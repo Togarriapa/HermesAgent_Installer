@@ -112,20 +112,21 @@ class RootTaskNativeObservationRegistry:
                 or getattr(native_bridge_broker, "provider_response_registry", None) is None
                 or not callable(getattr(process_custody_registry, "_resolve_task_handle", None))
                 or not callable(getattr(process_custody_registry, "resolve_task_terminal", None))
+                or not callable(getattr(process_custody_registry, "resolve_task_stdin_write", None))
                 or not callable(getattr(admitted_task_registry, "resolve_admitted_task_source", None))
                 or not callable(getattr(admitted_task_registry, "resolve_admitted_task", None))):
             raise AuthorityDenied("resource.native_observer", "root task native observation dependencies are unavailable")
-        input_observer = (getattr(source_observer_registry, "native_input_observer", None)
-                          or getattr(source_observer_registry, "input_observer", None))
-        if not callable(getattr(input_observer, "resolve_task_input_receipt", None)):
-            raise AuthorityDenied("resource.native_observer", "root task input observer is unavailable")
         invocations = native_bridge_broker.provider_response_registry
         if not all(isinstance(getattr(invocations, name, None), dict)
                    for name in ("_responses", "_invocations")):
             raise AuthorityDenied("resource.native_observer", "root native response registry is unavailable")
 
         self.source_observers = source_observer_registry
-        self.input_observer = input_observer
+        # The selected execution registry needs this object to be constructed,
+        # while the selected-only input observer needs that registry. Complete
+        # the cycle with one typed, identity-checked attachment after both exist.
+        self.input_observer: Any | None = None
+        self.selected_execution_registry: Any | None = None
         self.native_bridge = native_bridge_broker
         self.admitted_tasks = admitted_task_registry
         self.process_custody = process_custody_registry
@@ -136,6 +137,31 @@ class RootTaskNativeObservationRegistry:
         self._completed_tasks: dict[str, float] = {}
         self._lock = threading.RLock()
         self._closed = False
+
+    def attach_native_input_observer(self, observer: Any,
+                                     selected_execution_registry: Any) -> None:
+        """Attach the exact selected-only input observer once after graph construction."""
+        from .native_input_observer import RootNativeInputObserver
+        from .source_observers import RootNativeExecutionSelectionRegistry
+
+        if (type(observer) is not RootNativeInputObserver
+                or type(selected_execution_registry) is not RootNativeExecutionSelectionRegistry
+                or observer.selected_execution_registry is not selected_execution_registry
+                or selected_execution_registry.task_observations is not self
+                or selected_execution_registry.source_observers is not self.source_observers
+                or observer.source_observers is not self.source_observers
+                or observer.service is not self.source_observers.service
+                or not callable(getattr(observer, "resolve_task_input_receipt", None))
+                or not isinstance(getattr(observer, "_events", None), dict)):
+            raise AuthorityDenied(
+                "resource.native_observer", "selected task input observer graph is mismatched")
+        with self._lock:
+            if (self._closed or self.input_observer is not None
+                    or self.selected_execution_registry is not None or self._runs):
+                raise AuthorityDenied(
+                    "resource.native_observer", "selected task input observer is already attached or tasks are active")
+            self.input_observer = observer
+            self.selected_execution_registry = selected_execution_registry
 
     def bind_running_task(self, admission_handle: Any, node_id: str, source: Any,
                           task_handle: Any) -> None:
@@ -237,6 +263,8 @@ class RootTaskNativeObservationRegistry:
 
         if type(task_handle) is not ManagedTaskHandle or type(initial_input) is not RootTaskInitialInputReceipt:
             raise AuthorityDenied("resource.native_input", "initial task input receipt types are invalid")
+        if self.input_observer is None or self.selected_execution_registry is None:
+            raise AuthorityDenied("resource.native_input", "selected task input observer is not attached")
         with self._lock:
             run = self._runs.get(task_handle.handle_id)
             if (run is None or run.task_handle is not task_handle or run.admission_handle is not admission
@@ -302,6 +330,11 @@ class RootTaskNativeObservationRegistry:
                 task_handle.handle_id, terminal_receipt_handle)
             now = self.monotonic()
             self._validate_terminal(run, terminal, terminal_receipt_handle, now)
+            write_handle = getattr(terminal, "stdin_write_receipt_handle", None)
+            if not _opaque(write_handle):
+                raise AuthorityDenied("resource.native_stdin", "successful terminal lacks an actual stdin write receipt")
+            write_receipt = self._resolve_exact_stdin_write_receipt(task_handle, write_handle)
+            self._validate_stdin_write_receipt(run, terminal, write_handle, write_receipt, now)
         except Exception:
             self._discard_run(task_handle.handle_id, run)
             raise
@@ -352,6 +385,15 @@ class RootTaskNativeObservationRegistry:
             self._issued[receipt.native_execution_receipt_handle] = receipt
         return receipt
 
+    def _resolve_exact_stdin_write_receipt(self, task_handle: Any,
+                                           receipt_handle: str) -> Any:
+        """Require custody's stable manager-owned receipt lookup, not a reconstructed DTO."""
+        receipt = self.process_custody.resolve_task_stdin_write(task_handle, receipt_handle)
+        if self.process_custody.resolve_task_stdin_write(task_handle, receipt_handle) is not receipt:
+            raise AuthorityDenied(
+                "resource.native_stdin", "custody returned a reconstructed stdin write receipt")
+        return receipt
+
     def cancel_task_input(self, task_handle: Any, initial_input_receipt: Any) -> None:
         """Stop observations when custody rejects the already-bound input phase."""
         from ..managed_process_custodian import ManagedTaskHandle
@@ -366,6 +408,24 @@ class RootTaskNativeObservationRegistry:
                     or run.initial_input_receipt is not initial_input_receipt
                     or initial_input_receipt.task_handle != task_handle.handle_id):
                 raise AuthorityDenied("resource.native_cancel", "task input receipt is unknown or already consumed")
+            self._runs.pop(task_handle.handle_id, None)
+            self._completed_tasks[task_handle.handle_id] = run.deadline
+            run.stop.set()
+        if run.watcher is not None and run.watcher is not threading.current_thread():
+            run.watcher.join(timeout=1.0)
+            if run.watcher.is_alive():
+                raise AuthorityDenied("resource.native_timeout", "cancelled task native observer did not stop")
+
+    def cancel_running_task(self, task_handle: Any) -> None:
+        """Drop a retained task binding when pre-stdin selection never completes."""
+        from ..managed_process_custodian import ManagedTaskHandle
+
+        if type(task_handle) is not ManagedTaskHandle:
+            raise AuthorityDenied("resource.native_cancel", "running task cancellation reference is malformed")
+        with self._lock:
+            run = self._runs.get(task_handle.handle_id)
+            if run is None or run.task_handle is not task_handle:
+                raise AuthorityDenied("resource.native_cancel", "running task is unknown or already consumed")
             self._runs.pop(task_handle.handle_id, None)
             self._completed_tasks[task_handle.handle_id] = run.deadline
             run.stop.set()
@@ -664,7 +724,7 @@ class RootTaskNativeObservationRegistry:
                 or not self._receipt_live(input_receipt, now)
                 or not self._receipt_descends_from_task(run, input_receipt)):
             return None
-        selection_registry = getattr(self.source_observers, "native_execution_selections", None)
+        selection_registry = self.selected_execution_registry
         verifier = getattr(selection_registry, "resolve_current_execution", None)
         if callable(verifier):
             try:
@@ -861,6 +921,35 @@ class RootTaskNativeObservationRegistry:
             raise AuthorityDenied("resource.native_terminal", "task terminal or current authority does not match the retained native execution")
         if getattr(terminal, "native_execution_receipt_handle", None) not in (None, ""):
             raise AuthorityDenied("resource.native_terminal", "terminal already carries an unrelated native execution receipt")
+
+    def _validate_stdin_write_receipt(self, run: _TaskRun, terminal: Any,
+                                      receipt_handle: Any, receipt: Any,
+                                      now: float) -> None:
+        from ..registry.resource_jobs import RootTaskStdinWriteReceipt
+
+        task = run.admitted_task
+        initial = run.initial_input_receipt
+        if (type(receipt) is not RootTaskStdinWriteReceipt
+                or not _opaque(receipt_handle)
+                or getattr(terminal, "stdin_write_receipt_handle", None) != receipt_handle
+                or getattr(run.task_handle, "stdin_write_receipt_handle", None) != receipt_handle
+                or receipt.receipt_handle != receipt_handle
+                or receipt.task_handle != run.task_handle.handle_id
+                or receipt.process_id != run.task_handle.process_id
+                or receipt.process_generation != task.process_generation
+                or receipt.initial_input_receipt_handle != initial.receipt_handle
+                or receipt.stdin_sha256 != task.stdin_sha256
+                or receipt.stdin_size_bytes != task.stdin_size_bytes
+                or receipt.sequence != 0
+                or receipt.write_complete is not True or receipt.drained is not True
+                or receipt.stdin_closed is not True
+                or receipt.service_generation_digest != run.service_generation_digest
+                or receipt.issued_monotonic < initial.issued_monotonic
+                or receipt.issued_monotonic > getattr(terminal, "finished_monotonic", now)
+                or receipt.issued_monotonic > now or receipt.expires_monotonic <= now
+                or receipt.expires_monotonic > initial.expires_monotonic
+                or receipt.expires_monotonic > run.deadline):
+            raise AuthorityDenied("resource.native_stdin", "custody stdin write/EOF receipt does not match the admitted input")
 
     @staticmethod
     def _event_time(run: _TaskRun, event_id: str, now: float) -> None:

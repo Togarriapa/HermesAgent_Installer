@@ -229,7 +229,17 @@ def test_root_setup_reader_joins_selected_session_then_lists_and_inspects_only()
         principal_selection_receipt_handle="selected-principal-receipt",
         network=network)
     candidates = reader.list_types()
-    selected, receipt = reader.inspect_returned_type(SLUG)
+    class ArtifactRegistry:
+        def __init__(self):
+            self.call = None
+
+        def persist_selected_trigger_type(self, exchange_handle, selected_slug):
+            self.call = (exchange_handle, selected_slug)
+            return "root-derived-artifact-receipt"
+
+    artifact_registry = ArtifactRegistry()
+    selected, receipt, artifact_receipt = reader.inspect_and_persist_selected_type(
+        SLUG, artifact_registry)
     assert auth.setup_selection == ("selected-root-session", {
         "project_id": "project_1",
         "project_api_key_reference": "composio_fixture_project_key",
@@ -240,4 +250,6 @@ def test_root_setup_reader_joins_selected_session_then_lists_and_inspects_only()
     assert selected.slug == SLUG
     assert receipt.status == "discovered-not-configured"
     assert receipt.source_exchange_receipt_handles == ("exchange-1", "exchange-2")
+    assert artifact_registry.call == ("exchange-2", SLUG)
+    assert artifact_receipt == "root-derived-artifact-receipt"
     assert len(network.calls) == 2

@@ -362,3 +362,28 @@ class RootComposioCatalogReader:
     def inspect_returned_type(self, selected_slug: str):
         """Re-list and re-fetch only a slug returned by the current catalog."""
         return self._discovery.select(selected_slug)
+
+    def inspect_and_persist_selected_type(self, selected_slug: str,
+                                          artifact_registry: Any):
+        """Root-setup call point that derives the selected schema from its GET receipt.
+
+        ``artifact_registry`` must be the root-owned
+        ``RootComposioTriggerArtifactRegistry``. The helper passes only the
+        opaque detail exchange receipt and selected catalog slug; it never
+        supplies schema bytes, digests, paths, or readiness claims.
+        """
+        persist = getattr(artifact_registry, "persist_selected_trigger_type", None)
+        if not callable(persist):
+            raise ComposioCatalogTransportDenied(
+                "root Composio trigger artifact derivation registry is unavailable")
+        selected, discovery_receipt = self.inspect_returned_type(selected_slug)
+        handles = discovery_receipt.source_exchange_receipt_handles
+        if not isinstance(handles, tuple) or not handles:
+            raise ComposioCatalogTransportDenied(
+                "authenticated Composio detail exchange receipt is unavailable")
+        try:
+            artifact_receipt = persist(handles[-1], selected.slug)
+        except Exception:
+            raise ComposioCatalogTransportDenied(
+                "root could not derive the selected Composio trigger schema artifact") from None
+        return selected, discovery_receipt, artifact_receipt
