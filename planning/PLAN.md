@@ -271,3 +271,6 @@ v251: `plans/amendments/2026-10-11-official-desktop-native-source-policy-v251.md
 
 v251b: `plans/amendments/2026-10-11-official-desktop-native-build-direction-v251b.md` / `planning/official-desktop-native-build-direction-v251b.json`; RT-T251b.1/.2 and VD-T251b.3 OPEN. Source-only prebuild versus actually generated observed native AppDir output; no native cycle, fabricated caps or runtime acceptance.
 v253b: `planning/native-plugin-producer-sealed-api-v253b.json`; same253 tasks OPEN. Exact source owner corrections, no runtime/pin/acceptance.
+
+
+v251c: `plans/amendments/2026-10-11-official-desktop-prepared-packaging-direction-v251c.md` / `planning/official-desktop-prepared-packaging-direction-v251c.json`; RT-T251c.1/.2 and VD-T251c.3 OPEN. Actual source intent/normalization versus driver-generated upstream prepared.json; distinct tar byte and member closure, all caps/runtime/AC OPEN.

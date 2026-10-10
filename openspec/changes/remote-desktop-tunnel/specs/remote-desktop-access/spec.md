@@ -636,3 +636,17 @@ The installer SHALL consume source-only prebuild native manifests and SHALL gene
 #### Scenario: Generated native output is independently observed
 - **WHEN** actual fixed native/stage/package effects retain native manifests and complete native bytes within AppDir
 - **THEN** the observer reopens original input provenance and generated ABI/ELF/packaged mappings before native/package receipt issuance, while runtime qualification and missing measured caps remain denied
+
+
+## ADDED Requirements
+
+### Requirement: Desktop prepared packaging direction v251c
+The installer SHALL require source-only toolset intent and normalized packaging inputs before build, distinguishing exact tar byte digest from normalized member closure, and SHALL generate the genuine upstream prepared manifest only through actual fixed driver effects as specified by v251c.
+
+#### Scenario: Source provider cannot produce future prepared record
+- **WHEN** the provider holds only approved source archives/toolset receipts
+- **THEN** it issues the separately named input intent and normalization facts without future prepared-manifest fields or relabeling upstream prepared.json
+
+#### Scenario: Actual prepared packaging output is retained
+- **WHEN** fixed native/materialization/upstream packaging effects generate true prepared.json
+- **THEN** its exact bytes and native/toolset/package provenance are retained and independently reopened in final AppDir before receipt issuance, with all missing cap/runtime gates preserved

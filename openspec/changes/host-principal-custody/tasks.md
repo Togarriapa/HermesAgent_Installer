@@ -550,3 +550,10 @@ Exact contract: `planning/official-desktop-native-source-policy-v251.json`; all 
 - [ ] RT-T251b.2 Generate native tree/joined manifest through actual fixed managed driver and independently reopen retained packaged native facts before receipt; no hash-only native completion.
 - [ ] VD-T251b.3 Test missing/generated-input cycle, forged native result, absent retained tree, selfhash, ABI/packaged mapping/cancellation/currentness failure and genuine bounded offline ARM64 pipeline; runtime acceptance separate.
 - [ ] RB-T253.1 / HI-T253.2 / VD-T253.3 (v253b): Implement reviewed sealed dependency/result-schema/GitHub observation corrections; confirmation protocols cannot authorize writes.
+
+
+## v251c Packaging source and generated record
+
+- [ ] RT-T251c.1 Implement source-only packaging intent and deterministic origin-bound normalized inputs receipts/closure with separate tar-byte digest; remove future prepared fields from prebuild.
+- [ ] RT-T251c.2 Generate true upstream prepared.json through fixed driver after materialization/native effects and retain/reobserve it in actual AppDir joined output.
+- [ ] VD-T251c.3 Test stale path/source, missing notice/helper/library, normalization/tar hash confusion, forged future prepared proof, link/extra member/selfhash/currentness/cancellation failures and genuine bounded offline prepared packaging effects.

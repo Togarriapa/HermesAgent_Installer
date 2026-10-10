@@ -1402,3 +1402,16 @@ The installer SHALL obtain vault/journal/source owners through the sealed bindin
 #### Scenario: Account read does not establish writes
 - **WHEN** fixed GitHub /user and selected repository observations validate account/read readiness
 - **THEN** admit only independently joined read actions and retain write/admin/confirmation prerequisites as pending
+
+## ADDED Requirements
+
+### Requirement: Desktop prepared packaging direction v251c
+The installer SHALL require source-only toolset intent and normalized packaging inputs before build, distinguishing exact tar byte digest from normalized member closure, and SHALL generate the genuine upstream prepared manifest only through actual fixed driver effects as specified by v251c.
+
+#### Scenario: Source provider cannot produce future prepared record
+- **WHEN** the provider holds only approved source archives/toolset receipts
+- **THEN** it issues the separately named input intent and normalization facts without future prepared-manifest fields or relabeling upstream prepared.json
+
+#### Scenario: Actual prepared packaging output is retained
+- **WHEN** fixed native/materialization/upstream packaging effects generate true prepared.json
+- **THEN** its exact bytes and native/toolset/package provenance are retained and independently reopened in final AppDir before receipt issuance, with all missing cap/runtime gates preserved
