@@ -251,6 +251,62 @@ class RootApplicationQualificationContext:
 
 
 @dataclass(frozen=True, slots=True)
+class RootResolvedApplicationEffectMembers:
+    """Root release observer output; member bytes are held only in the issuer."""
+    schema: int
+    application_id: str
+    workflow_id: str
+    release_selection_handle: str
+    source_receipt_handles: tuple[str, ...]
+    source_closure_sha256: str
+    member_receipt_handles: tuple[tuple[str, str], ...]
+    member_bytes: Mapping[str, bytes] = field(repr=False, compare=False)
+    service_generation_digest: str
+    expires_monotonic: float
+
+
+@dataclass(frozen=True, slots=True)
+class RootApplicationQualificationEffectReceipt:
+    """Signed functional-effect result, independent from the runtime ABI receipt."""
+    schema: int
+    handle: str
+    request_handle: str
+    admission_handle: str
+    application_id: str
+    workflow_id: str
+    workload_id: str
+    profile_id: str
+    profile_generation: str
+    service_generation_digest: str
+    source_receipt_handles: tuple[str, ...]
+    source_closure_sha256: str
+    release_selection_handle: str
+    member_receipt_handles: tuple[tuple[str, str], ...]
+    source_revision: str
+    semantic_contract_id: str
+    result_schema_id: str
+    result_schema_sha256: str
+    result_sha256: str
+    result_size_bytes: int
+    terminal_receipt_handles: tuple[str, ...]
+    output_observation_handles: tuple[str, ...]
+    selected_step_handles: tuple[str, ...]
+    runtime_preparation_selection_handle: str
+    runtime_probe_receipt_handle: str
+    runtime_manifest_sha256: str
+    controller_binding_handle: str
+    qualification_consent_receipt_handle: str
+    namespace_selection_receipt_handle: str
+    fixture_receipt_handle: str
+    issued_monotonic: float
+    expires_monotonic: float
+    signature: str
+
+    def claims(self) -> dict[str, Any]:
+        return {name: getattr(self, name) for name in self.__dataclass_fields__ if name != "signature"}
+
+
+@dataclass(frozen=True, slots=True)
 class RootApplicationFixtureReceipt:
     """Receipt for a live, root-owned loopback fixture listener."""
     schema: int
@@ -640,6 +696,16 @@ class RootApplicationQualificationContextProducer:
         except Exception:
             return False
 
+    def resolve_effect_source_selection(self, context: RootApplicationQualificationContext) -> Any:
+        """Return the exact retained source selection only after full context revalidation."""
+        if type(context) is not RootApplicationQualificationContext:
+            raise AuthorityDenied("application.effect", "qualification context is untyped")
+        with self._lock:
+            row = self._contexts.get(context.source_preparation_selection_handle)
+        if row is None or row[0] is not context or not self.is_current(context, row[1].workflow_id):
+            raise AuthorityDenied("application.effect", "qualification source selection is stale")
+        return row[2]
+
     def resolve_controller_binding(self, controller_binding_handle: str) -> Any:
         with self._lock:
             row = next((item for item in self._contexts.values()
@@ -714,6 +780,13 @@ class RootApplicationExecutionJournal:
                 CREATE TABLE IF NOT EXISTS capsule (
                     handle TEXT PRIMARY KEY, admission_handle TEXT NOT NULL,
                     capsule BLOB NOT NULL, payload BLOB NOT NULL, terminal BLOB NOT NULL);
+                CREATE TABLE IF NOT EXISTS application_terminal (
+                    step_handle TEXT PRIMARY KEY, admission_handle TEXT NOT NULL,
+                    sequence INTEGER NOT NULL, terminal_handle TEXT NOT NULL UNIQUE);
+                CREATE TABLE IF NOT EXISTS qualification_effect (
+                    handle TEXT PRIMARY KEY, request_handle TEXT NOT NULL,
+                    admission_handle TEXT NOT NULL, receipt BLOB NOT NULL,
+                    payload BLOB NOT NULL);
             """)
             info = path.lstat()
             if (not stat.S_ISREG(info.st_mode) or info.st_uid != expected_uid
@@ -730,6 +803,8 @@ class RootApplicationExecutionJournal:
         self._admissions: dict[str, Any] = {}
         self._steps: dict[str, Any] = {}
         self._capsules: dict[str, tuple[Any, bytes, Any]] = {}
+        self._step_terminals: dict[str, tuple[Any, Any]] = {}
+        self._qualification_effects: dict[str, tuple[Any, bytes]] = {}
 
     def _verify_selection(self) -> None:
         try:
@@ -899,6 +974,92 @@ class RootApplicationExecutionJournal:
         if len(matches) != 1 or not self.is_application_step_current(matches[0].handle):
             raise AuthorityDenied("application.journal", "application step is stale")
         return matches[0]
+
+    def resolve_application_steps(self, admission_handle: str) -> tuple[Any, ...]:
+        """Return current immutable steps in their root-assigned sequence order."""
+        if not self.is_application_admission_current(admission_handle):
+            raise AuthorityDenied("application.journal", "application admission is stale")
+        with self._lock:
+            steps = tuple(sorted((item for item in self._steps.values()
+                if item.admission_handle == admission_handle), key=lambda item: item.sequence))
+        if not steps or any(not self.is_application_step_current(item.handle) for item in steps):
+            raise AuthorityDenied("application.journal", "application step sequence is stale")
+        if tuple(item.sequence for item in steps) != tuple(range(1, len(steps) + 1)):
+            raise AuthorityDenied("application.journal", "application step sequence is incomplete")
+        return steps
+
+    def retain_application_terminal_for_step(self, step: Any, terminal: Any) -> None:
+        """Bind a manager-issued terminal to its exact journal step once."""
+        if (type(step) is not RootApplicationSelectedStep
+                or type(terminal) is not RootApplicationTerminalReceipt
+                or not self.is_application_step_current(step.handle)
+                or terminal.admission_handle != step.admission_handle
+                or terminal.application_id != step.application_id
+                or terminal.workload_id != step.workload_id or terminal.step_id != step.step_id
+                or terminal.sequence != step.sequence
+                or terminal.profile_id != step.profile_id
+                or terminal.profile_generation != step.profile_generation
+                or terminal.service_generation_digest != step.service_generation_digest
+                or terminal.request_sha256 != step.request_sha256
+                or terminal.source_receipt_handle != step.source_receipt_handle
+                or terminal.runtime_receipt_handle != step.runtime_receipt_handle):
+            raise AuthorityDenied("application.journal", "terminal does not bind the current selected step")
+        def write() -> None:
+            self._db.execute("INSERT INTO application_terminal(step_handle,admission_handle,sequence,terminal_handle) VALUES(?,?,?,?)",
+                (step.handle, step.admission_handle, step.sequence, terminal.receipt_handle))
+        self._transaction(write)
+        with self._lock:
+            self._step_terminals[step.handle] = (step, terminal)
+
+    def resolve_application_step_terminals(self, admission_handle: str) -> tuple[tuple[Any, str], ...]:
+        """Resolve exact ordered stage terminal handles, never caller-supplied handles."""
+        steps = self.resolve_application_steps(admission_handle)
+        with self._lock:
+            rows = self._db.execute("SELECT step_handle,terminal_handle FROM application_terminal "
+                "WHERE admission_handle=? ORDER BY sequence", (admission_handle,)).fetchall()
+            retained = dict(self._step_terminals)
+        if len(rows) != len(steps):
+            raise AuthorityDenied("application.journal", "application workload has incomplete stage terminals")
+        result = []
+        for step, row in zip(steps, rows):
+            held = retained.get(step.handle)
+            if (row[0] != step.handle or held is None or held[0] is not step
+                    or held[1].receipt_handle != row[1]):
+                raise AuthorityDenied("application.journal", "application stage terminal retention changed")
+            result.append((step, row[1]))
+        return tuple(result)
+
+    def application_step_terminal_handle(self, step_handle: str) -> str | None:
+        if not self.is_application_step_current(step_handle):
+            raise AuthorityDenied("application.journal", "application step is stale")
+        with self._lock:
+            row = self._db.execute("SELECT terminal_handle FROM application_terminal WHERE step_handle=?",
+                (step_handle,)).fetchone()
+        return None if row is None else row[0]
+
+    def retain_application_qualification_effect(self, receipt: Any, payload: bytes) -> None:
+        if (type(receipt) is not RootApplicationQualificationEffectReceipt
+                or not isinstance(payload, bytes) or not 1 <= len(payload) <= 65536
+                or hashlib.sha256(payload).hexdigest() != receipt.result_sha256
+                or len(payload) != receipt.result_size_bytes):
+            raise AuthorityDenied("application.effect", "qualification effect payload is malformed")
+        raw = canonical_bytes(receipt.claims() | {"signature": receipt.signature})
+        def write() -> None:
+            self._db.execute("INSERT INTO qualification_effect(handle,request_handle,admission_handle,receipt,payload) VALUES(?,?,?,?,?)",
+                (receipt.handle, receipt.request_handle, receipt.admission_handle, raw, payload))
+        self._transaction(write)
+        with self._lock:
+            self._qualification_effects[receipt.handle] = (receipt, payload)
+
+    def resolve_application_qualification_effect(self, handle: str) -> tuple[Any, bytes]:
+        self._verify_selection()
+        with self._lock:
+            item = self._qualification_effects.get(handle)
+            row = self._db.execute("SELECT request_handle,admission_handle FROM qualification_effect WHERE handle=?",
+                (handle,)).fetchone()
+        if item is None or row is None or item[0].request_handle != row[0] or item[0].admission_handle != row[1]:
+            raise AuthorityDenied("application.effect", "qualification effect receipt is unavailable")
+        return item
 
     def is_application_step_current(self, handle: str) -> bool:
         try:
@@ -1835,6 +1996,10 @@ class ManagedApplicationWorkloadRunner:
                 terminal = self.wait_owned_application_terminal(
                     handle, timeout=max(.001, step.deadline_monotonic-self.authority.service.monotonic()),
                     cancelled=lambda: False)
+                retain_terminal = getattr(self.journal, "retain_application_terminal_for_step", None)
+                if not callable(retain_terminal):
+                    raise AuthorityDenied("application.journal", "root terminal-to-step journal is unavailable")
+                retain_terminal(step, terminal)
                 terminal_handle = terminal.receipt_handle
                 capsule = self.validate_selected_terminal(admission_handle, terminal_handle)
                 capsule_handle = capsule.handle
@@ -1855,6 +2020,303 @@ class ManagedApplicationWorkloadRunner:
             state=state, issued_monotonic=now,
             expires_monotonic=min(admission.expires_monotonic, now+30.0))
         return RootApplicationRunReceipt(**fields)
+
+    def run_selected_qualification_effect(self, admission_handle: str,
+            effect_authority: "RootApplicationQualificationEffectAuthority") -> RootApplicationQualificationEffectReceipt:
+        """Execute the retained pre-active workflow stages and issue their effect receipt."""
+        if (type(effect_authority) is not RootApplicationQualificationEffectAuthority
+                or self.authority._qualification_admissions.get(admission_handle) is None
+                or not self.authority.is_application_admission_current(admission_handle)):
+            raise AuthorityDenied("application.effect", "only a current prepared qualification can run this path")
+        admission = self.journal.resolve_application_admission(admission_handle)
+        if type(admission) is not RootApplicationWorkloadAdmission:
+            raise AuthorityDenied("application.effect", "qualification admission is untyped")
+        _request, _context, _selection, _source, recipe = effect_authority._inputs(admission_handle)
+        steps = self.journal.resolve_application_steps(admission_handle)
+        if (not steps or len(steps) > 3
+                or any(item.workload_id != recipe.workload_id or item.role != "application-workload"
+                       for item in steps)):
+            raise AuthorityDenied("application.effect", "retained managed stages differ from the fixed recipe")
+        if any(self.journal.application_step_terminal_handle(item.handle) is not None for item in steps):
+            raise AuthorityDenied("application.replay", "qualification stages were already executed")
+        for step in steps:
+            if not self.authority.is_application_admission_current(admission_handle):
+                raise AuthorityDenied("application.effect", "qualification admission became stale")
+            grant = self.authority.issue_root_application_start(admission_handle, step.step_id)
+            proof = self.authority.consume_root_application_start(grant, step.selection_payload)
+            handle = self.start_selected_application(
+                step.profile_id, proof, step.selection_payload, selected_step_handle=step.handle,
+                timeout=max(.001, min(600.0, step.deadline_monotonic - self.authority.service.monotonic())),
+                cancelled=lambda: False)
+            terminal = self.wait_owned_application_terminal(handle,
+                timeout=max(.001, step.deadline_monotonic-self.authority.service.monotonic()),
+                cancelled=lambda: False)
+            self.journal.retain_application_terminal_for_step(step, terminal)
+        return effect_authority.issue_selected_qualification_effect(admission_handle)
+
+
+class RootApplicationQualificationEffectAuthority:
+    """Issue and re-resolve signed receipts for actual bounded application effects.
+
+    The release observer, environment-preparation registry and managed-process
+    custodian are root composition dependencies. This class never takes paths,
+    bytes, argv, URLs, stage output, or receipt handles from the RPC caller.
+    """
+
+    def __init__(self, workload_authority: RootApplicationWorkloadAuthority,
+                 managed_process_custodian: Any, release_artifact_observer: Any,
+                 runtime_preparation_resolver: Any, root_journal: Any):
+        required = (
+            (managed_process_custodian, "resolve_application_terminal"),
+            (managed_process_custodian, "resolve_application_output"),
+            (release_artifact_observer, "resolve_application_effect_members"),
+            (runtime_preparation_resolver, "resolve_application_work_roots"),
+            (root_journal, "resolve_application_step_terminals"),
+            (root_journal, "retain_application_qualification_effect"),
+            (root_journal, "resolve_application_qualification_effect"),
+        )
+        if (type(workload_authority) is not RootApplicationWorkloadAuthority
+                or any(not callable(getattr(owner, method, None)) for owner, method in required)):
+            raise ValueError("application qualification effect authority dependencies are unavailable")
+        self.authority = workload_authority
+        self.manager = managed_process_custodian
+        self.artifacts = release_artifact_observer
+        self.preparations = runtime_preparation_resolver
+        self.journal = root_journal
+        self._lock = threading.RLock()
+        self._receipts: dict[str, tuple[RootApplicationQualificationEffectReceipt, bytes, Any, Any, Any]] = {}
+
+    def _inputs(self, admission_handle: str) -> tuple[Any, Any, Any, Any, Any]:
+        authority = self.authority
+        if not _handle(admission_handle) or not authority.is_application_admission_current(admission_handle):
+            raise AuthorityDenied("application.effect", "qualification admission is stale")
+        request_handle = authority._qualification_admissions.get(admission_handle)
+        record = authority._qualification_requests.get(request_handle)
+        if request_handle is None or record is None:
+            raise AuthorityDenied("application.effect", "admission is not a prepared qualification")
+        request, context, _projected, selection, _session_handle = record
+        if (request.request_handle != request_handle
+                or authority._qualification_context_current(request_handle, require_unconsumed=False) is not True
+                or request.workflow_id not in _QUALIFICATION_WORKFLOWS
+                or selection is not authority._application_preparations.resolve_application_runtime_preparation_selection(
+                    context.runtime_preparation_selection_handle)):
+            raise AuthorityDenied("application.effect", "prepared qualification context is stale")
+        producer = authority._qualification_context_producer
+        if producer is None:
+            raise AuthorityDenied("application.effect", "root qualification context producer is unavailable")
+        source_selection = producer.resolve_effect_source_selection(context)
+        from .application_probe_recipes import resolve_application_qualification_effect_recipe_for_selection
+        recipe = resolve_application_qualification_effect_recipe_for_selection(source_selection)
+        if (recipe.application_id != request.application_id or recipe.workflow_id != request.workflow_id
+                or recipe.workload_id != _QUALIFICATION_WORKFLOWS[request.workflow_id][1]):
+            raise AuthorityDenied("application.effect", "reviewed effect recipe differs from root workflow choice")
+        return request, context, selection, source_selection, recipe
+
+    def _terminal_stages(self, admission_handle: str, context: RootApplicationQualificationContext,
+                         selection: Any) -> tuple[tuple[RootApplicationSelectedStep, ...], tuple[Any, ...],
+                                                   tuple[tuple[bytes, bytes], ...]]:
+        pairs = self.journal.resolve_application_step_terminals(admission_handle)
+        if not isinstance(pairs, tuple) or not pairs:
+            raise AuthorityDenied("application.effect", "selected workload has no retained managed stages")
+        steps, terminals, outputs = [], [], []
+        for step, terminal_handle in pairs:
+            if type(step) is not RootApplicationSelectedStep or not self.authority._current(step):
+                raise AuthorityDenied("application.effect", "managed workload step is stale")
+            terminal = self.manager.resolve_application_terminal(terminal_handle)
+            if type(terminal) is not RootApplicationTerminalReceipt:
+                raise AuthorityDenied("application.effect", "managed stage terminal is untyped")
+            self.authority.service._verify_root_selected_signature(
+                "root-application-terminal-v1", terminal.claims(), terminal.signature)
+            stdout, stderr = self.manager.resolve_application_output(terminal.output_observation_handle)
+            if (terminal.receipt_handle != terminal_handle
+                    or terminal.admission_handle != admission_handle
+                    or terminal.application_id != context.application_id
+                    or terminal.workload_id != step.workload_id or terminal.step_id != step.step_id
+                    or terminal.sequence != step.sequence or terminal.profile_id != selection.profile_id
+                    or terminal.profile_generation != selection.profile_generation
+                    or terminal.service_generation_digest != selection.service_selection_digest
+                    or terminal.source_receipt_handle != context.prepared_source_receipt_handle
+                    or terminal.runtime_receipt_handle != selection.handle
+                    or terminal.state != "completed" or terminal.exit_code != 0 or not terminal.reaped
+                    or terminal.cancelled or terminal.timed_out or not terminal.stdin_eof
+                    or not isinstance(stdout, bytes) or not isinstance(stderr, bytes)
+                    or len(stdout) != terminal.stdout_size_bytes or len(stderr) != terminal.stderr_size_bytes
+                    or len(stdout) > 4 * 1024 * 1024 or len(stderr) > 4 * 1024 * 1024
+                    or hashlib.sha256(stdout).hexdigest() != terminal.stdout_sha256
+                    or hashlib.sha256(stderr).hexdigest() != terminal.stderr_sha256):
+                raise AuthorityDenied("application.effect", "managed stage terminal/output is incomplete or stale")
+            steps.append(step)
+            terminals.append(terminal)
+            outputs.append((stdout, stderr))
+        return tuple(steps), tuple(terminals), tuple(outputs)
+
+    def issue_selected_qualification_effect(self, admission_handle: str) -> RootApplicationQualificationEffectReceipt:
+        request, context, selection, _source_selection, recipe = self._inputs(admission_handle)
+        steps, terminals, outputs = self._terminal_stages(admission_handle, context, selection)
+        resolved = self.artifacts.resolve_application_effect_members(context, recipe)
+        if type(resolved) is not RootResolvedApplicationEffectMembers:
+            raise AuthorityDenied("application.effect", "release artifact observer returned no typed member closure")
+        from .application_probe_recipes import (
+            verify_qualification_effect_member_set,
+            validate_application_qualification_effect_result,
+        )
+        if (resolved.schema != 1 or resolved.application_id != context.application_id
+                or resolved.workflow_id != request.workflow_id
+                or resolved.service_generation_digest != self.authority.service.service_generation_digest
+                or resolved.expires_monotonic <= self.authority.service.monotonic()
+                or not _handle(resolved.release_selection_handle)
+                or not resolved.source_receipt_handles or not _digest(resolved.source_closure_sha256)
+                or context.prepared_source_receipt_handle not in resolved.source_receipt_handles
+                or tuple(member_id for member_id, _handle_value in resolved.member_receipt_handles)
+                    != tuple(member.member_id for member in recipe.members)
+                or any(not _handle(member_handle) for _member_id, member_handle in resolved.member_receipt_handles)
+                or len({member_handle for _member_id, member_handle in resolved.member_receipt_handles})
+                    != len(recipe.members)
+                or any(not _handle(source_handle) for source_handle in resolved.source_receipt_handles)
+                or not callable(getattr(self.artifacts, "is_application_effect_members_current", None))
+                or self.artifacts.is_application_effect_members_current(resolved) is not True):
+            raise AuthorityDenied("application.effect", "release member closure is stale or incomplete")
+        verify_qualification_effect_member_set(recipe, resolved.member_bytes)
+        stage_results = tuple({"exit_code": terminal.exit_code, "stdout": output[0], "stderr": output[1]}
+                              for terminal, output in zip(terminals, outputs))
+        work_roots = self.preparations.resolve_application_work_roots(selection.handle)
+        fixture_url = None
+        if context.fixture_receipt_handle:
+            producer = self.authority._qualification_context_producer
+            row = producer._contexts.get(context.source_preparation_selection_handle)
+            fixture = None if row is None else row[7]
+            if fixture is None or fixture.handle != context.fixture_receipt_handle:
+                raise AuthorityDenied("application.effect", "owned fixture receipt is stale")
+            fixture_url = fixture.url
+        result = validate_application_qualification_effect_result(
+            recipe, stage_results, expected_fixture_url=fixture_url, work_roots=work_roots)
+        payload = result.canonical_result
+        if (not isinstance(payload, bytes) or not 1 <= len(payload) <= 65536
+                or hashlib.sha256(payload).hexdigest() != result.result_sha256
+                or result.application_id != recipe.application_id
+                or result.workflow_id != recipe.workflow_id or result.workload_id != recipe.workload_id
+                or result.source_revision != recipe.source_revision
+                or result.semantic_contract_id != recipe.semantic_contract_id):
+            raise AuthorityDenied("application.effect", "effect validator returned a mismatched bounded result")
+        now = self.authority.service.monotonic()
+        fields = dict(schema=1, handle=secrets.token_urlsafe(32), request_handle=request.request_handle,
+            admission_handle=admission_handle, application_id=request.application_id,
+            workflow_id=request.workflow_id, workload_id=recipe.workload_id,
+            profile_id=request.profile_id, profile_generation=request.profile_generation,
+            service_generation_digest=request.enclosing_service_generation_digest,
+            source_receipt_handles=resolved.source_receipt_handles,
+            source_closure_sha256=resolved.source_closure_sha256,
+            release_selection_handle=resolved.release_selection_handle,
+            member_receipt_handles=resolved.member_receipt_handles,
+            source_revision=recipe.source_revision, semantic_contract_id=recipe.semantic_contract_id,
+            result_schema_id=recipe.result_schema_id, result_schema_sha256=recipe.result_schema_sha256,
+            result_sha256=result.result_sha256, result_size_bytes=len(payload),
+            terminal_receipt_handles=tuple(item.receipt_handle for item in terminals),
+            output_observation_handles=tuple(item.output_observation_handle for item in terminals),
+            selected_step_handles=tuple(item.handle for item in steps),
+            runtime_preparation_selection_handle=context.runtime_preparation_selection_handle,
+            runtime_probe_receipt_handle=context.runtime_probe_receipt_handle,
+            runtime_manifest_sha256=context.runtime_manifest_sha256,
+            controller_binding_handle=context.controller_binding_handle,
+            qualification_consent_receipt_handle=context.qualification_consent_receipt_handle,
+            namespace_selection_receipt_handle=context.namespace_selection_receipt_handle,
+            fixture_receipt_handle=context.fixture_receipt_handle,
+            issued_monotonic=now,
+            expires_monotonic=min(request.expires_monotonic, resolved.expires_monotonic, now + 30.0),
+            signature="pending")
+        unsigned = RootApplicationQualificationEffectReceipt(**fields)
+        receipt = RootApplicationQualificationEffectReceipt(**{**unsigned.claims(), "signature":
+            self.authority.service._sign_root_selected(
+                "root-application-qualification-effect-v1", unsigned.claims())})
+        if (receipt.expires_monotonic <= now
+                or self.authority._qualification_context_current(request.request_handle,
+                    require_unconsumed=False) is not True
+                or self.artifacts.is_application_effect_members_current(resolved) is not True):
+            raise AuthorityDenied("application.effect", "effect evidence changed before receipt commit")
+        self.journal.retain_application_qualification_effect(receipt, payload)
+        with self._lock:
+            self._receipts[receipt.handle] = (receipt, payload, request, context, resolved)
+        return receipt
+
+    def resolve_selected_qualification_effect(self, handle: str) -> tuple[RootApplicationQualificationEffectReceipt, bytes]:
+        stored = self.journal.resolve_application_qualification_effect(handle)
+        if (not isinstance(stored, tuple) or len(stored) != 2
+                or type(stored[0]) is not RootApplicationQualificationEffectReceipt):
+            raise AuthorityDenied("application.effect", "qualification effect journal result is malformed")
+        receipt, payload = stored
+        with self._lock:
+            retained = self._receipts.get(handle)
+        if retained is None or retained[0] is not receipt or retained[1] != payload:
+            raise AuthorityDenied("application.effect", "qualification effect receipt is not process-retained")
+        self.authority.service._verify_root_selected_signature(
+            "root-application-qualification-effect-v1", receipt.claims(), receipt.signature)
+        request, context = retained[2], retained[3]
+        if (receipt.handle != handle or receipt.expires_monotonic <= self.authority.service.monotonic()
+                or hashlib.sha256(payload).hexdigest() != receipt.result_sha256
+                or len(payload) != receipt.result_size_bytes or len(payload) > 65536
+                or receipt.request_handle != request.request_handle
+                or receipt.application_id != request.application_id
+                or receipt.workflow_id != request.workflow_id
+                or receipt.profile_id != request.profile_id
+                or receipt.profile_generation != request.profile_generation
+                or receipt.service_generation_digest != request.enclosing_service_generation_digest
+                or not self.authority._qualification_context_current(request.request_handle,
+                    require_unconsumed=False)
+                or receipt.terminal_receipt_handles != tuple(
+                    terminal for _step, terminal in self.journal.resolve_application_step_terminals(
+                        receipt.admission_handle))):
+            raise AuthorityDenied("application.effect", "qualification effect evidence is stale")
+        _request, _context, selection, _source_selection, recipe = self._inputs(receipt.admission_handle)
+        current_members = self.artifacts.resolve_application_effect_members(context, recipe)
+        from .application_probe_recipes import verify_qualification_effect_member_set
+        if (type(current_members) is not RootResolvedApplicationEffectMembers
+                or current_members.release_selection_handle != receipt.release_selection_handle
+                or current_members.source_receipt_handles != receipt.source_receipt_handles
+                or current_members.source_closure_sha256 != receipt.source_closure_sha256
+                or current_members.member_receipt_handles != receipt.member_receipt_handles
+                or current_members.service_generation_digest != receipt.service_generation_digest
+                or current_members.expires_monotonic <= self.authority.service.monotonic()
+                or tuple(member_id for member_id, _handle_value in current_members.member_receipt_handles)
+                    != tuple(member.member_id for member in recipe.members)
+                or any(not _handle(member_handle) for _member_id, member_handle in current_members.member_receipt_handles)
+                or self.artifacts.is_application_effect_members_current(current_members) is not True):
+            raise AuthorityDenied("application.effect", "qualification release member closure changed")
+        verify_qualification_effect_member_set(recipe, current_members.member_bytes)
+        steps, terminals, outputs = self._terminal_stages(receipt.admission_handle, context, selection)
+        if (receipt.selected_step_handles != tuple(item.handle for item in steps)
+                or receipt.output_observation_handles != tuple(item.output_observation_handle for item in terminals)):
+            raise AuthorityDenied("application.effect", "qualification terminal lineage changed")
+        from .application_probe_recipes import validate_application_qualification_effect_result
+        work_roots = self.preparations.resolve_application_work_roots(selection.handle)
+        fixture_url = None
+        if context.fixture_receipt_handle:
+            row = self.authority._qualification_context_producer._contexts.get(
+                context.source_preparation_selection_handle)
+            fixture_url = None if row is None or row[7] is None else row[7].url
+        validated = validate_application_qualification_effect_result(recipe,
+            tuple({"exit_code": term.exit_code, "stdout": output[0], "stderr": output[1]}
+                  for term, output in zip(terminals, outputs)),
+            expected_fixture_url=fixture_url, work_roots=work_roots)
+        if (validated.canonical_result != payload or validated.result_sha256 != receipt.result_sha256
+                or receipt.workload_id != recipe.workload_id
+                or receipt.source_revision != recipe.source_revision
+                or receipt.semantic_contract_id != recipe.semantic_contract_id
+                or receipt.result_schema_id != recipe.result_schema_id
+                or receipt.result_schema_sha256 != recipe.result_schema_sha256
+                or receipt.runtime_preparation_selection_handle != context.runtime_preparation_selection_handle
+                or receipt.runtime_probe_receipt_handle != context.runtime_probe_receipt_handle
+                or receipt.runtime_manifest_sha256 != context.runtime_manifest_sha256
+                or receipt.controller_binding_handle != context.controller_binding_handle
+                or receipt.qualification_consent_receipt_handle != context.qualification_consent_receipt_handle
+                or receipt.namespace_selection_receipt_handle != context.namespace_selection_receipt_handle
+                or receipt.fixture_receipt_handle != context.fixture_receipt_handle
+                or receipt.terminal_receipt_handles != tuple(item.receipt_handle for item in terminals)
+                or receipt.output_observation_handles != tuple(item.output_observation_handle for item in terminals)
+                or receipt.source_receipt_handles != retained[4].source_receipt_handles
+                or receipt.member_receipt_handles != retained[4].member_receipt_handles
+                or self.artifacts.is_application_effect_members_current(current_members) is not True):
+            raise AuthorityDenied("application.effect", "qualification effect result no longer validates")
+        return receipt, payload
 
 
 @dataclass(frozen=True, slots=True)
