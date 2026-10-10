@@ -904,6 +904,8 @@ class ManagedProcessEffectHandler:
         self._root_selected_status_receipts: dict[
             str, tuple[RootSelectedServiceStatusReceipt, RootSelectedServiceProcessReceipt, float]
         ] = {}
+        self._protected_enrollment_catalog: Any | None = None
+        self._private_loopback_endpoint_leases: dict[str, tuple[Any, Any, Any]] = {}
         self._lock = threading.RLock()
         self._member_key = os.urandom(32)
         # Root-only test harness may capture bounded manager diagnostics. This
@@ -924,7 +926,111 @@ class ManagedProcessEffectHandler:
                 raise ValueError("task input coordinator is already installed")
             if getattr(coordinator, "process_custody", None) is not self:
                 raise ValueError("task input coordinator is bound to another process manager")
-            self.task_input_coordinator = coordinator
+        self.task_input_coordinator = coordinator
+
+    def bind_private_memory_enrollment_catalog(self, catalog: Any) -> None:
+        """Bind the exact protected catalog used to resolve endpoint selection rows."""
+        from hermes_installer.protected_enrollment import ProtectedEnrollmentCatalog
+        if type(catalog) is not ProtectedEnrollmentCatalog:
+            raise AuthorityDenied("private_network.catalog", "root protected enrollment catalog is required")
+        with self._lock:
+            if self._protected_enrollment_catalog is not None and self._protected_enrollment_catalog is not catalog:
+                raise AuthorityDenied("private_network.catalog", "process manager catalog cannot be replaced")
+            self._protected_enrollment_catalog = catalog
+
+    def retain_private_loopback_network_lease(self, endpoint_binding: Any, network: Any, lease: Any) -> None:
+        """Retain a live namespace lease against its exact protected endpoint/network rows."""
+        from hermes_installer.authority.private_loopback_network import (
+            RootPrivateLoopbackNetworkLease, verify_root_network_lease,
+        )
+        from hermes_installer.protected_enrollment import (
+            PrivateLoopbackNetworkEnrollment, RootSelectedPrivateMemoryEndpointBinding,
+        )
+        if (type(endpoint_binding) is not RootSelectedPrivateMemoryEndpointBinding
+                or type(network) is not PrivateLoopbackNetworkEnrollment
+                or type(lease) is not RootPrivateLoopbackNetworkLease):
+            raise AuthorityDenied("private_network.binding", "typed protected endpoint/network and live lease are required")
+        with self._lock:
+            catalog = self._protected_enrollment_catalog
+        if catalog is None:
+            raise AuthorityDenied("private_network.catalog", "protected endpoint catalog is not bound")
+        try:
+            current = catalog.resolve_private_memory_endpoint_binding(endpoint_binding.binding_id)
+            verify_root_network_lease(lease)
+            profile = self.profiles.get(endpoint_binding.process_profile_id)
+            identities = [row for row in lease.network.member_identities
+                          if row.profile_id == endpoint_binding.process_profile_id
+                          and row.generation == endpoint_binding.process_profile_generation]
+            service = catalog.resolve(endpoint_binding.service_enrollment_id, endpoint_binding.service_generation)
+            if (current is not endpoint_binding or network.id != endpoint_binding.network_binding_handle
+                    or network.service_generation_digest != endpoint_binding.service_generation_digest
+                    or endpoint_binding.service_enrollment_id not in network.member_enrollment_ids
+                    or service.namespace_identity != network.namespace_identity
+                    or lease.network.network_id != network.id
+                    or lease.network.generation != network.generation
+                    or lease.network.members != network.member_enrollment_ids
+                    or lease.network.service_generation_digest
+                    != endpoint_binding.service_generation_digest
+                    or lease.network.namespace_identity != endpoint_binding.namespace_id
+                    or profile is None or profile.generation != endpoint_binding.process_profile_generation
+                    or profile.service_generation_digest != endpoint_binding.service_generation_digest
+                    or len(identities) != 1 or identities[0].uid != profile.owner_uid):
+                raise ValueError("endpoint and network membership differ")
+        except Exception:
+            raise AuthorityDenied("private_network.binding", "selected endpoint does not join a current private network lease") from None
+        with self._lock:
+            previous = self._private_loopback_endpoint_leases.get(endpoint_binding.network_binding_handle)
+            if previous is not None:
+                if previous[0] is endpoint_binding and previous[1] == network and previous[2] is lease:
+                    return
+                raise AuthorityDenied("private_network.binding", "network binding handle is already retained")
+            self._private_loopback_endpoint_leases[endpoint_binding.network_binding_handle] = (
+                endpoint_binding, network, lease,
+            )
+
+    def resolve_private_loopback_network_lease(self, endpoint_binding: Any) -> Any:
+        """Resolve the exact retained lease by a root-resolved endpoint DTO, never a raw handle."""
+        from hermes_installer.authority.private_loopback_network import (
+            RootPrivateLoopbackNetworkLease, verify_root_network_lease,
+        )
+        from hermes_installer.protected_enrollment import RootSelectedPrivateMemoryEndpointBinding
+        if type(endpoint_binding) is not RootSelectedPrivateMemoryEndpointBinding:
+            raise AuthorityDenied("private_network.binding", "root-resolved endpoint binding is required")
+        with self._lock:
+            retained = self._private_loopback_endpoint_leases.get(endpoint_binding.network_binding_handle)
+            catalog = self._protected_enrollment_catalog
+        if retained is None or catalog is None or retained[0] is not endpoint_binding:
+            raise AuthorityDenied("private_network.binding", "no exact retained lease exists for this protected endpoint")
+        try:
+            if catalog.resolve_private_memory_endpoint_binding(endpoint_binding.binding_id) is not endpoint_binding:
+                raise ValueError("endpoint selection changed")
+            network, lease = retained[1], retained[2]
+            from hermes_installer.protected_enrollment import PrivateLoopbackNetworkEnrollment
+            if type(network) is not PrivateLoopbackNetworkEnrollment:
+                raise ValueError("protected network selection type changed")
+            service = catalog.resolve(endpoint_binding.service_enrollment_id, endpoint_binding.service_generation)
+            if type(lease) is not RootPrivateLoopbackNetworkLease:
+                raise ValueError("lease type changed")
+            verify_root_network_lease(lease)
+            profile = self.profiles.get(endpoint_binding.process_profile_id)
+            identities = [row for row in lease.network.member_identities
+                          if row.profile_id == endpoint_binding.process_profile_id
+                          and row.generation == endpoint_binding.process_profile_generation]
+            if (network.id != endpoint_binding.network_binding_handle
+                    or endpoint_binding.service_enrollment_id not in network.member_enrollment_ids
+                    or service.namespace_identity != network.namespace_identity
+                    or lease.network.network_id != network.id
+                    or lease.network.generation != network.generation
+                    or lease.network.members != network.member_enrollment_ids
+                    or profile is None or profile.generation != endpoint_binding.process_profile_generation
+                    or profile.service_generation_digest != endpoint_binding.service_generation_digest
+                    or lease.network.service_generation_digest != endpoint_binding.service_generation_digest
+                    or lease.network.namespace_identity != endpoint_binding.namespace_id
+                    or len(identities) != 1 or identities[0].uid != profile.owner_uid):
+                raise ValueError("lease member or selected process changed")
+            return lease
+        except Exception:
+            raise AuthorityDenied("private_network.lease", "retained endpoint network lease is stale or mismatched") from None
 
     def set_native_loader_observation_store(self, store: Any) -> None:
         """Install the root-owned loader observer after manager construction.
@@ -1785,6 +1891,7 @@ class ManagedProcessEffectHandler:
                                  _start_guard: Callable[[], bool] | None = None,
                                  _task_admission: RootAdmittedTask | None = None,
                                  _root_selected_effect: Any | None = None,
+                                 _root_selected_lifecycle_deadline: float | None = None,
                                  _xauthority_mount_source: Path | None = None,
                                  _daemon_liveness_pidfd: int | None = None,
                                  _root_resource_start: Any | None = None,
@@ -1795,7 +1902,19 @@ class ManagedProcessEffectHandler:
         process.start grant against these exact selection bytes. No path, argv,
         executable, environment, PID, namespace, or socket comes from the peer.
         """
+        if _root_selected_effect is not None:
+            from hermes_installer.authority.types import VerifiedRootSelectedServiceEffect
+            if (type(_root_selected_effect) is not VerifiedRootSelectedServiceEffect
+                    or not _root_selected_effect.is_current()):
+                raise AuthorityDenied("root-selected.authority", "sealed current root service effect is required")
         request = self._json(payload)
+        if (_root_selected_effect is not None
+                and _root_selected_effect.role in {
+                    "memory-openviking", "memory-agentmemory", "memory-claude-mem"}
+                and (context is not None or authorization is not None
+                     or peer_pid is not None or peer_pidfd is not None
+                     or _daemon_liveness_pidfd is None)):
+            raise AuthorityDenied("root-selected.authority", "memory lifecycle launch must use the typed root admission path")
         expected_fields = {"schema", "enrollment_id", "generation", "operation_id", "parameters"}
         if _task_admission is not None:
             expected_fields |= {"admission_handle", "node_id", "task_payload_sha256",
@@ -1892,10 +2011,16 @@ class ManagedProcessEffectHandler:
                 or environment.get("HOME") != "/hermes" or environment.get("HERMES_HOME") != "/hermes"):
             raise AuthorityDenied("process.environment", "enrolled operation environment is invalid")
         if _root_selected_effect is not None:
-            if (_root_selected_effect.role != "display"
-                    or _xauthority_mount_source is None):
-                raise AuthorityDenied("root-selected.mount", "selected operation lacks its fixed role mount")
-            environment["XAUTHORITY"] = "/run/hermes-installer/display/Xauthority"
+            if _root_selected_effect.role == "display":
+                if _xauthority_mount_source is None:
+                    raise AuthorityDenied("root-selected.mount", "selected display lacks its fixed role mount")
+                environment["XAUTHORITY"] = "/run/hermes-installer/display/Xauthority"
+            elif (_root_selected_effect.role not in {
+                    "memory-openviking", "memory-agentmemory", "memory-claude-mem"}
+                    or _root_selected_effect.admission_kind != "memory"
+                    or _root_selected_effect.action != "start"
+                    or _xauthority_mount_source is not None):
+                raise AuthorityDenied("root-selected.mount", "selected operation has no fixed supported role binding")
         cwd_root_id = recipe["cwd_root_id"]
         root_by_id = {profile.home_id: profile.home_root, profile.work_id: profile.work_root,
                       profile.data_id: profile.data_root}
@@ -1932,19 +2057,27 @@ class ManagedProcessEffectHandler:
             "stdin_mode": "pipe" if recipe["stdin_mode"] == "bounded-typed-bytes" else "closed",
         }
         launch_bytes = json.dumps(launch, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+        lifecycle_deadline = (float(grant_expiry) if _root_selected_lifecycle_deadline is None
+                              else _root_selected_lifecycle_deadline)
+        if (isinstance(lifecycle_deadline, bool) or not isinstance(lifecycle_deadline, (int, float))
+                or not math.isfinite(lifecycle_deadline) or lifecycle_deadline <= self.monotonic()):
+            raise AuthorityDenied("process.start_expired", "root-selected service lifetime deadline is invalid")
         return self._start_reserved(derived, context, authorization, launch_bytes, timeout,
                                    peer_pid, peer_pidfd, cancelled, registered_profile=profile,
                                    start_guard=_start_guard,
-                                   lease_expires_monotonic=float(grant_expiry),
+                                   lease_expires_monotonic=float(lifecycle_deadline),
+                                   process_expires_monotonic=_root_selected_lifecycle_deadline,
+                                   root_selected_effect=_root_selected_effect,
                                    xauthority_mount_source=_xauthority_mount_source,
                                    daemon_liveness_pidfd=_daemon_liveness_pidfd)
 
     def perform_root_selected_service_effect(
             self, profile: ManagedProfileCustody, verified_effect: Any,
-            canonical_payload_bytes: bytes, *, controller_proof: Any,
+            canonical_payload_bytes: bytes, *, controller_proof: Any | None = None,
+            memory_admission: Any | None = None,
             timeout: float, cancelled: Callable[[], bool],
             xauthority_binding: Any | None = None,
-            xauthority_registry: Any | None = None) -> RootSelectedServiceProcessReceipt:
+            xauthority_registry: Any | None = None) -> RootSelectedServiceProcessReceipt | RootSelectedServiceStatusReceipt | Mapping[str, Any]:
         """Launch one sealed root-selected service operation from its fixed recipe.
 
         The controller PIDFD is verified as provenance, while the manager owns
@@ -1955,10 +2088,10 @@ class ManagedProcessEffectHandler:
         from hermes_installer.authority.selected_startup_authority import (
             RootControllerProcessIdentityLease,
         )
+        if cancelled is None:
+            cancelled = lambda: False
         if type(verified_effect) is not VerifiedRootSelectedServiceEffect:
             raise AuthorityDenied("root-selected.effect", "sealed selected-service effect is required")
-        if type(controller_proof) is not RootControllerProcessIdentityLease:
-            raise AuthorityDenied("root-selected.controller", "root controller PIDFD lease is required")
         if (type(profile) is not ManagedProfileCustody
                 or self.profiles.get(profile.profile_id) is not profile
                 or not isinstance(canonical_payload_bytes, bytes)
@@ -1967,18 +2100,86 @@ class ManagedProcessEffectHandler:
                 or not math.isfinite(timeout) or not 0 < timeout <= 600):
             raise AuthorityDenied("root-selected.binding", "selected service launch binding is malformed")
         request = self._json(canonical_payload_bytes)
-        operation_id = request.get("operation_id")
         effect = verified_effect
+        action = effect.action
+        memory_role = effect.role in {
+            "memory-openviking", "memory-agentmemory", "memory-claude-mem",
+        }
+        if memory_role:
+            from hermes_installer.memory.lifecycle_authority import RootVerifiedMemoryLifecycleAdmission
+            if type(memory_admission) is not RootVerifiedMemoryLifecycleAdmission:
+                raise AuthorityDenied("root-selected.memory", "sealed current memory lifecycle admission is required")
+            if controller_proof is None:
+                controller_proof = memory_admission._controller_lease
+            if (type(controller_proof) is not RootControllerProcessIdentityLease
+                    or controller_proof is not memory_admission._controller_lease
+                    or not memory_admission.is_current(now=self.monotonic())
+                    or effect.admission_handle != memory_admission.admission_handle
+                    or effect.admission_kind != "memory"
+                    or effect.role != memory_admission.role
+                    or effect.profile_id != memory_admission.profile_id
+                    or effect.enrollment_id != memory_admission.service_enrollment_id
+                    or effect.generation != memory_admission.generation
+                    or effect.selected_principal_id != memory_admission.principal_id
+                    or effect.selected_namespace_identity != memory_admission.namespace_identity
+                    or effect.selected_subject_uid != memory_admission.subject_uid
+                    or effect.selected_subject_gid != memory_admission.subject_gid
+                    or effect.service_generation_digest != memory_admission.service_generation_digest
+                    or effect.source_closure_sha256 != memory_admission.source_closure_sha256):
+                raise AuthorityDenied("root-selected.memory", "memory effect differs from its current lifecycle admission")
+            try:
+                selected_action = memory_admission.action(action, now=self.monotonic())
+            except Exception:
+                raise AuthorityDenied("root-selected.memory", "memory lifecycle action is not current") from None
+            if (selected_action.operation_id != effect.operation_id
+                    or selected_action.target != effect.target
+                    or selected_action.operation != effect.operation
+                    or selected_action.capability != effect.capability):
+                raise AuthorityDenied("root-selected.memory", "memory effect differs from its protected lifecycle action")
+        if type(controller_proof) is not RootControllerProcessIdentityLease:
+            raise AuthorityDenied("root-selected.controller", "root controller PIDFD lease is required")
+        if memory_role:
+            if effect.admission_kind != "memory":
+                raise AuthorityDenied("root-selected.role", "memory operation requires a memory lifecycle admission")
+            operation_id = effect.operation_id
+            expected_operation = {"start": "process.start", "status": "process.status",
+                                  "stop": "process.stop"}.get(action)
+            expected_capability = ("hermes-profile-invoke" if action == "start"
+                                   else "hermes-process-control")
+            expected_target = (process_start_target(profile) if action == "start"
+                               else process_control_target(profile, expected_operation or ""))
+            if action == "start":
+                expected_payload_fields = {"schema", "enrollment_id", "generation", "operation_id", "parameters"}
+                process_id = None
+            else:
+                expected_payload_fields = {"schema", "process_id", "generation"}
+                if action == "stop":
+                    expected_payload_fields |= {"reason", "grace_seconds"}
+                process_id = request.get("process_id")
+            if (set(request) != expected_payload_fields or request.get("schema") != 1
+                    or request.get("generation") != profile.generation
+                    or (action == "start" and (
+                        request.get("enrollment_id") != profile.enrollment_id
+                        or request.get("operation_id") != operation_id
+                        or request.get("parameters") != {}))
+                    or (action != "start" and (
+                        not isinstance(process_id, str) or not re.fullmatch(r"[0-9a-f]{32}", process_id)))
+                    or (action == "stop" and (
+                        request.get("reason") not in {"shutdown", "cancel", "rollback"}
+                        or type(request.get("grace_seconds")) is not int
+                        or request.get("grace_seconds") != 5))):
+                raise AuthorityDenied("root-selected.payload", "memory lifecycle payload is malformed")
+        else:
+            operation_id = request.get("operation_id")
+            expected_operation = "process.start"
+            expected_capability = "hermes-profile-invoke"
+            expected_target = process_start_target(profile)
+            if set(request) != {"schema", "enrollment_id", "generation", "operation_id", "parameters"}:
+                raise AuthorityDenied("root-selected.payload", "selected startup payload is malformed")
         profile_digest = profile.service_generation_digest
-        if (set(request) != {"schema", "enrollment_id", "generation", "operation_id", "parameters"}
-                or request.get("schema") != 1
-                or request.get("enrollment_id") != profile.enrollment_id
-                or request.get("generation") != profile.generation
-                or not isinstance(operation_id, str)
-                or request.get("parameters") != {}
-                or effect.action != "start"
-                or effect.operation != "process.start"
-                or effect.capability != "hermes-profile-invoke"
+        if (not isinstance(operation_id, str)
+                or effect.operation != expected_operation
+                or effect.capability != expected_capability
                 or effect.profile_id != profile.profile_id
                 or effect.enrollment_id != profile.enrollment_id
                 or effect.generation != profile.generation
@@ -1986,11 +2187,17 @@ class ManagedProcessEffectHandler:
                 or effect.selected_subject_gid != profile.owner_gid
                 or effect.service_generation_digest != profile_digest
                 or effect.operation_id != operation_id
-                or effect.target != process_start_target(profile)
+                or effect.target != expected_target
                 or not isinstance(profile.operation_recipes, Mapping)
-                or operation_id not in profile.operation_recipes
+                or (action == "start" and operation_id not in profile.operation_recipes)
+                or (action != "start" and operation_id != "managed-process-" + action + "-v1")
                 or hashlib.sha256(canonical_payload_bytes).hexdigest() != effect.request_sha256
-                or hashlib.sha256(json.dumps(dict(profile.operation_recipes[operation_id]),
+                or (action != "start" and hashlib.sha256(json.dumps({
+                    "operation": expected_operation, "target": expected_target,
+                    "enrollment_id": profile.enrollment_id, "generation": profile.generation,
+                }, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")).hexdigest()
+                    != effect.recipe_sha256)
+                or action == "start" and hashlib.sha256(json.dumps(dict(profile.operation_recipes[operation_id]),
                     sort_keys=True, separators=(",", ":"), ensure_ascii=True,
                     allow_nan=False).encode("ascii")).hexdigest() != effect.recipe_sha256
                 or not isinstance(effect.controller_proof_sha256, str)
@@ -2003,8 +2210,15 @@ class ManagedProcessEffectHandler:
                 or self.monotonic() >= min(float(effect.expires_monotonic),
                                            float(controller_proof.expires_monotonic))):
             raise AuthorityDenied("root-selected.binding", "selected service effect is stale or mismatched")
-        if effect.role not in {"display", "gateway", "desktop"}:
+        if effect.role not in {"display", "gateway", "desktop",
+                               "memory-openviking", "memory-agentmemory", "memory-claude-mem"}:
             raise AuthorityDenied("root-selected.role", "selected service role is unavailable")
+        if memory_role:
+            return self._perform_root_selected_memory_effect(
+                profile, effect, controller_proof, memory_admission,
+                canonical_payload_bytes, request,
+                timeout=timeout, cancelled=cancelled,
+            )
         if effect.role == "display":
             if (xauthority_binding is None or xauthority_registry is None
                     or not callable(getattr(xauthority_registry, "verify_mount_binding", None))
@@ -2117,6 +2331,154 @@ class ManagedProcessEffectHandler:
             raise AuthorityDenied("root-selected.network", "selected loopback network custody is unavailable")
         raise AuthorityDenied("root-selected.role", "selected service launch is unavailable")
 
+    def _perform_root_selected_memory_effect(
+            self, profile: ManagedProfileCustody, effect: Any, controller_proof: Any,
+            memory_admission: Any,
+            payload: bytes, request: Mapping[str, Any], *, timeout: float,
+            cancelled: Callable[[], bool]) -> RootSelectedServiceProcessReceipt | RootSelectedServiceStatusReceipt | Mapping[str, Any]:
+        """Execute one finite memory lifecycle action against its retained process."""
+        if (effect.role not in {"memory-openviking", "memory-agentmemory", "memory-claude-mem"}
+                or effect.admission_kind != "memory" or effect.action not in {"start", "status", "stop"}
+                or effect.source_closure_sha256 is None):
+            raise AuthorityDenied("root-selected.memory", "memory lifecycle binding is unavailable")
+        if (not memory_admission.is_current(now=self.monotonic())
+                or not controller_proof.is_current()
+                or self.monotonic() >= min(effect.expires_monotonic, controller_proof.expires_monotonic)):
+            raise AuthorityDenied("root-selected.currentness", "memory lifecycle authorization expired")
+        self._verify_root_controller_identity(controller_proof, effect)
+        if effect.action == "start":
+            with self._lock:
+                if (profile.profile_id in self._starting
+                        or any(item.profile.profile_id == profile.profile_id for item in self._handles.values())):
+                    raise AuthorityDenied("process.generation", "selected memory service is already active")
+                self._starting.add(profile.profile_id)
+            parent_pidfd = None
+            launched_process_id = None
+            try:
+                parent_pidfd = os.pidfd_open(os.getpid(), 0)
+                if (_pidfd_exited(parent_pidfd) or cancelled() or not effect.is_current()
+                        or not controller_proof.is_current()):
+                    raise AuthorityDenied("root-selected.currentness", "memory start admission became stale")
+                guard = lambda: (memory_admission.is_current(now=self.monotonic())
+                                 and controller_proof.is_current()
+                                 and self.monotonic() < memory_admission.original_deadline)
+                remaining = min(float(timeout), float(memory_admission.original_deadline) - self.monotonic())
+                if remaining <= 0:
+                    raise AuthorityDenied("root-selected.deadline", "memory start grant expired")
+                response = self.start_selected_operation(
+                    profile, None, None, payload, timeout=remaining,
+                    peer_pid=None, peer_pidfd=None, cancelled=cancelled,
+                    _start_guard=guard, _root_selected_effect=effect,
+                    _root_selected_lifecycle_deadline=memory_admission.original_deadline,
+                    _daemon_liveness_pidfd=parent_pidfd,
+                )
+                body = response.get("body") if isinstance(response, Mapping) else None
+                decoded = json.loads(body.decode("ascii")) if isinstance(body, bytes) else None
+                process_id = decoded.get("process_id") if isinstance(decoded, dict) else None
+                if (not isinstance(process_id, str) or not re.fullmatch(r"[0-9a-f]{32}", process_id)
+                        or decoded.get("generation") != profile.generation):
+                    raise AuthorityDenied("root-selected.launch", "memory service did not return an admitted process")
+                launched_process_id = process_id
+                lease = self.resolve_active_process_handle(profile.profile_id, profile.generation)
+                if lease is None:
+                    raise AuthorityDenied("root-selected.identity", "selected memory service is no longer live")
+                try:
+                    digest = self._selected_service_identity_digest(lease)
+                    receipt = RootSelectedServiceProcessReceipt(
+                        1, uuid.uuid4().hex, lease.process_id, effect.role, "start",
+                        effect.enrollment_id, effect.profile_id, effect.generation,
+                        effect.selected_principal_id, effect.selected_namespace_identity,
+                        effect.selected_subject_uid, effect.selected_subject_gid,
+                        effect.operation_id, effect.target, effect.service_generation_digest,
+                        digest, self.monotonic(), lease.expires_monotonic,
+                    )
+                    with self._lock:
+                        handle = self._handles.get(lease.process_id)
+                        if (handle is None or handle.stopped or handle.profile is not profile
+                                or handle.profile.generation != effect.generation):
+                            raise AuthorityDenied("root-selected.identity", "memory service process custody changed")
+                        self._root_selected_process_receipts[receipt.receipt_handle] = (receipt, handle)
+                    return receipt
+                finally:
+                    lease.close()
+            except BaseException:
+                if launched_process_id is not None:
+                    with self._lock:
+                        failed = self._handles.get(launched_process_id)
+                    if failed is not None and not failed.stopped:
+                        proof = self._stop(failed, timeout=5.0)
+                        if not proof.cleanup_verified:
+                            raise AuthorityDenied("process.cleanup_ambiguous", "failed memory start cleanup is unproven")
+                raise
+            finally:
+                if parent_pidfd is not None:
+                    os.close(parent_pidfd)
+                effect.close()
+                with self._lock:
+                    self._starting.discard(profile.profile_id)
+
+        process_id = request.get("process_id")
+        with self._lock:
+            candidates = [receipt for receipt, _handle in self._root_selected_process_receipts.values()
+                          if receipt.process_id == process_id and receipt.role == effect.role
+                          and receipt.profile_id == profile.profile_id
+                          and receipt.generation == effect.generation and receipt.action == "start"]
+        if len(candidates) != 1:
+            raise AuthorityDenied("root-selected.process", "memory action lacks one exact retained start receipt")
+        process_receipt = candidates[0]
+        if (process_receipt.enrollment_id != memory_admission.service_enrollment_id
+                or process_receipt.generation != memory_admission.generation
+                or process_receipt.profile_id != memory_admission.profile_id
+                or process_receipt.selected_principal_id != memory_admission.principal_id
+                or process_receipt.selected_namespace_identity != memory_admission.namespace_identity
+                or process_receipt.service_generation_digest != memory_admission.service_generation_digest
+                or process_receipt.selected_subject_uid != memory_admission.subject_uid
+                or process_receipt.selected_subject_gid != memory_admission.subject_gid):
+            raise AuthorityDenied("root-selected.process", "memory process receipt differs from its retained admission")
+        lease = self.resolve_selected_service_process(process_receipt)
+        if lease is None:
+            raise AuthorityDenied("root-selected.identity", "retained memory service process is no longer current")
+        try:
+            if (cancelled() or not memory_admission.is_current(now=self.monotonic())
+                    or not effect.is_current() or not controller_proof.is_current()):
+                raise AuthorityDenied("root-selected.currentness", "memory control admission became stale")
+            with self._lock:
+                retained = self._root_selected_process_receipts.get(process_receipt.receipt_handle)
+                handle = retained[1] if retained is not None and retained[0] is process_receipt else None
+            if (handle is None or handle.stopped or handle.profile is not profile
+                    or handle.process_id != process_receipt.process_id
+                    or handle.profile.generation != memory_admission.generation
+                    or self.monotonic() >= min(memory_admission.original_deadline, handle.expires)
+                    or _pidfd_exited(handle.child_pidfd) or cancelled()):
+                raise AuthorityDenied("root-selected.process", "memory lifecycle process is stale or outside its admission")
+            if effect.action == "stop":
+                proof = self._stop(handle, timeout=min(float(timeout), 5.0))
+                if not proof.cleanup_verified:
+                    raise AuthorityDenied("process.cleanup_ambiguous", "memory service stop cleanup is unproven")
+                with self._lock:
+                    for handle, (receipt, _owned) in tuple(self._root_selected_process_receipts.items()):
+                        if receipt is process_receipt:
+                            self._root_selected_process_receipts.pop(handle, None)
+                return _response(200, {"schema": 1, "process_id": process_receipt.process_id,
+                    "generation": process_receipt.generation, "operation": "process.stop",
+                    "state": "stopped", "result": {"closed": True, "reap_state": "reaped"}})
+            exit_code = handle.launcher.poll()
+            if exit_code is not None and type(exit_code) is not int:
+                raise AuthorityDenied("root-selected.status", "memory service exit status is malformed")
+            state = "running" if exit_code is None else "exited"
+            status = RootSelectedServiceStatusReceipt(
+                1, uuid.uuid4().hex, process_receipt, state, exit_code, self.monotonic(),
+                process_receipt.process_identity_digest, effect.service_generation_digest,
+            )
+            with self._lock:
+                self._root_selected_status_receipts[status.receipt_handle] = (
+                    status, process_receipt, min(effect.expires_monotonic, lease.expires_monotonic),
+                )
+            return status
+        finally:
+            lease.close()
+            effect.close()
+
     def _verify_root_controller_identity(self, proof: Any, effect: Any) -> None:
         """Compare the authority-retained setup actor with live kernel identity."""
         try:
@@ -2125,7 +2487,8 @@ class ManagedProcessEffectHandler:
             if (pid <= 0 or pidfd < 0 or self._pidfd_target(pidfd) != pid
                     or _pidfd_exited(pidfd) or not proof.is_current()
                     or proof.proof_handle != effect.controller_proof_handle
-                    or proof.startup_authorization_handle != effect.admission_handle
+                    or (effect.admission_kind != "memory"
+                        and proof.startup_authorization_handle != effect.admission_handle)
                     or proof.proof_sha256 != effect.controller_proof_sha256):
                 raise ValueError("controller lease stale")
             ticks, cgroup, _device, _inode = _pid_identity(pid)
@@ -3066,10 +3429,27 @@ class ManagedProcessEffectHandler:
                         registered_profile: ManagedProfileCustody | None = None,
                         start_guard: Callable[[], bool] | None = None,
                         lease_expires_monotonic: float | None = None,
+                        process_expires_monotonic: float | None = None,
+                        root_selected_effect: Any | None = None,
                         xauthority_mount_source: Path | None = None,
                         daemon_liveness_pidfd: int | None = None) -> Mapping[str, Any]:
-        effect_expiry = (authorization.monotonic_expires_at if lease_expires_monotonic is None
-                         else lease_expires_monotonic)
+        if root_selected_effect is None:
+            if authorization is None:
+                raise AuthorityDenied("process.authority", "ordinary process start authority is malformed")
+            effect_expiry = (authorization.monotonic_expires_at if lease_expires_monotonic is None
+                             else lease_expires_monotonic)
+        else:
+            memory_root = root_selected_effect.role in {
+                "memory-openviking", "memory-agentmemory", "memory-claude-mem"}
+            if (root_selected_effect.action != "start"
+                    or (memory_root and (context is not None or authorization is not None
+                                         or lease_expires_monotonic is None))
+                    or (not memory_root and (context is None or authorization is None))):
+                raise AuthorityDenied("root-selected.authority", "root-selected launch must use its typed admission")
+            effect_expiry = (lease_expires_monotonic if lease_expires_monotonic is not None
+                             else getattr(authorization, "monotonic_expires_at", None))
+            if not isinstance(effect_expiry, (int, float)) or isinstance(effect_expiry, bool):
+                raise AuthorityDenied("root-selected.authority", "root-selected launch deadline is malformed")
         launch_deadline = min(self.monotonic() + max(0.0, timeout), effect_expiry)
 
         def require_live_start(parent_fd: int | None = None) -> None:
@@ -3271,9 +3651,11 @@ class ManagedProcessEffectHandler:
                 "--property=RuntimeDirectory=hermes-installer/display",
                 "--property=RuntimeDirectoryMode=0755",
                 "--property=PrivateMounts=yes", "--property=MountFlags=private",
+                # The source stage is already a private self-bind with the
+                # kernel-enforced ro,nosuid,nodev,noexec flags. The readonly
+                # file bind inherits those per-mount flags; systemd exposes
+                # no per-path properties for the remaining mount flags.
                 "--property=NoExecPaths=/run/hermes-installer/display/Xauthority",
-                "--property=NoSuidPaths=/run/hermes-installer/display/Xauthority",
-                "--property=NoDevicePaths=/run/hermes-installer/display/Xauthority",
             ))
         if profile.memory_max_bytes is not None:
             properties.append(f"--property=MemoryMax={profile.memory_max_bytes}")
@@ -3528,8 +3910,7 @@ class ManagedProcessEffectHandler:
                                 "-p", "StatusText", "-p", "ControlGroup", "-p", "PrivateNetwork",
                                 "-p", "RestrictAddressFamilies", "-p", "RuntimeDirectory",
                                 "-p", "RuntimeDirectoryMode", "-p", "PrivateMounts",
-                                "-p", "MountFlags", "-p", "NoExecPaths", "-p", "NoSuidPaths",
-                                "-p", "NoDevicePaths"]),
+                                "-p", "MountFlags", "-p", "NoExecPaths"]),
                             (b"unit-journal", ["/usr/bin/journalctl", "--system", "--no-pager",
                                 "-n", "8", "-o", "cat", "--unit", unit]),
                         ):
@@ -3629,9 +4010,21 @@ class ManagedProcessEffectHandler:
                     raise AuthorityDenied("process.limits", "kernel io.weight does not match enrolled bound")
             if artifact_mount_dir is None:
                 raise AuthorityDenied("process.artifact", "artifact mount directory was not established")
+            process_expiry = started + float(lifetime)
+            if process_expires_monotonic is not None:
+                if (isinstance(process_expires_monotonic, bool)
+                        or not isinstance(process_expires_monotonic, (int, float))
+                        or not math.isfinite(process_expires_monotonic)
+                        or process_expires_monotonic <= started):
+                    raise AuthorityDenied("process.start_expired", "selected process lifetime deadline is invalid")
+                process_expiry = min(process_expiry, float(process_expires_monotonic))
+            selected_principal = (root_selected_effect.selected_principal_id
+                                  if root_selected_effect is not None else context.principal_id)
+            selected_namespace = (root_selected_effect.selected_namespace_identity
+                                  if root_selected_effect is not None else context.namespace_id)
             handle = _Handle(process_id, profile, unit, cgroup, launcher, parent_fd, child_fd, pid,
-                ticks, f"mnt:{mnt};net:{net}", context.principal_id, context.namespace_id,
-                started, started + float(lifetime), output_cap, artifact_mount_dir,
+                ticks, f"mnt:{mnt};net:{net}", selected_principal, selected_namespace,
+                started, process_expiry, output_cap, artifact_mount_dir,
                 native_mount_source=native_mount_source,
                 native_mount_receipt=native_mount_receipt,
                 xauthority_mount_source=xauthority_mount_source,

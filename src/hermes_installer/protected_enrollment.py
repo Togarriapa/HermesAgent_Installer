@@ -45,6 +45,7 @@ class RootSelectedPublicWebScope:
     target_contract_artifact_id: str
     target_contract_sha256: str
     target_contract_source_receipt_handle: str
+    scope_payload: bytes
     scope_payload_sha256: str
     service_generation_digest: str
 
@@ -139,18 +140,19 @@ class RootSelectedPublicWebScope:
             "targets", "request_bytes_limit", "response_bytes_limit", "deadline_seconds",
         )
         payload = {key: item[key] for key in payload_fields}
-        payload_digest = hashlib.sha256(json.dumps(
+        payload_bytes = json.dumps(
             payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
-        ).encode("utf-8")).hexdigest()
+        ).encode("utf-8")
+        payload_digest = hashlib.sha256(payload_bytes).hexdigest()
         scope = EnrolledPublicWebScope(
             ids["enrollment_id"], ids["target_id"], ids["generation"], ids["principal_id"],
             ids["profile_id"], ids["recipient"], tuple(targets), request_limit,
-            response_limit, float(deadline),
+            response_limit, deadline,
         )
         return cls(scope, ids["target_selection_handle"], ids["configuration_observation_handle"],
                    item["configuration_sha256"], ids["target_contract_artifact_id"],
                    item["target_contract_sha256"], ids["target_contract_source_receipt_handle"],
-                   payload_digest, service_generation_digest)
+                   payload_bytes, payload_digest, service_generation_digest)
 
 
 _BUILD_ENV = frozenset({"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ", "SOURCE_DATE_EPOCH",
@@ -666,8 +668,8 @@ class ProtectedEnrollmentCatalog:
             if key in public_scope_rows:
                 raise EnrollmentDenied("public web scope enrollment is duplicated")
             public_scope_rows[key] = scope
-        if tuple(scope.enrollment_id for scope in public_scope_rows.values()) != tuple(
-                sorted(scope.enrollment_id for scope in public_scope_rows.values())):
+        ordered_scope_ids = tuple(scope.enrollment_id for scope in public_scope_rows.values())
+        if ordered_scope_ids != tuple(sorted(set(ordered_scope_ids))):
             raise EnrollmentDenied("public web scope rows must be sorted by enrollment ID")
         if scope_ids_in_issuers != {scope.enrollment_id for scope in public_scope_rows.values()}:
             raise EnrollmentDenied("public web scope source issuer references do not resolve exactly")
@@ -1065,6 +1067,37 @@ class ProtectedEnrollmentCatalog:
         except Exception:
             raise EnrollmentDenied("private memory endpoint binding is no longer current") from None
         return row
+
+    def resolve_private_loopback_binding_handle(
+        self, network_binding_handle: str,
+    ) -> RootSelectedPrivateMemoryEndpointBinding:
+        """Resolve a unique current endpoint row for an opaque network handle."""
+        selected = _id(network_binding_handle, "private loopback network binding handle")
+        matches = [row for row in self._private_memory_endpoint_selections.values()
+                   if row.network_binding_handle == selected]
+        if len(matches) != 1:
+            raise EnrollmentDenied("private loopback handle has no unique selected memory endpoint")
+        # Re-run the endpoint's process, service, route, and namespace joins.
+        return self.resolve_private_memory_endpoint_binding(matches[0].binding_id)
+
+    def resolve_private_memory_endpoint_for_service(
+        self, service_enrollment_id: str, service_generation: str,
+        profile_id: str, principal_id: str,
+    ) -> RootSelectedPrivateMemoryEndpointBinding:
+        """Select the unique active endpoint row for a protected memory service."""
+        enrollment = _id(service_enrollment_id, "memory service enrollment ID")
+        generation = _id(service_generation, "memory service generation")
+        profile = _id(profile_id, "memory service profile ID")
+        principal = _id(principal_id, "memory service principal ID")
+        matches = [row for row in self._private_memory_endpoint_selections.values()
+                   if row.service_enrollment_id == enrollment
+                   and row.service_generation == generation
+                   and row.profile_id == profile
+                   and row.principal_id == principal]
+        if len(matches) != 1:
+            raise EnrollmentDenied("memory service has no unique selected endpoint binding")
+        # Re-run all service, process, route, and namespace joins on every lookup.
+        return self.resolve_private_memory_endpoint_binding(matches[0].binding_id)
 
     def resolve_private_memory_model_binding(
         self, binding_id: str, endpoint_binding_id: str | None = None,

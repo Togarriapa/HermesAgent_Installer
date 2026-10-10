@@ -844,3 +844,10 @@ The installer SHALL acquire and observe selected PEP517 backend wheel and embedd
 #### Scenario: Backend wheel is absent from project runtime lock
 - **WHEN** the exact separately reviewed backend policy selects that source
 - **THEN** the observer verifies actual wheel and license bytes against that policy without fabricating project lock membership or widening Node/Bun acquisition
+
+### Requirement: Application build admission v161
+The installer SHALL execute application runtime preparation only through a finite root-selected managed build profile, genuine held input/service/output proofs and one-use setup grant.
+
+#### Scenario: Final selection lacks a reviewed source driver or backend closure
+- **WHEN** an application environment build is requested
+- **THEN** custody denies before start without inventing a driver hash, caller script, future output digest or active runtime row

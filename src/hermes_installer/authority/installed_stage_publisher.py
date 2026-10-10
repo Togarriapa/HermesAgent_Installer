@@ -169,7 +169,8 @@ def _build_rows(receipt: Any) -> tuple[_ReleaseRow, ...]:
     rows: list[_ReleaseRow] = []
     previous = ""
     roles_allowed = {"launcher", "interpreter", "module", "template", "plan",
-                     "artifact-catalog", "bootstrap-policy", "baseline", "amendment"}
+                     "artifact-catalog", "bootstrap-policy", "baseline", "amendment",
+                     "runtime-member"}
     for entry in files:
         path, digest, size, mode, roles = (entry.relative_path, entry.sha256,
                                            entry.size_bytes, entry.mode, entry.roles)

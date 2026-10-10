@@ -7,12 +7,17 @@ import pytest
 from hermes_installer.authority.native_policy_preparation import (
     NativePolicyCoverageRecord,
     NativePolicyPreparationDenied,
+    RootPreparedNativeCaptureProfile,
     RootNativePolicyConfigurationChoice,
     _issue_root_native_policy_configuration_choice,
     _validate_choice,
     _source_coverage,
+    _selection_matches_choice_payload,
     RootNativePolicyPreparationSelection,
     _SELECTION_SEAL,
+)
+from hermes_installer.authority.native_schema_derivation import (
+    RootPreparedNativeActionSchemaDefinitions,
 )
 
 
@@ -71,13 +76,55 @@ def test_pending_coverage_requires_exact_resume_prerequisites() -> None:
     assert row.missing_prerequisite_ids == ("account-evidence", "target-permission")
 
 
+def test_capture_profile_record_cannot_be_constructed_from_caller_fields() -> None:
+    fields = {
+        "native_policy_selection_handle": "selection",
+        "source_definition_receipt_handle": "definition-receipt",
+        "artifact_id": "installer-native-input-capture-profile-v1",
+        "relative_path": "plans/amendments/capture-profile.json",
+        "sha256": "a" * 64,
+        "size_bytes": 100,
+        "capture_schema_id": "native-authenticated-input-v1",
+        "source_kind": "native-input",
+        "source_action_ids": ("authenticated-input",),
+        "max_payload_bytes": 1024,
+        "role_id": "hermes-native-invocations-v1",
+        "call_site": "read_selected_native_input",
+        "source_receipt_handle": "profile-receipt",
+        "issued_monotonic": time.monotonic(),
+        "expires_monotonic": time.monotonic() + 30,
+    }
+    with pytest.raises(TypeError, match="registry issued"):
+        RootPreparedNativeCaptureProfile(**fields, _seal=object())
+
+
+def test_schema_source_definition_bundle_cannot_be_caller_minted() -> None:
+    with pytest.raises(TypeError, match="root registry issued"):
+        RootPreparedNativeActionSchemaDefinitions(
+            definition_handle="d" * 64,
+            native_policy_selection_handle="s" * 64,
+            selection_sha256="a" * 64,
+            package_id="hermes-agent-native-package-v1",
+            native_package_generation="b" * 64,
+            service_profile_id="hermes-agent-native-v1",
+            service_generation="service-generation",
+            module_receipt_handles=(), definition_records=(),
+            schema_artifact_receipts=(), schema_derivation_receipts=(),
+            native_schema_records=(), schema_bytes=(),
+            missing_prerequisite_ids=("native-action-schema-cas-child-receipt",),
+            definitions_sha256="c" * 64, issued_monotonic=1.0,
+            expires_monotonic=2.0, _seal=object(),
+        )
+
+
 def test_all_reviewed_registrations_remain_pending_until_real_joins_exist() -> None:
     now = time.monotonic()
     selection = RootNativePolicyPreparationSelection(
         "3" * 64, "choice-1", "session-1", "transaction-1", "b" * 64,
         "generation-1", "c" * 64, "d" * 64, "f" * 64, "e" * 64, "1" * 64,
         "profile-1", "service-generation-1", None, "hermes-agent-native-package-v1",
-        None, ("some-selected-component",), (), (), (), (), None, "2" * 64,
+        None, ("some-selected-component",), (), (), (), (), None, "setup-choice-1", 1, "5" * 64,
+        "2" * 64,
         "4" * 64, now, now + 60, 0, _SELECTION_SEAL,
     )
     rows = _source_coverage(selection, {})
@@ -85,3 +132,41 @@ def test_all_reviewed_registrations_remain_pending_until_real_joins_exist() -> N
     assert len({row.registration_id for row in rows}) == 42
     assert {row.configuration_state for row in rows} == {"configurable-pending"}
     assert all(row.missing_prerequisite_ids for row in rows)
+
+
+def test_signed_choice_payload_must_match_every_selected_policy_field() -> None:
+    now = time.monotonic()
+    selection = RootNativePolicyPreparationSelection(
+        "3" * 64, "choice-1", "session-1", "transaction-1", "b" * 64,
+        "generation-1", "c" * 64, "d" * 64, "f" * 64, "e" * 64, "1" * 64,
+        "profile-1", "service-generation-1", None, "hermes-agent-native-package-v1",
+        "package-generation-1", ("some-selected-component",),
+        ("agent37-discovery:tool:agent37_discover_skills",), (), (), (), None,
+        "setup-choice-1", 1, "5" * 64, "2" * 64, "4" * 64,
+        now, now + 60, 1, _SELECTION_SEAL,
+    )
+    payload = {
+        "choice_observation_id": "choice-1",
+        "setup_session_id": "session-1",
+        "transaction_handle": "transaction-1",
+        "plan_sha256": "b" * 64,
+        "prepared_generation_id": "generation-1",
+        "prepared_generation_digest": "c" * 64,
+        "principal_selection_handle": "d" * 64,
+        "principal_binding_sha256": "e" * 64,
+        "namespace_selection_handle": "f" * 64,
+        "namespace_binding_sha256": "1" * 64,
+        "service_profile_id": "profile-1",
+        "service_generation": "service-generation-1",
+        "resource_profile_selection_handle": None,
+        "package_id": "hermes-agent-native-package-v1",
+        "native_package_generation": "package-generation-1",
+        "selected_component_ids": ["some-selected-component"],
+        "selected_registration_ids": ["agent37-discovery:tool:agent37_discover_skills"],
+        "selected_action_binding_ids": [],
+        "controller_binding_handle": "2" * 64,
+        "private_input_consent_selection_handle": None,
+    }
+    assert _selection_matches_choice_payload(selection, payload)
+    payload["selected_action_binding_ids"] = ["unselected-action"]
+    assert not _selection_matches_choice_payload(selection, payload)

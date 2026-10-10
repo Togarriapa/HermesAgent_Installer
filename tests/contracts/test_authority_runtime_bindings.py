@@ -84,9 +84,56 @@ def test_root_runtime_private_memory_getters_forward_only_protected_binding_ids(
         enrollment_catalog=catalog, build_catalog=None, device_catalog=None,
         process_manager=None, effect_handlers={}, native_bridges={}, artifact_catalog=artifact_catalog,
         build_store=None, service_connector=None,
+        private_memory_endpoint_selection_records=({"id": "endpoint-a"},),
+        private_memory_model_selection_records=({"id": "model-a"},),
     )
+    assert bindings.private_memory_endpoint_selection_records == ({"id": "endpoint-a"},)
+    assert bindings.private_memory_model_selection_records == ({"id": "model-a"},)
     assert bindings.resolve_private_memory_endpoint_binding("endpoint-a") is endpoint
     assert bindings.resolve_private_memory_model_binding("model-a", "endpoint-a") is model
+
+
+def test_public_web_scope_metadata_never_works_without_live_target_registry():
+    scope = SimpleNamespace(
+        enrollment_id="web-scope-a", generation="generation-a",
+        target_selection_handle="target-selection-a",
+    )
+    catalog = SimpleNamespace(
+        digest="a" * 64,
+        resolve_public_web_scope=lambda *_: scope,
+    )
+    bindings = RootRuntimeBindings(
+        enrollment_catalog=catalog, build_catalog=None, device_catalog=None,
+        process_manager=None, effect_handlers={}, native_bridges={}, artifact_catalog=None,
+        build_store=None, service_connector=None,
+    )
+    with pytest.raises(EnrollmentDenied, match="target selection registry is unavailable"):
+        bindings.resolve_public_web_scope("web-scope-a", "generation-a")
+
+
+def test_public_permission_selection_requires_current_generation_and_durable_choice_registry():
+    from hermes_installer.authority.service import PrincipalBinding
+
+    binding = PrincipalBinding(
+        uid=501, principal_id="principal-a", profile_id="profile-a",
+        namespace_id="namespace-a", capabilities=frozenset({"plugin:web"}),
+    )
+    runtime = RootRuntimeBindings(
+        enrollment_catalog=SimpleNamespace(digest="a" * 64), build_catalog=None,
+        device_catalog=None, process_manager=None, effect_handlers={}, native_bridges={},
+        artifact_catalog=None, build_store=None, service_connector=None,
+        protected_principal_bindings=(binding,), process_profiles={
+            "profile-a": SimpleNamespace(generation="process-generation-a"),
+        },
+    )
+    with pytest.raises(EnrollmentDenied, match="current principal or generation"):
+        runtime.resolve_current_public_input_permission_selection(
+            binding, service_generation_digest="b" * 64,
+        )
+    with pytest.raises(EnrollmentDenied, match="durable signed setup choices are unavailable"):
+        runtime.resolve_current_public_input_permission_selection(
+            binding, service_generation_digest="a" * 64,
+        )
 
 
 def test_empty_device_and_build_catalogs_fail_only_when_selected():

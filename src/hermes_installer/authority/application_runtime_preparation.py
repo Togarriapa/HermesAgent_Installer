@@ -7,6 +7,9 @@ wheel bytes a later root-held package receipt must acquire and inspect.
 from __future__ import annotations
 
 import ast
+import base64
+import binascii
+import csv
 import email
 import email.policy
 import hashlib
@@ -23,7 +26,7 @@ import urllib.parse
 import urllib.error
 import urllib.request
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
@@ -115,6 +118,197 @@ class PythonPackageLicenseEvidence:
     license_member_records: tuple[tuple[str, str, int], ...]
     evidence_sha256: str
     eligibility: str
+
+
+@dataclass(frozen=True, slots=True)
+class ApplicationBuildBackendRequirements:
+    """Source-observed PEP 517 requirements; not package or license receipts."""
+
+    application_id: str
+    backend: str
+    requirements: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class BackendWheelInspection:
+    package_name: str
+    package_version: str
+    filename: str
+    artifact_sha256: str
+    size_bytes: int
+    requires_python: str | None
+    requires_dist: tuple[str, ...]
+    metadata_member_path: str
+    metadata_member_sha256: str
+    declared_license_expression: str | None
+    license_member_records: tuple[tuple[str, str, int], ...]
+
+
+_PYTHON_BUILD_BACKENDS: Mapping[str, tuple[str, tuple[str, ...]]] = {
+    "graphify": ("setuptools.build_meta", ("setuptools>=83.0.0",)),
+    "browser-use": ("hatchling.build", ("hatchling==1.32.0",)),
+    "scrapegraph-ai": ("hatchling.build", ("hatchling==1.26.3",)),
+}
+
+
+def inspect_application_build_backend(
+    application_id: str, pyproject_bytes: bytes,
+) -> ApplicationBuildBackendRequirements:
+    """Match the pinned source manifest to its finite reviewed PEP 517 shape.
+
+    This rejects source drift. The returned requirements are deliberately not
+    treated as acquired wheels, a complete backend dependency closure, or a
+    license approval; those need separate root-held package observations.
+    """
+    expected = _PYTHON_BUILD_BACKENDS.get(application_id)
+    if (expected is None or not isinstance(pyproject_bytes, bytes)
+            or not 1 <= len(pyproject_bytes) <= 1024 * 1024):
+        raise ApplicationRuntimePreparationDenied(
+            "application has no finite reviewed Python project build profile")
+    try:
+        project = tomllib.loads(pyproject_bytes.decode("utf-8"))
+        build_system = project.get("build-system")
+        if not isinstance(build_system, dict):
+            raise ValueError
+        backend = build_system.get("build-backend")
+        requirements = build_system.get("requires")
+        if (backend != expected[0] or not isinstance(requirements, list)
+                or tuple(requirements) != expected[1]
+                or any(not isinstance(item, str) for item in requirements)):
+            raise ValueError
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError, ValueError, TypeError):
+        raise ApplicationRuntimePreparationDenied(
+            "pinned source PEP 517 backend requirements changed or are unsupported") from None
+    return ApplicationBuildBackendRequirements(application_id, backend, tuple(requirements))
+
+
+def inspect_reviewed_backend_wheel(payload: bytes, package_source: Mapping[str, Any]) -> BackendWheelInspection:
+    """Verify exact v152 source-table bytes, METADATA and license members.
+
+    This yields byte-level source facts only. Registry acquisition, CAS custody,
+    currentness and closure membership remain separate root receipts.
+    """
+    required = {
+        "name", "version", "filename", "url", "sha256", "size_bytes",
+        "requires_python", "requires_dist", "license_expression",
+        "license_declaration", "license_members",
+    }
+    if (not isinstance(package_source, Mapping) or not required.issubset(package_source)
+            or not isinstance(payload, bytes)
+            or len(payload) != package_source["size_bytes"]
+            or hashlib.sha256(payload).hexdigest() != package_source["sha256"]
+            or not isinstance(package_source["filename"], str)
+            or package_source["requires_dist"] is not None
+               and not isinstance(package_source["requires_dist"], list)
+            or not isinstance(package_source["license_members"], list)):
+        raise ApplicationRuntimePreparationDenied("backend wheel bytes differ from the reviewed source table")
+    try:
+        # Enforce the v157 compressed-artifact expansion and member ceilings
+        # before any metadata/license parser reads member bodies.
+        with zipfile.ZipFile(io.BytesIO(payload), "r") as bounded_archive:
+            bounded_entries = bounded_archive.infolist()
+            if not 1 <= len(bounded_entries) <= 2048:
+                raise ValueError
+            bounded_names: set[str] = set()
+            bounded_total = 0
+            for item in bounded_entries:
+                name = item.filename
+                mode = (item.external_attr >> 16) & 0xFFFF
+                kind = mode & 0o170000
+                if (not name or name.startswith("/") or "\\" in name
+                        or any(part in {"", ".", ".."} for part in name.rstrip("/").split("/"))
+                        or name in bounded_names or item.flag_bits & 0x1
+                        or item.file_size < 0 or item.compress_size < 0
+                        or item.is_dir() and kind not in {0, 0o040000}
+                        or not item.is_dir() and kind not in {0, 0o100000}):
+                    raise ValueError
+                bounded_names.add(name)
+                bounded_total += item.file_size
+                if bounded_total > 16 * 1024 * 1024:
+                    raise ValueError
+        evidence = observe_python_wheel_license(
+            payload, expected_artifact_sha256=package_source["sha256"],
+            expected_package_name=package_source["name"],
+            expected_package_version=package_source["version"])
+        with zipfile.ZipFile(io.BytesIO(payload), "r") as archive:
+            entries = archive.infolist()
+            if not 1 <= len(entries) <= 2048:
+                raise ValueError
+            names: set[str] = set()
+            expanded = 0
+            for item in entries:
+                name = item.filename
+                mode = (item.external_attr >> 16) & 0xFFFF
+                kind = mode & 0o170000
+                if (not name or name.startswith("/") or "\\" in name
+                        or any(part in {"", ".", ".."} for part in name.rstrip("/").split("/"))
+                        or name in names or item.flag_bits & 0x1
+                        or item.file_size < 0 or item.compress_size < 0
+                        or item.is_dir() and kind not in {0, 0o040000}
+                        or not item.is_dir() and kind not in {0, 0o100000}):
+                    raise ValueError
+                names.add(name)
+                expanded += item.file_size
+                if expanded > 16 * 1024 * 1024:
+                    raise ValueError
+            records = [item for item in entries if item.filename.endswith(".dist-info/RECORD")]
+            if len(records) != 1 or records[0].file_size > 2 * 1024 * 1024:
+                raise ValueError
+            record_bytes = archive.read(records[0])
+            record_rows = list(csv.reader(io.StringIO(record_bytes.decode("utf-8", "strict"))))
+            record_by_path: dict[str, tuple[str, str]] = {}
+            for row in record_rows:
+                if len(row) != 3 or row[0] in record_by_path:
+                    raise ValueError
+                record_by_path[row[0]] = (row[1], row[2])
+            regular_names = {item.filename for item in entries if not item.is_dir()}
+            if regular_names != set(record_by_path):
+                raise ValueError
+            for item in entries:
+                if item.is_dir():
+                    continue
+                record_hash, record_size = record_by_path[item.filename]
+                body = archive.read(item)
+                if len(body) != item.file_size:
+                    raise ValueError
+                if item.filename == records[0].filename:
+                    if record_hash or record_size:
+                        raise ValueError
+                    continue
+                if not record_hash.startswith("sha256=") or not record_size.isdecimal():
+                    raise ValueError
+                encoded = record_hash.removeprefix("sha256=")
+                decoded = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+                if (len(decoded) != 32 or decoded != hashlib.sha256(body).digest()
+                        or int(record_size) != len(body)):
+                    raise ValueError
+            metadata_bytes = archive.read(evidence.metadata_member_path)
+        metadata = email.message_from_bytes(metadata_bytes, policy=email.policy.default)
+        requires_python = metadata.get("Requires-Python")
+        requires_dist = tuple(value.strip() for value in metadata.get_all("Requires-Dist", []))
+        expected_license = (package_source["license_expression"]
+                            if package_source["license_expression"] is not None
+                            else package_source["license_declaration"])
+        observed_licenses = tuple(sorted(evidence.license_member_records))
+        expected_licenses = tuple(sorted(
+            (row["path"], row["sha256"], row["size_bytes"])
+            for row in package_source["license_members"]
+            if isinstance(row, dict) and set(row) == {"path", "sha256", "size_bytes"}))
+        expected_requires_dist = tuple(package_source["requires_dist"] or ())
+        if (requires_python != package_source["requires_python"]
+                or requires_dist != expected_requires_dist
+                or evidence.declared_license_expression != expected_license
+                or len(expected_licenses) != len(package_source["license_members"])
+                or observed_licenses != expected_licenses):
+            raise ValueError
+    except Exception:
+        raise ApplicationRuntimePreparationDenied(
+            "backend wheel metadata or license members differ from the reviewed source table") from None
+    return BackendWheelInspection(
+        package_source["name"], package_source["version"], package_source["filename"],
+        package_source["sha256"], len(payload), requires_python, requires_dist,
+        evidence.metadata_member_path, evidence.metadata_member_sha256,
+        evidence.declared_license_expression, observed_licenses)
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,12 +479,41 @@ class RootApplicationOfflinePackageClosureRegistry:
                        source_preparation_registry=source_preparation_registry,
                        artifact_observer=artifact_observer, root_journal=root_journal,
                        authority_service=authority_service, **kwargs)
+        binding_attach = getattr(selected_installation_binding,
+                                 "attach_application_package_closure_registry", None)
+        if not callable(binding_attach):
+            registry.close()
+            raise ValueError("root setup binding has no typed application-package closure attachment")
+        binding_attach(registry)
         attach = getattr(authority_service, "attach_application_package_closure_registry", None)
         if not callable(attach):
             registry.close()
             raise ValueError("authority service has no typed application-package receipt attachment")
         attach(registry)
         return registry
+
+    def resolve_current_package_closure_for_selection(
+        self, source_preparation_selection_handle: str,
+    ) -> RootApplicationOfflinePackageClosureReceipt:
+        """Return the sole retained, current package closure for an early app selector.
+
+        This is the factory join point between package acquisition and the final
+        v132 runtime selection. It never creates or refreshes a closure.
+        """
+        if not _valid_opaque(source_preparation_selection_handle):
+            raise ApplicationRuntimePreparationDenied("source preparation handle is malformed")
+        current_selection = self.source_registry.resolve_selection(
+            source_preparation_selection_handle)
+        candidates = [entry for entry in self._closure_entries.values()
+                      if entry.selection == current_selection
+                      and entry.receipt.source_preparation_selection_handle
+                      == source_preparation_selection_handle]
+        if len(candidates) != 1:
+            raise ApplicationRuntimePreparationDenied(
+                "current source selection has no unique retained package closure")
+        return self.resolve_selected_packages(
+            candidates[0].receipt.receipt_handle,
+            source_preparation_selection_handle)
 
     def close(self) -> None:
         for entry in self._artifact_entries.values():
@@ -1049,6 +1272,453 @@ class RootApplicationOfflinePackageClosureRegistry:
             raise ApplicationRuntimePreparationDenied("license observation differs from actual wheel members")
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class RootApplicationBuildBackendArtifactReceipt:
+    schema: int
+    receipt_handle: str
+    artifact_id: str
+    package_name: str
+    package_version: str
+    filename: str
+    sha256: str
+    size_bytes: int
+    source_url_sha256: str
+    metadata_sha256: str
+    license_observation_handle: str
+    backend_manifest_artifact_id: str
+    backend_manifest_sha256: str
+    backend_manifest_receipt_handle: str
+    pyproject_receipt_handle: str
+    source_preparation_selection_handle: str
+    qualification_choice_handle: str
+    target_platform: str
+    python_abi: str
+    issued_monotonic: float
+    expires_monotonic: float
+    _seal: object = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._seal is not _BACKEND_RECEIPT_SEAL:
+            raise TypeError("backend package receipts are minted by the root backend registry")
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootApplicationBuildBackendClosureReceipt:
+    schema: int
+    receipt_handle: str
+    application_id: str
+    build_backend: str
+    backend_requirement_sha256: str
+    backend_manifest_artifact_id: str
+    backend_manifest_sha256: str
+    backend_manifest_receipt_handle: str
+    pyproject_receipt_handle: str
+    source_preparation_selection_handle: str
+    qualification_choice_handle: str
+    package_artifact_receipt_handles: tuple[str, ...]
+    license_observation_handles: tuple[str, ...]
+    backend_closure_sha256: str
+    target_platform: str
+    python_abi: str
+    issued_monotonic: float
+    expires_monotonic: float
+    _seal: object = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._seal is not _BACKEND_RECEIPT_SEAL:
+            raise TypeError("backend package closures are minted by the root backend registry")
+
+
+_BACKEND_RECEIPT_SEAL = object()
+_BACKEND_POLICY_ARTIFACT_ID = "installer-application-pep517-backend-sources-v1"
+_BACKEND_POLICY_SHA256 = "c7d64c6ca0a186437d32b8093df0be0a3dc660fc721172e7ce1a56fd5a87c623"
+_BACKEND_TARGET_PLATFORM = "linux-aarch64-glibc2.36-python3.14"
+_BACKEND_PYTHON_ABI = "cp314-cp314-manylinux_2_36_aarch64"
+_BACKEND_PACKAGES: Mapping[str, tuple[tuple[str, str], ...]] = {
+    "graphify": (("setuptools", "84.0.0"),),
+    "browser-use": (
+        ("hatchling", "1.32.0"), ("packaging", "26.3"),
+        ("pathspec", "1.1.1"), ("pluggy", "1.6.0"),
+        ("tomlkit", "0.15.1"), ("trove-classifiers", "2026.9.21.13"),
+    ),
+    "scrapegraph-ai": (
+        ("hatchling", "1.26.3"), ("packaging", "26.3"),
+        ("pathspec", "1.1.1"), ("pluggy", "1.6.0"),
+        ("trove-classifiers", "2026.9.21.13"),
+    ),
+}
+
+
+@dataclass(slots=True)
+class _BackendClosureEntry:
+    input_selection: Any
+    receipt: RootApplicationBuildBackendClosureReceipt
+    artifacts: tuple[RootApplicationBuildBackendArtifactReceipt, ...]
+    source_observations: tuple[Any, ...]
+    license_observations: tuple[Any, ...]
+
+
+class RootApplicationBuildBackendClosureRegistry:
+    """Retain a separate PEP 517 wheel closure for one selected Python app.
+
+    Wheel bytes and license records come only from the finite v152 source table
+    through the separately typed v157 observer. Runtime-lock package receipts
+    are never reused or relabelled as build dependencies.
+    """
+
+    def __init__(self, *, selected_installation_binding: Any,
+                 source_preparation_registry: Any, backend_source_observer: Any,
+                 root_journal: RootJournalSelection, setup_choice_registry: Any,
+                 monotonic=time.monotonic, ttl_seconds: float = 900.0) -> None:
+        if (os.geteuid() != 0 or type(root_journal) is not RootJournalSelection
+                or not callable(getattr(selected_installation_binding,
+                                       "resolve_application_runtime_preparation_input_selection", None))
+                or not callable(getattr(source_preparation_registry, "resolve_selection", None))
+                or not callable(getattr(source_preparation_registry,
+                                       "resolve_current_prepared_source_for_selection", None))
+                or not callable(getattr(source_preparation_registry,
+                                       "resolve_current_lock_for_selection", None))
+                or not callable(getattr(source_preparation_registry, "read_current_source_members", None))
+                or not callable(getattr(setup_choice_registry,
+                                       "resolve_application_qualification_consent", None))
+                or not callable(getattr(backend_source_observer,
+                                       "observe_selected_backend_source", None))
+                or not callable(getattr(backend_source_observer, "verify_current", None))
+                or not callable(getattr(backend_source_observer,
+                                       "observe_embedded_backend_licenses", None))
+                or not callable(getattr(backend_source_observer, "open_blob", None))
+                or not 0 < ttl_seconds <= 1800):
+            raise ValueError("root PEP 517 backend closure bindings are unavailable")
+        self.binding = selected_installation_binding
+        self.source_registry = source_preparation_registry
+        self.backend_source_observer = backend_source_observer
+        self.root_journal = root_journal
+        self.setup_choice_registry = setup_choice_registry
+        self.monotonic = monotonic
+        self.ttl_seconds = float(ttl_seconds)
+        self._entries: dict[str, _BackendClosureEntry] = {}
+        self._inputs: dict[str, Any] = {}
+
+    @classmethod
+    def from_root_setup(cls, selected_installation_binding: Any,
+                        source_preparation_registry: Any,
+                        backend_source_observer: Any,
+                        root_journal: RootJournalSelection,
+                        setup_choice_registry: Any | None = None,
+                        **kwargs: Any) -> "RootApplicationBuildBackendClosureRegistry":
+        registry = cls(
+            selected_installation_binding=selected_installation_binding,
+            source_preparation_registry=source_preparation_registry,
+            backend_source_observer=backend_source_observer,
+            root_journal=root_journal,
+            setup_choice_registry=setup_choice_registry or selected_installation_binding,
+            **kwargs)
+        attach = getattr(selected_installation_binding,
+                         "attach_application_backend_closure_registry", None)
+        if not callable(attach):
+            raise ValueError("root setup binding has no typed PEP 517 closure attachment")
+        attach(registry)
+        return registry
+
+    def _current_inputs(self, input_selection_handle: str) -> tuple[Any, Any, Any, Any, Any]:
+        from .application_runtime_selection import RootApplicationRuntimePreparationInputSelection
+        if not _valid_opaque(input_selection_handle):
+            raise ApplicationRuntimePreparationDenied("runtime input selection handle is malformed")
+        try:
+            inputs = self.binding.resolve_application_runtime_preparation_input_selection(
+                input_selection_handle)
+            if (type(inputs) is not RootApplicationRuntimePreparationInputSelection
+                    or inputs.selection_handle != input_selection_handle
+                    or inputs.runtime_kind != "python"
+                    or inputs.application_id not in _BACKEND_PACKAGES
+                    or inputs.expires_monotonic <= self.monotonic()):
+                raise ValueError
+            source_selection = self.source_registry.resolve_selection(
+                inputs.source_preparation_selection_handle)
+            source = self.source_registry.resolve_current_prepared_source_for_selection(
+                inputs.source_preparation_selection_handle)
+            lock = self.source_registry.resolve_current_lock_for_selection(
+                inputs.source_preparation_selection_handle, source.receipt_handle)
+            pyproject = self.source_registry.read_current_source_members(
+                inputs.source_preparation_selection_handle, source.receipt_handle,
+                ("pyproject.toml",)).get("pyproject.toml")
+            lock_bytes = self.source_registry.read_current_lock_bytes(
+                lock.receipt_handle, inputs.source_preparation_selection_handle,
+                source.receipt_handle)
+            if (source_selection.application_id != inputs.application_id
+                    or source.receipt_handle != inputs.prepared_source_receipt_handle
+                    or source.source_generation_manifest_sha256
+                       != inputs.source_generation_manifest_sha256
+                    or lock.receipt_handle != inputs.selected_lock_receipt_handle
+                    or lock.lock_sha256 != inputs.lock_sha256
+                    or hashlib.sha256(lock_bytes).hexdigest() != inputs.lock_sha256
+                    or not isinstance(pyproject, bytes)):
+                raise ValueError
+            backend = inspect_application_build_backend(inputs.application_id, pyproject)
+            consent = self.setup_choice_registry.resolve_application_qualification_consent(
+                inputs.qualification_choice_handle, "acquire-locked-runtime-packages")
+            controller = self.binding.resolve_application_controller_binding(
+                inputs.qualification_choice_handle)
+            if (getattr(consent, "qualification_choice_handle", None)
+                    != inputs.qualification_choice_handle
+                    or getattr(consent, "application_id", None) != inputs.application_id
+                    or "acquire-locked-runtime-packages"
+                       not in getattr(consent, "allowed_phase_ids", ())
+                    or getattr(consent, "additional_metered_budget_usd", None) != 0.0
+                    or getattr(consent, "expires_monotonic", 0) <= self.monotonic()
+                    or getattr(controller, "handle", None) != inputs.controller_binding_handle
+                    or getattr(controller, "expires_monotonic", 0) <= self.monotonic()
+                    or not self.binding.verify_application_controller_binding(controller)):
+                raise ValueError
+            return inputs, source, lock, backend, consent
+        except ApplicationRuntimePreparationDenied:
+            raise
+        except Exception:
+            raise ApplicationRuntimePreparationDenied(
+                "current source, lock, choice, controller or project backend is unavailable") from None
+
+    def prepare_selected_backend(
+        self, preparation_input_selection_handle: str,
+    ) -> RootApplicationBuildBackendClosureReceipt:
+        inputs, source, lock, backend, _consent = self._current_inputs(
+            preparation_input_selection_handle)
+        expected_packages = _BACKEND_PACKAGES[inputs.application_id]
+        observed_sources: list[Any] = []
+        observed_licenses: list[Any] = []
+        artifacts: list[RootApplicationBuildBackendArtifactReceipt] = []
+        policy_receipt_handle: str | None = None
+        now = self.monotonic()
+        expiry = min(now + self.ttl_seconds, inputs.expires_monotonic,
+                     source.expires_monotonic, lock.expires_monotonic)
+        for package_name, package_version in expected_packages:
+            current, current_source, current_lock, current_backend, _consent = self._current_inputs(
+                preparation_input_selection_handle)
+            if (current != inputs or current_source.receipt_handle != source.receipt_handle
+                    or current_lock.lock_sha256 != lock.lock_sha256
+                    or current_backend != backend):
+                raise ApplicationRuntimePreparationDenied(
+                    "application source, lock or build backend changed during package acquisition")
+            try:
+                observation = self.backend_source_observer.observe_selected_backend_source(
+                    preparation_input_selection_handle, package_name)
+                license_observation = self.backend_source_observer.observe_embedded_backend_licenses(
+                    observation, preparation_input_selection_handle)
+                if (getattr(observation, "policy_artifact_id", None) != _BACKEND_POLICY_ARTIFACT_ID
+                        or getattr(observation, "policy_sha256", None) != _BACKEND_POLICY_SHA256
+                        or getattr(observation, "preparation_input_selection_handle", None)
+                           != preparation_input_selection_handle
+                        or getattr(observation, "source_preparation_receipt_handle", None)
+                           != source.receipt_handle
+                        or getattr(observation, "pyproject_receipt_handle", None)
+                           != source.receipt_handle
+                        or getattr(observation, "qualification_choice_handle", None)
+                           != inputs.qualification_choice_handle
+                        or getattr(observation, "package_name", None) != package_name
+                        or getattr(observation, "package_version", None) != package_version
+                        or getattr(license_observation, "license_observation_handle", None)
+                           != getattr(observation, "license_observation_handle", None)
+                        or not self.backend_source_observer.verify_current(
+                            observation, preparation_input_selection_handle)):
+                    raise ValueError
+                policy_handle = getattr(observation, "policy_member_receipt_handle", None)
+                if (not _valid_opaque(policy_handle)
+                        or policy_receipt_handle not in (None, policy_handle)):
+                    raise ValueError
+                policy_receipt_handle = policy_handle
+                source_handle = getattr(observation, "source_observation_handle", None)
+                license_handle = getattr(license_observation, "license_observation_handle", None)
+                source_url_sha = getattr(observation, "source_url_sha256", None)
+                digest = getattr(observation, "sha256", None)
+                metadata_sha = getattr(observation, "metadata_sha256", None)
+                size_bytes = getattr(observation, "size_bytes", None)
+                if (not _valid_opaque(source_handle) or not _valid_opaque(license_handle)
+                        or not all(isinstance(item, str) and re.fullmatch(r"[0-9a-f]{64}", item)
+                                   for item in (source_url_sha, digest, metadata_sha))
+                        or type(size_bytes) is not int or not 0 < size_bytes <= 1024 * 1024
+                        or getattr(observation, "expires_monotonic", 0) <= now
+                        or getattr(license_observation, "expires_monotonic", 0) <= now):
+                    raise ValueError
+                expiry = min(expiry, observation.expires_monotonic,
+                             license_observation.expires_monotonic)
+                observed_sources.append(observation)
+                observed_licenses.append(license_observation)
+                artifact_id = f"application-backend-wheel-{package_name}-{package_version}"
+                artifacts.append(RootApplicationBuildBackendArtifactReceipt(
+                    schema=1, receipt_handle=secrets.token_urlsafe(36),
+                    artifact_id=artifact_id, package_name=package_name,
+                    package_version=package_version,
+                    filename=getattr(observation, "filename"), sha256=digest,
+                    size_bytes=size_bytes, source_url_sha256=source_url_sha,
+                    metadata_sha256=metadata_sha, license_observation_handle=license_handle,
+                    backend_manifest_artifact_id=_BACKEND_POLICY_ARTIFACT_ID,
+                    backend_manifest_sha256=_BACKEND_POLICY_SHA256,
+                    backend_manifest_receipt_handle=policy_handle,
+                    pyproject_receipt_handle=source.receipt_handle,
+                    source_preparation_selection_handle=inputs.source_preparation_selection_handle,
+                    qualification_choice_handle=inputs.qualification_choice_handle,
+                    target_platform=_BACKEND_TARGET_PLATFORM, python_abi=_BACKEND_PYTHON_ABI,
+                    issued_monotonic=now, expires_monotonic=expiry,
+                    _seal=_BACKEND_RECEIPT_SEAL))
+            except ApplicationRuntimePreparationDenied:
+                raise
+            except Exception:
+                raise ApplicationRuntimePreparationDenied(
+                    f"selected PEP 517 backend package {package_name} is not currently held and verified") from None
+        if not policy_receipt_handle or not artifacts or expiry <= now:
+            raise ApplicationRuntimePreparationDenied("backend source closure is empty or expired")
+        req_digest = hashlib.sha256(_canonical({
+            "application_id": inputs.application_id,
+            "backend": backend.backend,
+            "requirements": backend.requirements,
+        })).hexdigest()
+        package_rows = [
+            {"artifact_id": row.artifact_id, "package_name": row.package_name,
+             "package_version": row.package_version, "sha256": row.sha256,
+             "size_bytes": row.size_bytes, "source_url_sha256": row.source_url_sha256,
+             "metadata_sha256": row.metadata_sha256,
+             "license_observation_handle": row.license_observation_handle,
+             "license_evidence_sha256": license.evidence_sha256,
+             "license_member_records": [list(item) for item in license.license_member_records],
+             "declared_license_expression": license.declared_license_expression,
+             "eligibility": license.eligibility}
+            for row, license in zip(artifacts, observed_licenses)
+        ]
+        closure_digest = hashlib.sha256(_canonical({
+            "application_id": inputs.application_id,
+            "build_backend": backend.backend,
+            "backend_requirement_sha256": req_digest,
+            "backend_manifest_artifact_id": _BACKEND_POLICY_ARTIFACT_ID,
+            "backend_manifest_sha256": _BACKEND_POLICY_SHA256,
+            "pyproject_receipt_handle": source.receipt_handle,
+            "package_rows": package_rows,
+        })).hexdigest()
+        closure = RootApplicationBuildBackendClosureReceipt(
+            schema=1, receipt_handle=secrets.token_urlsafe(36),
+            application_id=inputs.application_id, build_backend=backend.backend,
+            backend_requirement_sha256=req_digest,
+            backend_manifest_artifact_id=_BACKEND_POLICY_ARTIFACT_ID,
+            backend_manifest_sha256=_BACKEND_POLICY_SHA256,
+            backend_manifest_receipt_handle=policy_receipt_handle,
+            pyproject_receipt_handle=source.receipt_handle,
+            source_preparation_selection_handle=inputs.source_preparation_selection_handle,
+            qualification_choice_handle=inputs.qualification_choice_handle,
+            package_artifact_receipt_handles=tuple(row.receipt_handle for row in artifacts),
+            license_observation_handles=tuple(row.license_observation_handle for row in artifacts),
+            backend_closure_sha256=closure_digest,
+            target_platform=_BACKEND_TARGET_PLATFORM, python_abi=_BACKEND_PYTHON_ABI,
+            issued_monotonic=now, expires_monotonic=expiry, _seal=_BACKEND_RECEIPT_SEAL)
+        if closure.receipt_handle in self._entries:
+            raise ApplicationRuntimePreparationDenied("backend closure receipt handle collision")
+        self._inputs[preparation_input_selection_handle] = inputs
+        self._entries[closure.receipt_handle] = _BackendClosureEntry(
+            inputs, closure, tuple(artifacts), tuple(observed_sources), tuple(observed_licenses))
+        return closure
+
+    def resolve_selected_backend(
+        self, receipt_handle: str, preparation_input_selection_handle: str,
+    ) -> RootApplicationBuildBackendClosureReceipt:
+        entry = self._entries.get(receipt_handle)
+        if (entry is None or entry.receipt._seal is not _BACKEND_RECEIPT_SEAL
+                or entry.receipt.expires_monotonic <= self.monotonic()
+                or entry.receipt.source_preparation_selection_handle
+                   != entry.input_selection.source_preparation_selection_handle):
+            raise ApplicationRuntimePreparationDenied("backend closure receipt is absent, stale or detached")
+        inputs, source, lock, backend, _consent = self._current_inputs(
+            preparation_input_selection_handle)
+        receipt = entry.receipt
+        if (inputs != entry.input_selection
+                or inputs.application_id != receipt.application_id
+                or source.receipt_handle != receipt.pyproject_receipt_handle
+                or lock.lock_sha256 != inputs.lock_sha256
+                or backend.backend != receipt.build_backend
+                or hashlib.sha256(_canonical({
+                    "application_id": inputs.application_id,
+                    "backend": backend.backend,
+                    "requirements": backend.requirements,
+                })).hexdigest() != receipt.backend_requirement_sha256
+                or len(entry.source_observations) != len(_BACKEND_PACKAGES[inputs.application_id])
+                or len(entry.license_observations) != len(entry.source_observations)):
+            raise ApplicationRuntimePreparationDenied("backend closure no longer matches current source or lock")
+        for observation in entry.source_observations:
+            if not self.backend_source_observer.verify_current(
+                    observation, preparation_input_selection_handle):
+                raise ApplicationRuntimePreparationDenied("backend source observation is no longer current")
+        current_licenses = tuple(
+            self.backend_source_observer.observe_embedded_backend_licenses(
+                observation, preparation_input_selection_handle)
+            for observation in entry.source_observations)
+        if current_licenses != entry.license_observations:
+            raise ApplicationRuntimePreparationDenied("backend license evidence is no longer current")
+        expected_rows = [
+            {"artifact_id": row.artifact_id, "package_name": row.package_name,
+             "package_version": row.package_version, "sha256": row.sha256,
+             "size_bytes": row.size_bytes, "source_url_sha256": row.source_url_sha256,
+             "metadata_sha256": row.metadata_sha256,
+             "license_observation_handle": row.license_observation_handle,
+             "license_evidence_sha256": license.evidence_sha256,
+             "license_member_records": [list(item) for item in license.license_member_records],
+             "declared_license_expression": license.declared_license_expression,
+             "eligibility": license.eligibility}
+            for row, license in zip(entry.artifacts, current_licenses)
+        ]
+        expected_digest = hashlib.sha256(_canonical({
+            "application_id": receipt.application_id,
+            "build_backend": receipt.build_backend,
+            "backend_requirement_sha256": receipt.backend_requirement_sha256,
+            "backend_manifest_artifact_id": receipt.backend_manifest_artifact_id,
+            "backend_manifest_sha256": receipt.backend_manifest_sha256,
+            "pyproject_receipt_handle": receipt.pyproject_receipt_handle,
+            "package_rows": expected_rows,
+        })).hexdigest()
+        if expected_digest != receipt.backend_closure_sha256:
+            raise ApplicationRuntimePreparationDenied("backend closure digest no longer matches held package facts")
+        return receipt
+
+    def resolve_backend_artifact(
+        self, artifact_receipt_handle: str,
+        preparation_input_selection_handle: str,
+        closure_receipt_handle: str,
+    ) -> tuple[RootApplicationBuildBackendArtifactReceipt, int]:
+        closure = self.resolve_selected_backend(
+            closure_receipt_handle, preparation_input_selection_handle)
+        if artifact_receipt_handle not in closure.package_artifact_receipt_handles:
+            raise ApplicationRuntimePreparationDenied(
+                "backend package artifact is not a member of the current closure")
+        entry = self._entries[closure_receipt_handle]
+        index = closure.package_artifact_receipt_handles.index(artifact_receipt_handle)
+        artifact = entry.artifacts[index]
+        observation = entry.source_observations[index]
+        try:
+            fd = self.backend_source_observer.open_blob(observation)
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1
+                    or info.st_size != artifact.size_bytes
+                    or stat.S_IMODE(info.st_mode) & 0o222
+                    or getattr(observation, "device", None) != info.st_dev
+                    or getattr(observation, "inode", None) != info.st_ino
+                    or RootApplicationOfflinePackageClosureRegistry._hash_fd(
+                        fd, artifact.size_bytes) != artifact.sha256):
+                os.close(fd)
+                raise OSError
+            return artifact, fd
+        except Exception:
+            raise ApplicationRuntimePreparationDenied(
+                "held backend wheel CAS object failed current nofollow verification") from None
+
+    def resolve_current_backend_closure_for_selection(
+        self, preparation_input_selection_handle: str,
+    ) -> RootApplicationBuildBackendClosureReceipt:
+        inputs, _source, _lock, _backend, _consent = self._current_inputs(
+            preparation_input_selection_handle)
+        candidates = [entry for entry in self._entries.values()
+                      if entry.input_selection == inputs]
+        if len(candidates) != 1:
+            raise ApplicationRuntimePreparationDenied(
+                "current application has no unique retained PEP 517 backend closure")
+        return self.resolve_selected_backend(
+            candidates[0].receipt.receipt_handle, preparation_input_selection_handle)
+
+
 def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -1056,6 +1726,11 @@ def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             raise ValueError("duplicate lock key")
         result[key] = value
     return result
+
+
+def _canonical(value: Any) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False, allow_nan=False).encode("utf-8")
 
 
 def _norm_name(value: Any) -> str:

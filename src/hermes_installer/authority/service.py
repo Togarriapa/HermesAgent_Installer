@@ -37,6 +37,13 @@ MAX_REQUEST = 4 * 1024 * 1024 + 16_384
 MAX_RESPONSE = 4 * 1024 * 1024 + 32_768
 MAX_CONTEXT_LEASE = 600.0
 MAX_EFFECT_LEASE = 30.0
+_ROOT_SETUP_CHOICE_PURPOSES = frozenset({
+    "memory-service-enablement", "memory-capture-configuration", "private-input-routes",
+    "public-free-web-read", "existing-model-selection", "native-policy-preparation",
+    "application-qualification",
+})
+_ROOT_SETUP_CHOICE_DOMAIN = b"hermes-installer.setup-choice.v1\0"
+_ROOT_SETUP_CHOICE_REVOCATION_DOMAIN = b"hermes-installer.setup-choice-revocation.v1\0"
 _EFFECT_LEASE_BY_OPERATION = {
     "artifact.fetch": 120.0,
     "package.install": 600.0,
@@ -302,6 +309,119 @@ class _PublicInputPermissionSigner:
         return self.__service._verify_public_input_permission(receipt)
 
 
+class _RootSetupChoiceSigner:
+    """Finite-purpose facade over the active service's already selected key."""
+
+    __slots__ = ("__service", "key_id")
+
+    def __init__(self, service: "AuthorityService") -> None:
+        self.__service = service
+        self.key_id = service.key_id
+
+    def sign_choice(self, purpose: str, canonical_record_bytes: bytes) -> str:
+        service = self.__service
+        service._assert_root_setup_choice_signer_current(self)
+        payload = _validate_setup_choice_record_bytes(
+            purpose, canonical_record_bytes, expected_key_id=service.key_id)
+        message = _ROOT_SETUP_CHOICE_DOMAIN + purpose.encode("ascii") + b"\0" + payload
+        return hmac.new(service._key, message, hashlib.sha256).hexdigest()
+
+    def verify_choice(self, purpose: str, canonical_record_bytes: bytes,
+                      signature: str) -> bool:
+        if not isinstance(signature, str) or not re.fullmatch(r"[0-9a-f]{64}", signature):
+            return False
+        try:
+            expected = self.sign_choice(purpose, canonical_record_bytes)
+        except AuthorityDenied:
+            return False
+        return hmac.compare_digest(expected, signature)
+
+
+class _RootChoiceRevocationSigner:
+    """Separate fixed-domain signer; actual typed revocation admission stays elsewhere."""
+
+    __slots__ = ("__service", "key_id")
+
+    def __init__(self, service: "AuthorityService") -> None:
+        self.__service = service
+        self.key_id = service.key_id
+
+    def sign_revocation(self, observed_request: Any) -> str:
+        service = self.__service
+        service._assert_root_setup_choice_signer_current(self)
+        payload = service._root_choice_revocation_claims(observed_request)
+        registry = service._root_setup_choice_registry
+        if (registry is None
+                or registry.verify_revocation_transition_request(observed_request) is not True):
+            raise AuthorityDenied("setup.choice.revocation", "root-observed revocation transition is not current")
+        message = _ROOT_SETUP_CHOICE_REVOCATION_DOMAIN + payload
+        return hmac.new(service._key, message, hashlib.sha256).hexdigest()
+
+    def verify_revocation(self, receipt: Any) -> bool:
+        service = self.__service
+        try:
+            service._assert_root_setup_choice_signer_current(self)
+            payload = service._root_choice_revocation_claims(receipt)
+            registry = service._root_setup_choice_registry
+            if (registry is None
+                    or registry.verify_revocation_receipt_membership(receipt) is not True):
+                return False
+            signature = getattr(receipt, "signature", None)
+            if not isinstance(signature, str) or not re.fullmatch(r"[0-9a-f]{64}", signature):
+                return False
+            expected = hmac.new(service._key, _ROOT_SETUP_CHOICE_REVOCATION_DOMAIN + payload,
+                                hashlib.sha256).hexdigest()
+            return hmac.compare_digest(expected, signature)
+        except AuthorityDenied:
+            return False
+
+
+def _validate_setup_choice_record_bytes(
+        purpose: str, payload: bytes, *, expected_key_id: str | None = None) -> bytes:
+    if (purpose not in _ROOT_SETUP_CHOICE_PURPOSES or type(payload) is not bytes
+            or not payload or len(payload) > 1_048_576):
+        raise AuthorityDenied("setup.choice", "setup choice purpose or canonical record is invalid")
+    try:
+        decoded = strict_json_loads(payload.decode("utf-8", errors="strict"))
+        canonical = json.dumps(decoded, sort_keys=True, separators=(",", ":"),
+                               ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except Exception:
+        raise AuthorityDenied("setup.choice", "setup choice record is not canonical JSON") from None
+    from .root_setup_choices import _RECORD_FIELDS
+    if (type(decoded) is not dict or canonical != payload
+            or set(decoded) != _RECORD_FIELDS - {"signature"}
+            or decoded.get("schema") != 1 or decoded.get("purpose") != purpose
+            or (expected_key_id is not None and decoded.get("key_id") != expected_key_id)
+            or not isinstance(decoded.get("choice_payload"), dict)
+            or decoded.get("choice_payload_sha256") != hashlib.sha256(json.dumps(
+                decoded.get("choice_payload"), sort_keys=True, separators=(",", ":"),
+                ensure_ascii=False, allow_nan=False).encode("utf-8")).hexdigest()
+            or not isinstance(decoded.get("release_deployment_receipt_sha256"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", decoded["release_deployment_receipt_sha256"])
+            or type(decoded.get("choice_epoch")) is not int or decoded["choice_epoch"] < 1
+            or type(decoded.get("revocation_epoch")) is not int or decoded["revocation_epoch"] < 1
+            or not isinstance(decoded.get("source_member_receipt_handles"), list)
+            or any(not isinstance(handle, str) or not handle
+                   for handle in decoded["source_member_receipt_handles"])
+            or decoded["source_member_receipt_handles"] != sorted(set(decoded["source_member_receipt_handles"]))
+            or any(not isinstance(decoded.get(name), str) or not decoded[name]
+                   for name in ("selection_handle", "key_id", "release_deployment_receipt_sha256",
+                                "setup_session_handle", "transaction_handle", "plan_id",
+                                "prepared_generation", "principal_selection_handle",
+                                "namespace_selection_handle", "choice_payload_sha256"))
+            or decoded.get("private_profile_selection_handle") is not None
+               and (not isinstance(decoded.get("private_profile_selection_handle"), str)
+                    or not decoded["private_profile_selection_handle"])
+            or decoded.get("adoption_publication_receipt_handle") is not None
+            or type(decoded.get("issued_at_unix")) not in (int, float)
+            or type(decoded.get("setup_deadline_unix")) not in (int, float)
+            or not math.isfinite(decoded["issued_at_unix"])
+            or not math.isfinite(decoded["setup_deadline_unix"])
+            or decoded["setup_deadline_unix"] <= decoded["issued_at_unix"]):
+        raise AuthorityDenied("setup.choice", "setup choice record is not canonical JSON")
+    return payload
+
+
 class AuthorityService:
     """One authenticated client request per connection on the fixed socket."""
 
@@ -337,6 +457,7 @@ class AuthorityService:
         if set(handlers) - enrolled_operations:
             raise ValueError("effect handler has no protected enrollment rule")
         self._key = bytes(signing_key)
+        self._key_source_binding: tuple[Path, int, int, int, str] | None = None
         self.key_id = key_id
         self.bindings_by_uid = dict(bindings_by_uid)
         self.rules = dict(rules)
@@ -383,6 +504,9 @@ class AuthorityService:
         self._application_package_observation_signer = None
         self.public_input_permission_registry = None
         self._public_input_permission_signer = None
+        self._root_setup_choice_signer: _RootSetupChoiceSigner | None = None
+        self._root_choice_revocation_signer: _RootChoiceRevocationSigner | None = None
+        self._root_setup_choice_registry: Any | None = None
         self.web_content_artifact_registry = None
         self.memory_step_effect_authority = memory_step_effect_authority
         self.resource_task_runner = None
@@ -429,6 +553,129 @@ class AuthorityService:
         self.source_observer_registry = registry
         if self.source_receipt_delivery is None and callable(getattr(registry, "take_source_receipt", None)):
             self.source_receipt_delivery = registry
+
+    def root_setup_choice_signer(self) -> _RootSetupChoiceSigner:
+        """Return the finite setup-choice facade over this service's selected key.
+
+        It is available only in the fully composed installed root runtime. The
+        pre-active setup path continues to use RootSetupChoiceSigner from the
+        selected-key custody registry; this facade does not create or retain a
+        second key.
+        """
+        self._assert_root_setup_choice_signer_current(self._root_setup_choice_signer)
+        if self._root_setup_choice_signer is None:
+            self._root_setup_choice_signer = _RootSetupChoiceSigner(self)
+        return self._root_setup_choice_signer
+
+    def root_choice_revocation_signer(self) -> _RootChoiceRevocationSigner:
+        """Return a domain-specific revocation facade, which remains deny-only
+        until the exact root-observed revocation source is attached.
+        """
+        self._assert_root_setup_choice_signer_current(self._root_choice_revocation_signer)
+        if self._root_choice_revocation_signer is None:
+            self._root_choice_revocation_signer = _RootChoiceRevocationSigner(self)
+        return self._root_choice_revocation_signer
+
+    def attach_root_setup_choice_registry(self, registry: Any) -> None:
+        from .root_setup_choices import RootSetupChoiceRegistry
+        if (type(registry) is not RootSetupChoiceRegistry or registry.service is not self
+                or self._root_setup_choice_registry is not None):
+            raise AuthorityDenied("setup.choice", "root setup choice registry attachment is invalid or repeated")
+        self._assert_root_setup_choice_signer_current(self._root_setup_choice_signer)
+        self._root_setup_choice_registry = registry
+
+    def _assert_root_setup_choice_signer_current(self, signer: Any) -> None:
+        from .installer_release import RootActorObservation, VerifiedInstallerReleaseReceipt
+        from .runtime_composition import RootAuthorityRuntime
+
+        if signer is not None:
+            if (type(signer) is _RootSetupChoiceSigner
+                    and signer._RootSetupChoiceSigner__service is not self):
+                raise AuthorityDenied("setup.choice", "choice signer belongs to another authority service")
+            if (type(signer) is _RootChoiceRevocationSigner
+                    and signer._RootChoiceRevocationSigner__service is not self):
+                raise AuthorityDenied("setup.choice", "revocation signer belongs to another authority service")
+            if type(signer) not in (_RootSetupChoiceSigner, _RootChoiceRevocationSigner):
+                raise AuthorityDenied("setup.choice", "choice signer is not the exact authority facade")
+        runtime = getattr(self, "root_authority_runtime", None)
+        if (os.geteuid() != 0 or type(runtime) is not RootAuthorityRuntime
+                or runtime.service is not self or runtime.bindings is not self.root_runtime_bindings
+                or not isinstance(self.service_generation_digest, str)
+                or runtime.enrollment.protected_enrollment_digest != self.service_generation_digest
+                or runtime.bindings.enrollment_catalog.digest != self.service_generation_digest
+                or runtime.enrollment.key_id != self.key_id
+                or len(self._key) < 32
+                or runtime.controller_release_receipt is None
+                or type(runtime.controller_release_receipt) is not VerifiedInstallerReleaseReceipt
+                or runtime.controller_actor_observation is None
+                or type(runtime.controller_actor_observation) is not RootActorObservation
+                or self._key_source_binding is None
+                or set(self.bindings_by_uid) != set(self._active_binding_snapshot)
+                or any(self.bindings_by_uid.get(uid) is not binding
+                       for uid, binding in self._active_binding_snapshot.items())
+                or self.profile_generations != self._active_profile_generation_snapshot):
+            raise AuthorityDenied("setup.choice", "current installed root release, actor, key or service generation is unavailable")
+        try:
+            self._verify_setup_choice_key_file_current()
+            runtime.controller_release_receipt.verify_current()
+            runtime.controller_actor_observation.verify_current(runtime.controller_release_receipt)
+        except Exception:
+            raise AuthorityDenied("setup.choice", "installed root release or controller actor is stale") from None
+
+    def _verify_setup_choice_key_file_current(self) -> None:
+        binding = self._key_source_binding
+        if binding is None:
+            raise AuthorityDenied("setup.choice", "authority key has no retained protected-file identity")
+        path, expected_uid, expected_device, expected_inode, expected_digest = binding
+        try:
+            parent = path.parent.lstat()
+            if (stat.S_ISLNK(parent.st_mode) or not stat.S_ISDIR(parent.st_mode)
+                    or parent.st_uid != expected_uid or parent.st_mode & 0o022):
+                raise ValueError
+            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                         | getattr(os, "O_CLOEXEC", 0))
+            try:
+                info = os.fstat(fd)
+                data = os.read(fd, 33)
+            finally:
+                os.close(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != expected_uid
+                    or info.st_mode & 0o077 or info.st_dev != expected_device
+                    or info.st_ino != expected_inode or len(data) != 32
+                    or not hmac.compare_digest(hashlib.sha256(data).hexdigest(), expected_digest)
+                    or not hmac.compare_digest(data, self._key)):
+                raise ValueError
+        except Exception:
+            raise AuthorityDenied("setup.choice", "selected authority key custody changed") from None
+
+    def _root_choice_revocation_claims(self, observed_request: Any) -> bytes:
+        from .root_setup_choices import RootSetupChoiceRevocationReceipt
+        if type(observed_request) is not RootSetupChoiceRevocationReceipt:
+            raise AuthorityDenied("setup.choice.revocation", "revocation receipt has the wrong exact type")
+        claims_fn = getattr(observed_request, "claims", None)
+        claims = claims_fn() if callable(claims_fn) else None
+        expected = {
+            "schema", "revocation_receipt_handle", "selection_handle", "purpose", "consent_id",
+            "previous_choice_epoch", "previous_revocation_epoch", "revocation_epoch",
+            "source_choice_row_sha256", "revocation_observation_handle", "displayed_payload_sha256",
+            "key_id", "release_deployment_receipt_sha256", "service_generation_digest", "revoked_at_unix",
+        }
+        if (type(claims) is not dict or set(claims) != expected
+                or claims.get("key_id") != self.key_id
+                or claims.get("service_generation_digest") != self.service_generation_digest
+                or type(claims.get("schema")) is not int or claims["schema"] != 1
+                or type(claims.get("previous_choice_epoch")) is not int
+                or type(claims.get("previous_revocation_epoch")) is not int
+                or type(claims.get("revocation_epoch")) is not int
+                or claims["revocation_epoch"] != claims["previous_revocation_epoch"] + 1
+                or type(claims.get("revoked_at_unix")) not in (int, float)
+                or not math.isfinite(claims["revoked_at_unix"])):
+            raise AuthorityDenied("setup.choice.revocation", "revocation transition claims are invalid")
+        try:
+            return json.dumps(claims, sort_keys=True, separators=(",", ":"),
+                              ensure_ascii=False, allow_nan=False).encode("utf-8")
+        except (TypeError, ValueError):
+            raise AuthorityDenied("setup.choice.revocation", "revocation transition claims are not canonical") from None
 
     def attach_root_runtime_bindings(self, bindings: Any) -> None:
         """Attach the exact typed root composition used to resolve active rows."""
@@ -3001,6 +3248,11 @@ class AuthorityService:
         from .root_public_input_permission import (
             RootPublicInputPermission, RootPublicInputPermissionRegistry,
         )
+        try:
+            from .public_web_selection import RootTTYPublicInputDisclosure
+        except ImportError:
+            raise AuthorityDenied(
+                "source.public_input", "root TTY public-input disclosure support is unavailable") from None
 
         source_registry = self.source_observer_registry
         permission_registry = self.public_input_permission_registry
@@ -3038,16 +3290,28 @@ class AuthorityService:
         source_handle = None
         try:
             material = source_registry.resolve_consumed_public_input_source_material(proof)
+            verify_disclosure = getattr(
+                source_registry, "verify_consumed_public_input_disclosure", None)
             if (material.observation is not proof
                     or material.selected_execution is not selected_execution
                     or material.consumed is not True
+                    or type(material.disclosure) is not RootTTYPublicInputDisclosure
+                    or material.disclosure.disclosure_observation_handle
+                       != proof.disclosure_observation_handle
+                    or material.disclosure.input_sha256 != proof.input_sha256
+                    or material.disclosure.input_size_bytes != proof.input_size_bytes
+                    or material.disclosure.public_permission_selection_handle
+                       != proof.public_permission_selection_handle
+                    or material.disclosure.selected_execution_handle
+                       != selected_execution.selection_handle
+                    or not callable(verify_disclosure)
+                    or verify_disclosure(proof, material) is not True
                     or material.source_proof.proof_nonce != proof.source_observation_handle
                     or material.source_proof.selected_execution is not selected_execution
                     or not isinstance(material.payload_bytes, bytes)
                     or hashlib.sha256(material.payload_bytes).hexdigest() != proof.input_sha256
                     or len(material.payload_bytes) != proof.input_size_bytes
                     or tuple(material.parent_receipt_handles) != proof.parent_source_receipt_handles
-                    or not material.parent_receipts
                     or len(material.parent_receipts) != len(material.parent_receipt_handles)
                     or len(set(material.parent_receipt_handles)) != len(material.parent_receipt_handles)
                     or any(item.sensitivity is not Sensitivity.PUBLIC for item in material.parent_receipts)):
@@ -3457,13 +3721,17 @@ class AuthorityService:
                 if not stat.S_ISREG(info.st_mode) or info.st_uid != expected_uid or info.st_mode & 0o077:
                     raise AuthorityDenied("key.custody", "authority signing key custody is invalid")
                 data = os.read(fd, 33)
+                device, inode = info.st_dev, info.st_ino
             finally:
                 os.close(fd)
         except OSError:
             raise AuthorityDenied("key.custody", "authority signing key is unavailable") from None
         if len(data) != 32:
             raise AuthorityDenied("key.custody", "authority signing key has invalid length")
-        return cls(signing_key=data, key_id=key_id, **kwargs)
+        service = cls(signing_key=data, key_id=key_id, **kwargs)
+        service._key_source_binding = (
+            path, expected_uid, device, inode, hashlib.sha256(data).hexdigest())
+        return service
 
     def handle_connection(self, connection: socket.socket) -> None:
         """Authenticate kernel peer, issue challenge, and process exactly one RPC."""

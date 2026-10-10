@@ -93,9 +93,15 @@ def assemble_native_package(selection: _Selection, definitions: Any,
             or not isinstance(overlay_source, str) or len(overlay_source) != 40
             or not isinstance(member_bytes, Mapping)):
         raise NativeAssemblyDenied("native package identity or selected overlay is invalid")
-    if set(schema_bytes) != {row.get("schema_id") for row in schema_rows}:
+    # RootNativeAssemblyDefinitions uses the strict projection's canonical
+    # schema key `id`. Do not accept a second alias here: the same row set is
+    # consumed by native_registration_projection before compilation.
+    if (any(not isinstance(row, Mapping) or not isinstance(row.get("id"), str)
+            or "schema_id" in row for row in schema_rows)
+            or set(schema_bytes) != {row["id"] for row in schema_rows}):
         raise NativeAssemblyDenied("native schema documents do not match selected schema records")
     _validate_process_role_records(selection, process_roles, closure_defs)
+    process_roles_sha256 = hashlib.sha256(_canonical(process_roles)).hexdigest()
 
     resolver = {
         "schema": 1,
@@ -106,7 +112,7 @@ def assemble_native_package(selection: _Selection, definitions: Any,
         "actions": registrations,
         "source_issuers": issuer_rows,
         "native_schemas": schema_rows,
-        "process_roles": process_roles,
+        "process_role_records_sha256": process_roles_sha256,
         "effect_selection_receipt_handles": list(definitions.effect_selection_receipt_handles),
     }
     resolver_bytes = _canonical(resolver)
@@ -170,6 +176,8 @@ def assemble_native_package(selection: _Selection, definitions: Any,
         "generation": generation, "closure_files": closure_rows,
         "adapters": adapters, "dependencies": dependencies,
         "process_role_records": process_roles,
+        "process_role_records_sha256": process_roles_sha256,
+        "resolver_sha256": resolver_sha,
         "candidate_index": {
             "artifact_id": f"native-candidate-index:{package_id}:{generation}",
             "relative_path": "catalog/native-candidates.json",
@@ -349,7 +357,8 @@ def _validate_process_role_records(selection: _Selection, rows: list[dict[str, A
             values = row[key]
             if (not isinstance(values, list) or any(not isinstance(value, str) for value in values)
                     or len(values) != len(set(values))
-                    or any(not safe_id.fullmatch(value) for value in values)):
+                    or any(not safe_id.fullmatch(value) for value in values)
+                    or values != sorted(values)):
                 raise NativeAssemblyDenied("selected process-role foreign-key list is invalid")
         if not row["observer_enrollment_ids"]:
             raise NativeAssemblyDenied("selected process role has no enrolled observers")
