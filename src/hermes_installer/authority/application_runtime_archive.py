@@ -102,6 +102,22 @@ def _sha_file(path: Path, *, ceiling: int) -> tuple[str, int]:
     return digest.hexdigest(), size
 
 
+def _require_no_symlink_ancestors(path: Path) -> None:
+    if not path.is_absolute() or path == Path("/"):
+        raise RuntimeArchiveError("runtime destination must be an absolute non-root path")
+    current = Path("/")
+    for part in path.parts[1:]:
+        current = current / part
+        try:
+            info = current.lstat()
+        except OSError as exc:
+            raise RuntimeArchiveError("runtime destination parent is unavailable") from exc
+        if stat.S_ISLNK(info.st_mode):
+            raise RuntimeArchiveError("runtime destination traverses a symlink")
+        if current != path and not stat.S_ISDIR(info.st_mode):
+            raise RuntimeArchiveError("runtime destination parent is not a directory")
+
+
 def _normalized_mode(mode: int, *, directory: bool) -> int:
     permissions = stat.S_IMODE(mode)
     if permissions & 0o022:
@@ -381,6 +397,7 @@ def extract_verified_runtime_archive(stream: BinaryIO, destination: Path, *,
             raise RuntimeArchiveError("selected held interpreter is not a root-owned executable")
     elif held_interpreter is not None:
         raise RuntimeArchiveError("Node runtime extraction cannot accept a Python interpreter alias")
+    _require_no_symlink_ancestors(destination)
 
     # First pass validates the full archive and manifest before any destination
     # path is created. The archive file is read again only from the same held
