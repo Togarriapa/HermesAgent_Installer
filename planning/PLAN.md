@@ -120,3 +120,6 @@ Existing HI197/173/178 actual source producer ownership and finite APIs: `plans/
 
 
 Exact routine publisher candidate metadata review `plans/amendments/2026-10-10-fixed-release-store-source-review-v200.md` under existing HI-T149.1; no new leaf pin row, actual target acceptance OPEN.
+
+
+Existing HI160/197 current core producer and acquisition/effect lease compatibility: `plans/amendments/2026-10-10-publication-core-and-fixture-acquisition-v201.md`; all OPEN.
