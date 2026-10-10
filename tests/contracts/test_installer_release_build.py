@@ -71,6 +71,27 @@ def test_git_batch_streams_large_request_and_response_pipes(tmp_path):
     assert all(item == body for item in result)
 
 
+@pytest.mark.skipif(not Path("/usr/bin/git").exists(), reason="root source exporter requires system Git")
+def test_source_export_replaces_git_checkout_with_exact_blob_tree(tmp_path):
+    repository = tmp_path / "checkout"
+    repository.mkdir()
+    subprocess.run(["/usr/bin/git", "init", "-q", str(repository)], check=True)
+    (repository / "module.py").write_bytes(b"candidate module\n")
+    (repository / "nested").mkdir()
+    (repository / "nested" / "data.json").write_bytes(b'{"schema":1}\n')
+    subprocess.run(["/usr/bin/git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["/usr/bin/git", "-C", str(repository), "-c", "user.name=Fixture", "-c",
+                    "user.email=fixture@example.invalid", "commit", "-qm", "fixture"], check=True)
+
+    rows = release_build.RootInstallerDistributionRegistry._export_commit(repository, "HEAD")
+
+    assert {path for path, _, _ in rows} == {"module.py", "nested/data.json"}
+    assert not (repository / ".git").exists()
+    assert (repository / "module.py").read_bytes() == b"candidate module\n"
+    assert (repository / "nested" / "data.json").read_bytes() == b'{"schema":1}\n'
+    assert not list(repository.parent.glob(".stage-source-*"))
+
+
 @pytest.mark.skipif(os.name != "posix" or os.geteuid() != 0,
                     reason="fixed deployment-parent custody requires Linux root")
 def test_owned_deployment_parent_children_are_created_or_conflicts_preserved(tmp_path):
@@ -177,8 +198,15 @@ def test_runtime_dependency_receipt_requires_exact_locked_version():
 
 def test_runtime_lock_requires_version_and_hash_pins():
     lock = Path(__file__).parents[2] / release_build.RUNTIME_REQUIREMENTS_PATH
-    parsed = release_build._locked_package_versions(lock.read_bytes())
+    lock_bytes = lock.read_bytes()
+    parsed = release_build._locked_package_versions(lock_bytes)
     assert parsed["pyyaml"] == frozenset({"6.0.3"})
+    # Hash-locked requirements intentionally do not name a platform wheel;
+    # the provisioner selects the reviewed wheel by its exact digest.
+    assert release_build._lock_contains_exact_pyyaml(lock_bytes)
+    without_reviewed_wheel = lock_bytes.replace(
+        f"    --hash=sha256:{release_build.BOOTSTRAP_PYYAML_SHA256} \\\n".encode(), b"")
+    assert not release_build._lock_contains_exact_pyyaml(without_reviewed_wheel)
     with pytest.raises(release_build.InstallerReleaseBuildError):
         release_build._locked_package_versions(b"PyYAML==6.0.3\n")
 

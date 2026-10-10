@@ -521,6 +521,7 @@ class RootInstallerDistributionRegistry:
             raise InstallerReleaseBuildError("candidate Git tree has portable path collisions")
         batch = cls._git_batch(repository, object_ids)
         stage = repository / ".source-export"
+        exported = repository.parent / (".stage-source-" + secrets.token_hex(16))
         os.mkdir(stage, 0o700)
         total = 0
         out: list[tuple[str, str, int]] = []
@@ -538,20 +539,21 @@ class RootInstallerDistributionRegistry:
             finally:
                 os.close(root_fd)
             # Keep only the exact exported source tree; Git metadata is not part of its trust domain.
+            os.rename(stage, exported)
             for child in list(repository.iterdir()):
-                if child.name == ".source-export":
-                    continue
                 if child.is_dir() and not child.is_symlink():
                     _remove_tree_no_follow(child)
                 else:
                     child.unlink()
             os.rmdir(repository)
-            os.rename(stage, repository)
+            os.rename(exported, repository)
             _fsync_dir(repository.parent)
             return tuple(out)
         except BaseException:
             if stage.exists():
                 _remove_tree_no_follow(stage)
+            if exported.exists():
+                _remove_tree_no_follow(exported)
             raise
 
     @classmethod
@@ -962,8 +964,7 @@ def _lock_contains_exact_pyyaml(lock: bytes) -> bool:
         return False
     text = lock.decode("utf-8", "strict")
     return (rows.get("pyyaml") == frozenset({"6.0.3"}) and
-            BOOTSTRAP_PYYAML_SHA256 in text and
-            "pyyaml-6.0.3-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl" in text)
+            f"--hash=sha256:{BOOTSTRAP_PYYAML_SHA256}" in text)
 
 
 def _extract_verified_runtime_archive(archive: bytes, destination: Path) -> None:
