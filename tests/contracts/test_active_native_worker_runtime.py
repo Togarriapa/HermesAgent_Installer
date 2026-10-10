@@ -8,6 +8,7 @@ import pytest
 from hermes_installer.authority.active_native_worker_runtime import (
     ActiveNativeWorkerRuntimeUnavailable,
     RootActiveNativeWorkerRuntimeRegistry,
+    _native_output_relative_parts,
     _read_fd,
 )
 
@@ -25,10 +26,27 @@ def test_protected_receipt_reader_enforces_its_size_bound(tmp_path):
         assert _read_fd(fd, 2) == b"{}"
     finally:
         os.close(fd)
-
     fd = os.open(path, os.O_RDONLY)
     try:
         with pytest.raises(ValueError, match="size bound"):
             _read_fd(fd, 1)
     finally:
         os.close(fd)
+
+
+@pytest.mark.parametrize("path", [
+    "../escape/file.py",
+    "native-compiled-closure/../../etc/passwd",
+    "native-action-resolver//resolver.py",
+    r"native-boundary-overlay\patch.py",
+    "/native-candidate-index/index.json",
+])
+def test_active_output_member_path_is_confined_to_fixed_role_root(path):
+    with pytest.raises(ValueError):
+        _native_output_relative_parts(path)
+
+
+def test_active_output_member_accepts_nested_role_relative_path():
+    assert _native_output_relative_parts(
+        "native-compiled-closure/pkg/module.py") == (
+            "native-compiled-closure", "pkg", "module.py")
