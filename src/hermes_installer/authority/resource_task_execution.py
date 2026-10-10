@@ -111,6 +111,9 @@ def _validate_admission(
         raise AuthorityDenied("resource.task_binding", "source receipt closure is malformed") from None
     source_receipt_ids = {row.get("receipt_id") for row in source_receipt_rows
                           if isinstance(row, dict)}
+    root_controller = controller.controller_kind in {
+        "root-scheduler", "root-webhook", "root-channel",
+    }
     pairs = (
         (task.admission_id, admission.child_admission_id),
         (task.job_id, admission.job_id),
@@ -151,7 +154,10 @@ def _validate_admission(
     )
     if any(left != right for left, right in pairs):
         raise AuthorityDenied("resource.task_binding", "selected task, lineage, controller or generation changed")
-    if (controller.schema != 1 or controller.controller_kind != "worker"
+    if (controller.schema != 1
+            or controller.controller_kind not in {
+                "worker", "root-scheduler", "root-webhook", "root-channel",
+            }
             or controller.pid <= 0 or controller.pidfd < 0
             or not _HEX64.fullmatch(controller.controller_role_sha256)
             or not now < controller.expires_monotonic
@@ -161,7 +167,14 @@ def _validate_admission(
             or not source.verified_source_receipt_handles
             or not source.signed_receipt_wires
             or len(source.verified_source_receipt_handles) != len(source.signed_receipt_wires)
-            or controller.source_receipt_id not in source_receipt_ids
+            or (root_controller and (controller.uid != 0
+                                     or controller.controller_profile_id is not None
+                                     or controller.source_receipt_id is not None))
+            or (not root_controller and (
+                controller.controller_kind != "worker"
+                or controller.controller_profile_id != source.profile_id
+                or controller.source_receipt_id not in source_receipt_ids
+            ))
             or not _HEX64.fullmatch(task.parent_closure_digest)
             or admission.child_capability != "hermes-profile-invoke"
             or admission.operation_id != "hermes-resource-profile-task-v1"):
@@ -243,10 +256,32 @@ class RootResourceTaskRunner:
                 expected_principal_id=enrollment.principal_id,
             )
             self.jobs.start_task_handle(admission, node_id)
-            cancelled = lambda: self.jobs.task_handle_cancelled(admission, node_id)
+            root_controller = controller.controller_kind in {
+                "root-scheduler", "root-webhook", "root-channel",
+            }
+            if root_controller:
+                verify_controller = getattr(self.jobs, "verify_admitted_root_task_controller", None)
+                if (not callable(verify_controller)
+                        or verify_controller(admission, task, source, controller) is not True):
+                    raise AuthorityDenied(
+                        "resource.task_controller",
+                        "selected root event controller is stale or mismatched",
+                    )
+
+            def cancelled() -> bool:
+                if self.jobs.task_handle_cancelled(admission, node_id):
+                    return True
+                if root_controller:
+                    current = getattr(self.jobs, "is_admitted_task_controller_current", None)
+                    return (not callable(current)
+                            or current(admission, node_id, controller) is not True)
+                return False
+
             if cancelled():
                 raise AuthorityDenied("resource.task_cancelled", "selected resource task was cancelled")
-            start = getattr(self.service, "perform_admitted_resource_process_start", None)
+            start_method = ("perform_root_admitted_resource_process_start" if root_controller
+                            else "perform_admitted_resource_process_start")
+            start = getattr(self.service, start_method, None)
             if not callable(start):
                 raise AuthorityDenied("resource.task_unavailable", "root selected process.start effect is unavailable")
             task_deadline = min(float(task.deadline_monotonic), float(source.expires_monotonic))
@@ -344,6 +379,28 @@ class RootResourceTaskRunner:
             "receipt_id": capsule.result_receipt_id,
             "result_fields": capsule.result_fields,
         })
+
+    def resolve_result_capsule_sha256(self, receipt: RootResourceProcessReceipt) -> str:
+        """Resolve the digest of this exact unconsumed root-retained result.
+
+        ResourceJobAuthority uses this before completion to bind a DAG result
+        closure to the actual validator-produced capsule. The opaque handle or
+        a caller-provided mapping cannot be used to manufacture the digest.
+        """
+        if not isinstance(receipt, RootResourceProcessReceipt):
+            raise AuthorityDenied("resource.task_result", "root result receipt is malformed")
+        with self._lock:
+            capsule = self._capsules.get(receipt.result_capsule_handle)
+            if capsule is None or capsule.receipt is not receipt:
+                raise AuthorityDenied("resource.task_result", "root result capsule is unknown or consumed")
+        now = self.service.monotonic()
+        if (not now < receipt.expires_monotonic
+                or self.service.service_generation_digest != capsule.service_generation_digest
+                or capsule.process_receipt.terminal_receipt_handle != receipt.terminal_receipt_handle
+                or hashlib.sha256(capsule.canonical_body).hexdigest()
+                   != hashlib.sha256(_canonical_json(dict(capsule.result_fields))).hexdigest()):
+            raise AuthorityDenied("resource.task_result", "root result capsule is stale or inconsistent")
+        return hashlib.sha256(capsule.canonical_body).hexdigest()
 
     def _selected_backend(self, admission: RootResourceJobAdmissionHandle) -> tuple[Any, Any]:
         matches = [(enrollment, enrollment.backends.get(admission.backend_enrollment_id))

@@ -35,6 +35,7 @@ class _InitialInputRecord:
     peer_identity: Any
     profile_id: str
     generation: str
+    turn_handle: str | None = None
     consumed: bool = False
 
 
@@ -51,6 +52,7 @@ class RootTaskInputCoordinator:
                  source_delivery_registry: Any,
                  process_custody_registry: Any,
                  native_input_delivery_registry: Any,
+                 native_turn_observation_registry: Any | None = None,
                  monotonic: Callable[[], float] = time.monotonic):
         if (not callable(getattr(task_native_observation_registry, "bind_running_task", None))
                 or not callable(getattr(task_native_observation_registry, "bind_task_input", None))
@@ -67,6 +69,8 @@ class RootTaskInputCoordinator:
                 or not callable(getattr(native_input_delivery_registry, "queue_selected_input", None))
                 or not callable(getattr(native_input_delivery_registry, "wait_delivered", None))
                 or not callable(getattr(native_input_delivery_registry, "cancel_selected_input", None))
+                or (native_turn_observation_registry is not None and not callable(
+                    getattr(native_turn_observation_registry, "begin_selected_turn", None)))
                 or not callable(getattr(process_custody_registry, "resolve_managed_task_process_handle", None))
                 or not callable(monotonic)):
             raise ValueError("root task input coordinator dependencies are incomplete")
@@ -76,6 +80,7 @@ class RootTaskInputCoordinator:
         self.source_delivery = source_delivery_registry
         self.process_custody = process_custody_registry
         self.native_input_delivery = native_input_delivery_registry
+        self.native_turn_observation = native_turn_observation_registry
         self.monotonic = monotonic
         self._records: dict[str, _InitialInputRecord] = {}
         self._lock = threading.RLock()
@@ -86,7 +91,8 @@ class RootTaskInputCoordinator:
                           initial_native_input_observer: Any,
                           source_delivery_registry: Any,
                           process_custody_registry: Any,
-                          native_input_delivery_registry: Any) -> "RootTaskInputCoordinator":
+                          native_input_delivery_registry: Any,
+                          native_turn_observation_registry: Any | None = None) -> "RootTaskInputCoordinator":
         return cls(
             task_native_observation_registry=task_native_observation_registry,
             selected_native_execution_registry=selected_native_execution_registry,
@@ -94,6 +100,7 @@ class RootTaskInputCoordinator:
             source_delivery_registry=source_delivery_registry,
             process_custody_registry=process_custody_registry,
             native_input_delivery_registry=native_input_delivery_registry,
+            native_turn_observation_registry=native_turn_observation_registry,
         )
 
     def prepare_initial_input(self, *, task_admission: Any, admission_handle: Any,
@@ -160,6 +167,7 @@ class RootTaskInputCoordinator:
         source_handle = None
         receipt_handle = None
         initial_receipt = None
+        turn_handle = None
         try:
             target = self.selected_executions.resolve_selected_native_input_target(selected)
             self._check_cancelled(cancelled)
@@ -191,7 +199,13 @@ class RootTaskInputCoordinator:
                 raise AuthorityDenied("native.input.receipt", "root input capture differs from the selected task")
 
             source_handle = getattr(event, "source_receipt_handle", None)
-            self.native_input_delivery.queue_selected_input(selected, event)
+            if self.native_turn_observation is not None:
+                turn_handle = self.native_turn_observation.begin_selected_turn(
+                    selected.selection_handle, source_handle)
+                self.native_input_delivery.queue_selected_input(
+                    selected, event, turn_handle=turn_handle)
+            else:
+                self.native_input_delivery.queue_selected_input(selected, event)
             delivery = self.native_input_delivery.wait_delivered(
                 selected, timeout=min(float(timeout), 30.0), cancelled=cancelled)
             from .source_observers import NativeInitialInputDelivery
@@ -200,6 +214,7 @@ class RootTaskInputCoordinator:
                     or delivery.selected_execution_handle != selected.selection_handle
                     or delivery.input_sha256 != task_admission.stdin_sha256
                     or delivery.input_size_bytes != task_admission.stdin_size_bytes
+                    or getattr(delivery, "turn_handle", None) != turn_handle
                     or delivery.expires_monotonic > event.expires_monotonic
                     or delivery.expires_monotonic <= self.monotonic()):
                 raise AuthorityDenied("native.input.delivery", "producer take did not bind the selected input event")
@@ -261,6 +276,7 @@ class RootTaskInputCoordinator:
                     peer_pid=peer_pid, peer_uid=peer_uid,
                     peer_identity=peer_identity, profile_id=target_profile_id,
                     generation=target_generation,
+                    turn_handle=turn_handle,
                 )
             self.task_native_observations.bind_task_input(
                 task_handle=managed_task_handle, admission=admission_handle,
@@ -269,6 +285,11 @@ class RootTaskInputCoordinator:
             )
             return initial_receipt
         except BaseException:
+            if turn_handle is not None:
+                try:
+                    self.native_turn_observation.cancel_selected_turn(turn_handle)
+                except Exception:
+                    pass
             try:
                 self.native_input_delivery.cancel_selected_input(selected)
             except Exception:

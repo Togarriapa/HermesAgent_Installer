@@ -76,28 +76,32 @@ class NativeMemoryPluginTests(unittest.TestCase):
         spec.loader.exec_module(module)
         return module.HermesMemoryProvider(authority=authority)
 
-    def test_sync_turn_queues_once_without_running_data_plane(self):
+    def test_native_text_hooks_cannot_enqueue_unobserved_capture_events(self):
         authority = AuthorityFixture()
         with tempfile.TemporaryDirectory() as temporary:
             provider = self._installed_provider(temporary, authority)
             self.assertEqual(provider.name, "openviking")
             provider.initialize("session-1", hermes_home=temporary)
             provider.sync_turn("synthetic user fact", "short reply", session_id="session-1")
-        self.assertEqual(len(authority.enqueued), 1)
+            provider.on_memory_write("add", "memory", "synthetic write")
+        self.assertEqual(authority.enqueued, [])
         self.assertEqual(authority.requests, [])
-        self.assertEqual(provider._last_hook_status, "queued:job-receipt-1")
-        grant, payload = authority.enqueued[0]
-        self.assertEqual(grant["capability"], "memory-capture")
-        event = json.loads(payload)
-        self.assertNotIn("profile", event)
-        self.assertNotIn("namespace", event)
-        self.assertEqual(grant["context"].operation, "memory.enqueue")
-        self.assertEqual(grant["context"].final_payload_digest, hashlib.sha256(payload).hexdigest())
-        self.assertEqual(authority.context_requests[-1]["operation"], "memory.enqueue")
-        self.assertEqual(authority.context_requests[-1]["final_payload_digest"],
-                         hashlib.sha256(payload).hexdigest())
-        self.assertEqual(event["user_content"], "synthetic user fact")
-        self.assertNotIn("credential", json.dumps(event).lower())
+        self.assertEqual(provider._last_hook_status, "unavailable:source_event_missing")
+        self.assertEqual(authority.context_requests, [])
+
+    def test_search_returns_only_root_scoped_records(self):
+        authority = AuthorityFixture()
+        with tempfile.TemporaryDirectory() as temporary:
+            provider = self._installed_provider(temporary, authority)
+            provider.initialize("session-1", hermes_home=temporary)
+            authority.memory_request = lambda grant, **kwargs: SimpleNamespace(
+                status=200,
+                body=json.dumps({"records": [{"profile": "profile-a",
+                    "namespace": "namespace-a", "id": "memory-1",
+                    "source": "openviking", "text": "synthetic private fact"}]}).encode(),
+                receipt_id="search-1")
+            result = provider.prefetch("synthetic", session_id="session-1")
+        self.assertEqual(result, "synthetic private fact")
 
     def test_prefetch_fails_closed_on_cross_profile_or_namespace_result(self):
         authority = AuthorityFixture()
