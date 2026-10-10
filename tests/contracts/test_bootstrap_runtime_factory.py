@@ -26,6 +26,33 @@ from hermes_installer.authority.bootstrap_runtime_factory import (
 
 
 class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
+    def test_policy_identity_tags_reject_cross_domain_principal_substitution(self):
+        from hermes_installer.authority.bootstrap_runtime_factory import (
+            HERMES_SOURCE_ARTIFACT_ID, _POLICY_ID,
+        )
+        resolver = object.__new__(InstalledBootstrapPolicyResolver)
+        plan = {"bootstrap_policy_artifact_id": _POLICY_ID,
+                "allowed_artifact_ids": [HERMES_SOURCE_ARTIFACT_ID]}
+        selection = SimpleNamespace()
+        common = {"service_profile_id": "hermes-agent-native-v1",
+                  "service_account_name": "hermes-agent",
+                  "exclusive_group_name": "hermes-agent",
+                  "uid_allocation": "root-dedicated-account"}
+        cases = (
+            {**common, "identity_kind": "authentik-subject-v1",
+             "principal_id": "linux-local-owner:" + "a" * 64},
+            {**common, "identity_kind": "linux-local-owner-v1",
+             "principal_id": "authentik:" + "a" * 64,
+             "owner_binding_sha256": "b" * 64},
+        )
+        for identity in cases:
+            with self.subTest(identity_kind=identity["identity_kind"]), self.assertRaises(
+                    BootstrapEnrollmentPending):
+                resolver._parse_policy(
+                    {"schema": 1, "id": _POLICY_ID,
+                     "source_artifact_id": HERMES_SOURCE_ARTIFACT_ID,
+                     "identity_policy": identity}, "c" * 64, plan, selection)
+
     def test_active_enrollment_accessor_rejects_prepared_and_returns_only_current_commit(self):
         session = object.__new__(RootBootstrapSession)
         session._check_live = lambda: None
