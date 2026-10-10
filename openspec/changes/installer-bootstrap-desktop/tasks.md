@@ -258,3 +258,14 @@ Pinned runtime release asset redirect v116: `plans/amendments/2026-10-10-pinned-
 
 - [ ] `HI-T184.1` Implement exact schema2 finite network/runtime/source FK rows and acyclic canonical digest mapping. Exact contract: `plans/amendments/2026-10-10-network-row-wire-digest-boundaries-v184.md`; implementation/acceptance OPEN.
 - [ ] `HI-T184.2` Consume current row mapping and transient enclosing digest in real owner/manager lifecycle. Exact contract: `plans/amendments/2026-10-10-network-row-wire-digest-boundaries-v184.md`; implementation/acceptance OPEN.
+
+
+## v185 owner observation and proxy
+
+- [ ] `HI-T185.2` Bind actual worker proxy/native execute RPC to observed invocation/current one-use local grant and CAS. Exact contract `plans/amendments/2026-10-10-owner-overlay-observer-capture-rpc-v185.md`; implementation/acceptance OPEN.
+
+
+## v186 endpoint source phase
+
+- [ ] `HI-T186.1` Create and observe actual preactive root custody socket with no effects before signed recipe. Exact contract `plans/amendments/2026-10-10-preactive-authority-listener-custody-v186.md`; implementation/acceptance OPEN.
+- [ ] `HI-T186.2` Verify active adoption and one-use exact listener FD transfer/current active re-observation. Exact contract `plans/amendments/2026-10-10-preactive-authority-listener-custody-v186.md`; implementation/acceptance OPEN.

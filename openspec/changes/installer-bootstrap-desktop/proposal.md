@@ -227,3 +227,13 @@ Follow `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-produce
 ## Network wire/digest clarification v184
 
 Exact field sets/FKs/source and lifecycle mapping: `plans/amendments/2026-10-10-network-row-wire-digest-boundaries-v184.md` / `planning/network-row-wire-v184.json`. Generated AF_UNIX rows stay separate from existing TCP private-loopback rows; enclosing digest exists only on runtime projection. Pre-READY mount permits loader binding; effects require later actual READY/source/invocation/grant proof. All AC01..18 OPEN.
+
+
+## Owner observer/source/RPC clarification v185
+
+Exact typed registration/READY/module/source-capture and worker proxy→native.owner-overlay.execute→observed invocation→one-use grant contract: `plans/amendments/2026-10-10-owner-overlay-observer-capture-rpc-v185.md` / `planning/owner-overlay-observer-wire-v185.json`. Backend61 action schemas unchanged, no synthetic observer/source authority, all AC01..18 OPEN.
+
+
+## Preactive listener phase clarification v186
+
+Actual fixed root-owned listener before recipe signing and exact authenticated active FD adoption/re-observation: `plans/amendments/2026-10-10-preactive-authority-listener-custody-v186.md`. No future path/socketpair or prepared receipt substitutes for active authority; no effects before adoption. Source pins pending, all AC01..18 OPEN.
