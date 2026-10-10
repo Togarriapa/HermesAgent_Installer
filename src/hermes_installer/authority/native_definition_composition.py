@@ -46,6 +46,7 @@ class SelectedNativeSourceComposition:
     result_schema_receipts: tuple[Any, ...]
     operation_bundle: Any
     schema_receipts: tuple[Any, ...]
+    owner_overlay_source_records: tuple[Any, ...] = ()
 
 
 class RootSelectedNativeSourceComposer:
@@ -77,6 +78,13 @@ class RootSelectedNativeSourceComposer:
         reviewed = {f'{row.adapter_id}:tool:{row.native_tool_name}': row
                     for row in coverage.reviewed_definitions}
         roles, issuers, observers, role_handles = self._roles.selected_owner_overlay_source_rows(selection)
+        owner_overlay_sources = self._roles.selected_owner_overlay_source_records(selection)
+        owner_overlay_sources_by_registration = {
+            row['registration_id']: row for row in owner_overlay_sources
+        }
+        if (len(owner_overlay_sources_by_registration) != len(owner_overlay_sources)
+                or set(owner_overlay_sources_by_registration) != required):
+            raise PermissionError('selected owner-overlay source selectors do not cover exact registrations')
         registrations, schemas, schema_bytes, receipts, result_receipts = [], [], {}, [], []
         for operation in operations.operation_records:
             registration_id = operation['registration_id']
@@ -119,14 +127,21 @@ class RootSelectedNativeSourceComposer:
                                                 for name, field in row.argument_projection),
                     'workflow_id': None,
                 } for row in definition.action_bindings),
-                'observer_enrollment_ids': operation['source_observer_enrollment_ids'],
+                # Only the package's ordinary native registration observer may
+                # enter the generic registration projection.  The invocation
+                # and result selectors are signed in the separate local-owner
+                # catalog and are resolved by its typed observer branch.
+                'observer_enrollment_ids': (
+                    owner_overlay_sources_by_registration[registration_id][
+                        'package_observer_enrollment_id'],
+                ),
                 'generation': selection.native_package_generation,
             }))
         result = SelectedNativeSourceComposition(
             tuple(registrations), tuple(schemas), tuple(sorted(schema_bytes.items())),
             freeze(roles), freeze(issuers), freeze(observers), role_handles,
             tuple(sorted({row['effect_enrollment_id'] for row in operations.operation_records})),
-            tuple(result_receipts), operations, tuple(receipts))
+            tuple(result_receipts), operations, tuple(receipts), freeze(owner_overlay_sources))
         self._rows[selection.selection_handle] = result
         return result
 
@@ -138,7 +153,9 @@ class RootSelectedNativeSourceComposer:
         for receipt in row.schema_receipts:
             receipt.read_current()
         roles, issuers, observers, handles = self._roles.selected_owner_overlay_source_rows(selection)
+        owner_overlay_sources = self._roles.selected_owner_overlay_source_records(selection)
         if (roles != row.process_role_records or issuers != row.source_issuer_records
-                or observers != row.source_observer_policy_records or handles != row.source_role_selection_handles):
+                or observers != row.source_observer_policy_records or handles != row.source_role_selection_handles
+                or freeze(owner_overlay_sources) != row.owner_overlay_source_records):
             raise PermissionError('selected source role declaration changed')
         return row

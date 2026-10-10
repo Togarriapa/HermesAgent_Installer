@@ -607,6 +607,7 @@ class ProtectedEnrollmentCatalog:
                 raise EnrollmentDenied("native package does not join one exact process profile generation")
             parsed_native[key] = package
         self._native_packages = MappingProxyType(parsed_native)
+
         schema_rows: dict[tuple[str, str, str, str, str], Mapping[str, Any]] = {}
         for raw in native_schema_artifacts or ():
             if not isinstance(raw, Mapping):
@@ -875,6 +876,41 @@ class ProtectedEnrollmentCatalog:
                 raise EnrollmentDenied("operation parameter schema ID is duplicated")
             parsed_schemas[schema.schema_id] = schema
         self._parameter_schemas = MappingProxyType(parsed_schemas)
+        self._validate_observed_pm_worker_profile_references()
+
+    def _validate_observed_pm_worker_profile_references(self) -> None:
+        """Keep the one dynamic PM executable token inside its signed worker row."""
+        executable_id = "observed:pm-committed-venv-python"
+        for profile in self._records.values():
+            runtime_ids = getattr(profile, "runtime_artifact_ids", ())
+            operation_recipes = getattr(profile, "operation_recipes", {})
+            operation_refs = tuple(recipe for recipe in operation_recipes.values()
+                                   if recipe.executable_artifact_id == executable_id)
+            if executable_id not in runtime_ids and not operation_refs:
+                continue
+            if runtime_ids.count(executable_id) != 1:
+                raise EnrollmentDenied("observed PM executable must be one exact native runtime reference")
+            active_rows = tuple(row for row in self._active_network_generation_records.values()
+                                if row.get("service_enrollment_id") == profile.enrollment_id
+                                and row.get("service_generation") == profile.generation
+                                and row.get("process_profile_id") == profile.profile_id
+                                and row.get("process_profile_generation") == profile.generation)
+            if len(active_rows) != 1:
+                raise EnrollmentDenied("observed PM executable is outside one exact active worker generation")
+            runtime = self._native_worker_runtime_records.get(active_rows[0].get("worker_runtime_record_id"))
+            if runtime is None:
+                raise EnrollmentDenied("observed PM executable has no protected native worker runtime row")
+            identity = runtime.get("committed_venv_identity")
+            if (runtime.get("execution_mode") != "native-hermes-cli-module-v1"
+                    or not isinstance(identity, Mapping)
+                    or identity.get("executable_identity_id") != executable_id
+                    or identity.get("executable_sha256") != profile.executable_sha256
+                    or runtime.get("profile_id") != profile.profile_id
+                    or runtime.get("profile_generation") != profile.generation
+                    or runtime.get("service_enrollment_id") != profile.enrollment_id
+                    or any(recipe.executable_sha256 != identity["executable_sha256"]
+                           for recipe in operation_refs)):
+                raise EnrollmentDenied("observed PM executable differs from its signed worker identity")
 
     def resolve_native_package(self, package_id: str, generation: str) -> "NativePackageBinding":
         """Resolve a selected package row joined to this exact service generation.
@@ -1363,6 +1399,52 @@ class ProtectedEnrollmentCatalog:
                 or active.get("process_profile_generation") != service.generation):
             raise EnrollmentDenied("native worker network, service and runtime rows do not join")
         return network, active, runtime
+
+    def resolve_selected_native_worker_generation_candidates(
+            self, service_generation_digest: str,
+    ) -> tuple[tuple[Mapping[str, Any], Mapping[str, Any], Mapping[str, Any],
+                     HostServiceProfile, HostServiceProfile], ...]:
+        """Return the finite protected worker source candidates without caller IDs.
+
+        This is input to the separately held-source/active-publication resolver;
+        it is not itself executable authority.  Only the signed singleton row
+        set in this exact catalog generation can be returned.
+        """
+        if service_generation_digest != self.digest:
+            raise EnrollmentDenied("native worker candidates belong to a stale service generation")
+        if not self._native_worker_network_records:
+            return ()
+        active_rows = tuple(self._active_network_generation_records.values())
+        if len(active_rows) > 1:
+            raise EnrollmentDenied("native worker source candidate set is not a singleton")
+        candidates = []
+        for active in active_rows:
+            network_id = active.get("network_id")
+            profile_id = active.get("process_profile_id")
+            network, current_active, runtime = self.resolve_native_worker_generation(
+                network_id, profile_id, service_generation_digest=service_generation_digest)
+            service = self.resolve(current_active["service_enrollment_id"],
+                                   current_active["service_generation"])
+            profile = self.resolve_profile_generation(profile_id,
+                                                       current_active["process_profile_generation"])
+            executable_id = "observed:pm-committed-venv-python"
+            has_observed_reference = (
+                executable_id in profile.runtime_artifact_ids
+                or any(recipe.executable_artifact_id == executable_id
+                       for recipe in profile.operation_recipes.values()))
+            if has_observed_reference:
+                identity = runtime["committed_venv_identity"]
+                if (runtime.get("execution_mode") != "native-hermes-cli-module-v1"
+                        or identity.get("executable_identity_id") != executable_id
+                        or executable_id not in profile.runtime_artifact_ids
+                        or profile.executable_sha256 != identity.get("executable_sha256")
+                        or any(recipe.executable_artifact_id == executable_id
+                               and recipe.executable_sha256 != identity.get("executable_sha256")
+                               for recipe in profile.operation_recipes.values())):
+                    raise EnrollmentDenied(
+                        "observed PM executable reference does not join its exact selected native worker record")
+            candidates.append((network, current_active, runtime, profile, service))
+        return tuple(candidates)
 
     def resolve_owner_overlay_observer_records(
             self, *, profile_id: str, profile_generation: str,

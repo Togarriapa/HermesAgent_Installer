@@ -936,6 +936,11 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentPending("owner-overlay capture schema receipt is not owned by this setup session")
         return self._session._resolve_prepared_owner_overlay_capture_schema_module_receipt()
 
+    def resolve_prepared_owner_overlay_result_handler_module_receipt(self) -> RootReleaseModuleReceipt:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("owner-overlay result handler is not owned by this setup session")
+        return self._session._resolve_prepared_owner_overlay_result_handler_module_receipt()
+
     def resolve_prepared_native_capture_profile_receipts(
             self) -> tuple[RootPreparedReleaseMemberReceipt, ...]:
         if not secrets.compare_digest(self._seal, self._session._seal):
@@ -8800,6 +8805,52 @@ class RootBootstrapSession:
         if len(origins) != 1:
             raise BootstrapEnrollmentPending(
                 "owner-overlay capture schema module is outside the current root actor import closure")
+        prior = next((item for item in self._prepared_release_member_receipts.values()
+                      if item.artifact_id == artifact_id
+                      and item._prepared_generation_id == prepared.generation_id), None)
+        if prior is None:
+            handle = secrets.token_urlsafe(36)
+            prior = RootReleaseModuleReceipt(
+                artifact_id, relative_path, digest, size_bytes,
+                release.release_commit, release.deployment_receipt_sha256,
+                handle, self._handle.session_id, self._seal, self,
+                prepared.generation_id)
+            self._prepared_release_member_receipts[handle] = prior
+        prior.read_current()
+        actor.verify_current(release)
+        return prior
+
+    def _resolve_prepared_owner_overlay_result_handler_module_receipt(self) -> RootReleaseModuleReceipt:
+        """Resolve only the reviewed, root-imported local owner result handler."""
+        self._check_live()
+        self._refresh_authorization()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or not prepared.provision_receipt_handle):
+            raise BootstrapEnrollmentPending(
+                "owner-overlay result handler requires current empty prepared custody")
+        artifact_id = "installer-module:hermes_installer.authority.local_resource_effects"
+        relative_path = "lib/python/hermes_installer/authority/local_resource_effects.py"
+        source_artifact_id = "installer-reviewed-source-local-resource-effects-v180"
+        digest = "d79fa4c8693e4f6588cd351d51089e45173a437311d15a6dfae16e7e90178fb6"
+        size_bytes = 47_854
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        plan = self._factory.resolver.resolve(self._authorization.plan_artifact_id)
+        rows = [row for row in release.files if row.artifact_id == artifact_id
+                and row.relative_path == relative_path and row.sha256 == digest
+                and row.size_bytes == size_bytes and row.roles == ("module",) and row.mode == 0o444
+                and artifact_id in plan.allowed_artifact_ids
+                and source_artifact_id in plan.allowed_artifact_ids]
+        if len(rows) != 1:
+            raise BootstrapEnrollmentPending(
+                "owner-overlay result handler is not exactly authorized by the selected release plan")
+        origins = [origin for origin in actor.module_origins
+                   if origin[1] == str(release.release_root / relative_path)
+                   and origin[4] == digest]
+        if len(origins) != 1:
+            raise BootstrapEnrollmentPending(
+                "owner-overlay result handler is outside the current root actor import closure")
         prior = next((item for item in self._prepared_release_member_receipts.values()
                       if item.artifact_id == artifact_id
                       and item._prepared_generation_id == prepared.generation_id), None)

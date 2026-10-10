@@ -286,6 +286,7 @@ class VerifiedSourceObservation:
     selected_execution: Any = field(default=None, repr=False, compare=False)
     private_provider_route_ids: tuple[str, ...] = ()
     private_consent_selection_handle: str | None = None
+    owner_overlay_effect: Any = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if (not isinstance(self.payload_bytes, bytes) or not self.payload_bytes
@@ -398,6 +399,23 @@ class _PendingObservation:
     authority_epoch: str
     issued: float
     expires: float
+    owner_overlay_source: Any = None
+    owner_overlay_effect: Any = None
+
+
+@dataclass(frozen=True, slots=True)
+class _RootOwnerOverlaySourceAction:
+    """Finite typed action data from the signed local operation row."""
+
+    action_id: str
+    argument_schema_id: str
+    result_schema_id: str
+    effect_enrollment_id: str
+    operation: str
+    capability: str
+    target_id: str
+    recipient: str
+    generation: str
 
 
 @dataclass(slots=True)
@@ -583,7 +601,9 @@ class SourceObserverRegistry:
     def record_observed_event(self, observer_enrollment_id: str, *, payload_bytes: bytes,
                               parent_context: HostContext, peer_pid: int, peer_pidfd: int,
                               parent_receipt_handles: Sequence[str] = (),
-                              _selected_native_target: Any = None) -> str:
+                              _selected_native_target: Any = None,
+                              _selected_owner_overlay_source: Any = None,
+                              _selected_owner_overlay_effect: Any = None) -> str:
         """Capture exact bytes already observed by a selected root ingress/result adapter.
 
         The adapter selects the observer ID from protected dispatch state. This
@@ -624,7 +644,12 @@ class SourceObserverRegistry:
         self.service._verify_context_signature(parent_context)
         self.service._assert_current_context(parent_context, binding, observer.producer_uid)
         identity = self._resolve(observer, peer_pid, peer_pidfd)
-        package, adapter = self._resolve_package_role(observer)
+        if (_selected_owner_overlay_source is not None
+                and _selected_owner_overlay_effect is not None):
+            raise AuthorityDenied("source.owner_overlay", "owner source selection is ambiguous")
+        package, adapter = self._resolve_package_role(
+            observer, owner_overlay_source=_selected_owner_overlay_source,
+            owner_overlay_effect=_selected_owner_overlay_effect)
         if not callable(self.loaded_package_proof_resolver):
             raise AuthorityDenied("source.package", "root loaded-package custody proof is unavailable")
         loaded_package_proof = self._resolve_loaded_package_proof(
@@ -684,6 +709,7 @@ class SourceObserverRegistry:
                 selected_uid, selected_profile_id, selected_generation,
                 selected_target_identity, self.service.authority_epoch, now,
                 min(parent_context.monotonic_expires_at, now + observer.lease_seconds),
+                _selected_owner_overlay_source, _selected_owner_overlay_effect,
             )
             with self._lock:
                 if self._closed:
@@ -751,7 +777,9 @@ class SourceObserverRegistry:
             identity = self._resolve(observer, event.producer_pid, event.producer_pidfd)
             if identity != event.producer_identity:
                 raise AuthorityDenied("source.peer", "source producer identity or generation changed")
-            package, adapter = self._resolve_package_role(observer)
+            package, adapter = self._resolve_package_role(
+                observer, owner_overlay_source=event.owner_overlay_source,
+                owner_overlay_effect=event.owner_overlay_effect)
             if package != event.selected_package or adapter != event.selected_adapter:
                 raise AuthorityDenied("source.package", "selected immutable package or adapter binding changed")
             current_loaded_proof = self._resolve_loaded_package_proof(
@@ -848,6 +876,7 @@ class SourceObserverRegistry:
                 private_consent_selection_handle=(
                     getattr(_selected_execution, "private_consent_selection_handle", None)
                     if _selected_execution is not None else None),
+                owner_overlay_effect=event.owner_overlay_effect,
             )
             if _defer_public_input_disclosure:
                 if (_selected_execution is None
@@ -1033,6 +1062,113 @@ class SourceObserverRegistry:
                     self._capsule_bytes_reserved -= len(event.payload)
             os.close(event.producer_pidfd)
             os.close(event.target_peer_pidfd)
+
+    def record_owner_overlay_result(self, *, verified_effect: Any, result_observer: Any,
+                                    canonical_result_bytes: bytes,
+                                    observer_enrollment_id: str) -> str:
+        """Capture a completed local effect through its separately signed result selector.
+
+        This root-only method constructs the capture bytes and their lineage from
+        the paired consumed effect. No worker-supplied body, parent list, or
+        observer ID is trusted.
+        """
+        from .local_resource_effects import (
+            RootActiveOwnerOverlayResultSourceObserver,
+            RootVerifiedOwnerOverlayEffect,
+            _OWNER_OVERLAY_EFFECT_SEAL,
+        )
+        from .owner_overlay_capture_schemas import RESULT_SCHEMA_ID
+        from .types import HostContext
+        import base64
+        import json
+
+        active = getattr(self.service, "active_owner_overlay_registry", None)
+        try:
+            if (active is None or type(verified_effect) is not RootVerifiedOwnerOverlayEffect
+                    or verified_effect._seal is not _OWNER_OVERLAY_EFFECT_SEAL
+                    or verified_effect.selection._issuer is not active
+                    or type(result_observer) is not RootActiveOwnerOverlayResultSourceObserver
+                    or result_observer._issuer is not active
+                    or result_observer.selection is not verified_effect.selection
+                    or observer_enrollment_id != result_observer.observer_row["result_observer_enrollment_id"]
+                    or not isinstance(canonical_result_bytes, bytes) or not canonical_result_bytes):
+                raise AuthorityDenied("source.owner_overlay", "completed owner result is not root selected")
+            active.verify_current(verified_effect.selection)
+            active._effect_authority.verify_completed_effect(
+                verified_effect, hashlib.sha256(canonical_result_bytes).hexdigest())
+            observer = self.observers.get(observer_enrollment_id)
+            if observer is not result_observer.enrollment:
+                raise AuthorityDenied("source.owner_overlay", "signed result enrollment changed")
+            operation = verified_effect.selection.operation_record
+            catalog = getattr(getattr(self.service.native_invocation_registry,
+                                      "action_resolver", None), "schema_catalog", None)
+            from hermes_installer.authority.runtime_composition import _native_json_schema_matches
+            from .types import strict_json_loads
+            result_value = strict_json_loads(canonical_result_bytes.decode("utf-8", errors="strict"))
+            result_schema = catalog.resolve(
+                operation["result_schema_id"], native_package_id=verified_effect.selection.package_id,
+                native_package_generation=verified_effect.selection.package_generation,
+                adapter_id="resource-overlay-store", action_id=operation["registration_id"],
+                schema_kind="result")
+            if (not _native_json_schema_matches(result_value, result_schema)
+                    or json.dumps(result_value, sort_keys=True, separators=(",", ":"),
+                                  ensure_ascii=False, allow_nan=False).encode("utf-8")
+                       != canonical_result_bytes):
+                raise AuthorityDenied("source.owner_overlay", "completed result differs from held result schema")
+            invocation = verified_effect.invocation
+            parents = tuple(invocation.parent_source_receipt_handles)
+            if (not parents or len(parents) > MAX_PARENT_RECEIPTS or len(set(parents)) != len(parents)
+                    or invocation.invocation_source_receipt_handle not in parents):
+                raise AuthorityDenied("source.owner_overlay", "invocation receipt ancestry is incomplete")
+            payload_value = {
+                "schema": 1, "invocation_handle": invocation.invocation_handle,
+                "registration_id": operation["registration_id"],
+                "result_schema_id": RESULT_SCHEMA_ID,
+                "result_sha256": hashlib.sha256(canonical_result_bytes).hexdigest(),
+                "canonical_result_b64": base64.b64encode(canonical_result_bytes).decode("ascii"),
+                "parent_source_receipt_handles": list(parents),
+            }
+            payload = json.dumps(payload_value, sort_keys=True, separators=(",", ":"),
+                                 ensure_ascii=False, allow_nan=False).encode("utf-8")
+            if (set(payload_value) != {"schema", "invocation_handle", "registration_id",
+                                       "result_schema_id", "result_sha256", "canonical_result_b64",
+                                       "parent_source_receipt_handles"}
+                    or payload_value["result_schema_id"] != RESULT_SCHEMA_ID
+                    or payload_value["registration_id"] != operation["registration_id"]):
+                raise AuthorityDenied("source.owner_overlay", "owner result capture differs from its fixed schema")
+            context_wire = self.service._issue_context(
+                observer.producer_uid,
+                {"purpose": "native-owner-overlay-result",
+                 "intent": f"{invocation.invocation_handle}:{operation['registration_id']}",
+                 "trace_id": invocation.invocation_handle,
+                 "lease_seconds": max(1, min(30, int(verified_effect.peer.expires_monotonic
+                                                     - self.service.monotonic()))),
+                 "source_contexts": [], "source_receipt_handles": list(parents),
+                 "final_payload_digest": canonical_digest(payload),
+                 "operation": "native.request.dispatch"},
+                peer_pid=verified_effect.peer.pid)
+            context = HostContext.from_wire(context_wire)
+            if (context.uid != observer.producer_uid
+                    or context.native_process_identity != invocation.producer_identity):
+                raise AuthorityDenied("source.owner_overlay", "root result source context peer changed")
+            event = self.record_observed_event(
+                observer_enrollment_id, payload_bytes=payload, parent_context=context,
+                peer_pid=verified_effect.peer.pid, peer_pidfd=verified_effect.peer.pidfd,
+                parent_receipt_handles=parents,
+                _selected_owner_overlay_effect=verified_effect)
+            receipt = self.capture_observed_source(
+                observer_enrollment_id, event, payload, parent_receipt_handles=parents)
+            delivered = self.take_source_receipt(
+                str(receipt), peer_uid=verified_effect.peer.uid,
+                peer_pid=verified_effect.peer.pid, peer_pidfd=verified_effect.peer.pidfd)
+            if str(delivered) != str(receipt):
+                raise AuthorityDenied("source.owner_overlay", "owner result receipt delivery changed")
+            active._effect_authority.record_result_capture(verified_effect, str(receipt))
+            return str(receipt)
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("source.owner_overlay", "current signed owner result capture is unavailable") from None
 
     def take_source_receipt(self, handle: str, *, peer_uid: int, peer_pid: int,
                             peer_pidfd: int) -> SourceReceiptHandle:
@@ -2678,13 +2814,19 @@ class SourceObserverRegistry:
             raise AuthorityDenied("source.peer", "source producer is not a live enrolled package role")
         return identity
 
-    def _resolve_package_role(self, observer: SourceObserverEnrollment) -> tuple[Any, Any]:
+    def _resolve_package_role(self, observer: SourceObserverEnrollment, *,
+                              owner_overlay_source: Any = None,
+                              owner_overlay_effect: Any = None) -> tuple[Any, Any]:
         """Resolve the independent process role and its exact action binding.
 
         A process-role artifact proves which module the producer is allowed to
         load. The action record separately supplies operation, target, schema,
         and recipient. Adapter artifacts are never promoted to process roles.
         """
+        if owner_overlay_source is not None or owner_overlay_effect is not None:
+            return self._resolve_owner_overlay_package_role(
+                observer, owner_overlay_source=owner_overlay_source,
+                owner_overlay_effect=owner_overlay_effect)
         package_generation = observer.native_package_generation or observer.generation
         if (observer.native_package_generation is None
                 or observer.source_action_binding_id is None
@@ -2776,6 +2918,94 @@ class SourceObserverRegistry:
                        for name in ("source_tree_sha256", "entrypoint_sha256", "resolver_sha256"))):
             raise AuthorityDenied("source.package", "selected package closure or adapter record is incomplete")
         return package, action
+
+    def _resolve_owner_overlay_package_role(self, observer: SourceObserverEnrollment, *,
+                                            owner_overlay_source: Any,
+                                            owner_overlay_effect: Any) -> tuple[Any, Any]:
+        """Resolve the typed local operation without entering backend action rows."""
+        from .local_resource_effects import (
+            RootActiveOwnerOverlayResultSourceObserver,
+            RootActiveOwnerOverlaySourceObserver,
+            RootVerifiedOwnerOverlayEffect,
+            _OWNER_OVERLAY_EFFECT_SEAL,
+        )
+
+        active = getattr(self.service, "active_owner_overlay_registry", None)
+        result_capture = owner_overlay_effect is not None
+        if (active is None or result_capture == (owner_overlay_source is not None)
+                or (result_capture and (
+                    type(owner_overlay_effect) is not RootVerifiedOwnerOverlayEffect
+                    or owner_overlay_effect._seal is not _OWNER_OVERLAY_EFFECT_SEAL
+                    or type(owner_overlay_source) is not RootActiveOwnerOverlayResultSourceObserver
+                    or owner_overlay_source._issuer is not active
+                    or owner_overlay_source.selection is not owner_overlay_effect.selection
+                    or owner_overlay_source.observer_row.get("result_observer_enrollment_id")
+                       != observer.observer_enrollment_id))
+                or (not result_capture and (
+                    type(owner_overlay_source) is not RootActiveOwnerOverlaySourceObserver
+                    or owner_overlay_source._issuer is not active
+                    or owner_overlay_source.observer_row.get("observer_enrollment_id")
+                       != observer.observer_enrollment_id))):
+            raise AuthorityDenied("source.owner_overlay", "typed selected owner observer is unavailable")
+        selected = (owner_overlay_effect.selection if result_capture
+                    else owner_overlay_source.selection)
+        active.verify_current(selected)
+        operation = selected.operation_record
+        row = (owner_overlay_source.observer_row if result_capture
+               else owner_overlay_source.observer_row)
+        expected_kind = "tool-result" if result_capture else "provider-result"
+        expected_schema = ("native-owner-overlay-result-v1" if result_capture
+                           else "native-owner-overlay-invocation-v1")
+        if (observer.source_kind != expected_kind
+                or observer.capture_schema_id != expected_schema
+                or observer.source_action_id != ("registered-tool-result" if result_capture
+                                                 else "registered-effect-result")
+                or observer.profile_id != selected.principal_snapshot.profile_id
+                or observer.generation != selected.principal_snapshot.profile_generation
+                or observer.principal_id != selected.principal_snapshot.principal_id
+                or observer.namespace_id != selected.principal_snapshot.namespace_id
+                or observer.package_id != selected.package_id
+                or observer.native_package_generation != selected.package_generation
+                or observer.role_id != operation["process_role_id"]
+                or operation["registration_id"] not in observer.source_registration_ids
+                or observer.target_id != operation["target_id"]
+                or observer.recipient != operation["recipient"]
+                or row.get("registration_id") != operation["registration_id"]
+                or observer.channel_id != row.get(
+                    "result_channel_id" if result_capture else "channel_id")):
+            raise AuthorityDenied("source.owner_overlay", "signed owner observer differs from its selected operation")
+        try:
+            package = self.package_resolver(observer.package_id, selected.package_generation)
+        except Exception:
+            raise AuthorityDenied("source.package", "selected local native package is unavailable") from None
+        roles = getattr(package, "process_role_records", {}) if package is not None else {}
+        role = roles.get(operation["process_role_id"]) if isinstance(roles, Mapping) else None
+        loaded = selected.loaded_role_proof
+        if (package is None
+                or getattr(package, "package_id", None) != selected.package_id
+                or getattr(package, "profile_id", None) != selected.principal_snapshot.profile_id
+                or getattr(package, "generation", None) != selected.package_generation
+                or getattr(package, "compiled_closure_sha256", None)
+                   != selected.operation_record.get("compiled_closure_sha256",
+                       getattr(package, "compiled_closure_sha256", None))
+                or role is None
+                or getattr(role, "role_sha256", None) != loaded.role_sha256
+                or getattr(role, "role_artifact_id", None) != observer.role_artifact_id
+                or getattr(role, "role_source_receipt_handle", None)
+                   != observer.role_source_receipt_handle
+                or getattr(role, "module_name", None) != observer.role_module_name
+                or getattr(role, "closure_member_path", None) != observer.role_closure_member_path
+                or observer.observer_enrollment_id not in getattr(role, "observer_enrollment_ids", ())
+                or operation["registration_id"] not in getattr(role, "registration_ids", ())
+                or operation["registration_id"] not in getattr(loaded, "observed_registration_ids", ())):
+            raise AuthorityDenied("source.owner_overlay", "local role/module/READY registration join changed")
+        return package, _RootOwnerOverlaySourceAction(
+            operation["registration_id"], operation["argument_schema_id"],
+            operation["result_schema_id"], operation["effect_enrollment_id"],
+            operation["operation"], operation["capability"],
+            operation["target_id"], operation["recipient"] or "local-owner-overlay",
+            selected.package_generation,
+        )
 
     def _resolve_loaded_package_proof(self, identity: Any,
                                       observer: SourceObserverEnrollment,

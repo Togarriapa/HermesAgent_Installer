@@ -332,6 +332,46 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         with self.assertRaisesRegex(BootstrapEnrollmentPending, "outside the current root actor"):
             session._resolve_prepared_native_action_schema_module_receipts()
 
+    def test_owner_overlay_result_handler_receipt_is_finite_and_root_imported(self):
+        artifact_id = "installer-module:hermes_installer.authority.local_resource_effects"
+        relative_path = "lib/python/hermes_installer/authority/local_resource_effects.py"
+        digest = "d79fa4c8693e4f6588cd351d51089e45173a437311d15a6dfae16e7e90178fb6"
+        source_artifact_id = "installer-reviewed-source-local-resource-effects-v180"
+        row = SimpleNamespace(
+            artifact_id=artifact_id, relative_path=relative_path, sha256=digest,
+            size_bytes=47_854, roles=("module",), mode=0o444)
+        release = SimpleNamespace(
+            files=(row,), release_root=Path("/release"), release_commit="commit",
+            deployment_receipt_sha256="d" * 64)
+        origin = ("module", f"/release/{relative_path}", "origin", "loader", digest)
+        actor = SimpleNamespace(module_origins=(origin,), verify_current=lambda _release: None)
+        session = object.__new__(RootBootstrapSession)
+        session._check_live = lambda: None
+        session._refresh_authorization = lambda: None
+        session._authorization = SimpleNamespace(plan_artifact_id="plan")
+        session._last_receipt = SimpleNamespace(
+            state="prepared", enrollment_ids=(), provision_receipt_handle="prepared",
+            generation_id="generation")
+        session._handle = SimpleNamespace(session_id="session")
+        session._seal = "session-seal"
+        session._prepared_release_member_receipts = {}
+        session._read_release_member_receipt = lambda _receipt: b"held verified module bytes"
+        session._factory = SimpleNamespace(
+            _release=release, _actor=actor,
+            resolver=SimpleNamespace(resolve=lambda _plan: SimpleNamespace(
+                allowed_artifact_ids=(artifact_id, source_artifact_id))))
+
+        receipt = session._resolve_prepared_owner_overlay_result_handler_module_receipt()
+        self.assertIs(type(receipt), RootReleaseModuleReceipt)
+        self.assertEqual((receipt.artifact_id, receipt.relative_path, receipt.sha256, receipt.size_bytes),
+                         (artifact_id, relative_path, digest, 47_854))
+        self.assertEqual(receipt.read_current(), b"held verified module bytes")
+        self.assertIs(receipt, session._resolve_prepared_owner_overlay_result_handler_module_receipt())
+
+        actor.module_origins = ()
+        with self.assertRaisesRegex(BootstrapEnrollmentPending, "outside the current root actor"):
+            session._resolve_prepared_owner_overlay_result_handler_module_receipt()
+
     def test_native_assembly_requires_retained_root_tty_policy_selection(self):
         session = object.__new__(RootBootstrapSession)
         session._check_live = lambda: None
