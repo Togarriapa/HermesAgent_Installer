@@ -149,6 +149,91 @@ class InstalledStagePublicationTests(unittest.TestCase):
                              b"verified source bytes")
             self.assertEqual(release.stat().st_mode & 0o777, 0o555)
 
+    def test_update_controller_expiry_at_pre_cas_keeps_exact_predecessor_pointer(self):
+        """A delayed update cannot switch the pointer after its explicit TTY proof expires."""
+        with tempfile.TemporaryDirectory() as temp:
+            root, receipt, record_path, release, _absent = self._fixture(temp)
+            deploy = record_path.parent
+            old_release = root / "releases" / ("c" * 40)
+            old_release.mkdir(mode=0o555)
+            old_info = old_release.stat()
+            old_record = {
+                "schema": 1,
+                "receipt_id": "r" * 32,
+                "candidate_git_sha": "c" * 40,
+                "release_root": str(old_release),
+                "release_device": old_info.st_dev,
+                "release_inode": old_info.st_ino,
+                "closure_manifest_relative_path": "release-manifest.json",
+                "closure_manifest_sha256": "d" * 64,
+                "baseline_tree_sha256": "e" * 64,
+                "published_monotonic": 1.0,
+            }
+            old_raw = _canonical(old_record)
+            record_path.write_bytes(old_raw)
+            os.chmod(record_path, 0o600)
+            pointer_info = record_path.stat()
+            parent_info = deploy.stat()
+            predecessor = release_build.DeploymentPredecessor(
+                "present", parent_info.st_dev, parent_info.st_ino, _sha(old_raw),
+                pointer_info.st_dev, pointer_info.st_ino, "c" * 40)
+            snapshot = {
+                "schema": 1,
+                "update_transaction_handle": "u" * 43,
+                "candidate_git_sha": receipt.candidate_git_sha,
+                "selection_choice_sha256": "f" * 64,
+                "lifecycle_action": "update",
+                "pointer": {
+                    "parent_device": predecessor.parent_device,
+                    "parent_inode": predecessor.parent_inode,
+                    "candidate_git_sha": predecessor.candidate_git_sha,
+                    "sha256": predecessor.sha256,
+                    "device": predecessor.device,
+                    "inode": predecessor.inode,
+                    "canonical_bytes_b64": __import__("base64").b64encode(old_raw).decode("ascii"),
+                },
+                "release": {
+                    "root_device": old_info.st_dev,
+                    "root_inode": old_info.st_ino,
+                    "closure_manifest_sha256": "d" * 64,
+                    "baseline_tree_sha256": "e" * 64,
+                    "amendment_manifest_sha256": "a" * 64,
+                },
+            }
+            transition = release_build.RootAdmittedInstallerUpdate(
+                release_build._UPDATE_TRANSITION_SEAL,
+                update_transaction_handle=snapshot["update_transaction_handle"],
+                candidate_git_sha=receipt.candidate_git_sha,
+                selection_choice_sha256=snapshot["selection_choice_sha256"],
+                predecessor_json=release_build._canonical_json(snapshot),
+            )
+            expired = BootstrapEnrollmentPending("root TTY candidate controller is no longer current")
+            controller = {
+                "candidate_git_sha": receipt.candidate_git_sha,
+                "lifecycle_action": "update",
+                "controller_pid": os.getpid(),
+                "controller_start_ticks": 1,
+                "expires_monotonic": 2.0,
+            }
+            with tempfile.TemporaryDirectory(dir=root) as tx_temp:
+                tx_root = Path(tx_temp) / "transactions"
+                tx_root.mkdir(mode=0o700)
+                with (patch.object(release_build.RootAdmittedInstallerUpdate,
+                                   "verify_current", return_value=None),
+                      patch("hermes_installer.authority.installer_release_build._verify_current_selection_snapshot",
+                            side_effect=[None, expired])):
+                    with self.assertRaises(BootstrapEnrollmentPending):
+                        _publish_retained_build(
+                            receipt=receipt, release_root=release, receipt_path=record_path,
+                            expected_uid=os.getuid(), predecessor=predecessor,
+                            update_transition=transition, controller_snapshot=controller,
+                            update_transaction_root=tx_root,
+                        )
+                transaction = json.loads(
+                    (tx_root / (snapshot["update_transaction_handle"] + ".json")).read_bytes())
+                self.assertEqual(transaction["state"], "publication-prepared")
+            self.assertEqual(record_path.read_bytes(), old_raw)
+
     def test_fixed_release_store_directory_conflicts_are_preserved_and_denied(self):
         with tempfile.TemporaryDirectory() as temp:
             parent = Path(temp) / "usr-lib"

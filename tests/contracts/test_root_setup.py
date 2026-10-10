@@ -678,26 +678,22 @@ class RootSetupBoundaryTests(unittest.TestCase):
         self.assertEqual(result.state, RootSetupState.FAILED)
         self.assertEqual(result.phase, "admission")
 
-    def test_first_source_bootstrap_requires_proven_absent_predecessor_and_keeps_action(self) -> None:
-        from hermes_installer.authority.bootstrap_enrollment import BootstrapEnrollmentPending
-
+    def test_update_requires_a_present_verified_predecessor(self) -> None:
         predecessor = type("Predecessor", (), {"state": "absent", "verify_current": lambda self: None})()
         registry = RootBootstrapCandidateSelectionRegistry()
-        choice = object()
         with patch.object(root_setup, "_require_root_linux"), \
              patch("hermes_installer.authority.installer_release_build.observe_deployment_predecessor",
                    return_value=predecessor), \
              patch.object(root_setup, "RootBootstrapCandidateSelectionRegistry", return_value=registry), \
-             patch.object(registry, "issue_explicit_tty_choice", return_value=choice) as issue, \
-             patch("hermes_installer.authority.installer_release_build.bootstrap_selected_release",
-                   side_effect=BootstrapEnrollmentPending("exec handoff unavailable")) as bootstrap, \
+             patch.object(registry, "issue_explicit_tty_choice") as issue, \
+             patch("hermes_installer.authority.installer_release_build.bootstrap_selected_release") as bootstrap, \
              patch("hermes_installer.authority.installer_release.InstalledRootReleaseVerifier.from_current_root_process",
                    side_effect=AssertionError("must not inspect installed actor for absent deployment")):
             result = run_root_setup_action(RootSetupAction.UPDATE)
-        issue.assert_called_once_with(RootSetupAction.UPDATE)
-        bootstrap.assert_called_once_with(choice, registry)
+        issue.assert_not_called()
+        bootstrap.assert_not_called()
         self.assertEqual(result.state, RootSetupState.PENDING)
-        self.assertEqual(result.phase, "distribution")
+        self.assertEqual(result.phase, "admission")
 
     def test_present_predecessor_never_starts_first_source_bootstrap(self) -> None:
         from hermes_installer.authority.bootstrap_enrollment import BootstrapEnrollmentPending
