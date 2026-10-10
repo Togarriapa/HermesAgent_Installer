@@ -1349,6 +1349,8 @@ class SourceObserverRegistry:
             if (getattr(consent, "selection_handle", None)
                     != observation.private_consent_selection_handle
                     or getattr(consent, "input_observation_handle", None)
+                    != observation.proof_nonce
+                    or getattr(consent, "retained_input_selection_handle", None)
                     != selected_execution.selection_handle
                     or getattr(consent, "profile_id", None) != selected_execution.profile_id
                     or getattr(consent, "service_generation_digest", None)
@@ -2227,7 +2229,7 @@ class NativeInitialInputDelivery:
             raise ValueError("native initial-input delivery response is malformed")
 
     def to_wire(self) -> dict[str, Any]:
-        wire = {
+        result = {
             "schema": self.schema,
             "source_receipt_handle": self.source_receipt_handle,
             "selected_execution_handle": self.selected_execution_handle,
@@ -2236,8 +2238,8 @@ class NativeInitialInputDelivery:
             "expires_monotonic": self.expires_monotonic,
         }
         if self.turn_handle is not None:
-            wire["turn_handle"] = self.turn_handle
-        return wire
+            result["turn_handle"] = self.turn_handle
+        return result
 
 
 @dataclass(slots=True)

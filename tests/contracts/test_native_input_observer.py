@@ -33,6 +33,28 @@ class NativeInputObserverContracts(unittest.TestCase):
                 invocation_id="invocation:root-owned", private_consent_selection_handle="worker-claim",
             )
 
+    def test_selected_resource_factory_has_no_legacy_worker_selected_resolvers(self):
+        registry = SimpleNamespace(capture_observed_ingress=lambda *_a, **_k: None)
+        selected = SimpleNamespace(
+            select_resource_task=lambda *_a: None,
+            resolve_selected_native_input_target=lambda *_a: None,
+        )
+        observer = RootNativeInputObserver.for_selected_resource_tasks(
+            service=SimpleNamespace(), source_observers=registry,
+            selected_execution_registry=selected,
+            process_resolver=lambda *_a, **_k: None,
+            loaded_package_proof_resolver=lambda *_a, **_k: None,
+            monotonic=lambda: 10.0,
+        )
+        self.assertIs(observer.selected_execution_registry, selected)
+        self.assertIsNone(observer.task_input_resolver)
+        self.assertIsNone(observer.health_input_resolver)
+        self.assertIsNone(observer.desktop_input_resolver)
+        with self.assertRaises(AuthorityDenied):
+            observer.record_admitted_task_input("a" * 32, "node:one", object(), b"input")
+        with self.assertRaises(AuthorityDenied):
+            observer.record_selected_health_input("h" * 32, object(), "fixture:one")
+
     def test_unregistered_native_input_fails_closed_and_closes_transferred_pidfd(self):
         read_fd, write_fd = os.pipe()
         os.close(write_fd)

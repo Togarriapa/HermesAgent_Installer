@@ -304,6 +304,9 @@ def test_root_selected_task_dispatch_consumes_one_ledger_bound_handle(tmp_path):
     def launcher(handle, node_id):
         observed_handles.append(handle)
         authority.consume_task_handle(handle, node_id)
+        assert authority.resolve_task_child_admission(handle, node_id) is child
+        with pytest.raises(AuthorityDenied, match="exact consumed handle"):
+            authority.resolve_task_child_admission(replace(handle), node_id)
         observed_sources.append(authority.resolve_admitted_task_source(handle, node_id))
         observed_tasks.append(authority.resolve_admitted_task(handle, node_id))
         with pytest.raises(AuthorityDenied, match="one-use"):
@@ -552,8 +555,23 @@ def test_root_event_admission_requires_exact_registry_handle_and_persists_once(t
         _profile_binding=lambda _enrollment: object(),
         resolve_for_event=lambda _candidate, _node: SimpleNamespace(
             controller_kind="root-scheduler", uid=0, service_generation_digest=service.service_generation_digest,
+            controller_profile_id=None, expires_monotonic=now() + 30,
             pidfd=os.open("/dev/null", os.O_RDONLY)),
     )
+    controller_registry._resource_job_authority = None
+    controller_registry._event_admissions = {}
+    def attach_job_authority(value):
+        if controller_registry._resource_job_authority is not None:
+            raise RuntimeError("already attached")
+        controller_registry._resource_job_authority = value
+    def bind_job_admission(candidate, value):
+        if candidate is not handle or controller_registry._resource_job_authority is not authority:
+            raise RuntimeError("wrong event or authority")
+        if not authority.is_root_admission_current(candidate, value):
+            raise RuntimeError("stale admission")
+        controller_registry._event_admissions[candidate.handle] = value
+    controller_registry.attach_resource_job_authority = attach_job_authority
+    controller_registry.bind_admitted_job = bind_job_admission
     issuer = SimpleNamespace(
         service=None,
         controller_registry=controller_registry,
@@ -602,6 +620,8 @@ def test_root_event_admission_requires_exact_registry_handle_and_persists_once(t
     assert admission.resource_id == "demo"
     assert admission.generation == enrollment.generation
     assert authority._root_event_admissions[handle.handle] == (handle, admission)
+    assert controller_registry._resource_job_authority is authority
+    assert controller_registry._event_admissions[handle.handle] is admission
     retained = authority._source_closures_by_job[admission.job_id]
     assert retained[0] is context and retained[1] == (receipt,)
     with pytest.raises(AuthorityDenied, match="already admitted"):
