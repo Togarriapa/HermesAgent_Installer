@@ -3094,7 +3094,10 @@ class RootInitialSetupAggregate:
         self._require_open()
         factory = RootBootstrapRuntimeFactory(
             _release=self.release, _actor=self.actor,
-            _initial_compilation_registry=self.initial_registry)
+            _initial_compilation_registry=self.initial_registry,
+            _initial_principal_registry=self.principal_registry,
+            _initial_identity_observer=self.identity_observer,
+            _initial_identity_intake=self.identity_intake)
         self._transferred = True
         try:
             session = factory.begin_from_initial_publication(handoff_handle)
@@ -3127,7 +3130,10 @@ class RootBootstrapRuntimeFactory:
     """Production root-owned assembly for setup, prepared enrollment and activation."""
 
     def __init__(self, *, _release: Any | None = None, _actor: Any | None = None,
-                 _initial_compilation_registry: "RootInitialCompilationRegistry | None" = None):
+                 _initial_compilation_registry: "RootInitialCompilationRegistry | None" = None,
+                 _initial_principal_registry: Any | None = None,
+                 _initial_identity_observer: Any | None = None,
+                 _initial_identity_intake: Any | None = None):
         if os.getuid() != 0 or os.geteuid() != 0 or not InstalledBootstrapPolicyResolver._linux():
             raise BootstrapEnrollmentPending("root bootstrap runtime exists only in the installed Linux root process")
         from .installer_release import (InstalledRootReleaseVerifier,
@@ -3147,7 +3153,35 @@ class RootBootstrapRuntimeFactory:
                      or _initial_compilation_registry.actor is not _actor)):
             raise BootstrapEnrollmentPending("initial publication registry is not bound to this held release actor")
         self._initial_compilation_registry = _initial_compilation_registry
+        if ((_initial_principal_registry is None)
+                != (_initial_identity_observer is None)
+                or (_initial_principal_registry is None)
+                != (_initial_identity_intake is None)):
+            raise BootstrapEnrollmentPending(
+                "initial principal registry, identity observer, and intake must transfer together")
+        self._initial_principal_registry = _initial_principal_registry
+        self._initial_identity_observer = _initial_identity_observer
+        self._initial_identity_intake = _initial_identity_intake
         self.resolver = InstalledBootstrapPolicyResolver(_SELECTION_PATH)
+        if _initial_principal_registry is not None:
+            from .setup_principal import (
+                RootSetupAuthentikIdentityObserver, RootSetupIdentityIntake,
+                RootSetupPrincipalSelectionRegistry,
+            )
+            if (not isinstance(_initial_principal_registry, RootSetupPrincipalSelectionRegistry)
+                    or not isinstance(_initial_identity_observer, RootSetupAuthentikIdentityObserver)
+                    or not isinstance(_initial_identity_intake, RootSetupIdentityIntake)
+                    or _initial_principal_registry.identity_resolver is not _initial_identity_observer
+                    or _initial_identity_observer.policy_resolver is not _initial_identity_intake
+                    or _initial_principal_registry.setup_session_store is not _initial_compilation_registry
+                    or _initial_identity_observer.setup_session_store is not _initial_compilation_registry
+                    or _initial_identity_intake.initial_registry is not _initial_compilation_registry
+                    or _initial_identity_intake.actor_verifier is not _initial_compilation_registry.actor_verifier
+                    or _initial_identity_intake.vault is not _initial_identity_observer.vault
+                    or _initial_principal_registry.root_journal != self.resolver.journal_root
+                    or _initial_identity_observer.root_journal != self.resolver.journal_root):
+                raise BootstrapEnrollmentPending(
+                    "transferred principal registry and identity observer do not match the held initial setup")
         # Resolving the catalog authenticates the installed catalog bytes before
         # any root store or session object is constructed.
         try:
