@@ -838,7 +838,7 @@ class NativeEventClientContracts(unittest.TestCase):
                 return NativeResponseMetadata("p" * 40, (NativeToolCallBinding(
                     observed_call_handle="c" * 40, provider_tool_call_id="call_1",
                     tool_name="selected_tool", arguments_sha256="a" * 64,
-                ),))
+                ),), "t" * 40, "f" * 40)
 
         service = AuthorityService(
             signing_key=b"n" * 32, key_id="native-response-take-fixture",
@@ -849,7 +849,10 @@ class NativeEventClientContracts(unittest.TestCase):
                    "response_body_sha256": "b" * 64, "native_request_handle": "r" * 40}
         result = service._dispatch(binding.uid, 123, 8, "native.response.take", request,
                                    cancelled=lambda: False)
-        self.assertEqual(set(result), {"producer_context_handle", "tool_call_bindings"})
+        self.assertEqual(set(result), {"producer_context_handle", "tool_call_bindings",
+                                       "turn_handle", "final_response_delivery_handle"})
+        self.assertEqual(result["turn_handle"], "t" * 40)
+        self.assertEqual(result["final_response_delivery_handle"], "f" * 40)
         self.assertEqual(calls, [(binding.uid, 123, 8, "d" * 43, "b" * 64, "r" * 40)])
         client = AuthorityClient(Path("/unused"), server_uid=0)
         requests = []

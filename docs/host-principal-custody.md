@@ -40,6 +40,14 @@ Native bridge rows carry explicit producer/gateway observer-delivery maps; a pee
 
 ## Verification distinction
 
+### HI11 native provider request admission
+
+`authority.native_bridge.NativeBridgeBroker.prepare` now authenticates the producer from the current kernel peer and protected bridge row, resolves the complete retained signed parent-source closure, and runs the protected canonicalizer against the exact provider route and output-limit policy. It signs a fresh short request context whose sensitivity derives from those parents, then records the exact canonical body, digest, retry index, producer identity, selected package generation, and parent closure in `NativeRequestObservationRegistry`. The typed request observation has no wire representation and is not a `SourceReceipt`; it records bytes observed at the producer boundary without changing their ancestry or privacy classification. The request record joins the current root task turn before the one-use gateway event becomes dispatchable. Retries require new request records and retry indexes, and retained bytes/PIDFDs expire or scrub under a bounded root-owned lease.
+
+Contract fixtures now cover retained private ancestry, exact-byte digest binding, changed producer identity/bytes, forged parents, repeated retries, and expiry. These tests do not establish an installed root composition, successful external model call, active account, Linux ARM64, or Pi acceptance. Public route eligibility remains a separate live policy/effect-handler decision; this implementation never marks untrusted additions public.
+
+Current source-receipt issuance sets an empty `recipient_ceiling`, and the authority correctly requires every receipt to admit the selected provider recipient. Therefore a genuine request record can be created while provider egress remains denied until the Sol-owned finite private-recipient issuance rule is implemented. Do not widen a receipt ceiling in this broker or infer provider consent from source capture.
+
 Static syntax and whitespace checks have passed for the current supervisor changes. The meaningful Linux negative-effect suite, CI result, root custodian integration, protected profile enrollment, and Pi evidence must be recorded separately before enabling any affected capability. A failed probe leaves that capability disabled with its exact retry/resume action.
 
 ## Fixed local service connector (HI07)
