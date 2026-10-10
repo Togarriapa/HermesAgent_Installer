@@ -938,6 +938,7 @@ def reviewed_packaged_registration_result_schemas(
         v121 = contract["financial_alias_source_bound_v121"]
         v120 = contract["financial_web_results_v120"]
         by_tool = {row["tool_name"]: row for row in v120["schema_artifacts"]}
+        source_pins = v120["source_pins"]
         rows = [
             {"tool_name": "financial_data_read", "schema_id": v121["schema_id"],
              "artifact_id": v121["artifact_id"], "path": v121["path"],
@@ -949,12 +950,20 @@ def reviewed_packaged_registration_result_schemas(
     captured = registrations if registrations is not None else capture_actual_hermes_registrations()
     source_by_name = {row.native_tool_name: row for row in captured}
     expected_adapters = {"financial_data_read": "financial-data-hub", "web_retrieve": "web"}
+    expected_source_paths = {
+        "financial_data_read": ("src/hermes_installer/components/plugin_finance.py",
+                                source_pins["plugin_finance.py"]),
+        "web_retrieve": ("src/hermes_installer/components/plugin_local_voice_web.py",
+                         source_pins["plugin_local_voice_web.py"]),
+    }
     output = list(local)
     for row in rows:
         tool = row["tool_name"]
         source = source_by_name.get(tool)
         relative = row["path"]
         if (source is None or source.adapter_id != expected_adapters[tool]
+                or ("src/" + source.registration_source_path, source.registration_source_sha256)
+                   != expected_source_paths[tool]
                 or row["schema_id"] != row["artifact_id"]
                 or not isinstance(relative, str)
                 or not relative.startswith("plans/amendments/2026-10-10-")
