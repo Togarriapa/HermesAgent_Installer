@@ -905,6 +905,15 @@ class RootSelectedInstallationBinding:
                 "native-action-resolver", "native-boundary-overlay", "native-candidate-index",
         } or not isinstance(assembly_selection_handle, str)):
             raise BootstrapEnrollmentPending("generated native output lacks its fixed role or assembly selection")
+        expected_kinds = {
+            "native-compiled-closure": "compiled-closure",
+            "native-entrypoint-manifest": "entrypoint-json",
+            "native-action-resolver": "resolver-json",
+            "native-boundary-overlay": "boundary-overlay",
+            "native-candidate-index": "candidate-index-json",
+        }
+        if expected_kinds[artifact_role] != output_kind:
+            raise BootstrapEnrollmentPending("generated native output role and fixed output kind do not match")
         selection = session._resolve_current_native_bootstrap_assembly(assembly_selection_handle)
         policy = session.resolve_current_native_policy_selection(
             selection.native_policy_preparation_handle)
