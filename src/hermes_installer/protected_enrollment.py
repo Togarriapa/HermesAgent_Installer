@@ -34,6 +34,28 @@ def _public_web_exact(value: Any, fields: set[str], label: str) -> Mapping[str, 
     return value
 
 
+def _freeze_json_record(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze_json_record(child) for key, child in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_json_record(child) for child in value)
+    return value
+
+
+def _index_generation_rows(rows: Any, label: str) -> Mapping[str, Mapping[str, Any]]:
+    result: dict[str, Mapping[str, Any]] = {}
+    if not isinstance(rows, (list, tuple)) or len(rows) > 1:
+        raise EnrollmentDenied(f"{label} catalog is invalid or exceeds its one-worker bound")
+    for raw in rows:
+        if not isinstance(raw, Mapping):
+            raise EnrollmentDenied(f"{label} row is malformed")
+        key = _id(raw.get("id"), f"{label} ID")
+        if key in result:
+            raise EnrollmentDenied(f"{label} ID is duplicated")
+        result[key] = _freeze_json_record(raw)
+    return MappingProxyType(result)
+
+
 @dataclass(frozen=True, slots=True)
 class RootSelectedPublicWebScope:
     """Digest-bound public target plus the retained root selection provenance."""
@@ -546,13 +568,22 @@ class ProtectedEnrollmentCatalog:
                  native_mcp_tool_bindings: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
                  private_memory_endpoint_selections: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
                  private_memory_model_selections: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
-                 public_web_scopes: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None):
+                 public_web_scopes: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
+                 native_worker_network_records: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
+                 active_network_generation_records: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
+                 native_worker_runtime_records: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None):
         if not records:
             raise EnrollmentDenied("protected service enrollment is empty")
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise EnrollmentDenied("protected service enrollment digest is invalid")
         self._records = MappingProxyType(dict(records))
         self.digest = digest
+        self._native_worker_network_records = _index_generation_rows(
+            native_worker_network_records or (), "native worker network")
+        self._active_network_generation_records = _index_generation_rows(
+            active_network_generation_records or (), "active network generation")
+        self._native_worker_runtime_records = _index_generation_rows(
+            native_worker_runtime_records or (), "native worker runtime")
         parsed_native = {}
         for raw in native_packages or []:
             package = NativePackageBinding.from_protected_record(raw)
@@ -1293,6 +1324,34 @@ class ProtectedEnrollmentCatalog:
                 or profile.namespace_identity != record.namespace_identity):
             raise EnrollmentDenied("memory enrollment no longer joins its selected service profile")
         return record
+    def resolve_native_worker_generation(
+            self, network_id: str, profile_id: str, *, service_generation_digest: str,
+    ) -> tuple[Mapping[str, Any], Mapping[str, Any], Mapping[str, Any]]:
+        """Resolve the one immutable AF_UNIX worker row set in this generation."""
+        if service_generation_digest != self.digest:
+            raise EnrollmentDenied("native worker network rows belong to a stale service generation")
+        selected_network = _id(network_id, "native worker network ID")
+        selected_profile = _id(profile_id, "native worker profile ID")
+        network = self._native_worker_network_records.get(selected_network)
+        matches = [row for row in self._active_network_generation_records.values()
+                   if row.get("network_id") == selected_network
+                   and row.get("process_profile_id") == selected_profile]
+        if network is None or len(matches) != 1:
+            raise EnrollmentDenied("native worker network selection is absent or ambiguous")
+        active = matches[0]
+        runtime = self._native_worker_runtime_records.get(active.get("worker_runtime_record_id"))
+        service = self.resolve(active.get("service_enrollment_id"), active.get("service_generation"))
+        if (runtime is None or active.get("network_catalog") != "native_worker_network_records"
+                or network.get("role") != "af-unix"
+                or network.get("worker_profile_id") != selected_profile
+                or network.get("worker_enrollment_id") != service.enrollment_id
+                or runtime.get("service_enrollment_id") != service.enrollment_id
+                or runtime.get("profile_id") != selected_profile
+                or runtime.get("profile_generation") != service.generation
+                or active.get("process_profile_generation") != service.generation):
+            raise EnrollmentDenied("native worker network, service and runtime rows do not join")
+        return network, active, runtime
+
     def resolve_enrollment(self, enrollment_id: str) -> HostServiceProfile:
         """Resolve a unique current service enrollment by its opaque ID."""
         selected = _id(enrollment_id, "enrollment ID")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import hashlib
 
 import pytest
 
@@ -14,6 +15,7 @@ from hermes_installer.authority.native_policy_preparation import (
     _source_coverage,
     _selection_matches_choice_payload,
     _choice_payload,
+    _canonical,
     RootNativePolicyPreparationSelection,
     _SELECTION_SEAL,
 )
@@ -60,6 +62,42 @@ def test_configuration_choice_is_sealed_and_finite() -> None:
         RootNativePolicyConfigurationChoice(
             **{name: getattr(choice, name) for name in choice.__dataclass_fields__ if name != "_seal"},
             _seal=object(),
+        )
+
+
+def test_signed_worker_recipe_selection_is_paired_and_digest_bound() -> None:
+    recipe = {"receipt_handle": "r" * 32, "recipe_id": "native-owner-overlay-worker-v1",
+              "network_role": "af-unix", "allowed_bind_port": None,
+              "allowed_connect_port": None,
+              "source_receipt_handles": ["s" * 32]}
+    digest = hashlib.sha256(_canonical(recipe)).hexdigest()
+    choice = _issue_root_native_policy_configuration_choice(
+        **{name: getattr(_choice(), name) for name in _choice().__dataclass_fields__
+           if name not in {"_seal", "selected_worker_recipe_handles",
+                           "selected_worker_recipe_digests", "selected_worker_recipe_records"}},
+        selected_worker_recipe_handles=("r" * 32,),
+        selected_worker_recipe_digests=(digest,),
+        selected_worker_recipe_records=(recipe,),
+    )
+    assert _choice_payload(choice)["selected_worker_recipe_records"] == [recipe]
+    assert choice.selected_worker_recipe_handles == ("r" * 32,)
+    assert choice.selected_worker_recipe_records[0]["source_receipt_handles"] == ("s" * 32,)
+    with pytest.raises(TypeError):
+        choice.selected_worker_recipe_records[0]["recipe_id"] = "substituted"
+
+    with pytest.raises(NativePolicyPreparationDenied, match="digest or projection"):
+        _issue_root_native_policy_configuration_choice(
+            **{name: getattr(choice, name) for name in choice.__dataclass_fields__
+               if name not in {"_seal", "selected_worker_recipe_digests"}},
+            selected_worker_recipe_digests=("0" * 64,),
+        )
+
+    with pytest.raises(NativePolicyPreparationDenied, match="malformed or unpaired"):
+        _issue_root_native_policy_configuration_choice(
+            **{name: getattr(_choice(), name) for name in _choice().__dataclass_fields__
+               if name not in {"_seal", "selected_worker_recipe_handles",
+                               "selected_worker_recipe_digests", "selected_worker_recipe_records"}},
+            selected_worker_recipe_handles=("r" * 32,),
         )
 
 
@@ -167,6 +205,9 @@ def test_signed_choice_payload_must_match_every_selected_policy_field() -> None:
         "selected_registration_ids": ["agent37-discovery:tool:agent37_discover_skills"],
         "selected_action_binding_ids": [],
         "selected_owner_overlay_registration_ids": [],
+        "selected_worker_recipe_handles": [],
+        "selected_worker_recipe_digests": [],
+        "selected_worker_recipe_records": [],
         "controller_binding_handle": "2" * 64,
         "private_input_consent_selection_handle": None,
     }

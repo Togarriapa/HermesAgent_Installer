@@ -3904,14 +3904,31 @@ class RootSetupPolicyFactory:
     def activate_runnable(self, authorization: VerifiedRootSetupAuthorization,
                           identity: ServiceIdentity,
                           receipts: Mapping[str, RootRuntimeArtifactReceipt], *,
-                          seal: str) -> EnrollmentPolicy:
+                          seal: str,
+                          native_worker_recipe_handles: tuple[str, ...] = (),
+                          native_policy_selection: Any | None = None,
+                          native_worker_generation_producer: Any | None = None) -> EnrollmentPolicy:
         policy = self.resolver.resolve_policy(authorization.plan_artifact_id,
                                               compilation_phase="active")
         self._root_journal_join(authorization)
         if not receipts:
             _fail("runnable activation requires actual root-resolved runtime and launcher receipts")
-        rows = []
+        selection = policy.catalog_selections
+        selected_worker = bool(native_worker_recipe_handles)
+        if selected_worker:
+            from .native_policy_preparation import RootNativePolicyPreparationSelection
+            from .native_worker_service_generation import RootPreparedNativeServiceGenerationProducer
+            if (type(native_worker_generation_producer) is not RootPreparedNativeServiceGenerationProducer
+                    or type(native_policy_selection) is not RootNativePolicyPreparationSelection
+                    or type(native_worker_recipe_handles) is not tuple
+                    or len(native_worker_recipe_handles) != 1
+                    or native_worker_recipe_handles != native_policy_selection.selected_worker_recipe_handles):
+                _fail("selected native worker requires the exact signed selection and root producer")
+        elif (native_worker_recipe_handles or native_policy_selection is not None
+              or native_worker_generation_producer is not None):
+            _fail("native worker producer inputs were supplied without a selected worker")
         generation = "active-" + secrets.token_hex(16)
+        rows = []
         parent = Path(policy.root_policy["service_parent_root"])
         roots = (parent / "home", parent / "work", parent / "data")
         for template in policy.service_record_templates:
@@ -3942,8 +3959,8 @@ class RootSetupPolicyFactory:
                 value = getattr(receipt, binding["receipt_field"])
                 self._set_template_field(record, binding["field_path"], value)
             rows.append(record)
-        selection = policy.catalog_selections
-        return EnrollmentPolicy(
+        authority_base = copy.deepcopy(policy.authority_base_template)
+        base_policy = EnrollmentPolicy(
             service_profile_id=policy.identity_policy["service_profile_id"],
             principal_id=policy.identity_policy["principal_id"],
             generation_id=generation, source_artifact_id=policy.source_artifact_id,
@@ -3967,8 +3984,65 @@ class RootSetupPolicyFactory:
             composio_channel_enrollments=selection.get("composio_channel_enrollments", ()),
             channel_delivery_bindings=selection.get("channel_delivery_bindings", ()),
             root_journal_roots=(dict(authorization.root_journal_root),), activation_state="active",
-            authority_base=copy.deepcopy(policy.authority_base_template),
+            authority_base=authority_base,
             home_root=roots[0], work_root=roots[1], data_root=roots[2],
+        )
+        if not selected_worker:
+            return base_policy
+
+        # The producer receives only this root-factory-created typed policy,
+        # after every service template receipt and selected identity is bound.
+        # It cannot submit row dictionaries through the setup session API.
+        try:
+            native_worker_generation = native_worker_generation_producer.build_selected(
+                native_worker_recipe_handles, native_policy_selection,
+                base_policy=base_policy,
+            )
+            from .native_worker_service_generation import RootPreparedNativeServiceGeneration
+            if (type(native_worker_generation) is not RootPreparedNativeServiceGeneration
+                    or native_worker_generation_producer.verify_current(native_worker_generation)
+                    is not native_worker_generation
+                    or native_worker_generation.generation_id != base_policy.generation_id):
+                _fail("selected native generation differs from the root-expanded active policy")
+        except BootstrapEnrollmentPending:
+            raise
+        except Exception:
+            _fail("selected native generation could not be revalidated")
+
+        native_rows: dict[str, tuple[Mapping[str, Any], ...]] = {}
+        for field_name in (
+                "service_records", "process_profile_records", "native_worker_network_records",
+                "active_network_generation_records", "native_worker_runtime_records"):
+            value = getattr(native_worker_generation, field_name, None)
+            if (type(value) is not tuple or len(value) != 1
+                    or not isinstance(value[0], Mapping)):
+                _fail("selected native worker generation has an incomplete exact catalog")
+            native_rows[field_name] = value
+        if (native_worker_generation.service_generation_id
+                != native_rows["service_records"][0].get("generation")):
+            _fail("native worker service row generation does not match its producer")
+        selected_profile_id = base_policy.service_profile_id
+        final_services = list(base_policy.records)
+        matches = [index for index, record in enumerate(final_services)
+                   if record.get("profile_id") == selected_profile_id]
+        selected_service = native_rows["service_records"][0]
+        if len(matches) != 1 or selected_service.get("profile_id") != selected_profile_id:
+            _fail("native worker service row does not uniquely join the selected service profile")
+        final_services[matches[0]] = dict(selected_service)
+        authority_base = copy.deepcopy(base_policy.authority_base)
+        profiles = authority_base.get("process_profiles") if isinstance(authority_base, dict) else None
+        selected_profile = native_rows["process_profile_records"][0]
+        if (not isinstance(profiles, dict)
+                or selected_profile.get("profile_id") != selected_profile_id
+                or selected_profile.get("generation") != native_worker_generation.service_generation_id
+                or selected_profile_id not in profiles):
+            _fail("native worker process profile does not join the selected authority profile")
+        profiles[selected_profile_id] = dict(selected_profile)
+        return replace(
+            base_policy, records=tuple(final_services), authority_base=authority_base,
+            native_worker_network_records=native_rows["native_worker_network_records"],
+            active_network_generation_records=native_rows["active_network_generation_records"],
+            native_worker_runtime_records=native_rows["native_worker_runtime_records"],
         )
 
     @staticmethod
@@ -5717,6 +5791,8 @@ class RootBootstrapSession:
                     "remote_observation_enrollments", "native_schema_artifacts",
                     "composio_channel_enrollments", "channel_delivery_bindings",
                     "remote_startup_enrollments", "private_loopback_networks",
+                    "native_worker_network_records", "active_network_generation_records",
+                    "native_worker_runtime_records",
             "selected_resource_executions", "selected_application_runtimes",
             "memory_service_enablement_projections",
                     "private_memory_endpoint_selections", "private_memory_model_selections",

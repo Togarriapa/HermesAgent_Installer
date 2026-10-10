@@ -480,7 +480,8 @@ def _subject_capability_receipt(pid: int) -> str:
         status = Path(f"/proc/{pid}/status").read_text()
         values = {line.split(":", 1)[0]: line.split(":", 1)[1].strip()
                   for line in status.splitlines() if ":" in line}
-        caps = {name: int(values[name], 16) for name in ("CapEff", "CapPrm", "CapBnd", "CapAmb")}
+        caps = {name: int(values[name], 16)
+                for name in ("CapEff", "CapPrm", "CapBnd", "CapAmb", "CapInh")}
         if any(caps.values()):
             raise ValueError("subject retains a capability")
         tun = Path(f"/proc/{pid}/root/dev/net/tun")

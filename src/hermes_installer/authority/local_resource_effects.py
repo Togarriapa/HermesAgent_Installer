@@ -16,6 +16,7 @@ import os
 import re
 import secrets
 import stat
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1054,6 +1055,11 @@ class RootActiveLocalOwnerPrincipalRegistry:
                 receipt.service_generation_digest, receipt.receipt_handle, self._boot_epoch,
                 now, now + 30.0, row["adoption_sha256"], _ACTIVE_LOCAL_OWNER_SEAL, self,
             )
+            for handle, prior in tuple(self._snapshots.items()):
+                if prior.expires_monotonic <= now:
+                    self._snapshots.pop(handle, None)
+            if len(self._snapshots) >= 256:
+                raise ValueError("active local-owner snapshot capacity is exhausted")
             self._snapshots[snapshot.snapshot_handle] = snapshot
             return snapshot
         except LocalProfileOverlayEffectsDenied:
@@ -1089,3 +1095,384 @@ class RootActiveLocalOwnerPrincipalRegistry:
     def close(self) -> None:
         self._closed = True
         self._snapshots.clear()
+
+
+_ACTIVE_OWNER_OVERLAY_SELECTION_SEAL = object()
+_ACTIVE_OWNER_OVERLAY_SOURCE_OBSERVER_SEAL = object()
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootActiveOwnerOverlayInvocationSelection:
+    """Root-only join of a published operation to a READY loaded registration."""
+
+    selection_handle: str
+    principal_snapshot: RootCurrentActiveLocalOwnerPrincipalSnapshot
+    registration_id: str
+    operation_record: Mapping[str, Any]
+    adoption_sha256: str
+    package_id: str
+    package_generation: str
+    process_identity: Any
+    loaded_role_proof: Any
+    peer_pid: int
+    issued_monotonic: float
+    expires_monotonic: float
+    _seal: object = field(repr=False, compare=False)
+    _issuer: Any = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if (self._seal is not _ACTIVE_OWNER_OVERLAY_SELECTION_SEAL
+                or self.registration_id not in _REGISTRATIONS
+                or self.expires_monotonic <= self.issued_monotonic):
+            raise TypeError("active owner-overlay selections are root-issued")
+        object.__setattr__(self, "operation_record", MappingProxyType(dict(self.operation_record)))
+
+    def __repr__(self) -> str:
+        return "RootActiveOwnerOverlayInvocationSelection(<root-private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootActiveOwnerOverlaySourceObserver:
+    """Current, typed local source observer projected from a signed adoption."""
+
+    observer_row: Mapping[str, Any]
+    selection: RootActiveOwnerOverlayInvocationSelection
+    capture_schemas: Mapping[str, tuple[bytes, str]]
+    release_commit: str
+    _seal: object = field(repr=False, compare=False)
+    _issuer: Any = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if (self._seal is not _ACTIVE_OWNER_OVERLAY_SOURCE_OBSERVER_SEAL
+                or type(self.selection) is not RootActiveOwnerOverlayInvocationSelection
+                or not isinstance(self.release_commit, str) or not self.release_commit):
+            raise TypeError("owner-overlay source observers are root-issued active records")
+        object.__setattr__(self, "observer_row", MappingProxyType(dict(self.observer_row)))
+        object.__setattr__(self, "capture_schemas", MappingProxyType(dict(self.capture_schemas)))
+
+    def __repr__(self) -> str:
+        return "RootActiveOwnerOverlaySourceObserver(<root-private>)"
+
+
+class RootActiveOwnerOverlayRegistry:
+    """Rejoin signed owner adoption, current NSS/view, package and READY role.
+
+    This registry deliberately does not consume setup composer/view objects.
+    Its selections are provenance and invocation inputs only; effect issuance
+    still requires the separate typed service grant and one-use CAS proxy.
+    """
+
+    def __init__(self, runtime: Any, principal_registry: RootActiveLocalOwnerPrincipalRegistry):
+        from .runtime_composition import RootAuthorityRuntime
+        from .runtime_bindings import RootRuntimeBindings
+        from .native_custody_proof import RootNativeLoaderObservationStore
+
+        if (type(runtime) is not RootAuthorityRuntime
+                or type(runtime.bindings) is not RootRuntimeBindings
+                or type(principal_registry) is not RootActiveLocalOwnerPrincipalRegistry
+                or principal_registry._runtime is not runtime
+                or runtime.native_loader_observation_store is None
+                or type(runtime.native_loader_observation_store) is not RootNativeLoaderObservationStore
+                or not callable(getattr(runtime.process_manager, "resolve_native_package_for_peer", None))
+                or not callable(getattr(runtime.process_manager, "resolve_live_peer", None))):
+            raise LocalProfileOverlayEffectsDenied("active owner-overlay runtime dependencies are incomplete")
+        self._runtime = runtime
+        self._principals = principal_registry
+        self._closed = False
+        self._selections: dict[str, RootActiveOwnerOverlayInvocationSelection] = {}
+        self._peer_fds: dict[str, int] = {}
+        self._lock = threading.RLock()
+
+    @classmethod
+    def from_root_runtime(cls, runtime: Any,
+                          principal_registry: RootActiveLocalOwnerPrincipalRegistry
+                          ) -> "RootActiveOwnerOverlayRegistry":
+        return cls(runtime, principal_registry)
+
+    def resolve_selected_operation(self, registration_id: str, peer_pid: int,
+                                   peer_pidfd: int) -> RootActiveOwnerOverlayInvocationSelection:
+        """Resolve one operation only for the actual peer with a later READY event."""
+        from .setup_policy_publication import PolicyPublicationReceiptResolver, validate_owner_overlay_adoption_row
+        from .native_custody_proof import LivePeerProcess, RootActiveOwnerOverlayLoaderObserver
+
+        if (self._closed or registration_id not in _REGISTRATIONS
+                or type(peer_pid) is not int or peer_pid <= 0
+                or type(peer_pidfd) is not int or peer_pidfd < 0):
+            raise LocalProfileOverlayEffectsDenied("active owner-overlay peer or method is invalid")
+        try:
+            receipt = PolicyPublicationReceiptResolver.resolve_current()
+            if receipt.state != "active-committed":
+                raise ValueError
+            rows = [validate_owner_overlay_adoption_row(row)
+                    for row in receipt.owner_overlay_adoption_records]
+            matches = [(row, operation) for row in rows
+                       for operation in row["operation_records"]
+                       if operation["registration_id"] == registration_id]
+            candidates = []
+            for row, operation in matches:
+                principal = self._principals.resolve_profile(row["owner"]["profile_id"])
+                if (principal.identity_kind == row["identity_kind"]
+                        and principal.principal_id == row["owner"]["principal_id"]
+                        and principal.namespace_id == row["owner"]["namespace_id"]
+                        and principal.adoption_sha256 == row["adoption_sha256"]):
+                    candidates.append((row, operation, principal))
+            if len(candidates) != 1:
+                raise ValueError
+            adoption, operation, principal = candidates[0]
+            package = self._runtime.bindings.resolve_native_package(
+                adoption["native_package"]["package_id"], adoption["native_package"]["generation"],
+            )
+            package_operations = getattr(package, "owner_overlay_operation_records", None)
+            if (package.profile_id != principal.profile_id
+                    or package.generation != adoption["native_package"]["generation"]
+                    or not isinstance(package_operations, Mapping)
+                    or _canonical([dict(item) for _, item in sorted(package_operations.items())])
+                       != _canonical(adoption["operation_records"])):
+                raise ValueError
+            manager = self._runtime.process_manager
+            mount_proof = manager.resolve_native_package_for_peer(peer_pid, peer_pidfd)
+            if (mount_proof is None
+                    or mount_proof.profile_id != principal.profile_id
+                    or mount_proof.generation != principal.profile_generation
+                    or mount_proof.mount.package_id != package.package_id
+                    or mount_proof.mount.compiled_closure_sha256
+                       != adoption["native_package"]["compiled_closure_sha256"]
+                    or mount_proof.mount.entrypoint_sha256 != adoption["native_package"]["entrypoint_sha256"]
+                    or mount_proof.mount.resolver_sha256 != adoption["native_package"]["resolver_sha256"]):
+                raise ValueError
+            identity = manager.resolve_live_peer(
+                peer_pid, peer_pidfd, profile_id=principal.profile_id,
+                generation=principal.profile_generation,
+            )
+            if (identity is None or identity.kernel_uid != principal.service_uid
+                    or identity != (self._runtime.native_loader_observation_store
+                                    .custody_resolver.resolve_live_peer(
+                                        peer_pid, peer_pidfd, profile_id=principal.profile_id,
+                                        generation=principal.profile_generation))):
+                raise ValueError
+            roles = getattr(package, "process_role_records", None)
+            role = roles.get(operation["process_role_id"]) if isinstance(roles, Mapping) else None
+            observer_ids = tuple(operation["source_observer_enrollment_ids"])
+            source_members = [item for item in adoption["source_members"]
+                              if item["role"] == "native-source-module"
+                              and item["artifact_id"] == getattr(role, "role_artifact_id", None)]
+            if (role is None or len(observer_ids) != 1
+                    or observer_ids[0] not in getattr(role, "observer_enrollment_ids", ())
+                    or registration_id not in getattr(role, "registration_ids", ())
+                    or len(source_members) != 1
+                    or source_members[0]["sha256"] != role.role_sha256
+                    or source_members[0]["receipt_handle"] != role.role_source_receipt_handle):
+                raise ValueError
+            observer = RootActiveOwnerOverlayLoaderObserver._issue(
+                observer_enrollment_id=observer_ids[0], profile_id=principal.profile_id,
+                generation=principal.profile_generation, package_id=package.package_id,
+                native_package_generation=package.generation, role_id=role.role_id,
+                role_artifact_id=role.role_artifact_id, role_sha256=role.role_sha256,
+                role_source_receipt_handle=role.role_source_receipt_handle,
+                role_module_name=role.module_name, role_closure_member_path=role.closure_member_path,
+                role_source_revision=role.role_source_revision,
+                role_source_tree_sha256=role.role_source_tree_sha256,
+                registration_id=registration_id, lease_seconds=30,
+            )
+            loaded = self._runtime.native_loader_observation_store.resolve_loaded_package_closure(
+                LivePeerProcess(peer_pid, peer_pidfd, identity), observer,
+            )
+            if (loaded.package_id != package.package_id or loaded.profile_id != principal.profile_id
+                    or loaded.generation != principal.profile_generation
+                    or loaded.role_id != role.role_id
+                    or registration_id not in loaded.observed_registration_ids):
+                raise ValueError
+            view = adoption["view_custody"]
+            data_fd, view_fd, data_info, view_info, marker_info, marker = (
+                __import__("hermes_installer.authority.bootstrap_runtime_factory",
+                           fromlist=["_open_root_owned_profile_overlay_directory"])
+                ._open_root_owned_profile_overlay_directory(
+                    self._runtime.bindings.process_profiles[principal.profile_id].data_root,
+                    principal.service_uid, principal.service_gid, principal.profile_id,
+                    view["resource_profile_id"],
+                ))
+            try:
+                if ((data_info.st_dev, data_info.st_ino, data_info.st_uid, data_info.st_gid)
+                        != (view["data_root_device"], view["data_root_inode"],
+                            view["data_root_owner_uid"], view["data_root_owner_gid"])
+                        or (view_info.st_dev, view_info.st_ino, view_info.st_uid, view_info.st_gid,
+                            stat.S_IMODE(view_info.st_mode))
+                        != (view["view_device"], view["view_inode"], view["view_owner_uid"],
+                            view["view_owner_gid"], view["view_mode"])
+                        or hashlib.sha256(marker).hexdigest() != view["ownership_marker_sha256"]
+                        or not stat.S_ISREG(marker_info.st_mode)
+                        or operation["target_id"] != view["target_id"]
+                        or operation["target_receipt_handle"] != view["target_receipt_handle"]
+                        or [operation["operation"], operation["effect_enrollment_id"]]
+                           not in view["effect_enrollment_ids"]):
+                    raise ValueError
+            finally:
+                os.close(data_fd)
+                os.close(view_fd)
+            now = time.monotonic()
+            expires = min(now + 30.0, principal.expires_monotonic, loaded.expires_monotonic)
+            if expires <= now:
+                raise ValueError
+            selection = RootActiveOwnerOverlayInvocationSelection(
+                secrets.token_urlsafe(32), principal, registration_id, operation,
+                adoption["adoption_sha256"], package.package_id, package.generation,
+                identity, loaded, peer_pid, now, expires,
+                _ACTIVE_OWNER_OVERLAY_SELECTION_SEAL, self,
+            )
+            retained_fd = os.dup(peer_pidfd)
+            with self._lock:
+                if self._closed:
+                    os.close(retained_fd)
+                    raise ValueError
+                for handle, prior in tuple(self._selections.items()):
+                    if prior.expires_monotonic <= now:
+                        self._retire(handle)
+                if len(self._selections) >= 128:
+                    os.close(retained_fd)
+                    raise ValueError
+                self._selections[selection.selection_handle] = selection
+                self._peer_fds[selection.selection_handle] = retained_fd
+            return selection
+        except LocalProfileOverlayEffectsDenied:
+            raise
+        except Exception:
+            raise LocalProfileOverlayEffectsDenied(
+                "active publication, operation row, live peer, READY role or held view did not revalidate",
+            ) from None
+
+    def verify_current(self, selection: RootActiveOwnerOverlayInvocationSelection
+                       ) -> RootActiveOwnerOverlayInvocationSelection:
+        if (self._closed or type(selection) is not RootActiveOwnerOverlayInvocationSelection
+                or selection._seal is not _ACTIVE_OWNER_OVERLAY_SELECTION_SEAL
+                or selection._issuer is not self
+                or self._selections.get(selection.selection_handle) is not selection
+                or selection.expires_monotonic <= time.monotonic()):
+            raise LocalProfileOverlayEffectsDenied("active owner-overlay selection is expired or unretained")
+        pidfd = self._peer_fds.get(selection.selection_handle)
+        if pidfd is None:
+            raise LocalProfileOverlayEffectsDenied("active owner-overlay peer descriptor is not retained")
+        current = self.resolve_selected_operation(selection.registration_id, selection.peer_pid, pidfd)
+        if (current.operation_record != selection.operation_record
+                or current.adoption_sha256 != selection.adoption_sha256
+                or current.loaded_role_proof != selection.loaded_role_proof
+                or current.process_identity != selection.process_identity):
+            self._retire(selection.selection_handle)
+            raise LocalProfileOverlayEffectsDenied("active owner-overlay selection changed")
+        self._retire(current.selection_handle)
+        return selection
+
+    def resolve_current_source_observer(self, registration_id: str, peer_pid: int,
+                                        peer_pidfd: int) -> RootActiveOwnerOverlaySourceObserver:
+        """Rejoin one signed observer row, loaded owner role and installed source bytes."""
+        from .setup_policy_publication import PolicyPublicationReceiptResolver, validate_owner_overlay_adoption_row
+        from .owner_overlay_capture_schemas import (
+            CAPTURE_SCHEMAS, INVOCATION_SCHEMA_ID, RESULT_SCHEMA_ID,
+        )
+        from .installer_release import InstalledRootReleaseVerifier
+
+        selection = self.resolve_selected_operation(registration_id, peer_pid, peer_pidfd)
+        try:
+            receipt = PolicyPublicationReceiptResolver.resolve_current()
+            rows = [validate_owner_overlay_adoption_row(item)
+                    for item in receipt.owner_overlay_adoption_records]
+            adoptions = [row for row in rows
+                         if row["adoption_sha256"] == selection.adoption_sha256]
+            if len(adoptions) != 1:
+                raise ValueError
+            adoption = adoptions[0]
+            observers = [row for row in adoption["owner_overlay_observer_records"]
+                         if row["registration_id"] == registration_id]
+            if len(observers) != 1:
+                raise ValueError
+            observer = dict(observers[0])
+            operation = dict(selection.operation_record)
+            enrolled = self._runtime.service.source_observer_registry
+            source_row = (getattr(enrolled, "observers", {}).get(observer["observer_enrollment_id"])
+                          if enrolled is not None else None)
+            if (observer["operation_row_sha256"] != hashlib.sha256(_canonical(operation)).hexdigest()
+                    or observer["observer_enrollment_id"] not in operation["source_observer_enrollment_ids"]
+                    or source_row is None
+                    or source_row.observer_enrollment_id != observer["observer_enrollment_id"]
+                    or source_row.source_kind != "provider-result"
+                    or source_row.channel_id != observer["channel_id"]
+                    or source_row.enrollment_id != observer["service_enrollment_id"]
+                    or source_row.profile_id != observer["profile_id"]
+                    or source_row.principal_id != observer["principal_id"]
+                    or source_row.namespace_id != observer["namespace_id"]
+                    or source_row.generation != observer["profile_generation"]
+                    or source_row.package_id != observer["package_id"]
+                    or source_row.native_package_generation != observer["package_generation"]
+                    or source_row.role_id != observer["role_id"]
+                    or source_row.role_artifact_id != observer["role_artifact_id"]
+                    or source_row.role_sha256 != observer["role_sha256"]
+                    or source_row.role_source_receipt_handle != observer["role_source_receipt_handle"]
+                    or source_row.role_module_name != observer["role_module_name"]
+                    or source_row.role_closure_member_path != observer["role_closure_member_path"]
+                    or source_row.role_source_revision != observer["role_source_revision"]
+                    or source_row.role_source_tree_sha256 != observer["role_source_tree_sha256"]
+                    or registration_id not in source_row.source_registration_ids
+                    or observer["role_id"] != selection.loaded_role_proof.role_id
+                    or observer["role_sha256"] != selection.loaded_role_proof.role_sha256
+                    or observer["role_source_receipt_handle"]
+                       != selection.loaded_role_proof.role_source_receipt_handle
+                    or observer["package_id"] != selection.package_id
+                    or observer["package_generation"] != selection.package_generation
+                    or observer["source_choice_selection_handle"] != adoption["signed_choice"]["selection_handle"]):
+                raise ValueError
+            release = InstalledRootReleaseVerifier.verify_installed_release()
+            try:
+                source = release.resolve_reviewed_source_module(
+                    "installer-module:hermes_installer.authority.owner_overlay_capture_schemas")
+                source_fd = release.open_file(source.artifact_id)
+                try:
+                    chunks = []
+                    remaining = source.size_bytes
+                    while remaining:
+                        block = os.read(source_fd, min(65_536, remaining))
+                        if not block:
+                            raise ValueError
+                        chunks.append(block)
+                        remaining -= len(block)
+                    source_bytes = b"".join(chunks)
+                finally:
+                    os.close(source_fd)
+                member = [row for row in adoption["source_members"]
+                          if row["role"] == "owner-overlay-capture-schema-source"
+                          and row["artifact_id"] == source.artifact_id]
+                if (len(member) != 1 or member[0]["sha256"] != source.sha256
+                        or member[0]["relative_path"] != source.relative_path
+                        or hashlib.sha256(source_bytes).hexdigest() != source.sha256):
+                    raise ValueError
+                for schema_id in (INVOCATION_SCHEMA_ID, RESULT_SCHEMA_ID):
+                    schema_bytes, schema_digest = CAPTURE_SCHEMAS[schema_id]
+                    if (not schema_bytes or not re.fullmatch(r"[0-9a-f]{64}", schema_digest)
+                            or hashlib.sha256(schema_bytes).hexdigest() != schema_digest):
+                        raise ValueError
+                issued = RootActiveOwnerOverlaySourceObserver(
+                    observer, selection, CAPTURE_SCHEMAS, release.release_commit,
+                    _ACTIVE_OWNER_OVERLAY_SOURCE_OBSERVER_SEAL, self,
+                )
+                return issued
+            finally:
+                release.close()
+        except LocalProfileOverlayEffectsDenied:
+            self._retire(selection.selection_handle)
+            raise
+        except Exception:
+            self._retire(selection.selection_handle)
+            raise LocalProfileOverlayEffectsDenied(
+                "owner-overlay signed observer, held capture schemas or loaded source role is unavailable",
+            ) from None
+
+    def _retire(self, handle: str) -> None:
+        with self._lock:
+            self._selections.pop(handle, None)
+            fd = self._peer_fds.pop(handle, None)
+        if fd is not None:
+            os.close(fd)
+
+    def close(self) -> None:
+        self._closed = True
+        for handle in tuple(self._peer_fds):
+            self._retire(handle)
+        self._selections.clear()

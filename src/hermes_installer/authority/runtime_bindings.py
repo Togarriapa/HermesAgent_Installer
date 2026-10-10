@@ -1729,6 +1729,9 @@ def build_root_runtime_bindings(
         public_web_scopes=getattr(enrollment, "public_web_scope_records", None),
         native_schema_artifacts=getattr(enrollment, "native_schema_artifact_records", None),
         native_mcp_tool_bindings=getattr(enrollment, "native_mcp_tool_binding_records", None),
+        native_worker_network_records=getattr(enrollment, "native_worker_network_records", None),
+        active_network_generation_records=getattr(enrollment, "active_network_generation_records", None),
+        native_worker_runtime_records=getattr(enrollment, "native_worker_runtime_records", None),
     )
     build_catalog = ProtectedBuildCatalog.from_protected_records(
         builds, service_generation_digest=digest,

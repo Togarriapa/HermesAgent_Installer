@@ -13,6 +13,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+import pytest
+
 from hermes_installer.authority.native_custody_proof import (
     LivePeerProcess,
     LiveNativeInputTarget,
@@ -214,6 +216,22 @@ def _selection(process_id="owned-process"):
             action_binding_ids=("binding.input", "binding.tool"),
         ),),
     )
+
+
+def test_owner_overlay_loader_lane_stays_separate_from_backend_actions():
+    from dataclasses import replace
+
+    selected = replace(
+        _selection(), registered_action_ids=(), observer_role_action_bindings=(),
+        owner_overlay_registration_ids=("registration.input",),
+    )
+    assert selected.registered_action_ids == ()
+    assert selected.observer_role_action_bindings == ()
+    assert selected.owner_overlay_registration_ids == ("registration.input",)
+    with pytest.raises(ValueError, match="inside the observed selected role closure"):
+        replace(selected, registered_registration_ids=("registration.other",))
+    with pytest.raises(ValueError, match="bounded sorted tuple"):
+        replace(selected, owner_overlay_registration_ids=("registration.input", "registration.input"))
 
 
 def _context(identity):

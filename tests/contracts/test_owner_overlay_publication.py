@@ -14,11 +14,15 @@ from hermes_installer.authority.owner_overlay_publication import (
     _mint_published_local_owner_adoption,
     validate_owner_overlay_adoption_row,
 )
+from hermes_installer.authority.owner_overlay_capture_schemas import (
+    INVOCATION_SCHEMA_ID, RESULT_SCHEMA_ID,
+)
 from hermes_installer.authority.local_resource_effects import (
     LocalProfileOverlayEffectsDenied,
     RootActiveLocalOwnerPrincipalRegistry,
     RootCurrentActiveLocalOwnerPrincipalSnapshot,
 )
+from hermes_installer.authority.native_custody_proof import RootActiveOwnerOverlayLoaderObserver
 
 
 def _projection():
@@ -96,12 +100,40 @@ def _projection():
     members = [{
         "role": "native-source-module", "artifact_id": "artifact", "receipt_handle": "s" * 40,
         "relative_path": "module.py", "sha256": "5" * 64, "size_bytes": 1, "mode": 0o400,
+    }, {
+        "role": "owner-overlay-capture-schema-source",
+        "artifact_id": "installer-module:hermes_installer.authority.owner_overlay_capture_schemas",
+        "receipt_handle": "t" * 40,
+        "relative_path": "lib/python/hermes_installer/authority/owner_overlay_capture_schemas.py",
+        "sha256": "7" * 64, "size_bytes": 1, "mode": 0o400,
     }]
+    observer = {
+        "schema": 1, "observer_kind": "owner-overlay-registration-v1",
+        "observer_enrollment_id": "source-enrollment", "profile_id": "service-profile",
+        "profile_generation": "generation", "principal_id": "principal",
+        "namespace_id": "namespace", "service_enrollment_id": "service-enrollment",
+        "package_id": "package", "package_generation": "generation",
+        "registration_id": operation["registration_id"], "method": "read",
+        "operation_row_sha256": hashlib.sha256(_canonical(operation)).hexdigest(),
+        "source_choice_selection_handle": choice["selection_handle"],
+        "source_choice_signed_record_sha256": choice["signed_record_sha256"],
+        "choice_epoch": choice["choice_epoch"], "revocation_epoch": choice["revocation_epoch"],
+        "role_id": "role", "role_artifact_id": "artifact", "role_sha256": "5" * 64,
+        "role_source_receipt_handle": "s" * 40, "role_module_name": "owner_role",
+        "role_closure_member_path": "module.py", "role_source_revision": "f" * 40,
+        "role_source_tree_sha256": "6" * 64, "source_issuer_id": "issuer",
+        "channel_id": "channel", "invocation_capture_schema_id": INVOCATION_SCHEMA_ID,
+        "result_capture_schema_id": RESULT_SCHEMA_ID,
+        "argument_schema_id": operation["argument_schema_id"],
+        "argument_schema_sha256": operation["argument_schema_sha256"],
+        "result_schema_id": operation["result_schema_id"],
+        "result_schema_sha256": operation["result_schema_sha256"], "lease_seconds": 30,
+    }
     return _mint_published_local_owner_adoption(
         adoption_handle=handle, identity_kind="linux-local-owner-v1", signed_choice=choice,
         adopted_at_unix=None, setup_deadline_unix=20.0, owner=owner, resources=resources,
         native_package=package, operation_records=(operation,), view_custody=view,
-        source_members=tuple(members),
+        source_members=tuple(members), owner_overlay_observer_records=(observer,),
     )
 
 
@@ -137,6 +169,20 @@ def test_projection_rejects_altered_or_incomplete_publication_facts(mutation):
         validate_owner_overlay_adoption_row(row)
 
 
+@pytest.mark.parametrize("field,value", [
+    ("source_issuer_id", "other-issuer"),
+    ("invocation_capture_schema_id", "caller-schema"),
+    ("role_source_receipt_handle", "caller-handle"),
+])
+def test_observer_rows_reject_forged_source_and_schema_joins(field, value):
+    row = _projection().to_claim_row(include_digest=False)
+    row["adopted_at_unix"] = 15.0
+    row["owner_overlay_observer_records"][0][field] = value
+    row["adoption_sha256"] = hashlib.sha256(_canonical(row)).hexdigest()
+    with pytest.raises((TypeError, ValueError)):
+        validate_owner_overlay_adoption_row(row)
+
+
 def test_active_local_owner_registry_rejects_untyped_runtime():
     with pytest.raises(LocalProfileOverlayEffectsDenied):
         RootActiveLocalOwnerPrincipalRegistry.from_root_runtime(object())
@@ -155,3 +201,21 @@ def test_active_local_owner_snapshot_cannot_be_forged():
     )
     with pytest.raises(TypeError):
         RootCurrentActiveLocalOwnerPrincipalSnapshot(**fields)
+
+
+def test_local_owner_loaded_role_selector_is_separate_and_root_minted():
+    fields = {
+        "observer_enrollment_id": "observer", "profile_id": "service-profile",
+        "generation": "generation", "package_id": "package",
+        "native_package_generation": "generation", "role_id": "hermes-native-invocations-v1",
+        "role_artifact_id": "role-artifact", "role_sha256": "1" * 64,
+        "role_source_receipt_handle": "receipt", "role_module_name": "hermes.role",
+        "role_closure_member_path": "hermes/role.py", "role_source_revision": "release",
+        "role_source_tree_sha256": "2" * 64,
+        "registration_id": "resource-overlay-store:tool:resource_overlay_read",
+        "lease_seconds": 30,
+    }
+    selector = RootActiveOwnerOverlayLoaderObserver._issue(**fields)
+    assert selector.registration_id == fields["registration_id"]
+    with pytest.raises(TypeError):
+        RootActiveOwnerOverlayLoaderObserver(**fields, _seal=object())

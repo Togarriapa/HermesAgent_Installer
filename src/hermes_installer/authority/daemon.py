@@ -18,6 +18,7 @@ from typing import Any, Callable, Mapping
 from .service import (AuthorityPolicy, AuthorityService, ChildDelegationRule,
                       EffectHandler, EffectRule, PrincipalBinding)
 from .types import AuthorityDenied
+from .native_worker_endpoint_custody import RootPreparedAuthorityEndpointCustodian
 
 DEFAULT_SOCKET_DIR = Path("/run/hermes-installer/authority")
 
@@ -289,18 +290,49 @@ def _finalize_active_setup_choice_registry(*, service: AuthorityService,
         registry.attach_foreground_tty_observer(foreground_tty)
         runtime = replace(runtime, root_setup_choice_registry=registry,
                           consent_unavailable_reason=None)
+        service.root_authority_runtime = runtime
+        service.active_network_generation_owner = None
+        service.active_network_generation_unavailable_reason = None
         try:
             from .local_resource_effects import RootActiveLocalOwnerPrincipalRegistry
             local_owner_principal = RootActiveLocalOwnerPrincipalRegistry.from_root_runtime(runtime)
-            runtime = replace(runtime, active_local_owner_principal_registry=local_owner_principal)
+            from .local_resource_effects import RootActiveOwnerOverlayRegistry
+            owner_overlay_registry = RootActiveOwnerOverlayRegistry.from_root_runtime(
+                runtime, local_owner_principal,
+            )
+            runtime = replace(
+                runtime, active_local_owner_principal_registry=local_owner_principal,
+                active_owner_overlay_registry=owner_overlay_registry,
+                local_owner_overlay_unavailable_reason=None,
+            )
+            service.attach_active_owner_overlay_registry(owner_overlay_registry)
         except Exception as exc:
             # Local-owner resources are independent of Authentik. An absent
             # or stale local adoption disables only that exact feature lane.
             runtime = replace(
                 runtime, active_local_owner_principal_registry=None,
+                active_owner_overlay_registry=None,
                 local_owner_overlay_unavailable_reason=(
                     f"active local-owner principal registry is unavailable ({type(exc).__name__})"
                 ),
+            )
+        service.root_authority_runtime = runtime
+        # Network authority is independently current after setup has expired.
+        # Keep it unavailable if the exact post-setup runtime/source custody
+        # cannot be composed; no setup session or policy-property text is used
+        # as a substitute.
+        try:
+            from .active_network_generation import RootActiveNetworkGenerationOwner
+            # The service pointer is the canonical identity checked by the
+            # owner. Do not replace the runtime after owner construction.
+            service.root_authority_runtime = runtime
+            owner = RootActiveNetworkGenerationOwner.from_root_runtime(runtime)
+            service.active_network_generation_owner = owner
+            service.active_network_generation_unavailable_reason = None
+        except Exception as exc:
+            service.active_network_generation_owner = None
+            service.active_network_generation_unavailable_reason = (
+                f"active worker network generation owner is unavailable ({type(exc).__name__})"
             )
         return runtime
     except Exception as exc:

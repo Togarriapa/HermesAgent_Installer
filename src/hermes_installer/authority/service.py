@@ -494,6 +494,7 @@ class AuthorityService:
         self.source_observer_registry = source_observer_registry
         self.native_runtime_observer = native_runtime_observer
         self.native_invocation_registry = native_invocation_registry
+        self.active_owner_overlay_registry = None
         self.native_input_delivery_registry = None
         self.channel_peer_delivery_registry = None
         self.native_turn_observation_registry = None
@@ -533,6 +534,11 @@ class AuthorityService:
             raise ValueError("active service generation digest is invalid")
         self.service_generation_digest = service_generation_digest
         self.root_runtime_bindings = None
+        self.root_authority_runtime = None
+        # Set once by daemon composition after the durable choice registry and
+        # all runtime fields are final. The owner retains that exact runtime.
+        self.active_network_generation_owner = None
+        self.active_network_generation_unavailable_reason = None
         if any(key != rule.delegation_id for key, rule in self.delegations.items()):
             raise ValueError("delegation map keys must match fixed enrollment IDs")
         self._delegated_parents: set[str] = set()
@@ -1642,6 +1648,15 @@ class AuthorityService:
                 or not callable(getattr(registry, "take_native_response_metadata", None))):
             raise AuthorityDenied("native.invocation", "root invocation registry binding is invalid")
         self.native_invocation_registry = registry
+
+    def attach_active_owner_overlay_registry(self, registry: Any) -> None:
+        """Attach the one root-constructed local overlay authority lane."""
+        from .local_resource_effects import RootActiveOwnerOverlayRegistry
+        if (self.active_owner_overlay_registry is not None
+                or type(registry) is not RootActiveOwnerOverlayRegistry
+                or registry._runtime.service is not self):
+            raise AuthorityDenied("native.owner_overlay", "active owner-overlay registry attachment is invalid")
+        self.active_owner_overlay_registry = registry
 
     def attach_native_bridge_broker(self, broker: Any) -> None:
         """Attach the one root-built native provider broker after registries exist."""
@@ -3961,6 +3976,10 @@ class AuthorityService:
             return self._dispatch_native_invocation(
                 operation, uid, peer_pid, peer_pidfd, payload,
             )
+        if operation == "native.owner-overlay.execute":
+            return self._dispatch_native_owner_overlay(
+                uid, peer_pid, peer_pidfd, payload, cancelled=cancelled,
+            )
         if operation == "native.input.take":
             return self._dispatch_native_input_take(
                 uid, peer_pid, peer_pidfd, payload, cancelled=cancelled,
@@ -4279,6 +4298,47 @@ class AuthorityService:
                 or len(result["source_receipt_handles"]) > 128):
             raise AuthorityDenied("native.invocation", "root invocation registry returned invalid ancestry")
         return {**dict(result), "source_receipt_handles": list(result["source_receipt_handles"])}
+
+    def _dispatch_native_owner_overlay(self, peer_uid: int, peer_pid: int,
+                                       peer_pidfd: int | None, payload: Any, *,
+                                       cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        """Execute the fixed, root-rejoined local owner-overlay RPC."""
+        registry = self.active_owner_overlay_registry
+        expected = {"schema", "invocation_handle", "canonical_arguments_b64"}
+        if (registry is None or peer_pidfd is None or not isinstance(payload, dict)
+                or set(payload) != expected or type(payload.get("schema")) is not int
+                or payload["schema"] != 1
+                or not isinstance(payload.get("invocation_handle"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["invocation_handle"])
+                or not isinstance(payload.get("canonical_arguments_b64"), str)
+                or not 4 <= len(payload["canonical_arguments_b64"]) <= 2_800_000):
+            raise AuthorityDenied("native.owner_overlay", "owner-overlay execute request is malformed")
+        try:
+            arguments = base64.b64decode(payload["canonical_arguments_b64"], validate=True)
+        except (ValueError, TypeError):
+            raise AuthorityDenied("native.owner_overlay", "owner-overlay arguments are malformed") from None
+        if (not 1 <= len(arguments) <= 2 * 1024 * 1024
+                or base64.b64encode(arguments).decode("ascii") != payload["canonical_arguments_b64"]):
+            raise AuthorityDenied("native.owner_overlay", "owner-overlay arguments exceed their canonical bound")
+        if cancelled():
+            raise AuthorityDenied("native.owner_overlay", "owner-overlay request was cancelled")
+        execute = getattr(registry, "execute_rpc", None)
+        if not callable(execute):
+            raise AuthorityDenied("native.owner_overlay", "root owner-overlay invocation authority is unavailable")
+        result = execute(
+            invocation_handle=payload["invocation_handle"],
+            canonical_argument_bytes=arguments, peer_uid=peer_uid,
+            peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+        )
+        if cancelled():
+            raise AuthorityDenied("native.owner_overlay", "owner-overlay request was cancelled before response")
+        fields = {"schema", "invocation_handle", "registration_id", "result_schema_id",
+                  "result_sha256", "canonical_result_b64"}
+        if (not isinstance(result, Mapping) or set(result) != fields
+                or type(result.get("schema")) is not int or result["schema"] != 1
+                or result.get("invocation_handle") != payload["invocation_handle"]):
+            raise AuthorityDenied("native.owner_overlay", "root owner-overlay execution returned an invalid result")
+        return dict(result)
 
     def _dispatch_native_mcp(self, peer_uid: int, peer_pid: int,
                              peer_pidfd: int | None, payload: Any,
