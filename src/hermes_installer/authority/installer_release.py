@@ -206,7 +206,7 @@ REVIEWED_SOURCE_MODULES = (
     ("installer-module:hermes_installer.registry.resource_backends", "lib/python/hermes_installer/registry/resource_backends.py",
      "e59813aa36754a0e08fece9c9c2a83ec9c21a6807935a6c83f7b09cca6792414", 27_026, "module"),
     ("installer-module:hermes_installer.root_setup", "lib/python/hermes_installer/root_setup.py",
-     "029fcce9573f160bad07fb43e29bf891b36e0e7fea3a7b8e1a04854324390b40", 58_815, "module"),
+     "5bd49b6e0105d65d342302df953ed41f6ab0f0edd2bb90d7e7c2b4b4ada30563", 62_517, "module"),
     ("installer-native-invocations-module-v137", "src/hermes_installer/native_invocations.py",
      "78a3452289df5b7343e5c650ad4260d51b3aa1056e2eedea02cc3a0bff7b8226", 40_107, "source-module"),
     ("installer-native-boundary-module-v137", "src/hermes_installer/native_boundary.py",

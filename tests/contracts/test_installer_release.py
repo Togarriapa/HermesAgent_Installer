@@ -238,6 +238,13 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
                 row["installed_member"], row["sha256"], row["size_bytes"], row["roles"][0])
             for row in replacement["replaces_only_members"]
         })
+        reconfirmation = json.loads((Path(__file__).parents[2]
+                                     / "planning/bootstrap-handoff-reconfirmation-source-review-v211.json").read_text())
+        expected.update({
+            row["installed_artifact_id"]: (
+                row["installed_member"], row["sha256"], row["size_bytes"], row["roles"][0])
+            for row in reconfirmation["replaces_only_members"]
+        })
         self.assertEqual({artifact_id: (path, digest, size, role)
                           for artifact_id, path, digest, size, role in REVIEWED_SOURCE_MODULES}, expected)
         rows = [
