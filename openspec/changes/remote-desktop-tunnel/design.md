@@ -161,3 +161,9 @@ Remote source digest v246: planning/remote-source-active-digest-acyclic-v246.jso
 Use exact origin-bound archive links within an owned virtual-root sysroot, independent graph observer and one pinned glibc linker token transformation. Separately held immutable official HTML5 source copies only html5/ into actual output without ambient installer/minifier/assets; full mixed-license/native/session proofs remain required.
 
 Exact contract: `planning/xpra-sysroot-html5-v245.json`.
+
+## Jarvis visible MVP priority stage v259
+
+User prioritizes actual visible official native Jarvis Desktop/chat at confirmed jarvis.togarriapahome.uk, Access OTP/app-only gateway and owned durable restart. Exact concise milestones in `planning/jarvis-visible-desktop-mvp-stage-v259.json`. Reuse actual verified existing official artifact when eligible; provenance/sandbox/privacy/budget/currentness stay mandatory. Broader requirements remain deferred OPEN, not removed; no diagnostic/full installer equivalence.
+
+Manual owned MVP source/package/configuration/runtime evidence may establish this separate stage without counterfeit full installer authority; Debian-signed isolated display/gateway runtime preserves Hermes PM3.14 and actual sustained owned unit/session controls.

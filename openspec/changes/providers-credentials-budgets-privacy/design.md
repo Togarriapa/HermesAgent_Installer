@@ -82,3 +82,9 @@ Native capture profiles v158: `plans/amendments/2026-10-10-native-capture-profil
 MCP discovery capture v171: `plans/amendments/2026-10-10-mcp-discovery-capture-v171.md`; genuine retained tools/list witness distinct selected tools/call result schema.
 
 Initial public TTY source v174: `plans/amendments/2026-10-10-initial-public-tty-source-v174.md`; actual fresh root foreground input/disclosure/source precedes admission, never promotes PRIVATE task input.
+
+## Jarvis visible MVP priority stage v259
+
+User prioritizes actual visible official native Jarvis Desktop/chat at confirmed jarvis.togarriapahome.uk, Access OTP/app-only gateway and owned durable restart. Exact concise milestones in `planning/jarvis-visible-desktop-mvp-stage-v259.json`. Reuse actual verified existing official artifact when eligible; provenance/sandbox/privacy/budget/currentness stay mandatory. Broader requirements remain deferred OPEN, not removed; no diagnostic/full installer equivalence.
+
+Manual owned MVP source/package/configuration/runtime evidence may establish this separate stage without counterfeit full installer authority; Debian-signed isolated display/gateway runtime preserves Hermes PM3.14 and actual sustained owned unit/session controls.

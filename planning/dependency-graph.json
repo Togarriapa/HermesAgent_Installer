@@ -3779,5 +3779,30 @@
       ]
     },
     "acceptance": "open"
+  },
+  "jarvis_visible_desktop_mvp_stage_v259": {
+    "contract": "planning/jarvis-visible-desktop-mvp-stage-v259.json",
+    "amendment": "plans/amendments/2026-10-11-jarvis-visible-desktop-mvp-stage-v259.md",
+    "tasks": {
+      "BD-T259.1": [],
+      "PR-T259.2": [
+        "BD-T259.1"
+      ],
+      "RT-T259.3": [
+        "BD-T259.1"
+      ],
+      "LC-T259.4": [
+        "PR-T259.2",
+        "RT-T259.3"
+      ],
+      "VD-T259.5": [
+        "BD-T259.1",
+        "PR-T259.2",
+        "RT-T259.3",
+        "LC-T259.4"
+      ]
+    },
+    "priority": "four actual MVP milestones before unrelated extras; full baseline remains OPEN",
+    "acceptance": "MVP and full baseline tracked separately"
   }
 }

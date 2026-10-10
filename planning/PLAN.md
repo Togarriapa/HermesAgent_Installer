@@ -245,3 +245,7 @@ Remote source active digest v246: plans/amendments/2026-10-10-remote-source-acti
 v247 exact source-update leaf review: `plans/amendments/2026-10-10-source-update-entry-source-review-v247.md`; root_setup0b7d7203/71543 two-table literal update only. Existing BD-T242.1/VD-T242.2 and all AC OPEN; unexcluded/genuine positive/Pi evidence required.
 v245: `plans/amendments/2026-10-10-xpra-sysroot-html5-v245.md` / `planning/xpra-sysroot-html5-v245.json`; RT-T245.1/.2 and VD-T245.3 OPEN. Exact signed archive links/private sysroot and immutable official HTML5 source observations; mixed-license/current native/session proof pending, all AC OPEN.
 Append-only `plans/amendments/2026-10-10-version-aware-predecessor-verification-v249.md` / `planning/version-aware-predecessor-verification-v249.json`; BD-T249.1, LC-T249.2, VD-T249.3 open. Exact reviewed whole historical cohort verifies old custody only, no old actor/newest pin bypass or instance-specific allowlist.
+
+## Visible working MVP priority v259
+
+Confirmed jarvis.togarriapahome.uk. `planning/jarvis-visible-desktop-mvp-stage-v259.json`; native Jarvis app visible, real eligible chat, OTP protected app-only domain and owned durable restart/reconnect first. BD259.1/PR259.2/RT259.3/LC259.4/VD259.5 OPEN. Broad work preserved/deferred; full baseline AC OPEN; no provenance/security/budget shortcut.

@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "id": "EV-BD-T259-priority-source-audit-20261011",
+  "source_commit": "c68abcd5cdc3c0e7f4771106b31307cac156c7eb",
+  "preserved_v258_audit": [
+    {
+      "path": "src/hermes_installer/remote/desktop_icon_set.mjs",
+      "sha256": "6559278f2cc11b1133c404f208eccd706ec24ce33c671412e4d5cd2d87fd7f97",
+      "size_bytes": 6624,
+      "use": "preserved audit only; no new release pin or custody"
+    },
+    {
+      "path": "plans/amendments/2026-10-11-official-desktop-native-source-policy-v251/official-desktop-native-source-policy-v1.json",
+      "sha256": "da9824cd5a6c59ff0bd7b3a9200c30ce938ae138d2d3e943081ce24339868592",
+      "size_bytes": 233871,
+      "use": "preserved audit only; no new release pin or custody"
+    },
+    {
+      "path": "plans/amendments/2026-10-11-official-desktop-native-source-policy-v251/official-desktop-packaging-source-policy-v1.json",
+      "sha256": "167040297792248eccc7d96fcba42421c77eba070d38941df4f8386fa2b802df",
+      "size_bytes": 5219,
+      "use": "preserved audit only; no new release pin or custody"
+    }
+  ],
+  "finding": "Packaging policy observed helper differs from current measured helper and native ABI/control/license receipt gaps require followup only if chosen deployment uses this build path. Not an MVP runtime or source authority proof.",
+  "current_runtime_evidence": "Pi/retained AppDir/official prebuilt inventory in progress with root and Desktop owner; no actual availability or account/model success claimed.",
+  "acceptance": "All four milestone states OPEN; full baseline AC OPEN"
+}
