@@ -10,7 +10,7 @@ from unittest.mock import patch
 from hermes_installer.authority import setup_capabilities as capabilities
 from hermes_installer.authority.bootstrap_enrollment import BootstrapEnrollmentPending
 from hermes_installer.authority.setup_principal import (
-    AuthentikIdentityReceipt, ReviewedPrincipalCapabilities,
+    AuthentikIdentityReceipt, PrincipalBindingFactory, ReviewedPrincipalCapabilities,
     _PrincipalSetupContext, _validate_capability_selection,
 )
 
@@ -144,6 +144,11 @@ class ReviewedNativeCapabilitySelectionTests(unittest.TestCase):
         _validate_capability_selection(prepared, allow_empty=True)
         with self.assertRaises(BootstrapEnrollmentPending):
             _validate_capability_selection(prepared)
+        with self.assertRaises(ValueError):
+            PrincipalBindingFactory(
+                "authentik:" + "1" * 64, "hermes-agent-native-v1",
+                self.namespace, frozenset(),
+            ).bind(1201)
 
     def test_unknown_or_infrastructure_capabilities_never_enter_projection(self):
         binding = SimpleNamespace(

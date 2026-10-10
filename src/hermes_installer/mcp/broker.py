@@ -191,7 +191,12 @@ class _Handler:
                 or canonical_digest(payload) != authorization.request_digest):
             raise MCPBrokerError("mcp.binding", "MCP target, identity, or digest does not match its grant")
         method, params = envelope["method"], envelope["params"]
-        capability = f"mcp:{service.service_id}:{'read' if method == 'tools/call' else 'connect'}"
+        # Native selected schema discovery is a read and must use the observed
+        # result route. Ordinary protocol discovery remains a connect/lifecycle
+        # operation; the purpose is host-issued and included in the intent.
+        is_selected_discovery = (method == "tools/list"
+                                 and context.purpose == "mcp-selected-schema-discovery")
+        capability = f"mcp:{service.service_id}:{'read' if method == 'tools/call' or is_selected_discovery else 'connect'}"
         expected_intent = mcp_intent(
             service.service_id, service.channel, envelope["request_id"], method,
             envelope["selection"], params,
@@ -278,12 +283,18 @@ class _Handler:
                     or name in accepted):
                 continue
             _validate_schema(schema)
+            output_schema = item.get("outputSchema")
+            if output_schema is not None:
+                _validate_schema(output_schema)
             if len(canonical_bytes(dict(item))) > MAX_SCHEMA_BYTES:
                 raise MCPBrokerError("mcp.bounds", "MCP tool schema exceeds its bound")
             annotations = item.get("annotations", {})
             if not isinstance(annotations, Mapping):
                 annotations = {}
-            accepted[name] = {"inputSchema": dict(schema), "annotations": dict(annotations)}
+            accepted[name] = {
+                "inputSchema": dict(schema), "annotations": dict(annotations),
+                **({"outputSchema": dict(output_schema)} if output_schema is not None else {}),
+            }
         with self._lock:
             previous = self._tools.setdefault(state_key, {})
             previous.update(accepted)
@@ -293,7 +304,8 @@ class _Handler:
         if next_cursor is not None and (not isinstance(next_cursor, str) or not 1 <= len(next_cursor) <= 1024):
             raise MCPBrokerError("mcp.pagination", "MCP tools/list cursor is invalid")
         return {"tools": [
-            {"name": name, "inputSchema": item["inputSchema"], "annotations": item["annotations"]}
+            {"name": name, "inputSchema": item["inputSchema"], "annotations": item["annotations"],
+             **({"outputSchema": item["outputSchema"]} if "outputSchema" in item else {})}
             for name, item in accepted.items()
         ], **({"nextCursor": next_cursor} if next_cursor is not None else {})}
 

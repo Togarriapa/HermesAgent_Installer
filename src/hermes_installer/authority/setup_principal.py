@@ -158,6 +158,25 @@ class VerifiedRootSetupPrincipalSelection:
 
 
 @dataclass(frozen=True, slots=True)
+class VerifiedRootNamespaceSelection:
+    """Distinct root-issued namespace choice bound to a prepared generation."""
+
+    schema: int
+    receipt_handle: str
+    setup_session_id: str
+    transaction_handle: str
+    plan_digest: str
+    prepared_generation_id: str
+    prepared_generation_digest: str
+    principal_selection_receipt_id: str
+    target_profile_id: str
+    namespace_id: str
+    issued_monotonic: float
+    expires_monotonic: float
+    _registry_seal: str = field(repr=False, compare=False)
+
+
+@dataclass(frozen=True, slots=True)
 class PrincipalBindingFactory:
     principal_id: str
     profile_id: str
@@ -358,6 +377,98 @@ class RootSetupIdentityIntake:
             raise BootstrapEnrollmentPending("Authentik policy selection is absent or ambiguous")
         return self._verified_policy(matches[0])
 
+    def rebind_published_policy(
+        self, *, normal_session_store: RootSetupSessionStore,
+        normal_session_handle: RootSetupSessionHandle,
+        initial_principal_registry: "RootSetupPrincipalSelectionRegistry",
+        initial_identity_observer: "RootSetupAuthentikIdentityObserver",
+    ) -> tuple["RootSetupAuthentikIdentityObserver", str]:
+        """Rebind only the published policy, then make a fresh normal-session read.
+
+        The stage-zero records identify the policy and subject to preserve; they
+        are never accepted as current identity evidence. The returned observer
+        is bound to the new live setup session and has performed new TLS reads.
+        """
+        if (not _is_initial_compilation_registry(self.initial_registry)
+                or not isinstance(normal_session_store, RootSetupSessionStore)
+                or initial_principal_registry.setup_session_store is not self.initial_registry
+                or initial_principal_registry.identity_resolver is not initial_identity_observer
+                or initial_identity_observer.policy_resolver is not self
+                or initial_identity_observer.setup_session_store is not self.initial_registry
+                or initial_identity_observer.vault is not self.vault
+                or initial_identity_observer.root_journal != self.root_journal):
+            raise BootstrapEnrollmentPending("published identity rebind dependencies are not the selected root objects")
+        from .bootstrap_runtime_factory import RootInitialPublicationHandoff
+        try:
+            handoff = self.initial_registry.resolve_adopted_handoff(normal_session_handle)
+        except Exception:
+            raise BootstrapEnrollmentPending("normal setup session has no current published identity handoff") from None
+        if (not isinstance(handoff, RootInitialPublicationHandoff)
+                or handoff._initial_session is None
+                or not _HANDLE.fullmatch(handoff.principal_selection_receipt_handle)):
+            raise BootstrapEnrollmentPending("published handoff lacks its typed initial principal selection")
+        normal = _current_principal_setup_context(normal_session_store, normal_session_handle, "setup")
+        initial = handoff._initial_session
+        # Publication revokes the stage-zero session, so validate its retained
+        # signed handoff and original records rather than resurrecting that session.
+        if (initial.compilation_session_handle != handoff.compilation_session_handle
+                or initial.compilation_transaction_handle != handoff.compilation_transaction_handle
+                or initial.plan_sha256 != handoff.plan_sha256
+                or initial.choices_sha256 != handoff.choices_sha256
+                or handoff.normal_setup_session_id != normal.session_id
+                or handoff.normal_transaction_handle != normal.transaction_handle):
+            raise BootstrapEnrollmentPending("published stage-zero identity linkage changed")
+        old_selection = initial_principal_registry._read_selection(
+            handoff.principal_selection_receipt_handle)
+        if (old_selection.setup_session_id != initial.compilation_session_handle
+                or old_selection.transaction_handle != initial.compilation_transaction_handle
+                or old_selection.plan_digest != initial.plan_sha256
+                or initial_principal_registry._is_consumed(old_selection.receipt_id)):
+            raise BootstrapEnrollmentPending("published stage-zero principal selection is malformed or consumed")
+        old_identity = initial_identity_observer._read_identity_receipt(
+            old_selection.identity_receipt_handle)
+        if (old_identity.setup_session_id != initial.compilation_session_handle
+                or old_identity.transaction_handle != initial.compilation_transaction_handle
+                or old_identity.plan_digest != initial.plan_sha256
+                or old_identity.authentik_subject_id != old_selection.authentik_subject_id
+                or old_identity.actor_credential_ref != old_selection.actor_credential_ref
+                or old_identity.policy_selection_digest == ""):
+            raise BootstrapEnrollmentPending("published stage-zero Authentik identity linkage is invalid")
+        policy = self.resolve_policy_selection_by_digest(
+            initial, old_identity.policy_selection_digest)
+        if (policy.actor_credential_ref != old_selection.actor_credential_ref
+                or policy.policy_revision != old_selection.policy_revision):
+            raise BootstrapEnrollmentPending("published Authentik policy no longer matches the selected principal")
+        resolver = _AdoptedNormalPolicyResolver(
+            store=normal_session_store, handle=normal_session_handle,
+            initial_registry=self.initial_registry, principal_registry=initial_principal_registry,
+            principal_selection_receipt_handle=old_selection.receipt_id,
+            policy=policy, initial_subject=old_selection.authentik_subject_id,
+            initial_credential_ref=old_selection.actor_credential_ref,
+            normal_session_id=normal.session_id,
+            normal_transaction_handle=normal.transaction_handle,
+            normal_plan_digest=normal.plan_digest,
+        )
+        observer = RootSetupAuthentikIdentityObserver(
+            setup_session_store=normal_session_store, policy_resolver=resolver,
+            vault=self.vault, root_journal=self.root_journal,
+            transport_factory=initial_identity_observer.transport_factory,
+            monotonic=initial_identity_observer._clock,
+        )
+        handle = observer.observe_selected_authentik_identity(
+            normal_session_handle, resolver.selection_handle)
+        identity = observer._read_identity_receipt(handle)
+        if (identity.authentik_subject_id != old_selection.authentik_subject_id
+                or identity.actor_credential_ref != old_selection.actor_credential_ref
+                or identity.direct_group_ids != old_identity.direct_group_ids
+                or identity.effective_group_ids != old_identity.effective_group_ids
+                or identity.system_member != old_identity.system_member
+                or identity.policy_revision != old_identity.policy_revision):
+            raise BootstrapEnrollmentPending(
+                "fresh Authentik identity or group snapshot differs from the published principal; reselect")
+        return observer, handle
+
+
     def _verify_installed_actor(self, context: _PrincipalSetupContext) -> None:
         try:
             plan = self.initial_registry.resolve_actor_plan(context.session_id)
@@ -480,6 +591,74 @@ class RootSetupIdentityIntake:
                 "actor_credential_ref": record.actor_credential_ref,
             })).hexdigest(),
         )
+
+
+class _AdoptedNormalPolicyResolver:
+    """In-process sealed view of the one policy joined through publication."""
+
+    def __init__(
+        self, *, store: RootSetupSessionStore, handle: RootSetupSessionHandle,
+        initial_registry: Any, principal_registry: "RootSetupPrincipalSelectionRegistry",
+        principal_selection_receipt_handle: str,
+        policy: VerifiedAuthentikPolicySelection, initial_subject: str,
+        initial_credential_ref: str, normal_session_id: str,
+        normal_transaction_handle: str, normal_plan_digest: str,
+    ) -> None:
+        self.store = store
+        self.handle = handle
+        self.initial_registry = initial_registry
+        self.principal_registry = principal_registry
+        self.principal_selection_receipt_handle = principal_selection_receipt_handle
+        self.policy = policy
+        self.initial_subject = initial_subject
+        self.initial_credential_ref = initial_credential_ref
+        self.normal_session_id = normal_session_id
+        self.normal_transaction_handle = normal_transaction_handle
+        self.normal_plan_digest = normal_plan_digest
+        self.selection_handle = secrets.token_hex(32)
+        self._seal = secrets.token_hex(32)
+
+    def _resolve(self, session_handle: Any) -> VerifiedAuthentikPolicySelection:
+        if session_handle != self.handle:
+            raise BootstrapEnrollmentPending("adopted Authentik policy belongs to another root setup session")
+        proof = _current_principal_setup_context(self.store, self.handle, "setup")
+        if (proof.session_id != self.normal_session_id
+                or proof.transaction_handle != self.normal_transaction_handle
+                or proof.plan_digest != self.normal_plan_digest):
+            raise BootstrapEnrollmentPending("adopted Authentik policy session binding changed")
+        try:
+            handoff = self.initial_registry.resolve_adopted_handoff(self.handle)
+        except Exception:
+            raise BootstrapEnrollmentPending("adopted Authentik policy publication is no longer current") from None
+        if (handoff.normal_setup_session_id != proof.session_id
+                or handoff.normal_transaction_handle != proof.transaction_handle
+                or handoff.principal_selection_receipt_handle != self.principal_selection_receipt_handle):
+            raise BootstrapEnrollmentPending("adopted Authentik policy handoff changed")
+        original = self.principal_registry._read_selection(
+            handoff.principal_selection_receipt_handle)
+        if (original.setup_session_id != handoff.compilation_session_handle
+                or original.transaction_handle != handoff.compilation_transaction_handle
+                or original.plan_digest != handoff.plan_sha256
+                or original.authentik_subject_id != self.initial_subject
+                or original.actor_credential_ref != self.initial_credential_ref):
+            raise BootstrapEnrollmentPending("published Authentik subject or credential binding changed")
+        return self.policy
+
+    def resolve_policy_selection(
+        self, setup_session_handle: Any, policy_selection_handle: str,
+    ) -> VerifiedAuthentikPolicySelection:
+        if (not isinstance(policy_selection_handle, str)
+                or not secrets.compare_digest(policy_selection_handle, self.selection_handle)):
+            raise BootstrapEnrollmentPending("adopted Authentik policy handle is invalid")
+        return self._resolve(setup_session_handle)
+
+    def resolve_policy_selection_by_digest(
+        self, setup_session_handle: Any, policy_selection_digest: str,
+    ) -> VerifiedAuthentikPolicySelection:
+        policy = self._resolve(setup_session_handle)
+        if not secrets.compare_digest(policy.selection_digest, policy_selection_digest):
+            raise BootstrapEnrollmentPending("adopted Authentik policy digest changed")
+        return policy
 
 
 class RootSetupAuthentikIdentityObserver:
@@ -813,6 +992,7 @@ class RootSetupPrincipalSelectionRegistry:
         self, *, normal_session_store: RootSetupSessionStore,
         normal_session_handle: RootSetupSessionHandle,
         authenticated_identity_receipt_handle: str,
+        normal_identity_resolver: RootSetupAuthentikIdentityObserver | None = None,
     ) -> tuple["RootSetupPrincipalSelectionRegistry", str]:
         """Re-observe and rebind the stage-zero identity to the new setup session.
 
@@ -842,7 +1022,14 @@ class RootSetupPrincipalSelectionRegistry:
                 or self._is_consumed(old_handle)):
             raise BootstrapEnrollmentPending("stage-zero principal selection is stale, consumed, or mismatched")
         proof = _current_principal_setup_context(normal_session_store, normal_session_handle, "setup")
-        fresh = self.identity_resolver.resolve_authenticated_identity(
+        identity_resolver = normal_identity_resolver or self.identity_resolver
+        if (not isinstance(identity_resolver, RootSetupAuthentikIdentityObserver)
+                or identity_resolver.setup_session_store is not normal_session_store
+                or identity_resolver.vault is not self.identity_resolver.vault
+                or identity_resolver.root_journal != self.root_journal
+                or identity_resolver._session_mode != "setup"):
+            raise BootstrapEnrollmentPending("principal adoption requires a fresh observer bound to the normal session")
+        fresh = identity_resolver.resolve_authenticated_identity(
             authenticated_identity_receipt_handle, normal_session_handle,
             _capability_authorization(proof))
         _validate_identity_receipt(fresh, authenticated_identity_receipt_handle)
@@ -853,7 +1040,7 @@ class RootSetupPrincipalSelectionRegistry:
                 or fresh.actor_credential_ref != old_selection.actor_credential_ref):
             raise BootstrapEnrollmentPending("fresh setup identity does not match the published Authentik subject and vault reference")
         normal_registry = RootSetupPrincipalSelectionRegistry.from_root_setup(
-            normal_session_store, self.identity_resolver, self.capability_selection, self.root_journal)
+            normal_session_store, identity_resolver, self.capability_selection, self.root_journal)
         lock = _exclusive_registry_lock(self.receipt_root, self.root_journal)
         try:
             adopted_path = self.receipt_root / f"adopted-{old_handle}.json"
@@ -919,6 +1106,86 @@ class RootSetupPrincipalSelectionRegistry:
             raise BootstrapEnrollmentPending("adopted principal selection does not match the current setup transaction")
         return self.resolve_selected_principal(
             handle, normal_session_handle, proof.transaction_handle, proof.plan_digest)
+
+    def resolve_adopted_namespace_selection(
+        self, normal_session_store: RootSetupSessionStore,
+        normal_session_handle: RootSetupSessionHandle,
+    ) -> VerifiedRootNamespaceSelection:
+        """Issue/reuse a separate namespace receipt for pre-active source staging.
+
+        Namespace identity comes from the freshly revalidated adopted principal
+        selector, while generation identity comes from the current root authority
+        snapshot and setup CAS predecessor. No profile, namespace, or generation
+        value is accepted from a caller.
+        """
+        if (self._session_mode != "setup"
+                or not isinstance(self.setup_session_store, RootSetupSessionStore)
+                or normal_session_store is not self.setup_session_store):
+            raise BootstrapEnrollmentPending("namespace selection requires its concrete normal root setup store")
+        authorization = _current_setup_proof(normal_session_store, normal_session_handle)
+        principal = self.resolve_adopted_initial_principal(
+            normal_session_store, normal_session_handle)
+        if principal.service_profile_id != "hermes-agent-native-v1":
+            raise BootstrapEnrollmentPending("selected principal does not bind the reviewed native service profile")
+        authority = normal_session_store.authority_loader_for_session()
+        generations = authority.get("service_generations") if isinstance(authority, Mapping) else None
+        if not isinstance(generations, Mapping):
+            raise BootstrapEnrollmentPending("current prepared protected generation is unavailable")
+        try:
+            from .enrollment import _validate_service_generations
+            current = _validate_service_generations(dict(generations))
+        except Exception:
+            raise BootstrapEnrollmentPending("current protected generation failed strict root validation") from None
+        generation_id = current.get("generation_id")
+        generation_digest = current.get("generation_digest")
+        if (not isinstance(generation_id, str) or not _ID.fullmatch(generation_id)
+                or not isinstance(generation_digest, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", generation_digest)
+                or authorization.expected_previous_generation_digest != generation_digest):
+            raise BootstrapEnrollmentPending("prepared protected generation changed during namespace selection")
+        _ensure_receipt_root(self.root_journal, self.receipt_root)
+        path = self.receipt_root / f"namespace-{authorization.setup_session_id}.json"
+        if path.exists():
+            receipt = _namespace_from_json(_read_json(path), self._seal)
+            self._validate_namespace_receipt(
+                receipt, authorization, principal, generation_id, generation_digest)
+            return receipt
+        now = time.monotonic()
+        expires = min(now + SELECTION_RECEIPT_TTL_SECONDS, principal.expires_monotonic,
+                      _session_expiry(normal_session_store, normal_session_handle))
+        if expires <= now:
+            raise BootstrapEnrollmentPending("adopted namespace selection has expired")
+        receipt = VerifiedRootNamespaceSelection(
+            SCHEMA, secrets.token_hex(32), authorization.setup_session_id,
+            authorization.transaction_handle, authorization.plan_digest,
+            generation_id, generation_digest, principal.receipt_id,
+            principal.service_profile_id, principal.namespace_id, now, expires,
+            self._seal,
+        )
+        _atomic_json(path, _namespace_json(receipt))
+        return receipt
+
+    def _validate_namespace_receipt(
+        self, receipt: VerifiedRootNamespaceSelection,
+        authorization: VerifiedRootSetupAuthorization,
+        principal: VerifiedRootSetupPrincipalSelection,
+        generation_id: str, generation_digest: str,
+    ) -> None:
+        if (not isinstance(receipt, VerifiedRootNamespaceSelection)
+                or receipt.schema != SCHEMA
+                or not _HANDLE.fullmatch(receipt.receipt_handle)
+                or receipt.setup_session_id != authorization.setup_session_id
+                or receipt.transaction_handle != authorization.transaction_handle
+                or receipt.plan_digest != authorization.plan_digest
+                or receipt.prepared_generation_id != generation_id
+                or receipt.prepared_generation_digest != generation_digest
+                or receipt.principal_selection_receipt_id != principal.receipt_id
+                or receipt.target_profile_id != "hermes-agent-native-v1"
+                or receipt.target_profile_id != principal.service_profile_id
+                or receipt.namespace_id != principal.namespace_id
+                or not secrets.compare_digest(receipt._registry_seal, self._seal)
+                or receipt.expires_monotonic <= time.monotonic()):
+            raise BootstrapEnrollmentPending("root namespace selection receipt is stale or mismatched")
 
     def consume_selected_principal(
         self, receipt_handle: str, setup_session_handle: RootSetupSessionHandle,
@@ -1272,6 +1539,59 @@ def _validate_selection_receipt(receipt: VerifiedRootSetupPrincipalSelection, re
             or receipt.expires_monotonic <= receipt.issued_monotonic
             or receipt.expires_monotonic - receipt.issued_monotonic > SELECTION_RECEIPT_TTL_SECONDS + 0.001):
         raise BootstrapEnrollmentPending("principal selection receipt is malformed")
+
+
+def _namespace_json(receipt: VerifiedRootNamespaceSelection) -> dict[str, Any]:
+    return {
+        "schema": receipt.schema, "receipt_handle": receipt.receipt_handle,
+        "setup_session_id": receipt.setup_session_id,
+        "transaction_handle": receipt.transaction_handle,
+        "plan_digest": receipt.plan_digest,
+        "prepared_generation_id": receipt.prepared_generation_id,
+        "prepared_generation_digest": receipt.prepared_generation_digest,
+        "principal_selection_receipt_id": receipt.principal_selection_receipt_id,
+        "target_profile_id": receipt.target_profile_id,
+        "namespace_id": receipt.namespace_id,
+        "issued_monotonic": receipt.issued_monotonic,
+        "expires_monotonic": receipt.expires_monotonic,
+    }
+
+
+def _namespace_from_json(value: Any, registry_seal: str) -> VerifiedRootNamespaceSelection:
+    expected = {
+        "schema", "receipt_handle", "setup_session_id", "transaction_handle",
+        "plan_digest", "prepared_generation_id", "prepared_generation_digest",
+        "principal_selection_receipt_id", "target_profile_id", "namespace_id",
+        "issued_monotonic", "expires_monotonic",
+    }
+    if not isinstance(value, dict) or set(value) != expected:
+        raise BootstrapEnrollmentPending("root namespace selection record is absent or malformed")
+    try:
+        receipt = VerifiedRootNamespaceSelection(
+            value["schema"], value["receipt_handle"], value["setup_session_id"],
+            value["transaction_handle"], value["plan_digest"],
+            value["prepared_generation_id"], value["prepared_generation_digest"],
+            value["principal_selection_receipt_id"], value["target_profile_id"],
+            value["namespace_id"], value["issued_monotonic"],
+            value["expires_monotonic"], registry_seal,
+        )
+    except (KeyError, TypeError, ValueError):
+        raise BootstrapEnrollmentPending("root namespace selection record is malformed") from None
+    if (receipt.schema != SCHEMA or not _HANDLE.fullmatch(receipt.receipt_handle)
+            or not _ID.fullmatch(receipt.setup_session_id)
+            or not _ID.fullmatch(receipt.transaction_handle)
+            or not re.fullmatch(r"[0-9a-f]{64}", receipt.plan_digest)
+            or not _ID.fullmatch(receipt.prepared_generation_id)
+            or not re.fullmatch(r"[0-9a-f]{64}", receipt.prepared_generation_digest)
+            or not _HANDLE.fullmatch(receipt.principal_selection_receipt_id)
+            or receipt.target_profile_id != "hermes-agent-native-v1"
+            or not _ID.fullmatch(receipt.namespace_id)
+            or type(receipt.issued_monotonic) not in (int, float)
+            or type(receipt.expires_monotonic) not in (int, float)
+            or receipt.expires_monotonic <= receipt.issued_monotonic
+            or receipt.expires_monotonic - receipt.issued_monotonic > SELECTION_RECEIPT_TTL_SECONDS + 0.001):
+        raise BootstrapEnrollmentPending("root namespace selection record is malformed")
+    return receipt
 
 
 def _identity_json(receipt: AuthentikIdentityReceipt) -> dict[str, Any]:
