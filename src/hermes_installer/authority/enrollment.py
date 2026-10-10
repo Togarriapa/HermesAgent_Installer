@@ -781,6 +781,7 @@ class SourceIssuerRecord:
     observer_enrollment_id: str
     source_action_ids: tuple[str, ...]
     private_provider_route_ids: tuple[str, ...] = ()
+    public_web_scope_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -860,7 +861,9 @@ def _parse_source_issuers(value: Any) -> tuple[SourceIssuerRecord, ...]:
                 "generation", "observer_enrollment_id", "source_action_ids"}
     channels = set(_SOURCE_ACTIONS_BY_CHANNEL)
     for row in value:
-        if not isinstance(row, dict) or set(row) not in (required, required | {"private_provider_route_ids"}):
+        optional_fields = {"private_provider_route_ids", "public_web_scope_ids"}
+        if (not isinstance(row, dict) or not required.issubset(row)
+                or set(row) - required - optional_fields):
             raise AuthorityDenied("enrollment.source", "protected source issuer fields are invalid")
         item = row
         channel = _read_id(item["issuer_channel_id"], "issuer channel")
@@ -873,6 +876,7 @@ def _parse_source_issuers(value: Any) -> tuple[SourceIssuerRecord, ...]:
         actions = item["source_action_ids"]
         parents = item["allowed_parent_channels"]
         private_routes = item.get("private_provider_route_ids", [])
+        public_scopes = item.get("public_web_scope_ids", [])
         if (channel not in channels or not isinstance(role_sha, str)
                 or not re.fullmatch(r"[0-9a-f]{64}", role_sha)
                 or not isinstance(actions, list) or not actions or len(actions) > 16
@@ -884,16 +888,23 @@ def _parse_source_issuers(value: Any) -> tuple[SourceIssuerRecord, ...]:
                 or len(parents) != len(set(parents))
                 or not isinstance(private_routes, list) or len(private_routes) > 64
                 or any(not isinstance(route, str) for route in private_routes)
-                or len(private_routes) != len(set(private_routes))):
+                or len(private_routes) != len(set(private_routes))
+                or not isinstance(public_scopes, list) or len(public_scopes) > 32
+                or any(not isinstance(scope, str) for scope in public_scopes)
+                or len(public_scopes) != len(set(public_scopes))
+                or public_scopes != sorted(public_scopes)):
             raise AuthorityDenied("enrollment.source", "protected source issuer row is malformed")
         for route in private_routes:
             _read_id(route, "source private provider route")
+        for scope in public_scopes:
+            _read_id(scope, "source public web scope")
         if observer_id in seen_ids:
             raise AuthorityDenied("enrollment.source", "protected source issuer is duplicated")
         seen_ids.add(observer_id)
         result.append(SourceIssuerRecord(
             channel, profile, role_artifact, role_sha, capture_schema,
             tuple(parents), generation, observer_id, tuple(actions), tuple(private_routes),
+            tuple(public_scopes),
         ))
     return tuple(result)
 
