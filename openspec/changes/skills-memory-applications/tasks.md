@@ -220,3 +220,5 @@ Preactive qualification runtime proof v130: `plans/amendments/2026-10-10-preacti
 - [ ] SK-T152.1 app build/source broker: Actual separate reviewed backend table source/member observation, finite artifact/license/CAS receipt and complete current backend closure.
 
 - [ ] SK-T152.2 factory/application selection/build/probe: Final backend handle join, isolated actual project wheel frontend/backend/no-network source hook execution and genuine wheel output/install/probe; extra build requirements/source/license/currentness failures deny.
+
+- [ ] SK-T155.1 Broker/release/toolchain producer: exact held finite policy member/current selected dependency joins, no disconnected artifact authority.
