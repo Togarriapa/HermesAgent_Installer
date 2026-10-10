@@ -26,13 +26,14 @@ import sys
 MAX_CONTRACT = 16 * 1024
 MAX_RESULT = 4 * 1024
 MAX_GRANT = 1024
+MAX_GATE_FRAME = 8192
 GATE_FD = 3
 _FRAME = struct.Struct("!I")
 CONTRACT_PATH = "/run/hermes-installer/private-loopback/contract.json"
 FIELDS = frozenset({
     "schema", "purpose", "nonce", "network_id", "service_generation_digest",
     "enrollment_id", "profile_id", "generation", "uid", "gid",
-    "namespace_inode", "role", "allowed_bind_port", "allowed_connect_port",
+    "role", "allowed_bind_port", "allowed_connect_port",
     "denied_port", "application_executable", "application_argv",
     "application_environment",
 })
@@ -88,7 +89,7 @@ def _read_contract():
 
 
 def _validate_contract(row):
-    if (type(row["schema"]) is not int or row["schema"] != 1
+    if (type(row["schema"]) is not int or row["schema"] != 2
             or row["purpose"] != "private-loopback-worker-start"
             or not isinstance(row["nonce"], str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", row["nonce"])
             or any(not isinstance(row[name], str) or not _IDENT.fullmatch(row[name])
@@ -97,7 +98,6 @@ def _validate_contract(row):
             or not _SHA.fullmatch(row["service_generation_digest"])
             or type(row["uid"]) is not int or type(row["gid"]) is not int
             or row["uid"] <= 0 or row["gid"] <= 0
-            or type(row["namespace_inode"]) is not int or row["namespace_inode"] <= 0
             or row["role"] not in {"listener", "client", "listener-client", "af-unix"}):
         raise GateError("contract identity fields are invalid")
     for name in ("allowed_bind_port", "allowed_connect_port", "denied_port"):
@@ -134,9 +134,7 @@ def _self_identity(contract):
                       ("CapEff", "CapPrm", "CapBnd", "CapAmb", "CapInh")}
         if any(cap_values.values()):
             raise GateError("worker gate retains Linux capabilities")
-        namespace_inode = os.stat("/proc/self/ns/net").st_ino
-        if namespace_inode != contract["namespace_inode"]:
-            raise GateError("worker gate is outside the selected network namespace")
+        namespace = os.stat("/proc/self/ns/net")
         if os.getuid() != contract["uid"] or os.getgid() != contract["gid"]:
             raise GateError("worker gate identity differs from the selected UID/GID")
         cgroups = open("/proc/self/cgroup", "rt", encoding="ascii").read().splitlines()
@@ -150,7 +148,8 @@ def _self_identity(contract):
         return {
             "pid": os.getpid(), "uid": os.getuid(), "gid": os.getgid(),
             "start_ticks": int(fields[19]), "cgroup": unified[0],
-            "namespace_inode": namespace_inode, "capabilities": cap_values,
+            "namespace_device": namespace.st_dev, "namespace_inode": namespace.st_ino,
+            "capabilities": cap_values,
         }
     except (OSError, ValueError, KeyError, IndexError, UnicodeError) as exc:
         raise GateError("worker gate process identity could not be observed") from exc
@@ -239,6 +238,14 @@ def _gate_channel_from_activation(env):
     if channel.family != socket.AF_UNIX or channel.type & socket.SOCK_STREAM != socket.SOCK_STREAM:
         channel.close()
         raise GateError("root-owned private gate channel has the wrong socket type")
+    if not hasattr(socket, "SO_PEERCRED"):
+        channel.close()
+        raise GateError("kernel-authenticated manager peer credentials are unavailable")
+    peer = channel.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+    manager_pid, manager_uid, _manager_gid = struct.unpack("3i", peer)
+    if manager_pid <= 1 or manager_pid == os.getpid() or manager_uid != 0:
+        channel.close()
+        raise GateError("gate channel peer is not the distinct root manager")
     return channel
 
 
@@ -260,25 +267,85 @@ def _recv_exact(channel, count):
     return bytes(result)
 
 
-def _await_root_release(channel, *, nonce, contract_sha256):
-    """Block until the manager sends its exact one-use release over the private FD."""
+def _receive_gate_frame(channel, *, ceiling=MAX_GATE_FRAME):
+    """Read one canonical, bounded frame from the private manager channel."""
     header = _recv_exact(channel, _FRAME.size)
     (length,) = _FRAME.unpack(header)
-    if not 1 <= length <= MAX_GRANT:
-        raise GateError("root gate decision length is invalid")
+    if not 1 <= length <= ceiling:
+        raise GateError("root gate frame length is invalid")
     raw = _recv_exact(channel, length)
     try:
-        grant = json.loads(raw.decode("ascii"), object_pairs_hook=_unique_pairs)
+        value = json.loads(raw.decode("ascii"), object_pairs_hook=_unique_pairs)
     except (UnicodeError, ValueError, TypeError, json.JSONDecodeError):
-        raise GateError("root gate decision is malformed") from None
-    expected = {
-        "schema": 1, "purpose": "private-loopback-worker-release",
-        "nonce": nonce, "contract_sha256": contract_sha256, "decision": "release",
-    }
-    if (type(grant) is not dict or set(grant) != set(expected) or grant != expected
-            or json.dumps(grant, sort_keys=True, separators=(",", ":"),
+        raise GateError("root gate frame is malformed") from None
+    if (type(value) is not dict
+            or json.dumps(value, sort_keys=True, separators=(",", ":"),
                           ensure_ascii=True).encode("ascii") != raw):
-        raise GateError("root gate decision does not match the held worker contract")
+        raise GateError("root gate frame is not canonical closed JSON")
+    return value
+
+
+def _await_namespace_gate(channel, *, contract, contract_sha256, identity):
+    """Authenticate the actual launch namespace before any network probe."""
+    frame = _receive_gate_frame(channel)
+    fields = frozenset({
+        "schema", "operation", "nonce", "launch_contract_sha256",
+        "service_generation_digest", "projection_handle", "unit_invocation_id",
+        "pid", "start_ticks", "cgroup", "namespace_device", "namespace_inode",
+    })
+    if (set(frame) != fields or type(frame.get("schema")) is not int or frame.get("schema") != 2
+            or frame.get("operation") != "observe-selected-namespace"
+            or frame.get("nonce") != contract["nonce"]
+            or frame.get("launch_contract_sha256") != contract_sha256
+            or frame.get("service_generation_digest") != contract["service_generation_digest"]
+            or not isinstance(frame.get("projection_handle"), str)
+            or not _IDENT.fullmatch(frame["projection_handle"])
+            or not isinstance(frame.get("unit_invocation_id"), str)
+            or not _IDENT.fullmatch(frame["unit_invocation_id"])
+            or frame.get("pid") != identity["pid"]
+            or frame.get("start_ticks") != identity["start_ticks"]
+            or frame.get("cgroup") != identity["cgroup"]
+            or frame.get("namespace_device") != identity["namespace_device"]
+            or frame.get("namespace_inode") != identity["namespace_inode"]):
+        raise GateError("root namespace observation does not match this held worker")
+    if (type(frame["pid"]) is not int or frame["pid"] <= 1
+            or type(frame["start_ticks"]) is not int or frame["start_ticks"] <= 0
+            or type(frame["namespace_device"]) is not int or frame["namespace_device"] < 0
+            or type(frame["namespace_inode"]) is not int or frame["namespace_inode"] <= 0):
+        raise GateError("root namespace observation identity fields are invalid")
+    current = _self_identity(contract)
+    if current != identity:
+        raise GateError("worker identity changed before namespace probes")
+    namespace = os.stat("/proc/self/ns/net")
+    if (namespace.st_dev, namespace.st_ino) != (
+            frame["namespace_device"], frame["namespace_inode"]):
+        raise GateError("selected namespace descriptor does not name this worker namespace")
+    raw = json.dumps(frame, sort_keys=True, separators=(",", ":"),
+                     ensure_ascii=True).encode("ascii")
+    return frame, hashlib.sha256(raw).hexdigest()
+
+
+def _await_root_release(channel, *, contract, contract_sha256,
+                        namespace_gate_sha256, identity, gate_frame):
+    """Block until the manager issues its separate exact application release."""
+    grant = _receive_gate_frame(channel, ceiling=MAX_GRANT)
+    expected = {
+        "schema": 2, "operation": "release-selected-application",
+        "nonce": contract["nonce"],
+        "launch_contract_sha256": contract_sha256,
+        "namespace_gate_sha256": namespace_gate_sha256,
+        "service_generation_digest": contract["service_generation_digest"],
+        "projection_handle": gate_frame["projection_handle"],
+        "pid": identity["pid"], "start_ticks": identity["start_ticks"],
+        "unit_invocation_id": gate_frame["unit_invocation_id"],
+    }
+    if (set(grant) != set(expected) or grant != expected
+            or _self_identity(contract) != identity):
+        raise GateError("root application release differs from the one-use worker proof")
+    namespace = os.stat("/proc/self/ns/net")
+    if (namespace.st_dev, namespace.st_ino) != (
+            gate_frame["namespace_device"], gate_frame["namespace_inode"]):
+        raise GateError("worker changed network namespace before application release")
 
 
 def _emit(value):
@@ -298,22 +365,33 @@ def main():
         contract, digest = _read_contract()
         _validate_contract(contract)
         identity = _self_identity(contract)
-        checks, state = _probe(contract)
         channel = _gate_channel_from_activation(os.environ)
-        _send_frame(channel, {"schema": 1, "state": state, "contract_sha256": digest,
-                    "nonce": contract["nonce"], "identity": identity, "checks": checks}, MAX_RESULT)
+        _send_frame(channel, {
+            "schema": 2, "state": "awaiting-namespace", "nonce": contract["nonce"],
+            "launch_contract_sha256": digest, "pid": identity["pid"],
+            "start_ticks": identity["start_ticks"], "uid": identity["uid"],
+            "gid": identity["gid"],
+        }, MAX_RESULT)
+        gate_frame, gate_digest = _await_namespace_gate(
+            channel, contract=contract, contract_sha256=digest, identity=identity)
+        checks, state = _probe(contract)
+        result = {
+            "schema": 2, "state": state, "nonce": contract["nonce"],
+            "launch_contract_sha256": digest,
+            "namespace_gate_sha256": gate_digest,
+            "identity": identity, "checks": checks,
+        }
+        _send_frame(channel, result, MAX_RESULT)
         if state != "ready":
             return 77
-        # SIGCONT is only a scheduling action: the helper still blocks on its
-        # manager-owned channel until a contract- and nonce-bound release frame
-        # arrives. A same-UID signal sender cannot authorize application exec.
-        os.kill(os.getpid(), signal.SIGSTOP)
-        _await_root_release(channel, nonce=contract["nonce"], contract_sha256=digest)
+        _await_root_release(channel, contract=contract, contract_sha256=digest,
+                            namespace_gate_sha256=gate_digest, identity=identity,
+                            gate_frame=gate_frame)
         os.execve(contract["application_executable"], contract["application_argv"],
                   contract["application_environment"])
     except (GateError, OSError, ValueError, TypeError, KeyError):
         try:
-            _emit({"schema": 1, "state": "unavailable", "contract_sha256": digest,
+            _emit({"schema": 2, "state": "unavailable", "launch_contract_sha256": digest,
                    "nonce": contract.get("nonce") if isinstance(contract, dict) else None,
                    "identity": identity, "checks": {}})
         except Exception:

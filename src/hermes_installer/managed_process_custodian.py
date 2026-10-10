@@ -928,6 +928,8 @@ class ManagedProcessEffectHandler:
                  artifact_resolver: Callable[[str, str], Any] | None = None,
                  native_package_resolver: Callable[[str, str], ManagedNativePackageMount | None] | None = None,
                  native_loader_observation_store: Any | None = None,
+                 _committed_pm_executable_resolver: Any | None = None,
+                 _committed_pm_executable_identity: Any | None = None,
                  task_input_coordinator: Any | None = None,
                  task_admission_current: Callable[[RootAdmittedTask, bytes], bool] | None = None,
                  native_health_start_authority: Any | None = None,
@@ -941,6 +943,11 @@ class ManagedProcessEffectHandler:
         self.artifact_resolver = artifact_resolver
         self.native_package_resolver = native_package_resolver
         self.native_loader_observation_store = native_loader_observation_store
+        self._committed_pm_executable_resolver: Any | None = None
+        self._committed_pm_executable_identity: Any | None = None
+        self._native_worker_profile_id: str | None = None
+        self._native_worker_executable_binding: tuple[Any, ...] | None = None
+        self._native_worker_launch_owner: Any | None = None
         self.task_input_coordinator = None
         self._systemd_openfile_supported: bool | None = None
         self.task_admission_current = task_admission_current
@@ -971,10 +978,154 @@ class ManagedProcessEffectHandler:
         self._diagnostic_sink: Callable[[bytes], None] | None = None
         for profile in self.profiles.values():
             self._validate_profile(profile)
+        self._bind_committed_pm_constructor_custody(
+            _committed_pm_executable_resolver, _committed_pm_executable_identity)
         if task_input_coordinator is not None:
             self.set_task_input_coordinator(task_input_coordinator)
         if native_health_start_authority is not None:
             self.bind_native_health_start_authority(native_health_start_authority)
+
+    def _bind_committed_pm_constructor_custody(self, resolver: Any | None,
+                                               identity: Any | None) -> None:
+        """Pin only the selected native profile from a verified active PM receipt.
+
+        Generic profile validation above intentionally remains byte-for-byte
+        strict.  The private pair addresses the composition cycle in which
+        the active PM executable has to be resolved before the profile and
+        this manager can be built; it does not admit process effects.
+        """
+        if resolver is None and identity is None:
+            return
+        from hermes_installer.authority.committed_pm_executable import (
+            RootActiveCommittedPMExecutableResolver,
+            RootVerifiedCommittedPMExecutableIdentity,
+        )
+        if (type(resolver) is not RootActiveCommittedPMExecutableResolver
+                or type(identity) is not RootVerifiedCommittedPMExecutableIdentity):
+            raise AuthorityDenied(
+                "native_worker.pm_executable",
+                "exact committed PM executable resolver and identity are required")
+        try:
+            if resolver.verify_current(identity) is not identity:
+                raise ValueError("PM executable identity is not current")
+            matches = [profile for profile in self.profiles.values()
+                       if profile.profile_id == identity.profile_id]
+            if len(matches) != 1:
+                raise ValueError("selected native profile is absent or ambiguous")
+            profile = matches[0]
+            executable = profile.executable
+            info = executable.stat(follow_symlinks=False)
+            binding = (
+                identity.profile_id, identity.service_generation,
+                identity.service_generation_digest, identity.publication_receipt_handle,
+                identity.publication_sha256, identity.runtime_record_id,
+                identity.runtime_record_sha256, identity.pm_runtime_receipt_handle,
+                identity.pm_receipt_sha256, identity.pm_generation,
+                identity.runtime_closure_sha256, identity.executable_sha256,
+                identity.executable_device, identity.executable_inode,
+                identity.executable_uid, identity.executable_gid,
+                identity.executable_mode,
+            )
+            if (profile.generation != identity.service_generation
+                    or profile.service_generation_digest != identity.service_generation_digest
+                    or executable != identity.executable_path
+                    or profile.artifact_sha256 != identity.executable_sha256
+                    or (info.st_dev, info.st_ino, info.st_uid, info.st_gid,
+                        stat.S_IMODE(info.st_mode))
+                       != (identity.executable_device, identity.executable_inode,
+                           identity.executable_uid, identity.executable_gid,
+                           identity.executable_mode)
+                    or hashlib.sha256(executable.read_bytes()).hexdigest()
+                       != identity.executable_sha256):
+                raise ValueError("selected profile does not match the committed PM executable")
+        except Exception:
+            raise AuthorityDenied(
+                "native_worker.pm_executable",
+                "selected native profile lacks current committed PM executable custody") from None
+        self._committed_pm_executable_resolver = resolver
+        self._committed_pm_executable_identity = identity
+        self._native_worker_profile_id = identity.profile_id
+        self._native_worker_executable_binding = binding
+
+    def close(self) -> None:
+        """Stop selected native workers before retiring their source custody."""
+        native_profile_id = self._native_worker_profile_id
+        if native_profile_id is not None:
+            with self._lock:
+                workers = tuple(handle for handle in self._handles.values()
+                                if handle.profile.profile_id == native_profile_id
+                                and not handle.stopped)
+            for handle in workers:
+                try:
+                    proof = self._stop(handle, timeout=5.0)
+                except Exception as exc:
+                    # Keep the launch/source owner alive when cleanup could
+                    # not establish a stopped MainPID/cgroup. Closing its
+                    # custody first would make later recovery unverifiable.
+                    raise AuthorityDenied(
+                        "native_worker.cleanup",
+                        "selected native worker could not be retired before source custody") from exc
+                if not proof.cleanup_verified:
+                    raise AuthorityDenied(
+                        "native_worker.cleanup",
+                        "selected native worker stop did not verify the owned unit and cgroup")
+        launch_owner = self._native_worker_launch_owner
+        if launch_owner is not None:
+            launch_owner.close()
+            self._native_worker_launch_owner = None
+        resolver = self._committed_pm_executable_resolver
+        if resolver is not None:
+            resolver.close()
+            self._committed_pm_executable_resolver = None
+            self._committed_pm_executable_identity = None
+
+    def bind_native_worker_launch_owner(self, runtime: Any, listener_receiver: Any,
+                                        listener_receipt: Any) -> Any:
+        """Attach the one active launch owner from protected daemon composition."""
+        from hermes_installer.authority.native_worker_launch import (
+            RootActiveNativeHermesWorkerLaunchOwner,
+            NativeHermesWorkerLaunchUnavailable,
+        )
+        with self._lock:
+            if self._native_worker_launch_owner is not None:
+                raise NativeHermesWorkerLaunchUnavailable(
+                    "native worker launch owner cannot be replaced")
+            resolver = self._committed_pm_executable_resolver
+            identity = self._committed_pm_executable_identity
+            if resolver is None or identity is None:
+                raise NativeHermesWorkerLaunchUnavailable(
+                    "fresh committed PM source resolver is unavailable")
+            # Validate the short constructor observation, then let the owner
+            # resolve a fresh PM identity for every actual launch proof.
+            if resolver.verify_current(identity) is not identity:
+                raise NativeHermesWorkerLaunchUnavailable(
+                    "committed PM constructor custody is no longer current")
+            return RootActiveNativeHermesWorkerLaunchOwner.from_root_runtime(
+                runtime, listener_receiver, listener_receipt, resolver)
+
+    def select_native_worker(self, network_id: str, profile_id: str) -> Any:
+        owner = self._native_worker_launch_owner
+        if owner is None:
+            raise AuthorityDenied("native_worker.launch", "active native worker owner is unavailable")
+        return owner.select_worker(network_id, profile_id)
+
+    def select_unique_native_worker_for_profile(self, profile_id: str) -> Any:
+        owner = self._native_worker_launch_owner
+        if owner is None:
+            raise AuthorityDenied("native_worker.launch", "active native worker owner is unavailable")
+        return owner.select_unique_worker_for_profile(profile_id)
+
+    def resolve_selected_native_worker_launch(self, worker_selection: Any) -> Any:
+        owner = self._native_worker_launch_owner
+        if owner is None:
+            raise AuthorityDenied("native_worker.launch", "active native worker owner is unavailable")
+        return owner.resolve_selected_native_worker_launch(worker_selection)
+
+    def verify_current_native_worker_launch(self, proof: Any) -> Any:
+        owner = self._native_worker_launch_owner
+        if owner is None:
+            raise AuthorityDenied("native_worker.launch", "active native worker owner is unavailable")
+        return owner.verify_current_native_worker_launch(proof)
 
     def bind_native_health_start_authority(self, authority: Any) -> None:
         """Bind the one concrete root health admission issuer to this manager."""
@@ -3785,6 +3936,14 @@ class ManagedProcessEffectHandler:
                         root_selected_effect: Any | None = None,
                         xauthority_mount_source: Path | None = None,
                         daemon_liveness_pidfd: int | None = None) -> Mapping[str, Any]:
+        if (self._native_worker_profile_id is not None
+                and profile.profile_id == self._native_worker_profile_id):
+            # The generic process.start surface cannot admit the selected
+            # Hermes module recipe. It remains denied until the dedicated
+            # same-PID private-loopback gate owns the launch and its release.
+            raise AuthorityDenied(
+                "native_worker.gate",
+                "selected Hermes worker requires its typed current launch and same-process kernel gate")
         if root_selected_effect is None:
             if authorization is None:
                 raise AuthorityDenied("process.authority", "ordinary process start authority is malformed")

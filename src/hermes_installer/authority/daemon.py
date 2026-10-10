@@ -407,7 +407,8 @@ def _finalize_active_memory_lifecycle(*, service: AuthorityService,
 def serve_authority(service: AuthorityService, *, socket_gid_by_uid: Mapping[int, int],
                     stop_event: threading.Event,
                     socket_dir: Path = DEFAULT_SOCKET_DIR,
-                    max_clients_per_uid: int = 32) -> None:
+                    max_clients_per_uid: int = 32,
+                    adopted_listener_by_uid: Mapping[int, socket.socket] | None = None) -> None:
     """Run one root-owned socket per enrolled UID, gated by each primary GID."""
     if os.geteuid() != 0:
         raise AuthorityDenied("authority.privilege", "authority daemon must run as root")
@@ -425,6 +426,11 @@ def serve_authority(service: AuthorityService, *, socket_gid_by_uid: Mapping[int
     if (any(type(gid) is not int or gid <= 0 for gid in gids)
             or len(set(gids)) != len(gids)):
         raise AuthorityDenied("authority.socket", "each profile needs a unique protected primary GID")
+    adopted = dict(adopted_listener_by_uid or {})
+    if not adopted:
+        raise AuthorityDenied("authority.activation", "authority effects require an acknowledged transferred listener")
+    if set(adopted) != enrolled_uids or len(enrolled_uids) != 1:
+        raise AuthorityDenied("authority.socket", "supervised adoption must cover the exact singleton enrolled profile")
     failures: list[BaseException] = []
     failure_lock = threading.Lock()
 
@@ -443,9 +449,8 @@ def serve_authority(service: AuthorityService, *, socket_gid_by_uid: Mapping[int
 
     def run_one(uid: int, gid: int) -> None:
         try:
-            service.serve_unix(socket_dir / f"{uid}.sock", socket_gid=gid,
-                               stop_event=stop_event, expected_uid=0,
-                               max_clients=max_clients_per_uid)
+            service.serve_unix_from_owned_listener(adopted[uid], stop_event=stop_event,
+                                                   max_clients=max_clients_per_uid)
         except BaseException as exc:
             with failure_lock:
                 failures.append(exc)
@@ -484,10 +489,19 @@ def serve_authority(service: AuthorityService, *, socket_gid_by_uid: Mapping[int
 
 
 def main() -> int:
-    """System-service entry point; does not mutate installation state."""
+    """The direct console entry point is deliberately unavailable without adoption."""
+    raise AuthorityDenied("authority.activation", "authority effects require the fixed supervised adoption action")
+
+
+def main_adopt(activation_id: str) -> int:
+    """Fixed installed-unit action which serves only the acknowledged transferred listener."""
+    # The installed root actor snapshots its finite module closure.  Load the
+    # complete native launch verifier before that observation, never on the
+    # first post-capture worker request.
+    from .native_worker_launch import preload_native_worker_launch_closure
+    preload_native_worker_launch_closure()
     service, enrollment = build_enrolled_authority_service()
-    runtime = (getattr(service, "root_authority_runtime", None)
-               or getattr(service, "root_runtime_bindings", None))
+    runtime = getattr(service, "root_authority_runtime", None)
     process_manager = getattr(runtime, "process_manager", None)
     process_profiles = (process_manager.profiles if process_manager is not None
                         else enrollment.process_profiles)
@@ -497,12 +511,57 @@ def main() -> int:
         if profile is None or profile.owner_uid != uid:
             raise AuthorityDenied("authority.socket", "every socket peer must map to a root-enrolled worker profile")
         socket_gid_by_uid[uid] = profile.owner_gid
+    from .installer_release import InstalledRootReleaseVerifier
+    from .listener_activation import RootAuthorityListenerActivationReceiver
+    held_release, actor = InstalledRootReleaseVerifier.from_current_root_process()
+    receiver = RootAuthorityListenerActivationReceiver.from_current_installed_daemon(
+        runtime, activation_id, held_release, actor, service=service, enrollment=enrollment)
+    listener: socket.socket | None = None
+    active_listener: Any = None
     stop_event = threading.Event()
     signal.signal(signal.SIGTERM, lambda _signum, _frame: stop_event.set())
     signal.signal(signal.SIGINT, lambda _signum, _frame: stop_event.set())
     try:
-        serve_authority(service, socket_gid_by_uid=socket_gid_by_uid, stop_event=stop_event)
+        listener, active_listener = receiver.receive_listener()
+        if process_manager is not None:
+            # This owner binds fresh active PM/source projections and the
+            # receiver's retained adopted FD. Failure leaves the native worker
+            # unavailable; the generic process path denies that profile.
+            from .native_worker_launch import NativeHermesWorkerLaunchUnavailable
+            try:
+                process_manager.bind_native_worker_launch_owner(
+                    runtime, receiver, active_listener)
+            except NativeHermesWorkerLaunchUnavailable:
+                pass
+        socket_path = listener.getsockname()
+        if (not isinstance(socket_path, str)
+                or socket_path != str(DEFAULT_SOCKET_DIR / f"{next(iter(socket_gid_by_uid))}.sock")):
+            raise AuthorityDenied("authority.activation", "acknowledged listener path differs from the selected enrolled UID")
+        serve_authority(service, socket_gid_by_uid=socket_gid_by_uid, stop_event=stop_event,
+                        adopted_listener_by_uid={next(iter(socket_gid_by_uid)): listener})
     finally:
+        stop_event.set()
+        if listener is not None:
+            try:
+                listener.close()
+            except OSError:
+                pass
+            # Remove only the exact socket leaf named by the adopted journal;
+            # a pathname replacement is preserved for recovery/inspection.
+            try:
+                info = Path(socket_path).lstat()
+                if (stat.S_ISSOCK(info.st_mode) and info.st_uid == 0
+                        and info.st_gid == enrollment.process_profiles[
+                            next(iter(enrollment.bindings_by_uid.values())).profile_id].owner_gid
+                        and (info.st_dev, info.st_ino) == (
+                            active_listener.socket_device, active_listener.socket_inode)):
+                    Path(socket_path).unlink()
+            except (OSError, KeyError, StopIteration):
+                pass
+        owner = getattr(receiver, "_owner", None)
+        close_owner = getattr(owner, "close", None)
+        if callable(close_owner):
+            close_owner()
         authority_runtime = getattr(service, "root_authority_runtime", None)
         close_runtime = getattr(authority_runtime, "close", None)
         if callable(close_runtime):
@@ -516,4 +575,6 @@ def main() -> int:
         stop_watchdog = getattr(remote_authority, "stop_watchdog", None)
         if callable(stop_watchdog):
             stop_watchdog()
+        actor.close()
+        held_release.close()
     return 0

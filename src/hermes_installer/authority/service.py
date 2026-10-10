@@ -3808,6 +3808,57 @@ class AuthorityService:
             except OSError:
                 pass
 
+    def serve_unix_from_owned_listener(self, listener: socket.socket, *,
+                                       stop_event: threading.Event,
+                                       max_clients: int = 32) -> None:
+        """Serve on the exact inherited listener FD without rebinding or unlinking.
+
+        Only the listener activation receiver calls this after validating the
+        SCM_RIGHTS descriptor, the selected pathname inode, and current active
+        publication.  This method never changes the path or listener options.
+        """
+        if (not isinstance(listener, socket.socket) or listener.fileno() < 0
+                or listener.family != socket.AF_UNIX
+                or listener.getsockopt(socket.SOL_SOCKET, socket.SO_TYPE) != socket.SOCK_STREAM
+                or listener.getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN) != 1
+                or type(max_clients) is not int or not 1 <= max_clients <= 128
+                or not callable(getattr(stop_event, "is_set", None))
+                or not callable(getattr(stop_event, "wait", None))):
+            raise AuthorityDenied("authority.socket", "transferred authority listener is not a live Unix stream listener")
+        address = listener.getsockname()
+        if (not isinstance(address, str)
+                or not address.startswith("/run/hermes-installer/authority/")):
+            raise AuthorityDenied("authority.socket", "transferred listener path is outside the fixed authority namespace")
+        pool = ThreadPoolExecutor(max_workers=max_clients, thread_name_prefix="authority-rpc")
+        slots = threading.BoundedSemaphore(max_clients)
+        try:
+            listener.settimeout(0.25)
+            while not stop_event.is_set():
+                try:
+                    connection, _ = listener.accept()
+                except (TimeoutError, socket.timeout):
+                    continue
+                if not slots.acquire(blocking=False):
+                    connection.close()
+                    continue
+                def serve_one(conn: socket.socket = connection) -> None:
+                    try:
+                        self.handle_connection(conn)
+                    finally:
+                        conn.close()
+                        slots.release()
+                try:
+                    pool.submit(serve_one)
+                except RuntimeError:
+                    connection.close()
+                    slots.release()
+                    raise
+        finally:
+            # The fd and bound inode belong to the activation custodian.  A
+            # stopped daemon closes its descriptor; only the issuer reconciles
+            # the same inode after observing this process exit.
+            pool.shutdown(wait=True, cancel_futures=True)
+
     @classmethod
     def from_key_file(cls, path: Path, *, key_id: str,
                       expected_uid: int = 0, **kwargs: Any) -> "AuthorityService":

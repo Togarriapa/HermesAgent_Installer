@@ -262,10 +262,19 @@ class RootActiveCommittedPMExecutableResolver:
 
     def close(self) -> None:
         with self._identity_lock:
+            if self._closed:
+                return
             self._closed = True
             identities = tuple(self._issued.values())
         for identity in identities:
             identity.close()
+        # Runtime composition transfers this dedicated local release/actor
+        # evidence together with the resolver.  Closing the resolver closes
+        # the complete evidence owner exactly once.
+        for item in (getattr(self, "_actor", None), getattr(self, "_release", None)):
+            close = getattr(item, "close", None)
+            if callable(close):
+                close()
 
     def _begin_resolution(self) -> None:
         self._require_live()
