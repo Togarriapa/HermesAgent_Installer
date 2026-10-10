@@ -11,6 +11,7 @@ from unittest.mock import patch
 from hermes_installer.authority.source_observers import (
     LiveSourceProducer,
     NativeInitialInputDelivery,
+    RootNativeExecutionSelectionRegistry,
     RootSelectedNativeExecution,
     SourceObserverEnrollment,
     SourceObserverRegistry,
@@ -147,8 +148,17 @@ class _Service:
     def issue_selected_input_source(self, observation):
         if not isinstance(observation, VerifiedSourceObservation):
             raise AssertionError("service received unverified selected input DTO")
+        if not self.observation_registry.verify_current_selected_input_proof(
+                observation, observation.selected_execution):
+            raise AssertionError("selected input proof was not current before consent resolution")
+        if self.observation_registry.resolve_selected_input_execution_registry(
+                observation, observation.selected_execution) is None:
+            raise AssertionError("consent resolver could not recover the retained selection registry")
         self.observation_registry.consume_selected_input_observation(
             observation, observation.selected_execution)
+        if self.observation_registry.verify_current_selected_input_proof(
+                observation, observation.selected_execution):
+            raise AssertionError("selected input proof remained current after one-use consumption")
         return self._issue_fixture_receipt(observation)
 
     def _issue_fixture_receipt(self, observation):
@@ -294,6 +304,41 @@ class SourceObserverContracts(unittest.TestCase):
             loaded_package_proof_resolver=self.loaded_package_proof,
         )
         self.service.observation_registry = self.registry
+
+    def test_private_consent_selection_comes_from_current_root_principal_choice(self):
+        handle = "c" * 43
+        principal = SimpleNamespace(
+            uid=self.enrollment.producer_uid,
+            profile_id=self.enrollment.profile_id,
+            principal_id=self.enrollment.principal_id,
+            namespace_id=self.enrollment.namespace_id,
+        )
+
+        class _ConsentRegistry:
+            service = self.service
+
+            def selection_handle_for_current_profile(self, selected):
+                if selected is not principal:
+                    raise AuthorityDenied("consent.selection", "wrong principal")
+                return handle
+
+        self.service.private_input_consent_registry = _ConsentRegistry()
+        self.service.bindings_by_uid = {principal.uid: principal}
+        selections = object.__new__(RootNativeExecutionSelectionRegistry)
+        selections.service = self.service
+        running = SimpleNamespace(source=SimpleNamespace(
+            profile_id=principal.profile_id,
+            principal_id=principal.principal_id,
+            namespace_id=principal.namespace_id,
+        ), private_consent_selection_handle="worker-must-not-be-read")
+        self.assertEqual(
+            selections._private_consent_selection_handle(self.enrollment, running), handle)
+        self.service.bindings_by_uid = {principal.uid: SimpleNamespace(
+            uid=principal.uid, profile_id="other",
+            principal_id=principal.principal_id, namespace_id=principal.namespace_id,
+        )}
+        with self.assertRaises(AuthorityDenied):
+            selections._private_consent_selection_handle(self.enrollment, running)
         self.addCleanup(self.registry.close)
 
     def test_native_input_delivery_wire_is_bounded_and_contains_no_payload(self):
