@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 from hermes_installer.memory.broker import (
     BrokerDenied, BrokerUnavailable, DurableMemoryQueue, MemoryTarget, build_memory_handlers,
-    canonical, ROUTE_IDS, build_memory_runtime,
+    ProfiledMemoryJobResolver, canonical, ROUTE_IDS, build_memory_runtime,
 )
 from hermes_installer.memory.enrollment import MemoryServiceEnrollment
 from test_memory_enrollment import record as memory_enrollment_record
@@ -81,6 +81,10 @@ def call(handler, context, action, value, *, digest_override=None, provider="age
 
 
 class MemoryBrokerTests(unittest.TestCase):
+    def test_profiled_root_job_resolver_cannot_be_caller_constructed(self):
+        with self.assertRaises(TypeError):
+            ProfiledMemoryJobResolver({}, _seal=object())
+
     def test_legacy_raw_service_connector_is_never_called(self):
         t1, t2 = target("p1", "n1", "service-one"), target("p2", "n2", "service-two")
         ipc = IPC()
