@@ -1553,13 +1553,20 @@ class RootBuildExecutionService:
         output_parent = Path(profile.output_root)
         ContentAddressedBuildStore._check_owned_directory(
             output_parent, profile.output_owner_uid, mode=0o700)
+        parent_info = output_parent.lstat()
+        if (stat.S_ISLNK(parent_info.st_mode) or parent_info.st_gid != output_owner_gid):
+            raise AuthorityDenied("build.output_custody", "output parent GID differs from the selected build service")
         output_root_id = secrets.token_hex(16)
         output = output_parent / ("job-" + output_root_id)
         try:
             output.mkdir(mode=0o700)
-            if output.stat().st_uid != profile.output_owner_uid:
-                os.chown(output, profile.output_owner_uid, -1, follow_symlinks=False)
+            os.chown(output, profile.output_owner_uid, output_owner_gid, follow_symlinks=False)
             os.chmod(output, 0o700, follow_symlinks=False)
+            output_info = output.lstat()
+            if (not stat.S_ISDIR(output_info.st_mode) or stat.S_ISLNK(output_info.st_mode)
+                    or output_info.st_uid != profile.output_owner_uid
+                    or output_info.st_gid != output_owner_gid):
+                raise OSError("fresh output child does not have the selected UID/GID")
         except OSError:
             try:
                 output.rmdir()
@@ -1567,6 +1574,9 @@ class RootBuildExecutionService:
                 pass
             raise AuthorityDenied("build.output_custody", "fresh private output root could not be created") from None
         ContentAddressedBuildStore._check_owned_directory(output, profile.output_owner_uid, mode=0o700)
+        if output.lstat().st_gid != output_owner_gid:
+            self._remove_job_output_root(output, profile.output_owner_uid)
+            raise AuthorityDenied("build.output_custody", "fresh private output root has the wrong GID")
         output_specs = {}
         try:
             for relative_path, raw in profile.output_specs.items():

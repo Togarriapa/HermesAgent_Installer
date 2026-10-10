@@ -564,6 +564,8 @@ class NativeResponseMetadata:
 
     producer_context_handle: str
     tool_call_bindings: tuple[NativeToolCallBinding, ...]
+    turn_handle: str | None
+    final_response_delivery_handle: str | None
 
     def __post_init__(self) -> None:
         if (not isinstance(self.producer_context_handle, str)
@@ -572,7 +574,13 @@ class NativeResponseMetadata:
                 or len(self.tool_call_bindings) > 128
                 or any(not isinstance(item, NativeToolCallBinding) for item in self.tool_call_bindings)
                 or len({item.observed_call_handle for item in self.tool_call_bindings})
-                    != len(self.tool_call_bindings)):
+                    != len(self.tool_call_bindings)
+                or self.turn_handle is not None
+                    and (not isinstance(self.turn_handle, str)
+                         or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.turn_handle))
+                or self.final_response_delivery_handle is not None
+                    and (not isinstance(self.final_response_delivery_handle, str)
+                         or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.final_response_delivery_handle))):
             raise AuthorityDenied("native.response.take", "provider response metadata is malformed")
 
     def to_wire(self) -> dict[str, Any]:
@@ -585,11 +593,14 @@ class NativeResponseMetadata:
                  "arguments_sha256": item.arguments_sha256}
                 for item in self.tool_call_bindings
             ],
+            "turn_handle": self.turn_handle,
+            "final_response_delivery_handle": self.final_response_delivery_handle,
         }
 
     @classmethod
     def from_wire(cls, value: Any) -> "NativeResponseMetadata":
-        fields = {"producer_context_handle", "tool_call_bindings"}
+        fields = {"producer_context_handle", "tool_call_bindings", "turn_handle",
+                  "final_response_delivery_handle"}
         if (not isinstance(value, dict) or set(value) != fields
                 or not isinstance(value["tool_call_bindings"], list)
                 or len(value["tool_call_bindings"]) > 128):
@@ -597,7 +608,254 @@ class NativeResponseMetadata:
         return cls(
             value["producer_context_handle"],
             tuple(NativeToolCallBinding.from_wire(item) for item in value["tool_call_bindings"]),
+            value["turn_handle"], value["final_response_delivery_handle"],
         )
+
+
+@dataclass(frozen=True, slots=True)
+class RootCompletedNativeTurnPresentation:
+    """Opaque completion reference released after a root-verified native turn."""
+
+    schema: int
+    receipt_handle: str
+    turn_handle: str
+    state: str
+    expires_monotonic: float
+
+    def __post_init__(self) -> None:
+        if (type(self.schema) is not int or self.schema != 1
+                or not isinstance(self.receipt_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.receipt_handle)
+                or not isinstance(self.turn_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.turn_handle)
+                or self.state != "completed"
+                or isinstance(self.expires_monotonic, bool)
+                or not isinstance(self.expires_monotonic, (int, float))
+                or not math.isfinite(self.expires_monotonic)):
+            raise AuthorityDenied("native.turn.finish", "native turn presentation is malformed")
+
+    def to_wire(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "receipt_handle": self.receipt_handle,
+            "turn_handle": self.turn_handle,
+            "state": self.state,
+            "expires_monotonic": self.expires_monotonic,
+        }
+
+    @classmethod
+    def from_wire(cls, value: Any) -> "RootCompletedNativeTurnPresentation":
+        fields = {"schema", "receipt_handle", "turn_handle", "state", "expires_monotonic"}
+        if not isinstance(value, dict) or set(value) != fields:
+            raise AuthorityDenied("native.turn.finish", "native turn presentation fields are invalid")
+        try:
+            return cls(**value)
+        except (TypeError, ValueError):
+            raise AuthorityDenied("native.turn.finish", "native turn presentation is malformed") from None
+
+
+@dataclass(frozen=True, slots=True)
+class RootSelectedServiceContext:
+    """Domain-separated authority context for root-selected service effects."""
+
+    schema: int
+    context_id: str
+    admission_handle: str
+    admission_kind: str
+    controller_proof_sha256: str
+    selected_principal_id: str
+    selected_profile_id: str
+    selected_generation: str
+    selected_namespace_identity: str
+    selected_subject_uid: int
+    selected_subject_gid: int
+    service_generation_digest: str
+    role: str
+    action: str
+    enrollment_id: str
+    operation_id: str
+    operation: str
+    capability: str
+    target: str
+    source_closure_sha256: str
+    sensitivity: Sensitivity
+    recipient: str | None
+    policy_revision: str
+    authority_epoch: str
+    issued_monotonic: float
+    expires_monotonic: float
+    nonce: str
+    signature: str
+
+    def __post_init__(self) -> None:
+        for field in ("context_id", "admission_handle", "admission_kind", "selected_principal_id",
+                      "selected_profile_id", "selected_generation", "selected_namespace_identity",
+                      "service_generation_digest", "role", "action", "enrollment_id", "operation_id",
+                      "operation", "capability", "target", "policy_revision", "authority_epoch", "nonce"):
+            value = getattr(self, field)
+            if not isinstance(value, str) or not value:
+                raise AuthorityDenied("root-selected.context", f"{field} is invalid")
+        for field in ("controller_proof_sha256", "source_closure_sha256"):
+            if not isinstance(getattr(self, field), str) or not _DIGEST.fullmatch(getattr(self, field)):
+                raise AuthorityDenied("root-selected.context", f"{field} is invalid")
+        if (type(self.schema) is not int or self.schema != 1
+                or type(self.selected_subject_uid) is not int or self.selected_subject_uid <= 0
+                or type(self.selected_subject_gid) is not int or self.selected_subject_gid < 0
+                or not isinstance(self.sensitivity, Sensitivity)
+                or self.recipient is not None and (not isinstance(self.recipient, str) or not self.recipient)
+                or not _DIGEST.fullmatch(self.signature)
+                or not re.fullmatch(r"[0-9a-f]{64}", self.nonce)
+                or not math.isfinite(self.issued_monotonic) or not math.isfinite(self.expires_monotonic)
+                or not self.issued_monotonic < self.expires_monotonic
+                or self.expires_monotonic - self.issued_monotonic > 30.0):
+            raise AuthorityDenied("root-selected.context", "root-selected context fields are invalid")
+
+    def claims(self) -> dict[str, Any]:
+        return {name: getattr(self, name) for name in (
+            "schema", "context_id", "admission_handle", "admission_kind", "controller_proof_sha256",
+            "selected_principal_id", "selected_profile_id", "selected_generation",
+            "selected_namespace_identity", "selected_subject_uid", "selected_subject_gid",
+            "service_generation_digest", "role", "action", "enrollment_id", "operation_id",
+            "operation", "capability", "target", "source_closure_sha256", "recipient",
+            "policy_revision", "authority_epoch", "issued_monotonic", "expires_monotonic", "nonce",
+        )} | {"sensitivity": self.sensitivity.value}
+
+    def to_wire(self) -> dict[str, Any]:
+        return {**self.claims(), "signature": self.signature}
+
+    @property
+    def principal_id(self) -> str:
+        return self.selected_principal_id
+
+    @property
+    def profile_id(self) -> str:
+        return self.selected_profile_id
+
+    @property
+    def namespace_id(self) -> str:
+        return self.selected_namespace_identity
+
+    @property
+    def uid(self) -> int:
+        return self.selected_subject_uid
+
+    @property
+    def purpose(self) -> str:
+        return f"root-selected:{self.role}:{self.action}"
+
+    @property
+    def intent_id(self) -> str:
+        return self.context_id
+
+    @property
+    def trace_id(self) -> str:
+        return self.context_id
+
+    @property
+    def lineage_hash(self) -> str:
+        return self.source_closure_sha256
+
+    @property
+    def capabilities(self) -> frozenset[str]:
+        return frozenset({self.capability})
+
+    @property
+    def source_receipts(self) -> tuple[Any, ...]:
+        return ()
+
+    @property
+    def final_payload_digest(self) -> str:
+        return ""
+
+    @property
+    def issued_at_monotonic(self) -> float:
+        return self.issued_monotonic
+
+    @property
+    def monotonic_expires_at(self) -> float:
+        return self.expires_monotonic
+
+
+@dataclass(frozen=True, slots=True)
+class RootSelectedServiceEffectGrant:
+    """Signed one-use grant for one exact selected service lifecycle effect."""
+
+    schema: int
+    grant_id: str
+    context_sha256: str
+    admission_handle: str
+    operation: str
+    capability: str
+    target: str
+    request_sha256: str
+    nonce: str
+    issued_monotonic: float
+    expires_monotonic: float
+    signature: str
+
+    def __post_init__(self) -> None:
+        if (type(self.schema) is not int or self.schema != 1
+                or any(not isinstance(value, str) or not value for value in (
+                    self.grant_id, self.admission_handle, self.operation, self.capability, self.target))
+                or any(not isinstance(value, str) or not _DIGEST.fullmatch(value) for value in (
+                    self.context_sha256, self.request_sha256, self.nonce, self.signature))
+                or not math.isfinite(self.issued_monotonic) or not math.isfinite(self.expires_monotonic)
+                or not self.issued_monotonic < self.expires_monotonic
+                or self.expires_monotonic - self.issued_monotonic > 30.0):
+            raise AuthorityDenied("root-selected.grant", "root-selected grant fields are invalid")
+
+    def claims(self) -> dict[str, Any]:
+        return {name: getattr(self, name) for name in (
+            "schema", "grant_id", "context_sha256", "admission_handle", "operation", "capability",
+            "target", "request_sha256", "nonce", "issued_monotonic", "expires_monotonic",
+        )}
+
+    def to_wire(self) -> dict[str, Any]:
+        return {**self.claims(), "signature": self.signature}
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedRootSelectedServiceEffect:
+    """Sealed in-process effect capability returned only after grant consume."""
+
+    admission_handle: str
+    admission_kind: str
+    role: str
+    action: str
+    profile_id: str
+    enrollment_id: str
+    generation: str
+    selected_principal_id: str
+    selected_namespace_identity: str
+    selected_subject_uid: int
+    selected_subject_gid: int
+    operation: str
+    capability: str
+    target: str
+    request_sha256: str
+    controller_proof_handle: str
+    controller_proof_sha256: str
+    service_generation_digest: str
+    issued_monotonic: float
+    expires_monotonic: float
+    context_sha256: str
+    operation_id: str
+    recipe_sha256: str
+    source_closure_sha256: str
+    service_profile: Any
+    process_operation: Any
+    _service: Any
+    _nonce: str
+    _seal: object
+
+    def is_current(self) -> bool:
+        check = getattr(self._service, "_is_current_root_selected_service_effect", None)
+        return bool(callable(check) and check(self, self._seal))
+
+    def close(self) -> None:
+        close = getattr(self._service, "_close_root_selected_service_effect", None)
+        if callable(close):
+            close(self, self._seal)
 
 
 def canonical_bytes(value: bytes | Mapping[str, Any] | list[Any]) -> bytes:

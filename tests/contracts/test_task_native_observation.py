@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 import threading
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 
+from hermes_installer.managed_process_custodian import ManagedTaskHandle
 from hermes_installer.authority.task_native_observation import (
     RootTaskNativeObservationRegistry,
+)
+from hermes_installer.authority.native_input_observer import RootNativeInputObserver
+from hermes_installer.authority.source_observers import (
+    RootNativeExecutionSelectionRegistry, SourceObserverRegistry,
 )
 from hermes_installer.authority.types import AuthorityDenied
 from hermes_installer.registry.resource_jobs import (
     ResourceJobDenied, RootTaskInitialInputReceipt, RootTaskNativeExecutionReceipt,
+    RootTaskStdinWriteReceipt,
 )
 
 
@@ -30,6 +37,9 @@ def _registry(receipts, payloads=None):
     registry.source_observers = source
     registry.monotonic = lambda: 10.0
     registry._issued = {}
+    registry._completed_tasks = {}
+    registry._runs = {}
+    registry._closed = False
     registry._lock = threading.RLock()
     return registry
 
@@ -98,14 +108,188 @@ def test_initial_input_event_joins_parent_closure_not_source_lineage_hash():
     assert not RootTaskNativeObservationRegistry._matches_initial_input_event(run, receipt, event)
 
 
+def test_stdin_write_receipt_requires_actual_complete_write_drain_and_eof():
+    values = dict(
+        schema=1, receipt_handle="r" * 40, task_handle="t" * 40,
+        process_id="p" * 40, process_generation="profile-generation-a",
+        initial_input_receipt_handle="i" * 40, stdin_sha256="a" * 64,
+        stdin_size_bytes=3, sequence=0, write_complete=True, drained=True,
+        stdin_closed=True, service_generation_digest="b" * 64,
+        issued_monotonic=5.0, expires_monotonic=20.0,
+    )
+    assert RootTaskStdinWriteReceipt(**values).sequence == 0
+    with pytest.raises(ResourceJobDenied):
+        RootTaskStdinWriteReceipt(**{**values, "stdin_closed": False})
+    with pytest.raises(ResourceJobDenied):
+        RootTaskStdinWriteReceipt(**{**values, "sequence": 1})
+
+
+def test_stdin_write_receipt_must_join_exact_initial_input_and_terminal():
+    registry = RootTaskNativeObservationRegistry.__new__(RootTaskNativeObservationRegistry)
+    task = SimpleNamespace(process_generation="profile-generation-a", stdin_sha256="a" * 64,
+                           stdin_size_bytes=3)
+    handle = SimpleNamespace(handle_id="t" * 40, process_id="p" * 40,
+                             stdin_write_receipt_handle="w" * 40)
+    initial = SimpleNamespace(receipt_handle="i" * 40, issued_monotonic=4.0,
+                              expires_monotonic=20.0)
+    run = SimpleNamespace(admitted_task=task, initial_input_receipt=initial,
+                          task_handle=handle, service_generation_digest="b" * 64,
+                          deadline=20.0)
+    terminal = SimpleNamespace(stdin_write_receipt_handle="w" * 40, finished_monotonic=6.0)
+    write = RootTaskStdinWriteReceipt(
+        schema=1, receipt_handle="w" * 40, task_handle=handle.handle_id,
+        process_id=handle.process_id, process_generation=task.process_generation,
+        initial_input_receipt_handle=initial.receipt_handle, stdin_sha256=task.stdin_sha256,
+        stdin_size_bytes=task.stdin_size_bytes, sequence=0, write_complete=True,
+        drained=True, stdin_closed=True, service_generation_digest="b" * 64,
+        issued_monotonic=5.0, expires_monotonic=20.0,
+    )
+    registry._validate_stdin_write_receipt(run, terminal, write.receipt_handle, write, 6.0)
+    wrong_input = replace(write, initial_input_receipt_handle="j" * 40)
+    with pytest.raises(AuthorityDenied):
+        registry._validate_stdin_write_receipt(run, terminal, write.receipt_handle, wrong_input, 6.0)
+
+
+def test_stdin_write_lookup_requires_stable_manager_retained_object():
+    registry = RootTaskNativeObservationRegistry.__new__(RootTaskNativeObservationRegistry)
+    handle = object()
+    receipt = object()
+    calls = []
+    registry.process_custody = SimpleNamespace(
+        resolve_task_stdin_write=lambda task, receipt_handle:
+            calls.append((task, receipt_handle)) or receipt)
+
+    assert registry._resolve_exact_stdin_write_receipt(handle, "w" * 40) is receipt
+    assert calls == [(handle, "w" * 40), (handle, "w" * 40)]
+
+
+def test_stdin_write_lookup_rejects_reconstructed_receipt():
+    registry = RootTaskNativeObservationRegistry.__new__(RootTaskNativeObservationRegistry)
+    calls = 0
+
+    def resolve(_task, _receipt_handle):
+        nonlocal calls
+        calls += 1
+        return object()
+
+    registry.process_custody = SimpleNamespace(resolve_task_stdin_write=resolve)
+    with pytest.raises(AuthorityDenied):
+        registry._resolve_exact_stdin_write_receipt(object(), "w" * 40)
+    assert calls == 2
+
+
+def _attachment_graph():
+    source = SourceObserverRegistry.__new__(SourceObserverRegistry)
+    source.service = object()
+    observations = RootTaskNativeObservationRegistry.__new__(RootTaskNativeObservationRegistry)
+    observations.source_observers = source
+    observations.input_observer = None
+    observations.selected_execution_registry = None
+    observations._runs = {}
+    observations._closed = False
+    observations._lock = threading.RLock()
+    selections = RootNativeExecutionSelectionRegistry.__new__(RootNativeExecutionSelectionRegistry)
+    selections.task_observations = observations
+    selections.source_observers = source
+    observer = RootNativeInputObserver.__new__(RootNativeInputObserver)
+    observer.selected_execution_registry = selections
+    observer.source_observers = source
+    observer.service = source.service
+    observer._events = {}
+    return observations, selections, observer
+
+
+def test_selected_input_observer_graph_attaches_once_after_cycle_is_built():
+    observations, selections, observer = _attachment_graph()
+    observations.attach_native_input_observer(observer, selections)
+    assert observations.input_observer is observer
+    assert observations.selected_execution_registry is selections
+    with pytest.raises(AuthorityDenied):
+        observations.attach_native_input_observer(observer, selections)
+
+
+def test_selected_input_observer_attachment_rejects_cross_registry_graph():
+    observations, selections, observer = _attachment_graph()
+    other = RootTaskNativeObservationRegistry.__new__(RootTaskNativeObservationRegistry)
+    selections.task_observations = other
+    with pytest.raises(AuthorityDenied):
+        observations.attach_native_input_observer(observer, selections)
+    assert observations.input_observer is None
+    assert observations.selected_execution_registry is None
+
+
 def test_issued_receipt_is_identity_bound_and_one_use():
     registry = _registry({})
     value = _dto()
     registry._issued[value.native_execution_receipt_handle] = value
+    registry._completed_tasks[value.task_handle] = 20.0
     clone = _dto()
     assert registry.verify_receipt(clone) is False
     assert registry.verify_receipt(value) is True
     assert registry.verify_receipt(value) is False
+
+
+def test_issued_receipt_expires_and_close_revokes_pending_receipts():
+    registry = _registry({})
+    expired = _dto(native_execution_receipt_handle="x" * 40)
+    registry._issued[expired.native_execution_receipt_handle] = expired
+    registry._completed_tasks[expired.task_handle] = 9.0
+    assert registry.verify_receipt(expired) is False
+    assert expired.native_execution_receipt_handle not in registry._issued
+
+    pending = _dto(native_execution_receipt_handle="y" * 40)
+    registry._issued[pending.native_execution_receipt_handle] = pending
+    registry._completed_tasks[pending.task_handle] = 20.0
+    registry.close()
+    assert registry.verify_receipt(pending) is False
+
+
+def test_cancel_task_input_stops_watcher_and_rejects_replay():
+    registry = _registry({})
+    handle_args = dict(handle_id="t" * 40, generation="profile-generation-a")
+    if "process_id" in ManagedTaskHandle.__dataclass_fields__:
+        handle_args["process_id"] = "process-a"
+    task_handle = ManagedTaskHandle(**handle_args)
+    receipt = RootTaskInitialInputReceipt(
+        schema=1, receipt_handle="r" * 40, task_handle=task_handle.handle_id,
+        admission_id="admission-1", node_id="node-a", process_id="process-a",
+        process_generation="profile-generation-a", selected_execution_handle="s" * 40,
+        source_receipt_handle="c" * 40, producer_context_delivery_handle="c" * 40,
+        native_loader_ready_event_id="l" * 40, stdin_sha256="a" * 64,
+        stdin_size_bytes=3, parent_closure_digest="b" * 64,
+        service_generation_digest="c" * 64, resource_generation="resource-gen-1",
+        issued_monotonic=1.0, expires_monotonic=20.0,
+    )
+    run = SimpleNamespace(task_handle=task_handle, initial_input_receipt=receipt,
+                          deadline=20.0, stop=threading.Event(), watcher=None)
+    run.watcher = threading.Thread(target=run.stop.wait)
+    run.watcher.start()
+    registry._runs[task_handle.handle_id] = run
+
+    registry.cancel_task_input(task_handle, receipt)
+    assert not run.watcher.is_alive()
+    assert task_handle.handle_id not in registry._runs
+    with pytest.raises(AuthorityDenied):
+        registry.cancel_task_input(task_handle, receipt)
+
+
+def test_cancel_running_task_cleans_selection_failure_before_input_receipt():
+    registry = _registry({})
+    handle_args = dict(handle_id="u" * 40, generation="profile-generation-a")
+    if "process_id" in ManagedTaskHandle.__dataclass_fields__:
+        handle_args["process_id"] = "process-b"
+    task_handle = ManagedTaskHandle(**handle_args)
+    stop = threading.Event()
+    watcher = threading.Thread(target=stop.wait)
+    run = SimpleNamespace(task_handle=task_handle, deadline=20.0, stop=stop, watcher=watcher)
+    registry._runs[task_handle.handle_id] = run
+    watcher.start()
+
+    registry.cancel_running_task(task_handle)
+    assert not watcher.is_alive()
+    assert task_handle.handle_id not in registry._runs
+    with pytest.raises(AuthorityDenied):
+        registry.cancel_running_task(task_handle)
 
 
 def test_model_receipt_requires_complete_task_source_ancestry():
@@ -149,7 +333,8 @@ def test_capture_pairs_root_retained_native_request_with_completed_result():
         receipt_handles=("input-handle", "result-handle"),
         producer_identity=identity, producer_pid=42, profile_id="profile-a",
         generation="profile-generation-a", package_id="package-a",
-        loaded_package_proof=package_proof, expires_monotonic=90.0, calls={},
+        loaded_package_proof=package_proof, expires_monotonic=90.0,
+        metadata_taken=True, calls={},
     )
     registry = _registry(
         {"source-handle": source, "input-handle": task_input, "result-handle": result},
@@ -191,6 +376,12 @@ def test_capture_pairs_root_retained_native_request_with_completed_result():
     assert run.requests == {}
     assert run.responses == {}
 
+    registry.source_observers.service.authority_epoch = "epoch-a"
+    response.metadata_taken = False
+    registry._capture(run)
+    assert run.requests == {}
+    assert run.responses == {}
+
 
 def test_tool_result_must_descend_from_matching_native_call_and_task():
     source = _receipt("source")
@@ -204,13 +395,22 @@ def test_tool_result_must_descend_from_matching_native_call_and_task():
                           "provider-handle": provider, "tool-handle": tool}, payloads)
     registry.source_observers.service.authority_epoch = "epoch-a"
     run = SimpleNamespace(
-        authority_epoch="epoch-a", required_action_ids=frozenset(),
+        authority_epoch="epoch-a", profile_id="profile-a",
+        native_process_identity="native-a",
+        admitted_task=SimpleNamespace(process_generation="profile-generation-a"),
+        required_action_ids=frozenset(),
         tool_calls={"call": ("response", "selected.read", "provider-result")},
         input_event=SimpleNamespace(source_receipt_handle="input-handle"),
         tool_results={}, observed_at={},
     )
     registry._capture_tool_results(run, 10.0)
     assert run.tool_results == {"event-tool-result-123456789012345678901234": "selected.read"}
+
+    tool.native_process_identity = "native-b"
+    run.tool_results.clear()
+    registry._capture_tool_results(run, 10.0)
+    assert run.tool_results == {}
+    tool.native_process_identity = "native-a"
 
     run.tool_calls = {"call": ("response", "selected.write", "provider-result")}
     run.tool_results.clear()
@@ -240,3 +440,48 @@ def test_current_admission_denies_cancelled_or_replaced_generation():
     assert not registry._admitted_task_current(task, "profile-b")
     authority.task_handle_cancelled = lambda _handle, _node: True
     assert not registry._admitted_task_current(task, "profile-a")
+
+
+def test_terminal_resolution_denies_revoked_source_snapshot():
+    task = SimpleNamespace(
+        admission_id="admission-a", backend_enrollment_id="backend-a",
+        operation_id="operation-a", task_body_recipe_id="recipe-a",
+        task_request_schema_id="schema-a", resource_generation="resource-gen-a",
+        process_generation="profile-generation-a", parent_closure_digest="a" * 64,
+        task_payload_sha256="b" * 64,
+    )
+    handle = SimpleNamespace(handle_id="task-handle", process_id="process-a")
+    terminal = SimpleNamespace(
+        terminal_receipt_handle="terminal-handle", task_handle=handle.handle_id,
+        admission_id=task.admission_id, admission_handle_id="admission-handle",
+        backend_enrollment_id=task.backend_enrollment_id, operation_id=task.operation_id,
+        task_body_recipe_id=task.task_body_recipe_id,
+        task_request_schema_id=task.task_request_schema_id,
+        resource_generation=task.resource_generation, profile_id="profile-a",
+        process_id=handle.process_id, process_generation=task.process_generation,
+        parent_closure_digest=task.parent_closure_digest, state="completed", exit_code=0,
+        timed_out=False, cancelled=False, cleanup_verified=True, cgroup_empty=True,
+        main_pidfd_gone=True, descendants_gone=True, launcher_reaped=True,
+        output_complete=True, native_loader_ready_event_id="loader-event",
+        native_execution_receipt_handle=None,
+    )
+    service = SimpleNamespace(authority_epoch="epoch-a", service_generation_digest="c" * 64)
+    registry = RootTaskNativeObservationRegistry.__new__(RootTaskNativeObservationRegistry)
+    registry.source_observers = SimpleNamespace(service=service)
+    registry.process_custody = SimpleNamespace(
+        resolve_task_terminal=lambda *_args: terminal)
+    registry._admitted_task_current = lambda *_args: True
+    registry._source_snapshot_current = lambda *_args, **_kwargs: False
+    registry.monotonic = lambda: 10.0
+    run = SimpleNamespace(
+        admitted_task=task, admission_handle=object(), source_closure=object(),
+        profile_id="profile-a", task_handle=handle,
+        custody_state=SimpleNamespace(admission_handle_id="admission-handle"),
+        loaded_package_proof=SimpleNamespace(
+            loader_ready_event_id="loader-event", expires_monotonic=30.0),
+        input_event=SimpleNamespace(expires_monotonic=30.0),
+        authority_epoch="epoch-a", service_generation_digest="c" * 64,
+        deadline=30.0,
+    )
+    with pytest.raises(AuthorityDenied):
+        registry._validate_terminal(run, terminal, terminal.terminal_receipt_handle, 10.0)
