@@ -41,14 +41,34 @@ BASELINE_TAG = "hermes-installer-plan-2026-10-09-v1"
 BASELINE_TAG_OBJECT = "c47c90cf2e0a6b1cd5779257fdcba9e487ee08f8"
 BASELINE_COMMIT = "653ac5fbc7a02613c9951859a7d794599603459b"
 BASELINE_TREE_SHA256 = "039a6ab93f6bd44d80df01e99368c24c4348624305b6f4d17816eed25a167ade"
-PLAN_TEMPLATE_PATH = "plans/amendments/2026-10-09-release-plan-active-compiler-v53/root-setup-plan-template-v1.json"
+PLAN_TEMPLATE_PATH = "plans/amendments/2026-10-10-closed-root-plan-template-selection-v81/root-setup-plan-template-v1.json"
 PLAN_TEMPLATE_ID = "installer-root-setup-plan-template-v1"
-PLAN_TEMPLATE_SHA256 = "9f96befca8dba54a8251df80ccbed236809e9affbf1116efed42e06a7b92ac31"
-PLAN_TEMPLATE_BYTES = 767
+PLAN_TEMPLATE_SHA256 = "210114d336b54ec86b40861a1d808508db48d20c9ecfb0a20b30049b2e4f84f5"
+PLAN_TEMPLATE_BYTES = 920
 COMPILER_TEMPLATE_PATH = "plans/amendments/2026-10-09-closed-bootstrap-compiler-template-v30/bootstrap-compiler-template-v1.json"
 COMPILER_TEMPLATE_ID = "installer-bootstrap-compiler-template-v1"
+COMPILER_TEMPLATE_SHA256 = "27854f8f8c67ce42832f020dbfd96512607e39576b27e484598ff397cb9432e5"
+COMPILER_TEMPLATE_BYTES = 4281
 IDENTITY_TEMPLATE_PATH = "plans/amendments/2026-10-09-authentik-template-actor-api-v49/authentik-policy-template-v1.json"
 IDENTITY_TEMPLATE_ID = "installer-authentik-policy-template-v1"
+IDENTITY_TEMPLATE_SHA256 = "617f78fc4a692de6a22dd69456fd92b874c9bc82e0869f3817910c953bd2ceb8"
+IDENTITY_TEMPLATE_BYTES = 261
+PREPARED_BASE_TEMPLATE_PATH = "plans/amendments/2026-10-10-prepared-base-reader-release-manifest-v63/prepared-authority-base-template-v1.json"
+PREPARED_BASE_TEMPLATE_ID = "installer-prepared-authority-base-template-v1"
+PREPARED_BASE_TEMPLATE_SHA256 = "da20ce244bbbc771dfaf463d8ce8914d87b6eb9898228952a55681e1aa6fb953"
+PREPARED_BASE_TEMPLATE_BYTES = 369
+RECEIPT_BINDINGS_TEMPLATE_PATH = "plans/amendments/2026-10-10-literal-bootstrap-receipt-bindings-v72/bootstrap-receipt-bindings-template-v1.json"
+RECEIPT_BINDINGS_TEMPLATE_ID = "installer-bootstrap-receipt-bindings-template-v1"
+RECEIPT_BINDINGS_TEMPLATE_SHA256 = "2036e9443b8c1c085cf7c90a4eb26c162f7d787f030cd759e35d92ca17b3e609"
+RECEIPT_BINDINGS_TEMPLATE_BYTES = 10_195
+COMPOSIO_POLICY_TEMPLATE_PATH = "plans/amendments/2026-10-10-prepared-base-reader-release-manifest-v63/composio-whatsapp-catalog-read-policy-v1.json"
+COMPOSIO_POLICY_TEMPLATE_ID = "installer-composio-whatsapp-catalog-read-policy-v1"
+COMPOSIO_POLICY_TEMPLATE_SHA256 = "319076116a060e371c10886e5c2cfea274ed4d985aa03f5e66a4f611f949cfc5"
+COMPOSIO_POLICY_TEMPLATE_BYTES = 528
+REVIEWED_CAPABILITY_MAP_PATH = "plans/amendments/2026-10-10-reviewed-native-capability-selection-v91/reviewed-native-capability-map-v1.json"
+REVIEWED_CAPABILITY_MAP_ID = "installer-reviewed-native-capability-map-v1"
+REVIEWED_CAPABILITY_MAP_SHA256 = "41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565"
+REVIEWED_CAPABILITY_MAP_BYTES = 2026
 CATALOG_SOURCE_PATH = "src/hermes_installer/authority/artifact-catalog.json"
 RUNTIME_REQUIREMENTS_PATH = "requirements-runtime.txt"
 RELEASE_BUILDER_ARTIFACT_ID = "installer-release-builder-v1"
@@ -85,7 +105,15 @@ STAGED_PLAN_PATH = "plans/root-setup-plan-v1.json"
 STAGED_PLAN_TEMPLATE_PATH = "templates/root-setup-plan-template-v1.json"
 STAGED_COMPILER_TEMPLATE_PATH = "templates/bootstrap-compiler-template-v1.json"
 STAGED_IDENTITY_TEMPLATE_PATH = "templates/authentik-policy-template-v1.json"
+STAGED_PREPARED_BASE_TEMPLATE_PATH = "templates/prepared-authority-base-template-v1.json"
+STAGED_RECEIPT_BINDINGS_TEMPLATE_PATH = "templates/bootstrap-receipt-bindings-template-v1.json"
+STAGED_COMPOSIO_POLICY_TEMPLATE_PATH = "templates/composio-whatsapp-catalog-read-policy-v1.json"
+STAGED_REVIEWED_CAPABILITY_MAP_PATH = "templates/reviewed-native-capability-map-v1.json"
 STAGED_CATALOG_PATH = "catalog/artifacts.json"
+ROOT_PLAN_TEMPLATE_ARTIFACT_IDS = (
+    COMPILER_TEMPLATE_ID, IDENTITY_TEMPLATE_ID, PREPARED_BASE_TEMPLATE_ID,
+    RECEIPT_BINDINGS_TEMPLATE_ID, COMPOSIO_POLICY_TEMPLATE_ID,
+)
 RECEIPT_TTL_SECONDS = 300.0
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _GIT_SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -110,6 +138,7 @@ class DistributionFile:
     mode: int
     device: int
     inode: int
+    ctime_ns: int = 0
 
 
 class VerifiedInstallerDistributionReceipt:
@@ -118,7 +147,7 @@ class VerifiedInstallerDistributionReceipt:
     __slots__ = ("candidate_git_sha", "git_tree_sha1", "source_tree_sha256",
                  "baseline_tree_sha256", "amendment_manifest_sha256",
                  "source_catalog_sha256", "files", "root_device", "root_inode",
-                 "_root_fd", "_seal", "_expected_uid", "_closed", "_handle")
+                 "_root_fd", "_seal", "_expected_uid", "_closed", "_handle", "_file_fds")
 
     def __init__(self, seal: object, *, candidate_git_sha: str, git_tree_sha1: str,
                  source_tree_sha256: str, baseline_tree_sha256: str,
@@ -138,6 +167,21 @@ class VerifiedInstallerDistributionReceipt:
         self.root_device, self.root_inode = info.st_dev, info.st_ino
         self._root_fd, self._seal, self._expected_uid = root_fd, seal, expected_uid
         self._closed, self._handle = False, handle
+        held: dict[str, int] = {}
+        try:
+            for row in files:
+                fd = _open_relative(root_fd, row.relative_path, os.O_RDONLY)
+                current = os.fstat(fd)
+                if (current.st_dev != row.device or current.st_ino != row.inode
+                        or current.st_ctime_ns != row.ctime_ns):
+                    os.close(fd)
+                    raise InstallerReleaseBuildError("candidate source changed while sealing its file custody")
+                held[row.relative_path] = fd
+        except BaseException:
+            for fd in held.values():
+                os.close(fd)
+            raise
+        self._file_fds = held
 
     @property
     def receipt_handle(self) -> str:
@@ -160,6 +204,13 @@ class VerifiedInstallerDistributionReceipt:
             raise InstallerReleaseBuildError("candidate source CAS directory custody changed")
 
     def _verify_row(self, row: DistributionFile) -> None:
+        held_fd = self._file_fds.get(row.relative_path)
+        if held_fd is None:
+            raise InstallerReleaseBuildError("candidate source file custody is not retained")
+        held = os.fstat(held_fd)
+        if (held.st_dev != row.device or held.st_ino != row.inode
+                or held.st_ctime_ns != row.ctime_ns):
+            raise InstallerReleaseBuildError("retained candidate source file identity changed")
         fd = _open_relative(self._root_fd, row.relative_path, os.O_RDONLY)
         try:
             info = os.fstat(fd)
@@ -167,6 +218,7 @@ class VerifiedInstallerDistributionReceipt:
             if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
                     or info.st_uid != self._expected_uid or info.st_dev != row.device
                     or info.st_ino != row.inode or stat.S_IMODE(info.st_mode) != row.mode
+                    or info.st_ctime_ns != row.ctime_ns
                     or digest != row.sha256 or size != row.size_bytes):
                 raise InstallerReleaseBuildError("candidate source CAS file bytes or ownership changed")
         finally:
@@ -183,7 +235,8 @@ class VerifiedInstallerDistributionReceipt:
             info = os.fstat(fd)
             digest, size = _hash_fd(fd, MAX_SOURCE_FILE_BYTES)
             if (digest != row.sha256 or size != row.size_bytes or info.st_dev != row.device
-                    or info.st_ino != row.inode or info.st_uid != self._expected_uid):
+                    or info.st_ino != row.inode or info.st_ctime_ns != row.ctime_ns
+                    or info.st_uid != self._expected_uid):
                 raise InstallerReleaseBuildError("candidate source changed while opening a verified file")
             os.lseek(fd, 0, os.SEEK_SET)
             return fd
@@ -193,6 +246,9 @@ class VerifiedInstallerDistributionReceipt:
 
     def close(self) -> None:
         if not self._closed:
+            for fd in self._file_fds.values():
+                os.close(fd)
+            self._file_fds.clear()
             os.close(self._root_fd)
             self._root_fd, self._closed = -1, True
 
@@ -2305,14 +2361,28 @@ class RootInstalledReleaseBuilder:
             _write_relative(output_fd, path, body, mode=0o555 if row.mode & 0o111 else 0o444)
             staged.append((path, row.sha256, row.size_bytes,
                            0o555 if row.mode & 0o111 else 0o444, ("interpreter",)))
-        for source_path, target, role in (
-            (PLAN_TEMPLATE_PATH, STAGED_PLAN_TEMPLATE_PATH, "template"),
-            (COMPILER_TEMPLATE_PATH, STAGED_COMPILER_TEMPLATE_PATH, "template"),
-            (IDENTITY_TEMPLATE_PATH, STAGED_IDENTITY_TEMPLATE_PATH, "template"),
-            (CATALOG_SOURCE_PATH, STAGED_CATALOG_PATH, "artifact-catalog"),
+        for source_path, target, role, expected_sha256, expected_size in (
+            (PLAN_TEMPLATE_PATH, STAGED_PLAN_TEMPLATE_PATH, "template", PLAN_TEMPLATE_SHA256, PLAN_TEMPLATE_BYTES),
+            (COMPILER_TEMPLATE_PATH, STAGED_COMPILER_TEMPLATE_PATH, "template",
+             COMPILER_TEMPLATE_SHA256, COMPILER_TEMPLATE_BYTES),
+            (IDENTITY_TEMPLATE_PATH, STAGED_IDENTITY_TEMPLATE_PATH, "template",
+             IDENTITY_TEMPLATE_SHA256, IDENTITY_TEMPLATE_BYTES),
+            (PREPARED_BASE_TEMPLATE_PATH, STAGED_PREPARED_BASE_TEMPLATE_PATH, "template",
+             PREPARED_BASE_TEMPLATE_SHA256, PREPARED_BASE_TEMPLATE_BYTES),
+            (RECEIPT_BINDINGS_TEMPLATE_PATH, STAGED_RECEIPT_BINDINGS_TEMPLATE_PATH, "template",
+             RECEIPT_BINDINGS_TEMPLATE_SHA256, RECEIPT_BINDINGS_TEMPLATE_BYTES),
+            (COMPOSIO_POLICY_TEMPLATE_PATH, STAGED_COMPOSIO_POLICY_TEMPLATE_PATH, "template",
+             COMPOSIO_POLICY_TEMPLATE_SHA256, COMPOSIO_POLICY_TEMPLATE_BYTES),
+            (REVIEWED_CAPABILITY_MAP_PATH, STAGED_REVIEWED_CAPABILITY_MAP_PATH, "template",
+             REVIEWED_CAPABILITY_MAP_SHA256, REVIEWED_CAPABILITY_MAP_BYTES),
+            (CATALOG_SOURCE_PATH, STAGED_CATALOG_PATH, "artifact-catalog", None, None),
         ):
             if source_path not in source_files:
                 raise InstallerReleaseBuildError("fixed release layout source input is absent")
+            row = source_files[source_path]
+            if (expected_sha256 is not None
+                    and (row.sha256 != expected_sha256 or row.size_bytes != expected_size)):
+                raise InstallerReleaseBuildError("fixed installed template differs from its reviewed bytes")
             self._copy_source(source, output_fd, source_path, target, (role,))
             staged.append(self._last_output_row)
         # Include exact full frozen baseline and selected amendment bytes under stable roots.
@@ -2409,7 +2479,7 @@ class RootInstalledReleaseBuilder:
         value["amendment_manifest_sha256"] = source.amendment_manifest_sha256
         value["allowed_artifact_ids"] = allowed_ids
         value["bootstrap_policy_artifact_id"] = "installer-bootstrap-policy-v1"
-        value["template_artifact_ids"] = [COMPILER_TEMPLATE_ID, IDENTITY_TEMPLATE_ID]
+        value["template_artifact_ids"] = list(ROOT_PLAN_TEMPLATE_ARTIFACT_IDS)
         return _canonical_json(value)
 
 
@@ -2588,7 +2658,7 @@ def _inspect_source_tree(root_fd: int, exported: tuple[tuple[str, str, int], ...
                     or stat.S_IMODE(info.st_mode) not in {0o444, 0o555}):
                 raise InstallerReleaseBuildError("exported source file differs from exact Git blob bytes")
             rows.append(DistributionFile(relative, digest, size, stat.S_IMODE(info.st_mode),
-                                         info.st_dev, info.st_ino))
+                                         info.st_dev, info.st_ino, info.st_ctime_ns))
         finally:
             os.close(fd)
     if len(rows) != len(by_path) or _enumerate_regular_files(root_fd) != tuple(sorted(by_path)):
@@ -2711,7 +2781,7 @@ def _write_distribution_receipt(candidate_dir: Path,
         "files": [
             {"relative_path": row.relative_path, "sha256": row.sha256,
              "size_bytes": row.size_bytes, "mode": row.mode,
-             "device": row.device, "inode": row.inode}
+             "device": row.device, "inode": row.inode, "ctime_ns": row.ctime_ns}
             for row in receipt.files
         ],
     }
