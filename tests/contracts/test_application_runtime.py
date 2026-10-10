@@ -94,6 +94,9 @@ def test_source_receipt_reopens_root_generation_and_rejects_tampering(tmp_path: 
     assert registry.record_verified_generation(source, generation, application_id="ecc") == handle
     selected = registry.resolve(handle, application_id="ecc", service_generation_digest=catalog.generation_digest)
     assert selected.source_tree_sha256 == source.source_tree_sha
+    assert registry.resolve_verified_generation(
+        handle, application_id="ecc", service_generation_digest=catalog.generation_digest,
+    ) is generation
 
     member = selected.generation_root / "source.py"
     member.chmod(0o600)

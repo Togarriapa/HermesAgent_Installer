@@ -142,6 +142,7 @@ class RootComponentSourceReceipt:
     expires_monotonic: float
     generation_root: Path
     _manifest: Mapping[str, Any]
+    _verified_generation: VerifiedComponentGeneration
 
 
 class RootComponentSourceReceiptRegistry:
@@ -250,7 +251,7 @@ class RootComponentSourceReceiptRegistry:
         receipt = RootComponentSourceReceipt(
             1, handle, application_id, source.source_identity, source.revision,
             source.source_tree_sha, source.generation_id, digest, service_digest,
-            now, now + self.ttl_seconds, root, manifest,
+            now, now + self.ttl_seconds, root, manifest, generation,
         )
         with self._lock:
             if len(self._records) >= 100_000:
@@ -277,6 +278,31 @@ class RootComponentSourceReceiptRegistry:
         if _service_digest(self.enrollment_catalog) != service_generation_digest:
             raise SelectedApplicationUnavailable("source receipt belongs to a stale service generation")
         return receipt
+
+    def resolve_verified_generation(self, handle: str, *, application_id: str,
+                                    service_generation_digest: str) -> VerifiedComponentGeneration:
+        """Return the exact root-retained source binding after reopening it.
+
+        This exists for reviewed source-owned workload builders that need the
+        installer generation object (for example, to validate an import tree).
+        It never manufactures that object from a path or selected row.
+        """
+        receipt = self.resolve(
+            handle, application_id=application_id,
+            service_generation_digest=service_generation_digest,
+        )
+        generation = receipt._verified_generation
+        store = self.generation_stores.get(application_id)
+        if (type(generation) is not VerifiedComponentGeneration or store is None
+                or generation._store is not store
+                or generation.component_id != application_id
+                or generation.root != receipt.generation_root
+                or generation.generation_digest != receipt.generation_manifest_sha256
+                or generation.source_identity != receipt.source_identity
+                or generation.revision != receipt.source_revision
+                or generation.source_tree_sha != receipt.source_tree_sha256):
+            raise SelectedApplicationUnavailable("root source receipt retained no exact verified generation")
+        return generation
 
 
 @dataclass(frozen=True, slots=True)
