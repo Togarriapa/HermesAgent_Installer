@@ -218,53 +218,19 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
             )
 
     def test_reviewed_native_source_modules_are_finite_pinned_release_rows(self):
+        reviewed = json.loads((Path(__file__).parents[2]
+                               / "planning/final-coherent-source-pin-review-v195.json").read_text())
         expected = {
-            "installer-module:hermes_installer.components.native_plugins": (
-                "lib/python/hermes_installer/components/native_plugins.py",
-                "a027311518a746a6b1bcd126fc677190f4fe0ec2ac91b941872b3cdc542a79e7", 28_259, "module"),
-            "installer-module:hermes_installer.components.public_registries": (
-                "lib/python/hermes_installer/components/public_registries.py",
-                "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f", 29_374, "module"),
-            "installer-native-invocations-module-v137": (
-                "src/hermes_installer/native_invocations.py",
-                "78a3452289df5b7343e5c650ad4260d51b3aa1056e2eedea02cc3a0bff7b8226", 40_107, "source-module"),
-            "installer-native-boundary-module-v137": (
-                "src/hermes_installer/native_boundary.py",
-                "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb", 14_356, "source-module"),
-            "installer-module:hermes_installer.authority.native_source_definitions": (
-                "lib/python/hermes_installer/authority/native_source_definitions.py",
-                "745aa6492235b54205ffeec01f9672d1663602780413757dafc27c2de4e22e2c", 23_672, "module"),
-            "installer-module:hermes_installer.authority.bootstrap_runtime_factory": (
-                "lib/python/hermes_installer/authority/bootstrap_runtime_factory.py",
-                "1156ea17992ddfd0b04819dc5afbc9426611cc2a745ebfb61800df86b08a0c14", 579_669, "module"),
-            "installer-module:hermes_installer.authority.local_resource_effects": (
-                "lib/python/hermes_installer/authority/local_resource_effects.py",
-                "d79fa4c8693e4f6588cd351d51089e45173a437311d15a6dfae16e7e90178fb6", 47_854, "module"),
-            "installer-module:hermes_installer.authority.native_assembler": (
-                "lib/python/hermes_installer/authority/native_assembler.py",
-                "311e07fb52ae001e44d4be17cf4ed8a09277118e0aca34b6ff45c22b9b6e2055", 21_265, "module"),
-            "installer-module:hermes_installer.authority.native_output_receipts": (
-                "lib/python/hermes_installer/authority/native_output_receipts.py",
-                "37f18a0d9c2e7082955f82bb27221dae3ae4781c6278b5e0c1a254233fbf7b5f", 109_864, "module"),
-            "installer-module:hermes_installer.authority.native_policy_preparation": (
-                "lib/python/hermes_installer/authority/native_policy_preparation.py",
-                "93695570e20218ea1e40a0707ef7d6f51e1646e74e5c5338ba1fd83fef737752", 60_196, "module"),
-            "installer-module:hermes_installer.authority.native_registration_projection": (
-                "lib/python/hermes_installer/authority/native_registration_projection.py",
-                "7afa35250c9cd82f34030d37a74b6c310f25fde88d2169cf30913eafcbcf266b", 82_047, "module"),
-            "installer-module:hermes_installer.authority.native_definition_composition": (
-                "lib/python/hermes_installer/authority/native_definition_composition.py",
-                "a60e3b2dadb8e1733767035209f988c2fcbb9feb0ff15e5fd0539da9877d16aa", 8_355, "module"),
-            "installer-module:hermes_installer.authority.application_runtime_archive": (
-                "lib/python/hermes_installer/authority/application_runtime_archive.py",
-                "3117c4c706bfcffe6626c57c79934b143c36d8cd75758dd1198c2020286c2197", 31_457, "module"),
-            "installer-module:hermes_installer.authority.application_runtime_relocation": (
-                "lib/python/hermes_installer/authority/application_runtime_relocation.py",
-                "9b426e61480613c9e10aeaa4227aaff6d06a5558000b45cb94fb0d0160e47afc", 12_120, "module"),
-            "installer-module:hermes_installer.authority.remote_observations": (
-                "lib/python/hermes_installer/authority/remote_observations.py",
-                "b6e602fc03996fcd00da4ba43d394e377feea1706d2b7d08691c587754a9ec31", 93_746, "module"),
+            row["installed_artifact_id"]: (
+                row["installed_member"], row["sha256"], row["size_bytes"], row["roles"][0])
+            for row in reviewed["members"]
+            if "module" in row["roles"]
         }
+        expected.update({
+            row["installed_artifact_id"]: (
+                row["installed_member"], row["sha256"], row["size_bytes"], row["roles"][0])
+            for row in reviewed["worker_source_members"]
+        })
         self.assertEqual({artifact_id: (path, digest, size, role)
                           for artifact_id, path, digest, size, role in REVIEWED_SOURCE_MODULES}, expected)
         rows = [
@@ -307,6 +273,10 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
         rows.extend(VerifiedReleaseFile(artifact_id, (role,), path, digest, size, 1, 220 + i, 0o444)
                     for i, (artifact_id, path, role, digest, size)
                     in enumerate(APPLICATION_EFFECT_SOURCE_MEMBERS))
+        helper_id, _helper_source, helper_path, helper_digest, helper_size, helper_role = \
+            release.NETWORK_STARTUP_HELPER
+        rows.append(VerifiedReleaseFile(helper_id, (helper_role,), helper_path, helper_digest,
+                                        helper_size, 1, 240, 0o444))
         self.assertEqual(_fixed_roles(rows, "closure.json"), ("installer-root-setup-plan-v1", "3" * 64))
         bad = list(rows)
         index = next(i for i, row in enumerate(bad) if row.artifact_id == REVIEWED_SOURCE_MODULES[0][0])

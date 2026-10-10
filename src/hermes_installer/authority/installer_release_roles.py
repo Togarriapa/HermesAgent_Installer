@@ -30,7 +30,7 @@ NETWORK_STARTUP_HELPER = (
     "installer-private-loopback-worker-gate-v180",
     "helpers/private-loopback-worker-gate.py",
     "helpers/private-loopback-worker-gate.py",
-    None,
-    None,
+    "4bf258da343991920fc80c512975277623d06a96740b073f38b740583d8cb720",
+    20_350,
     "network-startup-helper",
 )
