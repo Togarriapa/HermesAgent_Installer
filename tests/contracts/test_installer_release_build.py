@@ -272,6 +272,20 @@ def test_runtime_archive_rejects_cyclic_symlink(monkeypatch, tmp_path):
         _extract_fixture_runtime(monkeypatch, archive, destination)
 
 
+def test_runtime_closure_rows_allow_only_contained_parent_relative_symlinks(tmp_path):
+    root = tmp_path / "python"
+    (root / "bin").mkdir(parents=True)
+    os.symlink("../lib/target", root / "bin/alias")
+    rows = release_build._runtime_archive_rows(root)
+    assert rows == [("bin/alias", hashlib.sha256(b"../lib/target").hexdigest(),
+                     len(b"../lib/target"), 0o777, "../lib/target")]
+
+    (root / "bin/alias").unlink()
+    os.symlink("../../outside", root / "bin/alias")
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="escapes its fixed prefix"):
+        release_build._runtime_archive_rows(root)
+
+
 def test_wheel_record_rejects_digest_and_unlisted_member_changes():
     import base64
 

@@ -1308,7 +1308,10 @@ def _append_runtime_member(rows: list[tuple[str, str, int, int, str | None]], ro
     _validate_relative_path(rel)
     if stat.S_ISLNK(info.st_mode):
         target = os.readlink(path)
-        _validate_relative_path(target)
+        # The official CPython archive uses contained parent-relative aliases.
+        # Validate them against the same closed `python/` prefix rule used by
+        # extraction, rather than rejecting them as stand-alone source paths.
+        _resolve_runtime_archive_symlink(f"python/{rel}", target)
         rows.append((rel, hashlib.sha256(target.encode()).hexdigest(), len(target.encode()), 0o777, target))
     elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == 0 and info.st_gid == 0:
         digest, size = _hash_path(path, MAX_SOURCE_FILE_BYTES)
