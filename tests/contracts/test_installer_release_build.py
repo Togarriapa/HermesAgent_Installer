@@ -238,7 +238,7 @@ def test_pinned_download_rejects_unreviewed_digest_without_network(monkeypatch):
 
     class Response:
         status = 200
-        headers = type("Headers", (), {"get_content_length": lambda self: len(payload)})()
+        headers = type("Headers", (), {"get_all": lambda self, name, default=None: [str(len(payload))]})()
 
         def __enter__(self):
             return self
@@ -271,7 +271,7 @@ def test_runtime_download_follows_only_one_exact_public_asset_redirect(monkeypat
 
     class Response:
         status = 200
-        headers = type("Headers", (), {"get_content_length": lambda self: len(payload)})()
+        headers = type("Headers", (), {"get_all": lambda self, name, default=None: [str(len(payload))]})()
 
         def __init__(self):
             self.offset = 0
@@ -372,7 +372,7 @@ def test_runtime_download_rejects_a_second_redirect_and_hash_mismatch(monkeypatc
 
             class Response:
                 status = 200
-                headers = type("Headers", (), {"get_content_length": lambda self: len(payload)})()
+                headers = type("Headers", (), {"get_all": lambda self, name, default=None: [str(len(payload))]})()
 
                 def __init__(self):
                     self.offset = 0
@@ -420,6 +420,24 @@ def test_pyyaml_download_keeps_no_redirect_policy(monkeypatch):
             1_048_576,
         )
     assert calls == [release_build.BOOTSTRAP_PYYAML_URL]
+
+
+def test_declared_content_length_is_optional_but_must_be_unambiguous_and_exact():
+    from email.message import Message
+
+    headers = Message()
+    assert release_build._declared_content_length(headers, 12) is None
+    headers["Content-Length"] = "12"
+    assert release_build._declared_content_length(headers, 12) is True
+    headers["Content-Length"] = "13"
+    assert release_build._declared_content_length(headers, 12) is False
+    headers = Message()
+    headers["Content-Length"] = "12"
+    headers["Content-Length"] = "12"
+    assert release_build._declared_content_length(headers, 12) is False
+    headers = Message()
+    headers["Content-Length"] = "12, 12"
+    assert release_build._declared_content_length(headers, 12) is False
 
 
 def test_bootstrap_transition_descriptor_requires_exact_sealed_shape():
