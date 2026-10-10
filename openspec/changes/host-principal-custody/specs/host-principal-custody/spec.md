@@ -792,3 +792,14 @@ The installer SHALL implement the source-owned receipt joins and closed fixture 
 #### Scenario: Missing or misjoined producer
 - **WHEN** a required source/effect/member/observer/service receipt is absent, stale, altered or from another namespace
 - **THEN** affected capability remains precisely pending, no caller path or production-row relabeling fills the gap, and no denial-only callback counts as implementation
+
+### Requirement: Selected native executable closure v179
+The installer SHALL apply `plans/amendments/2026-10-10-selected-native-executable-closure-v179.md` while preserving full source coverage and pending unavailable capabilities.
+
+#### Scenario: Current selected owned local closure
+- **WHEN** current source, schema, selected target/effect and preactive role declarations join every selected executable registration
+- **THEN** the projector and assembler SHALL consume exactly that retained closure without requiring unavailable account/provider/device effects
+
+#### Scenario: Omitted or extra executable row
+- **WHEN** a selected required join is missing or an unselected executable row is supplied
+- **THEN** compilation SHALL deny before output, keeping full pending coverage and all AC acceptance OPEN
