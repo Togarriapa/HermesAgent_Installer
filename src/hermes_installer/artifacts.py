@@ -148,10 +148,11 @@ class ArtifactSpec:
 
     @property
     def tree_manifest_sha256(self) -> str:
-        """Hash the exact sorted content-tree contract enrolled for this archive."""
+        """Hash the sorted regular-file projection; links stay in the full enrolled rows."""
         rows = [{"path": row.path, "sha256": row.sha256,
                  "size_bytes": row.size_bytes, "executable": row.executable}
-                for row in sorted(self.tree_files, key=lambda item: item.path)]
+                for row in sorted(self.tree_files, key=lambda item: item.path)
+                if row.kind == "file"]
         body = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return hashlib.sha256(body).hexdigest()
 
@@ -310,7 +311,8 @@ class ResolvedArtifact:
         """Hash the exact sorted content-tree contract for copy verification."""
         rows = [{"path": row.path, "sha256": row.sha256,
                  "size_bytes": row.size_bytes, "executable": row.executable}
-                for row in sorted(self.tree_files, key=lambda item: item.path)]
+                for row in sorted(self.tree_files, key=lambda item: item.path)
+                if row.kind == "file"]
         body = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return hashlib.sha256(body).hexdigest()
 
