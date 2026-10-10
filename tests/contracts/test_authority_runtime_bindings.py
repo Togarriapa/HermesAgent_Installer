@@ -41,7 +41,7 @@ def test_root_runtime_composition_requires_service_records_before_optional_hardw
         native_schema_artifact_records=(),
         composio_channel_enrollment_records=(), channel_delivery_binding_records=(),
         remote_startup_records=(), private_loopback_network_records=(),
-        selected_resource_execution_records=(), selected_application_runtime_records=(), resource_scope_binding_records=(),
+        selected_resource_execution_records=(), selected_application_runtime_records=(), resource_scope_binding_records=(), public_web_scope_records=(),
     )
     with pytest.raises(EnrollmentDenied, match="service generation records"):
         build_root_runtime_bindings(
@@ -84,7 +84,11 @@ def test_root_runtime_private_memory_getters_forward_only_protected_binding_ids(
         enrollment_catalog=catalog, build_catalog=None, device_catalog=None,
         process_manager=None, effect_handlers={}, native_bridges={}, artifact_catalog=artifact_catalog,
         build_store=None, service_connector=None,
+        private_memory_endpoint_selection_records=({"id": "endpoint-a"},),
+        private_memory_model_selection_records=({"id": "model-a"},),
     )
+    assert bindings.private_memory_endpoint_selection_records == ({"id": "endpoint-a"},)
+    assert bindings.private_memory_model_selection_records == ({"id": "model-a"},)
     assert bindings.resolve_private_memory_endpoint_binding("endpoint-a") is endpoint
     assert bindings.resolve_private_memory_model_binding("model-a", "endpoint-a") is model
 
