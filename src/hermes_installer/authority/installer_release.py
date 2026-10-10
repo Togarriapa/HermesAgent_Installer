@@ -69,9 +69,16 @@ EXISTING_MODEL_STORE_TEMPLATE = (
     "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f",
     712,
 )
+REVIEWED_NATIVE_CAPABILITY_MAP_TEMPLATE = (
+    "installer-reviewed-native-capability-map-v1",
+    "templates/reviewed-native-capability-map-v1.json",
+    "41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565",
+    2026,
+)
 FIXED_TEMPLATES = (TEMPLATE, PLAN_TEMPLATE, AUTHENTIK_TEMPLATE,
                    PREPARED_BASE_TEMPLATE, RECEIPT_BINDINGS_TEMPLATE,
-                   COMPOSIO_READER_TEMPLATE, EXISTING_MODEL_STORE_TEMPLATE)
+                   COMPOSIO_READER_TEMPLATE, EXISTING_MODEL_STORE_TEMPLATE,
+                   REVIEWED_NATIVE_CAPABILITY_MAP_TEMPLATE)
 REVIEWED_SOURCE_MODULES = (
     ("installer-module:hermes_installer.components.native_plugins",
      "lib/python/hermes_installer/components/native_plugins.py",

@@ -118,12 +118,15 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
             "templates/existing-model-store-root-template-v1.json":
                 ("installer-existing-model-store-root-template-v1",
                  "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f", 712),
+            "templates/reviewed-native-capability-map-v1.json":
+                ("installer-reviewed-native-capability-map-v1",
+                 "41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565", 2026),
         }
         actual = {path: (artifact_id, digest, size)
                   for artifact_id, path, digest, size in FIXED_TEMPLATES}
         for path, value in expected.items():
             self.assertEqual(actual[path], value)
-        self.assertEqual(len(actual), 7)
+        self.assertEqual(len(actual), 8)
         self.assertEqual(
             _artifact_id_for("templates/existing-model-store-root-template-v1.json", ["template"]),
             "installer-existing-model-store-root-template-v1",
@@ -137,6 +140,16 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
             _validate_fixed_layout_role(
                 "templates/composio-whatsapp-catalog-read-policy-v1.json",
                 "0" * 64, 528, ["template"],
+            )
+        _validate_fixed_layout_role(
+            "templates/reviewed-native-capability-map-v1.json",
+            "41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565",
+            2026, ["template"],
+        )
+        with self.assertRaises(InstallerReleaseError):
+            _validate_fixed_layout_role(
+                "templates/reviewed-native-capability-map-v1.json",
+                "0" * 64, 2026, ["template"],
             )
 
     def test_reviewed_native_source_modules_are_finite_pinned_release_rows(self):
