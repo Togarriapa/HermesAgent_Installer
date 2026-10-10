@@ -331,6 +331,150 @@ class RootCatalogArtifactObserver:
         return digest.hexdigest()
 
 
+_SETUP_CATALOG_OBSERVATION_SEAL = object()
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class VerifiedSetupCatalogArtifactObservation:
+    """Held CAS bytes observed under a current root setup authorization."""
+
+    artifact_id: str
+    sha256: str
+    size_bytes: int
+    transaction_handle: str
+    setup_session_id: str
+    _observer_id: str
+    _fd: int
+    _device: int
+    _inode: int
+    _seal: object
+
+    def __post_init__(self) -> None:
+        if self._seal is not _SETUP_CATALOG_OBSERVATION_SEAL:
+            raise TypeError("setup catalog observations are minted by the root observer")
+
+    def open_blob(self) -> int:
+        return os.dup(self._fd)
+
+    def close(self) -> None:
+        if self._fd >= 0:
+            os.close(self._fd)
+            object.__setattr__(self, "_fd", -1)
+
+
+class RootSetupCatalogArtifactObserver:
+    """Root CAS observer for prepared setup before the new catalog is active.
+
+    This observer is session/transaction-scoped and uses the same immutable
+    ArtifactCatalog and CAS as setup receipt issuance. It does not depend on an
+    active RuntimeBindings/ProtectedEnrollment object, avoiding an activation
+    cycle while preserving root UID, inode, size, digest and catalog checks.
+    """
+
+    def __init__(self, catalog: ArtifactCatalog, artifact_root: Path,
+                 setup_authorization: Any, *, expected_uid: int = 0) -> None:
+        from hermes_installer.authority.bootstrap_enrollment import (
+            VerifiedRootSetupAuthorization, _validate_setup_authorization,
+        )
+
+        if (os.geteuid() != expected_uid or expected_uid != 0
+                or not isinstance(catalog, ArtifactCatalog)
+                or not isinstance(artifact_root, Path) or not artifact_root.is_absolute()
+                or type(setup_authorization) is not VerifiedRootSetupAuthorization):
+            raise SourceArtifactReceiptDenied("prepared root catalog observer inputs are unavailable")
+        try:
+            _validate_setup_authorization(setup_authorization)
+            info = artifact_root.lstat()
+            if (stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode)
+                    or info.st_uid != expected_uid or stat.S_IMODE(info.st_mode) != 0o700):
+                raise ValueError
+        except Exception:
+            raise SourceArtifactReceiptDenied("prepared root artifact CAS is not owned by the setup session") from None
+        self.catalog = catalog
+        self.artifact_root = artifact_root
+        self.setup_authorization = setup_authorization
+        self.expected_uid = expected_uid
+        self._observer_id = secrets.token_urlsafe(32)
+
+    @classmethod
+    def from_root_setup(cls, catalog: ArtifactCatalog, artifact_root: Path,
+                        setup_authorization: Any, *, expected_uid: int = 0
+                        ) -> "RootSetupCatalogArtifactObserver":
+        return cls(catalog, artifact_root, setup_authorization, expected_uid=expected_uid)
+
+    def observe(self, artifact_id: str, sha256: str) -> VerifiedSetupCatalogArtifactObservation:
+        if os.geteuid() != self.expected_uid or self.expected_uid != 0:
+            raise SourceArtifactReceiptDenied("prepared catalog observation requires root")
+        try:
+            spec = self.catalog._artifact(artifact_id, sha256)
+            if spec.tree_files or spec.size_bytes is None or spec.size_bytes > 256 * 1024:
+                raise ValueError
+            resolved = self.catalog.resolve(artifact_id, sha256, self.artifact_root,
+                                            expected_uid=self.expected_uid)
+            fd = os.open(resolved.path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != self.expected_uid
+                    or info.st_nlink != 1 or info.st_mode & 0o222
+                    or info.st_size != spec.size_bytes or info.st_size > 256 * 1024
+                    or self._hash_fd(fd, 256 * 1024) != sha256):
+                os.close(fd)
+                raise ValueError
+            return VerifiedSetupCatalogArtifactObservation(
+                artifact_id, sha256, info.st_size,
+                self.setup_authorization.transaction_handle,
+                self.setup_authorization.setup_session_id,
+                self._observer_id, fd, info.st_dev, info.st_ino,
+                _SETUP_CATALOG_OBSERVATION_SEAL,
+            )
+        except SourceArtifactReceiptDenied:
+            raise
+        except Exception:
+            raise SourceArtifactReceiptDenied(
+                "artifact is absent from the selected prepared root catalog or CAS") from None
+
+    def verify_current(self, observation: VerifiedSetupCatalogArtifactObservation) -> bool:
+        from hermes_installer.authority.bootstrap_enrollment import _validate_setup_authorization
+
+        if (os.geteuid() != self.expected_uid or self.expected_uid != 0
+                or type(observation) is not VerifiedSetupCatalogArtifactObservation
+                or observation._seal is not _SETUP_CATALOG_OBSERVATION_SEAL
+                or observation._observer_id != self._observer_id
+                or observation.transaction_handle != self.setup_authorization.transaction_handle
+                or observation.setup_session_id != self.setup_authorization.setup_session_id):
+            raise SourceArtifactReceiptDenied("prepared catalog observation is forged or from another transaction")
+        try:
+            _validate_setup_authorization(self.setup_authorization)
+            root_info = self.artifact_root.lstat()
+            info = os.fstat(observation._fd)
+            spec = self.catalog._artifact(observation.artifact_id, observation.sha256)
+            if (root_info.st_uid != self.expected_uid or stat.S_IMODE(root_info.st_mode) != 0o700
+                    or (info.st_dev, info.st_ino) != (observation._device, observation._inode)
+                    or info.st_uid != self.expected_uid or info.st_nlink != 1
+                    or info.st_size != observation.size_bytes or spec.size_bytes != info.st_size
+                    or info.st_mode & 0o222 or self._hash_fd(observation._fd, 256 * 1024)
+                       != observation.sha256):
+                raise ValueError
+            return True
+        except SourceArtifactReceiptDenied:
+            raise
+        except Exception:
+            raise SourceArtifactReceiptDenied("prepared catalog artifact observation is stale") from None
+
+    @staticmethod
+    def _hash_fd(fd: int, maximum: int) -> str:
+        digest = hashlib.sha256()
+        offset = 0
+        while offset <= maximum:
+            block = os.pread(fd, min(64 * 1024, maximum + 1 - offset), offset)
+            if not block:
+                break
+            digest.update(block)
+            offset += len(block)
+        if offset > maximum:
+            raise ValueError
+        return digest.hexdigest()
+
+
 def build_root_schema_receipt_runtime(
     runtime_bindings: RootRuntimeBindings,
     protected_enrollment: Any,

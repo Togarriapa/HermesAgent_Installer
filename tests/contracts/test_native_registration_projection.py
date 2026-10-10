@@ -147,3 +147,47 @@ def test_root_registration_source_observation_fails_closed_without_held_release_
         assert "held release module receipts" in str(exc)
     else:
         raise AssertionError("source registration capture was promoted without root-held receipts")
+
+
+def test_result_schema_receipt_registry_rejects_caller_constructed_observer_inputs():
+    from hermes_installer.authority.native_registration_projection import (
+        NativeRegistrationResultSchemaObservationDenied,
+        RootNativeRegistrationResultSchemaReceiptRegistry,
+    )
+
+    try:
+        RootNativeRegistrationResultSchemaReceiptRegistry(None, None, None)
+    except NativeRegistrationResultSchemaObservationDenied as exc:
+        assert "root setup authorization" in str(exc)
+    else:
+        raise AssertionError("schema receipt registry accepted untyped caller inputs")
+
+
+def test_native_registration_projection_rows_are_root_issued_only():
+    from hermes_installer.authority.native_registration_projection import RootNativeRegistrationProjection
+
+    values = {
+        "registration_id": "adapter:tool:tool",
+        "native_tool_name": "tool",
+        "native_server_name": "hermes-installer",
+        "toolset": "test",
+        "family": "test",
+        "adapter_id": "adapter",
+        "argument_schema": {},
+        "result_schema": {},
+        "native_schema_sha256": "0" * 64,
+        "registration_source_artifact_id": "source",
+        "registration_source_sha256": "0" * 64,
+        "registration_source_receipt_handle": "receipt",
+        "handler_kind": "effect-action",
+        "handler_id": "handler",
+        "selector_fields": (),
+        "action_bindings": (),
+        "observer_enrollment_ids": (),
+    }
+    try:
+        RootNativeRegistrationProjection(**values)
+    except TypeError as exc:
+        assert "issued by the root resolver" in str(exc)
+    else:
+        raise AssertionError("caller-created projection row was accepted")
