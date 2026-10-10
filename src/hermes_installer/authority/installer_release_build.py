@@ -1315,7 +1315,10 @@ def _append_runtime_member(rows: list[tuple[str, str, int, int, str | None]], ro
         rows.append((rel, hashlib.sha256(target.encode()).hexdigest(), len(target.encode()), 0o777, target))
     elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == 0 and info.st_gid == 0:
         digest, size = _hash_path(path, MAX_SOURCE_FILE_BYTES)
-        rows.append((rel, digest, size, stat.S_IMODE(info.st_mode), None))
+        # The provisional tree is sealed after its closure key is derived.
+        # Hash the post-seal mode so the same tree revalidates after sealing.
+        sealed_mode = _sealed_runtime_mode(info.st_mode)
+        rows.append((rel, digest, size, sealed_mode, None))
     else:
         raise InstallerReleaseBuildError("materialized runtime closure contains a hardlink or special member")
 
@@ -1337,7 +1340,7 @@ def _seal_runtime_tree(root: Path) -> None:
                 continue
             info = path.lstat()
             os.chown(path, 0, 0, follow_symlinks=False)
-            os.chmod(path, 0o555 if info.st_mode & 0o111 else 0o444, follow_symlinks=False)
+            os.chmod(path, _sealed_runtime_mode(info.st_mode), follow_symlinks=False)
         for name in dirs:
             path = current / name
             if not path.is_symlink():
@@ -1346,6 +1349,10 @@ def _seal_runtime_tree(root: Path) -> None:
         os.chown(current, 0, 0, follow_symlinks=False)
         os.chmod(current, 0o555, follow_symlinks=False)
         _fsync_dir(current)
+
+
+def _sealed_runtime_mode(mode: int) -> int:
+    return 0o555 if mode & 0o111 else 0o444
 
 
 def _verify_runtime_materialization(root: Path, expected_closure: str) -> None:

@@ -286,6 +286,13 @@ def test_runtime_closure_rows_allow_only_contained_parent_relative_symlinks(tmp_
         release_build._runtime_archive_rows(root)
 
 
+def test_runtime_closure_modes_match_the_sealed_tree_modes():
+    assert release_build._sealed_runtime_mode(0o755) == 0o555
+    assert release_build._sealed_runtime_mode(0o644) == 0o444
+    assert release_build._sealed_runtime_mode(0o700) == 0o555
+    assert release_build._sealed_runtime_mode(0o600) == 0o444
+
+
 def test_wheel_record_rejects_digest_and_unlisted_member_changes():
     import base64
 
