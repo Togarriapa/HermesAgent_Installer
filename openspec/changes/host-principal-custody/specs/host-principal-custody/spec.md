@@ -875,3 +875,15 @@ The installer SHALL implement the exact tagged role/registration/READY/source sc
 #### Scenario: Registration or captured authority absent
 - **WHEN** source/role/READY/peer/schema/choice/invocation proof is synthetic, stale or absent
 - **THEN** the effect SHALL deny before side effect without skipping backend checks or fabricating local observer/provider provenance
+
+
+### Requirement: Genuine preactive listener custody v186
+The installer SHALL resolve the endpoint source phase through actual root-held listener custody and current authenticated active transfer in `plans/amendments/2026-10-10-preactive-authority-listener-custody-v186.md`.
+
+#### Scenario: Endpoint observed before recipe
+- **WHEN** the current prepared owned account/root and installed root custodian bind and observe the exact fixed socket
+- **THEN** source recipe MAY retain actual prepared socket custody while every effect remains unavailable until verified active adoption and re-observation
+
+#### Scenario: Custody or phase invalid
+- **WHEN** socket/root/actor/account/transfer/publication identity changes or adoption is absent/expired
+- **THEN** worker start/effect SHALL deny, preserve foreign conflicts and verify only owned cleanup without claiming future target proof
