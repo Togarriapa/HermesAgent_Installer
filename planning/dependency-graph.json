@@ -2833,5 +2833,17 @@
     "implementation_complete": false,
     "target_acceptance_complete": false,
     "acceptance": "AC01..AC18 OPEN"
+  },
+  "health_event_causal_ancestry_v194": {
+    "amendment": "plans/amendments/2026-10-10-health-event-causal-ancestry-v194.md",
+    "wire_contract": "planning/health-event-causal-ancestry-v194.json",
+    "order": [
+      "HI-T194.1",
+      "HI-T194.2",
+      "VD-T194.3"
+    ],
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
   }
 }

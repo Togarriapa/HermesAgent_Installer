@@ -979,3 +979,15 @@ The manager SHALL enforce exact source/member/owned target proof under `plans/am
 #### Scenario: Sparse view not exact
 - **WHEN** target has extra/changed/unreadable member, foreign mount or unproven source/current namespace
 - **THEN** startup SHALL deny without source permission repair or broad host exposure
+
+
+### Requirement: Genuine health event causal ancestry v194
+Health SHALL retain each actual native event ancestry meaning and verify the exact source/control causal graph under `plans/amendments/2026-10-10-health-event-causal-ancestry-v194.md`; uniform source closure equality SHALL NOT be fabricated.
+
+#### Scenario: Native digest meanings differ
+- **WHEN** signed input lineage and actual invocation/result receipt closure differ but genuine source/control causal relations match the selected health run
+- **THEN** the root observer MAY bind the actual completed DAG proof and final result closure separately
+
+#### Scenario: Causal proof absent
+- **WHEN** event ancestry is relabeled, foreign, incomplete or replaced by fixture/package hashes
+- **THEN** health completion and functional enablement SHALL deny
