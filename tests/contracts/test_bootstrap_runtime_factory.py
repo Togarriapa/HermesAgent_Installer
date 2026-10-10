@@ -77,6 +77,24 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         with self.assertRaises(BootstrapEnrollmentPending):
             session._restore_current_prepared_checkpoint()
 
+    def test_active_compiler_composition_requires_adopted_principal_before_dependencies(self):
+        session = object.__new__(RootBootstrapSession)
+        session._check_live = lambda: None
+        session._refresh_authorization = lambda: None
+        prepared = SimpleNamespace(state="prepared", enrollment_ids=())
+        session._resolve_current_prepared_enrollment = lambda: prepared
+        session._adopted_principal_registry = None
+        with self.assertRaisesRegex(BootstrapEnrollmentPending, "adopted normal-session principal"):
+            session._resolve_current_active_policy_compilation_registry()
+
+    def test_active_compiler_binding_checks_session_seal(self):
+        from hermes_installer.authority.bootstrap_runtime_factory import RootSelectedInstallationBinding
+
+        session = SimpleNamespace(_seal="right")
+        binding = RootSelectedInstallationBinding(session, "wrong")
+        with self.assertRaisesRegex(BootstrapEnrollmentPending, "active policy compiler"):
+            binding.resolve_current_active_policy_compilation_registry()
+
     def test_reviewed_capability_map_resolves_only_exact_release_pin(self):
         import hermes_installer.authority.bootstrap_runtime_factory as factory_module
 
