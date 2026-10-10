@@ -115,6 +115,92 @@ def _owner_overlay_adoption_source_handles(values: tuple[Any, ...]) -> tuple[str
     return _ordered_unique_receipt_handles(handles, "owner-overlay source")
 
 
+def _verify_recovered_owner_overlay_join(manifest: Mapping[str, Any], inputs: Mapping[str, Any],
+                                         descriptor: Mapping[str, Any]) -> None:
+    """Join pre-CAS claim rows to publisher-timestamped descriptor rows."""
+    from .owner_overlay_publication import validate_owner_overlay_adoption_row
+
+    claim_rows = manifest.get("owner_overlay_adoptions")
+    raw_rows = descriptor.get("owner_overlay_adoption_records")
+    if not isinstance(claim_rows, list) or not isinstance(raw_rows, list) or len(raw_rows) > 4:
+        raise BootstrapEnrollmentPending("recovered owner-overlay adoption rows are malformed")
+    try:
+        published = [validate_owner_overlay_adoption_row(row) for row in raw_rows]
+    except (TypeError, ValueError):
+        raise BootstrapEnrollmentPending("recovered owner-overlay adoption rows are invalid") from None
+    if (len(claim_rows) != len(published)
+            or inputs.get("owner_overlay_adoption_sha256") != _sha(_canonical(published))):
+        raise BootstrapEnrollmentPending("recovered owner-overlay adoption digest differs from publication")
+    if not claim_rows:
+        if published:
+            raise BootstrapEnrollmentPending("publication introduced an unclaimed local-owner adoption")
+        return
+    if manifest.get("principal_identity_kind") != "linux-local-owner-v1":
+        raise BootstrapEnrollmentPending("recovered owner-overlay adoption crossed the active identity domain")
+    source_handles = manifest.get("source_receipt_handles")
+    choice_rows = manifest.get("choice_adoptions")
+    published_choices = inputs.get("choice_projections")
+    if not isinstance(source_handles, list) or not isinstance(choice_rows, list) or not isinstance(published_choices, list):
+        raise BootstrapEnrollmentPending("recovered owner-overlay claim ancestry is malformed")
+    by_handle = {row.get("selection_handle"): row for row in published_choices
+                 if isinstance(row, Mapping) and isinstance(row.get("selection_handle"), str)}
+    if len(by_handle) != len(published_choices):
+        raise BootstrapEnrollmentPending("published choice projections are ambiguous")
+    for claimed, adopted in zip(claim_rows, published):
+        if not isinstance(claimed, Mapping) or claimed.get("identity_kind") != "linux-local-owner-v1":
+            raise BootstrapEnrollmentPending("durable owner-overlay claim row has an invalid identity domain")
+        unsigned_claim = dict(claimed)
+        claim_digest = unsigned_claim.pop("adoption_sha256", None)
+        if not isinstance(claim_digest, str) or claim_digest != _sha(_canonical(unsigned_claim)):
+            raise BootstrapEnrollmentPending("durable owner-overlay claim digest is invalid")
+        expected_published = dict(claimed)
+        expected_published["adopted_at_unix"] = adopted["adopted_at_unix"]
+        expected_published["adoption_sha256"] = adopted["adoption_sha256"]
+        signed = claimed.get("signed_choice")
+        owner = claimed.get("owner")
+        if not isinstance(signed, Mapping) or not isinstance(owner, Mapping):
+            raise BootstrapEnrollmentPending("durable owner-overlay identity binding is malformed")
+        choice = by_handle.get(signed.get("selection_handle"))
+        normalized_choice = ({key: value for key, value in choice.items()
+                              if key not in {"adopted_at_unix", "publication_receipt_handle",
+                                             "publication_sha256", "generation_id"}}
+                             if isinstance(choice, Mapping) else None)
+        timestamp = adopted["adopted_at_unix"]
+        signed_projection = ({key: signed.get(key) for key in normalized_choice}
+                             if normalized_choice is not None else None)
+        if (adopted != expected_published
+                or normalized_choice != signed_projection
+                or not isinstance(choice, Mapping)
+                or choice.get("adopted_at_unix") != timestamp
+                or not isinstance(timestamp, (int, float))
+                or not signed.get("issued_at_unix") <= timestamp <= claimed.get("setup_deadline_unix", -1)
+                or owner.get("principal_binding_sha256") != manifest.get("principal_binding_sha256")
+                or owner.get("namespace_binding_sha256") != manifest.get("namespace_binding_sha256")
+                or signed.get("principal_selection_handle") != manifest.get("principal_selection_receipt_handle")
+                or signed.get("namespace_selection_handle") != manifest.get("namespace_selection_handle")
+                or signed.get("principal_binding_sha256") != manifest.get("principal_binding_sha256")
+                or signed.get("namespace_binding_sha256") != manifest.get("namespace_binding_sha256")
+                or owner.get("service_generation_id") != manifest.get("prepared_generation_id")
+                or owner.get("service_generation_digest") != manifest.get("expected_service_generation_digest")):
+            raise BootstrapEnrollmentPending("published owner-overlay row differs from its signed local-owner claim")
+        choice_handles = signed.get("source_member_receipt_handles", [])
+        resources = claimed.get("resources", {})
+        package = claimed.get("native_package", {})
+        view = claimed.get("view_custody", {})
+        members = claimed.get("source_members", [])
+        operations = claimed.get("operation_records", [])
+        ancestry = [*choice_handles, resources.get("source_receipt_handle"),
+                    *resources.get("member_receipt_handles", []),
+                    package.get("native_cas_transition_receipt_handle"),
+                    view.get("data_root_receipt_handle"), view.get("profile_view_receipt_handle"),
+                    view.get("target_receipt_handle"),
+                    *(row.get("receipt_handle") for row in members),
+                    *(value for row in operations for key, value in row.items()
+                      if key.endswith("_receipt_handle") and value is not None)]
+        if not set(_ordered_unique_receipt_handles(ancestry, "recovered owner-overlay")).issubset(source_handles):
+            raise BootstrapEnrollmentPending("recovered owner-overlay ancestry is outside the claim source closure")
+
+
 def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -1309,6 +1395,8 @@ class RootActivePolicyCompilationRegistry:
 
         descriptor, _file_digests, file_bytes = _read_generation_descriptor(receipt, 0)
         inputs = descriptor.get("inputs")
+        if isinstance(inputs, Mapping):
+            _verify_recovered_owner_overlay_join(manifest, inputs, descriptor)
         if (not isinstance(inputs, Mapping)
                 or inputs.get("source_receipt_handles") != source_handles
                 or inputs.get("observed_root_receipt_handle") != observed_handle

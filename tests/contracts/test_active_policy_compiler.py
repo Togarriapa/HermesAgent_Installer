@@ -228,6 +228,48 @@ def test_owner_overlay_claim_rows_bind_local_domain_namespace_and_receipt_closur
         _manifest(replace(claim, namespace_binding_sha256="c" * 64))
 
 
+def test_recovered_owner_overlay_rows_join_claim_identity_and_publisher_timestamp():
+    from hermes_installer.authority.active_policy_compiler import (
+        _choice_projection_record, _owner_overlay_adoption_source_handles,
+        _verify_recovered_owner_overlay_join,
+    )
+
+    claim = replace(_claim(), principal_selection_receipt_handle="G" * 43,
+                    principal_identity_kind="linux-local-owner-v1",
+                    principal_binding_sha256="a" * 64,
+                    namespace_selection_handle="F" * 43,
+                    namespace_binding_sha256="b" * 64)
+    projection, adoption = _local_owner_adoption_for_claim(claim)
+    source_handles = _ordered_unique_receipt_handles(
+        (*claim.source_receipt_handles, *_owner_overlay_adoption_source_handles((adoption,))),
+        "recovery test")
+    claim = replace(claim, choice_adoptions=(projection,), source_receipt_handles=source_handles,
+                    owner_overlay_adoptions=(adoption,))
+    manifest = _manifest(claim)
+    published = adoption.to_claim_row(include_digest=False)
+    published["adopted_at_unix"] = 50.0
+    published["adoption_sha256"] = hashlib.sha256(_canonical(published)).hexdigest()
+    choice_row = _choice_projection_record(projection)
+    choice_row["adopted_at_unix"] = 50.0
+    inputs = {"owner_overlay_adoption_sha256": hashlib.sha256(
+        _canonical([published])).hexdigest(), "choice_projections": [choice_row]}
+    descriptor = {"owner_overlay_adoption_records": [published]}
+    _verify_recovered_owner_overlay_join(manifest, inputs, descriptor)
+
+    wrong_domain = dict(manifest, principal_identity_kind="authentik-subject-v1")
+    with pytest.raises(BootstrapEnrollmentPending, match="crossed the active identity domain"):
+        _verify_recovered_owner_overlay_join(wrong_domain, inputs, descriptor)
+    crossed = dict(published)
+    crossed["adopted_at_unix"] = 51.0
+    crossed.pop("adoption_sha256")
+    crossed["adoption_sha256"] = hashlib.sha256(_canonical(crossed)).hexdigest()
+    bad_inputs = {**inputs, "owner_overlay_adoption_sha256": hashlib.sha256(
+        _canonical([crossed])).hexdigest()}
+    with pytest.raises(BootstrapEnrollmentPending, match="differs from its signed local-owner claim"):
+        _verify_recovered_owner_overlay_join(manifest, bad_inputs,
+                                             {"owner_overlay_adoption_records": [crossed]})
+
+
 def test_active_source_receipt_closure_is_ordered_unique_and_covers_explicit_receipts():
     claim = _claim()
     raw = ("A" * 43, "B" * 43, "9" * 64, "F" * 43, "A" * 43, "B" * 43, "9" * 64, "F" * 43)
@@ -368,7 +410,7 @@ def test_process_restart_recovers_only_from_durable_claim_and_current_typed_publ
         "expires_monotonic": original.expires_monotonic,
         "state": "claimed",
     }
-    descriptor = {"inputs": {
+    descriptor = {"owner_overlay_adoption_records": [], "inputs": {
         "source_receipt_handles": list(source_handles),
         "observed_root_receipt_handle": original.observed_root_receipt_handle,
         "selection_catalog_sha256": original.selection_catalog_sha256,
@@ -379,6 +421,7 @@ def test_process_restart_recovers_only_from_durable_claim_and_current_typed_publ
         "transaction_handle": original.transaction_handle,
         "runtime_receipt_handles": list(original.runtime_receipt_handles),
         "materialization_receipt_handles": list(original.materialization_receipt_handles),
+        "owner_overlay_adoption_sha256": hashlib.sha256(_canonical([])).hexdigest(),
     }}
     monkeypatch.setattr(PolicyPublicationReceiptResolver, "resolve_current", lambda: receipt)
     monkeypatch.setattr(publication, "_read_generation_descriptor", lambda *_args: (
