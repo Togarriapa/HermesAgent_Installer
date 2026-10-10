@@ -663,6 +663,12 @@ class RootSelectedInstallationBinding:
         return registry.resolve_selected_runnable_roles(
             pm_runtime_receipt_handle, native_output_claim_handle)
 
+    def resolve_current_runnable_role_receipt_projection(
+            self, closure_handle: str) -> "RootRunnableRoleReceiptProjection":
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("runnable role receipt projection is not owned by this setup session")
+        return self._session.resolve_current_runnable_role_receipt_projection(closure_handle)
+
     def resolve_adopted_principal_selector(self) -> Any:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("principal selector is not owned by this setup session")
@@ -1549,6 +1555,40 @@ class RootSelectedRunnableRoleClosure:
     _registry_seal: object = field(repr=False, compare=False)
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class RootRunnableRoleReceiptProjection:
+    """Sealed v72 field projection of one current six-role runnable closure.
+
+    The values are produced from the retained PM receipt and the five exact
+    reserved output receipts.  This is deliberately separate from the generic
+    CAS receipt type: a generated PM venv and an output closure are not
+    installer-artifact CAS objects.
+    """
+    schema: int
+    closure_handle: str
+    closure_sha256: str
+    role_rows: tuple[RootRunnableRoleRow, ...]
+    _field_values: tuple[tuple[str, str, Any], ...] = field(repr=False, compare=False)
+    _issuer: Any = field(repr=False, compare=False)
+    _registry_seal: object = field(repr=False, compare=False)
+
+    def resolve_field(self, role: str, field_name: str) -> Any:
+        if (role, field_name) not in _RUNNABLE_TYPED_FIELDS:
+            raise BootstrapEnrollmentPending("runnable role field is outside the literal v72 projection")
+        matches = [value for field_role, name, value in self._field_values
+                   if field_role == role and name == field_name]
+        if len(matches) != 1:
+            raise BootstrapEnrollmentPending("runnable role field is absent or duplicated")
+        value = matches[0]
+        # Return detached JSON-compatible values; the sealed internal snapshot
+        # itself stays immutable across compiler consumers.
+        if isinstance(value, Mapping):
+            return copy.deepcopy(dict(value))
+        if type(value) is tuple:
+            return list(value)
+        return value
+
+
 _RUNNABLE_ROLE_NAMES = frozenset({
     "official-pm-runtime", "native-compiled-closure", "native-entrypoint-manifest",
     "native-action-resolver", "native-boundary-overlay", "native-candidate-index",
@@ -1560,6 +1600,12 @@ _RUNNABLE_OUTPUT_ROLE_MAP = {
     "native-boundary-overlay": "native-boundary-overlay",
     "native-candidate-index": "native-candidate-index",
 }
+_RUNNABLE_TYPED_FIELDS = {
+    ("official-pm-runtime", name) for name in (
+        "catalog_executable_path", "executable_artifact_id", "executable_sha256",
+        "runtime_artifact_ids", "package_runtime_records",
+    )
+} | {("native-compiled-closure", "child_artifact_refs")}
 
 
 class RootRunnableRoleProjectionRegistry:
@@ -1589,6 +1635,7 @@ class RootRunnableRoleProjectionRegistry:
         self.root_journal = root_journal
         self._seal = object()
         self._rows: dict[str, RootSelectedRunnableRoleClosure] = {}
+        self._receipt_projections: dict[str, RootRunnableRoleReceiptProjection] = {}
 
     @classmethod
     def from_root_setup(cls, selected_installation_binding: "RootSelectedInstallationBinding",
@@ -1630,9 +1677,13 @@ class RootRunnableRoleProjectionRegistry:
             pm_size = pm.python_path.stat().st_size
         except OSError:
             raise BootstrapEnrollmentPending("observed PM executable is no longer readable") from None
+        pm_receipt = self.pm_registry._record(pm_runtime_receipt_handle)
+        if (pm_receipt.get("runtime_executable_artifact_id") != "observed:pm-committed-venv-python"
+                or pm_receipt.get("runtime_executable_sha256") != pm.runtime_sha256):
+            raise BootstrapEnrollmentPending("official PM receipt has no exact committed executable identity")
         rows = [RootRunnableRoleRow(
             "official-pm-runtime", "pm-runtime", pm_runtime_receipt_handle,
-            pm.source_artifact_id, pm.runtime_sha256, pm_size, "pm-runtime", (),
+            pm_receipt["runtime_executable_artifact_id"], pm.runtime_sha256, pm_size, "pm-runtime", (),
         )]
         native = tuple(self.output_registry._receipt_from_id(receipt_id)
                        for receipt_id in reservation.receipt_ids)
@@ -1697,6 +1748,82 @@ class RootRunnableRoleProjectionRegistry:
         if current is not closure:
             raise BootstrapEnrollmentPending("runnable role closure changed during currentness check")
         return closure
+
+    def resolve_current_role_receipt_projection(
+            self, closure_handle: str) -> RootRunnableRoleReceiptProjection:
+        """Issue only the literal v72 typed values from the exact retained closure."""
+        closure = next((row for row in self._rows.values()
+                        if row.role_closure_handle == closure_handle), None)
+        if closure is None:
+            raise BootstrapEnrollmentPending("runnable role closure is not retained by this issuer")
+        self.verify_current(closure)
+        values = self._current_role_field_values(closure)
+        existing = self._receipt_projections.get(closure_handle)
+        if existing is not None:
+            if existing._field_values != values:
+                raise BootstrapEnrollmentPending("current runnable role projection changed")
+            return existing
+        projection = RootRunnableRoleReceiptProjection(
+            schema=1, closure_handle=closure.role_closure_handle,
+            closure_sha256=closure.role_closure_sha256, role_rows=closure.role_rows,
+            _field_values=values, _issuer=self, _registry_seal=self._seal,
+        )
+        self._receipt_projections[closure_handle] = projection
+        return projection
+
+    def verify_current_role_receipt_projection(
+            self, projection: RootRunnableRoleReceiptProjection
+            ) -> RootRunnableRoleReceiptProjection:
+        if (type(projection) is not RootRunnableRoleReceiptProjection
+                or projection._issuer is not self or projection._registry_seal is not self._seal
+                or self._receipt_projections.get(projection.closure_handle) is not projection):
+            raise BootstrapEnrollmentPending("runnable role field projection is unsealed or stale")
+        current = self.resolve_current_role_receipt_projection(projection.closure_handle)
+        if current is not projection:
+            raise BootstrapEnrollmentPending("runnable role field projection changed during verification")
+        return projection
+
+    def _current_role_field_values(
+            self, closure: RootSelectedRunnableRoleClosure
+            ) -> tuple[tuple[str, str, Any], ...]:
+        from .pm_runtime import PYTHON_ID, PYTHON_SHA256
+        catalog = getattr(self.pm_registry, "catalog", None)
+        artifacts = getattr(catalog, "artifacts", None)
+        base_python = artifacts.get(PYTHON_ID) if isinstance(artifacts, Mapping) else None
+        if (base_python is None or base_python.artifact_id != PYTHON_ID
+                or base_python.sha256 != PYTHON_SHA256):
+            raise BootstrapEnrollmentPending("official PM base Python is not in the current pinned artifact catalog")
+        pm = self.pm_registry.resolve_runtime_projection(
+            closure.pm_runtime_receipt_handle, closure.transaction_handle,
+            closure.prepared_generation_id)
+        try:
+            record = self.pm_registry._record(closure.pm_runtime_receipt_handle)
+            if (pm.selection.receipt_handle != closure.pm_runtime_receipt_handle
+                    or pm.selection.runtime_sha256 != record.get("runtime_executable_sha256")
+                    or record.get("runtime_executable_artifact_id") != "observed:pm-committed-venv-python"
+                or record.get("base_python_artifact_id") != PYTHON_ID
+                or record.get("base_python_sha256") != base_python.sha256):
+                raise BootstrapEnrollmentPending("official PM receipt lacks its exact v72 runtime identity")
+            output_rows = [row for row in closure.role_rows
+                           if row.role in _RUNNABLE_OUTPUT_ROLE_MAP]
+            if len(output_rows) != 5 or {row.role for row in output_rows} != set(_RUNNABLE_OUTPUT_ROLE_MAP):
+                raise BootstrapEnrollmentPending("native child closure is not the exact five reviewed output roles")
+            child_refs = {row.artifact_id: row.sha256 for row in output_rows}
+            if len(child_refs) != 5 or any(not _SHA.fullmatch(digest) for digest in child_refs.values()):
+                raise BootstrapEnrollmentPending("native child artifact pins are incomplete")
+            values = (
+                ("official-pm-runtime", "catalog_executable_path", str(pm.selection.python_path)),
+                ("official-pm-runtime", "executable_artifact_id",
+                 record["runtime_executable_artifact_id"]),
+                ("official-pm-runtime", "executable_sha256", pm.selection.runtime_sha256),
+                ("official-pm-runtime", "runtime_artifact_ids", (PYTHON_ID,)),
+                ("official-pm-runtime", "package_runtime_records", MappingProxyType({})),
+                ("native-compiled-closure", "child_artifact_refs",
+                 MappingProxyType(dict(sorted(child_refs.items())))),
+            )
+            return values
+        finally:
+            pm.close()
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -3922,7 +4049,9 @@ class RootSetupPolicyFactory:
                           seal: str,
                           native_worker_recipe_handles: tuple[str, ...] = (),
                           native_policy_selection: Any | None = None,
-                          native_worker_generation_producer: Any | None = None) -> EnrollmentPolicy:
+                          native_worker_generation_producer: Any | None = None,
+                          runnable_role_receipts: RootRunnableRoleReceiptProjection | None = None
+                          ) -> EnrollmentPolicy:
         policy = self.resolver.resolve_policy(authorization.plan_artifact_id,
                                               compilation_phase="active")
         self._root_journal_join(authorization)
@@ -3935,12 +4064,24 @@ class RootSetupPolicyFactory:
             from .native_worker_service_generation import RootPreparedNativeServiceGenerationProducer
             if (type(native_worker_generation_producer) is not RootPreparedNativeServiceGenerationProducer
                     or type(native_policy_selection) is not RootNativePolicyPreparationSelection
+                    or type(runnable_role_receipts) is not RootRunnableRoleReceiptProjection
+                    or type(runnable_role_receipts._issuer) is not RootRunnableRoleProjectionRegistry
+                    or runnable_role_receipts._issuer.binding is not native_worker_generation_producer.binding
+                    or runnable_role_receipts._issuer.pm_registry
+                       is not native_worker_generation_producer.recipe_registry.pm_registry
+                    or runnable_role_receipts._issuer.output_registry
+                       is not native_worker_generation_producer.recipe_registry.native_outputs
+                    or runnable_role_receipts._issuer.verify_current_role_receipt_projection(
+                        runnable_role_receipts) is not runnable_role_receipts
+                    or native_worker_generation_producer.recipe_registry.resolve_current_runnable_closure(
+                        native_policy_selection.selection_handle).role_closure_handle
+                       != runnable_role_receipts.closure_handle
                     or type(native_worker_recipe_handles) is not tuple
                     or len(native_worker_recipe_handles) != 1
                     or native_worker_recipe_handles != native_policy_selection.selected_worker_recipe_handles):
                 _fail("selected native worker requires the exact signed selection and root producer")
         elif (native_worker_recipe_handles or native_policy_selection is not None
-              or native_worker_generation_producer is not None):
+              or native_worker_generation_producer is not None or runnable_role_receipts is not None):
             _fail("native worker producer inputs were supplied without a selected worker")
         generation = "active-" + secrets.token_hex(16)
         rows = []
@@ -3960,6 +4101,26 @@ class RootSetupPolicyFactory:
             }
             for binding in template["receipt_bindings"]:
                 role = binding["receipt_role"]
+                if role in _RUNNABLE_ROLE_NAMES and selected_worker:
+                    row_matches = [row for row in runnable_role_receipts.role_rows if row.role == role]
+                    rule = next((item for item in policy.receipt_binding_rules
+                                 if item["receipt_role"] == role), None)
+                    if (len(row_matches) != 1 or rule is None
+                            or rule["required_phase"] != "runnable"):
+                        _fail(f"required typed runnable-role row for {role} is absent")
+                    role_row = row_matches[0]
+                    if (role_row.artifact_id not in rule["allowed_artifact_ids"]
+                            or role_row.output_kind not in rule["allowed_output_kinds"]
+                            or not _SHA.fullmatch(role_row.sha256)):
+                        _fail(f"typed runnable-role receipt for {role} differs from the compiled role pin")
+                    if (role == "official-pm-runtime"
+                            and binding["receipt_field"] == "package_runtime_records"
+                            and any(target == "package.install" or target.startswith("package-set:")
+                                    for target in record["operation_targets"].values())):
+                        _fail("empty PM package runtime projection cannot back a package-install target")
+                    value = runnable_role_receipts.resolve_field(role, binding["receipt_field"])
+                    self._set_template_field(record, binding["field_path"], value)
+                    continue
                 receipt = receipts.get(role)
                 rule = next((item for item in policy.receipt_binding_rules
                              if item["receipt_role"] == role), None)
@@ -3974,6 +4135,10 @@ class RootSetupPolicyFactory:
                 value = getattr(receipt, binding["receipt_field"])
                 self._set_template_field(record, binding["field_path"], value)
             rows.append(record)
+        if (selected_worker
+                and runnable_role_receipts._issuer.verify_current_role_receipt_projection(
+                    runnable_role_receipts) is not runnable_role_receipts):
+            _fail("selected runnable role receipts changed during active policy rendering")
         authority_base = copy.deepcopy(policy.authority_base_template)
         base_policy = EnrollmentPolicy(
             service_profile_id=policy.identity_policy["service_profile_id"],
@@ -7755,6 +7920,18 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentPending("retained runnable projection dependencies changed")
         return registry
 
+    def resolve_current_runnable_role_receipt_projection(
+            self, closure_handle: str) -> RootRunnableRoleReceiptProjection:
+        """Resolve the closed role-field DTO from this session's retained closure."""
+        self._check_live()
+        registry = self._resolve_current_runnable_role_projection_registry()
+        projection = registry.resolve_current_role_receipt_projection(closure_handle)
+        if (type(projection) is not RootRunnableRoleReceiptProjection
+                or projection._issuer is not registry
+                or registry.verify_current_role_receipt_projection(projection) is not projection):
+            raise BootstrapEnrollmentPending("current runnable role field projection is unavailable")
+        return projection
+
     def resolve_runtime_receipt(self, role: str, receipt_handle: str,
                                 generation: str) -> RootRuntimeArtifactReceipt:
         """Mint a runtime receipt only from a current transaction-scoped CAS handle."""
@@ -7893,6 +8070,7 @@ class RootBootstrapSession:
         native_worker_recipe_handles: tuple[str, ...] = ()
         native_policy_selection = None
         native_worker_generation_producer = None
+        runnable_role_receipts = None
         policy_handle = self._current_native_policy_selection_handle
         if policy_handle is not None:
             native_policy_selection = self.resolve_current_native_policy_selection(policy_handle)
@@ -7901,11 +8079,19 @@ class RootBootstrapSession:
             if native_worker_recipe_handles:
                 native_worker_generation_producer = \
                     self.resolve_current_native_worker_service_generation_producer()
+                recipe_registry = self.resolve_current_native_worker_recipe_registry()
+                closure = recipe_registry.resolve_current_runnable_closure(
+                    native_policy_selection.selection_handle)
+                role_registry = self._resolve_current_runnable_role_projection_registry()
+                role_registry.verify_current(closure)
+                runnable_role_receipts = self.resolve_current_runnable_role_receipt_projection(
+                    closure.role_closure_handle)
         policy = self._factory.policy_factory.activate_runnable(
             self._authorization, self._identity.ensure(), receipts, seal=self._factory._seal,
             native_worker_recipe_handles=native_worker_recipe_handles,
             native_policy_selection=native_policy_selection,
-            native_worker_generation_producer=native_worker_generation_producer)
+            native_worker_generation_producer=native_worker_generation_producer,
+            runnable_role_receipts=runnable_role_receipts)
         policy = self._attach_current_owner_overlay_observer_records(policy)
         prepared_native_generation = None
         prepared_native_materializer = None
