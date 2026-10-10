@@ -141,42 +141,27 @@ def test_runtime_receipt_refuses_without_actual_custody_probe_producer(tmp_path:
         runtime_registry.record_observed_environment(source_handle, selected_lock, probe_handle)
 
 
-def test_production_factory_forwards_only_canonical_selected_request() -> None:
-    source = _source()
-    source_receipt = SimpleSourceReceipt(
-        "ecc", source.source_identity, source.revision, source.source_tree_sha,
-        "s" * 40, "b" * 64, "f" * 64,
-    )
-    runtime_receipt = SimpleRuntimeReceipt("ecc", "s" * 40, "runtime-ecc", "r" * 40, "c" * 64, "a" * 64, "f" * 64)
-    runtime = RootSelectedApplicationRuntime(
-        "ecc", "profile", "generation", "principal", "ecc.adapter.v1",
-        source.source_identity, source.revision, source.source_tree_sha,
-        "s" * 40, "b" * 64, "runtime-ecc", "r" * 40, "c" * 64, "a" * 64,
-        "work", "data", "ecc.run.v1", "process.start.target",
-        "ecc.request.v1", "d" * 64, "ecc.result.v1", "validator", "e" * 64,
-        ("component.ecc.run",), (), (), None, None, 30, 64 * 1024 * 1024,
-        1, "0", True, "f" * 64, source_receipt, runtime_receipt, {},
-    )
+def test_production_factory_routes_only_registered_workloads_and_canonical_request() -> None:
+    from hermes_installer.authority.application_runtime import RootSelectedApplicationRuntimeRouter
 
-    class Bindings:
-        def resolve_selected_application_runtime(self, app, profile):
-            assert (app, profile) == ("ecc", "profile")
-            return runtime
-
-    class Authority:
-        def dispatch_selected_application(self, invocation, app, canonical):
-            assert invocation == "i" * 40
-            assert app == "ecc"
-            assert canonical == b'{"count":2,"mode":"local"}'
-            return RootApplicationRunReceipt(
-                1, "r" * 40, "ecc", "profile", "generation", "f" * 64,
-                "s" * 40, "r" * 40, "ecc.run.v1", hashlib.sha256(canonical).hexdigest(),
-                "t" * 40, "c" * 40, "complete", 10.0, 20.0,
-            )
-
-    adapter = SelectedApplicationWorkloadFactory(bindings=Bindings(), authority=Authority()).build("ecc", "profile")
-    receipt = adapter.invoke("i" * 40, {"mode": "local", "count": 2})
+    calls = []
+    router = object.__new__(RootSelectedApplicationRuntimeRouter)
+    def dispatch(invocation, canonical, **kwargs):
+        calls.append((invocation, canonical, kwargs))
+        return RootApplicationRunReceipt(
+            1, "r" * 40, "browser-use", "profile", "generation", "f" * 64,
+            "s" * 40, "r" * 40, "operation.browser.v1", hashlib.sha256(canonical).hexdigest(),
+            "t" * 40, "c" * 40, "complete", 10.0, 20.0,
+        )
+    router.dispatch_workload = dispatch
+    adapter = SelectedApplicationWorkloadFactory(router=router).build("browser-fixture")
+    receipt = adapter.invoke("i" * 40, {"fixture_url": "http://127.0.0.1:8080/fixture"},
+                             peer_uid=501, peer_pid=77, peer_pidfd=8, cancelled=lambda: False)
     assert receipt.state == "complete"
+    assert calls[0][0] == "i" * 40
+    assert calls[0][1] == b'{"arguments":{"fixture_url":"http://127.0.0.1:8080/fixture"},"id":"browser-fixture"}'
+    with pytest.raises(SelectedApplicationUnavailable, match="not in the fixed"):
+        SelectedApplicationWorkloadFactory(router=router).build("arbitrary-command")
 
 
 @dataclass(frozen=True)
