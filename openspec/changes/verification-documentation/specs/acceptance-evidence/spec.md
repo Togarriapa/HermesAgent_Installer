@@ -1312,3 +1312,31 @@ The installer SHALL provide only the finite source-update bridge in `planning/pr
 #### Scenario: Old pointer or source authority fails verification
 - **WHEN** predecessor, selected source, controller or transition proof is absent, changed or foreign
 - **THEN** no update publication occurs and no old immutable release or pointer is removed to force source bootstrap
+
+
+## ADDED Requirements
+
+### Requirement: Gateway source and dependency inputs have genuine finite issuers
+The system SHALL use the v244 exact held release source-only receipt and current selected Gateway wheel CAS issuer before permitting offline remote Gateway build, retaining original currentness, PM, license, controller and FD custody boundaries.
+
+#### Scenario: Raw acquisition output is not build authority
+- **WHEN** a wheel body or module-shaped lock receipt is supplied without the exact current Gateway issuer proof
+- **THEN** build admission is denied before effects
+
+#### Scenario: Exact finite source and locked wheel closure is retained
+- **WHEN** the current reviewed release source cohort and complete lock/PM/license wheel closure are independently verified and retained in immutable CAS
+- **THEN** only their current issuer-backed FDs enter selected build inputs, without claiming runtime or Pi acceptance
+
+
+## ADDED Requirements
+
+### Requirement: Exact reviewed source update entry leaf
+The installer SHALL apply only the reviewed root_setup tuple bytes in `planning/source-update-entry-source-review-v247.json`, retaining v242 genuine predecessor/current TTY/source actor boundaries and separate evidence states.
+
+#### Scenario: Source entry guard or predecessor proof is unavailable
+- **WHEN** source-update lacks current root TTY, has foreign FD3 or lacks a fully verified present predecessor
+- **THEN** it performs no publication and never falls back to deleting the old pointer or claiming checkout installed-actor authority
+
+#### Scenario: Source entry contract fixtures pass
+- **WHEN** mocked admission or branch tests pass
+- **THEN** genuine full publication and actual Pi acceptance remain unproven

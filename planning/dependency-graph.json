@@ -3456,6 +3456,58 @@
     },
     "acceptance": "All AC OPEN"
   },
+  "preactive_native_build_manager_composition_v237": {
+    "contract": "planning/preactive-native-build-manager-composition-v237.json",
+    "tasks": {
+      "RT-T237.1": [
+        "RT-T227.3"
+      ],
+      "RT-T237.2": [
+        "RT-T237.1",
+        "RT-T225.1"
+      ],
+      "VD-T237.3": [
+        "RT-T237.1",
+        "RT-T237.2",
+        "RT-T234.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "xpra_native_source_policy_v238": {
+    "contract": "planning/xpra-native-source-policy-v238.json",
+    "tasks": {
+      "RT-T238.1": [
+        "RT-T227.1"
+      ],
+      "RT-T238.2": [
+        "RT-T238.1",
+        "RT-T227.2"
+      ],
+      "VD-T238.3": [
+        "RT-T238.1",
+        "RT-T238.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "official_desktop_measured_headers_managed_plan_v240": {
+    "contract": "planning/official-desktop-measured-headers-managed-plan-v240.json",
+    "tasks": {
+      "RT-T240.1": [
+        "RT-T226.1"
+      ],
+      "RT-T240.2": [
+        "RT-T240.1",
+        "RT-T237.1"
+      ],
+      "VD-T240.3": [
+        "RT-T240.1",
+        "RT-T240.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
   "qualification_source_before_process_custody_v230": {
     "contract": "planning/qualification-source-before-process-custody-v230.json",
     "tasks": [
@@ -3594,41 +3646,6 @@
     ],
     "acceptance": "All AC OPEN"
   },
-  "preactive_native_build_manager_composition_v237": {
-    "contract": "planning/preactive-native-build-manager-composition-v237.json",
-    "tasks": {
-      "RT-T237.1": [
-        "RT-T227.3"
-      ],
-      "RT-T237.2": [
-        "RT-T237.1",
-        "RT-T225.1"
-      ],
-      "VD-T237.3": [
-        "RT-T237.1",
-        "RT-T237.2",
-        "RT-T234.2"
-      ]
-    },
-    "acceptance": "All AC OPEN"
-  },
-  "xpra_native_source_policy_v238": {
-    "contract": "planning/xpra-native-source-policy-v238.json",
-    "tasks": {
-      "RT-T238.1": [
-        "RT-T227.1"
-      ],
-      "RT-T238.2": [
-        "RT-T238.1",
-        "RT-T227.2"
-      ],
-      "VD-T238.3": [
-        "RT-T238.1",
-        "RT-T238.2"
-      ]
-    },
-    "acceptance": "All AC OPEN"
-  },
   "preactive_remote_build_output_receipts_v239": {
     "contract": "planning/preactive-remote-build-output-receipts-v239.json",
     "tasks": {
@@ -3674,6 +3691,74 @@
       "VD-T242.2": [
         "BD-T242.1",
         "VD-T235.3"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "gateway_source_wheel_issuers_v244": {
+    "amendment": "plans/amendments/2026-10-10-gateway-source-wheel-issuers-v244.md",
+    "contract": "planning/gateway-source-wheel-issuers-v244.json",
+    "tasks": {
+      "RT-T244.1": [
+        "RT-T239.1"
+      ],
+      "RT-T244.2": [
+        "RT-T244.1"
+      ],
+      "VD-T244.3": [
+        "RT-T244.1",
+        "RT-T244.2"
+      ]
+    },
+    "acceptance": "open"
+  },
+  "remote_source_active_digest_acyclic_v246": {
+    "contract": "planning/remote-source-active-digest-acyclic-v246.json",
+    "tasks": [
+      "RT-T246.1",
+      "RT-T246.2",
+      "VD-T246.3"
+    ],
+    "dependencies": [
+      "RT-T225.1",
+      "RT-T225.2",
+      "RT-T239.2",
+      "RT-T239.3",
+      "HI-T231.1"
+    ],
+    "ordering": [
+      "immutable source2",
+      "complete generation selector/full hash",
+      "active claim/publication",
+      "current signed adoption",
+      "runtime activation"
+    ],
+    "acceptance": "All AC OPEN"
+  },
+  "source_update_entry_source_review_v247": {
+    "contract": "planning/source-update-entry-source-review-v247.json",
+    "source_commit": "7b7f402800b378d9420a6b8da09680cce430a40e",
+    "existing_task_dependencies": {
+      "VD-T242.2": [
+        "BD-T242.1",
+        "VD-T235.3"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "xpra_sysroot_html5_v245": {
+    "contract": "planning/xpra-sysroot-html5-v245.json",
+    "tasks": {
+      "RT-T245.1": [
+        "RT-T238.1"
+      ],
+      "RT-T245.2": [
+        "RT-T238.1"
+      ],
+      "VD-T245.3": [
+        "RT-T245.1",
+        "RT-T245.2",
+        "RT-T238.2"
       ]
     },
     "acceptance": "All AC OPEN"

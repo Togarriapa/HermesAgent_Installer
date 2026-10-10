@@ -322,3 +322,6 @@ v241 narrow candidate update source review: `plans/amendments/2026-10-10-candida
 
 
 v242 pre-v235 bridge: `plans/amendments/2026-10-10-preinstalled-source-update-entry-v242.md` / `planning/preinstalled-source-update-entry-v242.json` adds finite source-update entry using genuine present predecessor/current UPDATE TTY/fixed-origin CAS/FD3 and isolated source actor before new installed actor. Ordinary installed verifier is preserved; no oldrelease/pointer deletion, caller path/flag authority or restored seals. BD-T242.1 → VD-T242.2 and all AC OPEN.
+
+
+v247 narrow source-update leaf review: `plans/amendments/2026-10-10-source-update-entry-source-review-v247.md` / `planning/source-update-entry-source-review-v247.json`. Exact7b7f source root_setup0b7d7203/71543 replaces only two existing static tuple literals after publication. Current verified predecessor/TTY/source actor/FD3 gates and safe fixed source retry retained; no recipe/catalog or broader source approval. Genuine full positive/unexcluded/Pi and all tasks/AC OPEN.

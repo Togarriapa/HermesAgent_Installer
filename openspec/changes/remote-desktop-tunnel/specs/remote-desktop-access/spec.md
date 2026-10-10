@@ -517,3 +517,56 @@ The installer SHALL derive the v202 aggregate remote identity and prepared netwo
 #### Scenario: Caller strings are not enrollment proof
 - **WHEN** hostname, supplied IDs or incomplete role/policy evidence replaces the root reservation
 - **THEN** aggregate issuance SHALL deny without creating a runnable network or active identity
+
+## ADDED Requirements
+
+### Requirement: Measured official Desktop build inputs and finite managed plan
+The implementation SHALL use the exact v240 official header/member observations and current source-bound upstream commit-build provenance. The managed Desktop build SHALL use only sealed fixed driver/mount/output recipes and independently measured finite bounds; source/native fixture observations SHALL NOT imply AppDir or runtime acceptance.
+
+#### Scenario: Pending measured plan
+- **WHEN** a resource/output cap, actual driver, current native/packaging receipt or reviewed link policy is absent
+- **THEN** plan issuance and execution SHALL deny without an invented cap or lazy fallback
+
+#### Scenario: Header or stamp mismatch
+- **WHEN** redirect/checksum/member/source revision differs or the stamp is zero/fallback/fake CI or Git
+- **THEN** packaging SHALL remain unavailable and preserve genuine source identity
+
+
+## ADDED Requirements
+
+### Requirement: Gateway source and dependency inputs have genuine finite issuers
+The system SHALL use the v244 exact held release source-only receipt and current selected Gateway wheel CAS issuer before permitting offline remote Gateway build, retaining original currentness, PM, license, controller and FD custody boundaries.
+
+#### Scenario: Raw acquisition output is not build authority
+- **WHEN** a wheel body or module-shaped lock receipt is supplied without the exact current Gateway issuer proof
+- **THEN** build admission is denied before effects
+
+#### Scenario: Exact finite source and locked wheel closure is retained
+- **WHEN** the current reviewed release source cohort and complete lock/PM/license wheel closure are independently verified and retained in immutable CAS
+- **THEN** only their current issuer-backed FDs enter selected build inputs, without claiming runtime or Pi acceptance
+
+## ADDED Requirements
+
+### Requirement: Acyclic remote source and complete active generation binding
+The installer SHALL apply planning/remote-source-active-digest-acyclic-v246.json: immutable remote source schema2 omits service_generation_digest, while post-publication adoption and current runtime proof bind actual active_service_generation_id/digest to the complete authority core generation. Prepared lineage SHALL remain separately checked.
+
+#### Scenario: Source publication precedes full active hash
+- **WHEN** complete retained role/network/source receipts produce immutable remote source bytes
+- **THEN** the compiler includes their SHA selector before computing the full unchanged generation hash, and adoption verifies current actual active receipt/core/claim/member joins before activation
+
+#### Scenario: Component or prepared digest cannot authorize active runtime
+- **WHEN** a subset hash, prepared digest, unexpected source digest field or altered selector is supplied under the active domain
+- **THEN** publication or adoption rejects it without omitting selector rows, rewriting hashed source bytes or weakening current source validation
+
+## ADDED Requirements
+
+### Requirement: Origin-bound Xpra dependency sysroot and official HTML5
+The implementation SHALL materialize only the exact v245 signed origin-bound graph in a private bounded sysroot and SHALL install only held verified official HTML5 source assets. Native diagnostic success and static asset presence SHALL NOT prove managed session/runtime acceptance.
+
+#### Scenario: Required dependency link or license cannot resolve
+- **WHEN** a consumed graph path escapes, cycles, conflicts, remains dangling or lacks current signed origin/license proof
+- **THEN** the buildable closure SHALL deny without host aliases, package installation or inferred targets
+
+#### Scenario: Exact private transform and source assets
+- **WHEN** pinned glibc script and official HTML5 bytes match their held policy and independent graph/transform observer
+- **THEN** only the single reviewed private token transform and source-data copy SHALL be admitted; actual native/Xvfb/HTML5 session qualification remains required

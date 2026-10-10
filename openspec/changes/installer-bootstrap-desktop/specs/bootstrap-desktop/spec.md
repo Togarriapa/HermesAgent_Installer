@@ -1081,3 +1081,17 @@ The installer SHALL provide only the finite source-update bridge in `planning/pr
 #### Scenario: Old pointer or source authority fails verification
 - **WHEN** predecessor, selected source, controller or transition proof is absent, changed or foreign
 - **THEN** no update publication occurs and no old immutable release or pointer is removed to force source bootstrap
+
+
+## ADDED Requirements
+
+### Requirement: Exact reviewed source update entry leaf
+The installer SHALL apply only the reviewed root_setup tuple bytes in `planning/source-update-entry-source-review-v247.json`, retaining v242 genuine predecessor/current TTY/source actor boundaries and separate evidence states.
+
+#### Scenario: Source entry guard or predecessor proof is unavailable
+- **WHEN** source-update lacks current root TTY, has foreign FD3 or lacks a fully verified present predecessor
+- **THEN** it performs no publication and never falls back to deleting the old pointer or claiming checkout installed-actor authority
+
+#### Scenario: Source entry contract fixtures pass
+- **WHEN** mocked admission or branch tests pass
+- **THEN** genuine full publication and actual Pi acceptance remain unproven

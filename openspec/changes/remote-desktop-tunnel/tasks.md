@@ -195,5 +195,33 @@ Exact source contract: `planning/xpra-native-source-policy-v238.json`; all AC OP
 - [ ] RT-T239.1: Retain genuine remote executor terminal proof and implement narrow remote CAS/attestation package issuer.
 - [ ] RT-T239.2: Materialize exact role package through current held data-root custody and issue v209/v202 runtime receipts for v225 adoption.
 - [ ] VD-T239.4: Verify terminal forgery, source/schema/root races, expiry, cross-role and owned rollback failures plus actual pipeline effect; target acceptance separate.
-
 - [ ] RT-T239.3: Issue same-transaction remote enrollment reservation and current source/NSS-derived private-network policy selection; wire exact v202 aggregate and separate v225 kernel lease.
+
+## v240 Measured Desktop headers and managed interface
+
+- [ ] RT-T240.1 Implement exact held headers and truthful upstream commit-build stamp wrapper.
+- [ ] RT-T240.2 Implement fixed Desktop driver and measured plan/output/current receipts.
+- [ ] VD-T240.3 Test source/stamp/ABI/digest/caps/link failures and actual offline ARM64 effects; all AC OPEN.
+
+Exact contract: `planning/official-desktop-measured-headers-managed-plan-v240.json`.
+
+
+## Gateway source and wheel issuer refinement v244
+
+- [ ] RT-T244.1 Implement fixed held release source receipt/member projection and reviewed exact source-member cohort.
+- [ ] RT-T244.2 Implement Gateway lock/PM/choice-bound bounded acquisition, license verification, immutable CAS and retained provider/source projection integration.
+- [ ] VD-T244.3 Exercise spoofed receipts, changed lock/source/PM, stale choice, cancellation, conflicting CAS, bounded dependency/license failure and genuine ARM64 production positives; target acceptance separately open.
+
+## v246 Acyclic source and active digest
+
+- [ ] RT-T246.1: Emit exact remote source schema2 without misleading generation component hash and bind adoption to actual active_service_generation_id/digest; preserve current genuine aggregate and prepared lineage.
+- [ ] RT-T246.2: Validate immutable schema2 published member and strict current source/core/claim/receipt/adoption full active generation joins, preserving v225 absent remote and schema3/schema4.
+- [ ] VD-T246.3: Verify genuine acyclic source-to-full-generation-to-adoption pipeline, prepared/component confusion, unrelated-row fullhash changes, tamper/restart/disabled failures; target acceptance OPEN.
+
+## v245 Xpra source graph and HTML5
+
+- [ ] RT-T245.1 Implement actual signed graph/private sysroot and independent single glibc transform observer.
+- [ ] RT-T245.2 Implement held official HTML5 acquisition/license/source-data install.
+- [ ] VD-T245.3 Test exact graph/hash/license/currentness failures and managed ARM64 HTML5 session; all AC OPEN.
+
+Exact contract: `planning/xpra-sysroot-html5-v245.json`.

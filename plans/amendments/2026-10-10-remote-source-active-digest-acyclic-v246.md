@@ -1,0 +1,5 @@
+# Remote source active digest cycle correction v246
+
+Refines v225/v231/v239 and original R0037/R0203/R0204/R0211. The current remote source component hash is named service_generation_digest but cannot be the full active generation hash because that generation contains the source SHA selector. The exact contract in planning/remote-source-active-digest-acyclic-v246.json defines source schema2 as v225 schema1 minus that unnecessary field; complete immutable source bytes precede the unchanged full generation digest. Prepared lineage remains separate. Post-publication adoption and current readers bind actual active_service_generation_id/digest from the current receipt to the complete core/claim. No self-hash, selector omission, placeholder or source rewrite.
+
+RT-T246.1 central source/adoption, RT-T246.2 publisher/current-reader joins, VD-T246.3 genuine pipeline/failed joins depend on existing225/231/239 producer work. All tasks and AC01..18 OPEN; no code/source pins/target evidence. Frozen baseline and older amendments unchanged.

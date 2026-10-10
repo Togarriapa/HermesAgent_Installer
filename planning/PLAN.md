@@ -232,3 +232,14 @@ v241 narrow update source review: `plans/amendments/2026-10-10-candidate-update-
 
 
 v242 genuine source-update bridge: `plans/amendments/2026-10-10-preinstalled-source-update-entry-v242.md`; BD-T242.1 → VD-T242.2 OPEN, retaining v235 tasks/source approval separately. Actual old predecessor/rootTTY/fixedoriginFD3/source actor required; all AC OPEN.
+v240: `plans/amendments/2026-10-10-official-desktop-measured-headers-managed-plan-v240.md` / `planning/official-desktop-measured-headers-managed-plan-v240.json`; RT-T240.1/.2 and VD-T240.3 OPEN. Exact observed header/member tuples and fixed Desktop managed interface; AppDir/measured caps/current receipts pending, no runtime/Pi acceptance.
+
+
+## Gateway source and wheel issuers v244
+
+Append-only `plans/amendments/2026-10-10-gateway-source-wheel-issuers-v244.md` / `planning/gateway-source-wheel-issuers-v244.json`; RT-T244.1/.2, VD-T244.3 open. Exact source-only held release projection plus selected Gateway locked-wheel CAS/license/FD issuer closes the source production seam; no source pins or acceptance inferred.
+Remote source active digest v246: plans/amendments/2026-10-10-remote-source-active-digest-acyclic-v246.md; RT-T246.1/.2/VD-T246.3 OPEN, exact source schema2 omits self-dependent field; actual full active receipt/core/adoption joins retain independent prepared lineage. All AC OPEN.
+
+
+v247 exact source-update leaf review: `plans/amendments/2026-10-10-source-update-entry-source-review-v247.md`; root_setup0b7d7203/71543 two-table literal update only. Existing BD-T242.1/VD-T242.2 and all AC OPEN; unexcluded/genuine positive/Pi evidence required.
+v245: `plans/amendments/2026-10-10-xpra-sysroot-html5-v245.md` / `planning/xpra-sysroot-html5-v245.json`; RT-T245.1/.2 and VD-T245.3 OPEN. Exact signed archive links/private sysroot and immutable official HTML5 source observations; mixed-license/current native/session proof pending, all AC OPEN.

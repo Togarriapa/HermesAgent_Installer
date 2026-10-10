@@ -1,0 +1,428 @@
+[
+  {
+    "path": "html5/clipboard.html",
+    "mode": 436,
+    "size_bytes": 5803,
+    "sha256": "32f65c2a7ebe73cd0f4ff9a0006d9927b647c14b3e23fe1d516c6adb16f0617a"
+  },
+  {
+    "path": "html5/connect.html",
+    "mode": 436,
+    "size_bytes": 65538,
+    "sha256": "53555fea78d875ecd810a6b931e7452c0fb41f7c109a95947eed471929f6d527"
+  },
+  {
+    "path": "html5/crypto.html",
+    "mode": 436,
+    "size_bytes": 18083,
+    "sha256": "3cf5685a1ae9787e5fb8f6230184fd6176ab0196d1318c3a3aa1e1523ebb10ca"
+  },
+  {
+    "path": "html5/css/client.css",
+    "mode": 436,
+    "size_bytes": 9340,
+    "sha256": "569b62f15b8f4182a62cc6f240930a89cc501cf77a0b48c3a3528562acf1a49f"
+  },
+  {
+    "path": "html5/css/connect.css",
+    "mode": 436,
+    "size_bytes": 4539,
+    "sha256": "d14d6f87632ede5fc11628361f5385927f295ebd6d9c6b563fe17127591789ba"
+  },
+  {
+    "path": "html5/css/icon.css",
+    "mode": 436,
+    "size_bytes": 581,
+    "sha256": "754c017697b33bb454fbba28b9f265243f67a98a4e43a3ff5cf430b2e8c2db45"
+  },
+  {
+    "path": "html5/css/menu-skin.css",
+    "mode": 436,
+    "size_bytes": 3861,
+    "sha256": "971d03dcd92507e37ef8a2e90149807967235468713ada412680c923e502191f"
+  },
+  {
+    "path": "html5/css/menu.css",
+    "mode": 436,
+    "size_bytes": 5636,
+    "sha256": "d986b28187a5bdacf05b313f83472fdb00721b2945d8eb1151eb0322fa165bbe"
+  },
+  {
+    "path": "html5/css/simple-keyboard.css",
+    "mode": 436,
+    "size_bytes": 2533,
+    "sha256": "b4663a0ad89f73b6d31bffd838213ff68374880be02b76f8685c341e99ca59d4"
+  },
+  {
+    "path": "html5/css/simple-keyboard.css.map",
+    "mode": 436,
+    "size_bytes": 6160,
+    "sha256": "f5ed87f0d8956832b90ef5c965ba31729075db4d927ef370fc63284ce5c384e0"
+  },
+  {
+    "path": "html5/css/slick.css",
+    "mode": 436,
+    "size_bytes": 1445,
+    "sha256": "608f56678961f93facf350f9aed8c645d54af1ee66370cecb65d59de2e4d125d"
+  },
+  {
+    "path": "html5/css/spinner.css",
+    "mode": 436,
+    "size_bytes": 751,
+    "sha256": "2724650f02fa0370459ae823b119431e0fd9da72fc3e78f857a98daa427a9060"
+  },
+  {
+    "path": "html5/default-settings.txt",
+    "mode": 436,
+    "size_bytes": 283,
+    "sha256": "de1cdca5f867673b2da7cefe82f24cc4675ed174496559b3a67dd51810980606"
+  },
+  {
+    "path": "html5/digest.html",
+    "mode": 436,
+    "size_bytes": 2627,
+    "sha256": "92fd60995bafa38f357b04707fdbf0fc2b9c12c04653c08332026be4a2c6a7e3"
+  },
+  {
+    "path": "html5/favicon.ico",
+    "mode": 436,
+    "size_bytes": 7358,
+    "sha256": "e8ba79bd89458ef701f71f13f3ab8b28fa69a178b60686e96e4f0a2a629db0f3"
+  },
+  {
+    "path": "html5/favicon.png",
+    "mode": 436,
+    "size_bytes": 2950,
+    "sha256": "1529d270bc56289a4763ce76c8e280484d2ca9d0bd4e317eecedac4c95a0caa4"
+  },
+  {
+    "path": "html5/icons/authentication.png",
+    "mode": 436,
+    "size_bytes": 2083,
+    "sha256": "2eedf8ecc2079701b19d5b9f1b4f1ec987ffca9d4284c774e422b2bc67ad5a1d"
+  },
+  {
+    "path": "html5/icons/close.png",
+    "mode": 436,
+    "size_bytes": 333,
+    "sha256": "cb0564ff04cc8ff98cb69cf4d6e7f66996b7234214374138a521c2dbbdc70edc"
+  },
+  {
+    "path": "html5/icons/default_cursor.png",
+    "mode": 436,
+    "size_bytes": 1252,
+    "sha256": "5a114e0f592bded6c6a1f7713cf266902eaea50ca2669cae71c539c2fe8b1aea"
+  },
+  {
+    "path": "html5/icons/empty.png",
+    "mode": 436,
+    "size_bytes": 356,
+    "sha256": "7ddaf1600b7fbb511c963d8896f08946cad020dda60a3df3f05aa62bbda68e3e"
+  },
+  {
+    "path": "html5/icons/eye-slash.png",
+    "mode": 436,
+    "size_bytes": 5347,
+    "sha256": "0f17b52c83666359bd9f87630791a9f8741636f217e1010a8258bce9369d878d"
+  },
+  {
+    "path": "html5/icons/eye.png",
+    "mode": 436,
+    "size_bytes": 1115,
+    "sha256": "16c11dab531869c3a2dc406c492eb4c4e2d2025131f0190954b63900ca567a19"
+  },
+  {
+    "path": "html5/icons/fullscreen.png",
+    "mode": 436,
+    "size_bytes": 1069,
+    "sha256": "e2c99faf667db64d7d8c1dbb79dac273ae9922d1264e5b93264aafb2c73ff8f5"
+  },
+  {
+    "path": "html5/icons/materialicons-regular.ttf",
+    "mode": 436,
+    "size_bytes": 356840,
+    "sha256": "ef149f08bdd2ff09a4e2c8573476b7b0f3fbb15b623954ade59899e7175bedda"
+  },
+  {
+    "path": "html5/icons/materialicons-regular.woff",
+    "mode": 436,
+    "size_bytes": 183892,
+    "sha256": "bba53cfd93ba28f437043f1d1e5be17f857264a2f95bb8d1ab08c72d29e51b51"
+  },
+  {
+    "path": "html5/icons/materialicons-regular.woff2",
+    "mode": 436,
+    "size_bytes": 128352,
+    "sha256": "8265f64786397d6b832d1ca0aafdf149ad84e72759fffa9f7272e91a0fb015d1"
+  },
+  {
+    "path": "html5/icons/maximize.png",
+    "mode": 436,
+    "size_bytes": 291,
+    "sha256": "ce4b460add6ea8362041223ea854fe362b0afe5fe043518c6c6276749cb3bd1c"
+  },
+  {
+    "path": "html5/icons/minimize.png",
+    "mode": 436,
+    "size_bytes": 199,
+    "sha256": "98c3164f0ea9ba67c0c6a1d8fd99f34ceda08cabe05c0ede1dab0522ca33c3cc"
+  },
+  {
+    "path": "html5/icons/noicon.png",
+    "mode": 436,
+    "size_bytes": 133,
+    "sha256": "3d67f714719d678314a912b16e6467970f3c323d01e6bab9d185a9b20a67731a"
+  },
+  {
+    "path": "html5/icons/unfullscreen.png",
+    "mode": 436,
+    "size_bytes": 543,
+    "sha256": "4ce0f63eb51205b87f5473b093361b1788e2de4194c54ddfd4e8602485c740f1"
+  },
+  {
+    "path": "html5/icons/xpra-logo.png",
+    "mode": 436,
+    "size_bytes": 6657,
+    "sha256": "d6e628dec7451f7d7f511b33442725f6d798e82c9b6c898ee666c33afde68a24"
+  },
+  {
+    "path": "html5/index.html",
+    "mode": 436,
+    "size_bytes": 59041,
+    "sha256": "3eb29221541ffb40b92ff5c59a32d97146cbc06f4d67f2ea5f485f1c78cbc398"
+  },
+  {
+    "path": "html5/js/Client.js",
+    "mode": 436,
+    "size_bytes": 161656,
+    "sha256": "e85a109600836c07a9b2cc6d543c6b43af6d600c8419f7786400c6e2c6068768"
+  },
+  {
+    "path": "html5/js/Constants.js",
+    "mode": 436,
+    "size_bytes": 3376,
+    "sha256": "69123fae8b01a0865ccb6ba8d04bd416da9ae40d5926ccb55eaa4eca7b03ce4b"
+  },
+  {
+    "path": "html5/js/DecodeWorker.js",
+    "mode": 436,
+    "size_bytes": 11429,
+    "sha256": "c1cc3a1947ff757838f9e733226bcc2c75b46f77ad12cf63529125186f1b62e1"
+  },
+  {
+    "path": "html5/js/ImageDecoder.js",
+    "mode": 436,
+    "size_bytes": 1312,
+    "sha256": "3ff161c1868c3d5a57a57c84338b0456cb8351733150eb7f11424deb9139a3ef"
+  },
+  {
+    "path": "html5/js/Keycodes.js",
+    "mode": 436,
+    "size_bytes": 45917,
+    "sha256": "f74888be2cc43aad3b06d8859c8632a244018fde7d1c901d2960e70abb6e76fa"
+  },
+  {
+    "path": "html5/js/MediaSourceUtil.js",
+    "mode": 436,
+    "size_bytes": 9381,
+    "sha256": "3af8ada863f7575803415d4f3475174a99b4eb56b1af83f6fb24d3405d115b1c"
+  },
+  {
+    "path": "html5/js/Menu.js",
+    "mode": 436,
+    "size_bytes": 4005,
+    "sha256": "bb01ede02d76d698ca6ac886b0e0344cd223480afd6994921c2ececf1c9a06ec"
+  },
+  {
+    "path": "html5/js/MenuCustom.js",
+    "mode": 436,
+    "size_bytes": 5484,
+    "sha256": "fb1a0d42d776b355efead96fc6bb366597bdea4d7e280bc3ffedf15b273502d3"
+  },
+  {
+    "path": "html5/js/Notifications.js",
+    "mode": 436,
+    "size_bytes": 4300,
+    "sha256": "f5135fd041582e51f27269a6ce4b258a0504f3a3ad4d0b17b118dbc0cb67f112"
+  },
+  {
+    "path": "html5/js/OffscreenDecodeWorker.js",
+    "mode": 436,
+    "size_bytes": 9264,
+    "sha256": "eeea9f6d63250a0b1051bf836ca2dc4e95c41637c2eaf58d190028be029aeead"
+  },
+  {
+    "path": "html5/js/OffscreenDecodeWorkerHelper.js",
+    "mode": 436,
+    "size_bytes": 2146,
+    "sha256": "967f74a690cd26ad7c1143692ecffcdd79eb4de75d28227a284a27ea1442e4a7"
+  },
+  {
+    "path": "html5/js/Protocol.js",
+    "mode": 436,
+    "size_bytes": 21387,
+    "sha256": "1be583e360739a4978b03f207c05b0369500f7f90bc47adf1279fc02700797bd"
+  },
+  {
+    "path": "html5/js/RgbHelpers.js",
+    "mode": 436,
+    "size_bytes": 2292,
+    "sha256": "25dd4e9b3010dc7f6aaef5d1a1d12dbc43dbf7c854c61b4395dcb77e8210f6c1"
+  },
+  {
+    "path": "html5/js/Utilities.js",
+    "mode": 436,
+    "size_bytes": 23582,
+    "sha256": "c3841021d12eafeefe77b0e9658298ee1fe64645cc708738968d1fb7c4c5271f"
+  },
+  {
+    "path": "html5/js/VideoDecoder.js",
+    "mode": 436,
+    "size_bytes": 6753,
+    "sha256": "2ce0b1f3cf72ce53d83a32f1fd1d0e908b1c99c6baab5b94544420dda99a574a"
+  },
+  {
+    "path": "html5/js/WebTransport.js",
+    "mode": 436,
+    "size_bytes": 9926,
+    "sha256": "6e1944b0f21f91f00386f0993da3c83f33a247bcfc4e8464c67657929ba3162d"
+  },
+  {
+    "path": "html5/js/Window.js",
+    "mode": 436,
+    "size_bytes": 45284,
+    "sha256": "8381c5b10502bf738cfb1c31a9f68cbe84db89aa644667e8095eacd57fe2d65d"
+  },
+  {
+    "path": "html5/js/lib/FileSaver.js",
+    "mode": 436,
+    "size_bytes": 5649,
+    "sha256": "d759ba55403a8ba527cbd68ab924b8e83d9e118a97a2a489c0b256cbdcc45c58"
+  },
+  {
+    "path": "html5/js/lib/StreamSaver.js",
+    "mode": 436,
+    "size_bytes": 10245,
+    "sha256": "c7c8d3b7cd75529ab7c2974b3b010eafbe9cee15bad80d2c75c93f874a6b0fe1"
+  },
+  {
+    "path": "html5/js/lib/aurora/aac.js",
+    "mode": 436,
+    "size_bytes": 154207,
+    "sha256": "8581374c101cfd492717be587a7f4c56ec7e753440e9c0eb8e00dbc29da2a5b9"
+  },
+  {
+    "path": "html5/js/lib/aurora/aurora-xpra.js",
+    "mode": 436,
+    "size_bytes": 1248,
+    "sha256": "57f803b5154db1614939b0206d08e99a29f6014fa868fa05463d584fb3e8b9f5"
+  },
+  {
+    "path": "html5/js/lib/aurora/aurora.js",
+    "mode": 436,
+    "size_bytes": 328520,
+    "sha256": "9e7106d2ac764daa603d20e05c8eb1ed287b11b17c8cabeede8b6c0402bd6db1"
+  },
+  {
+    "path": "html5/js/lib/aurora/flac.js",
+    "mode": 436,
+    "size_bytes": 26877,
+    "sha256": "26958f81ab7631fd35b847ab9bd4296f1dbc1492814f926a133c8b0dcdffe4d8"
+  },
+  {
+    "path": "html5/js/lib/aurora/mp3.js",
+    "mode": 436,
+    "size_bytes": 207552,
+    "sha256": "e650e36d9aa24bb885729920f0a9aec53bc138776d401ff19020e165ba3452a6"
+  },
+  {
+    "path": "html5/js/lib/brotli_decode.js",
+    "mode": 509,
+    "size_bytes": 204675,
+    "sha256": "8b5494ee4d157a328e835643e7071adb2a1860824b2ba4475f0763a64514fd8f"
+  },
+  {
+    "path": "html5/js/lib/detect-zoom.js",
+    "mode": 436,
+    "size_bytes": 9221,
+    "sha256": "7a980f785c0f4bd4bf8d09c419085c581ea89d2ec0480de0a907c1a4da5b3965"
+  },
+  {
+    "path": "html5/js/lib/hmac.js",
+    "mode": 436,
+    "size_bytes": 7226,
+    "sha256": "5fee1ce0ff7ddd4d3dcca7ca09a644039d86be28b41c05d18b7918dd7507ac3d"
+  },
+  {
+    "path": "html5/js/lib/jquery-transform-draggable.js",
+    "mode": 436,
+    "size_bytes": 5366,
+    "sha256": "a28c5db76f0c62dcd3a10a477bd99ed30068d9759faf546ba47c6b2297b7e6dc"
+  },
+  {
+    "path": "html5/js/lib/jquery-ui.js",
+    "mode": 436,
+    "size_bytes": 529158,
+    "sha256": "45482764af53f960b53b0f26e19e58ad58a6a924ff5a713a8048feb9a0e5fda9"
+  },
+  {
+    "path": "html5/js/lib/jquery.ba-throttle-debounce.js",
+    "mode": 436,
+    "size_bytes": 10254,
+    "sha256": "df0bb4f2d98e441a6c420464184d5a0dd5f800934a2bd30cc0bc7dfd35613ca3"
+  },
+  {
+    "path": "html5/js/lib/jquery.js",
+    "mode": 436,
+    "size_bytes": 285314,
+    "sha256": "78a85aca2f0b110c29e0d2b137e09f0a1fb7a8e554b499f740d6744dc8962cfe"
+  },
+  {
+    "path": "html5/js/lib/jsmpeg.js",
+    "mode": 436,
+    "size_bytes": 121112,
+    "sha256": "4247a836808ff1d15476f785260af7a1caddb34a29b842e5e0e727c349363f0d"
+  },
+  {
+    "path": "html5/js/lib/lz4.js",
+    "mode": 436,
+    "size_bytes": 17728,
+    "sha256": "93222ae45232d9710fe2df9b1d601e50a0a9308282392d0ca18822e024ba68ce"
+  },
+  {
+    "path": "html5/js/lib/rencode.js",
+    "mode": 436,
+    "size_bytes": 14349,
+    "sha256": "a90d046e840c7eff0592efcc4da21a4612c1b391a76ea91bc3102e09bca4360f"
+  },
+  {
+    "path": "html5/js/lib/simple-keyboard.js",
+    "mode": 436,
+    "size_bytes": 287629,
+    "sha256": "09283200f7a730039fa13d69f8a962d1563865e85e0d3c67379a5c8e26a54444"
+  },
+  {
+    "path": "html5/js/lib/slick.js",
+    "mode": 436,
+    "size_bytes": 88955,
+    "sha256": "9baa573e4378873b7ac81ccb1d954ce9bb2b1a933947ad3012263ddc604d8505"
+  },
+  {
+    "path": "html5/js/lib/web-streams-ponyfill.es6.js",
+    "mode": 436,
+    "size_bytes": 190167,
+    "sha256": "aa9f537f78684921a60a17e8965f554f46452baf1768da0198732709dfde8945"
+  },
+  {
+    "path": "html5/mitm.html",
+    "mode": 436,
+    "size_bytes": 6530,
+    "sha256": "2b6ae0f5bbca8fd2e281b476a898023e4e40c99d0f667234c04cd010bbbf6871"
+  },
+  {
+    "path": "html5/sw.js",
+    "mode": 436,
+    "size_bytes": 3809,
+    "sha256": "ab1c984eac16ae622f81a15edfd1f78b359e11df1a4d2738b90a3100ec771733"
+  }
+]
