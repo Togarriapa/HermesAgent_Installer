@@ -118,19 +118,19 @@ class RootNativeHermesWorkerStartRecipe:
 
 
 _WORKER_MEMBER_PINS = {
-    "src/hermes_installer/native_invocations.py": "78a3452289df5b7343e5c650ea8620d51b3aa1056e2eedea02cc3a0bff7b8226",
+    "src/hermes_installer/native_invocations.py": "78a3452289df5b7343e5c650ad4260d51b3aa1056e2eedea02cc3a0bff7b8226",
     "src/hermes_installer/native_boundary.py": "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb",
 }
 _INSTALLER_MEMBER_PINS = {
     "lib/python/hermes_installer/native_plugin_loader.py":
         ("installer-module:hermes_installer.native_plugin_loader",
-         "807e44082ee51b212e1a7bebcdc858dfffe09772820542f012a1956542ecac3d", 115_924),
+         "eebe58ea486ecebeceacc8d8f46f8b26e061b46b4f25a11e41a5059f0233bdbd", 124_775),
     "lib/python/hermes_installer/native_boundary_patch.py":
         ("installer-module:hermes_installer.native_boundary_patch",
          "fe1bfca7de02408c27891f0d6830da938ee7f18c84ee6b34bdd766f8e1645159", 22_888),
     "lib/python/hermes_installer/native_plugin_bindings.py":
         ("installer-module:hermes_installer.native_plugin_bindings",
-         "7cdb0f08ed59c8fc08f1eb7cc892d0059cd6bd81a4da1a94efa6e7b5218d36cc", 16_387),
+         "f5e9fcb74b555dcd5d98bc37eec29c42cbe85f3793cf43f2dc97536b030d1b26", 22_679),
     "lib/python/hermes_installer/registry/resource_backends.py":
         ("installer-module:hermes_installer.registry.resource_backends",
          "e59813aa36754a0e08fece9c9c2a83ec9c21a6807935a6c83f7b09cca6792414", 27_026),

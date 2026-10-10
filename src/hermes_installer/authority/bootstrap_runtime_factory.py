@@ -8700,7 +8700,7 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentPending("worker role modules require current empty prepared custody")
         pins = (
             ("installer-native-invocations-module-v137", "src/hermes_installer/native_invocations.py",
-             "78a3452289df5b7343e5c650ea8620d51b3aa1056e2eedea02cc3a0bff7b8226", 40_107),
+             "78a3452289df5b7343e5c650ad4260d51b3aa1056e2eedea02cc3a0bff7b8226", 40_107),
             ("installer-native-boundary-module-v137", "src/hermes_installer/native_boundary.py",
              "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb", 14_356),
         )
