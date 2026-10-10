@@ -172,6 +172,52 @@ class RootSetupBoundaryTests(unittest.TestCase):
             with bootstrap_runtime_error_step("bootstrap.reexec"):
                 raise PermissionError(private_detail)
 
+    def test_bootstrap_pending_step_diagnostic_is_fixed_and_redacts_details(self) -> None:
+        from hermes_installer.authority.bootstrap_enrollment import (
+            BootstrapEnrollmentPending, BootstrapPendingStepFailure,
+            bootstrap_enrollment_pending_step,
+        )
+
+        private_detail = "/etc/hermes-installer/credentials/provider-token API_KEY=sentinel"
+        for step in BootstrapPendingStepFailure.STEPS:
+            with self.subTest(step=step):
+                with self.assertRaises(BootstrapPendingStepFailure) as caught:
+                    with bootstrap_enrollment_pending_step(step):
+                        raise BootstrapEnrollmentPending(private_detail)
+                failure = caught.exception
+                self.assertEqual(failure.step, step)
+                safe = root_setup._safe_reason(failure)
+                self.assertEqual(
+                    safe,
+                    f"A required root-selected setup prerequisite is pending at {step}; "
+                    "rerun the root setup action after resolving it.",
+                )
+                self.assertNotIn(private_detail, safe)
+                self.assertNotIn("API_KEY", str(failure))
+
+        failure = BootstrapPendingStepFailure("initial_compilation.catalog")
+        failure.step = private_detail
+        self.assertEqual(
+            root_setup._safe_reason(failure),
+            "A required root-selected setup prerequisite is pending; rerun the root setup action after resolving it.",
+        )
+
+        class PendingSubclass(BootstrapEnrollmentPending):
+            pass
+
+        original = PendingSubclass(private_detail)
+        with self.assertRaises(PendingSubclass) as unwrapped:
+            with bootstrap_enrollment_pending_step("initial_compilation.catalog"):
+                raise original
+        self.assertIs(unwrapped.exception, original)
+        self.assertEqual(
+            root_setup._safe_reason(original),
+            "A required root-selected setup prerequisite is pending; rerun the root setup action after resolving it.",
+        )
+        with self.assertRaises(ValueError):
+            with bootstrap_enrollment_pending_step(private_detail):
+                pass
+
     def test_source_choice_runtime_failure_reports_only_fixed_boundary(self) -> None:
         predecessor = type("Predecessor", (), {"state": "absent", "verify_current": lambda self: None})()
         registry = RootBootstrapCandidateSelectionRegistry()

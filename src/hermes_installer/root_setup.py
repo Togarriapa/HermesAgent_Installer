@@ -1106,9 +1106,16 @@ def _read_target_account_name() -> str:
 
 def _safe_reason(error: BaseException) -> str:
     from .authority.bootstrap_enrollment import (
-        BootstrapEnrollmentPending, BootstrapRuntimeStepFailure, BootstrapSystemCallFailure,
+        BootstrapEnrollmentPending, BootstrapPendingStepFailure,
+        BootstrapRuntimeStepFailure, BootstrapSystemCallFailure,
     )
 
+    if type(error) is BootstrapPendingStepFailure:
+        step = error.step
+        if type(step) is str and step in BootstrapPendingStepFailure.STEPS:
+            return (f"A required root-selected setup prerequisite is pending at {step}; "
+                    "rerun the root setup action after resolving it.")
+        return "A required root-selected setup prerequisite is pending; rerun the root setup action after resolving it."
     if isinstance(error, BootstrapEnrollmentPending):
         return "A required root-selected setup prerequisite is pending; rerun the root setup action after resolving it."
     if type(error) is BootstrapRuntimeStepFailure:

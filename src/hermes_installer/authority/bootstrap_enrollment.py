@@ -38,6 +38,41 @@ class BootstrapEnrollmentPending(BootstrapEnrollmentError):
     """A required root-enrolled artifact or account prerequisite is absent."""
 
 
+class BootstrapPendingStepFailure(BootstrapEnrollmentPending):
+    """A fixed initial-compilation stage where a prerequisite is pending."""
+
+    STEPS = frozenset({
+        "initial_compilation.actor_current",
+        "initial_compilation.validation",
+        "initial_compilation.account",
+        "initial_compilation.install_mode",
+        "initial_compilation.release_closure",
+        "initial_compilation.template",
+        "initial_compilation.catalog",
+        "initial_compilation.journal",
+        "initial_compilation.actor_write",
+    })
+
+    def __init__(self, step: str):
+        if type(step) is not str or step not in self.STEPS:
+            raise ValueError("bootstrap pending diagnostic step is outside the fixed catalog")
+        self.step = step
+        super().__init__("root setup prerequisite is pending at a fixed initial-compilation stage")
+
+
+@contextmanager
+def bootstrap_enrollment_pending_step(step: str) -> Iterator[None]:
+    """Tag only an exact pending prerequisite with a reviewed fixed stage."""
+    if type(step) is not str or step not in BootstrapPendingStepFailure.STEPS:
+        raise ValueError("bootstrap pending diagnostic step is outside the fixed catalog")
+    try:
+        yield
+    except BootstrapEnrollmentPending as exc:
+        if type(exc) is not BootstrapEnrollmentPending:
+            raise
+        raise BootstrapPendingStepFailure(step) from None
+
+
 class BootstrapSystemCallFailure(OSError):
     """A root bootstrap OS failure with a finite step and sanitized errno."""
 
