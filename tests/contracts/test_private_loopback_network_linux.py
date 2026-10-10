@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import fcntl
 import json
 import os
 import platform
 import pwd
 import select
 import socket
+import struct
 import subprocess
 import sys
 import threading
@@ -18,12 +20,14 @@ from pathlib import Path
 
 from hermes_installer.authority.private_loopback_network import (
     POLICY_ID, POLICY_SHA256, close_root_network_lease,
-    create_root_namespace, namespace_path_for, validate_private_loopback_networks,
-    verify_root_network_lease,
+    create_root_namespace, namespace_path_for, validate_private_loopback_networks, _in_namespace,
+    verify_root_network_lease, PrivateLoopbackMember, retain_network_member,
+    release_network_member, unit_network_properties,
 )
 from hermes_installer.authority.host_tool_observation import (
     HostToolObservationDenied, HostToolObservationRegistry,
 )
+from hermes_installer.authority.types import AuthorityDenied
 
 
 def _service(enrollment: str, profile: str, generation: str, uid: int) -> dict[str, object]:
@@ -115,12 +119,47 @@ def _wait(pid: int) -> int:
     return os.waitstatus_to_exitcode(status)
 
 
+def _toggle_interface(namespace_fd: int, name: str, up: bool) -> None:
+    host_fd = os.open("/proc/self/ns/net", os.O_RDONLY | os.O_CLOEXEC)
+    failure: list[BaseException] = []
+
+    def change() -> None:
+        try:
+            os.setns(namespace_fd, getattr(os, "CLONE_NEWNET", 0x40000000))
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM | socket.SOCK_CLOEXEC)
+            try:
+                request = struct.pack("16sH14s", name.encode("ascii"), 0, b"")
+                flags = struct.unpack("16sH14s", fcntl.ioctl(sock.fileno(), 0x8913, request))[1]
+                next_flags = flags | 1 if up else flags & ~1
+                fcntl.ioctl(sock.fileno(), 0x8914, struct.pack("16sH14s", name.encode("ascii"), next_flags, b""))
+            finally:
+                sock.close()
+        except BaseException as exc:
+            failure.append(exc)
+        finally:
+            try:
+                os.setns(host_fd, getattr(os, "CLONE_NEWNET", 0x40000000))
+            except BaseException as exc:
+                failure.append(exc)
+
+    thread = threading.Thread(target=change, name="loopback-template-mutation")
+    thread.start(); thread.join(5.0)
+    os.close(host_fd)
+    if thread.is_alive() or failure:
+        raise failure[0] if failure else AssertionError("template state mutation timed out")
+
+
 def _systemd_bind_probe(namespace: Path, uid: int, port: int, *, allowed: bool,
                         allowed_port: int | None) -> subprocess.CompletedProcess[str]:
     """Run an actual transient unit so systemd attaches its cgroup bind BPF."""
     unit = "hermes-loopback-bind-" + uuid.uuid4().hex + ".service"
     probe = (
-        "import socket,sys; s=socket.socket(socket.AF_INET,socket.SOCK_STREAM); "
+        "import pathlib,socket,sys; "
+        "st={line.split(':',1)[0]:line.split(':',1)[1].strip() for line in pathlib.Path('/proc/self/status').read_text().splitlines() if ':' in line}; "
+        "caps=[int(st[k],16) for k in ('CapEff','CapPrm','CapBnd','CapAmb')]; "
+        "print('CAPS_EMPTY' if not any(caps) else 'CAPS_PRESENT'); "
+        "sys.exit(41) if any(caps) or pathlib.Path('/dev/net/tun').exists() else None; "
+        "print('TUN_DEVICE_HIDDEN'); s=socket.socket(socket.AF_INET,socket.SOCK_STREAM); "
         "\ntry:\n s.bind(('127.0.0.1',int(sys.argv[1]))); print('BOUND'); sys.exit(0 if sys.argv[2]=='allow' else 31)"
         "\nexcept OSError as e:\n print('DENIED:'+str(e)); sys.exit(0 if sys.argv[2]=='deny' else 32)"
     )
@@ -130,6 +169,8 @@ def _systemd_bind_probe(namespace: Path, uid: int, port: int, *, allowed: bool,
         "--property=NetworkNamespacePath=" + str(namespace),
         "--property=SocketBindDeny=any",
         "--property=CapabilityBoundingSet=", "--property=AmbientCapabilities=",
+        "--property=PrivateDevices=yes", "--property=DevicePolicy=closed",
+        "--property=NoNewPrivileges=yes",
         "--property=RestrictAddressFamilies=AF_UNIX AF_INET",
     ]
     if allowed_port is not None:
@@ -212,6 +253,16 @@ class LinuxPrivateLoopbackNamespaceFixtures(unittest.TestCase):
                 self.assertNotEqual(lease.namespace_inode, os.stat("/proc/self/ns/net").st_ino)
                 verify_root_network_lease(lease)
 
+                template_state = json.loads(_in_namespace(lease.namespace_fd, "netns", tool))
+                optional_links = [row for row in template_state["links"] if row["name"] != "lo"]
+                if optional_links:
+                    template_name = optional_links[0]["name"]
+                    _toggle_interface(lease.namespace_fd, template_name, True)
+                    with self.assertRaises(AuthorityDenied):
+                        verify_root_network_lease(lease)
+                    _toggle_interface(lease.namespace_fd, template_name, False)
+                    verify_root_network_lease(lease)
+
                 host_probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 host_probe.bind(("127.0.0.1", 0))
                 host_probe.listen(1)
@@ -276,6 +327,8 @@ class LinuxPrivateLoopbackNamespaceFixtures(unittest.TestCase):
                                               allowed=True, allowed_port=14500)
                 self.assertEqual(bind_ok.returncode, 0, bind_ok.stdout)
                 self.assertIn("BOUND", bind_ok.stdout)
+                self.assertIn("CAPS_EMPTY", bind_ok.stdout)
+                self.assertIn("TUN_DEVICE_HIDDEN", bind_ok.stdout)
                 wrong_port = _systemd_bind_probe(lease.namespace_path, candidate_uids[0], 14501,
                                                  allowed=False, allowed_port=14500)
                 self.assertEqual(wrong_port.returncode, 0, wrong_port.stdout)
@@ -284,6 +337,52 @@ class LinuxPrivateLoopbackNamespaceFixtures(unittest.TestCase):
                                                   allowed=False, allowed_port=None)
                 self.assertEqual(client_bind.returncode, 0, client_bind.stdout)
                 self.assertIn("DENIED:", client_bind.stdout)
+
+                member = PrivateLoopbackMember(network, "display", candidate_uids[0], generation_digest)
+                unit = "hermes-installer-" + uuid.uuid4().hex + ".service"
+                started = False
+                proof = None
+                subject_pidfd = -1
+                cgroup = "/system.slice/" + unit
+                try:
+                    launch = ["/usr/bin/systemd-run", "--system", "--quiet", "--unit=" + unit,
+                              "--property=Type=exec", "--property=User=" + str(candidate_uids[0])]
+                    launch.extend(unit_network_properties(member, lease.namespace_path))
+                    launch.extend(("/usr/bin/sleep", "60"))
+                    start_result = subprocess.run(launch, stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                        timeout=15, check=False)
+                    self.assertEqual(start_result.returncode, 0, start_result.stdout)
+                    started = True
+                    pid_result = subprocess.run(["/usr/bin/systemctl", "show", unit,
+                        "--property=MainPID", "--value"], stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                        timeout=5, check=False)
+                    self.assertEqual(pid_result.returncode, 0, pid_result.stdout)
+                    subject_pid = int(pid_result.stdout.strip())
+                    subject_pidfd = os.pidfd_open(subject_pid)
+                    proof = retain_network_member(lease, member, pid=subject_pid,
+                        pidfd=subject_pidfd, cgroup=cgroup, unit=unit)
+                    self.assertEqual(lease.subject_capability_receipt_handles["display"],
+                                     proof.capability_receipt_sha256)
+                    verify_root_network_lease(lease)
+                finally:
+                    if started:
+                        subprocess.run(["/usr/bin/systemctl", "stop", unit],
+                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, timeout=10, check=False)
+                    if proof is not None:
+                        deadline = time.monotonic() + 5
+                        while time.monotonic() < deadline:
+                            try:
+                                if not Path("/sys/fs/cgroup" + cgroup + "/cgroup.procs").read_text().strip():
+                                    break
+                            except OSError:
+                                break
+                            time.sleep(.05)
+                        release_network_member(lease, "display")
+                    if subject_pidfd >= 0:
+                        os.close(subject_pidfd)
             finally:
                 close_root_network_lease(lease)
         finally:

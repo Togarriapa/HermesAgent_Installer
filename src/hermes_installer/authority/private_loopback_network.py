@@ -20,6 +20,7 @@ import subprocess
 import time
 import threading
 import ctypes
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
@@ -384,6 +385,16 @@ class RootPrivateLoopbackNetworkLease:
     namespace_inode: int
     nft_tool: RootResolvedHostTool
     nft_ruleset_sha256: str
+    kernel_receipt_handle: str = field(repr=False)
+    kernel_release: str
+    kernel_version_sha256: str
+    link_state_sha256: str
+    address_state_sha256: str
+    route_state_sha256: str
+    kernel_observed_monotonic: float
+    expires_monotonic: float
+    kernel_state: Mapping[str, Any] = field(repr=False)
+    subject_capability_receipt_handles: dict[str, str] = field(default_factory=dict, repr=False)
     member_processes: dict[str, "RootNetworkMemberProof"] = field(default_factory=dict, repr=False)
     created_monotonic: float = field(default_factory=time.monotonic)
     closed: bool = False
@@ -411,6 +422,7 @@ class RootNetworkMemberProof:
     start_ticks: int
     cgroup: str
     unit: str
+    capability_receipt_sha256: str
 
     def __repr__(self) -> str:
         return "RootNetworkMemberProof(<root-private>)"
@@ -438,6 +450,69 @@ def _proc_identity(pid: int) -> tuple[int, int, str, int]:
         raise AuthorityDenied("private_network.member", "managed network member identity is unavailable") from None
 
 
+def _subject_capability_receipt(pid: int) -> str:
+    """Prove a running subject cannot mutate links or open tunnel devices."""
+    try:
+        status = Path(f"/proc/{pid}/status").read_text()
+        values = {line.split(":", 1)[0]: line.split(":", 1)[1].strip()
+                  for line in status.splitlines() if ":" in line}
+        caps = {name: int(values[name], 16) for name in ("CapEff", "CapPrm", "CapBnd", "CapAmb")}
+        if any(caps.values()):
+            raise ValueError("subject retains a capability")
+        tun = Path(f"/proc/{pid}/root/dev/net/tun")
+        if tun.exists():
+            raise ValueError("subject can see /dev/net/tun")
+        return _state_digest({"capabilities": caps, "tun_device_absent": True})
+    except (OSError, KeyError, ValueError):
+        raise AuthorityDenied("private_network.subject", "subject capability/device isolation is not proven") from None
+
+
+def _current_unit_network_properties(unit: str, member: PrivateLoopbackMember,
+                                     namespace_path: Path) -> dict[str, str]:
+    """Read actual fixed systemd properties for the exact owned unit."""
+    if not re.fullmatch(r"hermes-installer-[0-9a-f]{32}\.service", unit):
+        raise AuthorityDenied("private_network.systemd", "unit name is outside the owned service namespace")
+    expected: dict[str, str] = {}
+    for prop in unit_network_properties(member, namespace_path):
+        assignment = prop.removeprefix("--property=")
+        key, separator, _value = assignment.partition("=")
+        if not separator:
+            raise AuthorityDenied("private_network.systemd", "fixed network property is malformed")
+        try:
+            result = subprocess.run(
+                ["/usr/bin/systemctl", "show", unit, f"--property={key}", "--value"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
+                close_fds=True, shell=False, timeout=3.0, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            raise AuthorityDenied("private_network.systemd", "systemd network-property readback is unavailable") from None
+        if result.returncode != 0 or len(result.stdout) > 4096:
+            raise AuthorityDenied("private_network.systemd", "systemd network-property readback failed")
+        try:
+            expected[key] = result.stdout.decode("utf-8", "strict").rstrip("\r\n")
+        except UnicodeDecodeError:
+            raise AuthorityDenied("private_network.systemd", "systemd property is not valid UTF-8") from None
+    if "SocketBindAllow" not in expected:
+        try:
+            result = subprocess.run(
+                ["/usr/bin/systemctl", "show", unit, "--property=SocketBindAllow", "--value"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
+                close_fds=True, shell=False, timeout=3.0, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            raise AuthorityDenied("private_network.systemd", "systemd bind-policy readback is unavailable") from None
+        if result.returncode != 0 or len(result.stdout) > 4096:
+            raise AuthorityDenied("private_network.systemd", "systemd bind-policy readback failed")
+        try:
+            expected["SocketBindAllow"] = result.stdout.decode("utf-8", "strict").rstrip("\r\n")
+        except UnicodeDecodeError:
+            raise AuthorityDenied("private_network.systemd", "systemd bind-policy readback is not valid UTF-8") from None
+    verify_unit_network_readback(member, namespace_path, expected)
+    return expected
+
+
 def _cgroup_members(cgroup: str) -> tuple[int, ...]:
     if (not isinstance(cgroup, str) or not cgroup.startswith("/system.slice/")
             or ".." in Path(cgroup).parts):
@@ -461,12 +536,26 @@ def retain_network_member(
     unit: str,
 ) -> RootNetworkMemberProof:
     """Retain live systemd identity only after namespace/UID/cgroup joins."""
-    verify_root_network_lease(lease)
-    row = lease.network.member(member.enrollment_id)
+    if (not isinstance(unit, str) or not re.fullmatch(r"hermes-installer-[0-9a-f]{32}\.service", unit)
+            or not isinstance(cgroup, str) or not cgroup.endswith("/" + unit)):
+        raise AuthorityDenied("private_network.member", "selected process unit is outside the owned service namespace")
+    try:
+        verify_root_network_lease(lease)
+    except BaseException:
+        _stop_owned_network_unit(unit)
+        raise
+    if not isinstance(member, PrivateLoopbackMember):
+        _stop_owned_network_unit(unit)
+        raise AuthorityDenied("private_network.member", "selected member record is unavailable")
+    try:
+        row = lease.network.member(member.enrollment_id)
+    except AuthorityDenied:
+        _stop_owned_network_unit(unit)
+        raise
     if (member.network != lease.network or member.uid != row.uid or member.enrollment_id in lease.member_processes
             or type(pid) is not int or pid <= 1 or type(pidfd) is not int or pidfd < 0
-            or not isinstance(unit, str) or not re.fullmatch(r"hermes-installer-[0-9a-f]{32}\.service", unit)
             or not cgroup.endswith("/" + unit)):
+        _stop_owned_network_unit(unit)
         raise AuthorityDenied("private_network.member", "selected process does not match one unoccupied network member")
     try:
         retained_pidfd = os.dup(pidfd)
@@ -474,19 +563,34 @@ def retain_network_member(
         raise AuthorityDenied("private_network.member", "managed member pidfd could not be retained") from None
     try:
         start_ticks, uid, current_cgroup, namespace_inode = _proc_identity(pid)
+        _current_unit_network_properties(unit, member, lease.namespace_path)
         processes = _cgroup_members(cgroup)
         if (uid != row.uid or current_cgroup != cgroup or pid not in processes
                 or namespace_inode != lease.namespace_inode):
             raise AuthorityDenied("private_network.member", "managed process is outside its enrolled namespace/UID/cgroup")
         proof = RootNetworkMemberProof(
             member.enrollment_id, row.profile_id, row.generation, row.uid, pid,
-            retained_pidfd, start_ticks, cgroup, unit,
+            retained_pidfd, start_ticks, cgroup, unit, _subject_capability_receipt(pid),
         )
         lease.member_processes[member.enrollment_id] = proof
+        lease.subject_capability_receipt_handles[member.enrollment_id] = proof.capability_receipt_sha256
         return proof
     except BaseException:
+        _stop_owned_network_unit(unit)
         os.close(retained_pidfd)
         raise
+
+
+def _stop_owned_network_unit(unit: str) -> None:
+    if not re.fullmatch(r"hermes-installer-[0-9a-f]{32}\.service", unit):
+        return
+    try:
+        subprocess.run(["/usr/bin/systemctl", "stop", unit], stdin=subprocess.DEVNULL,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                       env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
+                       close_fds=True, shell=False, timeout=10.0, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return
 
 
 def release_network_member(lease: RootPrivateLoopbackNetworkLease, enrollment_id: str) -> None:
@@ -499,6 +603,7 @@ def release_network_member(lease: RootPrivateLoopbackNetworkLease, enrollment_id
     if _cgroup_members(proof.cgroup):
         raise AuthorityDenied("private_network.member", "selected systemd unit still owns live processes")
     lease.member_processes.pop(enrollment_id)
+    lease.subject_capability_receipt_handles.pop(enrollment_id, None)
     os.close(proof.pidfd)
 
 
@@ -526,8 +631,253 @@ def _linux_root() -> None:
         raise AuthorityDenied("private_network.privilege", "selected loopback namespace requires root custody")
 
 
+_OPTIONAL_KERNEL_TEMPLATES = {
+    "tunl0": "ipip", "gre0": "gre", "gretap0": "gretap",
+    "erspan0": "erspan", "ip_vti0": "vti", "ip6_vti0": "vti6",
+    "sit0": "sit", "ip6tnl0": "ip6tnl", "ip6gre0": "ip6gre",
+}
+_NLMSG_ALIGNTO = 4
+
+
+def _align4(value: int) -> int:
+    return (value + _NLMSG_ALIGNTO - 1) & ~(_NLMSG_ALIGNTO - 1)
+
+
+def _attributes(data: bytes) -> list[tuple[int, bytes]]:
+    result: list[tuple[int, bytes]] = []
+    offset = 0
+    while offset < len(data):
+        if len(data) - offset < 4:
+            if any(data[offset:]):
+                raise ValueError("trailing rtnetlink attribute bytes")
+            break
+        length, attr_type = struct.unpack_from("=HH", data, offset)
+        if length < 4 or offset + length > len(data):
+            raise ValueError("malformed rtnetlink attribute")
+        result.append((attr_type & 0x3FFF, data[offset + 4:offset + length]))
+        offset += _align4(length)
+    return result
+
+
+def _rtnetlink_dump(message_type: int, body: bytes) -> list[bytes]:
+    """Read one typed kernel rtnetlink dump; never shells out to `ip`."""
+    sock = socket.socket(socket.AF_NETLINK, socket.SOCK_RAW | socket.SOCK_CLOEXEC,
+                         getattr(socket, "NETLINK_ROUTE", 0))
+    try:
+        sock.settimeout(3.0)
+        sock.bind((0, 0))
+        port_id = sock.getsockname()[0]
+        sequence = 0x4849
+        request = struct.pack("=IHHII", 16 + len(body), message_type, 0x301,
+                              sequence, port_id) + body
+        sock.send(request)
+        records: list[bytes] = []
+        done = False
+        while not done:
+            packet, address = sock.recvfrom(1024 * 1024)
+            if address[0] != 0:
+                raise OSError("rtnetlink dump did not come from kernel")
+            offset = 0
+            while offset + 16 <= len(packet):
+                length, kind, _flags, response_seq, _pid = struct.unpack_from("=IHHII", packet, offset)
+                if length < 16 or offset + length > len(packet) or response_seq != sequence:
+                    raise OSError("rtnetlink dump response was malformed")
+                payload = packet[offset + 16:offset + length]
+                if kind == 3:  # NLMSG_DONE
+                    done = True
+                    break
+                if kind == 2:  # NLMSG_ERROR
+                    error = struct.unpack_from("=i", payload, 0)[0] if len(payload) >= 4 else -1
+                    if error:
+                        raise OSError(-error, os.strerror(-error))
+                    done = True
+                    break
+                if kind == message_type - 2:
+                    records.append(payload)
+                offset += _align4(length)
+            if len(records) > 8192:
+                raise OSError("rtnetlink dump exceeded its fixed record bound")
+        return records
+    finally:
+        sock.close()
+
+
+def _decode_nul(raw: bytes) -> str:
+    return raw.split(b"\0", 1)[0].decode("ascii", "strict")
+
+
+def _kernel_topology() -> dict[str, Any]:
+    """Return canonical rtnetlink link, address, route, and neighbor records."""
+    links: list[dict[str, Any]] = []
+    for payload in _rtnetlink_dump(18, struct.pack("=BBHiII", socket.AF_UNSPEC, 0, 0, 0, 0, 0)):
+        if len(payload) < 16:
+            raise ValueError("short RTM_NEWLINK record")
+        _family, _pad, hwtype, ifindex, flags, change = struct.unpack_from("=BBHiII", payload)
+        attrs = _attributes(payload[16:])
+        by_type: dict[int, list[bytes]] = {}
+        for kind, value in attrs:
+            by_type.setdefault(kind, []).append(value)
+        if not any(kind == 3 for kind, _ in attrs) or ifindex <= 0:
+            raise ValueError("link name or ifindex is absent")
+        link_name = _decode_nul(by_type[3][0])
+        info_kind: str | None = None
+        info_data: list[dict[str, Any]] = []
+        for raw_info in by_type.get(18, []):
+            for attr, value in _attributes(raw_info):
+                if attr == 1:
+                    info_kind = _decode_nul(value)
+                elif attr == 2:
+                    for config_type, config_value in _attributes(value):
+                        info_data.append({"type": config_type, "value": config_value.hex()})
+        oper = by_type.get(16, [b"\0"])[0]
+        links.append({
+            "ifindex": ifindex, "name": link_name, "kind": info_kind or ("loopback" if hwtype == 772 else "ether"),
+            "flags": flags, "change": change, "operstate": oper[0] if oper else 0,
+            "master_ifindex": struct.unpack("=I", by_type[10][0][:4])[0] if by_type.get(10) else None,
+            "link_ifindex": struct.unpack("=I", by_type[5][0][:4])[0] if by_type.get(5) else None,
+            "link_netnsid": struct.unpack("=i", by_type[37][0][:4])[0] if by_type.get(37) else None,
+            "address_hex": by_type.get(1, [b""])[0].hex(), "config": info_data,
+            "attributes": [{"type": kind, "value": value.hex()} for kind, value in attrs],
+        })
+    links.sort(key=lambda row: (row["name"], row["ifindex"]))
+
+    addresses: list[dict[str, Any]] = []
+    for payload in _rtnetlink_dump(22, struct.pack("=BBBBI", socket.AF_UNSPEC, 0, 0, 0, 0)):
+        if len(payload) < 8:
+            raise ValueError("short RTM_NEWADDR record")
+        family, prefix, flags, scope, ifindex = struct.unpack_from("=BBBBI", payload)
+        attrs = _attributes(payload[8:])
+        local = next((value for kind, value in attrs if kind == 2), None)
+        address = local or next((value for kind, value in attrs if kind == 1), None)
+        if address is None:
+            raise ValueError("address record has no address")
+        addresses.append({"family": family, "prefix": prefix, "flags": flags, "scope": scope,
+                          "ifindex": ifindex, "address_hex": address.hex()})
+    addresses.sort(key=lambda row: (row["ifindex"], row["family"], row["address_hex"]))
+
+    routes: list[dict[str, Any]] = []
+    for payload in _rtnetlink_dump(26, struct.pack("=BBBBBBBBI", socket.AF_UNSPEC, 0, 0, 0, 0, 0, 0, 0, 0)):
+        if len(payload) < 12:
+            raise ValueError("short RTM_NEWROUTE record")
+        family, dst_prefix, src_prefix, tos, table, protocol, scope, route_type, _flags = struct.unpack_from("=BBBBBBBBI", payload)
+        attrs = _attributes(payload[12:])
+        values = {kind: value for kind, value in attrs}
+        table = struct.unpack("=I", values[15][:4])[0] if 15 in values and len(values[15]) >= 4 else table
+        oif = struct.unpack("=I", values[4][:4])[0] if 4 in values and len(values[4]) >= 4 else None
+        routes.append({"family": family, "dst_prefix": dst_prefix, "src_prefix": src_prefix,
+                       "tos": tos, "table": table, "protocol": protocol, "scope": scope,
+                       "type": route_type, "flags": _flags, "oif": oif,
+                       "dst_hex": values.get(1, b"").hex(), "gateway_hex": values.get(5, b"").hex()})
+    routes.sort(key=lambda row: (row["family"], row["table"], row["dst_prefix"], row["dst_hex"], row["type"]))
+
+    neighbors: list[dict[str, Any]] = []
+    for payload in _rtnetlink_dump(30, struct.pack("=BBHiHBB", socket.AF_UNSPEC, 0, 0, 0, 0, 0, 0)):
+        if len(payload) < 12:
+            raise ValueError("short RTM_NEWNEIGH record")
+        family, _pad1, _pad2, ifindex, state, flags, ntype = struct.unpack_from("=BBHiHBB", payload)
+        attrs = _attributes(payload[12:])
+        values = {kind: value for kind, value in attrs}
+        neighbors.append({"family": family, "ifindex": ifindex, "state": state, "flags": flags,
+                          "type": ntype, "destination_hex": values.get(1, b"").hex(),
+                          "link_address_hex": values.get(2, b"").hex()})
+    neighbors.sort(key=lambda row: (row["ifindex"], row["family"], row["destination_hex"]))
+    return {"links": links, "addresses": addresses, "routes": routes, "neighbors": neighbors,
+            "kernel_release": os.uname().release,
+            "kernel_version_sha256": hashlib.sha256(Path("/proc/version").read_bytes()).hexdigest()}
+
+
+def _topology_valid(state: Mapping[str, Any]) -> bool:
+    """Validate v122 inert templates from typed rtnetlink output."""
+    try:
+        links = list(state["links"])
+        by_name = {row["name"]: row for row in links}
+        if len(by_name) != len(links) or len({row["ifindex"] for row in links}) != len(links):
+            return False
+        loopback = by_name.get("lo")
+        if (loopback is None or loopback["kind"] != "loopback" or not loopback["flags"] & 1
+                or loopback["master_ifindex"] not in (None, 0) or loopback["link_ifindex"] not in (None, 0)):
+            return False
+        template_indices: set[int] = set()
+        for row in links:
+            if row["name"] == "lo":
+                continue
+            if _OPTIONAL_KERNEL_TEMPLATES.get(row["name"]) != row["kind"]:
+                return False
+            if (row["flags"] & 1 or row["operstate"] != 2
+                    or row["master_ifindex"] not in (None, 0)
+                    or row["link_ifindex"] not in (None, 0)
+                    or row["link_netnsid"] not in (None, 0)
+                    or any(bytes.fromhex(row["address_hex"]))):
+                return False
+            template_indices.add(row["ifindex"])
+            zero_ids = {
+                "ipip": {1, 2, 3, 4, 5, 9, 10, 20, 15, 17, 18, 16},
+                "gre": {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 14, 16, 17, 15, 19},
+                "gretap": {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 14, 16, 17, 15, 19},
+                "erspan": {1, 2, 4, 5, 6, 7, 8, 9, 10, 20, 14, 16, 17, 15, 19, 21},
+                "vti": {1, 2, 3, 4, 5, 6}, "vti6": {1, 2, 3, 4, 5, 6},
+                "sit": {1, 2, 3, 5, 10, 8, 20, 12, 14, 15, 17, 18, 16},
+                "ip6tnl": {1, 2, 3, 4, 5, 6, 7, 20, 15, 17, 18, 16},
+                "ip6gre": {1, 2, 3, 4, 5, 6, 7, 8, 11, 12, 13, 20, 14, 16, 17, 15},
+            }[row["kind"]]
+            fixed_defaults: dict[tuple[str, int], str] = {
+                ("erspan", 22): "01", ("erspan", 3): "2000",
+                ("sit", 4): "40", ("sit", 9): "29",
+                ("sit", 11): "20020000000000000000000000000000",
+                ("sit", 13): "1000",
+                ("ip6tnl", 8): "00000400", ("ip6tnl", 9): "29",
+            }
+            seen_config: set[int] = set()
+            for item in row["config"]:
+                value = bytes.fromhex(item["value"])
+                attr_id = item["type"]
+                if attr_id in seen_config:
+                    return False
+                seen_config.add(attr_id)
+                expected = fixed_defaults.get((row["kind"], attr_id))
+                if attr_id not in zero_ids and expected is None:
+                    return False
+                if (expected is not None and item["value"] != expected) or (expected is None and any(value)):
+                    return False
+        expected_addresses = {
+            (socket.AF_INET, bytes((127, 0, 0, 1)).hex(), 8),
+            (socket.AF_INET6, bytes.fromhex("00000000000000000000000000000001").hex(), 128),
+        }
+        for row in state["addresses"]:
+            if row["ifindex"] != loopback["ifindex"]:
+                return False
+        observed_addresses = {(row["family"], row["address_hex"], row["prefix"])
+                              for row in state["addresses"]}
+        if not observed_addresses.issubset(expected_addresses) or (socket.AF_INET, bytes((127, 0, 0, 1)).hex(), 8) not in observed_addresses:
+            return False
+        for row in state["routes"]:
+            if row["oif"] != loopback["ifindex"] or row["gateway_hex"]:
+                return False
+            if row["family"] == socket.AF_INET:
+                dst = row["dst_hex"] or "00000000"
+                if row["dst_prefix"] > 32 or not ipaddress.IPv4Address(bytes.fromhex(dst)).is_loopback:
+                    return False
+            elif row["family"] == socket.AF_INET6:
+                dst = row["dst_hex"] or "00" * 16
+                if row["dst_prefix"] > 128 or not ipaddress.IPv6Address(bytes.fromhex(dst)).is_loopback:
+                    return False
+            else:
+                return False
+        if any(row["ifindex"] in template_indices for row in state["neighbors"]):
+            return False
+        if state["neighbors"]:
+            return False
+        return True
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
+
+
+def _state_digest(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
 def _set_loopback_up() -> None:
-    """Initialize loopback and require the selected v97 lo-only topology."""
+    """Initialize loopback, then validate actual typed kernel topology."""
     import fcntl
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM | socket.SOCK_CLOEXEC)
@@ -537,11 +887,12 @@ def _set_loopback_up() -> None:
         fcntl.ioctl(sock.fileno(), 0x8914, struct.pack("16sH14s", b"lo", flags | 1, b""))
     finally:
         sock.close()
-    if socket.if_nameindex() != [(1, "lo")]:
-        raise AuthorityDenied("private_network.namespace", "new namespace has an unexpected interface")
-    if not _loopback_routes_only(Path("/proc/self/net/route").read_text(),
-                                 Path("/proc/self/net/ipv6_route").read_text()):
-        raise AuthorityDenied("private_network.namespace", "new namespace unexpectedly has IPv4 routes")
+    try:
+        state = _kernel_topology()
+    except (OSError, ValueError, struct.error):
+        raise AuthorityDenied("private_network.namespace", "fresh namespace rtnetlink state is unavailable") from None
+    if not _topology_valid(state):
+        raise AuthorityDenied("private_network.namespace", "fresh namespace violates the exact loopback topology")
 
 
 def _loopback_routes_only(ipv4_text: str, ipv6_text: str) -> bool:
@@ -647,6 +998,7 @@ def create_root_namespace(
     if thread.is_alive() or failure:
         _remove_namespace_mount(path, libc=libc, allow_unmounted=True)
         raise AuthorityDenied("private_network.namespace", "kernel did not create the selected isolated namespace") from None
+    namespace_fd = -1
     try:
         namespace_fd = os.open(path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
         namespace_info = os.fstat(namespace_fd)
@@ -654,11 +1006,23 @@ def create_root_namespace(
         if namespace_info.st_ino == host_info.st_ino:
             raise AuthorityDenied("private_network.namespace", "selected namespace resolves to the host network namespace")
         rules_digest = _apply_and_measure(network, nft_tool, namespace_fd)
+        state = json.loads(_in_namespace(namespace_fd, "netns", nft_tool))
+        if not _topology_valid(state):
+            raise AuthorityDenied("private_network.namespace", "held namespace failed its typed rtnetlink policy receipt")
+        observed = time.monotonic()
+        expires = min(observed + 30.0, nft_tool.expires_monotonic)
+        if expires <= observed:
+            raise AuthorityDenied("private_network.lease", "kernel observation lease has no remaining lifetime")
         return RootPrivateLoopbackNetworkLease(
             network, path, namespace_fd, namespace_info.st_dev, namespace_info.st_ino,
-            nft_tool, rules_digest,
+            nft_tool, rules_digest, uuid.uuid4().hex, str(state["kernel_release"]),
+            str(state["kernel_version_sha256"]), _state_digest(state["links"]),
+            _state_digest(state["addresses"] + state["neighbors"]),
+            _state_digest(state["routes"]), observed, expires, state,
         )
     except BaseException:
+        if namespace_fd >= 0:
+            os.close(namespace_fd)
         _remove_namespace_mount(path, libc=libc, allow_unmounted=False)
         raise
 
@@ -713,11 +1077,8 @@ def _in_namespace(namespace_fd: int, operation: str, nft_tool: RootResolvedHostT
                     raise AuthorityDenied("private_network.nft", "selected kernel table application/readback failed")
                 result.append(process.stdout)
             else:
-                names = [name for _index, name in socket.if_nameindex()]
-                routes = Path("/proc/self/net/route").read_text()
-                ipv6_routes = Path("/proc/self/net/ipv6_route").read_text()
-                result.append(json.dumps({"interfaces": names, "routes": routes,
-                                          "ipv6_routes": ipv6_routes}, sort_keys=True).encode())
+                result.append(json.dumps(_kernel_topology(), sort_keys=True,
+                                         separators=(",", ":")).encode())
         except BaseException as exc:
             failure.append(exc)
         finally:
@@ -788,6 +1149,22 @@ def _verify_nft_readback(network: PrivateLoopbackNetwork, readback: bytes) -> st
 
 def verify_root_network_lease(lease: RootPrivateLoopbackNetworkLease) -> None:
     """Revalidate live namespace inode, host separation, tool bytes and kernel policy."""
+    try:
+        _verify_root_network_lease_current(lease)
+    except BaseException:
+        # Once any part of the retained kernel proof becomes stale or unreadable,
+        # stop only the systemd units whose identities were retained by this
+        # lease.  The unit-name check in _stop_owned_network_unit is deliberate:
+        # malformed or caller-controlled names can never become stop targets.
+        if isinstance(lease, RootPrivateLoopbackNetworkLease):
+            for proof in tuple(lease.member_processes.values()):
+                if isinstance(proof, RootNetworkMemberProof):
+                    _stop_owned_network_unit(proof.unit)
+        raise
+
+
+def _verify_root_network_lease_current(lease: RootPrivateLoopbackNetworkLease) -> None:
+    """Perform the proof checks; the public wrapper fails closed on any error."""
     if not isinstance(lease, RootPrivateLoopbackNetworkLease) or lease.closed or lease.namespace_fd < 0:
         raise AuthorityDenied("private_network.lease", "current private network lease is absent")
     _linux_root()
@@ -802,6 +1179,9 @@ def verify_root_network_lease(lease: RootPrivateLoopbackNetworkLease) -> None:
             or (path_stat.st_dev, path_stat.st_ino) != (lease.namespace_device, lease.namespace_inode)
             or lease.namespace_inode == host_stat.st_ino):
         raise AuthorityDenied("private_network.namespace", "retained namespace identity changed")
+    now = time.monotonic()
+    if now >= lease.expires_monotonic or now >= lease.nft_tool.expires_monotonic:
+        raise AuthorityDenied("private_network.expired", "retained kernel/network proof lease expired")
     current = _in_namespace(lease.namespace_fd, "read", lease.nft_tool)
     if _verify_nft_readback(lease.network, current) != lease.nft_ruleset_sha256:
         raise AuthorityDenied("private_network.nft", "retained namespace policy changed")
@@ -809,18 +1189,63 @@ def verify_root_network_lease(lease: RootPrivateLoopbackNetworkLease) -> None:
         topology = json.loads(_in_namespace(lease.namespace_fd, "netns", lease.nft_tool))
     except (ValueError, TypeError):
         raise AuthorityDenied("private_network.namespace", "retained namespace topology is unreadable") from None
-    if (topology.get("interfaces") != ["lo"]
-            or not _loopback_routes_only(topology.get("routes", ""),
-                                         topology.get("ipv6_routes", ""))):
-        raise AuthorityDenied("private_network.namespace", "retained namespace gained an interface or route")
+    if (not _topology_valid(topology)
+            or topology.get("kernel_release") != lease.kernel_release
+            or topology.get("kernel_version_sha256") != lease.kernel_version_sha256
+            or _state_digest(topology.get("links")) != lease.link_state_sha256
+            or _state_digest(topology.get("addresses", []) + topology.get("neighbors", [])) != lease.address_state_sha256
+            or _state_digest(topology.get("routes")) != lease.route_state_sha256):
+        raise AuthorityDenied("private_network.namespace", "retained typed kernel topology changed")
     for enrollment_id, proof in lease.member_processes.items():
-        if not isinstance(proof, RootNetworkMemberProof) or proof.enrollment_id != enrollment_id:
+        if (not isinstance(proof, RootNetworkMemberProof) or proof.enrollment_id != enrollment_id
+                or lease.subject_capability_receipt_handles.get(enrollment_id)
+                != proof.capability_receipt_sha256):
             raise AuthorityDenied("private_network.member", "retained member identity was altered")
         start_ticks, uid, cgroup, namespace_inode = _proc_identity(proof.pid)
         if (_pidfd_alive(proof.pidfd) is False or start_ticks != proof.start_ticks
                 or uid != proof.uid or cgroup != proof.cgroup or namespace_inode != lease.namespace_inode
-                or proof.pid not in _cgroup_members(proof.cgroup)):
+                or proof.pid not in _cgroup_members(proof.cgroup)
+                or _subject_capability_receipt(proof.pid) != proof.capability_receipt_sha256):
             raise AuthorityDenied("private_network.member", "current process/cgroup proof changed")
+        member = PrivateLoopbackMember(lease.network, enrollment_id, proof.uid,
+                                       lease.network.service_generation_digest)
+        _current_unit_network_properties(proof.unit, member, lease.namespace_path)
+
+
+def renew_root_network_lease(lease: RootPrivateLoopbackNetworkLease,
+                             fresh_nft_tool: RootResolvedHostTool) -> None:
+    """Refresh only after the current proof still matches the held namespace."""
+    verify_root_network_lease(lease)
+    if not isinstance(fresh_nft_tool, RootResolvedHostTool):
+        raise TypeError("network renewal requires a fresh root-resolved nft tool")
+    if (fresh_nft_tool.observation_registry is not None
+            and fresh_nft_tool.selected_network_key != (lease.network.network_id,
+                lease.network.generation, lease.network.service_generation_digest)):
+        raise AuthorityDenied("private_network.tool", "renewal nft observation belongs to another selected network")
+    fresh_nft_tool.verify_current()
+    current = _verify_nft_readback(lease.network,
+                                   _in_namespace(lease.namespace_fd, "read", fresh_nft_tool))
+    if current != lease.nft_ruleset_sha256:
+        raise AuthorityDenied("private_network.nft", "retained nft rules changed before proof renewal")
+    state = json.loads(_in_namespace(lease.namespace_fd, "netns", fresh_nft_tool))
+    if not _topology_valid(state):
+        raise AuthorityDenied("private_network.namespace", "retained kernel topology changed before proof renewal")
+    observed = time.monotonic()
+    expires = min(observed + 30.0, fresh_nft_tool.expires_monotonic)
+    if expires <= observed:
+        raise AuthorityDenied("private_network.expired", "fresh kernel/network proof has no remaining lease")
+    old_tool = lease.nft_tool
+    lease.nft_tool = fresh_nft_tool
+    lease.kernel_receipt_handle = uuid.uuid4().hex
+    lease.kernel_release = str(state["kernel_release"])
+    lease.kernel_version_sha256 = str(state["kernel_version_sha256"])
+    lease.link_state_sha256 = _state_digest(state["links"])
+    lease.address_state_sha256 = _state_digest(state["addresses"] + state["neighbors"])
+    lease.route_state_sha256 = _state_digest(state["routes"])
+    lease.kernel_observed_monotonic = observed
+    lease.expires_monotonic = expires
+    lease.kernel_state = state
+    old_tool.close()
 
 
 def close_root_network_lease(lease: RootPrivateLoopbackNetworkLease) -> None:
@@ -856,6 +1281,12 @@ def unit_network_properties(member: PrivateLoopbackMember, namespace_path: Path)
         "--property=SocketBindDeny=any",
         "--property=CapabilityBoundingSet=",
         "--property=AmbientCapabilities=",
+        "--property=PrivateDevices=yes",
+        "--property=DevicePolicy=closed",
+        "--property=NoNewPrivileges=yes",
+        "--property=PrivateDevices=yes",
+        "--property=DevicePolicy=closed",
+        "--property=NoNewPrivileges=yes",
         "--property=RestrictAddressFamilies=AF_UNIX AF_INET" if inet_role
         else "--property=RestrictAddressFamilies=AF_UNIX",
     ]
@@ -867,6 +1298,15 @@ def unit_network_properties(member: PrivateLoopbackMember, namespace_path: Path)
     elif member.role not in {"client", "af-unix"}:
         raise AuthorityDenied("private_network.unit", "selected network role is invalid")
     return tuple(props)
+
+
+def selected_unit_network_properties(lease: RootPrivateLoopbackNetworkLease,
+                                    member: PrivateLoopbackMember) -> tuple[str, ...]:
+    """Revalidate all held kernel/member state before creating a role unit."""
+    verify_root_network_lease(lease)
+    if not isinstance(member, PrivateLoopbackMember) or member.network != lease.network:
+        raise AuthorityDenied("private_network.member", "selected unit member does not belong to the current lease")
+    return unit_network_properties(member, lease.namespace_path)
 
 
 def verify_unit_network_readback(
@@ -884,5 +1324,10 @@ def verify_unit_network_readback(
         if not separator:
             raise AuthorityDenied("private_network.systemd", "fixed systemd property is malformed")
         expected[key] = value
-    if any(observed.get(key) != value for key, value in expected.items()):
+    expected.setdefault("SocketBindAllow", "")
+    expected_keys = {prop.removeprefix("--property=").partition("=")[0]
+                     for prop in unit_network_properties(member, namespace_path)}
+    expected_keys.add("SocketBindAllow")
+    if (set(observed) != expected_keys
+            or any(observed.get(key) != value for key, value in expected.items())):
         raise AuthorityDenied("private_network.systemd", "selected systemd network restrictions differ from the role")
