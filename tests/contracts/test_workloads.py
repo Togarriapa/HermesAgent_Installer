@@ -21,10 +21,20 @@ class WorkloadSchedulerTests(unittest.TestCase):
         def run(invocation):
             self.calls.append(invocation)
             if invocation.component_id == "browser-use":
-                return {
-                    "exit_code": 0,
-                    "stdout": 'HERMES_BROWSER_USE_PROOF={"navigation":true,"interaction":"interaction-ok","screenshot_bytes":128}\n',
+                proof = {
+                    "schema_version": 1,
+                    "navigation_url": invocation.argv[2],
+                    "navigation_succeeded": True,
+                    "page_title": "Hermes qualification fixture",
+                    "initial_text": "ready",
+                    "click_succeeded": True,
+                    "interaction_text": "interaction-ok",
+                    "screenshot_format": "png",
+                    "screenshot_bytes": 128,
+                    "screenshot_sha256": "a" * 64,
                 }
+                return {"exit_code": 0,
+                        "stdout": "HERMES_BROWSER_USE_PROOF=" + json.dumps(proof) + "\n"}
             if invocation.component_id == "hyperframes" and invocation.executable.endswith("/bin/hyperframes"):
                 Path(self.hyperframes_work, "rendered.mp4").write_bytes(b"fixture-mp4-proof")
                 return {"exit_code": 0, "stdout": "", "stderr": ""}
@@ -65,13 +75,14 @@ class WorkloadSchedulerTests(unittest.TestCase):
         result = self.scheduler.execute(Workload(
             "browser-fixture", {"fixture_url": "http://127.0.0.1:8765/fixture"}
         ))
-        self.assertEqual(True, result["navigation"])
-        self.assertEqual("interaction-ok", result["interaction"])
+        self.assertEqual(True, result["navigation_succeeded"])
+        self.assertEqual("interaction-ok", result["interaction_text"])
         invocation = self.calls[0]
         self.assertEqual("/owned/browser/bin/python", invocation.executable)
         self.assertEqual("browser-use", invocation.component_id)
         self.assertEqual("localhost", invocation.network)
-        self.assertIn("chromium_sandbox=True", invocation.argv[2])
+        self.assertTrue(invocation.argv[1].endswith("browser_use_qualification_probe.py"))
+        self.assertIn("chromium_sandbox=True", Path(invocation.argv[1]).read_text(encoding="utf-8"))
         self.assertEqual(180, invocation.timeout_seconds)
         self.assertEqual(2048, invocation.memory_limit_mb)
         self.assertEqual(Decimal("0"), self.scheduler.metered_spend_usd)
