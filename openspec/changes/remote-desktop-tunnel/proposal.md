@@ -153,3 +153,8 @@ Remote source digest v246: planning/remote-source-active-digest-acyclic-v246.jso
 v245 supplies exact official HTML5 source observations and signed DEB link/sysroot ABI needed by the real43-extension diagnostic build; positive managed session remains pending.
 
 Exact contract: `planning/xpra-sysroot-html5-v245.json`.
+
+
+## Gateway license and official acquisition custody v248
+
+Preserve AC13..15 and v244. Exact-wheel held policy/eligibility and root-only bounded direct official PyPI transport are defined in `planning/gateway-wheel-license-transport-v248.json`; raw metadata, caller license approval and pip network do not authorize admission. All acceptance remains open.

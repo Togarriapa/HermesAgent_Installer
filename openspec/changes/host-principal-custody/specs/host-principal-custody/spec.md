@@ -1316,3 +1316,17 @@ The system SHALL use the v244 exact held release source-only receipt and current
 #### Scenario: Exact finite source and locked wheel closure is retained
 - **WHEN** the current reviewed release source cohort and complete lock/PM/license wheel closure are independently verified and retained in immutable CAS
 - **THEN** only their current issuer-backed FDs enter selected build inputs, without claiming runtime or Pi acceptance
+
+
+## ADDED Requirements
+
+### Requirement: Gateway dependency eligibility and acquisition are finite root proofs
+The system SHALL issue Gateway build dependency receipts only after exact v248 held policy matching against verified wheel metadata and embedded notices, and SHALL acquire those wheels solely through the current root-owned bounded official metadata/file transport.
+
+#### Scenario: Declaration or generic networking cannot approve dependencies
+- **WHEN** metadata declares a license or a pip subprocess requests network without exact current policy and finite transport custody
+- **THEN** dependency admission remains denied
+
+#### Scenario: Exact reviewed wheel has current custody and retained notices
+- **WHEN** the official lock-matching wheel and exact reviewed metadata/notice files pass held policy verification under current selection and bounded transport
+- **THEN** only its issuer-backed CAS FD enters the offline build closure, with no runtime acceptance claim

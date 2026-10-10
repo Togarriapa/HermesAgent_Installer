@@ -508,3 +508,10 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 - [ ] RT-T244.1 Implement fixed held release source receipt/member projection and reviewed exact source-member cohort.
 - [ ] RT-T244.2 Implement Gateway lock/PM/choice-bound bounded acquisition, license verification, immutable CAS and retained provider/source projection integration.
 - [ ] VD-T244.3 Exercise spoofed receipts, changed lock/source/PM, stale choice, cancellation, conflicting CAS, bounded dependency/license failure and genuine ARM64 production positives; target acceptance separately open.
+
+
+## Gateway license and official acquisition custody v248
+
+- [ ] RT-T248.1 Implement exact held policy source and wheel/metadata/notice eligibility issuer with preserved package notices.
+- [ ] RT-T248.2 Implement root-only no-proxy/no-redirect official metadata/file transport, DNS/TLS/currentness/cancellation custody and v244 CAS integration without subprocess network.
+- [ ] VD-T248.3 Verify metadata/license mismatch, unsafe archive, redirect/private DNS/changed hash, deadline/cancel cleanup and all13 genuine selected wheel positives; native/Pi acceptance separately open.

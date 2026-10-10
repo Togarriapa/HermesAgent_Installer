@@ -1,0 +1,84 @@
+{
+  "schema": 1,
+  "amendment": "v248",
+  "refines": [
+    "v244",
+    "v239"
+  ],
+  "baseline_requirements": [
+    "AC13",
+    "AC14",
+    "AC15"
+  ],
+  "audit": {
+    "source_commit": "f21f2265002c36570e87113dd5ff63d2391c4841",
+    "lock_sha256": "0a183e010a44751c3383ef574a77ac270283cc85671d50dfb38d6df3f168ed13",
+    "package_count": 13,
+    "verified_wheel_total_bytes": 7573114,
+    "evidence": "plans/amendments/2026-10-10-gateway-wheel-license-transport-v248/gateway-wheel-license-observations.json",
+    "scope": "Read-only development official TLS file/hash/license audit, no root CAS/current receipt/native installation/target acceptance. Existing observe_python_wheel_license gives observation, not eligibility. PyPI JSON info may differ from wheel metadata; wheel bytes and embedded notices are authoritative evidence.",
+    "primary_sources": [
+      "https://docs.pypi.org/api/json/",
+      "https://cryptography.io/en/latest/installation/"
+    ]
+  },
+  "license_policy_source": {
+    "artifact_id": "gateway-locked-wheel-license-policy-v248",
+    "role": "source",
+    "source_path": "plans/amendments/2026-10-10-gateway-wheel-license-transport-v248/gateway-locked-wheel-license-policy-v1.json",
+    "release_path": "source-policies/gateway-locked-wheel-license-policy-v248.json",
+    "sha256": "ae7b23b63b60e839e2f5ee12e4a8125e6fdbf34ae314bc0e1bbed670a4c16340",
+    "size_bytes": 15664,
+    "mode": 292,
+    "custody": "Exact finite reviewed source artifact member in verified installed release; resolver rereads nofollow held-release FD and descriptor role/path/hash/size/current release/actor. No module import proof or caller policy mapping. Add only this fixed source-role mapping; existing source role semantics unchanged."
+  },
+  "license_issuer": {
+    "module": "hermes_installer.authority.gateway_setup_input_receipts",
+    "class": "RootGatewayWheelLicenseEligibilityRegistry",
+    "constructor": "from_root_setup(binding, verified_release, current_actor_verifier, root_journal)",
+    "method": "observe_selected_wheel_eligibility(selection, lock_receipt, wheel_cas_receipt) -> RootGatewayWheelLicenseEligibilityReceipt",
+    "resolve": "resolve_current_eligibility(receipt_handle, selection_handle, wheel_receipt_handle)",
+    "fields": [
+      "receipt_handle",
+      "policy_artifact_id",
+      "policy_sha256",
+      "policy_source_receipt_handle",
+      "selection_handle",
+      "choice_handle",
+      "transaction_handle",
+      "prepared_generation_id",
+      "lock_receipt_handle",
+      "lock_sha256",
+      "wheel_receipt_handle",
+      "wheel_sha256",
+      "wheel_metadata_sha256",
+      "license_evidence_sha256",
+      "eligibility",
+      "obligations_sha256",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "rule": "Exact retained issuer membership and current selection/lock/CAS/release policy. Match one exact policy row by normalized name+version+wheel SHA+filename+size; inspect actual bounded verified wheel zip without executing. Compare exact METADATA hash, declarations and all reviewed embedded license/notice hashes/size/path; reject duplicate/unsafe members/aliases/conflicting declarations/missing license files. Existing observer can share bounded parser, but exact policy verifier must also cover legacy license files/NOTICE/AUTHORS not listed by License-File. No caller eligibility string, broad SPDX allowlist or metadata-only authorization. Unknown wheels or changed evidence deny. Receipt eligibility literal eligible-with-retained-notices only after actual match.",
+    "digest": "license_evidence_sha256=SHA256 canonical UTF8 JSON sorted compact ensure_ascii=False allow_nan=False of {wheel_sha256,wheel_metadata_sha256,license_files:[path-sorted {path,sha256,size_bytes}],policy_sha256,eligibility,obligations_sha256}. closure license digest commits filename-sorted wheel eligibility receipt digest rows, not receipt strings alone.",
+    "lifetime": "Original min current selection/session/controller/lock/PM/CAS lifetime; historical policy source remains evidence, not renewed effect authority. Materializer preserves notices and validates their resulting package membership."
+  },
+  "acquisition": {
+    "module": "hermes_installer.authority.gateway_runtime_acquisition",
+    "class": "RootGatewayPyPIAcquisitionCustodian",
+    "constructor": "from_root_setup(binding, root_journal, gateway_input_registry)",
+    "entry": "acquire_selected_locked_wheels(selection, lock_receipt, current_pm_projection) -> private AcquiredGatewayWheelClosure consumed immediately by Gateway CAS issuer",
+    "transport": "No subprocess/pip/resolver/worker network, no generic URL fetch capability. Private root-owned default TLS HTTPS opener with ProxyHandler({}) and NoRedirect. Existing exact current Gateway acquisition choice/permission and controller original deadline authorize only this finite metadata+file exchange. No secret/header/token supplied; fixed Accept/User-Agent/identity encoding. Ambient proxy/config/CA override ignored; platform verified trust store, hostname validation and certificate verification remain enabled.",
+    "metadata": "GET https://pypi.org/pypi/<PEP503-normalized exact lock name>/<exact lock version>/json only. Name/version must match bounded lock grammar; URL components percent-encoded, forbid slash/query/fragment/userinfo/port. HTTP200 application/json only, identity encoding, max2MiB raw body, bounded headers, reject duplicate JSON keys/nonfinite values. Select exactly one bdist_wheel URL whose SHA256 belongs to exact lock row and name/version/filename/CPython3.14 Linux ARM64 or compatible abi3/pure tags match; no latest endpoint/sdist/transitive dependencies/yanked file.",
+    "wheel": "Only selected metadata URL with scheme https, exact hostname files.pythonhosted.org, port absent/443, no userinfo/query/fragment, canonical /packages/ safe path and basename exact selected filename; redirects disabled even to same host. Bind exact metadata advertised hash/size, Content-Length when present, identity encoding, HTTP200 application/octet-stream or binary/octet-stream. Bounded streamed read into current root-owned CAS temporary object; no HTML/error body acceptance. SHA/actual size must equal lock+metadata. No arbitrary caller URL/address/header.",
+    "network": "Use existing reviewed DNS/address validation to deny private/loopback/link-local/reserved answers and pin connection to selected validated public address while preserving exact TLS SNI/hostname; deny DNS rebinding and changes mid-request. Custodian retains original choice/controller/selection at each request/read. This is a root-only finite transport method, not a worker egress grant or reusable network lease. Managed build remains offline; no network namespace opened to pip.",
+    "bounds": "At most13 metadata plus13 exact file requests for current lock, each30s connect/read slices, whole900s or original deadline whichever sooner; cancellation/currentness checked between reads. Existing max64/512MiB per wheel/1GiB total unchanged; exact selected13 and measured7,573,114-byte current closure still required. max bounded error/log summaries4096 bytes with no remote body. No retries outside original bounded call; explicit root resume reacquires current proofs.",
+    "failure": "TLS/host/redirect/metadata/hash/license/cancel/deadline failure leaves no member receipt or build admission. Close tracked sockets/FDs and remove only owned temporary entries; immutable verified CAS may remain. No raw body return to worker, no target networking or provider budget."
+  },
+  "integration": "Gateway registry first retains immutable CAS readback then obtains exact license eligibility receipts before minting dependency/member closure. Source/PM projection and lock remain distinct proofs. A verified download may exist without eligible build receipt; after all13 current wheel eligibility proofs, issue v244 closure with license_evidence_sha256 and root-held FD members. v239 store consumes same genuine issuer source projection. No fabricated future active generation, global license policy change or wider consent.",
+  "tasks": [
+    "RT-T248.1",
+    "RT-T248.2",
+    "VD-T248.3"
+  ],
+  "acceptance": "All AC remain open; official observations do not qualify acquisition/current root/native runtime/Pi."
+}

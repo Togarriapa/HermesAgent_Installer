@@ -256,3 +256,10 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 
 
 - [ ] BD-T242.1 / VD-T242.2 (v247): Apply only exact reviewed root_setup two-table tuples and run unexcluded coherent source-update checks plus genuine full old/pre-v235 predecessor and target evidence; source approval remains separate from completion.
+
+
+## Gateway license and official acquisition custody v248
+
+- [ ] RT-T248.1 Implement exact held policy source and wheel/metadata/notice eligibility issuer with preserved package notices.
+- [ ] RT-T248.2 Implement root-only no-proxy/no-redirect official metadata/file transport, DNS/TLS/currentness/cancellation custody and v244 CAS integration without subprocess network.
+- [ ] VD-T248.3 Verify metadata/license mismatch, unsafe archive, redirect/private DNS/changed hash, deadline/cancel cleanup and all13 genuine selected wheel positives; native/Pi acceptance separately open.

@@ -3762,5 +3762,23 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "gateway_wheel_license_transport_v248": {
+    "amendment": "plans/amendments/2026-10-10-gateway-wheel-license-transport-v248.md",
+    "contract": "planning/gateway-wheel-license-transport-v248.json",
+    "tasks": {
+      "RT-T248.1": [
+        "RT-T244.1"
+      ],
+      "RT-T248.2": [
+        "RT-T248.1",
+        "RT-T244.2"
+      ],
+      "VD-T248.3": [
+        "RT-T248.1",
+        "RT-T248.2"
+      ]
+    },
+    "acceptance": "open"
   }
 }

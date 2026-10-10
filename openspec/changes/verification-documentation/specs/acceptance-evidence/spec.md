@@ -1340,3 +1340,17 @@ The installer SHALL apply only the reviewed root_setup tuple bytes in `planning/
 #### Scenario: Source entry contract fixtures pass
 - **WHEN** mocked admission or branch tests pass
 - **THEN** genuine full publication and actual Pi acceptance remain unproven
+
+
+## ADDED Requirements
+
+### Requirement: Gateway dependency eligibility and acquisition are finite root proofs
+The system SHALL issue Gateway build dependency receipts only after exact v248 held policy matching against verified wheel metadata and embedded notices, and SHALL acquire those wheels solely through the current root-owned bounded official metadata/file transport.
+
+#### Scenario: Declaration or generic networking cannot approve dependencies
+- **WHEN** metadata declares a license or a pip subprocess requests network without exact current policy and finite transport custody
+- **THEN** dependency admission remains denied
+
+#### Scenario: Exact reviewed wheel has current custody and retained notices
+- **WHEN** the official lock-matching wheel and exact reviewed metadata/notice files pass held policy verification under current selection and bounded transport
+- **THEN** only its issuer-backed CAS FD enters the offline build closure, with no runtime acceptance claim

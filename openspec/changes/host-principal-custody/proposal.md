@@ -400,3 +400,8 @@ The v239 aggregate also consumes exact root-issued enrollment reservation and pr
 ## Gateway source and wheel issuer refinement v244
 
 Preserve AC13..15 and v202/v209/v239. Consume the exact finite source-only held release and selected Gateway locked-wheel CAS issuer in `planning/gateway-source-wheel-issuers-v244.json`. Public rows/raw bodies do not authorize; actual retained source/PM/choice/FD/license/currentness proofs precede offline build. No source pins or acceptance declared.
+
+
+## Gateway license and official acquisition custody v248
+
+Preserve AC13..15 and v244. Exact-wheel held policy/eligibility and root-only bounded direct official PyPI transport are defined in `planning/gateway-wheel-license-transport-v248.json`; raw metadata, caller license approval and pip network do not authorize admission. All acceptance remains open.

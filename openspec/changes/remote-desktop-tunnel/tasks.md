@@ -225,3 +225,10 @@ Exact contract: `planning/official-desktop-measured-headers-managed-plan-v240.js
 - [ ] VD-T245.3 Test exact graph/hash/license/currentness failures and managed ARM64 HTML5 session; all AC OPEN.
 
 Exact contract: `planning/xpra-sysroot-html5-v245.json`.
+
+
+## Gateway license and official acquisition custody v248
+
+- [ ] RT-T248.1 Implement exact held policy source and wheel/metadata/notice eligibility issuer with preserved package notices.
+- [ ] RT-T248.2 Implement root-only no-proxy/no-redirect official metadata/file transport, DNS/TLS/currentness/cancellation custody and v244 CAS integration without subprocess network.
+- [ ] VD-T248.3 Verify metadata/license mismatch, unsafe archive, redirect/private DNS/changed hash, deadline/cancel cleanup and all13 genuine selected wheel positives; native/Pi acceptance separately open.

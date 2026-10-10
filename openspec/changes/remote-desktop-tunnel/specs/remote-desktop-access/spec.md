@@ -570,3 +570,17 @@ The implementation SHALL materialize only the exact v245 signed origin-bound gra
 #### Scenario: Exact private transform and source assets
 - **WHEN** pinned glibc script and official HTML5 bytes match their held policy and independent graph/transform observer
 - **THEN** only the single reviewed private token transform and source-data copy SHALL be admitted; actual native/Xvfb/HTML5 session qualification remains required
+
+
+## ADDED Requirements
+
+### Requirement: Gateway dependency eligibility and acquisition are finite root proofs
+The system SHALL issue Gateway build dependency receipts only after exact v248 held policy matching against verified wheel metadata and embedded notices, and SHALL acquire those wheels solely through the current root-owned bounded official metadata/file transport.
+
+#### Scenario: Declaration or generic networking cannot approve dependencies
+- **WHEN** metadata declares a license or a pip subprocess requests network without exact current policy and finite transport custody
+- **THEN** dependency admission remains denied
+
+#### Scenario: Exact reviewed wheel has current custody and retained notices
+- **WHEN** the official lock-matching wheel and exact reviewed metadata/notice files pass held policy verification under current selection and bounded transport
+- **THEN** only its issuer-backed CAS FD enters the offline build closure, with no runtime acceptance claim

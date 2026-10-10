@@ -201,3 +201,8 @@ Preserve AC13..15 and v202/v209/v239. Consume the exact finite source-only held 
 
 
 v247 narrow source-update leaf review: `plans/amendments/2026-10-10-source-update-entry-source-review-v247.md` / `planning/source-update-entry-source-review-v247.json`. Exact7b7f source root_setup0b7d7203/71543 replaces only two existing static tuple literals after publication. Current verified predecessor/TTY/source actor/FD3 gates and safe fixed source retry retained; no recipe/catalog or broader source approval. Genuine full positive/unexcluded/Pi and all tasks/AC OPEN.
+
+
+## Gateway license and official acquisition custody v248
+
+Preserve AC13..15 and v244. Exact-wheel held policy/eligibility and root-only bounded direct official PyPI transport are defined in `planning/gateway-wheel-license-transport-v248.json`; raw metadata, caller license approval and pip network do not authorize admission. All acceptance remains open.

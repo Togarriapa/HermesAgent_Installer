@@ -243,3 +243,8 @@ Remote source active digest v246: plans/amendments/2026-10-10-remote-source-acti
 
 v247 exact source-update leaf review: `plans/amendments/2026-10-10-source-update-entry-source-review-v247.md`; root_setup0b7d7203/71543 two-table literal update only. Existing BD-T242.1/VD-T242.2 and all AC OPEN; unexcluded/genuine positive/Pi evidence required.
 v245: `plans/amendments/2026-10-10-xpra-sysroot-html5-v245.md` / `planning/xpra-sysroot-html5-v245.json`; RT-T245.1/.2 and VD-T245.3 OPEN. Exact signed archive links/private sysroot and immutable official HTML5 source observations; mixed-license/current native/session proof pending, all AC OPEN.
+
+
+## Gateway license and acquisition custody v248
+
+Append-only `plans/amendments/2026-10-10-gateway-wheel-license-transport-v248.md` and `planning/gateway-wheel-license-transport-v248.json`; RT-T248.1/.2, VD-T248.3 open. Official exact13 wheel audit is evidence; held exact license policy plus finite root HTTPS custody must produce current receipts before offline build.

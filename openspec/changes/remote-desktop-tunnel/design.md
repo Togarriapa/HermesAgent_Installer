@@ -161,3 +161,8 @@ Remote source digest v246: planning/remote-source-active-digest-acyclic-v246.jso
 Use exact origin-bound archive links within an owned virtual-root sysroot, independent graph observer and one pinned glibc linker token transformation. Separately held immutable official HTML5 source copies only html5/ into actual output without ambient installer/minifier/assets; full mixed-license/native/session proofs remain required.
 
 Exact contract: `planning/xpra-sysroot-html5-v245.json`.
+
+
+## Gateway license and official acquisition custody v248
+
+Preserve AC13..15 and v244. Exact-wheel held policy/eligibility and root-only bounded direct official PyPI transport are defined in `planning/gateway-wheel-license-transport-v248.json`; raw metadata, caller license approval and pip network do not authorize admission. All acceptance remains open.

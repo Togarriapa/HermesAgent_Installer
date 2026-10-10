@@ -1,0 +1,355 @@
+{
+  "schema": 1,
+  "policy_id": "gateway-locked-wheel-license-policy-v248",
+  "lock_sha256": "0a183e010a44751c3383ef574a77ac270283cc85671d50dfb38d6df3f168ed13",
+  "lock_size_bytes": 1553,
+  "use": "exact locked gateway offline component install and package materialization; no generic license approval or unrelated package selection",
+  "required_obligations": [
+    "retain exact license/notice/authorship files in immutable wheel CAS and installed dist-info/package closure",
+    "preserve attribution and notices; no endorsement or altered license text",
+    "any bundled dependency/license evidence discovered beyond this exact reviewed wheel evidence must be reviewed before positive eligibility; no universal all-license verdict"
+  ],
+  "rows": [
+    {
+      "name": "aiohappyeyeballs",
+      "version": "2.6.2",
+      "wheel_sha256": "4708045e2d7a6c6bdf8aafa8ed39649eaf926a4543b54560659129e3365953c4",
+      "filename": "aiohappyeyeballs-2.6.2-py3-none-any.whl",
+      "size_bytes": 15062,
+      "url": "https://files.pythonhosted.org/packages/5f/fc/a7bf5b6e4e617b45f90f2d9d2a68519c249c81dd4fc2658c7a2a61c4f4b7/aiohappyeyeballs-2.6.2-py3-none-any.whl",
+      "wheel_metadata_sha256": "72ab36558f13c04d9eff8aaa9d6e34f528b7b2ebe3f9a33ef1d0a2586d809e09",
+      "license_expression": null,
+      "license": "PSF-2.0",
+      "license_files_declared": [
+        "LICENSE"
+      ],
+      "license_files": [
+        {
+          "path": "aiohappyeyeballs-2.6.2.dist-info/licenses/LICENSE",
+          "sha256": "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf",
+          "size_bytes": 13936
+        }
+      ],
+      "reviewed_basis": "exact included PSF license history and BSD-0 notice retained",
+      "eligibility": "eligible-with-retained-notices"
+    },
+    {
+      "name": "aiohttp",
+      "version": "3.13.5",
+      "wheel_sha256": "ecc26751323224cf8186efcf7fbcbc30f4e1d8c7970659daf25ad995e4032a56",
+      "filename": "aiohttp-3.13.5-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+      "size_bytes": 1726701,
+      "url": "https://files.pythonhosted.org/packages/0a/33/a8362cb15cf16a3af7e86ed11962d5cd7d59b449202dc576cdc731310bde/aiohttp-3.13.5-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+      "wheel_metadata_sha256": "c951ddd170c8bae6abe5c8138791192369835c2444794096099f9503a816bd44",
+      "license_expression": null,
+      "license": "Apache-2.0 AND MIT",
+      "license_files_declared": [
+        "LICENSE.txt",
+        "vendor/llhttp/LICENSE"
+      ],
+      "license_files": [
+        {
+          "path": "aiohttp-3.13.5.dist-info/licenses/LICENSE.txt",
+          "sha256": "9f80d0db7d755a941db4572172c270ecbd8f082ba215ddd095985942ed94a9eb",
+          "size_bytes": 588
+        },
+        {
+          "path": "aiohttp-3.13.5.dist-info/licenses/vendor/llhttp/LICENSE",
+          "sha256": "ebca854e0134cd256d673627c20499f42577eb74bacf08b9f25b626a73c91277",
+          "size_bytes": 1105
+        }
+      ],
+      "reviewed_basis": "Apache-2.0 AND MIT (llhttp notice retained)",
+      "eligibility": "eligible-with-retained-notices"
+    },
+    {
+      "name": "aiosignal",
+      "version": "1.4.0",
+      "wheel_sha256": "053243f8b92b990551949e63930a839ff0cf0b0ebbe0597b0f3fb19e1a0fe82e",
+      "filename": "aiosignal-1.4.0-py3-none-any.whl",
+      "size_bytes": 7490,
+      "url": "https://files.pythonhosted.org/packages/fb/76/641ae371508676492379f16e2fa48f4e2c11741bd63c48be4b12a6b09cba/aiosignal-1.4.0-py3-none-any.whl",
+      "wheel_metadata_sha256": "09247ef1da8bc696728d47130e702e4307f6f7d101d6c485bff9f3a71ce7008d",
+      "license_expression": null,
+      "license": "Apache 2.0",
+      "license_files_declared": [
+        "LICENSE"
+      ],
+      "license_files": [
+        {
+          "path": "aiosignal-1.4.0.dist-info/licenses/LICENSE",
+          "sha256": "6fd5243e92dd7f98ec69c7ac377728e74905709ff527a5bf98d6d0263c04f5b6",
+          "size_bytes": 11332
+        }
+      ],
+      "reviewed_basis": "Apache-2.0",
+      "eligibility": "eligible-with-retained-notices"
+    },
+    {
+      "name": "attrs",
+      "version": "26.1.0",
+      "wheel_sha256": "c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309",
+      "filename": "attrs-26.1.0-py3-none-any.whl",
+      "size_bytes": 67548,
+      "url": "https://files.pythonhosted.org/packages/64/b4/17d4b0b2a2dc85a6df63d1157e028ed19f90d4cd97c36717afef2bc2f395/attrs-26.1.0-py3-none-any.whl",
+      "wheel_metadata_sha256": "4cd40e690f23bf37cbcad34efd6758e062df1df07c86833f7e3ce95bf1fa38cc",
+      "license_expression": "MIT",
+      "license": null,
+      "license_files_declared": [
+        "LICENSE"
+      ],
+      "license_files": [
+        {
+          "path": "attrs-26.1.0.dist-info/licenses/LICENSE",
+          "sha256": "882115c95dfc2af1eeb6714f8ec6d5cbcabf667caff8729f42420da63f714e9f",
+          "size_bytes": 1109
+        }
+      ],
+      "reviewed_basis": "MIT",
+      "eligibility": "eligible-with-retained-notices"
+    },
+    {
+      "name": "cffi",
+      "version": "2.0.0",
+      "wheel_sha256": "24b6f81f1983e6df8db3adc38562c83f7d4a0c36162885ec7f7b77c7dcbec97b",
+      "filename": "cffi-2.0.0-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+      "size_bytes": 220049,
+      "url": "https://files.pythonhosted.org/packages/d6/43/0e822876f87ea8a4ef95442c3d766a06a51fc5298823f884ef87aaad168c/cffi-2.0.0-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+      "wheel_metadata_sha256": "b98ce7e3417af089bc12d5c73412d9b3b1683ccf8ec73c986c35ac8c9be1ba39",
+      "license_expression": "MIT",
+      "license": null,
+      "license_files_declared": [
+        "LICENSE",
+        "AUTHORS"
+      ],
+      "license_files": [
+        {
+          "path": "cffi-2.0.0.dist-info/licenses/AUTHORS",
+          "sha256": "2a67a60bbfb33759d67d645ff131b8e6d6bc4cafc232d751fcac3eda4d314cc8",
+          "size_bytes": 208
+        },
+        {
+          "path": "cffi-2.0.0.dist-info/licenses/LICENSE",
+          "sha256": "5ba24ddc57067f9249add644c3afc41a5d6dc37e23433ef759d95df370b0af63",
+          "size_bytes": 1123
+        }
+      ],
+      "reviewed_basis": "exact included MIT No Attribution text; metadata MIT alone is not verdict",
+      "eligibility": "eligible-with-retained-notices"
+    },
+    {
+      "name": "cryptography",
+      "version": "50.0.2",
+      "wheel_sha256": "79def8d059362e7831389ed3be0ecdf58a89386e1271e35dd9f5af84e81bffd0",
+      "filename": "cryptography-50.0.2-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+      "size_bytes": 4731146,
+      "url": "https://files.pythonhosted.org/packages/d9/69/c9bd862c3bf43d6399c433caf002df16e2dffd4be49bdf515cda38038711/cryptography-50.0.2-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+      "wheel_metadata_sha256": "047cfc71226409de4318b360aef15c63a2adf609731e3dcf7fe932f14ea042ee",
+      "license_expression": "Apache-2.0 OR BSD-3-Clause",
+      "license": null,
+      "license_files_declared": [
+        "LICENSE",
+        "LICENSE.APACHE",
+        "LICENSE.BSD"
+      ],
+      "license_files": [
+        {
+          "path": "cryptography-50.0.2.dist-info/licenses/LICENSE",
+          "sha256": "3e0c7c091a948b82533ba98fd7cbb40432d6f1a9acbf85f5922d2f99a93ae6bb",
+          "size_bytes": 197
+        },
+        {
+          "path": "cryptography-50.0.2.dist-info/licenses/LICENSE.APACHE",
+          "sha256": "aac73b3148f6d1d7111dbca32099f68d26c644c6813ae1e4f05f6579aa2663fe",
+          "size_bytes": 11360
+        },
+        {
+          "path": "cryptography-50.0.2.dist-info/licenses/LICENSE.BSD",
+          "sha256": "602c4c7482de6479dd2e9793cda275e5e63d773dacd1eca689232ab7008fb4fb",
+          "size_bytes": 1532
+        }
+      ],
+      "reviewed_basis": "Apache-2.0 OR BSD-3-Clause; retain both notices",
+      "eligibility": "eligible-with-retained-notices"
+    },
+    {
+      "name": "frozenlist",
+      "version": "1.8.0",
+      "wheel_sha256": "778a11b15673f6f1df23d9586f83c4846c471a8af693a22e066508b77d201ec8",
+      "filename": "frozenlist-1.8.0-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+      "size_bytes": 232015,
+      "url": "https://files.pythonhosted.org/packages/3a/3b/d9b1e0b0eed36e70477ffb8360c49c85c8ca8ef9700a4e6711f39a6e8b45/frozenlist-1.8.0-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+      "wheel_metadata_sha256": "946c22dc9f7e2c76f2d698f00a4306dbe49a820e2b3f1a0e22fe5286cbec35f1",
+      "license_expression": null,
+      "license": "Apache-2.0",
+      "license_files_declared": [
+        "LICENSE"
+      ],
+      "license_files": [
+        {
+          "path": "frozenlist-1.8.0.dist-info/licenses/LICENSE",
+          "sha256": "6fd5243e92dd7f98ec69c7ac377728e74905709ff527a5bf98d6d0263c04f5b6",
+          "size_bytes": 11332
+        }
+      ],
+      "reviewed_basis": "Apache-2.0",
+      "eligibility": "eligible-with-retained-notices"
+    },
+    {
+      "name": "idna",
+      "version": "3.16",
+      "wheel_sha256": "cc246e3a3f89580c3a951b5ad298ca4638078b2cdd4f115654332b5c26daded5",
+      "filename": "idna-3.16-py3-none-any.whl",
+      "size_bytes": 74165,
+      "url": "https://files.pythonhosted.org/packages/94/16/70255075a9859a0e3adb789b68ceb0e210dec03934245fd98d248226572f/idna-3.16-py3-none-any.whl",
+      "wheel_metadata_sha256": "b2300f4635c05551876447ca508080098ef973444c4efbafdafceb0d1c50828e",
+      "license_expression": "BSD-3-Clause",
+      "license": null,
+      "license_files_declared": [
+        "LICENSE.md"
+      ],
+      "license_files": [
+        {
+          "path": "idna-3.16.dist-info/licenses/LICENSE.md",
+          "sha256": "1a9a4f0e3d479a27240ddd59a9137a66ab4a0f9dfdc8ca6188cc0bfd85187f04",
+          "size_bytes": 1541
+        }
+      ],
+      "reviewed_basis": "BSD-3-Clause",
+      "eligibility": "eligible-with-retained-notices"
+    },
+    {
+      "name": "multidict",
+      "version": "6.7.1",
+      "wheel_sha256": "97231140a50f5d447d3164f994b86a0bed7cd016e2682f8650d6a9158e14fd31",
+      "filename": "multidict-6.7.1-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+      "size_bytes": 252420,
+      "url": "https://files.pythonhosted.org/packages/a7/f9/44d4b3064c65079d2467888794dea218d1601898ac50222ab8a9a8094460/multidict-6.7.1-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+      "wheel_metadata_sha256": "4913fdaae936a309c29b89b98c2dbebd237203fb27ab9e68ae5e4ec17ba3024f",
+      "license_expression": null,
+      "license": "Apache License 2.0",
+      "license_files_declared": [
+        "LICENSE"
+      ],
+      "license_files": [
+        {
+          "path": "multidict-6.7.1.dist-info/licenses/LICENSE",
+          "sha256": "93d11a968e2f0f36373c40811ff6d20e173f58c3cab5884cd6617bbfd795492a",
+          "size_bytes": 611
+        }
+      ],
+      "reviewed_basis": "Apache-2.0",
+      "eligibility": "eligible-with-retained-notices"
+    },
+    {
+      "name": "propcache",
+      "version": "0.5.2",
+      "wheel_sha256": "ba57fffe4ac99c5d30076161b5866336d97600769bad35cc68f7774b15298a4e",
+      "filename": "propcache-0.5.2-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+      "size_bytes": 59912,
+      "url": "https://files.pythonhosted.org/packages/70/06/2f46c318e3307cd7a6a7481def374ce838c0fe20084b39dd54b0879d0e99/propcache-0.5.2-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+      "wheel_metadata_sha256": "f534495cdd2f915af8e649783d95fddcb1a05a1ac181850f0c973c0a78f7bbae",
+      "license_expression": null,
+      "license": "Apache-2.0",
+      "license_files_declared": [
+        "LICENSE",
+        "NOTICE"
+      ],
+      "license_files": [
+        {
+          "path": "propcache-0.5.2.dist-info/licenses/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "size_bytes": 11358
+        },
+        {
+          "path": "propcache-0.5.2.dist-info/licenses/NOTICE",
+          "sha256": "56d6ac6c8105c0a51304c21db060e361af9a8ea0af9a75c239c28b5d13693838",
+          "size_bytes": 609
+        }
+      ],
+      "reviewed_basis": "Apache-2.0 plus NOTICE",
+      "eligibility": "eligible-with-retained-notices"
+    },
+    {
+      "name": "pycparser",
+      "version": "3.0",
+      "wheel_sha256": "b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992",
+      "filename": "pycparser-3.0-py3-none-any.whl",
+      "size_bytes": 48172,
+      "url": "https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl",
+      "wheel_metadata_sha256": "f547a60b0ab54cc2f242213d1f87960ad80df7dd5dfeb98d17a444d48bfb6b93",
+      "license_expression": "BSD-3-Clause",
+      "license": null,
+      "license_files_declared": [
+        "LICENSE"
+      ],
+      "license_files": [
+        {
+          "path": "pycparser-3.0.dist-info/licenses/LICENSE",
+          "sha256": "0c846399369ea76ddd7b5c44fe6d16497415fcf015f5cbb508c24bf98b81c5b1",
+          "size_bytes": 1543
+        }
+      ],
+      "reviewed_basis": "BSD-3-Clause",
+      "eligibility": "eligible-with-retained-notices"
+    },
+    {
+      "name": "PyJWT",
+      "version": "2.15.1",
+      "wheel_sha256": "42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193",
+      "filename": "pyjwt-2.15.1-py3-none-any.whl",
+      "size_bytes": 33860,
+      "url": "https://files.pythonhosted.org/packages/50/ca/44de4e75f8aadc457f0634be3b542815078ded46dca30efb960edeecad6e/pyjwt-2.15.1-py3-none-any.whl",
+      "wheel_metadata_sha256": "1ea0c9f139b8c928276b3628af165955f6f764491448a6ad8f103cdcbb382da3",
+      "license_expression": "MIT",
+      "license": null,
+      "license_files_declared": [
+        "LICENSE",
+        "AUTHORS.rst"
+      ],
+      "license_files": [
+        {
+          "path": "pyjwt-2.15.1.dist-info/licenses/AUTHORS.rst",
+          "sha256": "925ce43461029eedbf558ec0b7cf7fc4b045def5120ebb97937c70814071cf07",
+          "size_bytes": 322
+        },
+        {
+          "path": "pyjwt-2.15.1.dist-info/licenses/LICENSE",
+          "sha256": "797a7a20231d4c433e9f1911db1731d06b5828b98f499819a034f7c0f56f5ce5",
+          "size_bytes": 1085
+        }
+      ],
+      "reviewed_basis": "MIT",
+      "eligibility": "eligible-with-retained-notices"
+    },
+    {
+      "name": "yarl",
+      "version": "1.24.2",
+      "wheel_sha256": "fecd17873a096036c1c87ab3486f1aef7f269ada7f23f7f856f93b1cc7744f14",
+      "filename": "yarl-1.24.2-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+      "size_bytes": 104574,
+      "url": "https://files.pythonhosted.org/packages/02/a7/45baabfff76829264e623b185cff0c340d7e11bf3e1cd9ea37e7d17934bd/yarl-1.24.2-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+      "wheel_metadata_sha256": "12b3abe92e9854917cbfc98bd9593828a2d1123c874be76cd811abddfd481d3f",
+      "license_expression": null,
+      "license": "Apache-2.0",
+      "license_files_declared": [
+        "LICENSE",
+        "NOTICE"
+      ],
+      "license_files": [
+        {
+          "path": "yarl-1.24.2.dist-info/licenses/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "size_bytes": 11358
+        },
+        {
+          "path": "yarl-1.24.2.dist-info/licenses/NOTICE",
+          "sha256": "56d6ac6c8105c0a51304c21db060e361af9a8ea0af9a75c239c28b5d13693838",
+          "size_bytes": 609
+        }
+      ],
+      "reviewed_basis": "Apache-2.0 plus NOTICE",
+      "eligibility": "eligible-with-retained-notices"
+    }
+  ]
+}
