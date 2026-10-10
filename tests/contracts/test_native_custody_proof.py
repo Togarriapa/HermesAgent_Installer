@@ -630,6 +630,31 @@ class RootLoaderObservationContracts(unittest.TestCase):
             time.monotonic() + 20,
         )
 
+    def _controlled_root_module_stat(self):
+        """Model the root-owned fstat result while preserving all real file facts.
+
+        This contract suite runs as a nonroot user. The fixture imports the
+        actual module from its temporary package tree, and the production
+        verifier still opens/hashes that exact file. Only uid/gid returned by
+        fstat are controlled here; this is not production custody evidence.
+        """
+        expected = self.role_file.stat()
+        real_fstat = os.fstat
+
+        def controlled_fstat(fd):
+            actual = real_fstat(fd)
+            if (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino):
+                return actual
+            fields = list(actual)
+            fields[4] = 0
+            fields[5] = 0
+            return os.stat_result(fields)
+
+        return mock.patch(
+            "hermes_installer.authority.native_custody_proof.os.fstat",
+            side_effect=controlled_fstat,
+        )
+
     def tearDown(self):
         self.store.close()
         try:
@@ -654,8 +679,9 @@ class RootLoaderObservationContracts(unittest.TestCase):
         event_id = self.store.receive_loader_progress(self.launch_handle, lambda: False)
         observer = _observer(producer_uid=self.uid)
         peer = LivePeerProcess(self.child.pid, self.child_pidfd, self.identity)
-        first = self.store.resolve_loaded_package_closure(peer, observer)
-        second = self.store.resolve_loaded_package_closure(peer, observer)
+        with self._controlled_root_module_stat():
+            first = self.store.resolve_loaded_package_closure(peer, observer)
+            second = self.store.resolve_loaded_package_closure(peer, observer)
         self.assertEqual(first.schema, 1)
         self.assertEqual(first.loader_ready_event_id, event_id)
         self.assertEqual(first.observed_registration_ids, ("registration.input", "registration.tool"))
@@ -727,7 +753,8 @@ class RootLoaderObservationContracts(unittest.TestCase):
             observer_enrollments={observer.observer_enrollment_id: observer},
             loader_observations=self.store,
         )
-        target = resolver.resolve_selected_native_input_target(execution)
+        with self._controlled_root_module_stat():
+            target = resolver.resolve_selected_native_input_target(execution)
         try:
             self.assertIsInstance(target, LiveNativeInputTarget)
             self.assertEqual(target.schema, 1)
@@ -811,20 +838,21 @@ class RootLoaderObservationContracts(unittest.TestCase):
         self.store.receive_loader_progress(self.launch_handle, lambda: False)
         observer = _observer(producer_uid=self.uid)
         peer = LivePeerProcess(self.child.pid, self.child_pidfd, self.identity)
-        self.store.resolve_loaded_package_closure(peer, observer)
-        self.custody.mount_proof = _MountProof(
-            "owned-process", "producer-profile", "generation-1", self.uid, 123,
-            "cgroup-test", "mnt:234;net:345", _ROLE,
-            replace(self.mount_receipt, service_mount_id="mount-replaced"),
-        )
-        with self.assertRaises(AuthorityDenied):
+        with self._controlled_root_module_stat():
             self.store.resolve_loaded_package_closure(peer, observer)
-        self.custody.identity = LivePeerIdentity(
-            "other-profile", "generation-1", self.uid, 123, _ROLE,
-            "cgroup-test", "mnt:234;net:345",
-        )
-        with self.assertRaises(AuthorityDenied):
-            self.store.resolve_loaded_package_closure(peer, observer)
+            self.custody.mount_proof = _MountProof(
+                "owned-process", "producer-profile", "generation-1", self.uid, 123,
+                "cgroup-test", "mnt:234;net:345", _ROLE,
+                replace(self.mount_receipt, service_mount_id="mount-replaced"),
+            )
+            with self.assertRaises(AuthorityDenied):
+                self.store.resolve_loaded_package_closure(peer, observer)
+            self.custody.identity = LivePeerIdentity(
+                "other-profile", "generation-1", self.uid, 123, _ROLE,
+                "cgroup-test", "mnt:234;net:345",
+            )
+            with self.assertRaises(AuthorityDenied):
+                self.store.resolve_loaded_package_closure(peer, observer)
 
     def test_changed_loaded_role_bytes_after_authenticated_import_deny_proof(self):
         self.store.receive_loader_progress(self.launch_handle, lambda: False)
@@ -833,8 +861,9 @@ class RootLoaderObservationContracts(unittest.TestCase):
         self.role_file.chmod(0o644)
         self.role_file.write_bytes(b"# different role bytes after import\n")
         self.role_file.chmod(0o444)
-        with self.assertRaises(AuthorityDenied):
-            self.store.resolve_loaded_package_closure(peer, observer)
+        with self._controlled_root_module_stat():
+            with self.assertRaises(AuthorityDenied):
+                self.store.resolve_loaded_package_closure(peer, observer)
 
     def test_unowned_loaded_role_module_denies_proof(self):
         self.store.receive_loader_progress(self.launch_handle, lambda: False)

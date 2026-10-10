@@ -59,6 +59,76 @@ def test_distribution_receipt_rechecks_nofollow_bytes_and_inode(tmp_path):
         receipt.close()
 
 
+def test_initial_setup_prefixes_create_only_fixed_owned_directories_and_fsync(tmp_path, monkeypatch):
+    parent = tmp_path / "etc"
+    parent.mkdir(mode=0o755)
+    parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+    real_fsync = os.fsync
+    synced = []
+    monkeypatch.setattr(release_build.os, "fsync", lambda fd: (synced.append(fd), real_fsync(fd))[1])
+    try:
+        release_build._ensure_owned_child_directory(
+            parent_fd, "hermes-installer", 0o755,
+            expected_uid=os.geteuid(), expected_gid=os.getegid())
+        setup_fd = os.open("hermes-installer", os.O_RDONLY | os.O_DIRECTORY, dir_fd=parent_fd)
+        try:
+            release_build._ensure_owned_child_directory(
+                setup_fd, "credentials", 0o700,
+                expected_uid=os.geteuid(), expected_gid=os.getegid())
+            before = len(synced)
+            # Idempotent verification must not normalize or rewrite existing directories.
+            release_build._ensure_owned_child_directory(
+                setup_fd, "credentials", 0o700,
+                expected_uid=os.geteuid(), expected_gid=os.getegid())
+            assert len(synced) == before
+            assert (parent / "hermes-installer" / "credentials").stat().st_mode & 0o777 == 0o700
+        finally:
+            os.close(setup_fd)
+        assert len(synced) >= 4  # each newly created directory and its parent
+    finally:
+        os.close(parent_fd)
+
+
+def test_initial_setup_prefixes_reject_symlink_and_unsafe_existing_mode(tmp_path):
+    parent = tmp_path / "etc"
+    parent.mkdir()
+    target = tmp_path / "target"
+    target.mkdir()
+    (parent / "hermes-installer").symlink_to(target, target_is_directory=True)
+    parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        with pytest.raises(release_build.InstallerReleaseBuildError):
+            release_build._ensure_owned_child_directory(
+                parent_fd, "hermes-installer", 0o755,
+                expected_uid=os.geteuid(), expected_gid=os.getegid())
+        (parent / "hermes-installer").unlink()
+        (parent / "hermes-installer").mkdir(mode=0o777)
+        os.chmod(parent / "hermes-installer", 0o777)
+        with pytest.raises(release_build.InstallerReleaseBuildError):
+            release_build._ensure_owned_child_directory(
+                parent_fd, "hermes-installer", 0o755,
+                expected_uid=os.geteuid(), expected_gid=os.getegid())
+        assert (parent / "hermes-installer").stat().st_mode & 0o777 == 0o777
+    finally:
+        os.close(parent_fd)
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="foreign-owner custody requires root")
+def test_initial_setup_prefixes_reject_foreign_owned_existing_directory(tmp_path):
+    parent = tmp_path / "etc"
+    parent.mkdir()
+    child = parent / "hermes-installer"
+    child.mkdir(mode=0o755)
+    os.chown(child, 1, 1)
+    parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        with pytest.raises(release_build.InstallerReleaseBuildError):
+            release_build._ensure_owned_child_directory(parent_fd, "hermes-installer", 0o755)
+        assert child.stat().st_uid == 1
+    finally:
+        os.close(parent_fd)
+
+
 def test_release_builder_pins_literal_model_store_template_and_native_source_modules():
     assert release_build.EXISTING_MODEL_STORE_TEMPLATE_ID == "installer-existing-model-store-root-template-v1"
     assert release_build.EXISTING_MODEL_STORE_TEMPLATE_PATH.endswith(
@@ -71,6 +141,19 @@ def test_release_builder_pins_literal_model_store_template_and_native_source_mod
         body = source.read_bytes()
         assert target_path.startswith("lib/python/hermes_installer/components/")
         assert (hashlib.sha256(body).hexdigest(), len(body)) == (digest, size)
+
+
+def test_first_source_actor_preloads_exact_installed_launcher_module_closure():
+    release_build._load_installed_setup_module_closure()
+    for name in (
+        "hermes_installer.root_setup",
+        "hermes_installer.authority.installer_release",
+        "hermes_installer.authority.bootstrap_runtime_factory",
+    ):
+        module = sys.modules[name]
+        origin = Path(module.__spec__.origin)
+        assert origin.is_file()
+        assert origin == origin.resolve(strict=True)
 
 
 @pytest.mark.skipif(not Path("/usr/bin/git").exists(), reason="root source exporter requires system Git")

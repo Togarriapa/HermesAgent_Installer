@@ -189,6 +189,7 @@ class LinuxPrivateLoopbackNamespaceFixtures(unittest.TestCase):
         generation_digest = "a" * 64
         registry = None
         lease = None
+        fixture_users: list[str] = []
         try:
             candidate_uids = (17001, 17002, 17003)
             active_uids: set[int] = set()
@@ -207,6 +208,28 @@ class LinuxPrivateLoopbackNamespaceFixtures(unittest.TestCase):
                 except KeyError:
                     continue
                 self.skipTest("reserved fixture service UID already has an account")
+            useradd = Path("/usr/sbin/useradd")
+            userdel = Path("/usr/sbin/userdel")
+            systemctl = Path("/usr/bin/systemctl")
+            if (not useradd.is_file() or not userdel.is_file()
+                    or not systemctl.is_file() or not Path("/usr/bin/systemd-run").is_file()):
+                self.skipTest("fixture-only system account tools are unavailable")
+            if subprocess.run([str(systemctl), "--system", "show-environment"],
+                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, timeout=3, check=False).returncode:
+                self.skipTest("systemd system manager is unavailable")
+            fixture_suffix = uuid.uuid4().hex[:12]
+            for index, uid in enumerate(candidate_uids):
+                username = f"hermes-net-{fixture_suffix}-{index}"
+                created = subprocess.run(
+                    [str(useradd), "--system", "--no-create-home", "--home-dir=/nonexistent",
+                     "--shell=/usr/sbin/nologin", "--user-group", "--uid", str(uid), username],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE, text=True, timeout=5, check=False,
+                )
+                if created.returncode:
+                    self.fail("could not create fixture-only identities required by systemd")
+                fixture_users.append(username)
             services = [
                 _service("display", "display-profile", "display-v1", candidate_uids[0]),
                 _service("gateway", "gateway-profile", "gateway-v1", candidate_uids[1]),
@@ -386,6 +409,10 @@ class LinuxPrivateLoopbackNamespaceFixtures(unittest.TestCase):
             finally:
                 close_root_network_lease(lease)
         finally:
+            for username in reversed(fixture_users):
+                subprocess.run(["/usr/sbin/userdel", username], stdin=subprocess.DEVNULL,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               timeout=5, check=False)
             if lease is not None:
                 lease.close_fd()
             if registry is not None:

@@ -12,7 +12,8 @@ from unittest.mock import patch
 from hermes_installer.authority.installer_release import (
     DEPLOYMENT_RECEIPT_PATH, InstalledRootReleaseVerifier, InstallerReleaseError,
     RootActorObservation, VerifiedInstallerReleaseReceipt, VerifiedReleaseFile,
-    REVIEWED_SOURCE_MODULES, REVIEWED_SOURCE_ARTIFACTS, FIXED_TEMPLATES, LAUNCHER_PATH, INTERPRETER_PATH,
+    REVIEWED_SOURCE_MODULES, REQUIRED_LAUNCHER_MODULES, REVIEWED_SOURCE_ARTIFACTS,
+    FIXED_TEMPLATES, LAUNCHER_PATH, INTERPRETER_PATH,
     PLAN_PATH, ARTIFACT_CATALOG_PATH, _fixed_roles, _open_verified_fd,
     _read_fixed_file, _safe_relative, _verify_complete_tree, _SEAL,
     _artifact_id_for, _module_name, _validate_fixed_layout_role,
@@ -118,12 +119,15 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
             "templates/existing-model-store-root-template-v1.json":
                 ("installer-existing-model-store-root-template-v1",
                  "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f", 712),
+            "templates/reviewed-native-capability-map-v1.json":
+                ("installer-reviewed-native-capability-map-v1",
+                 "41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565", 2026),
         }
         actual = {path: (artifact_id, digest, size)
                   for artifact_id, path, digest, size in FIXED_TEMPLATES}
         for path, value in expected.items():
             self.assertEqual(actual[path], value)
-        self.assertEqual(len(actual), 7)
+        self.assertEqual(len(actual), 8)
         self.assertEqual(
             _artifact_id_for("templates/existing-model-store-root-template-v1.json", ["template"]),
             "installer-existing-model-store-root-template-v1",
@@ -137,6 +141,16 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
             _validate_fixed_layout_role(
                 "templates/composio-whatsapp-catalog-read-policy-v1.json",
                 "0" * 64, 528, ["template"],
+            )
+        _validate_fixed_layout_role(
+            "templates/reviewed-native-capability-map-v1.json",
+            "41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565",
+            2026, ["template"],
+        )
+        with self.assertRaises(InstallerReleaseError):
+            _validate_fixed_layout_role(
+                "templates/reviewed-native-capability-map-v1.json",
+                "0" * 64, 2026, ["template"],
             )
 
     def test_reviewed_native_source_modules_are_finite_pinned_release_rows(self):
@@ -166,6 +180,9 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
                     for i, (artifact_id, path, digest, size) in enumerate(FIXED_TEMPLATES))
         rows.extend(VerifiedReleaseFile(artifact_id, ("module",), path, digest, size, 1, 100 + i, 0o444)
                     for i, (artifact_id, path, digest, size) in enumerate(REVIEWED_SOURCE_MODULES))
+        rows.extend(VerifiedReleaseFile(artifact_id, ("module",), path, f"{i + 8:064x}", 100 + i,
+                                        1, 300 + i, 0o444)
+                    for i, (artifact_id, path) in enumerate(REQUIRED_LAUNCHER_MODULES))
         rows.extend((
             VerifiedReleaseFile("baseline-file", ("baseline",), "plans/2026-10-09-v1/file.json",
                                 "5" * 64, 1, 1, 200, 0o444),
@@ -173,6 +190,17 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
                                 "6" * 64, 1, 1, 201, 0o444),
         ))
         self.assertEqual(_fixed_roles(rows, "closure.json"), ("installer-root-setup-plan-v1", "3" * 64))
+        missing_root_setup = [row for row in rows
+                              if row.artifact_id != "installer-module:hermes_installer.root_setup"]
+        with self.assertRaises(InstallerReleaseError):
+            _fixed_roles(missing_root_setup, "closure.json")
+        wrong_path = [row if row.artifact_id != "installer-module:hermes_installer.root_setup"
+                      else VerifiedReleaseFile(row.artifact_id, row.roles,
+                                               "lib/python/hermes_installer/other_setup.py",
+                                               row.sha256, row.size_bytes, row.device, row.inode, row.mode)
+                      for row in rows]
+        with self.assertRaises(InstallerReleaseError):
+            _fixed_roles(wrong_path, "closure.json")
         bad = list(rows)
         index = next(i for i, row in enumerate(bad) if row.artifact_id == REVIEWED_SOURCE_MODULES[0][0])
         row = bad[index]

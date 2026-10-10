@@ -4,8 +4,11 @@ import builtins
 import contextlib
 import io
 import os
+import subprocess
+import tempfile
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import hermes_installer.root_setup as root_setup
@@ -22,6 +25,31 @@ from hermes_installer.root_setup import (
 
 
 class RootSetupBoundaryTests(unittest.TestCase):
+    def test_installed_launcher_disables_runtime_bytecode_writes(self) -> None:
+        source = Path(__file__).parents[2] / "scripts/hermes-installer-root-setup"
+        with tempfile.TemporaryDirectory() as temporary:
+            release = Path(temporary) / "release"
+            launcher = release / "bin/hermes-installer-root-setup"
+            interpreter = release / "runtime/bin/python"
+            capture = Path(temporary) / "argv.txt"
+            launcher.parent.mkdir(parents=True)
+            interpreter.parent.mkdir(parents=True)
+            launcher.write_bytes(source.read_bytes())
+            launcher.chmod(0o755)
+            interpreter.write_text(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE\"\n",
+                encoding="utf-8",
+            )
+            interpreter.chmod(0o755)
+
+            environment = {**os.environ, "CAPTURE": str(capture)}
+            result = subprocess.run([str(launcher), "install"], env=environment,
+                                    capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
+            args = capture.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(args[:4], ["-B", "-I", "-S", "-c"])
+            self.assertEqual(args[-1], "install")
+
     def test_candidate_choice_is_exact_root_tty_input_and_one_use(self) -> None:
         registry = RootBootstrapCandidateSelectionRegistry()
         candidate = "a" * 40
