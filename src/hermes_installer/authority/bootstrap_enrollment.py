@@ -7,6 +7,7 @@ adapters; callers submit only opaque artifact receipt handles and an intent.
 from __future__ import annotations
 
 import hashlib
+import errno
 import json
 import os
 import pwd
@@ -35,6 +36,39 @@ class BootstrapEnrollmentError(RuntimeError):
 
 class BootstrapEnrollmentPending(BootstrapEnrollmentError):
     """A required root-enrolled artifact or account prerequisite is absent."""
+
+
+class BootstrapSystemCallFailure(OSError):
+    """A root bootstrap OS failure with a finite step and sanitized errno."""
+
+    STEPS = frozenset({
+        "bootstrap.tty_selection",
+        "source_cas.construct",
+        "source_cas.prepare",
+        "source_cas.lock",
+        "source_cas.lock_release",
+        "source_cas.inspect",
+        "source_cas.materialize",
+        "source_cas.resolve",
+        "installer_runtime.provision",
+        "bootstrap.handoff",
+        "bootstrap.reexec",
+    })
+    ERRNO_NAMES = frozenset({
+        "EACCES", "EAGAIN", "EBUSY", "EEXIST", "EINTR", "EINVAL", "EIO",
+        "EISDIR", "EMFILE", "ENFILE", "ENOSPC", "ENOTDIR", "ENOTTY",
+        "ENXIO", "ELOOP", "ENOENT", "ENOMEM", "EPERM", "EROFS", "ETIMEDOUT",
+        "EXDEV",
+    })
+
+    def __init__(self, step: str, error_number: int | None):
+        if step not in self.STEPS:
+            step = "source_cas.inspect"
+        errno_name = errno.errorcode.get(error_number) if isinstance(error_number, int) else None
+        safe_errno = error_number if errno_name in self.ERRNO_NAMES else None
+        self.step = step
+        self.errno_name = errno_name if safe_errno is not None else "UNKNOWN"
+        super().__init__(safe_errno, "installer bootstrap system call failed")
 
 
 @dataclass(frozen=True, slots=True)
