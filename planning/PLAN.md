@@ -178,3 +178,6 @@ Gateway tested source v223: `plans/amendments/2026-10-10-tested-gateway-source-m
 
 
 Qualification v217: `plans/amendments/2026-10-10-qualification-compiler-terminal-custody-v217.md` and `planning/qualification-compiler-terminal-custody-v217.json` supply concrete compiler/task outcome, installed parent journal/unit custody and signed historical terminal evidence; no restored child seals or exit-only pass. All AC OPEN. HI-T217.1/.2 and VD-T217.3 remain OPEN.
+
+
+Qualification serializer v224: `plans/amendments/2026-10-10-qualification-protected-row-serializer-v224.md` / `planning/qualification-protected-row-serializer-v224.json` supply the finite private row serializer, fixture NSS policy/catalog and actual task recipe source joins. Existing HI-T217.1/.2 and VD-T217.3 remain OPEN; all AC OPEN.

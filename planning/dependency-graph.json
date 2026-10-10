@@ -3348,5 +3348,23 @@
       "consume result then collect unit/close key"
     ],
     "acceptance": "AC01..AC18 OPEN"
+  },
+  "qualification_protected_row_serializer_v224": {
+    "contract": "planning/qualification-protected-row-serializer-v224.json",
+    "tasks": [
+      "HI-T217.1",
+      "HI-T217.2",
+      "VD-T217.3"
+    ],
+    "owner": "luna_resource_runtime",
+    "order": [
+      "current v173/NSS/source",
+      "real fixed task recipe/package",
+      "finite serializer/fixture parser",
+      "strict full index",
+      "actual native task outcome",
+      "parent durable evidence"
+    ],
+    "acceptance": "All AC OPEN"
   }
 }

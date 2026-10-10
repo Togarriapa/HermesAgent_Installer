@@ -1185,3 +1185,17 @@ The installer SHALL follow planning/qualification-compiler-terminal-custody-v217
 #### Scenario: Genuine native task route is missing
 - **WHEN** discovery/materialization succeeds but no approved real native task route exists
 - **THEN** the child returns a concrete incomplete outcome without provider grants, substituted execution or fabricated terminal/native receipts
+
+
+## ADDED Requirements
+
+### Requirement: Finite qualification protected rows
+The installer SHALL apply planning/qualification-protected-row-serializer-v224.json using exact current privately issued source/NSS/task recipe/member proofs and a fixture-only process policy, preserving generic production authority/catalog validation.
+
+#### Scenario: Resource indexing silently omits a malformed job
+- **WHEN** the internally serialized fixture documents parse but their selected job is absent from the strict index
+- **THEN** compilation fails instead of issuing a ready policy or claiming native task success
+
+#### Scenario: Fixture has no Authentik or native task proof
+- **WHEN** only genuine fixture NSS/materialization exists
+- **THEN** no Authentik identity or runnable package is fabricated and missing task source produces an explicit incomplete outcome

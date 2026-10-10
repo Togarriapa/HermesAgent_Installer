@@ -217,3 +217,6 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 - [ ] HI-T217.1: Resource owner implements exact retained v173 compiler/source projection and strict fixture policy/catalog issuer.
 - [ ] HI-T217.2: Resource owner implements genuine child runtime/task outcome and source adapter proof; missing native route remains incomplete, never substitute success.
 - [ ] VD-T217.3: Integrator implements current installed journal owner, retained actual unit/PIDFD, signed historical evidence and parent result consumption/cleanup with two-process failure tests.
+
+
+- [ ] HI-T217.1 / HI-T217.2 / VD-T217.3 (v224): Implement exact source-owned row serializer/recipe selection, genuine fixture NSS policy/catalog and strict complete indexing; verify actual native outcome and missing-route incomplete without fake Authentik/rows/source proof.
