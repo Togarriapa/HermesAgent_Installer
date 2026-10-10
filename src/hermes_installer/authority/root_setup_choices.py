@@ -518,8 +518,6 @@ class RootSetupChoiceRegistry:
         try:
             active = PolicyPublicationReceiptResolver.resolve_current()
             adoption = PolicyPublicationReceiptResolver.resolve_current_choice_adoption(selection_handle)
-            if adoption.verify_current() is not adoption:
-                raise ValueError("adoption resolver returned another object")
         except Exception:
             raise AuthorityDenied("setup-choice.publication", "choice is not in the current active publication") from None
         if (type(adoption) is not PublishedSetupChoiceAdoption
@@ -577,17 +575,29 @@ class RootSetupChoiceRegistry:
         profile_id = _choice_profile_id_from_payload(payload, expected_purpose)
         principal_id = payload.get("principal_id", adoption.principal_id)
         namespace_id = payload.get("namespace_id", adoption.namespace_id)
+        try:
+            current_binding = self.service.resolve_current_active_principal_binding(profile_id)
+        except Exception:
+            raise AuthorityDenied("setup-choice.subject", "active protected principal/profile binding is unavailable") from None
+        profile_generation = self.service.profile_generations.get(profile_id)
         if (principal_id != adoption.principal_id
                 or profile_id != adoption.profile_id
                 or namespace_id != adoption.namespace_id
+                or current_binding.principal_id != adoption.principal_id
+                or current_binding.profile_id != adoption.profile_id
+                or current_binding.namespace_id != adoption.namespace_id
+                or not isinstance(profile_generation, str) or not profile_generation
+                or ("profile_generation" in payload
+                    and payload.get("profile_generation") != profile_generation)
                 or payload.get("principal_binding_sha256", adoption.principal_binding_sha256)
                 != adoption.principal_binding_sha256
                 or payload.get("namespace_binding_sha256", adoption.namespace_binding_sha256)
                 != adoption.namespace_binding_sha256):
             raise AuthorityDenied("setup-choice.subject", "active adoption does not match signed choice selectors")
         consent_id = payload.get("consent_id")
-        if consent_id is not None and (not isinstance(consent_id, str)
-                                       or not re.fullmatch(r"[0-9a-f]{32,128}", consent_id)):
+        if (expected_purpose == "public-free-web-read"
+                and (not isinstance(consent_id, str)
+                     or not re.fullmatch(r"[0-9a-f]{48}", consent_id))):
             raise AuthorityDenied("setup-choice.consent", "signed consent identity is malformed")
         now = time.monotonic()
         return RootAdoptedSetupChoiceSelection(
@@ -749,11 +759,11 @@ class RootSetupChoiceRegistry:
             # Confirm the same signed intent is still in the active publisher
             # descriptor. Its choice is revoked for use, while the active
             # deployment/source generation remains the owner of the record.
-            from .setup_policy_publication import PolicyPublicationReceiptResolver
+            from .setup_policy_publication import PolicyPublicationReceiptResolver, PublishedSetupChoiceAdoption
             adoption = PolicyPublicationReceiptResolver.resolve_current_choice_adoption(
                 receipt.selection_handle)
             return bool(
-                adoption.verify_current() is adoption
+                type(adoption) is PublishedSetupChoiceAdoption
                 and adoption.purpose == receipt.purpose
                 and adoption.signed_record_sha256 == receipt.source_choice_row_sha256
                 and adoption.choice_epoch == receipt.previous_choice_epoch
@@ -914,10 +924,11 @@ class RootSetupChoiceRegistry:
         # setup choice to the current published generation and remains valid
         # after the setup TTY lease expires; no setup lease is renewed here.
         try:
-            current = receipt.verify_current()
+            from .setup_policy_publication import PolicyPublicationReceiptResolver
+            current = PolicyPublicationReceiptResolver.resolve_current_choice_adoption(selection_handle)
         except Exception:
             raise AuthorityDenied("setup-choice.adoption", "publisher adoption is not current") from None
-        if current is not receipt:
+        if current != receipt:
             raise AuthorityDenied("setup-choice.adoption", "publisher adoption resolver returned another receipt")
         with self._lock:
             row = self._rows.get(selection_handle)
