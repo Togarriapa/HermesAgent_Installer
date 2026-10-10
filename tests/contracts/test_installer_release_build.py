@@ -5,6 +5,7 @@ import io
 import json
 import os
 import subprocess
+import tarfile
 import time
 from pathlib import Path
 
@@ -210,6 +211,65 @@ def test_runtime_lock_requires_version_and_hash_pins():
     assert not release_build._lock_contains_exact_pyyaml(without_reviewed_wheel)
     with pytest.raises(release_build.InstallerReleaseBuildError):
         release_build._locked_package_versions(b"PyYAML==6.0.3\n")
+
+
+def _runtime_archive(entries):
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w:gz") as archive:
+        for name, kind, value in entries:
+            member = tarfile.TarInfo(name)
+            if kind == "file":
+                body = value
+                member.type = tarfile.REGTYPE
+                member.mode = 0o755
+                member.size = len(body)
+                archive.addfile(member, io.BytesIO(body))
+            else:
+                member.type = tarfile.SYMTYPE
+                member.mode = 0o777
+                member.linkname = value
+                archive.addfile(member)
+    return output.getvalue()
+
+
+def _extract_fixture_runtime(monkeypatch, archive_bytes, destination):
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_ARCHIVE_BYTES", len(archive_bytes))
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_ARCHIVE_SHA256",
+                        hashlib.sha256(archive_bytes).hexdigest())
+    monkeypatch.setattr(release_build, "BOOTSTRAP_RUNTIME_MAX_EXPANDED", 1024 * 1024)
+    release_build._extract_verified_runtime_archive(archive_bytes, destination)
+
+
+def test_runtime_archive_accepts_normalized_internal_parent_symlink(monkeypatch, tmp_path):
+    archive = _runtime_archive([
+        ("python/lib/target", "file", b"runtime member"),
+        ("python/lib/alias", "symlink", "../lib/target"),
+    ])
+    destination = tmp_path / "python"
+    destination.mkdir()
+    _extract_fixture_runtime(monkeypatch, archive, destination)
+    assert (destination / "lib/target").read_bytes() == b"runtime member"
+    assert (destination / "lib/alias").is_symlink()
+    assert (destination / "lib/alias").resolve() == (destination / "lib/target")
+
+
+@pytest.mark.parametrize("target", [
+    "../../outside", "/usr/bin/python", ".././target", "../target//file", "..\\outside",
+])
+def test_runtime_archive_rejects_escaping_or_nonportable_symlink_targets(monkeypatch, tmp_path, target):
+    archive = _runtime_archive([("python/lib/escape", "symlink", target)])
+    destination = tmp_path / "python"
+    destination.mkdir()
+    with pytest.raises(release_build.InstallerReleaseBuildError):
+        _extract_fixture_runtime(monkeypatch, archive, destination)
+
+
+def test_runtime_archive_rejects_cyclic_symlink(monkeypatch, tmp_path):
+    archive = _runtime_archive([("python/lib/cycle", "symlink", "cycle")])
+    destination = tmp_path / "python"
+    destination.mkdir()
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="broken or cyclic"):
+        _extract_fixture_runtime(monkeypatch, archive, destination)
 
 
 def test_wheel_record_rejects_digest_and_unlisted_member_changes():
