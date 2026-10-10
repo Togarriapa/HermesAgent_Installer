@@ -187,6 +187,7 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
                          "transaction_handle": record["transaction_handle"],
                          "prepared_generation": record["prepared_generation_id"],
                          "service_generation_digest": record["service_generation_digest"]})
+        record["input_receipt_handles"].extend(adoption["source_member_receipt_handles"])
         record["choice_adoptions"] = [adoption]
         receipt = _receipt_from_record(record)
         projection = {key: value for key, value in adoption.items()

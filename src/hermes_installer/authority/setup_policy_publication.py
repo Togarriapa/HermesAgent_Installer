@@ -496,6 +496,8 @@ def _receipt_from_record(record: Mapping[str, Any]) -> RootSetupPublicationRecei
                     or row.prepared_generation != record.get("prepared_generation_id")
                     or row.service_generation_digest != record.get("service_generation_digest")):
                 raise BootstrapEnrollmentError("setup choice adoption differs from its active publication")
+            if not set(row.source_member_receipt_handles).issubset(handles):
+                raise BootstrapEnrollmentError("setup choice source receipts are outside the publication input closure")
     return RootSetupPublicationReceipt(
         1, record["publication_receipt_handle"], record["transaction_handle"],
         record["generation_id"], record["publication_sha256"], Path(record["generation_root"]),
