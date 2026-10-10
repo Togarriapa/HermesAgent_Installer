@@ -74,7 +74,7 @@ def test_owned_fixture_receipt_requires_live_loopback_listener():
             service_generation_digest="a" * 64) is receipt
         with urllib.request.urlopen(receipt.url, timeout=2) as response:
             assert response.status == 200
-            assert response.read(256) == RootOwnedApplicationFixtureServer._BODY
+            assert response.read() == RootOwnedApplicationFixtureServer._BODY
         with pytest.raises(AuthorityDenied, match="stale"):
             server.resolve(receipt.handle, setup_session_id="other",
                 service_generation_digest="a" * 64)
