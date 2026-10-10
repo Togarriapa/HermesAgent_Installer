@@ -1128,5 +1128,62 @@ class PublicInputPermissionBoundaryContracts(unittest.TestCase):
             }, object())
         self.assertEqual(service._source_receipt_handles, {})
 
+
+class RootSetupChoiceSignerContracts(unittest.TestCase):
+    def _service(self):
+        binding = PrincipalBinding(
+            1234, "principal:choice", "profile:choice", "namespace:choice",
+            frozenset({"plugin.web.read"}),
+        )
+        return AuthorityService(
+            signing_key=b"k" * 32, key_id="authority-key-choice-test",
+            bindings_by_uid={binding.uid: binding}, rules={}, handlers={},
+        )
+
+    def test_setup_choice_signer_requires_composed_live_root_runtime(self):
+        service = self._service()
+        with self.assertRaises(AuthorityDenied):
+            service.root_setup_choice_signer()
+        with self.assertRaises(AuthorityDenied):
+            service.root_choice_revocation_signer()
+
+    def test_setup_choice_signer_input_is_finite_canonical_json(self):
+        from hermes_installer.authority.service import _validate_setup_choice_record_bytes
+
+        raw = b'{"purpose":"public-free-web-read","schema":1}'
+        self.assertEqual(
+            _validate_setup_choice_record_bytes("public-free-web-read", raw), raw)
+        for purpose, payload in (
+            ("unbounded-purpose", raw),
+            ("public-free-web-read", b'{ "purpose":"public-free-web-read","schema":1}'),
+            ("public-free-web-read", b'{"purpose":"public-free-web-read","purpose":"private-input-routes","schema":1}'),
+            ("public-free-web-read", b'{"value":NaN}'),
+        ):
+            with self.subTest(purpose=purpose, payload=payload):
+                with self.assertRaises(AuthorityDenied):
+                    _validate_setup_choice_record_bytes(purpose, payload)
+
+    def test_setup_choice_key_file_identity_is_rechecked(self):
+        binding = PrincipalBinding(
+            1234, "principal:key", "profile:key", "namespace:key",
+            frozenset({"plugin.web.read"}),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "authority.key"
+            key_path.write_bytes(b"x" * 32)
+            key_path.chmod(0o600)
+            service = AuthorityService.from_key_file(
+                key_path, key_id="authority-key-file-test",
+                expected_uid=os.geteuid(), bindings_by_uid={binding.uid: binding},
+                rules={}, handlers={},
+            )
+            service._verify_setup_choice_key_file_current()
+            replacement = Path(directory) / "replacement.key"
+            replacement.write_bytes(b"y" * 32)
+            replacement.chmod(0o600)
+            replacement.replace(key_path)
+            with self.assertRaises(AuthorityDenied):
+                service._verify_setup_choice_key_file_current()
+
 if __name__ == "__main__":
     unittest.main()
