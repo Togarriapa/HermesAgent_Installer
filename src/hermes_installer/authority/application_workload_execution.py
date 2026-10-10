@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import http.server
 import ipaddress
 import json
 import math
@@ -222,6 +223,111 @@ class RootApplicationQualificationContext:
     fixture_url: str | None
     observed_request_sha256: str
     revocation_epoch: int
+
+
+@dataclass(frozen=True, slots=True)
+class RootApplicationFixtureReceipt:
+    """Receipt for a live, root-owned loopback fixture listener."""
+    schema: int
+    handle: str
+    fixture_id: str
+    setup_session_id: str
+    controller_binding_handle: str
+    service_generation_digest: str
+    url: str
+    issued_monotonic: float
+    expires_monotonic: float
+
+
+class RootOwnedApplicationFixtureServer:
+    """Serve one fixed bounded fixture on an owned IPv4 loopback socket.
+
+    The listener owns its socket and thread and emits a receipt only after the
+    socket is listening. It has no URL, content, or bind-address inputs.
+    """
+    _BODY = b"<!doctype html><title>Hermes qualification fixture</title><p>fixture only</p>"
+
+    def __init__(self, *, controllers: Any, monotonic: Any, service_generation_digest: str,
+                 ttl_seconds: float = 120.0):
+        if (not _digest(service_generation_digest) or not 0 < ttl_seconds <= 300
+                or not callable(monotonic)):
+            raise ValueError("application fixture server configuration is invalid")
+        self._controllers = controllers
+        self._clock = monotonic
+        self._generation = service_generation_digest
+        self._ttl = float(ttl_seconds)
+        self._lock = threading.RLock()
+        self._server: http.server.ThreadingHTTPServer | None = None
+        self._thread: threading.Thread | None = None
+        self._receipt: RootApplicationFixtureReceipt | None = None
+
+    def start(self, *, setup_session_id: str, controller_binding_handle: str) -> RootApplicationFixtureReceipt:
+        if (not isinstance(setup_session_id, str) or not setup_session_id
+                or not _handle(controller_binding_handle)):
+            raise AuthorityDenied("application.fixture", "fixture requires a live setup session and controller")
+        with self._lock:
+            if self._receipt is not None:
+                raise AuthorityDenied("application.fixture", "fixture listener is one-use")
+            binding = self._controllers.resolve_binding(controller_binding_handle)
+            if binding is None or self._controllers.verify_binding(binding) is not True:
+                raise AuthorityDenied("application.fixture", "setup controller binding is not current")
+            body = self._BODY
+
+            class Handler(http.server.BaseHTTPRequestHandler):
+                def do_GET(self) -> None:
+                    if self.path != "/fixture" or self.headers.get("Host", "").split(":", 1)[0] not in {"127.0.0.1", "localhost"}:
+                        self.send_error(404)
+                        return
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    self.wfile.write(body)
+
+                def log_message(self, *_: Any) -> None:
+                    return
+
+            server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            server.daemon_threads = True
+            server.timeout = 0.25
+            thread = threading.Thread(target=server.serve_forever, name="hermes-app-fixture", daemon=True)
+            thread.start()
+            now = self._clock()
+            expiry = min(now + self._ttl, float(binding.expires_monotonic))
+            if expiry <= now:
+                server.shutdown()
+                server.server_close()
+                raise AuthorityDenied("application.fixture", "setup controller lease has expired")
+            host, port = server.server_address
+            receipt = RootApplicationFixtureReceipt(1, secrets.token_urlsafe(32), "browser-fixture",
+                setup_session_id, controller_binding_handle, self._generation,
+                f"http://{host}:{port}/fixture", now, expiry)
+            self._server, self._thread, self._receipt = server, thread, receipt
+            return receipt
+
+    def resolve(self, handle: str, *, setup_session_id: str,
+                 service_generation_digest: str) -> RootApplicationFixtureReceipt:
+        with self._lock:
+            receipt, server, thread = self._receipt, self._server, self._thread
+        if (receipt is None or receipt.handle != handle or receipt.setup_session_id != setup_session_id
+                or receipt.service_generation_digest != service_generation_digest
+                or service_generation_digest != self._generation or receipt.expires_monotonic <= self._clock()
+                or server is None or thread is None or not thread.is_alive()
+                or server.socket.fileno() < 0 or server.server_address[0] != "127.0.0.1"
+                or not _owned_loopback_url(receipt.url)):
+            raise AuthorityDenied("application.fixture", "owned fixture listener receipt is stale")
+        binding = self._controllers.resolve_binding(receipt.controller_binding_handle)
+        if binding is None or self._controllers.verify_binding(binding) is not True:
+            raise AuthorityDenied("application.fixture", "fixture controller binding is stale")
+        return receipt
+
+    def close(self) -> None:
+        with self._lock:
+            server, self._server, self._thread = self._server, None, None
+        if server is not None:
+            server.shutdown()
+            server.server_close()
 
 
 @dataclass(frozen=True, slots=True)
