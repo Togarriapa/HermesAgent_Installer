@@ -626,3 +626,10 @@ The installer SHALL verify current signed source choice/revocation and active ad
 #### Scenario: Original signed choice is revoked under unchanged active pointer
 - **WHEN** the root journal choice epoch/revocation changes
 - **THEN** the adoption/current permission denies despite an unchanged policy pointer and never extends an expired setup or runtime lease
+
+### Requirement: Prepared source module layout v154
+The installer SHALL bind the two reviewed worker source members with source-module role and the root-imported definition adapter with its distinct module identity.
+
+#### Scenario: Prepared worker source is available before worker launch
+- **WHEN** a verified held release includes the exact source-module bytes
+- **THEN** the factory may prove source membership without claiming root import or live worker origin, and later worker evidence remains independently required
