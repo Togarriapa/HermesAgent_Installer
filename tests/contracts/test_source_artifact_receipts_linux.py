@@ -21,7 +21,10 @@ from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
 from hermes_installer.authority.setup_policy_publication import (
     PolicyPublicationReceiptResolver, RootSetupPublicationReceipt,
 )
-from hermes_installer.authority.source_artifact_receipts import build_root_schema_receipt_runtime
+from hermes_installer.authority.source_artifact_receipts import (
+    RootCatalogArtifactObserver, SourceArtifactReceiptDenied,
+    build_root_schema_receipt_runtime,
+)
 from hermes_installer.protected_enrollment import ProtectedRootJournalCatalog, RootJournalSelection
 
 
@@ -142,6 +145,38 @@ class RootSchemaDerivationLinuxTests(unittest.TestCase):
             registry = source_runtime.derivations
             self.assertIs(source_runtime.artifact_receipts.catalog, catalog)
             self.assertEqual(source_runtime.artifact_receipts.root, receipt_root)
+            observer = RootCatalogArtifactObserver.from_root_runtime(bindings, enrollment)
+            held_tree = observer.observe(source.artifact_id, source.sha256, materialize_tree=True)
+            try:
+                self.assertTrue(observer.verify_current(held_tree))
+                member_fd = held_tree.open_member("schemas/arguments.json", observer=observer)
+                try:
+                    self.assertEqual(os.read(member_fd, len(schema)), schema)
+                    os.fchmod(member_fd, 0o644)
+                    with self.assertRaises(SourceArtifactReceiptDenied):
+                        observer.verify_current(held_tree)
+                    os.fchmod(member_fd, 0o444)
+                finally:
+                    os.close(member_fd)
+                self.assertTrue(observer.verify_current(held_tree))
+                os.fchmod(held_tree._fd, 0o755)
+                unexpected_fd = os.open(
+                    "unexpected.bin", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
+                    0o600, dir_fd=held_tree._fd,
+                )
+                try:
+                    os.write(unexpected_fd, b"unlisted")
+                finally:
+                    os.close(unexpected_fd)
+                os.fchmod(held_tree._fd, 0o555)
+                with self.assertRaises(SourceArtifactReceiptDenied):
+                    observer.verify_current(held_tree)
+                os.fchmod(held_tree._fd, 0o755)
+                os.unlink("unexpected.bin", dir_fd=held_tree._fd)
+                os.fchmod(held_tree._fd, 0o555)
+                self.assertTrue(observer.verify_current(held_tree))
+            finally:
+                held_tree.close()
             with mock.patch.object(derivation, "_active_publication_with_parent", lambda _handle: object()):
                 observation = registry.observe_packaged_schema(
                     schema_record=schema_row, parent_receipt_handle=parent,
