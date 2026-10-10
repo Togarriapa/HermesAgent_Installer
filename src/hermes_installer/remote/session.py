@@ -24,17 +24,21 @@ class SessionSpec:
  uid:int|None=None
  hermes_arguments:tuple[str,...]=()
  hermes_environment:Mapping[str,str]=field(default_factory=dict,repr=False)
+ xvfb_artifact_ref:str|None=None
  def __post_init__(self):
   if not self.user or self.user in {"root","pi"} or not self.hermes_executable.startswith("/"):raise SessionUnavailable("dedicated unprivileged session and absolute Desktop executable required")
   if len(self.hermes_build_sha)!=40 or not self.allowed_window_classes:raise SessionUnavailable("verified Hermes build and window allowlist required")
   if any(not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}",c) for c in self.allowed_window_classes):raise SessionUnavailable("invalid window class allowlist")
   if any("\x00" in a for a in self.hermes_arguments):raise SessionUnavailable("invalid Desktop argv")
+  if (not isinstance(self.xvfb_artifact_ref,str)
+      or not re.fullmatch(r"artifact:[A-Za-z0-9_.-]{1,128}:[0-9a-f]{64}",self.xvfb_artifact_ref)):
+   raise SessionUnavailable("a root-enrolled Xvfb child artifact reference is required")
   if set(self.hermes_environment)-_ALLOWED_ENV or any(not isinstance(v,str) or "\x00" in v for v in self.hermes_environment.values()):raise SessionUnavailable("Desktop environment contains an unapproved variable")
   for key,value in self.hermes_environment.items():
    parts=value.split(":") if key=="PATH" else [value]
    if any(not p.startswith("/") or ".." in p.split("/") for p in parts):raise SessionUnavailable("Desktop environment path must stay absolute and confined")
   if self.uid is not None and self.uid<=0:raise SessionUnavailable("dedicated unprivileged uid required")
 def server_policy(spec:SessionSpec)->Mapping[str,object]:
- return {"mode":"seamless","forbidden_modes":("desktop","shadow","proxy"),"start_child":(spec.hermes_executable,*spec.hermes_arguments),"clipboard":False,"printing":False,"file_transfer":False,"open_files":False,"audio":False,"webcam":False,"dbus":False,"shell":False,"commands":False,"start_new_commands":False,"control":False,"http_scripts":False,"bind_tcp":"127.0.0.1:14500","html5":"on","bind_unix":"private-runtime-dir-only","window_policy":"patched_default_deny_allowlist","allowed_window_classes":tuple(sorted(spec.allowed_window_classes)),"electron_sandbox":"verify_each_launch_before_ready","foreign_window_injection":"reject","denied_features":XPRA_DISABLED_FEATURES}
+ return {"mode":"seamless","forbidden_modes":("desktop","shadow","proxy"),"xvfb_artifact_ref":spec.xvfb_artifact_ref,"clipboard":False,"printing":False,"file_transfer":False,"open_files":False,"audio":False,"webcam":False,"dbus":False,"shell":False,"commands":False,"start_new_commands":False,"control":False,"http_scripts":False,"bind_tcp":"127.0.0.1:14500","html5":"on","bind_unix":"private-runtime-dir-only","window_policy":"patched_default_deny_allowlist","allowed_window_classes":tuple(sorted(spec.allowed_window_classes)),"electron_sandbox":"verify_each_launch_before_ready","foreign_window_injection":"reject","denied_features":XPRA_DISABLED_FEATURES}
 def require_sandbox_evidence(*,renderer_sandboxed:bool,no_sandbox_marker:bool):
  if not renderer_sandboxed or no_sandbox_marker:raise SessionUnavailable("Desktop renderer sandbox unavailable; remote session remains disabled")

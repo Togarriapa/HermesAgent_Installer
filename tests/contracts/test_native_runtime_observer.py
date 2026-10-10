@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 import hashlib
 import json
+import time
 from dataclasses import dataclass
 from types import MappingProxyType, ModuleType
 from types import SimpleNamespace
@@ -86,6 +87,7 @@ def _authorization(context):
         uid=context.uid, generation=context.generation,
         native_process_identity=context.native_process_identity,
         source_receipts=context.source_receipts,
+        request_digest=None,
     )
 
 
@@ -222,6 +224,59 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
         self.assertEqual(source_observers.calls[0][2]["payload_bytes"], b"exact root-validated response")
         self.assertEqual(source_observers.calls[1][2], "e" * 40)
 
+    def test_native_tool_result_clears_only_root_resolved_pending_call(self):
+        from hermes_installer.authority.native_runtime_observer import RootNativeToolEffectInvocation
+        from hermes_installer.authority.native_turn_observation import RootNativeTurnObservationRegistry
+
+        observer, source_observers = self._observer()
+        context = _context()
+        payload = b'{"operation":"selected"}'
+        digest = canonical_digest(payload)
+        authorization = _authorization(context)
+        authorization.request_digest = digest
+        identity = SimpleNamespace(
+            kernel_uid=2001, profile_id="profile-a", generation="generation-a",
+        )
+        invocation = RootNativeToolEffectInvocation(
+            invocation_handle="i" * 40, observed_call_handle="c" * 40,
+            response_observation_handle="o" * 40, response_receipt_handle="r" * 40,
+            native_request_handle="n" * 40, turn_handle="t" * 40,
+            producer_identity=identity, producer_pid=123, profile_id="profile-a",
+            generation="generation-a", package_id="package-a",
+            native_package_generation="package-generation-a",
+            service_generation_digest="a" * 64, adapter_id="adapter-a",
+            action_id="action-a", tool_name="selected_tool",
+            arguments_sha256="b" * 64, source_receipt_handles=("r" * 40,),
+            operation="plugin.resource-overlay-store.write", request_digest=digest,
+            expires_monotonic=time.monotonic() + 30.0,
+        )
+        service = SimpleNamespace(
+            _source_receipt_handles={}, service_generation_digest="a" * 64,
+        )
+        invocation_registry = object.__new__(NativeInvocationRegistry)
+        invocation_registry.service = service
+        invocation_registry.source_observers = source_observers
+        invocation_registry.resolve_invocation_for_effect = lambda *args: invocation
+        turn_registry = object.__new__(RootNativeTurnObservationRegistry)
+        turn_registry.service = service
+        recorded = []
+        turn_registry.record_tool_result = lambda *args, **kwargs: recorded.append((args, kwargs))
+        observer.attach_turn_observation(
+            invocation_registry=invocation_registry,
+            native_turn_observation_registry=turn_registry,
+        )
+        receipt = observer.observe_effect_result(
+            service=service, context=context, authorization=authorization,
+            operation="plugin.resource-overlay-store.write", target="overlay.target",
+            response_status=200, result_payload=b"exact result", peer_pid=123,
+            peer_pidfd=456, request_payload=payload, request_sha256=digest,
+        )
+        self.assertEqual(receipt, "r" * 40)
+        self.assertEqual(len(recorded), 1)
+        self.assertEqual(recorded[0][0][0], "t" * 40)
+        self.assertEqual(recorded[0][0][1], receipt)
+        self.assertEqual(recorded[0][1]["observed_call_handle"], "c" * 40)
+
     def test_wrong_operation_cancelled_or_closed_generation_produces_no_event(self):
         observer, source_observers = self._observer()
         context = _context()
@@ -313,13 +368,19 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
             producer_pid=123, producer_pidfd=456, gateway_identity=gateway,
             gateway_pid=124, gateway_pidfd=457, observer_id="observer",
             package_id="package", profile_id="profile-a", generation="generation-a",
+            native_package_generation="package-generation-a",
             loaded_package_proof="proof", expires_monotonic=20.0, calls={},
+            request_context=SimpleNamespace(), authorization=SimpleNamespace(retry_index=0),
+            target="provider://fixed", recipient="provider:fixed", request_digest="a" * 64,
+            retry_index=0, response_status=200, response_headers={}, response_bytes=body,
+            response_receipt_handle="s" * 43,
         )
         registry._responses = {response.handle: response}
         registry._deliveries = {response.delivery_handle: response}
         registry._calls = {}
         registry._invocations = {}
         registry._issued_handles = {response.handle, response.delivery_handle}
+        registry._retained_response_bytes = len(body)
         registry.process_resolver = lambda pid, _fd, **_kwargs: producer if pid == 123 else gateway
         registry._loaded_proof = lambda *_args: "proof"
 
@@ -418,7 +479,8 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
         digest = hashlib.sha256(args).hexdigest()
         action = NativeActionSelection("package-a", "profile-a", "generation-a",
                                        "hermes-installer.native-mcp-dispatch.v1",
-                                       "mcp-row-a", lambda value: value == args)
+                                       "mcp-row-a", "plugin.weather.lookup",
+                                       lambda value: value == args)
         registry = object.__new__(NativeInvocationRegistry)
         registry.service = service
         registry.source_observers = source_observers
@@ -444,8 +506,9 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
             adapter_id="hermes-installer.native-mcp-dispatch.v1", action_id="mcp-row-a",
             tool_name="weather.lookup", arguments_sha256=digest,
             parent_closure_digest="d" * 64, receipt_handles=("receipt-handle",),
-            observer_id="observer-id", loaded_package_proof=proof,
+            canonical_arguments=args, observer_id="observer-id", loaded_package_proof=proof,
             expires_monotonic=25.0, service_generation_digest="c" * 64,
+            operation="plugin.weather.lookup",
         )
         registry._invocations = {invocation.invocation_handle: invocation}
         registry._mcp_dispatches = {}

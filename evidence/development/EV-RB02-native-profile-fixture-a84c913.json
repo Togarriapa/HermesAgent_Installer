@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "evidence_id": "EV-RB02",
+  "acceptance_id": "AC16",
+  "state": "fixture_observation_only",
+  "acceptance_record_emitted": false,
+  "authenticated": false,
+  "candidate_sha": "a84c91343eaef781572b461f0649e53670a68b70",
+  "target": {
+    "connect_device_id": "48dfbc75-8877-40bb-b391-9b08301911ad",
+    "platform": "Raspberry Pi 5 Model B Rev 1.1",
+    "architecture": "aarch64",
+    "owner": "admin",
+    "uid": 1000,
+    "gid": 1000,
+    "checkout": "/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/acceptance/native-profile-a84c9134/checkout",
+    "checkout_mode": "0700",
+    "privilege": "unprivileged"
+  },
+  "pinned_hermes_source": {
+    "commit": "7085fbf7753266fc4943c55ac04926186bc90005",
+    "python": "/home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/pm-runtime/generations/2b4054f3c69c4c27a52777d5a9d36251/bin/python"
+  },
+  "execution": {
+    "started_at": "2026-10-09T21:36:18Z",
+    "ended_at": "2026-10-09T21:36:20Z",
+    "timeout_seconds": 60,
+    "helper_timeout_seconds": 45,
+    "exit_code": 0,
+    "tests_passed": 1,
+    "tests_failed": 0,
+    "tests_skipped": 0,
+    "command": [
+      "/home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/test-environment/gen-7e2c5b513dd14fcf93cb556cb732730a/venv/bin/python",
+      "-B",
+      "-m",
+      "pytest",
+      "-q",
+      "-rA",
+      "--basetemp=/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/acceptance/native-profile-a84c9134/tmp/pytest",
+      "/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/acceptance/native-profile-a84c9134/checkout/tests/contracts/test_native_install_handoff.py::test_selected_profile_and_skill_use_pinned_hermes_apis"
+    ],
+    "environment_names": [
+      "PATH",
+      "PYTHONPATH",
+      "PYTHONDONTWRITEBYTECODE",
+      "HOME",
+      "TMPDIR",
+      "HERMES_NATIVE_TEST_SOURCE",
+      "HERMES_NATIVE_TEST_PYTHON"
+    ],
+    "environment_values_recorded": false,
+    "private_log": {
+      "bytes": 370,
+      "sha256": "53d8583da01e39748e62f08d81499d843495e7b15d97529b5bec46faef835b10",
+      "raw_log_retained": false
+    }
+  },
+  "observations": [
+    "selected profile and skills loaded through pinned Hermes APIs in an isolated unprivileged test environment"
+  ],
+  "not_observed": [
+    "installer deployment",
+    "active protected enrollment",
+    "root receipt or authenticated target result",
+    "profile invocation",
+    "plugin side effect",
+    "model inference",
+    "Cloudflare or other account operation",
+    "TPU delegate execution"
+  ],
+  "assertions": {
+    "fixture_profile_skill_api_load": true,
+    "installed_target_acceptance": null,
+    "native_effect_mediation": null,
+    "account_and_provider_operations": null
+  },
+  "claim_limit": "This non-root fixture observation does not pass AC16 or any other acceptance ID."
+}
