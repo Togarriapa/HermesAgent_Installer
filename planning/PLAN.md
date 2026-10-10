@@ -136,3 +136,6 @@ Jarvis sole user-facing profile v205: plans/amendments/2026-10-10-jarvis-sole-us
 
 
 Existing HI173/178/197 actual fixture-subject NSS producer and unprivileged observation: `plans/amendments/2026-10-10-fixture-subject-nss-custody-v206.md`; all OPEN.
+
+
+Refinement v207: plans/amendments/2026-10-10-raspberry-pi-nft-dependency-observation-v207.md; HI-T207.1/VD-T207.2 exact Raspberry Pi libc6 dependency observation only, original HI-T09/HI-T13. Source/installed/kernel states separate; AC01..18 OPEN.

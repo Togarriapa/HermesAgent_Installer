@@ -1040,3 +1040,17 @@ The installer SHALL issue the v206 unprivileged fixture subject receipt only fro
 
 - **WHEN** an unrelated normal session, production marker, caller UID or copied receipt is offered as fixture authority
 - **THEN** launch denies and preserves unrelated identity/data, without enrollment or acceptance promotion
+
+
+## ADDED Requirements
+
+### Requirement: Exact Raspberry Pi vendor dependency evidence
+The installer SHALL admit vendor provenance only for the v207 exact libc6/u3/arm64 tuple in the reviewed Debian nft closure, using the pinned existing keyring and exact signed index/package/control/installed ELF chain. It SHALL preserve other package provenance, bounded metadata time and concrete per-archive keyring currentness, without mutating packages or trust.
+
+#### Scenario: Exact retained signed vendor row
+- **WHEN** the fixed live or protected cache witnesses verify with the exact primary key and still-valid signed complete index digest, selecting the exact installed package and matching all held ELF bytes
+- **THEN** the registry may issue only the existing short selected host-tool observation, subject to unchanged actual kernel/network proof
+
+#### Scenario: Current metadata selects a different libc package
+- **WHEN** only u4, an unsigned u3 package, expired cache, changed trust anchor or mismatched control/installed bytes is available
+- **THEN** selected network capability remains unavailable without version substitution, host package change or acceptance promotion

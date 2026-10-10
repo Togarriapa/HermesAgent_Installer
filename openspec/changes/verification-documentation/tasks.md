@@ -175,3 +175,6 @@ Existing HI-T160.1/HI-T197.2/VD-T197.4 include exact remote chooser and three-ro
 
 
 Existing HI-T173.1/HI-T178.2/HI-T197.3/VD-T197.4 include exact fixture subject NSS issuer/custody/cleanup in `plans/amendments/2026-10-10-fixture-subject-nss-custody-v206.md`; remain OPEN.
+
+- [ ] HI-T207.1: Implement v207 exact vendor libc6 signed dependency evidence and concrete per-archive keyring/index currentness, preserving other Debian package provenance.
+- [ ] VD-T207.2: Verify meaningful signed-cache/control/ELF and mutation failures plus actual target evidence separately; no package mutation or runtime acceptance inference.

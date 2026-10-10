@@ -302,3 +302,6 @@ Existing HI-T160.1/HI-T197.2/VD-T197.4 include exact remote chooser and three-ro
 - [ ] RB-T205.1: Implement Jarvis sole default user entry and protected isolated specialist map.
 - [ ] RB-T205.2: Preserve state/secrets with journaled idempotent owned migration and deny unowned conflicts.
 - [ ] VD-T205.3: Verify genuine backend/Desktop listing/routing/delegation and migration effects; acceptance separate.
+
+- [ ] HI-T207.1: Implement v207 exact vendor libc6 signed dependency evidence and concrete per-archive keyring/index currentness, preserving other Debian package provenance.
+- [ ] VD-T207.2: Verify meaningful signed-cache/control/ELF and mutation failures plus actual target evidence separately; no package mutation or runtime acceptance inference.

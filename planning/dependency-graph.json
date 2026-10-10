@@ -3092,5 +3092,18 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "raspberry_pi_nft_dependency_v207": {
+    "contract": "planning/raspberry-pi-nft-dependency-observation-v207.json",
+    "tasks": {
+      "HI-T207.1": [
+        "HI-T09",
+        "HI-T13"
+      ],
+      "VD-T207.2": [
+        "HI-T207.1"
+      ]
+    },
+    "acceptance": "AC01..AC18 OPEN"
   }
 }

@@ -133,3 +133,6 @@ Jarvis sole user-facing profile v205: direct user requirement and audited suppor
 
 
 Finite fixture-owned NSS subject v206: `plans/amendments/2026-10-10-fixture-subject-nss-custody-v206.md`. Existing HI173/178/197 source session issues genuine actual NSS receipt under its own fixture transaction/controller; no normal session scan/production marker authority. All acceptance OPEN.
+
+
+Raspberry Pi vendor dependency refinement v207: plans/amendments/2026-10-10-raspberry-pi-nft-dependency-observation-v207.md defines only exact libc6/u3/arm64 signed evidence for reviewed Debian nft, per-archive retained trust anchors, bounded live/cache metadata and unchanged installed ELF/kernel proof. No package/key mutation; all acceptance OPEN.
