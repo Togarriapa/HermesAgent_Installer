@@ -261,8 +261,7 @@ class RootSetupChoiceRegistry:
             raise AuthorityDenied("setup-choice.revocation", "runtime TTY observer is already attached or unavailable")
         from .root_runtime_foreground_tty import RootRuntimeForegroundTTYObserver
         if (type(observer) is not RootRuntimeForegroundTTYObserver
-                or getattr(observer, "_registry", None) is not self
-                or getattr(observer, "_bindings", None) is not self.service.root_runtime_bindings):
+                or observer.is_bound_to(self, self.service.root_runtime_bindings) is not True):
             raise AuthorityDenied("setup-choice.revocation", "foreground TTY observer is not this exact runtime composition")
         self.foreground_tty_observer = observer
 
@@ -511,16 +510,27 @@ class RootSetupChoiceRegistry:
         from .setup_policy_publication import PublishedSetupChoiceAdoption
         if type(adoption) is not PublishedSetupChoiceAdoption:
             raise AuthorityDenied("setup-choice.adoption", "exact published choice adoption is required")
-        current = self.resolve_current_adopted_choice_snapshot(
-            adoption.selection_handle, adoption.purpose)
+        adopted_at = getattr(adoption, "adopted_at_unix", None)
+        if (type(adopted_at) not in (int, float) or isinstance(adopted_at, bool)
+                or not math.isfinite(adopted_at)
+                or adopted_at < adoption.issued_at_unix
+                or adopted_at > adoption.setup_deadline_unix):
+            raise AuthorityDenied("setup-choice.adoption", "published choice adoption is outside its signed setup window")
+        if self._runtime_only:
+            current = self.resolve_current_adopted_choice_snapshot(
+                adoption.selection_handle, adoption.purpose)
+        else:
+            # During publication the actual setup TTY/session is still live.
+            # Validate through that retained source; runtime-mode resolution
+            # is reserved for post-setup consumers.
+            current = self.resolve_current_setup_choice(
+                adoption.selection_handle, adoption.purpose)
         if (current.signed_record_sha256 != adoption.signed_record_sha256
                 or current.choice_payload_sha256 != adoption.choice_payload_sha256
                 or current.choice_epoch != adoption.choice_epoch
                 or current.revocation_epoch != adoption.revocation_epoch
                 or current.key_id != adoption.key_id
                 or current.release_deployment_receipt_sha256 != adoption.release_deployment_receipt_sha256
-                or current.active_publication_receipt_handle != adoption.publication_receipt_handle
-                or current.service_generation_digest != adoption.service_generation_digest
                 or current.setup_session_handle != adoption.setup_session_handle
                 or current.transaction_handle != adoption.transaction_handle
                 or current.plan_id != adoption.plan_id
@@ -531,9 +541,12 @@ class RootSetupChoiceRegistry:
                 or current.setup_deadline_unix != adoption.setup_deadline_unix
                 or current.choice_payload.get("principal_id") not in (None, adoption.principal_id)
                 or _choice_profile_id_from_payload(current.choice_payload, current.purpose) != adoption.profile_id
-                or current.choice_payload.get("namespace_id") not in (None, adoption.namespace_id)
-                or current.source_choice_row_sha256 != adoption.signed_record_sha256):
+                or current.choice_payload.get("namespace_id") not in (None, adoption.namespace_id)):
             raise AuthorityDenied("setup-choice.adoption", "publisher adoption differs from its exact current signed source row")
+        if self._runtime_only and (
+                current.active_publication_receipt_handle != adoption.publication_receipt_handle
+                or current.service_generation_digest != adoption.service_generation_digest):
+            raise AuthorityDenied("setup-choice.adoption", "runtime adoption differs from its current active generation")
 
     def resolve_current_adopted_choice(
             self, selection_handle: str, expected_purpose: str,
@@ -959,16 +972,13 @@ class RootSetupChoiceRegistry:
                 or actual_active_publication_receipt.selection_handle != selection_handle):
             raise AuthorityDenied("setup-choice.adoption", "exact publisher choice adoption is required")
         receipt = actual_active_publication_receipt
-        # Check the independent active publisher proof first. It binds this
-        # setup choice to the current published generation and remains valid
-        # after the setup TTY lease expires; no setup lease is renewed here.
+        # Check the active publisher projection and its exact signed source
+        # row. Adoption time is a historical admission boundary; setup expiry
+        # after a timely publication does not expire runtime configuration.
         try:
-            from .setup_policy_publication import PolicyPublicationReceiptResolver
-            current = PolicyPublicationReceiptResolver.resolve_current_choice_adoption(selection_handle)
+            receipt.verify_current(self)
         except Exception:
             raise AuthorityDenied("setup-choice.adoption", "publisher adoption is not current") from None
-        if current != receipt:
-            raise AuthorityDenied("setup-choice.adoption", "publisher adoption resolver returned another receipt")
         with self._lock:
             row = self._rows.get(selection_handle)
         if row is None:
@@ -980,8 +990,12 @@ class RootSetupChoiceRegistry:
                 or type(row.get("choice_epoch")) is not int
                 or type(row.get("revocation_epoch")) is not int):
             raise AuthorityDenied("setup-choice.record", "published setup choice row is malformed")
-        if time.time() >= row["setup_deadline_unix"]:
-            raise AuthorityDenied("setup-choice.expired", "expired setup intent cannot be adopted")
+        adopted_at = getattr(receipt, "adopted_at_unix", None)
+        if (type(adopted_at) not in (int, float) or isinstance(adopted_at, bool)
+                or not math.isfinite(adopted_at)
+                or adopted_at < row["issued_at_unix"]
+                or adopted_at > row["setup_deadline_unix"]):
+            raise AuthorityDenied("setup-choice.expired", "setup intent was not adopted within its original deadline")
         payload = row["choice_payload"]
         profile_id = _choice_profile_id_from_payload(payload, row["purpose"])
         principal_id = payload.get("principal_id")

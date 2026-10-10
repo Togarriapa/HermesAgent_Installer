@@ -393,7 +393,7 @@ class RootRuntimeBindings:
         try:
             snapshot = registry.resolve_current_adopted_choice_snapshot(
                 adoption.selection_handle, "public-free-web-read")
-            adoption.verify_current()
+            adoption.verify_current(registry)
         except Exception:
             raise EnrollmentDenied("signed public-web choice or publisher adoption is stale") from None
         if type(snapshot) is not RootSetupChoiceSnapshot:
