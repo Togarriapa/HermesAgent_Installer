@@ -16,6 +16,13 @@ from dataclasses import InitVar, dataclass
 from pathlib import Path
 from typing import Literal
 
+from hermes_installer.authority import qualification_resource_cron_recipe as task_recipe
+from hermes_installer.authority import qualification_resource_cron_schema as task_schema
+from hermes_installer.authority import root_controller_custody as _root_controller_custody
+from hermes_installer.authority import installer_release as _installer_release
+from hermes_installer import managed_process_custodian as _managed_process_custodian
+from hermes_installer import protected_enrollment as _protected_enrollment
+
 
 _SUITES = frozenset({"resource-cron-task-v1", "display-xauthority-v1"})
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -88,9 +95,7 @@ class SelectedFixtureSourceCatalog:
     __slots__ = ("release", "_rows")
 
     def __init__(self, release: object):
-        from hermes_installer.authority.installer_release import VerifiedInstallerReleaseReceipt
-
-        if type(release) is not VerifiedInstallerReleaseReceipt:
+        if type(release) is not _installer_release.VerifiedInstallerReleaseReceipt:
             raise TypeError("fixture source catalog requires the sealed installed release receipt")
         release.verify_current()
         expected = {
@@ -273,18 +278,12 @@ class RootOwnedQualificationFixtureRegistry:
     def __init__(self, verified_installer_release: object, current_actor_observation: object,
                  selected_fixture_source_catalog: SelectedFixtureSourceCatalog,
                  root_journal: object, managed_process_custody: object):
-        from hermes_installer.authority.installer_release import (
-            RootActorObservation, VerifiedInstallerReleaseReceipt,
-        )
-        from hermes_installer.managed_process_custodian import ManagedProcessEffectHandler
-        from hermes_installer.protected_enrollment import RootJournalSelection
-
-        if (type(verified_installer_release) is not VerifiedInstallerReleaseReceipt
-                or type(current_actor_observation) is not RootActorObservation
+        if (type(verified_installer_release) is not _installer_release.VerifiedInstallerReleaseReceipt
+                or type(current_actor_observation) is not _installer_release.RootActorObservation
                 or type(selected_fixture_source_catalog) is not SelectedFixtureSourceCatalog
                 or selected_fixture_source_catalog.release is not verified_installer_release
-                or type(root_journal) is not RootJournalSelection
-                or type(managed_process_custody) is not ManagedProcessEffectHandler):
+                or type(root_journal) is not _protected_enrollment.RootJournalSelection
+                or type(managed_process_custody) is not _managed_process_custodian.ManagedProcessEffectHandler):
             raise QualificationFixtureUnavailable("qualification requires held production root objects")
         if os.geteuid() != 0 or not sys_platform_linux():
             raise QualificationFixtureUnavailable("qualification requires isolated Linux root")
@@ -337,13 +336,10 @@ class RootOwnedQualificationFixtureRegistry:
             if len(interpreter_rows) != 1 or os.path.realpath(interpreter[0]) != os.path.realpath(
                     self.release.release_root / interpreter_rows[0].relative_path):
                 raise QualificationFixtureUnavailable("installed interpreter member is not uniquely pinned")
-            from hermes_installer.authority.root_controller_custody import (
-                ControllerExecutablePin, SystemdMainPidInspector,
-            )
             row = interpreter_rows[0]
-            pin = ControllerExecutablePin(row.artifact_id, self.release.release_root / row.relative_path,
-                                          row.sha256)
-            inspector = SystemdMainPidInspector()
+            pin = _root_controller_custody.ControllerExecutablePin(
+                row.artifact_id, self.release.release_root / row.relative_path, row.sha256)
+            inspector = _root_controller_custody.SystemdMainPidInspector()
             identity = inspector.inspect(unit_id, pin)
             if identity.pid != self.actor.pid:
                 raise QualificationFixtureUnavailable("current installed actor is not this unit MainPID")
@@ -407,8 +403,7 @@ class RootOwnedQualificationFixtureRegistry:
                     except OSError:
                         pass
             if identity is not None:
-                from hermes_installer.authority.root_controller_custody import SystemdMainPidInspector
-                SystemdMainPidInspector.close_pidfd(identity.pidfd)
+                _root_controller_custody.SystemdMainPidInspector.close_pidfd(identity.pidfd)
             raise
 
     def resolve_current_selection(self, selection: str | RootOwnedQualificationFixtureSelection
@@ -425,6 +420,92 @@ class RootOwnedQualificationFixtureRegistry:
             raise QualificationFixtureUnavailable("fixture selection is not retained by this registry")
         lease.verify_current()
         return lease
+
+    def release_selection(self, selection_handle: str, owned_publication: object) -> None:
+        """Remove the exact publisher-owned outputs and release this lease.
+
+        Names supplied by callers are never treated as cleanup authority.  The
+        publication object must be the sealed type minted by the dedicated
+        qualification publisher, and it must revalidate every held inode and
+        digest against this selection before unlinking anything.
+        """
+        if not isinstance(selection_handle, str) or not _HANDLE.fullmatch(selection_handle):
+            raise QualificationFixtureUnavailable("fixture selection handle is malformed")
+        lease = self._leases.get(selection_handle)
+        if lease is None:
+            raise QualificationFixtureUnavailable("fixture selection is not retained by this registry")
+        from hermes_installer.authority.qualification_publication import (
+            RootQualificationOwnedPublication,
+        )
+
+        if type(owned_publication) is not RootQualificationOwnedPublication:
+            raise QualificationFixtureUnavailable("cleanup requires the sealed owned publication")
+        if owned_publication.selection_handle != selection_handle:
+            raise QualificationFixtureUnavailable("publication belongs to another fixture selection")
+        lease.verify_current()
+        if owned_publication.verify_current(lease) is not True:
+            raise QualificationFixtureUnavailable("publisher could not verify its owned fixture entries")
+
+        # The publisher's type is trusted only for the exact fixed namespace;
+        # constrain it again here so a future producer expansion cannot turn
+        # this registry into a general root-owned recursive remover.
+        allowed = {
+            "fixture-authority.json": ("file",),
+            "fixture-key.bin": ("file",),
+            "fixture-session.json": ("file",),
+            "fixture-policy": ("directory",),
+            "fixture-policy/generation.json": ("file",),
+            "fixture-policy/selection.json": ("file",),
+        }
+        entries = tuple(owned_publication.entries)
+        names = [entry.name for entry in entries]
+        if len(names) != len(set(names)) or set(names) != set(allowed):
+            raise QualificationFixtureUnavailable("publisher manifest is outside the fixed cleanup set")
+        for entry in entries:
+            if entry.kind not in allowed.get(entry.name, ()):
+                raise QualificationFixtureUnavailable("publisher manifest entry kind is invalid")
+
+        # Remove child files through the held policy directory, then that
+        # directory, then flat run-root files.  Directory modes and inode
+        # identities were verified above, and all names remain fixed here.
+        policy_fd = os.open("fixture-policy", os.O_RDONLY | os.O_DIRECTORY
+                            | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=lease.fixture_root_fd)
+        try:
+            for name in ("generation.json", "selection.json"):
+                self._unlink_verified_entry(policy_fd, name, entries, "fixture-policy/" + name)
+        finally:
+            os.close(policy_fd)
+        self._unlink_verified_entry(lease.fixture_root_fd, "fixture-policy", entries,
+                                    "fixture-policy", directory=True)
+        for name in ("fixture-authority.json", "fixture-key.bin", "fixture-session.json"):
+            self._unlink_verified_entry(lease.fixture_root_fd, name, entries, name)
+        lease.cleanup_empty_owned_root()
+        del self._leases[selection_handle]
+        lease.close()
+
+    @staticmethod
+    def _unlink_verified_entry(parent_fd: int, name: str, entries: tuple[object, ...],
+                              manifest_name: str, *, directory: bool = False) -> None:
+        entry = next((candidate for candidate in entries if candidate.name == manifest_name), None)
+        if entry is None:
+            raise QualificationFixtureUnavailable("publisher manifest entry is missing")
+        current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        expected_type = stat.S_ISDIR(current.st_mode) if directory else stat.S_ISREG(current.st_mode)
+        if (not expected_type or (current.st_dev, current.st_ino) != (entry.device, entry.inode)
+                or stat.S_IMODE(current.st_mode) != entry.mode):
+            raise QualificationFixtureUnavailable("publisher output changed before cleanup")
+        if not directory:
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent_fd)
+            try:
+                if _hash_fd(fd) != entry.sha256:
+                    raise QualificationFixtureUnavailable("publisher output digest changed before cleanup")
+            finally:
+                os.close(fd)
+            os.unlink(name, dir_fd=parent_fd)
+        else:
+            if entry.sha256 is not None:
+                raise QualificationFixtureUnavailable("publisher directory manifest has a file digest")
+            os.rmdir(name, dir_fd=parent_fd)
 
     def _open_selected_journal(self) -> int:
         info = os.stat(self.root_journal.path, follow_symlinks=False)
@@ -531,16 +612,11 @@ def run_selected_installed_qualification(suite_id: str) -> RootInstalledQualific
     """
     if suite_id not in _SUITES:
         raise ValueError("qualification suite is outside the fixed installed catalog")
-    from hermes_installer.authority.installer_release import InstalledRootReleaseVerifier
-
-    release, actor = InstalledRootReleaseVerifier.from_current_root_process()
+    release, actor = _installer_release.InstalledRootReleaseVerifier.from_current_root_process()
     try:
         # These imports make the finite task assets part of the installed source
         # closure. Their held deployment rows are still checked by the release
         # receipt/actor verifier; source constants alone are not runtime proof.
-        from hermes_installer.authority import qualification_resource_cron_recipe as task_recipe
-        from hermes_installer.authority import qualification_resource_cron_schema as task_schema
-
         release.verify_current()
         actor.verify_current(release)
         required = {
