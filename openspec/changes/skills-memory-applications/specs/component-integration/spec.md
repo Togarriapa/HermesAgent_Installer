@@ -703,3 +703,74 @@ The installer SHALL record v124 actual protected root TTY service-enable configu
 
 - **WHEN** only user-private selection state or capture consent exists without the current root service-enable choice and active projection
 - **THEN** memory service startup is unavailable and no service authorization is inferred
+
+### Requirement: Actual observed private endpoint and separate model deployments
+
+The installer SHALL require v125 actual root-held endpoint/model/runtime/source-load/current process evidence for private memory route selection, separately for GLM5.2 extraction and embedding.
+
+#### Scenario: Model-list alias without verified source loading
+
+- **WHEN** an endpoint lists a model alias but no exact verified installed model/runtime/config/current load proof exists
+- **THEN** no deployment receipt is minted and private memory remains unavailable with the missing prerequisite stated
+
+### Requirement: Root selected existing model source tree observation
+
+The installer SHALL use v127 actual held root directory/source-member verification and finite authority signing for pre-existing model artifacts outside the static catalog.
+
+#### Scenario: Arbitrary directory or listed model alias
+
+- **WHEN** no genuine selected owned-directory/source inventory receipt exists
+- **THEN** the registry denies model source observation and does not infer source or deployment proof from a path or served alias
+
+### Requirement: Exact private model protected selection and held directory getters
+
+The installer SHALL resolve v128 exact protected endpoint/model selection records and current owned-directory source getters independently of actual deployment observations.
+
+#### Scenario: A typed caller object lacks registry membership
+
+- **WHEN** a selection object or directory FD is not the exact retained current root selection
+- **THEN** source/model observation is denied even if its fields appear structurally valid
+
+### Requirement: Prepared qualification admission from actual runtime preparation
+
+The installer SHALL admit v130 finite prepared qualification from actual source/lock/environment/discriminated ABI probe/choice/consent/ownedfixture receipts without fabricating an active runtime row.
+
+#### Scenario: Node source has only Python runtime proof
+
+- **WHEN** Hyperframes lacks actual selected Node/Bun environment and Node ABI/import-origin probe evidence
+- **THEN** qualification remains unavailable with the missing prerequisite and cannot pass through a Python probe or RuntimeReview
+
+### Requirement: Source-selected offline application environment builds
+The system SHALL use only the four v132 setup build targets with current genuine source, lock, package closure, runtime, controller, namespace and qualification consent selections before producing an application environment receipt. Python and Bun/Node preparation and probes SHALL remain distinct, and no active app row SHALL be fabricated to prepare its environment.
+
+#### Scenario: Missing immutable package or native toolchain
+- **WHEN** a selected lock dependency, build hook, Bun/Node artifact or native dependency has no verified held source/integrity/license/toolchain proof
+- **THEN** the build denies that phase without network fallback, runtime receipt or functional acceptance.
+
+### Requirement: Setup intent selectors and current private profile proof
+The system SHALL distinguish stable root setup principal/namespace/private-purpose intent from current <=30s authenticated authority snapshots, using the v133 exact source/subject/session/generation joins. It SHALL mint a distinct private-purpose selection only from the actual adopted native principal/profile and verified v91 owner-private namespace source within actual root TTY configuration.
+
+#### Scenario: Identity changes during preparation
+- **WHEN** refreshed Authentik subject, groups, policy or selected namespace differs from the retained choice
+- **THEN** the phase denies without extending old receipts, widening permission or substituting a Resources profile.
+
+### Requirement: Source-bound GLM inventory and independent license observations v135
+The installer SHALL observe the exact bounded inventory, upstream MIT license and selected quantizer declaration pinned by v135 before model-source selection; metadata SHALL NOT substitute for actual immutable model member/runtime/load evidence.
+
+#### Scenario: Source metadata is available but model is absent
+- **WHEN** the three small source blobs verify but no complete selected model directory or owned deployment is observed
+- **THEN** source provenance is retained and deployment remains pending; no weights are downloaded and no acceptance is promoted
+
+### Requirement: Current consent and actual lock-selected package source receipts v136
+The installer SHALL acquire only exact supported-origin integrity-locked package bytes under the explicit acquire-locked-runtime-packages qualification phase and retain genuine scoped CAS/license evidence; deployment SHALL exclude editable installs and default dependency groups.
+
+#### Scenario: Old source-only consent or missing package evidence
+- **WHEN** acquisition lacks the explicit phase, exact lock integrity, allowed origin, current held bytes or required reviewed license eligibility
+- **THEN** the affected phase remains pending and no static catalog handle, unchecked cache or metadata assertion substitutes for proof
+
+### Requirement: Actual held existing model-store source selection v139
+The installer SHALL select an already-present model directory only through the fixed reviewed model-store root and actual protected directory/source observations, independently of private profile intent and deployment proof.
+
+#### Scenario: Model store or selected tree absent
+- **WHEN** the exact store/child/source inventory is absent, unowned, writable or changed
+- **THEN** selection remains pending with its exact prerequisite and no arbitrary path, download, copy or inferred model load substitutes

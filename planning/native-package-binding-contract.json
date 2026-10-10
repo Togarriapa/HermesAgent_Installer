@@ -1163,5 +1163,523 @@
       "HI-T123.2: factory/registration/assembler owner produce reviewed root staged definitions/role module source receipts before active publish; do not wait for pre-existing active rows.",
       "HI-T123.3: source/custody owner independently join actual loaded role/source proof to producer and exact selected action; test wrong role module/adapter/observer and two generations; actual native runtime acceptance open."
     ]
+  },
+  "web_content_root_receipt_v126": {
+    "schema": 1,
+    "id": "web-content-root-receipt-v1",
+    "requirements": [
+      "HI-T08",
+      "HI-T11"
+    ],
+    "why": "v120 bounded native web receipt shape has no actual root captured-content CAS producer. Existing PublicSourceReceipt transport hash/URL/TLS facts are observations, not root artifact or SourceReceipt registry membership.",
+    "owner_module": "hermes_installer.authority.web_content_artifacts",
+    "owner": "artifact broker producer; authority.artifacts may tiny public re-export; root web handler creates observation, native web adapter consumes metadata only.",
+    "API": "RootWebContentArtifactRegistry.from_authority_service(service,root_journal,web_transport_receipt_registry).publish_authorized_response(verified_root_web_response_observation)->RootWebContentArtifactReceipt; resolve_web_content_receipt(source_receipt_handle,*,profile_id,owner_generation,operation_id)->RootWebContentArtifactReceipt; read_selected_content(receipt_handle,verified_current_native_result_binding)->held read-only bounded bytes root-only.",
+    "observation": "VerifiedRootWebResponseObservation is a sealed root-only actual authorized plugin.web.read handler response. Exact native invocation/action/canonical request digest/context/current effect authorization/operation receipt/parent source closure selected profile+owner generation plus actual transport receipt and captured body bytes retained by root handler. Root registry validates service-issued execution membership/currentness and one-use response observation. No worker dictionary or callback boolean mints it; consumed authorization is referenced through retained effect execution receipt, never reused as a fresh effect.",
+    "observation_fields": [
+      "observation_handle",
+      "root_effect_receipt_handle",
+      "native_invocation_handle",
+      "profile_id",
+      "owner_generation",
+      "operation_id",
+      "canonical_request_sha256",
+      "parent_source_receipt_handles",
+      "transport_receipt_handle",
+      "body_sha256",
+      "body_size_bytes",
+      "media_type",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "artifact_id": "web-content:<lowercase64 raw_body_sha256>",
+    "artifact_identity": "Dynamic bounded captured content only, not a static seed ArtifactCatalog row. Existing generic artifact ID regex is not broadened; this dedicated root registry resolves exact namespace and actual held CAS identity. SHA addresses bytes, while receipt handle separately binds per-profile/current invocation/provenance. Equal public bytes never merge private authority/source contexts.",
+    "CAS": "ProtectedRootJournal private root child web-content/<SHA256(profile_id UTF8)>/objects/<raw_body_sha256>; secure owner0 mode0700 parents nofollow, exclusive tmp write/fsync/atomic create or exact existing-byte reopen, immutable0400/0444 file no execute, held FD/dev/inode/size/hash. <=2097152 raw bytes and existing lower fetch cap; quota/lease cleanup under same owner profile, no path crossing worker API. Empty body may be retained transport observation but cannot mint v120 positive-size artifact receipt.",
+    "receipt_fields": [
+      "artifact_id",
+      "sha256",
+      "size_bytes",
+      "media_type",
+      "profile_id",
+      "owner_generation",
+      "operation_id",
+      "source_receipt_handle",
+      "expires_monotonic"
+    ],
+    "retained_private_fields": [
+      "receipt_handle",
+      "boot_id",
+      "CAS_device",
+      "CAS_inode",
+      "root_effect_receipt_handle",
+      "native_invocation_handle",
+      "canonical_request_sha256",
+      "parent_source_receipt_handles",
+      "transport_receipt_handle",
+      "transport_observation_sha256",
+      "captured_body_sha256",
+      "current_service_profile_generation",
+      "issued_monotonic",
+      "expires_monotonic",
+      "revocation_epoch",
+      "signature"
+    ],
+    "source_receipt_domain": "source_receipt_handle is this dedicated registry opaque root observed web-content provenance receipt, not fabricated SourceObserverRegistry ingress token or provider-authority SourceReceipt. Native result validator calls this exact resolver. Root transcript/memory source collector retains and resolves its transport/content/effect/parent ancestry; text remains untrusted-public-source with authority none and original parent sensitivity restrictions. Never promote web dictionary to signed source authority or strip parent private lineage.",
+    "serializer": "Root web handler publishes actual captured raw bytes and joins PublicSourceReceipt actual TLS/peer/status/redirect/request facts to the same authorized fetch. Existing native outer key set url/content_type/content/untrusted_source/authority/redirects/source_receipt unchanged; source_receipt replaced only by genuine resolved v120 metadata. content decoding comes from captured bytes through selected charset/content serializer; raw bytes SHA remains raw bytes, not string re-encoding hash. Root content validator checks this join. No response URL/header/receipt hash from caller accepted as authority.",
+    "currentness": "Cap <=30s by selected effect/native invocation/profile/source leases; validate service/owner generation/current registry/signature/source ancestry/transport/CAS each resolve and before transcript use. Expire/revoke closes FDs and invalidates handles; new boot cannot adopt old monotonic receipt without fresh actual observation. v120 receipt numeric finite expiry and canonical result <=2MiB unchanged. No redirect policy broadened by result schema maxItems32.",
+    "tasks": [
+      "HI-T126.1: broker implement actual bounded dynamic root CAS/response observation/receipt resolver and root handler callpoint, distinct transport versus source/artifact proof.",
+      "HI-T126.2: web/native/turn owners consume exact typed root receipt projection and retained ancestry; no synthesized opaque handles.",
+      "HI-T126.3: test forged effect/native/transport, false CAS hash/inode, profile/owner/expiry mismatch, duplicate bytes across profiles, output limits and untrusted content/source semantics; real account/runtime acceptance open."
+    ]
+  },
+  "native_process_role_delivery_v134": {
+    "schema": 1,
+    "requirements": [
+      "HI-T08",
+      "HI-T09",
+      "HI-T11"
+    ],
+    "why": "v123 active role records exist but actual compiled entrypoint/resolver deliver no process-role selection to worker. RootSelectedPluginEffects cannot honestly observe role imports from adapter labels. Delivery of selected metadata is distinct live import evidence.",
+    "producer": "Root native assembler takes sealed v123 RootNativeAssemblyDefinitions.process_role_records from actual root selection, never active-before-assembly or caller role rows. Root validates actual role source/module/closure member/observer/action/registration/workflow FKs before serialization.",
+    "manifest_fields": [
+      "process_role_records",
+      "process_role_records_sha256"
+    ],
+    "row_shape": "Exact v123 NativeProcessRoleRecord 16-field shape unchanged. process_role_records canonical array sorted role_id; unique role IDs, finite exact selected records only. ID list fields sorted unique. No enclosing active generation digest serialized. Rows match package/profile/process generation/native package generation of selected assembly independently.",
+    "hash_domain": "process_role_records_sha256=SHA256(UTF8(json.dumps(sorted validated rows,sort_keys=True,separators=(comma,colon),ensure_ascii=False))); no newline in hash input. Entrypoint manifest is itself verified via existing selected mounted package manifest/output CAS artifact pin. No circular self-hash or caller-selected digest.",
+    "resolver": "Action resolver document adds process_role_records_sha256 only, not duplicate role rows. Root computes same exact row digest before resolver hashing; manifest pins actual resolver digest and process-role digest. Reader validates digest equality and exact manifest row hash, then resolves roles from verified manifest. Source action/effect/resolver records remain distinct. No role labels inferred from adapters.",
+    "consumer": "RootSelectedPluginEffects adds process_role_records and process_role_records_sha256 populated only by validated selected manifest/closure reader. Pinned native loader receives same authenticated mount/selection; reads these fields before emitting loaded role observations, not ordinary Hermes config/cache/RPC challenge or ambient discovery. LoadedPackageClosureProof joins root-selected manifest roles, but metadata alone never means imported/ready.",
+    "live_import_observation": {
+      "wire_key": "loaded_process_roles",
+      "row_fields": [
+        "role_id",
+        "module_name",
+        "closure_member_path",
+        "module_file_sha256",
+        "module_file_device",
+        "module_file_inode",
+        "module_file_size_bytes"
+      ],
+      "rule": "Only actual selected role modules found in the pinned loader current sys.modules/import-origin observations after required import. Exact module_name and resolved origin must equal selected read-only mounted closure member. Open no-follow regular file, observe actual bytes/stat/hash; never synthesize a live import row merely enumerating manifest. Duplicate/unknown role/module/path or changed loaded origin denies. The finite authenticated existing loader event binds package/profile/process generation/native generation/process PID/start/UID/cgroup/mount namespace/load-event nonce/lease; no worker supplied process role authority. Root reopens selected held mounted member independently, validates manifest/role source receipt/current PIDFD+kernel/mount+event identity and matches actual module stat/hash before accepting.",
+      "generation": "Process generation and native package generation remain separate explicit joins. Do not require equal generations or substitute one field for both.",
+      "effect_identity": "Registration observation identifies exact registration_id; selected effect invocation identifies action_binding_id/action_id per reviewed projection; live process-role identity is role_id. No interchange or role from adapter label.",
+      "retention": "Root LoadedPackageClosureProof/current registry retains manifest role selection digest plus actual validated import rows/origin evidence digest and original event/proc/mount/source receipts. No new wildcard source kind or generic role-mint RPC; incomplete imports remain unavailable. LoadedPackageClosureProof API details owned custody/loader implementation, preserving this fixed fact schema/currentness."
+    },
+    "bounds": "Inherit selected closure/package manifest and existing loader-message bound; role/import arrays additionally <=256 records with normalized paths/module/ID constraints already v123. Exceeding existing loader byte cap denies rather than truncates facts.",
+    "tasks": [
+      "HI-T134.1 native assembler: exact manifest role projection/hash and resolver digest join from sealed preactive definitions; CAS/role/FK/source mismatch tests",
+      "HI-T134.2 boundary/loader/custody: validated selected role delivery and actual import event proof, root held member/PIDFD/mount currentness, no catalog-only loaded claim",
+      "HI-T134.3 source/factory/runtime: root validated loaded-role proof to current selected observer registration/action joins; missing/changed role/import denies"
+    ],
+    "status": "No operational readiness or AC promotion; frozen baseline and original scope unchanged."
+  },
+  "native_policy_preparation_source_v137": {
+    "schema": 1,
+    "requirements": [
+      "HI-T03",
+      "HI-T08",
+      "HI-T09",
+      "HI-T11",
+      "R0060",
+      "R0067"
+    ],
+    "why": "Actual RootSetupChoices has no effect/target/observer/process-role configuration. Reviewed capability selection is prepared-empty. Existing v113 action/registration/workflow records and v123 roles are exact data shapes, not actual permission producers. Initial assembly must prepare those records from genuine configuration without requiring already-active native_packages.",
+    "owner_module": "hermes_installer.authority.native_policy_preparation",
+    "registry": "RootNativePolicyPreparationRegistry",
+    "constructor": "from_root_setup(selected_installation_binding,root_principal_selection_registry,root_component_target_registry,root_release_module_registry,root_native_registration_projection_registry,root_schema_observation_registry,root_journal,authority_service)",
+    "factory_call": "RootBootstrapSession.observe_native_policy_configuration()->RootNativePolicyPreparationSelection; same root-only normal installer configuration, not worker RPC. Factory composes registry and its actual source-specific target adapters.",
+    "selection_fields": [
+      "selection_handle",
+      "choice_observation_id",
+      "setup_session_id",
+      "transaction_handle",
+      "plan_sha256",
+      "prepared_generation_id",
+      "prepared_generation_digest",
+      "principal_selection_handle",
+      "namespace_selection_handle",
+      "principal_binding_sha256",
+      "namespace_binding_sha256",
+      "service_profile_id",
+      "service_generation",
+      "resource_profile_selection_handle",
+      "package_id",
+      "native_package_generation",
+      "selected_component_ids",
+      "selected_registration_ids",
+      "selected_action_binding_ids",
+      "target_selection_handles",
+      "source_role_selection_handles",
+      "private_input_consent_selection_handle",
+      "controller_binding_handle",
+      "selection_sha256",
+      "issued_monotonic",
+      "expires_monotonic",
+      "revocation_epoch"
+    ],
+    "selection_rule": "Actual foreground root TTY installed actor/normal session presents source-reviewed finite component/registration/action configuration from the current held installer release. No auto-grant all families/actions or defaults for accounts/owned targets/credentials/egress. Component choice describes finite permitted setup effects and current user task versus setup distinction; secure masked vault intake only for explicitly selected account config. Root records raw choice as intent, then re-resolves current v133 principal/namespace/actual controller and independent source-specific target/permission evidence. Choosing source inventory or adopting System does not certify account/site rights. Source map v99/v113 establishes names/schema/selector/workflow facts only. All selected fields come from registry-owned actual observations, no caller JSON/path/target strings accepted by assembly API. Existing resource profile selector remains independent of service profile; not equated or aliased.",
+    "target_type": "RootPreparedNativeTargetSelection",
+    "target_fields": [
+      "selection_handle",
+      "native_policy_selection_handle",
+      "component_id",
+      "adapter_id",
+      "target_contract_artifact_id",
+      "target_contract_sha256",
+      "target_contract_source_receipt_handle",
+      "configuration_schema_id",
+      "configuration_schema_sha256",
+      "configuration_observation_handle",
+      "principal_selection_handle",
+      "namespace_selection_handle",
+      "profile_id",
+      "profile_generation",
+      "target_id",
+      "recipient",
+      "credential_reference_ids",
+      "account_observation_handle",
+      "owned_target_observation_handle",
+      "permission_observation_handle",
+      "backend_generation",
+      "configuration_sha256",
+      "issued_monotonic",
+      "expires_monotonic",
+      "revocation_epoch"
+    ],
+    "target_producer": "RootNativeComponentTargetRegistry, factory-composed source-specific adapters, observes actual selected backend config using reviewed installed component source/schema and current authenticated read-only SDK/API or root-local owned-store/artifact observation. Implement as finite component adapters, never generic HTTP/argv/caller headers. Account/owned-target/permission receipt handles are nullable only where the reviewed component contract has no such prerequisite (e.g. a root-owned overlay or public read); otherwise absent proofs leave that component configurable pending. Root TTY declaration/vault key possession alone is not account eligibility, remote ownership or write permission. Credential reference resolves exact root vault scope/principal/backend; secrets stay root-held. Numeric/user/host/resource IDs are exact configuration-schema values observed and joined to source-specific account/target evidence, not model arguments. IDs target_id/effect_enrollment_id are internally generated stable root selection identities; actual source observer/target semantics and resolved resource/account are retained in registry.",
+    "target_API": "observe_selected_component_target(native_policy_selection_handle,component_id)->RootPreparedNativeTargetSelection; resolve_current_target(target_selection_handle,native_policy_selection_handle)->current typed source-specific target. Root factory invokes only component IDs present in held source registration projection. Currentness never extends stale credential/account/ownership evidence; fresh supported reads or precise pending.",
+    "effect_policy_type": "RootPreparedNativeEffectPolicy",
+    "effect_policy_fields": [
+      "receipt_handle",
+      "native_policy_selection_handle",
+      "target_selection_handle",
+      "action_binding_id",
+      "adapter_id",
+      "action_id",
+      "effect_enrollment_id",
+      "operation",
+      "capability",
+      "target_id",
+      "recipient",
+      "profile_id",
+      "profile_generation",
+      "principal_id",
+      "namespace_id",
+      "argument_schema_id",
+      "result_schema_id",
+      "action_source_receipt_handle",
+      "target_observation_digest",
+      "policy_sha256",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "effect_source": "Exact current PluginActionSchema supplies adapter/action/operation/source hash/backend argument and result schemas. Existing PluginEffectsFacade source enforces capability=plugin:<adapter_id> and target=plugin:<adapter_id>:<root-selected target_id>:<profile_generation>; this reviewed recipe is explicit, never inferred from tool labels. Effect policy is setup-owned selected intent only, no EffectAuthorization or worker HostContext. Writes/host changes require current actual Authentik System gate per v91 AND independent selected account/target permission; System never grants a backend by itself. Actual effect dispatch after activation retains exact payload/source/sensitivity/recipient/consent/account/budget/idempotency/task/destructive-confirmation gates. No installation probe write/payment/message is permitted.",
+    "capability_projection": "Root active compiler may derive selected protected effect rules and current reviewed capability tuple from these genuine source-reviewed staged policies after actual current subject and target validation; prepared principal capabilities remain empty. It does not require existing active rules merely to prepare the same first policy. This finite root-only setup publication authority is bound existing normal session/install transaction/current root actor, not a synthetic worker context. Post-activation worker capability projection still exact current v91 selected-rule intersection; no wildcard/infrastructure capability.",
+    "source_role_type": "RootPreparedNativeSourceRoleSelection",
+    "source_role_fields": [
+      "selection_handle",
+      "native_policy_selection_handle",
+      "role_id",
+      "package_id",
+      "native_package_generation",
+      "profile_id",
+      "profile_generation",
+      "role_artifact_id",
+      "role_sha256",
+      "role_source_receipt_handle",
+      "module_name",
+      "closure_member_path",
+      "role_source_revision",
+      "role_source_tree_sha256",
+      "observer_enrollment_ids",
+      "registration_ids",
+      "action_binding_ids",
+      "workflow_ids",
+      "source_definition_receipt_handle",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "source_role_rule": "Role definition uses actual reviewed native boundary/loader/process source role and RootReleaseModuleReceipt module_name/relative_path/bytes/source revision/tree, held installed release import closure; do not derive process role from action adapter artifact. The source definition supplies finite required observable source kinds/action bindings/capture schemas/delivery roles; registration source mapping alone does not supply a source issuer. Staged role policy has no PIDFD/import claim. Live proof is independently actual managed process/loaded module event per v123/v134 after launch. Root materializer selects exact closure member and verifies actual source bytes before recording role; compiled package hash is a post-output observation, never a preactive invented hash.",
+    "prepared_observer_type": "RootPreparedSourceObserverPolicy",
+    "prepared_observer_fields": [
+      "observer_enrollment_id",
+      "native_policy_selection_handle",
+      "source_definition_receipt_handle",
+      "source_kind",
+      "origin_id",
+      "profile_id",
+      "principal_id",
+      "namespace_id",
+      "enrollment_id",
+      "profile_generation",
+      "producer_uid",
+      "producer_executable_sha256",
+      "package_id",
+      "native_package_generation",
+      "role_id",
+      "role_artifact_id",
+      "role_sha256",
+      "role_source_receipt_handle",
+      "source_action_id",
+      "source_action_binding_id",
+      "channel_id",
+      "capture_schema_id",
+      "target_id",
+      "recipient",
+      "allowed_parent_source_kinds",
+      "private_provider_route_ids",
+      "max_event_bytes",
+      "lease_seconds"
+    ],
+    "observer_rule": "Exact source-kind/capture schema/action/delivery role from held reviewed source definition and actual selected effect/workflow/input protocol; IDs explicit root minted. producer_uid is genuine selected service NSS receipt, executable SHA actual selected PM/runtime/operation recipe, never root controller relabeled as worker. No package_sha256 or enclosing policy generation digest before compilation: active publisher fills actual SourceObserverEnrollment.package_sha256 only from verified compiled closure receipt and injects enclosing digest outside rows. role/action/registration/workflow/observer foreign keys must match source and target selections. Initial native-input/private routes require actual purpose consent, never source flags. Receipt issuance waits for actual current PIDFD/namespace/package mount/loaded role proof, so prepared observer policy is not a SourceReceipt.",
+    "prepared_records_API": "prepare_selected_policy(selection_handle)->RootPreparedNativePolicyRecords; resolve_prepared_policy(records_handle,selected_installation_binding)->same current sealed root records. Uses actual source/schema/target/role observers and normal setup identity, no active catalog constructor.",
+    "prepared_records_fields": [
+      "records_handle",
+      "native_policy_selection_handle",
+      "selection_sha256",
+      "definition_source_receipt_handles",
+      "target_selection_handles",
+      "effect_policy_receipt_handles",
+      "source_role_selection_handles",
+      "action_records",
+      "registration_records",
+      "workflow_records",
+      "process_role_records",
+      "source_issuer_records",
+      "source_observer_policy_records",
+      "native_schema_records",
+      "native_schema_bytes",
+      "coverage_records",
+      "records_sha256",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "existing_record_joins": "action_records/registration_records/workflow_records exact v113; process_role_records exact v123; source_issuer_records exact existing SourceIssuerRecord, process generation distinct package generation. Each schema requires genuine RootCatalogArtifactObserver/schema derivation/source receipt bytes. Backend action schemas (61) remain separate from 42 external registration schemas/finite selector/workflow routes. Reviewed v112/v120/v121 wrapper artifacts are actual observations, not audited inventory copied as authority. MCP rows require actual selected authenticated tools/list schema/server evidence or packaged selected schema, never a guessed server/action. Local four overlay registrations resolve exact current root-owned profile view CAS; four public registry handlers require actual selected finite immutable registry scopes and PUBLIC-source egress permission. They do not acquire invented PluginActionSchema/effect rows.",
+    "coverage_record_fields": [
+      "component_id",
+      "registration_id",
+      "configuration_state",
+      "missing_prerequisite_ids",
+      "resume_operation_id"
+    ],
+    "coverage_rule": "Retain all eighteen components and all 42 exact source registrations in coverage. configuration_state only selected-complete or configurable-pending; pending reports exact missing source/schema/account/target/permission/observer/runtime/route evidence and finite installer configure/resume action. No guessed result/schema/source proof or silent family omission. Only fully complete selected registration projections emit executable NativeCandidateIndex rows; coverage inventory is not candidate authority or a false readiness flag. Actual all-18 functional obligations stay open.",
+    "assembly_handoff": "RootNativeAssemblyDefinitions and RootNativeBootstrapAssemblySelection add native_policy_preparation_handle; actual registry resolves RootPreparedNativePolicyRecords into existing nonrecursive assembly inputs and definitions digest. Current compiler receipt is actual installed native_materialization module/import closure; source/Resources/profile/PM/NSS/materialization joins remain v84. Factory must not require active package/effect/source observer rows, and assembler must not invent them. Source policy can be staged before outputs; active publisher only atomically publishes when actual generated closure/manifest/resolver/index/overlay receipt joins succeed and current setup subject/target/source/choice evidence revalidates. Retain selected source/target evidence durable under publication registry/current receipt contract, not old setup TTL extension.",
+    "tasks": [
+      {
+        "id": "HI-T137.1",
+        "owner": "factory/native policy preparation",
+        "work": "Implement actual root TTY selected native component/action/target configuration and sealed preactive policy registry feeding existing assembly; finite choice/target/current identity/source proof failures and phase renewal."
+      },
+      {
+        "id": "HI-T137.2",
+        "owner": "component target/source owners",
+        "work": "Implement finite reviewed per-component target/account/vault/permission observation adapters and protected source-role/observer definition producer; preserve configurable pending for absent auth/rights/runtime, no installation-test writes/messages."
+      },
+      {
+        "id": "HI-T137.3",
+        "owner": "registration projection/source observer/native assembler/active compiler",
+        "work": "Produce exact 61 action/42 registration/workflow/process-role/schema/observer joins from actual staged records, real root source receipts; compile then atomically publish real outputs without active-before-assembly cycle, verify all-family coverage and missing proof denial."
+      }
+    ],
+    "acceptance": "All original AC open. Configuration/policy/source metadata is not live process, account functionality, provider/tool execution or production acceptance."
+  },
+  "public_input_web_permission_v138": {
+    "schema": 1,
+    "requirements": [
+      "PR-F03",
+      "HI-T11",
+      "RB-T08",
+      "R0060"
+    ],
+    "why": "Actual RootPrivateInputConsentRegistry permits only private eligible recipients and cannot authorize public web. Existing source receipt issuers otherwise have empty recipient ceilings. A PUBLIC input observation and purpose-specific public-web permission are independently required; native profile or private consent is insufficient.",
+    "owner_module": "hermes_installer.authority.root_public_input_permission",
+    "registry": "RootPublicInputPermissionRegistry",
+    "constructor": "from_root_runtime(authority_service,active_bindings,root_native_input_selection_registry,root_source_observer_registry,root_journal)",
+    "purpose": "public-free-web-read",
+    "configuration_producer": "RootBootstrapSession.observe_public_web_permission_selection records explicit root foreground TTY normal configuration under current installed actor/principal/namespace selectors and genuine selected EnrolledPublicWebScope. Show exact finite HTTPS hosts/path/query scopes and disclosure purpose, zero additional metered budget. No defaults or private consent reuse. Persistent selection is permission intent only; public classification requires a separate actual per-input source observation. Factory registry persists selection, active publisher binds it to same actual selected web effect enrollment/profile/current generation. Unconfigured choice remains precise pending, not inferred from PUBLIC profile names.",
+    "selection_type": "RootPublicInputPermissionSelection",
+    "selection_fields": [
+      "selection_handle",
+      "consent_id",
+      "purpose",
+      "choice_observation_id",
+      "setup_session_id",
+      "transaction_handle",
+      "plan_sha256",
+      "principal_selection_handle",
+      "namespace_selection_handle",
+      "principal_id",
+      "profile_id",
+      "namespace_id",
+      "web_scope_ids",
+      "web_scope_sha256",
+      "public_recipient_ids",
+      "allowed_operations",
+      "additional_metered_budget_usd",
+      "controller_binding_handle",
+      "issued_monotonic",
+      "expires_monotonic",
+      "revocation_epoch"
+    ],
+    "selection_rules": {
+      "purpose": "public-free-web-read",
+      "allowed_operations": [
+        "plugin.web.read"
+      ],
+      "budget": 0,
+      "scope": "Exact current protected EnrolledPublicWebScope enrollment_id/target_id/generation/principal/profile/recipient and bounded PublicReadTarget records. Source API existing components.plugin_public_https: hostname canonical public DNS, path_prefixes and query_keys bounded; no wildcard all hosts, local/private/reserved destinations, arbitrary authenticated headers/cookies or scheme. All DNS/connect/redirect/TLS checks and byte/deadline bounds remain source handler enforced at each request; permission does not authorize URL parameters to escape that scope. Target rows derive actual root reviewed normal config/source contracts, not worker URLs or route label public.",
+      "lease": "Persistent root setup choice is adopted into current actual active policy generation under publisher receipt; resolve each source/dispatch/retry as <=30s snapshot with same selected principal/profile/namespace/web scope/epoch/current loader. No old setup monotonic lease revival or unregistered bearer."
+    },
+    "public_source_observation": {
+      "type": "RootPublicNativeInputObservation",
+      "fields": [
+        "observation_handle",
+        "retained_input_selection_handle",
+        "input_sha256",
+        "input_size_bytes",
+        "source_observation_handle",
+        "public_permission_selection_handle",
+        "principal_id",
+        "profile_id",
+        "namespace_id",
+        "profile_generation",
+        "service_generation_digest",
+        "source_classification",
+        "parent_source_receipt_handles",
+        "controller_binding_handle",
+        "issued_monotonic",
+        "expires_monotonic"
+      ],
+      "source": "Actual root-observed explicit public input bytes supplied via foreground installer/native selected public-input entry or fixed source-reviewed PUBLIC qualification fixture, bound to exact selected live native input peer and retained root input selection/delivery. UI makes disclosed public use explicit for this exact input; root captures/hash retains the actual bytes outside argv/logs. Runtime selected source adapter is root-selected and validates actual provenance; worker flags or model claims never classify input. A public transport, private profile or untrusted website does not classify arbitrary human content PUBLIC.",
+      "classification": "source_classification is PUBLIC only with actual root selected public-source observation and this explicit purpose. Any parent sensitivity PRIVATE/UNKNOWN, credentials/private attachment/history/memory/delegation content or uncaptured input invalidates the PUBLIC path. No source ancestry stripping, masking hash or consent-based downgrade. Existing source trust aggregation preserved: public web responses remain untrusted-source authority none, not authorization evidence.",
+      "bounds": "Reuse actual selected input/source capture schema and max_event_bytes; exact current immutable input SHA/size and retained source handles, no generic new source kind. Source kind remains native-input. Root input coordinator/selection store owns actual source observation independently of native pending request pair."
+    },
+    "permission_type": "RootPublicInputPermission",
+    "permission_fields": [
+      "receipt_handle",
+      "consent_id",
+      "purpose",
+      "selection_handle",
+      "principal_id",
+      "profile_id",
+      "namespace_id",
+      "profile_generation",
+      "service_generation_digest",
+      "retained_input_selection_handle",
+      "input_observation_handle",
+      "input_sha256",
+      "web_scope_ids",
+      "web_scope_sha256",
+      "public_recipient_ids",
+      "allowed_operations",
+      "additional_metered_budget_usd",
+      "revocation_epoch",
+      "issued_monotonic",
+      "expires_monotonic",
+      "signature"
+    ],
+    "source_resolver": "resolve_for_selected_input(observed_public_input_proof,selected_input_binding)->RootPublicInputPermission; consumes only actual root retained input/public observation once, validates current registered purpose/scope/classification/peer/source ancestry and signed selected input proof. Not private-input or memory-capture consent.",
+    "current_resolver": "resolve_current_for_selection(receipt_handle,retained_input_selection_handle,expected_consent_id,expected_revocation_epoch)->same current typed RootPublicInputPermission; nonconsuming root-private resolution for every dispatch/retry. Confirms actual current profile/policy generation/web scope/permission epoch/lease and original retained input/public source identity; never reconsumes ingress proof, extends expiry, reclassifies parent or substitutes current unrelated input. Revocation cancels pending effect delivery and subsequent retries.",
+    "source_issuer_join": "SourceIssuerRecord and SourceObserverEnrollment add public_web_scope_ids (sorted unique tuple/list <=32, empty for nonpublic-selected issuers). RootRuntimeBindings resolves exact current EnrolledPublicWebScope rows matching principal/profile/process generation/recipient; no scope ID alone confers permission. RootNativeInputSelection retains optional public_input_permission_selection_handle from real root selection, mutually exclusive with a private consent purpose for that input. Root observed input proof/current permission selects one path; configuration can support both private and public inputs but each captured input has explicit independent classification and source ancestry. Do not auto-public label existing private input to produce a positive test.",
+    "authority_rule": "Dedicated existing root-selected source issuance path sets recipient_ceiling only to intersection of genuine current RootPublicInputPermission.public_recipient_ids and exact selected web scope recipients and every parent source ceiling, with allowed operations intersected to plugin.web.read. Source sensitivity must remain PUBLIC all ancestry; UNKNOWN/PRIVATE has empty public ceiling regardless permission. Existing source budget intersection stays zero additional. Authorization/revalidation always retains signed source receipts, checks every parent/current permission/scope/epoch/source lease and actual input identity. RootPrivateInputConsentRegistry remains private-only; no public provider chat/embedding/memory export permission is added.",
+    "retention": "Root-owned protected journal public-input-permission durable selection and signed actual per-input receipt membership, domain-separated existing AuthorityService finite signer. Root-private handles only. Public input bytes retained only under existing bounded input lifetime; revoke/expiry cleanup does not erase required receipt digest audit. No arbitrary sign/worker-issued consent endpoint.",
+    "tasks": [
+      {
+        "id": "PR-T138.1",
+        "owner": "factory/consent",
+        "work": "Actual same normal configuration public-web permission producer and current root source selection snapshots; no defaults/private alias."
+      },
+      {
+        "id": "HI-T138.2",
+        "owner": "source input/host authority",
+        "work": "Actual PUBLIC source observation and initial selected input proof -> signed finite permission/source ceiling; per-dispatch nonconsuming epoch revalidation, private/UNKNOWN ancestry negative tests."
+      },
+      {
+        "id": "RB-T138.3",
+        "owner": "web/native integration",
+        "work": "Current bounded public web scope projection, actual public-only fixture positive through genuine source/authority/transport/CAS/result joins; SSRF/redirect/private ancestry/revocation/zero-budget failures. Public fixture proves only fixture behavior, not live acceptance."
+      }
+    ],
+    "acceptance": "All original AC remain open. No live web/account/audio/host installation performed by this amendment; private sources remain forbidden public egress."
+  },
+  "registration_source_pin_refinement_v140": {
+    "schema": 1,
+    "requirements": [
+      "HI-T08",
+      "HI-T120",
+      "HI-T121",
+      "RB-T08"
+    ],
+    "why": "Committed source result wrapper now consumes actual v126 root web content receipt and normalized media type. Immutable v99 capture records old source bytes and cannot authenticate current implementation; exact updated module pin is a separate source cohort.",
+    "source_record": {
+      "module_name": "hermes_installer.components.plugin_local_voice_web",
+      "relative_path": "src/hermes_installer/components/plugin_local_voice_web.py",
+      "source_commit": "13dd3f0fbe92d85fd0ec93d2cbcfd33ed20670f0",
+      "source_url": "https://raw.githubusercontent.com/Togarriapa/HermesAgent_Installer/13dd3f0fbe92d85fd0ec93d2cbcfd33ed20670f0/src/hermes_installer/components/plugin_local_voice_web.py",
+      "sha256": "f46733a6e59788c94360187bb4d24369c5f3298984b6a351b190b1dca4feea84",
+      "size_bytes": 23963,
+      "native_tool_names": [
+        "epic_board",
+        "voice_speak",
+        "voice_transcribe",
+        "web_retrieve"
+      ]
+    },
+    "source_review": "Actual held source read at named clean owner checkout matches SHA/size. web_retrieve serializer retains exact v120/121 fields, actual v126 artifact handle/domain, current root operation equality, canonical HTTPS redirect chain, untrusted_source true/authority none; MIME normalized content_type matches raw artifact media_type. It deliberately does not compare raw response SHA to decoded content UTF8 bytes. Exact raw root receipt byte/transport identity is independently registry validated. Source handler max receipt metadata bound does not raise root transport/CAS bound. No account/HTTP/public-source permission or runtime success inferred from adapter tests.",
+    "producer_join": "Current RootReleaseModuleReceipt and source/schema observers must resolve this exact module from installed verified release/source closure before selecting current registration/action/workflow records. All four registrations sharing the module must bind this current source receipt/SHA, not only web_retrieve. Backend action adapter SHA source references follow actual module cohort. No arbitrary artifact ID alias or blanket hash replacement in old receipts. Legacy v99 source-only capture remains immutable and operational_projection=false.",
+    "projection": "Native registration capture owner re-runs actual source register calls under current typed selected context and verifies exact names/toolset/descriptions/full argument schemas; result schemas/source observers/selected target/effect/workflow proofs remain genuine independently observed v112/v113/v120/v123/v137. Existing 42registration/61backend route counts stay distinct. Do not copy old source receipt or assert registration names/arguments unchanged without actual capture.",
+    "tasks": [
+      {
+        "id": "HI-T140.1",
+        "owner": "native source/projection/factory",
+        "work": "Consume current held module pin, re-observe exact registration/action/schema source joins and current registration capture; stale source receipts/hash deny."
+      },
+      {
+        "id": "RB-T140.2",
+        "owner": "web/native integration",
+        "work": "Preserve genuine raw receipt/result/media/operation joins and PUBLIC-only egress positive with private ancestry/revocation negatives; actual runtime/account/ARM acceptance remains open."
+      }
+    ],
+    "acceptance": "Source pin/schema/fixture evidence only. All original AC open."
+  },
+  "registration_source_pin_refinement_v141": {
+    "schema": 1,
+    "requirements": [
+      "HI-T08",
+      "HI-T120",
+      "HI-T121",
+      "R0060"
+    ],
+    "why": "Actual committed financial_data_read source now returns exact bounded v120/v121 observations with genuine selected account alias. Current source hash differs historical source-only v99 inventory and requires fresh held receipt/projection joins.",
+    "source_record": {
+      "module_name": "hermes_installer.components.plugin_finance",
+      "relative_path": "src/hermes_installer/components/plugin_finance.py",
+      "source_commit": "2d2889be426d55a6db0c0c836db8bdfc068e0a9a",
+      "source_url": "https://raw.githubusercontent.com/Togarriapa/HermesAgent_Installer/2d2889be426d55a6db0c0c836db8bdfc068e0a9a/src/hermes_installer/components/plugin_finance.py",
+      "sha256": "ba87876d4bed36027822be008c85d094655226afcfab19d4509148685ff9e111",
+      "size_bytes": 61987,
+      "native_tool_names": [
+        "agent_live_wallet_action",
+        "agent_sandbox_wallet_action",
+        "financial_data_read",
+        "financial_execute_one_order"
+      ]
+    },
+    "source_review": "Independently measured actual clean committed source bytes. financial_data_read consumes exactly root effect {items,account_alias}, requires source-selected validated account alias (max128, no selected fallback) and normalizes provider/operation rows to exact v121 observations. Closed fields and scalar data<=64 keys, UTF8/scalar/nonfinite/2MiB bounds enforced; no credential/account blobs accepted or wrong provider/source alias promoted. This read result serialization does not grant financial trade/payment/wallet permissions or prove accounts functional. Execution/wallet bounded wrapper source and actual target/account/operation/task/destructive confirmation constraints remain v113/v120; a generic underlying object is untrusted bounded data, not successful verified execution.",
+    "producer_join": "Current RootReleaseModuleReceipt/source schema observation binds exact module SHA for all four affected registrations and source backend adapter schemas. Native projection owner re-runs actual typed register calls for current source and exact finite provider/operation/action selector maps, with genuine current target/effect/observer/schema policies v137. No backend action derived from native name or finance provider labels. Source-only v99 audit stays immutable/nonoperational; no old receipt hash alias/global replacement.",
+    "tasks": [
+      {
+        "id": "HI-T141.1",
+        "owner": "finance/native source/projection/factory",
+        "work": "Current installed source/schema receipt and fresh exact registration/finite selector capture against pinned module; stale/forged source, malformed observations/alias and forbidden account fields deny."
+      },
+      {
+        "id": "HI-T141.2",
+        "owner": "finance/native integration",
+        "work": "Actual bounded observation fixture path/source ancestry and separate finance/wallet account/effect/current permission failures; no outbound transaction or account/live acceptance claim."
+      }
+    ],
+    "acceptance": "Source/serialization/fixtures only. All original AC remain open."
   }
 }
