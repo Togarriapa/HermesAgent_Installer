@@ -670,6 +670,7 @@ The installer SHALL satisfy this obligation: Finish with the project location, e
 - **WHEN** a requested item or assertion lacks functional evidence, contains a failed/pending result or only has source/configuration/fixture evidence
 - **THEN** The installer SHALL report an actionable blocked/failed result, preserve prior owned data/state, and SHALL NOT claim this obligation passed without the required evidence.
 
+
 ### Requirement: Supplemental target and account evidence profiles
 The acceptance verifier SHALL provide installer-owned assertion profiles for every Sol-validated supplemental evidence ID and bind each profile to its exact acceptance criterion. A profile definition SHALL NOT claim that the corresponding implementation, hardware, account, or external-service behavior has been executed.
 
@@ -677,7 +678,12 @@ The acceptance verifier SHALL provide installer-owned assertion profiles for eve
 - **WHEN** the validated planning catalog includes EV-RB06, EV-RB07, EV-RB08, EV-HI10, EV-HI11, EV-HI12, EV-HI13, EV-HW01, or EV-PR01
 - **THEN** each ID SHALL map to its exact requirement dimensions under AC16, AC16, AC16, AC18, AC18, AC18, AC18, AC10, or AC08 respectively, with no generic placeholder assertion
 - **AND** every unobserved assertion SHALL remain null/pending; an observed false assertion or nonzero command exit SHALL fail; only authenticated retained results can contribute to acceptance
+<<<<<<< HEAD
  ### Requirement: Installer-owned target and result verification
+=======
+
+### Requirement: Installer-owned target and result verification
+>>>>>>> issuer/current
 
 The executable verifier SHALL bind actual selected installer target/current candidate and each original assertion to root-observed concrete workflow receipts.
 
