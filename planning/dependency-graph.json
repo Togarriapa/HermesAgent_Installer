@@ -3422,5 +3422,22 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "official_desktop_ws_types_repair_v229": {
+    "contract": "planning/official-desktop-ws-types-repair-v229.json",
+    "tasks": {
+      "RT-T229.1": [
+        "RT-T226.1"
+      ],
+      "RT-T229.2": [
+        "RT-T229.1",
+        "RT-T226.2"
+      ],
+      "VD-T229.3": [
+        "RT-T229.1",
+        "RT-T229.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }

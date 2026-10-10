@@ -156,3 +156,10 @@ Tested gateway source review v223: `plans/amendments/2026-10-10-tested-gateway-s
 - [ ] `RT-T227.2` Implement actual preactive transform manager/CAS/independent overlay receipt and acyclic member/config/final input digest projections.
 - [ ] `RT-T227.3` Implement sealed exact managed role plan/current output-controller custody, fixed driver argv/mounts and role-specific caps under v227.
 - [ ] `VD-T227.4` Verify genuine setup acquisition/CAS/transform/input/manager joins and specified TLS/replay/foreign/closure/expiry/revocation/network/cleanup failures; all target acceptance OPEN.
+
+
+## Official Desktop ws typecheck repair v229
+
+- [ ] `RT-T229.1` Implement exact separately admitted auxiliary declaration receipt and owned disposable workspace projection without originalsource/lock edits.
+- [ ] `RT-T229.2` Run actual original ARM64 typecheck before/after and continue genuine v226 native/workspace/AppDir build.
+- [ ] `VD-T229.3` Verify exact archive/SRI/member/dependency/currentness/foreign conflict/API rejection and real original compiler effects; all target acceptance OPEN.

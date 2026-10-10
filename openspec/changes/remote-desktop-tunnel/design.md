@@ -115,3 +115,8 @@ v225 schema placement is authority.service_generations schema3, exact schema2 fi
 ## Preactive source authority and acyclic build inputs v227
 
 Exact `planning/preactive-xpra-acquisition-build-v227.json` separates quarantined download from signed dependency/license admission and no-egress role build. Actual setup transform grants/manager output precede active patch adoption. Member digest excludes config; config carries member digest; final receipt binds config/member/setup/schema. Concrete sealed role plans enforce actual argv/mount/output/role caps and original controller deadline; no actor substitute, old receipt renewal or generic shared defaults.
+
+
+## Types-only auxiliary workspace input v229
+
+Use exact `planning/official-desktop-ws-types-repair-v229.json` source artifact/member/dependency proofs through existing v226 current native registry. Originalrootlock@types/node22.20.1 satisfies wildcard withoutfetch. Disposable node_modules/@types/ws injection is explicitly digest-bound auxiliary projection, never fictional original lock membership, fake declarations or runtime substitution. Actual original compiler and nativeAppDir qualification remain separate.

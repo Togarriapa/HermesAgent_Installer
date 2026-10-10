@@ -193,3 +193,6 @@ v225 schema clarification: `plans/amendments/2026-10-10-current-remote-identity-
 
 
 Preactive Xpra acquisition/build v227: `plans/amendments/2026-10-10-preactive-xpra-acquisition-build-v227.md`; RT-T227.1 → RT-T227.2 → RT-T227.3 → VD-T227.4 OPEN. Actual one-use fixedHTTPS/dynamic sourceCAS, preactive transform and acyclic member/recipe input digests; finite role managed plans, all pins/AC OPEN.
+
+
+Official Desktop ws types repair v229: `plans/amendments/2026-10-10-official-desktop-ws-types-repair-v229.md`; RT-T229.1 → RT-T229.2 → VD-T229.3 OPEN. Exact separately reviewed types-only auxiliary artifact and owned workspace projection, unchanged originalsource/lock; actualARM64compiler/native/AppDir/AC separate.

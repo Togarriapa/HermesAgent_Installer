@@ -107,3 +107,8 @@ v225 compiler clarification: append-only schema clarification fixes authority en
 ## Preactive Xpra producers and role plans v227
 
 Implement actual one-use fixedHTTPS setup acquisition/dynamic sourceCAS, existing preactive transform executor and acyclic member/config/final receipt projections plus fixed managed role plans under `plans/amendments/2026-10-10-preactive-xpra-acquisition-build-v227.md`. RT-T227.1/.2/.3 and VD-T227.4 remain OPEN.
+
+
+## Official Desktop ws type repair v229
+
+Add exact MIT @types/ws8.18.2 as separately reviewed types-only auxiliarytoolchain/workspace projection under `plans/amendments/2026-10-10-official-desktop-ws-types-repair-v229.md`; original source/lock and runtimews unchanged. Actual ARM64 original compiler/nativeAppDir effects remain required; tasks OPEN.

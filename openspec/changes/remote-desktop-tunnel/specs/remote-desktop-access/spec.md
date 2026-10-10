@@ -438,3 +438,15 @@ The installer SHALL compute separate finalized member and recipe-bound input dig
 #### Scenario: Config or plan authority mutated
 - **WHEN** config embeds its own final digest, caller config becomes argv, a link/recipe changes without correct digest changes, or role plan exceeds source-owned bounds or original controller deadline
 - **THEN** managed build and runtime issuance SHALL deny and terminate only owned expired/cancelled jobs, preserving foreign state and independent output qualification
+
+
+### Requirement: Exact auxiliary Desktop ws declarations
+The installer SHALL implement `planning/official-desktop-ws-types-repair-v229.json` as an explicitly separate types-only held toolchain/workspace input, preserving original source/lock and ws runtime identity.
+
+#### Scenario: Type dependency or compiler proof substituted
+- **WHEN** wildcard fetching, ambient install, fake declarations, skipped compiler flags, altered original lock/source or typecheck-only readiness is presented
+- **THEN** admission SHALL deny and preserve original/foreign state rather than issue native AppDir/runtime acceptance
+
+#### Scenario: Exact declarations applied
+- **WHEN** current auxiliary receipt and original dependency/compiler/source joins materialize the exact fixed declarations in an owned disposable workspace
+- **THEN** the owner SHALL verify the original actual ARM64 typecheck and record the distinct auxiliary projection before proceeding to required native/AppDir qualification
