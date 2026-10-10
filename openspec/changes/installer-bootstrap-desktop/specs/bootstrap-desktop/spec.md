@@ -791,3 +791,17 @@ The installer SHALL enforce the independent daemon commit/source proof and fixed
 #### Scenario: Transport or copied setup proof only
 - **WHEN** only ACK, copied DTO, wrong generation/source, stale intent or incomplete observer/terminal evidence exists
 - **THEN** functional enablement SHALL remain pending with one-use reconciliation and owned cleanup
+
+
+## ADDED Requirements
+
+### Requirement: Final coherent source tuple application
+The installer SHALL apply only the exact committed source/member/catalog/role/import closure tuple list in `plans/amendments/2026-10-10-final-coherent-source-pin-review-v195.md` and `planning/final-coherent-source-pin-review-v195.json`, preserving independent source, installed import, loaded native and current effect/health evidence.
+
+#### Scenario: Exact finite pin application
+- **WHEN** Luna applies the reviewed source0add8c33 batch after specification publication
+- **THEN** exact byte hashes/sizes, canonical member roles/modes, required PlanResolver aliases and actual import closure SHALL agree, with no source metadata self-hash cycle or caller-derived pin
+
+#### Scenario: Source evidence does not activate runtime
+- **WHEN** source review or fixture tests pass but actual loaded/current source, helper, invocation, health or target evidence is absent
+- **THEN** affected execution SHALL remain denied or unavailable and all original AC01..AC18 acceptance SHALL remain OPEN

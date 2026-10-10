@@ -101,3 +101,6 @@ Native member custody v193: `plans/amendments/2026-10-10-native-worker-view-memb
 
 
 Health event ancestry v194: `plans/amendments/2026-10-10-health-event-causal-ancestry-v194.md`; HI-T194.1 → HI-T194.2 → VD-T194.3 OPEN, genuine per-event provenance and causal DAG/source proof. All AC01..18 OPEN.
+
+
+Final coherent source review v195: `plans/amendments/2026-10-10-final-coherent-source-pin-review-v195.md` / `planning/final-coherent-source-pin-review-v195.json`; exact source0add8c33, closed source/member/catalog/helper/preload application under existing VD-T180.6/VD-T183.5. Pin application, full runtime/target evidence and all AC01..AC18 OPEN; frozen160 baseline unchanged.

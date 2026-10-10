@@ -135,3 +135,6 @@ Application owned execution receipts v104: `plans/amendments/2026-10-10-applicat
   Partial Pi mount-primitive evidence: `planning/evidence/vd-t1932-pi-mount-primitive-20261010/README.md`. Exact source/target leaf identities, permissions and private-namespace cleanup verified; selected manager/worker joins and full failure matrix remain open.
 
 - [ ] VD-T194.3 Verify real distinct input/tool ancestry joins and false samehash/foreignchain failures. See `plans/amendments/2026-10-10-health-event-causal-ancestry-v194.md`; acceptance OPEN.
+
+
+Existing `VD-T180.6`/`VD-T183.5` handoff: apply and verify only the exact v195 source/catalog/role/import closure batch in `plans/amendments/2026-10-10-final-coherent-source-pin-review-v195.md`. This source review leaves all existing checkboxes OPEN; no duplicate task or runtime acceptance is created.

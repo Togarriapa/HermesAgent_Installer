@@ -21,7 +21,7 @@
     "write",
     "delete"
   ],
-  "source_pins": "pending actual committed changed sources, no future hashes",
+  "source_pins": "Exact final committed source reviewed in planning/final-coherent-source-pin-review-v195.json; pin application, actual installed/loaded/current effects and target evidence remain pending.",
   "tasks": {
     "HI-T183.1": {
       "description": "Produce concrete held worker recipes, signed choice fields and generated service/process/network output.",
