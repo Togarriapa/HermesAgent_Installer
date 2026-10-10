@@ -1754,6 +1754,7 @@ class RootComposioSetupSelectionAuthority:
         self._exchange_receipts: dict[str, RootComposioCatalogReadReceipt] = {}
         self._exchange_authorizations: dict[str, str] = {}
         self._exchange_detail_slugs: dict[str, str] = {}
+        self._exchange_request_bytes: dict[str, bytes] = {}
 
     @staticmethod
     def _verify_reader_policy(release: Any) -> None:
@@ -1969,6 +1970,7 @@ class RootComposioSetupSelectionAuthority:
         if http_status == 200:
             self._exchange_receipts[exchange_handle] = receipt
             self._exchange_authorizations[exchange_handle] = authorization.authorization_handle
+            self._exchange_request_bytes[exchange_handle] = request_bytes
             if grant._detail_slug is not None:
                 self._exchange_detail_slugs[exchange_handle] = grant._detail_slug
         return exchange_handle
@@ -2025,6 +2027,30 @@ class RootComposioSetupSelectionAuthority:
             raise BootstrapEnrollmentPending("Composio exchange receipt journal differs from retained root facts")
         return receipt
 
+    def resolve_catalog_request_bytes(self, exchange_receipt_handle: str) -> bytes:
+        """Resolve the private canonical request evidence for one live exchange."""
+        receipt = self.resolve_catalog_exchange_receipt(exchange_receipt_handle)
+        request_bytes = self._exchange_request_bytes.get(exchange_receipt_handle)
+        if (not isinstance(request_bytes, bytes)
+                or not secrets.compare_digest(hashlib.sha256(request_bytes).hexdigest(),
+                                              receipt.request_sha256)):
+            raise BootstrapEnrollmentPending("Composio request evidence is absent or differs from its receipt")
+        return request_bytes
+
+    def resolve_catalog_response_bytes(self, exchange_receipt_handle: str) -> bytes:
+        """Resolve exact private response bytes from the selected root response CAS."""
+        receipt = self.resolve_catalog_exchange_receipt(exchange_receipt_handle)
+        response_path = self._root / "responses" / f"{receipt.response_sha256}.json"
+        try:
+            body = _read_secure_root_bytes(
+                response_path, _COMPOSIO_POLICY["max_response_bytes"], 0o600)
+        except Exception:
+            raise BootstrapEnrollmentPending("Composio response evidence is absent from root CAS") from None
+        if (len(body) != receipt.response_size_bytes
+                or not secrets.compare_digest(hashlib.sha256(body).hexdigest(), receipt.response_sha256)):
+            raise BootstrapEnrollmentPending("Composio response bytes differ from its root exchange receipt")
+        return body
+
     def read_verified_trigger_detail(self, exchange_receipt_handle: str,
                                      selected_returned_slug: str
                                      ) -> tuple[RootComposioCatalogReadReceipt, bytes]:
@@ -2035,15 +2061,8 @@ class RootComposioSetupSelectionAuthority:
                 or selected_returned_slug != slug or receipt.selected_slug != slug
                 or slug not in self._catalog_records.get(receipt.authorization_handle, {})):
             raise BootstrapEnrollmentPending("Composio detail exchange did not inspect the selected catalog slug")
-        response_path = self._root / "responses" / f"{receipt.response_sha256}.json"
-        try:
-            body = _read_secure_root_bytes(
-                response_path, _COMPOSIO_POLICY["max_response_bytes"], 0o600)
-        except Exception:
-            raise BootstrapEnrollmentPending("Composio detail response bytes are absent from root CAS") from None
-        if (len(body) != receipt.response_size_bytes
-                or hashlib.sha256(body).hexdigest() != receipt.response_sha256):
-            raise BootstrapEnrollmentPending("Composio detail response bytes differ from retained exchange receipt")
+        self.resolve_catalog_request_bytes(exchange_receipt_handle)
+        body = self.resolve_catalog_response_bytes(exchange_receipt_handle)
         authorization = self._resolve_authorization(receipt.authorization_handle)
         self._observe_detail(authorization, slug, body)
         return receipt, body

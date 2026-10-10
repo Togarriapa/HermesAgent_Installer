@@ -14,6 +14,7 @@ import os
 import re
 import secrets
 import stat
+import threading
 import time
 from types import MappingProxyType
 from dataclasses import dataclass, field
@@ -24,10 +25,10 @@ from hermes_installer.protected_enrollment import RootJournalSelection
 from hermes_installer.authority.enrollment import ARTIFACT_STAGING_DIRECTORY
 
 
-_VERSION = re.compile(r"[0-9]{8}_[0-9]{2}\Z", re.ASCII)
 _SLUG = re.compile(r"[A-Z][A-Z0-9_]{0,127}\Z", re.ASCII)
 _HANDLE = re.compile(r"[A-Za-z0-9_-]{8,128}\Z", re.ASCII)
 _SHA = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
+_ARTIFACT_ID = re.compile(r"composio-whatsapp-trigger-type:[0-9a-f]{64}\Z", re.ASCII)
 _MAX = 256 * 1024
 _POLICY_ID = "installer-composio-whatsapp-catalog-read-policy-v1"
 _POLICY_SHA256 = "319076116a060e371c10886e5c2cfea274ed4d985aa03f5e66a4f611f949cfc5"
@@ -40,6 +41,8 @@ class ComposioTriggerArtifactUnavailable(PermissionError):
 
 class ComposioCatalogExchangeRegistry(Protocol):
     def resolve_catalog_exchange_receipt(self, exchange_receipt_handle: str) -> Any: ...
+    def resolve_catalog_request_bytes(self, exchange_receipt_handle: str) -> bytes: ...
+    def resolve_catalog_response_bytes(self, exchange_receipt_handle: str) -> bytes: ...
     def read_verified_trigger_detail(self, exchange_receipt_handle: str,
                                      selected_returned_slug: str) -> tuple[Any, bytes]: ...
 
@@ -171,6 +174,23 @@ class VerifiedComposioTriggerArtifact:
             raise TypeError("verified Composio artifact values are root-issued")
 
     @property
+    def artifact_id(self) -> str:
+        return self.receipt.artifact_id
+
+    @property
+    def artifact_sha256(self) -> str:
+        return self.receipt.artifact_sha256
+
+    @property
+    def schema_sha256(self) -> str:
+        """The ingress verifier's schema digest is the exact published CAS SHA."""
+        return self.receipt.artifact_sha256
+
+    @property
+    def size_bytes(self) -> int:
+        return self.receipt.size_bytes
+
+    @property
     def active_catalog_binding(self) -> Mapping[str, str]:
         """Exact fields a root compiler may bind into the selected channel row."""
         return MappingProxyType({
@@ -179,6 +199,23 @@ class VerifiedComposioTriggerArtifact:
             "trigger_slug": self.receipt.trigger_slug,
             "toolkit_version": self.receipt.toolkit_version,
         })
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class ComposioTriggerArtifactCASObservation:
+    """Held root-CAS output proof, produced only by this registry instance."""
+    artifact_id: str
+    artifact_sha256: str
+    size_bytes: int
+    device: int
+    inode: int
+    _fd: int = field(repr=False, compare=False)
+    _registry_id: str = field(repr=False)
+    _seal: object = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._seal is not _SEAL:
+            raise TypeError("Composio CAS observations are root-issued")
 
 
 class RootComposioTriggerArtifactRegistry:
@@ -190,9 +227,12 @@ class RootComposioTriggerArtifactRegistry:
                  journal: RootJournalSelection, signer: RootSigner, *,
                  expected_uid: int = 0, monotonic=time.monotonic):
         if (os.geteuid() != expected_uid or expected_uid != 0
-                or not callable(getattr(selected_session_registry, "resolve_live_session", None))
+                or not (callable(getattr(selected_session_registry, "resolve_live_session_id", None))
+                        or callable(getattr(selected_session_registry, "resolve_live_session", None)))
                 or not callable(getattr(catalog_exchange_registry, "read_verified_trigger_detail", None))
                 or not callable(getattr(catalog_exchange_registry, "resolve_catalog_exchange_receipt", None))
+                or not callable(getattr(catalog_exchange_registry, "resolve_catalog_request_bytes", None))
+                or not callable(getattr(catalog_exchange_registry, "resolve_catalog_response_bytes", None))
                 or not isinstance(owned_artifact_store, Path)
                 or owned_artifact_store != ARTIFACT_STAGING_DIRECTORY
                 or not isinstance(journal, RootJournalSelection)
@@ -210,6 +250,7 @@ class RootComposioTriggerArtifactRegistry:
         self._instance = secrets.token_urlsafe(24)
         self._records: dict[str, tuple[RootComposioTriggerArtifactReceipt, bytes]] = {}
         self._used_exchanges: set[str] = set()
+        self._lock = threading.RLock()
 
     @classmethod
     def from_root_setup(cls, selected_session_registry: Any,
@@ -223,6 +264,11 @@ class RootComposioTriggerArtifactRegistry:
 
     def persist_selected_trigger_type(self, exchange_receipt_handle: str,
                                       selected_returned_slug: str) -> RootComposioTriggerArtifactReceipt:
+        with self._lock:
+            return self._persist_selected_trigger_type(exchange_receipt_handle, selected_returned_slug)
+
+    def _persist_selected_trigger_type(self, exchange_receipt_handle: str,
+                                       selected_returned_slug: str) -> RootComposioTriggerArtifactReceipt:
         self._require_root()
         if (not isinstance(exchange_receipt_handle, str) or not _HANDLE.fullmatch(exchange_receipt_handle)
                 or not isinstance(selected_returned_slug, str) or not _SLUG.fullmatch(selected_returned_slug)):
@@ -235,6 +281,14 @@ class RootComposioTriggerArtifactRegistry:
         except Exception:
             raise ComposioTriggerArtifactUnavailable("selected authenticated Composio detail receipt is unavailable") from None
         self._validate_exchange(exchange, exchange_receipt_handle, selected_returned_slug)
+        try:
+            request_bytes = self.exchanges.resolve_catalog_request_bytes(exchange_receipt_handle)
+        except Exception:
+            raise ComposioTriggerArtifactUnavailable("authenticated catalog request evidence is unavailable") from None
+        if (not isinstance(request_bytes, bytes)
+                or not secrets.compare_digest(hashlib.sha256(request_bytes).hexdigest(), exchange.request_sha256)
+                or not secrets.compare_digest(hashlib.sha256(raw).hexdigest(), exchange.response_sha256)):
+            raise ComposioTriggerArtifactUnavailable("catalog source bytes differ from their exchange receipt")
         if (len(raw) != exchange.response_size_bytes
                 or not secrets.compare_digest(hashlib.sha256(raw).hexdigest(), exchange.response_sha256)):
             raise ComposioTriggerArtifactUnavailable("detail bytes differ from their retained exchange receipt")
@@ -266,30 +320,35 @@ class RootComposioTriggerArtifactRegistry:
         session = self._resolve_session(exchange.session_handle)
         self._validate_session(session, exchange)
         self._store_bytes(artifact_id, artifact_sha, document_bytes)
-        handle = secrets.token_urlsafe(32)
-        claims = {
-            "schema": 1, "receipt_handle": handle, "artifact_id": artifact_id,
-            "artifact_sha256": artifact_sha, "size_bytes": len(document_bytes),
-            "document_sha256": semantic_sha, "toolkit_version": exchange.toolkit_version,
-            "trigger_slug": selected_returned_slug,
-            "exchange_receipt_handle": exchange_receipt_handle,
-            "request_sha256": exchange.request_sha256,
-            "response_sha256": exchange.response_sha256,
-            "request_policy_artifact_id": _POLICY_ID,
-            "request_policy_sha256": _POLICY_SHA256,
-            "setup_session_handle": exchange.session_handle,
-            "transaction_handle": exchange.transaction_handle,
-            "principal_id": exchange.principal_id, "project_id": exchange.project_id,
-            "issued_monotonic": now, "expires_monotonic": expires,
-        }
-        signature = self.signer.sign(_canonical(claims))
-        if not isinstance(signature, bytes) or not signature:
-            raise ComposioTriggerArtifactUnavailable("root receipt signer failed")
-        receipt = RootComposioTriggerArtifactReceipt(**claims, signature=signature, _seal=_SEAL)
-        self._write_receipt(receipt)
-        self._records[handle] = (receipt, document_bytes)
-        self._used_exchanges.add(exchange_receipt_handle)
-        return receipt
+        observation = self._hold_cas_output(artifact_id, artifact_sha, document_bytes)
+        try:
+            self._verify_held_output(observation, document_bytes)
+            handle = secrets.token_urlsafe(32)
+            claims = {
+                "schema": 1, "receipt_handle": handle, "artifact_id": artifact_id,
+                "artifact_sha256": artifact_sha, "size_bytes": len(document_bytes),
+                "document_sha256": semantic_sha, "toolkit_version": exchange.toolkit_version,
+                "trigger_slug": selected_returned_slug,
+                "exchange_receipt_handle": exchange_receipt_handle,
+                "request_sha256": exchange.request_sha256,
+                "response_sha256": exchange.response_sha256,
+                "request_policy_artifact_id": _POLICY_ID,
+                "request_policy_sha256": _POLICY_SHA256,
+                "setup_session_handle": exchange.session_handle,
+                "transaction_handle": exchange.transaction_handle,
+                "principal_id": exchange.principal_id, "project_id": exchange.project_id,
+                "issued_monotonic": now, "expires_monotonic": expires,
+            }
+            signature = self.signer.sign(_canonical(claims))
+            if not isinstance(signature, bytes) or not signature:
+                raise ComposioTriggerArtifactUnavailable("root receipt signer failed")
+            receipt = RootComposioTriggerArtifactReceipt(**claims, signature=signature, _seal=_SEAL)
+            self._write_receipt(receipt)
+            self._records[handle] = (receipt, document_bytes)
+            self._used_exchanges.add(exchange_receipt_handle)
+            return receipt
+        finally:
+            os.close(observation._fd)
 
     def resolve_selected_trigger_artifact(self, receipt_handle: str,
                                           current_setup_session: Any) -> VerifiedComposioTriggerArtifact:
@@ -312,7 +371,15 @@ class RootComposioTriggerArtifactRegistry:
             receipt.exchange_receipt_handle, receipt.trigger_slug)
         self._validate_exchange(exchange, receipt.exchange_receipt_handle, receipt.trigger_slug)
         self._validate_session(session, exchange)
-        if (verified_body is None or hashlib.sha256(verified_body).hexdigest() != receipt.response_sha256
+        try:
+            request_bytes = self.exchanges.resolve_catalog_request_bytes(receipt.exchange_receipt_handle)
+            response_bytes = self.exchanges.resolve_catalog_response_bytes(receipt.exchange_receipt_handle)
+        except Exception:
+            raise ComposioTriggerArtifactUnavailable("catalog exchange byte domains could not be re-opened") from None
+        if (not isinstance(request_bytes, bytes)
+                or hashlib.sha256(request_bytes).hexdigest() != receipt.request_sha256
+                or not isinstance(response_bytes, bytes) or response_bytes != verified_body
+                or verified_body is None or hashlib.sha256(verified_body).hexdigest() != receipt.response_sha256
                 or exchange.request_sha256 != receipt.request_sha256
                 or len(verified_body) != exchange.response_size_bytes
                 or verified_body != self._detail_source_body(exchange, receipt)):
@@ -375,8 +442,13 @@ class RootComposioTriggerArtifactRegistry:
             raise ComposioTriggerArtifactUnavailable("Composio source exchange receipt differs from the pinned policy")
 
     def _store_bytes(self, artifact_id: str, digest: str, body: bytes) -> None:
+        if not _ARTIFACT_ID.fullmatch(artifact_id) or not _SHA.fullmatch(digest):
+            raise ComposioTriggerArtifactUnavailable("derived Composio artifact identity is malformed")
         root = self._cas_root(create=True)
-        object_dir = root / "objects"
+        object_dir = root / artifact_id
+        if not object_dir.exists():
+            object_dir.mkdir(mode=0o700)
+            self._fsync_dir(root)
         self._ensure_dir(object_dir)
         object_path = object_dir / digest
         try:
@@ -405,10 +477,78 @@ class RootComposioTriggerArtifactRegistry:
         self._fsync_dir(object_dir)
 
     def _verify_stored_bytes(self, receipt: RootComposioTriggerArtifactReceipt, expected: bytes) -> None:
-        root = self._cas_root(create=False)
+        root = self._cas_root(create=False) / receipt.artifact_id
         actual = self._read_object(root / receipt.artifact_sha256)
         if actual != expected or hashlib.sha256(actual).hexdigest() != receipt.artifact_sha256:
             raise ComposioTriggerArtifactUnavailable("immutable Composio CAS object changed")
+
+    def _hold_cas_output(self, artifact_id: str, digest: str,
+                         expected: bytes) -> ComposioTriggerArtifactCASObservation:
+        if not _ARTIFACT_ID.fullmatch(artifact_id):
+            raise ComposioTriggerArtifactUnavailable("derived Composio artifact identity is malformed")
+        root = self._cas_root(create=False) / artifact_id
+        self._ensure_dir(root)
+        path = root / digest
+        fd: int | None = None
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            info = os.fstat(fd)
+            named = path.lstat()
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != self.expected_uid
+                    or stat.S_IMODE(info.st_mode) != 0o400 or info.st_size != len(expected)
+                    or (info.st_dev, info.st_ino) != (named.st_dev, named.st_ino)):
+                raise OSError("CAS output custody mismatch")
+            observation = ComposioTriggerArtifactCASObservation(
+                artifact_id, digest, info.st_size, info.st_dev, info.st_ino,
+                fd, self._instance, _SEAL)
+            self._verify_held_output(observation, expected)
+            return observation
+        except Exception:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            raise ComposioTriggerArtifactUnavailable("root could not hold the derived CAS output") from None
+
+    def _verify_held_output(self, observation: ComposioTriggerArtifactCASObservation,
+                            expected: bytes) -> None:
+        if (type(observation) is not ComposioTriggerArtifactCASObservation
+                or observation._seal is not _SEAL or observation._registry_id != self._instance
+                or observation.size_bytes != len(expected)
+                or observation.artifact_sha256 != hashlib.sha256(expected).hexdigest()):
+            raise ComposioTriggerArtifactUnavailable("held Composio CAS output observation is invalid")
+        try:
+            parsed = json.loads(expected[:-1].decode("utf-8"), object_pairs_hook=_unique_pairs)
+            semantic = {key: value for key, value in parsed.items() if key != "sha256"}
+            if (expected[-1:] != b"\n" or _canonical(parsed) + b"\n" != expected
+                    or parsed.get("artifact_id") != observation.artifact_id
+                    or hashlib.sha256(_canonical(semantic)).hexdigest() != parsed.get("sha256")):
+                raise ValueError("output document does not bind the held artifact identity")
+        except Exception:
+            raise ComposioTriggerArtifactUnavailable("held Composio output document is not canonical") from None
+        try:
+            fd_info = os.fstat(observation._fd)
+            path = self._cas_root(create=False) / observation.artifact_id / observation.artifact_sha256
+            path_info = path.lstat()
+            if ((fd_info.st_dev, fd_info.st_ino) != (observation.device, observation.inode)
+                    or (path_info.st_dev, path_info.st_ino) != (observation.device, observation.inode)
+                    or fd_info.st_uid != self.expected_uid or path_info.st_uid != self.expected_uid
+                    or not stat.S_ISREG(path_info.st_mode)
+                    or stat.S_IMODE(path_info.st_mode) != 0o400):
+                raise OSError("held CAS identity changed")
+            chunks = bytearray()
+            offset = 0
+            while len(chunks) <= _MAX:
+                part = os.pread(observation._fd, min(65536, _MAX + 1 - len(chunks)), offset)
+                if not part:
+                    break
+                chunks.extend(part)
+                offset += len(part)
+            if bytes(chunks) != expected:
+                raise OSError("held CAS bytes changed")
+        except Exception:
+            raise ComposioTriggerArtifactUnavailable("held Composio CAS output changed before receipt signing") from None
 
     def _read_object(self, path: Path) -> bytes:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
