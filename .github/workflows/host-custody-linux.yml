@@ -18,7 +18,8 @@ jobs:
           sudo apt-get install --yes \
             xvfb=2:21.1.12-1ubuntu1.8 \
             libxres1=2:1.2.1-1build1 \
-            libx11-6=2:1.8.7-1build1
+            libx11-6=2:1.8.7-1build1 \
+            libxtst6=2:1.2.3-1.1build1
       - id: install-ci-deps
         name: Install hash-pinned host authority primitives
         run: python -m pip install --no-deps --require-hashes -r src/hermes_installer/remote/requirements-ci-x86-py313-core.lock

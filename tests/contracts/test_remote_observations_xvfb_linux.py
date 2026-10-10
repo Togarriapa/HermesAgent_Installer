@@ -26,7 +26,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from hermes_installer.authority.remote_observations import (
+    NativeWindowInputObservation,
     RemoteObservationUnavailable,
+    _SelectedNativeWindowTarget,
     _check_xserver_peer,
     _hash_bounded_window_sample,
     _owner_pid,
@@ -39,13 +41,15 @@ from hermes_installer.authority.remote_observations import (
     _xwindow_viewable,
     SelectedNativeWindow,
 )
+from hermes_installer.authority.remote_origin import HMACReceiptSigner
 
 
 def _field(value: bytes) -> bytes:
     return struct.pack(">H", len(value)) + value
 
 
-def _start_client(display_name: str, xauthority: str, x: int) -> subprocess.Popen[str]:
+def _start_client(display_name: str, xauthority: str, x: int,
+                  uid: int, gid: int) -> subprocess.Popen[str]:
     source = r'''
 import ctypes, ctypes.util, os, sys, time
 x11 = ctypes.CDLL(ctypes.util.find_library("X11"))
@@ -65,9 +69,13 @@ time.sleep(20)
 '''
     environment = {"PATH": "/usr/bin:/bin", "DISPLAY": display_name,
                    "XAUTHORITY": xauthority, "HOME": "/root", "LANG": "C"}
+    def drop_privileges() -> None:
+        os.setgid(gid)
+        os.setuid(uid)
+
     process = subprocess.Popen(["/usr/bin/python3", "-I", "-c", source, str(x)],
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, close_fds=True, env=environment)
+        text=True, close_fds=True, env=environment, preexec_fn=drop_privileges)
     assert process.stdout is not None
     ready, _, _ = select.select([process.stdout], [], [], 4.0)
     if not ready:
@@ -97,6 +105,7 @@ class RemoteObservationXvfbKernelProof(unittest.TestCase):
             self.skipTest("pinned Xvfb, libX11, and XRes packages are required")
 
         cookie = os.urandom(16)
+        client_account = pwd.getpwnam("nobody")
         server: subprocess.Popen[bytes] | None = None
         clients: list[subprocess.Popen[str]] = []
         display: int | None = None
@@ -116,6 +125,8 @@ class RemoteObservationXvfbKernelProof(unittest.TestCase):
                            + _field(b"MIT-MAGIC-COOKIE-1") + _field(cookie))
             auth_path.write_bytes(auth_record)
             auth_path.chmod(0o600)
+            os.chown(auth_path, client_account.pw_uid, client_account.pw_gid)
+            os.chmod(directory, 0o755)
             server = subprocess.Popen([xvfb, display_name, "-screen", "0", "640x480x24",
                 "-auth", str(auth_path), "-nolisten", "tcp", "-noreset"],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -130,7 +141,7 @@ class RemoteObservationXvfbKernelProof(unittest.TestCase):
                     self.fail("Xvfb did not allocate a local display")
                 row = SelectedNativeWindow(
                     remote_enrollment_id="fixture-only", native_profile_id="fixture-only",
-                    native_generation="fixture-only", native_uid=os.getuid(),
+                    native_generation="fixture-only", native_uid=client_account.pw_uid,
                     native_cgroup_id="fixture-only", allowed_executable_sha256s=("0" * 64,),
                     display_server_profile_id="fixture-only", display_server_generation="fixture-only",
                     display_name=display_name, xauthority_path=auth_path,
@@ -142,12 +153,16 @@ class RemoteObservationXvfbKernelProof(unittest.TestCase):
                 for index in range(len(root_cookie)):
                     root_cookie[index] = 0
 
-                clients.append(_start_client(display_name, str(auth_path), 20))
-                clients.append(_start_client(display_name, str(auth_path), 240))
+                clients.append(_start_client(display_name, str(auth_path), 20,
+                    client_account.pw_uid, client_account.pw_gid))
+                clients.append(_start_client(display_name, str(auth_path), 240,
+                    client_account.pw_uid, client_account.pw_gid))
                 server_start = _proc_starttime(server.pid)
                 server_account = pwd.getpwuid(os.stat(f"/proc/{server.pid}").st_uid)
-                server_identity = SimpleNamespace(pid=server.pid, uid=server_account.pw_uid,
-                    gid=server_account.pw_gid, pid_starttime_ticks=server_start)
+                server_cgroup = Path(f"/proc/{server.pid}/cgroup").read_text().strip().split(":", 2)[-1]
+                server_identity = SimpleNamespace(pid=server.pid, process_id=server.pid,
+                    uid=server_account.pw_uid, gid=server_account.pw_gid,
+                    pid_starttime_ticks=server_start, cgroup_id=server_cgroup)
                 _check_xserver_peer(x11, display, server_identity)
 
                 try:
@@ -177,14 +192,106 @@ class RemoteObservationXvfbKernelProof(unittest.TestCase):
                         poller.register(pidfd, select.POLLIN | select.POLLHUP | select.POLLERR)
                         self.assertEqual(poller.poll(0), [])
                         self.assertGreater(_proc_starttime(client.pid), 0)
-                        exe_path = os.readlink(f"/proc/{client.pid}/exe")
-                        self.assertTrue(exe_path.startswith("/usr/bin/python"))
+                        self.assertEqual(os.stat(f"/proc/{client.pid}").st_uid,
+                                         client_account.pw_uid)
                         cgroup = Path(f"/proc/{client.pid}/cgroup").read_bytes()
                         self.assertTrue(cgroup)
-                        self.assertEqual(hashlib.sha256(Path(exe_path).read_bytes()).hexdigest(),
-                                         hashlib.sha256(Path("/usr/bin/python3").read_bytes()).hexdigest())
+                        self.assertTrue(hashlib.sha256(Path("/usr/bin/python3").read_bytes()).hexdigest())
                     finally:
                         os.close(pidfd)
+
+                # Exercise exact one-shot F24 delivery on the actual selected
+                # XRes client/window. This fixture uses a narrow in-memory
+                # custody adapter over live kernel observations; it does not
+                # impersonate managed enrollment or target Desktop acceptance.
+                selected_process = clients[0]
+                selected_cgroup = Path(f"/proc/{selected_process.pid}/cgroup").read_text().strip().split(":", 2)[-1]
+                executable = Path("/usr/bin/python3")
+                executable_sha = hashlib.sha256(executable.read_bytes()).hexdigest()
+                selected_row = SelectedNativeWindow(
+                    remote_enrollment_id="fixture-only", native_profile_id="fixture-native",
+                    native_generation="fixture-native-generation", native_uid=client_account.pw_uid,
+                    native_cgroup_id=selected_cgroup, allowed_executable_sha256s=(executable_sha,),
+                    display_server_profile_id="fixture-display", display_server_generation="fixture-display-generation",
+                    display_name=display_name, xauthority_path=auth_path,
+                    xauthority_device=auth_path.stat().st_dev, xauthority_inode=auth_path.stat().st_ino,
+                    xauthority_uid=auth_path.stat().st_uid,
+                    xauthority_receipt_handle="fixture_receipt_handle_123456")
+                # Minimal Xvfb keymaps may omit F24. Assign XK_F24 to the
+                # reserved high keycode inside this disposable server only.
+                x11.XChangeKeyboardMapping.argtypes = [ctypes.c_void_p, ctypes.c_int,
+                    ctypes.c_int, ctypes.POINTER(ctypes.c_ulong), ctypes.c_int]
+                x11.XChangeKeyboardMapping.restype = ctypes.c_int
+                f24_keysym = ctypes.c_ulong(0xFFD5)
+                x11.XChangeKeyboardMapping(display, 255, 1, ctypes.byref(f24_keysym), 1)
+                x11.XSync(display, 0)
+
+                class FixtureCustody:
+                    def inspect_enrolled_process(self, profile_id, generation):
+                        if (profile_id, generation) != (selected_row.display_server_profile_id,
+                                selected_row.display_server_generation):
+                            raise AssertionError("fixture selected a foreign display profile")
+                        return server_identity
+
+                    def resolve_live_peer(self, pid, pidfd, *, profile_id, generation):
+                        if (pid != selected_process.pid or profile_id != selected_row.native_profile_id
+                                or generation != selected_row.native_generation):
+                            raise AssertionError("fixture selected a foreign app process")
+                        peer_cgroup = Path(f"/proc/{pid}/cgroup").read_text().strip().split(":", 2)[-1]
+                        mount_ns = os.stat(f"/proc/{pid}/ns/mnt").st_ino
+                        net_ns = os.stat(f"/proc/{pid}/ns/net").st_ino
+                        return SimpleNamespace(profile_id=profile_id, generation=generation,
+                            kernel_uid=os.stat(f"/proc/{pid}").st_uid,
+                            start_ticks=_proc_starttime(pid), executable_sha256=executable_sha,
+                            cgroup_identity=peer_cgroup,
+                            namespace_identity=f"mnt:{mount_ns};net:{net_ns}")
+
+                authority_fd = os.open(auth_path, os.O_RDONLY | os.O_CLOEXEC)
+                server_pidfd = os.pidfd_open(server.pid, 0)
+                auth_stat = os.fstat(authority_fd)
+                authority_receipt = SimpleNamespace(
+                    file_fd=authority_fd, pidfd=server_pidfd, device=auth_stat.st_dev,
+                    inode=auth_stat.st_ino, owner_uid=auth_stat.st_uid, owner_gid=auth_stat.st_gid,
+                    mode=auth_stat.st_mode & 0o777,
+                    content_sha256=hashlib.sha256(auth_path.read_bytes()).hexdigest(),
+                    process_id=server.pid, process_generation=selected_row.display_server_generation,
+                    pid_start_ticks=server_start, pidfd_identity=f"fixture-pidfd:{server.pid}",
+                    cgroup_id=server_cgroup, receipt_handle=selected_row.xauthority_receipt_handle,
+                    remote_enrollment_id=selected_row.remote_enrollment_id,
+                    native_profile_id=selected_row.native_profile_id,
+                    native_generation=selected_row.native_generation,
+                    display_profile_id=selected_row.display_server_profile_id,
+                    display_generation=selected_row.display_server_generation,
+                    display_name=selected_row.display_name, close=lambda: None)
+                target_cookie = _read_xauthority(selected_row, display_number)
+                target_display = _xopen_authorized_display(x11, display_name, target_cookie)
+                for index in range(len(target_cookie)):
+                    target_cookie[index] = 0
+                try:
+                    signer = HMACReceiptSigner(b"x" * 32)
+                    target = _SelectedNativeWindowTarget(row=selected_row,
+                        custody=FixtureCustody(), signer=signer, x11=x11, xres=xres,
+                        display=target_display, authority_file=authority_receipt,
+                        native_identity=SimpleNamespace(executable_sha256=executable_sha),
+                        server_identity=server_identity, pid=selected_process.pid,
+                        pid_start_ticks=_proc_starttime(selected_process.pid),
+                        window_id=selected_xid,
+                        websocket_observation_id="fixture_stream_observation_123",
+                        expires_monotonic=time.monotonic() + 5, monotonic=time.monotonic)
+                    try:
+                        input_receipt = target.send_f24_press_release_and_observe()
+                        self.assertIsInstance(input_receipt, NativeWindowInputObservation)
+                        self.assertEqual(input_receipt.outcome, "complete")
+                        self.assertEqual(input_receipt.delivered_event_types, (2, 3))
+                        self.assertTrue(input_receipt.focus_stable)
+                        self.assertTrue(input_receipt.verify(signer, now=time.monotonic(),
+                            selected=selected_row,
+                            websocket_observation_id="fixture_stream_observation_123"))
+                    finally:
+                        target.close()
+                finally:
+                    os.close(authority_fd)
+                    os.close(server_pidfd)
                 tile_digest = _hash_bounded_window_sample(x11, display, selected_xid)
                 self.assertRegex(tile_digest, r"^[0-9a-f]{64}$")
 

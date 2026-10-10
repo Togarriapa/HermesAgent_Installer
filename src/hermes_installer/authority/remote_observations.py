@@ -27,9 +27,10 @@ import stat
 import struct
 import time
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Callable, Iterator, Mapping, Protocol
 
 
 class RemoteObservationUnavailable(PermissionError):
@@ -211,6 +212,80 @@ class NativeWindowObservation:
                 and signer.verify(self.payload(), self.signature))
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class NativeWindowInputObservation:
+    """Root-private sealed receipt for exactly one observed F24 key pair.
+
+    ``window_id`` and Xauthority receipt handles are included in the signed
+    payload but are intentionally hidden from repr and must never be serialized
+    into a gateway or worker-visible DTO.
+    """
+    remote_enrollment_id: str
+    websocket_observation_id: str
+    native_profile_id: str
+    native_generation: str
+    native_pid: int
+    native_pid_start_ticks: int
+    display_profile_id: str
+    display_generation: str
+    display_name: str = field(repr=False)
+    xauthority_receipt_handle: str = field(repr=False)
+    window_id: int = field(repr=False)
+    keycode: int
+    delivered_keypress_count: int
+    delivered_keyrelease_count: int
+    delivered_event_types: tuple[int, ...] = field(repr=False)
+    focus_stable: bool
+    focus_restored: bool
+    outcome: str
+    focus_observation_handle: str = field(repr=False)
+    event_observation_handle: str = field(repr=False)
+    issued_monotonic: float
+    expires_monotonic: float
+    assertion_ids: tuple[str, ...]
+    signature: bytes = field(repr=False, compare=False)
+
+    def payload(self) -> bytes:
+        return _canonical({item.name: getattr(self, item.name) for item in fields(self)
+                           if item.name != "signature"})
+
+    def verify(self, signer: RemoteObservationSigner, *, now: float,
+               selected: SelectedNativeWindow, websocket_observation_id: str) -> bool:
+        return (isinstance(selected, SelectedNativeWindow)
+                and self.remote_enrollment_id == selected.remote_enrollment_id
+                and self.websocket_observation_id == websocket_observation_id
+                and self.native_profile_id == selected.native_profile_id
+                and self.native_generation == selected.native_generation
+                and self.display_profile_id == selected.display_server_profile_id
+                and self.display_generation == selected.display_server_generation
+                and self.display_name == selected.display_name
+                and self.xauthority_receipt_handle == selected.xauthority_receipt_handle
+                and self.window_id > 0 and self.native_pid > 0
+                and self.native_pid_start_ticks > 0 and self.keycode > 0
+                and self.delivered_keypress_count in {0, 1}
+                and self.delivered_keyrelease_count in {0, 1}
+                and all(event_type in {2, 3} for event_type in self.delivered_event_types)
+                and self.delivered_keypress_count == self.delivered_event_types.count(2)
+                and self.delivered_keyrelease_count == self.delivered_event_types.count(3)
+                and self.outcome in {"complete", "partial"}
+                and ((self.outcome == "complete"
+                      and self.delivered_keypress_count == 1
+                      and self.delivered_keyrelease_count == 1
+                      and self.delivered_event_types == (2, 3) and self.focus_stable
+                      and self.focus_restored)
+                     or (self.outcome == "partial"
+                         and not (self.delivered_keypress_count == 1
+                                  and self.delivered_keyrelease_count == 1
+                                  and self.delivered_event_types == (2, 3)
+                                  and self.focus_stable and self.focus_restored)))
+                and bool(re.fullmatch(r"[A-Za-z0-9_-]{16,128}", self.focus_observation_handle))
+                and bool(re.fullmatch(r"[A-Za-z0-9_-]{16,128}", self.event_observation_handle))
+                and self.issued_monotonic <= now < self.expires_monotonic
+                and self.expires_monotonic - self.issued_monotonic <= 30.0
+                and self.assertion_ids == _NATIVE_INPUT_ASSERTIONS
+                and signer.verify(self.payload(), self.signature))
+
+
 _DENIAL_REQUESTS = frozenset({"unauthenticated", "arbitrary-route", "shell-route", "full-host-desktop"})
 _GATEWAY_ASSERTIONS = (
     "remote-boundary:loopback-listener", "remote-boundary:unauthenticated-before-connector",
@@ -222,6 +297,12 @@ _NATIVE_ASSERTIONS = (
     "remote-window:profile-cgroup", "remote-window:official-package-executable",
     "remote-window:selected-xserver-peer", "remote-window:active-viewable-window",
     "remote-window:bound-websocket-observation",
+)
+_NATIVE_INPUT_ASSERTIONS = (
+    "remote_desktop.native_input.current_selected_xres_window",
+    "remote_desktop.native_input.focus_observed_at_each_f24_boundary",
+    "remote_desktop.native_input.f24_event_delivery_measured",
+    "remote_desktop.native_input.focus_restore_observed_and_identity_revalidated",
 )
 
 
@@ -650,6 +731,23 @@ class NativeWindowObserver:
         self._xauthority = xauthority_registry
         self._signer, self._now = signer, monotonic
 
+    def verify_input_observation(self, receipt: NativeWindowInputObservation,
+                                 selected: Any, websocket_observation_id: str,
+                                 *, now: float | None = None) -> bool:
+        """Verify a sealed event receipt without exposing the root signer."""
+        enrollment_id = getattr(selected, "enrollment_id", None)
+        if not isinstance(enrollment_id, str):
+            return False
+        try:
+            row = self._catalog.selected_native_window(enrollment_id)
+        except Exception:
+            return False
+        return (isinstance(row, SelectedNativeWindow)
+                and row.remote_enrollment_id == enrollment_id
+                and isinstance(receipt, NativeWindowInputObservation)
+                and receipt.verify(self._signer, now=float(self._now() if now is None else now),
+                    selected=row, websocket_observation_id=websocket_observation_id))
+
     def __call__(self, selected: Any, native_proof: Any,
                  websocket_observation_id: str, deadline: float) -> NativeWindowObservation:
         _require_root_linux()
@@ -718,6 +816,98 @@ class NativeWindowObserver:
             raise RemoteObservationUnavailable("root-signed native-window observation failed self-validation")
         return receipt
 
+    @contextmanager
+    def open_selected_window_target(self, selected: Any, native_proof: Any,
+                                    websocket_observation_id: str,
+                                    deadline: float) -> Iterator["_SelectedNativeWindowTarget"]:
+        """Open a short-lived root-only target for the current observed stream.
+
+        This deliberately accepts no XID, display name, cookie, path, PID or
+        window label from the caller. Only the protected active catalog and a
+        currently consumed native WebSocket observation can select a target.
+        The yielded object does not expose its XID or Xlib display handle.
+        """
+        _require_root_linux()
+        now = float(self._now())
+        expiry = _lease(now, deadline)
+        enrollment_id = getattr(selected, "enrollment_id", None)
+        row = self._catalog.selected_native_window(enrollment_id) if isinstance(enrollment_id, str) else None
+        if (not isinstance(row, SelectedNativeWindow)
+                or row.remote_enrollment_id != enrollment_id
+                or getattr(native_proof, "profile_id", None) != row.native_profile_id
+                or getattr(native_proof, "generation",
+                           getattr(native_proof, "profile_generation", None)) != row.native_generation
+                or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", websocket_observation_id)):
+            raise RemoteObservationUnavailable("selected native-window row, process proof, or stream reference is mismatched")
+        try:
+            stream = self._streams.resolve_window_stream(
+                websocket_observation_id, remote_enrollment_id=enrollment_id,
+                native_profile_id=row.native_profile_id, native_generation=row.native_generation)
+        except Exception:
+            raise RemoteObservationUnavailable("WebSocket observation is not a current selected native stream") from None
+        stream_expiry = float(getattr(stream, "expires_monotonic", 0))
+        if (getattr(stream, "observation_id", None) != websocket_observation_id
+                or getattr(stream, "remote_enrollment_id", None) != enrollment_id
+                or getattr(stream, "native_profile_id", None) != row.native_profile_id
+                or getattr(stream, "native_generation", None) != row.native_generation
+                or getattr(stream, "binary_frame_count", 0) < 1
+                or not _sha(getattr(stream, "byte_sha256", None))
+                or not math.isfinite(stream_expiry) or stream_expiry <= now):
+            raise RemoteObservationUnavailable("selected WebSocket stream has no live binary frame receipt")
+        native_identity = self._current_profile(row.native_profile_id, row.native_generation,
+                                                row.native_uid, row.native_cgroup_id,
+                                                native_proof)
+        server_identity = self._current_profile(row.display_server_profile_id,
+            row.display_server_generation, None, None, None)
+        try:
+            authority_file = self._xauthority.resolve_catalog_selection(self._catalog, enrollment_id)
+        except Exception:
+            raise RemoteObservationUnavailable("current root Xauthority startup receipt is unavailable") from None
+        try:
+            _verify_xauthority_receipt(row, authority_file, server_identity)
+            with _X11_LOCK:
+                # First derive the exact target through the ordinary observer,
+                # then reconnect from the held receipt and revalidate that the
+                # same XID is still owned by the same live selected process.
+                observed = _observe_x11_app_window(row, native_identity,
+                    server_identity, self._custody, authority_file)
+                x11_name = ctypes.util.find_library("X11")
+                xres_name = ctypes.util.find_library("XRes") or ctypes.util.find_library("Xres")
+                if not x11_name or not xres_name:
+                    raise RemoteObservationUnavailable("libX11/XRes is unavailable for selected-window input")
+                x11, xres = ctypes.CDLL(x11_name), ctypes.CDLL(xres_name)
+                display_number = row.display_name.split(":", 1)[1].split(".", 1)[0]
+                cookie = _read_xauthority_receipt(row, authority_file, display_number, server_identity)
+                try:
+                    display = _xopen_authorized_display(x11, row.display_name, cookie)
+                finally:
+                    for index in range(len(cookie)):
+                        cookie[index] = 0
+                target = None
+                try:
+                    target = _SelectedNativeWindowTarget(
+                        row=row, custody=self._custody, signer=self._signer,
+                        x11=x11, xres=xres, display=display,
+                        authority_file=authority_file,
+                        native_identity=native_identity, server_identity=server_identity,
+                        pid=observed["pid"], pid_start_ticks=observed["start"],
+                        window_id=observed["xid"], websocket_observation_id=websocket_observation_id,
+                        expires_monotonic=min(expiry, stream_expiry, now + 10.0),
+                        monotonic=self._now)
+                    target.revalidate_current()
+                    yield target
+                finally:
+                    if target is not None:
+                        target.close()
+                    elif display:
+                        x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+                        x11.XCloseDisplay.restype = ctypes.c_int
+                        x11.XCloseDisplay(display)
+        finally:
+            close = getattr(authority_file, "close", None)
+            if callable(close):
+                close()
+
     def close(self) -> None:
         """No persistent descriptors or leases are held by this observer."""
         return None
@@ -744,6 +934,290 @@ class NativeWindowObserver:
         pidfd = _verify_linux_pid(current)
         os.close(pidfd)
         return current
+
+
+class _X11KeyEvent(ctypes.Structure):
+    _fields_ = [
+        ("type", ctypes.c_int), ("serial", ctypes.c_ulong),
+        ("send_event", ctypes.c_int), ("display", ctypes.c_void_p),
+        ("window", ctypes.c_ulong), ("root", ctypes.c_ulong),
+        ("subwindow", ctypes.c_ulong), ("time", ctypes.c_ulong),
+        ("x", ctypes.c_int), ("y", ctypes.c_int),
+        ("x_root", ctypes.c_int), ("y_root", ctypes.c_int),
+        ("state", ctypes.c_uint), ("keycode", ctypes.c_uint),
+        ("same_screen", ctypes.c_int),
+    ]
+
+
+class _X11Event(ctypes.Union):
+    # XEvent is 24 longs on both ILP32 and LP64 Xlib ABIs.
+    _fields_ = [("type", ctypes.c_int), ("xkey", _X11KeyEvent),
+                ("_pad", ctypes.c_long * 24)]
+
+
+class _SelectedNativeWindowTarget:
+    """In-memory, one-shot X11 target. No XID/display getter is exposed."""
+
+    def __init__(self, *, row: SelectedNativeWindow, custody: RootProcessCustody,
+                 signer: RemoteObservationSigner, x11: Any, xres: Any, display: int,
+                 authority_file: Any, native_identity: Any, server_identity: Any,
+                 pid: int, pid_start_ticks: int, window_id: int,
+                 websocket_observation_id: str, expires_monotonic: float,
+                 monotonic: Callable[[], float]):
+        self._row, self._custody, self._signer = row, custody, signer
+        self._x11, self._xres, self._display = x11, xres, display
+        self._authority_file = authority_file
+        self._native_identity, self._server_identity = native_identity, server_identity
+        self._pid, self._pid_start = int(pid), int(pid_start_ticks)
+        self._window_id = int(window_id)
+        self._websocket_id, self._expires = websocket_observation_id, expires_monotonic
+        self._now, self._used, self._closed = monotonic, False, False
+        self._pidfd = _open_pidfd(self._pid)
+
+    def revalidate_current(self) -> None:
+        if self._closed or float(self._now()) >= self._expires:
+            raise RemoteObservationUnavailable("selected native-window target lease expired")
+        try:
+            pid_poller = select.poll()
+            pid_poller.register(self._pidfd, select.POLLIN | select.POLLHUP | select.POLLERR)
+            if pid_poller.poll(0) or _proc_starttime(self._pid) != self._pid_start:
+                raise RemoteObservationUnavailable("selected native-window client PIDFD is stale")
+            current_server = self._custody.inspect_enrolled_process(
+                self._row.display_server_profile_id, self._row.display_server_generation)
+            _check_xserver_peer(self._x11, self._display, current_server)
+            _verify_xauthority_receipt(self._row, self._authority_file, current_server)
+            cookie = _read_xauthority_receipt(self._row, self._authority_file,
+                self._row.display_name.split(":", 1)[1].split(".", 1)[0], current_server)
+            for index in range(len(cookie)):
+                cookie[index] = 0
+            process = self._custody.resolve_live_peer(self._pid, self._pidfd,
+                profile_id=self._row.native_profile_id, generation=self._row.native_generation)
+            process_fields = _pidfd_process_fields(process, self._pid)
+            if (process_fields["start"] != self._pid_start
+                    or process_fields["uid"] != self._row.native_uid
+                    or process_fields["cgroup_id"] != self._row.native_cgroup_id
+                    or process_fields["executable_sha256"] not in self._row.allowed_executable_sha256s
+                    or process_fields["executable_sha256"] != self._native_identity.executable_sha256):
+                raise RemoteObservationUnavailable("selected XRes window no longer belongs to the selected native package")
+            clients = _xres_client_pids(self._x11, self._xres, self._display)
+            if (_owner_pid(self._window_id, clients) != self._pid
+                    or not _xwindow_viewable(self._x11, self._display, self._window_id)):
+                raise RemoteObservationUnavailable("selected XRes window changed owner or is no longer viewable")
+        except RemoteObservationUnavailable:
+            raise
+        except Exception:
+            raise RemoteObservationUnavailable("selected XRes target custody could not be revalidated") from None
+
+    def send_f24_press_release_and_observe(self) -> NativeWindowInputObservation:
+        """Deliver one F24 press/release pair to this exact focused X window."""
+        if self._used:
+            raise RemoteObservationUnavailable("selected native-window target is one-shot")
+        self._used = True
+        self.revalidate_current()
+        xtst_name = ctypes.util.find_library("Xtst")
+        if not xtst_name:
+            raise RemoteObservationUnavailable("XTest client library is unavailable")
+        xtst = ctypes.CDLL(xtst_name)
+        xtst.XTestQueryExtension.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int),
+            ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int)]
+        xtst.XTestQueryExtension.restype = ctypes.c_int
+        event_base, error_base, major, minor = (ctypes.c_int() for _ in range(4))
+        if not xtst.XTestQueryExtension(self._display, ctypes.byref(event_base),
+                ctypes.byref(error_base), ctypes.byref(major), ctypes.byref(minor)):
+            raise RemoteObservationUnavailable("selected X server does not support XTest")
+        self._x11.XKeysymToKeycode.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+        self._x11.XKeysymToKeycode.restype = ctypes.c_ubyte
+        # XK_F24 is defined by X11/keysymdef.h as 0xFFD5.
+        keycode = int(self._x11.XKeysymToKeycode(self._display, 0xFFD5))
+        if not keycode:
+            raise RemoteObservationUnavailable("selected X server keymap has no F24 keycode")
+        xtst.XTestFakeKeyEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint,
+                                           ctypes.c_int, ctypes.c_ulong]
+        xtst.XTestFakeKeyEvent.restype = ctypes.c_int
+        self._x11.XSelectInput.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_long]
+        self._x11.XSelectInput.restype = ctypes.c_int
+        self._x11.XGetInputFocus.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong),
+                                             ctypes.POINTER(ctypes.c_int)]
+        self._x11.XGetInputFocus.restype = ctypes.c_int
+        self._x11.XSetInputFocus.argtypes = [ctypes.c_void_p, ctypes.c_ulong,
+            ctypes.c_int, ctypes.c_ulong]
+        self._x11.XSetInputFocus.restype = ctypes.c_int
+        self._x11.XGrabServer.argtypes = [ctypes.c_void_p]; self._x11.XGrabServer.restype = ctypes.c_int
+        self._x11.XUngrabServer.argtypes = [ctypes.c_void_p]; self._x11.XUngrabServer.restype = ctypes.c_int
+        self._x11.XGrabKeyboard.argtypes = [ctypes.c_void_p, ctypes.c_ulong,
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_ulong]
+        self._x11.XGrabKeyboard.restype = ctypes.c_int
+        self._x11.XUngrabKeyboard.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+        self._x11.XUngrabKeyboard.restype = ctypes.c_int
+        self._x11.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]; self._x11.XSync.restype = ctypes.c_int
+        self._x11.XPending.argtypes = [ctypes.c_void_p]; self._x11.XPending.restype = ctypes.c_int
+        self._x11.XNextEvent.argtypes = [ctypes.c_void_p, ctypes.POINTER(_X11Event)]
+        self._x11.XNextEvent.restype = ctypes.c_int
+        self._x11.XFlush.argtypes = [ctypes.c_void_p]; self._x11.XFlush.restype = ctypes.c_int
+
+        previous_focus, revert = ctypes.c_ulong(), ctypes.c_int()
+        self._x11.XGetInputFocus(self._display, ctypes.byref(previous_focus), ctypes.byref(revert))
+        # KeyPressMask | KeyReleaseMask. Drain stale events before acquiring
+        # focus so only this one operation can contribute to the receipt.
+        self._x11.XSelectInput(self._display, self._window_id, (1 << 0) | (1 << 1))
+        self._x11.XSync(self._display, 0)
+        while self._x11.XPending(self._display):
+            stale = _X11Event()
+            self._x11.XNextEvent(self._display, ctypes.byref(stale))
+        focus_samples: list[int] = []
+        focus_id = ""
+        events: list[tuple[int, int, int, int]] = []
+        grabbed = False
+        keyboard_grabbed = False
+        press_queued = False
+        focus_stable = True
+        focus_restored = False
+        partial_error: str | None = None
+        try:
+            self._x11.XGrabServer(self._display)
+            grabbed = True
+            self.revalidate_current()
+            self._x11.XSetInputFocus(self._display, self._window_id, 2, 0)
+            self._x11.XSync(self._display, 0)
+            actual_focus, actual_revert = ctypes.c_ulong(), ctypes.c_int()
+            self._x11.XGetInputFocus(self._display, ctypes.byref(actual_focus), ctypes.byref(actual_revert))
+            if actual_focus.value != self._window_id:
+                raise RemoteObservationUnavailable("selected X window did not receive input focus")
+            focus_samples.append(int(actual_focus.value))
+            # Route XTest key transitions only to the selected window even if
+            # physical input changes X input focus while the server is grabbed.
+            # A focus change still makes the observation partial and unusable.
+            keyboard_grab = self._x11.XGrabKeyboard(self._display, self._window_id,
+                0, 1, 1, 0)
+            self._x11.XSync(self._display, 0)
+            if keyboard_grab != 0:  # GrabSuccess is the X11 protocol value 0.
+                raise RemoteObservationUnavailable("selected X window keyboard grab was not granted")
+            keyboard_grabbed = True
+            self.revalidate_current()
+            before_press, before_press_revert = ctypes.c_ulong(), ctypes.c_int()
+            self._x11.XGetInputFocus(self._display, ctypes.byref(before_press),
+                                     ctypes.byref(before_press_revert))
+            focus_samples.append(int(before_press.value))
+            focus_stable = focus_stable and before_press.value == self._window_id
+            if before_press.value != self._window_id:
+                raise RemoteObservationUnavailable("selected X window focus changed before F24 press")
+            pressed = bool(xtst.XTestFakeKeyEvent(self._display, keycode, 1, 0))
+            if not pressed:
+                raise RemoteObservationUnavailable("XTest could not queue exact F24 press/release")
+            press_queued = True
+            self._x11.XSync(self._display, 0)
+            after_press, _ = ctypes.c_ulong(), ctypes.c_int()
+            self._x11.XGetInputFocus(self._display, ctypes.byref(after_press), ctypes.byref(_))
+            focus_samples.append(int(after_press.value))
+            focus_stable = focus_stable and after_press.value == self._window_id
+            released = bool(xtst.XTestFakeKeyEvent(self._display, keycode, 0, 0))
+            if not released:
+                # Do not leave a key logically held if release queueing fails.
+                xtst.XTestFakeKeyEvent(self._display, keycode, 0, 0)
+                partial_error = "XTest could not confirm exact F24 release queueing"
+            self._x11.XSync(self._display, 0)
+            after_release, after_release_revert = ctypes.c_ulong(), ctypes.c_int()
+            self._x11.XGetInputFocus(self._display, ctypes.byref(after_release),
+                                     ctypes.byref(after_release_revert))
+            focus_samples.append(int(after_release.value))
+            focus_stable = focus_stable and after_release.value == self._window_id
+            deadline = min(self._expires, float(self._now()) + 1.0)
+            while float(self._now()) < deadline and len(events) < 2:
+                if not self._x11.XPending(self._display):
+                    time.sleep(0.005)
+                    continue
+                event = _X11Event()
+                self._x11.XNextEvent(self._display, ctypes.byref(event))
+                key = event.xkey
+                if key.window == self._window_id and key.keycode == keycode \
+                        and not key.send_event and key.type in {2, 3}:
+                    events.append((int(key.type), int(key.window), int(key.keycode), int(key.time)))
+            self.revalidate_current()
+        except RemoteObservationUnavailable as exc:
+            if not press_queued:
+                raise
+            partial_error = partial_error or str(exc)
+        except Exception:
+            if not press_queued:
+                raise RemoteObservationUnavailable("selected XTest request could not be made safely") from None
+            partial_error = partial_error or "XTest request or observation failed after press queueing"
+        finally:
+            try:
+                self._x11.XSetInputFocus(self._display, previous_focus.value,
+                                         revert.value, 0)
+                self._x11.XSync(self._display, 0)
+                restored_focus, restored_revert = ctypes.c_ulong(), ctypes.c_int()
+                self._x11.XGetInputFocus(self._display, ctypes.byref(restored_focus),
+                                         ctypes.byref(restored_revert))
+                focus_samples.append(int(restored_focus.value))
+                focus_restored = restored_focus.value == previous_focus.value
+            finally:
+                if keyboard_grabbed:
+                    self._x11.XUngrabKeyboard(self._display, 0)
+                    self._x11.XSync(self._display, 0)
+                if grabbed:
+                    self._x11.XUngrabServer(self._display)
+                    self._x11.XSync(self._display, 0)
+        try:
+            self.revalidate_current()
+        except Exception:
+            # The measured event result still needs a truthful signed partial
+            # receipt if current custody changed after a press was queued.
+            partial_error = partial_error or "selected native-window custody changed after F24 effect"
+        press_count = sum(1 for item in events if item[0] == 2)
+        release_count = sum(1 for item in events if item[0] == 3)
+        focus_stable = focus_stable and len(focus_samples) == 5 and all(
+            focus == self._window_id for focus in focus_samples[:4])
+        focus_restored = focus_restored and focus_samples[-1] == previous_focus.value
+        event_types = tuple(item[0] for item in events)
+        outcome = ("complete" if press_count == 1 and release_count == 1
+                   and event_types == (2, 3)
+                   and focus_stable and focus_restored and partial_error is None else "partial")
+        focus_id = hashlib.sha256(_canonical({
+            "previous_focus": int(previous_focus.value), "revert": int(revert.value),
+            "samples": focus_samples, "target": self._window_id,
+            "at": float(self._now())})).hexdigest()
+        issued = float(self._now())
+        unsigned = NativeWindowInputObservation(
+            remote_enrollment_id=self._row.remote_enrollment_id,
+            websocket_observation_id=self._websocket_id,
+            native_profile_id=self._row.native_profile_id,
+            native_generation=self._row.native_generation,
+            native_pid=self._pid, native_pid_start_ticks=self._pid_start,
+            display_profile_id=self._row.display_server_profile_id,
+            display_generation=self._row.display_server_generation,
+            display_name=self._row.display_name,
+            xauthority_receipt_handle=self._row.xauthority_receipt_handle,
+            window_id=self._window_id, keycode=keycode,
+            delivered_keypress_count=press_count, delivered_keyrelease_count=release_count,
+            delivered_event_types=event_types,
+            focus_stable=focus_stable, focus_restored=focus_restored, outcome=outcome,
+            focus_observation_handle=focus_id,
+            event_observation_handle=hashlib.sha256(_canonical(events)).hexdigest(),
+            issued_monotonic=issued, expires_monotonic=min(self._expires, issued + 5.0),
+            assertion_ids=_NATIVE_INPUT_ASSERTIONS, signature=b"")
+        receipt = NativeWindowInputObservation(**{
+            item.name: getattr(unsigned, item.name) for item in fields(unsigned)
+            if item.name != "signature"}, signature=self._signer.sign(unsigned.payload()))
+        if not receipt.verify(self._signer, now=issued, selected=self._row,
+                              websocket_observation_id=self._websocket_id):
+            raise RemoteObservationUnavailable("root F24 event receipt failed self-validation")
+        return receipt
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            if self._pidfd >= 0:
+                os.close(self._pidfd)
+        finally:
+            self._pidfd = -1
+            if self._display:
+                self._x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+                self._x11.XCloseDisplay.restype = ctypes.c_int
+                self._x11.XCloseDisplay(self._display)
+                self._display = 0
 
 
 _X11_LOCK = threading.RLock()
@@ -819,7 +1293,7 @@ def _observe_x11_app_window(row: SelectedNativeWindow, native_identity: Any,
                                key=lambda value: (value["xid"], value["pid"]))})).hexdigest()
         surface_digest = _hash_bounded_window_sample(x11, display, matched[0][0])
         first = matched[0]
-        return {"pid": first[1], "start": first[2], "window_digest": window_digest,
+        return {"pid": first[1], "start": first[2], "xid": first[0], "window_digest": window_digest,
                 "surface_digest": surface_digest}
     finally:
         x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
