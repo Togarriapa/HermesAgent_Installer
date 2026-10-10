@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import sqlite3
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ from hermes_installer.authority.native_materialization import (
     NativeMaterializationReceipt,
     NativeMaterializationSelection,
     NativeMaterializedItem,
+    _retained_resource_definitions,
     RootNativeMaterialization,
     _atomic_service_write_at,
     _hash_file_at,
@@ -75,6 +77,34 @@ def test_all_bundled_profiles_compile_to_their_exact_profile_local_skill_closure
         assert all(path.startswith(f"profiles/{profile_id}/") for path in selected)
         discovered_skills.update(actual)
     assert len(discovered_skills) == 396
+
+
+def test_materialization_definition_projection_retains_transformed_source_and_native_members() -> None:
+    registry = _registry()
+    profile_id = sorted(key.split("/", 1)[1].split("@", 1)[0]
+                        for key in registry.resolver.raw if key.startswith("profiles/"))[0]
+    discovery = registry.discover([f"profiles/{profile_id}@*"])
+    compiled = registry.materialize(discovery)
+    definitions = _retained_resource_definitions(registry, discovery, compiled)
+
+    profile = next(row for row in definitions
+                   if row.kind == "profiles" and row.resource_id == profile_id)
+    raw = registry.resolver.raw[f"profiles/{profile_id}@{profile.version}"]
+    assert profile.source_revision == registry.source.revision
+    assert profile.source_document_sha256 == raw.content_digest
+    assert any(row.relative_path == profile.source_path for row in profile.members)
+    assert all(hashlib.sha256(compiled[row.relative_path]).hexdigest() == row.sha256
+               and len(compiled[row.relative_path]) == row.size_bytes
+               for row in profile.members)
+
+    selected_skills = {item.resource.id for item in discovery.resources
+                       if item.resource.kind.value == "skills"}
+    retained_skills = {row.resource_id for row in definitions if row.kind == "skills"}
+    assert retained_skills == selected_skills
+    assert all(any(member.relative_path == f"homes/skills/{skill}/SKILL.md"
+                   for member in row.members)
+               for skill in selected_skills
+               for row in definitions if row.kind == "skills" and row.resource_id == skill)
 
 
 def test_crosswalk_path_tampering_is_rejected_before_writes() -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import os
 import socket
 import stat
@@ -530,6 +531,25 @@ class HostAuthorityIPCContracts(unittest.TestCase):
             request_digest=digest,
         )
         return context, grant, digest
+
+    def test_native_mcp_dispatch_accepts_safe_content_type_header(self):
+        class Dispatcher:
+            def __init__(self, service):
+                self.service = service
+
+            def dispatch_native_mcp(self, **_kwargs):
+                return {"status": 200, "body": b"{}",
+                        "headers": {"content-type": "application/json"},
+                        "receipt_id": "mcp-receipt"}
+
+        self.service.attach_native_mcp_dispatcher(Dispatcher(self.service))
+        result = self.service._dispatch_native_mcp(
+            os.getuid(), os.getpid(), 0,
+            {"schema": 1, "invocation_handle": "h" * 32,
+             "canonical_arguments_b64": base64.b64encode(b"{}").decode("ascii")},
+            cancelled=lambda: False,
+        )
+        self.assertEqual(result["headers"], {"content-type": "application/json"})
 
     def test_peer_uid_issues_signed_context_and_fixed_broker_performs_effect(self):
         context, grant, digest = self._context_and_grant()
