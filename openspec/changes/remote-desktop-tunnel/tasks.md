@@ -138,3 +138,10 @@ Tested gateway source review v223: `plans/amendments/2026-10-10-tested-gateway-s
 - [ ] `RT-T225.1` Implement actual retained source projection, compiler member/core selectors and typed signed immutable existing transaction-journal adoption writer.
 - [ ] `RT-T225.2` Implement fresh active identity/private role observations and genuine current root network lease resolver under exact v225 APIs.
 - [ ] `VD-T225.3` Verify actual publication/journal restart joins and specified missing proof/replay/signature/currentness/NSS/kernel/cleanup failures; target acceptance OPEN.
+
+
+## Official Desktop native build inputs v226
+
+- [ ] `RT-T226.1` Implement actual current official header/native/signedARM64 sysroot source acquisition and held native input registry under v226.
+- [ ] `RT-T226.2` Complete actual offline ElectronABI node-pty/helpers, original workspace typecheck/build and prepared AppDir with independent ELF/PTY/sandbox observer.
+- [ ] `VD-T226.3` Verify real isolated ARM64 build and specified header/ABI/dependency/egress/degraded/currentness/link/sandbox/cancel failures; all target acceptance OPEN.

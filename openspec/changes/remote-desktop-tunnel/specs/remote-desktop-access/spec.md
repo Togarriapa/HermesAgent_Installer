@@ -399,3 +399,15 @@ The installer SHALL implement `planning/current-remote-identity-adoption-v225.js
 #### Scenario: Network authority requested
 - **WHEN** active remote startup requires listener/client identity or lease renewal
 - **THEN** the resolver SHALL join exact fresh three-role identities to current protected namespace/network rows and actual nft/kernel lease proof, preserving private14500/8765 and Desktop AF_UNIX restrictions and refusing stale or foreign cleanup
+
+
+### Requirement: Actual bounded Desktop native build source and output v226
+The installer SHALL implement `planning/official-desktop-native-build-inputs-v226.json` with actual official header/Electron ABI, signed private ARM64 compiler/sysroot/dependency receipts and exact original workspace/native/prepared AppDir build; an unavailable placeholder or npm inventory SHALL NOT count as completion.
+
+#### Scenario: Native source or staging fallback missing
+- **WHEN** header/ABI/compiler/dependency/workspace or required helper proof is absent or prepared native state is degraded
+- **THEN** build/runtime issuance SHALL deny without network fallback, skipped typecheck, arbitrary install, global downgrade or reduced sandbox
+
+#### Scenario: Real AppDir built
+- **WHEN** exact current held inputs yield a full AppDir under fixed offline managed build
+- **THEN** independent observers SHALL verify complete package/native/library/link and actual sandbox-enabled Electron PTY effects while keeping source/build/CAS/materialized/active/Pi acceptance separate

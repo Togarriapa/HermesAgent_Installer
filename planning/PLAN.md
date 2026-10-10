@@ -184,3 +184,6 @@ Qualification serializer v224: `plans/amendments/2026-10-10-qualification-protec
 
 
 Current remote identity adoption v225: `plans/amendments/2026-10-10-current-remote-identity-adoption-v225.md`; RT-T225.1 → RT-T225.2 → VD-T225.3 OPEN. Actual publication/core/member + immutable signed existing journal adoption, fresh restart NSS/root/network proof; no old setup seal/all AC OPEN.
+
+
+Official Desktop native inputs v226: `plans/amendments/2026-10-10-official-desktop-native-build-inputs-v226.md`; RT-T226.1 → RT-T226.2 → VD-T226.3 OPEN. Actual official Electron headers/ABI, signedARM64 compiler/sysroot, exact workspace/native/packaging/AppDir producer and independent sandbox effects; all pins/AC OPEN.

@@ -3383,5 +3383,22 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "official_desktop_native_build_inputs_v226": {
+    "contract": "planning/official-desktop-native-build-inputs-v226.json",
+    "tasks": {
+      "RT-T226.1": [
+        "BD-T218.1"
+      ],
+      "RT-T226.2": [
+        "RT-T226.1",
+        "BD-T218.2"
+      ],
+      "VD-T226.3": [
+        "RT-T226.1",
+        "RT-T226.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }

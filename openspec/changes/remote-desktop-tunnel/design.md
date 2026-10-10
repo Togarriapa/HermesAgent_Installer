@@ -102,3 +102,8 @@ Tested gateway source review v223: `plans/amendments/2026-10-10-tested-gateway-s
 ## Durable remote identity currentness v225
 
 Use the exact schemas/APIs in `planning/current-remote-identity-adoption-v225.json`: source projection precedes publication; immutable signed adoption follows exact committed receipt. Current protected member/core/journal/NSS/root/lease observations issue fresh receipts after restart without restored setup seals. Publication-before-journal crashes deny activation until original authorized transaction completes. Source pins and all runtime/target acceptance remain pending.
+
+
+## Desktop native source/build closure v226
+
+`planning/official-desktop-native-build-inputs-v226.json` fixes owner registry and retained FD receipt fields. Exact Electron ABI/local headers and signed private sysroot feed offline locked rebuild; prepared native degraded=false and complete original workspace prevent lazy staging fallback. Original prepared dir build produces full independently observed AppDir, ELF/library/PTY/sandbox proof, separate from final runtime/active/target acceptance. No guessed header/dependency/schema pins or ambient Mac/global libraries.
