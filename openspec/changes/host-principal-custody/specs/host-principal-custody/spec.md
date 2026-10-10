@@ -619,3 +619,45 @@ The installer SHALL preserve unique interpreter identity, exact runtime member c
 #### Scenario: Persistent public config has no disclosed input
 - **WHEN** a public web request has no actual root-observed per-input disclosure and ancestry proof
 - **THEN** no PUBLIC receipt is issued merely from profile configuration or missing parents
+
+### Requirement: Durable adopted public choice currentness v153
+The installer SHALL verify current signed source choice/revocation and active adoption beyond setup closure while requiring separate fresh per-input installed-root TTY disclosure and effect authority.
+
+#### Scenario: Original signed choice is revoked under unchanged active pointer
+- **WHEN** the root journal choice epoch/revocation changes
+- **THEN** the adoption/current permission denies despite an unchanged policy pointer and never extends an expired setup or runtime lease
+
+### Requirement: Prepared source module layout v154
+The installer SHALL bind the two reviewed worker source members with source-module role and the root-imported definition adapter with its distinct module identity.
+
+#### Scenario: Prepared worker source is available before worker launch
+- **WHEN** a verified held release includes the exact source-module bytes
+- **THEN** the factory may prove source membership without claiming root import or live worker origin, and later worker evidence remains independently required
+
+### Requirement: Runtime choice revocation source v156
+The installer SHALL consume genuine current installed actor and one-use foreground TTY revocation observation tied to the displayed adopted choice before signing a durable revoked epoch.
+
+#### Scenario: Revocation request carries caller epoch or expired setup proof
+- **WHEN** no genuine current runtime revocation observation exists
+- **THEN** the registry denies without changing the signed choice or restoring an expired lease
+
+### Requirement: Native capture profiles v158
+The installer SHALL validate raw root-observed result bytes against the exact selected protected result schema before source capture and deliver only genuine current peer-bound handles.
+
+#### Scenario: Worker supplies a ToolMessage without a completed root result
+- **WHEN** no matching current root invocation/result/schema observation exists
+- **THEN** source capture denies and no worker message or generic object schema supplies authority
+
+### Requirement: Root native health start v159
+The installer SHALL admit health only from genuine committed runnable enrollment and bind the root-selected service grant, transaction, fixture and live control before authenticated input.
+
+#### Scenario: Only a prepared generation is available
+- **WHEN** health is requested without a current committed runnable enrollment receipt
+- **THEN** health start denies and ordinary enablement stays withheld until actual same-generation semantic health succeeds
+
+### Requirement: Installed local qualification v160
+The installer SHALL dispatch only fixed source-reviewed local qualification suites under its genuine installed actor and execute production authority paths with actual owned fixture receipts.
+
+#### Scenario: Qualification caller supplies arbitrary test code or policy JSON
+- **WHEN** input exceeds the finite installed suite selector
+- **THEN** dispatch denies and no actor/session/grant shortcut is created
