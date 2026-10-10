@@ -3188,5 +3188,17 @@
       "VD-T209.5"
     ],
     "acceptance": "All AC OPEN"
+  },
+  "home_assistant_metadata_functional_read_v210": {
+    "contract": "planning/home-assistant-metadata-functional-read-v210.json",
+    "tasks": {
+      "MC-R0101.5": [
+        "MC-R0101.3"
+      ],
+      "MC-R0101.6": [
+        "MC-R0101.5"
+      ]
+    },
+    "acceptance": "AC01..AC18 OPEN"
   }
 }

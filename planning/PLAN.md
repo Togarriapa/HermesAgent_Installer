@@ -151,3 +151,6 @@ Concrete remote runtime substrate v209: `plans/amendments/2026-10-10-concrete-re
 
 
 Production remote NSS/roots v212: `plans/amendments/2026-10-10-production-remote-role-nss-roots-v212.md`; RT-T212.1 → RT-T212.2 → VD-T212.3 OPEN, exact production three identities/owned roots/current adoption/verified-dead rollback; v209 AppDir finite targets corrected, all source pins/AC OPEN.
+
+
+HA v210 plans/amendments/2026-10-10-home-assistant-metadata-functional-read-v210.md extends MC-R0101/MC-F01 with MC-R0101.5/.6 actual WS metadata and genuine whole-context functional read; no HA exposure mutation, source/runtime/account evidence separate, all AC OPEN.

@@ -189,3 +189,6 @@ Existing HI-T173.1/HI-T178.2/HI-T197.3/VD-T197.4 include exact fixture subject N
 - [ ] VD-T213.3: Verify unprivileged delegate effects, isolation, stale/grant/source denial and cleanup.
 
 RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member readback and post-setup restart/current active home registry; setup-only maps cannot complete Jarvis delegate scope.
+
+- [ ] MC-R0101.5: Implement v210 source-owned fixed HA WS metadata transport plus exact complete-filter or whole-context mode, actual root choice/grant and genuine MCP functional read.
+- [ ] MC-R0101.6: Validate protocol/dependency/TLS/DNS/auth/admin/metadata/scope/currentness failures and actual protected GetLiveContext semantic result separately from setup/acceptance.

@@ -53,3 +53,6 @@ Native registration projection v99: `plans/amendments/2026-10-10-native-registra
 Home Assistant MC-R0101 root enrollment: `plans/amendments/2026-10-10-home-assistant-root-enrollment-mc-r0101.md`; actual root vault/instance/source probe and finite strict publication/adoption, preserving existing HA configuration and all pending acceptance.
 
 HA Assist actual resource scope: `plans/amendments/2026-10-10-home-assistant-assist-scope-mc-r0101.md`; exact typed home-assistant-assist-read choice and conditional current exposure/resource filter proofs.
+
+
+HA v210 plans/amendments/2026-10-10-home-assistant-metadata-functional-read-v210.md refines actual Core2026.10.0 complete metadata reads and genuine explicitly selected whole GetLiveContext alternative with finite TLS/DNS-pinned WS dependency/credential custody. No HA exposure mutation, metadata/functional/source/enablement evidence separate; all acceptance OPEN.

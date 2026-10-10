@@ -158,3 +158,6 @@ Handoff reconfirmation source review v211: exact26cf root_setup sole leaf replac
 Jarvis selected task home custody v213: planning/jarvis-selected-task-home-custody-v213.json; current active held home→existing consumed task grant→fixed/hermes unprivileged mount. Root discovery not usability; all208/source/toolpolicy/namespace/private-public boundaries preserved. RB-T213.1/HI-T213.2/VD-T213.3 OPEN.
 
 RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member readback and post-setup restart/current active home registry; setup-only maps cannot complete Jarvis delegate scope.
+
+
+HA v210 plans/amendments/2026-10-10-home-assistant-metadata-functional-read-v210.md refines actual Core2026.10.0 complete metadata reads and genuine explicitly selected whole GetLiveContext alternative with finite TLS/DNS-pinned WS dependency/credential custody. No HA exposure mutation, metadata/functional/source/enablement evidence separate; all acceptance OPEN.
