@@ -3493,16 +3493,19 @@
     "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
     "source_tree": "9928a1ca538d629f778e1823f2867a9646bcad75",
     "task_dependencies": {
-      "VD-T180.6": [
-        "BD-T232.1"
-      ],
-      "VD-T183.5": [
-        "VD-T180.6"
-      ],
-      "VD-T232.2": [
-        "BD-T232.1"
-      ]
+      "VD-T180.6": ["BD-T232.1"],
+      "VD-T183.5": ["VD-T180.6"],
+      "VD-T232.2": ["BD-T232.1"]
     },
     "acceptance": "All AC OPEN"
+  },
+  "predecessor_bound_candidate_update_v235": {
+    "contract": "planning/predecessor-bound-candidate-update-v235.json",
+    "tasks": {
+      "BD-T235.1": ["BD-T208.1"],
+      "LC-T235.2": ["BD-T235.1", "LC-F03"],
+      "VD-T235.3": ["LC-T235.2"]
+    },
+    "acceptance": "All AC01..18 OPEN"
   }
 }

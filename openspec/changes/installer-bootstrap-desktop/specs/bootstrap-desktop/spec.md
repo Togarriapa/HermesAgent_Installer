@@ -1016,7 +1016,6 @@ The installer SHALL consume only the issuer-current v231 active authority aggreg
 - **WHEN** the current sealed aggregate and exact native precompile reservation have been validated
 - **THEN** the compiler binds the real core and distinct crosswalk members without resolving an already published policy to obtain its own inputs
 
-
 ## ADDED Requirements
 
 ### Requirement: Exact Jarvis cohort source closure
@@ -1029,3 +1028,14 @@ The installer SHALL apply the finite source membership and byte tuples in `plann
 #### Scenario: Materialization or direct mount fixture succeeds
 - **WHEN** exact source profiles/skills or isolated bind effects pass
 - **THEN** evidence retains that phase and does not promote task/provider/runtime/Pi acceptance
+
+### Requirement: Verified predecessor-bound installer candidate update
+The installer SHALL implement planning/predecessor-bound-candidate-update-v235.json using actual current old release and exact candidate source/runtime/build receipts, atomic owned pointer CAS and conditional rollback; candidate distribution publication SHALL remain distinct from verified compatible active runtime update.
+
+#### Scenario: Existing verified installer selects a new candidate
+- **WHEN** the root controlling TTY selects an exact compatible descendant candidate while an owned installed predecessor is verified
+- **THEN** the same predecessor is bound before staging and carried through sealed exec/build/publication, the new candidate launcher is verified and reexecuted, and the old release/data/active generation remain recoverable
+
+#### Scenario: Failed or concurrent publication
+- **WHEN** predecessor/source/controller drift or candidate verification/exec fails
+- **THEN** the old pointer remains intact before CAS and a post-CAS failure restores only the issuer-owned verified predecessor if the exact candidate pointer is still current; unrelated pointer changes and data remain untouched

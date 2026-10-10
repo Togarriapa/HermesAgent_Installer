@@ -314,3 +314,5 @@ Active authority aggregate v231: planning/active-authority-receipt-aggregate-v23
 
 
 v228 exact Jarvis/runtime source review: `plans/amendments/2026-10-10-jarvis-runtime-source-pin-review-v228.md` and `planning/jarvis-runtime-source-pin-review-v228.json`. Apply only13 measured leaf tuple updates,3 finite held module members/preloads and4 existing catalog rows from frozen8185; preserve corrected nested aliases, structural metadata/no self-pin, and separate source/materialization/fixture/runtime evidence. Existing VD-T180.6/VD-T183.5/VD-T232.2 and all AC OPEN.
+
+Predecessor-bound candidate update v235: planning/predecessor-bound-candidate-update-v235.json requires current verified old release admission before exact candidate staging, sealed samecontroller input joins, existing publisher present CAS, durable owned rollback and candidate reexec. Distribution and runtime generation acceptance remain separate. BD-T235.1/LC-T235.2/VD-T235.3 OPEN; all AC OPEN.
