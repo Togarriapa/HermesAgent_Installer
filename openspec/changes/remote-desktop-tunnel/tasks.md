@@ -122,3 +122,12 @@ Xpra native build acquisition v219: `plans/amendments/2026-10-10-xpra-native-bui
 - [ ] `RT-T219.2` Wire exact source/transform/PM/member/config joins and corrected offline native build/qualification under v219; all acceptance OPEN.
 
 - [ ] `VD-T219.3` Verify isolated ARM64 real build/session and specified signature/ABI/source/currentness/RPATH/cleanup failures under v219; all acceptance OPEN.
+
+
+Tested gateway source review v223: `plans/amendments/2026-10-10-tested-gateway-source-members-v223.md` / `planning/tested-gateway-source-members-v223.json`; exact tested leaf/schema pins, eighteen-member import closure, held libpython config and gateway-only lib64 link, separate synthetic-authority ARM64 fixture/production runtime/target evidence. All AC OPEN.
+
+- [ ] `RT-T223.1` Apply exact tested gateway source/schema tuples and complete runtime import/sourcegroup closure under v223; all runtime/target acceptance OPEN.
+
+- [ ] `RT-T223.2` Complete genuine current source/PM/wheel/native config/CAS/final-runtime joins and exact gateway-only directory-link policy under v223; all runtime/target acceptance OPEN.
+
+- [ ] `VD-T223.3` Verify real sealed source/build/materialization joins and specified source/ELF/link/currentness/fake-authority failures under v223; all runtime/target acceptance OPEN.

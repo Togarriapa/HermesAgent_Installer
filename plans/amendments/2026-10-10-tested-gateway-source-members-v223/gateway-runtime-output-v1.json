@@ -1,0 +1,1 @@
+{"member_fields":["path","kind","mode","size_bytes","sha256","executable_role","target","target_sha256","target_size_bytes","owner_uid","owner_gid"],"required":["schema","role","selection_handle","input_closure_sha256","target","package_members","executable_member","dependency_members","qualification"],"schema":1}

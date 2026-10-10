@@ -172,3 +172,6 @@ CurrentpublishedPMhome runtime221: plans/amendments/2026-10-10-current-published
 
 
 Xpra native source producers v219: `plans/amendments/2026-10-10-xpra-native-build-acquisition-v219.md`; RT-T219.1 → RT-T219.2 → VD-T219.3 OPEN, actual signed native+isolatedPM314 acquisition and independent session qualification; no gap-only completion/all AC OPEN.
+
+
+Gateway tested source v223: `plans/amendments/2026-10-10-tested-gateway-source-members-v223.md`; RT-T223.1 → RT-T223.2 → VD-T223.3 OPEN. Exact tested leaf/schema pins/heldlibpython/finitegatewaylink and synthetic-authorityARM64fixture distinguished; productionruntime/AC OPEN.

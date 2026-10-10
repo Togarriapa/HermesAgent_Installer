@@ -3301,5 +3301,20 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "tested_gateway_source_members_v223": {
+    "contract": "planning/tested-gateway-source-members-v223.json",
+    "amendment": "plans/amendments/2026-10-10-tested-gateway-source-members-v223.md",
+    "tasks": {
+      "RT-T223.1": [],
+      "RT-T223.2": [
+        "RT-T223.1"
+      ],
+      "VD-T223.3": [
+        "RT-T223.1",
+        "RT-T223.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }
