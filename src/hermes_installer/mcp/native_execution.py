@@ -78,6 +78,8 @@ class NativeMCPExecutionDenied(AuthorityDenied):
 
 def build_native_mcp_schema_catalog(records: Any, *, authority_service: Any,
                                     artifact_catalog: Any, staging_root: Path,
+                                    registration_index: Any | None = None,
+                                    schema_derivation_registry: Any | None = None,
                                     expected_uid: int = 0) -> Any:
     """Build the schema catalog from CAS bytes and retained signed source receipts.
 
@@ -93,6 +95,12 @@ def build_native_mcp_schema_catalog(records: Any, *, authority_service: Any,
             or type(expected_uid) is not int or expected_uid < 0
             or not callable(getattr(authority_service, "resolve_retained_source_receipt", None))):
         raise TypeError("root CAS and source receipt services are required")
+    if registration_index is not None and type(registration_index) is not NativeMCPRegistrationIndex:
+        raise TypeError("root native MCP registration index is invalid")
+    if schema_derivation_registry is not None:
+        from ..authority.artifacts import RootSchemaDerivationReceiptRegistry
+        if type(schema_derivation_registry) is not RootSchemaDerivationReceiptRegistry:
+            raise TypeError("root schema derivation receipt registry is invalid")
 
     def read_artifact(artifact_id: str, digest: str) -> bytes:
         resolved = artifact_catalog.resolve(
@@ -113,9 +121,28 @@ def build_native_mcp_schema_catalog(records: Any, *, authority_service: Any,
             return False
         return True
 
+    def resolve_derived_artifact(record: Mapping[str, Any]) -> Any:
+        if registration_index is None or schema_derivation_registry is None:
+            raise NativeMCPExecutionDenied(
+                "native.mcp.schema", "selected dynamic schema resolver is unavailable",
+            )
+        binding = registration_index.resolve_action(record["action_id"])
+        if (type(binding) is not NativeMCPToolBinding
+                or binding.request_schema_id != record["id"] and binding.result_schema_id != record["id"]):
+            raise NativeMCPExecutionDenied(
+                "native.mcp.schema", "dynamic schema is not joined to a selected action",
+            )
+        return schema_derivation_registry.resolve_schema_artifact(
+            record["derivation_receipt_handle"], selected_binding=binding,
+            schema_role=record["schema_kind"],
+        )
+
     return NativeMCPProtectedSchemaCatalog.from_protected_records(
         records, read_artifact=read_artifact,
         verify_source_receipt=verify_source_receipt,
+        resolve_derived_artifact=(resolve_derived_artifact
+                                  if registration_index is not None
+                                  and schema_derivation_registry is not None else None),
     )
 
 

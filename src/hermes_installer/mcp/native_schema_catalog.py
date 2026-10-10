@@ -23,6 +23,7 @@ _SHA256 = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
 _FIELDS = frozenset({
     "id", "artifact_id", "sha256", "schema_kind", "native_package_id",
     "native_package_generation", "adapter_id", "action_id", "source_receipt_handle",
+    "size_bytes", "derivation_receipt_handle",
 })
 _MAX_ARTIFACT_BYTES = 256 * 1024
 _MAX_SCHEMA_NODES = 16_384
@@ -116,12 +117,14 @@ class NativeSchemaArtifact:
     id: str
     artifact_id: str
     sha256: str
+    size_bytes: int
     schema_kind: str
     native_package_id: str
     native_package_generation: str
     adapter_id: str
     action_id: str
     source_receipt_handle: str
+    derivation_receipt_handle: str | None
     schema: Mapping[str, Any]
 
 
@@ -151,6 +154,7 @@ class NativeMCPProtectedSchemaCatalog:
         *,
         read_artifact: Callable[[str, str], bytes],
         verify_source_receipt: Callable[[str, Mapping[str, str]], bool],
+        resolve_derived_artifact: Callable[[Mapping[str, Any]], Any] | None = None,
     ) -> "NativeMCPProtectedSchemaCatalog":
         if (not isinstance(records, (tuple, list)) or len(records) > _MAX_SCHEMA_RECORDS
                 or not callable(read_artifact) or not callable(verify_source_receipt)):
@@ -169,6 +173,13 @@ class NativeMCPProtectedSchemaCatalog:
             digest = raw["sha256"]
             if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
                 raise NativeSchemaCatalogError("protected schema artifact digest is invalid")
+            if (type(raw["size_bytes"]) is not int
+                    or not 1 <= raw["size_bytes"] <= _MAX_ARTIFACT_BYTES):
+                raise NativeSchemaCatalogError("protected schema artifact size is invalid")
+            derivation_handle = raw["derivation_receipt_handle"]
+            if (derivation_handle is not None
+                    and (not isinstance(derivation_handle, str) or not _ID.fullmatch(derivation_handle))):
+                raise NativeSchemaCatalogError("protected schema derivation handle is invalid")
             identity = {
                 "schema_id": raw["id"], "sha256": digest,
                 "schema_kind": raw["schema_kind"],
@@ -177,14 +188,33 @@ class NativeMCPProtectedSchemaCatalog:
                 "adapter_id": raw["adapter_id"], "action_id": raw["action_id"],
             }
             try:
-                if verify_source_receipt(raw["source_receipt_handle"], identity) is not True:
-                    raise NativeSchemaCatalogError("protected schema source receipt is not current")
-                artifact = read_artifact(raw["artifact_id"], digest)
+                if derivation_handle is None:
+                    # Packaged schemas still use their source receipt as the
+                    # artifact byte witness. Check that receipt before reading.
+                    if verify_source_receipt(raw["source_receipt_handle"], identity) is not True:
+                        raise NativeSchemaCatalogError("protected schema source receipt is not current")
+                    artifact = read_artifact(raw["artifact_id"], digest)
+                else:
+                    if not callable(resolve_derived_artifact):
+                        raise NativeSchemaCatalogError("root derived schema resolver is unavailable")
+                    derived = resolve_derived_artifact(raw)
+                    from ..authority.artifacts import RootDerivedSchemaArtifact
+                    if (type(derived) is not RootDerivedSchemaArtifact
+                            or derived.artifact_id != raw["artifact_id"]
+                            or derived.sha256 != digest
+                            or derived.size_bytes != raw["size_bytes"]
+                            or derived.source_receipt_handle != raw["source_receipt_handle"]
+                            or derived.derivation_receipt_handle != derivation_handle
+                            or derived.native_binding_id != raw["action_id"]
+                            or derived.schema_role != raw["schema_kind"]):
+                        raise NativeSchemaCatalogError("root derived schema differs from its selected record")
+                    artifact = derived.canonical_schema_bytes
             except NativeSchemaCatalogError:
                 raise
             except Exception:
                 raise NativeSchemaCatalogError("protected schema source could not be verified") from None
-            if not isinstance(artifact, bytes) or not 1 <= len(artifact) <= _MAX_ARTIFACT_BYTES:
+            if (not isinstance(artifact, bytes) or not 1 <= len(artifact) <= _MAX_ARTIFACT_BYTES
+                    or len(artifact) != raw["size_bytes"]):
                 raise NativeSchemaCatalogError("protected schema artifact is unavailable or oversized")
             if hashlib.sha256(artifact).hexdigest() != digest:
                 raise NativeSchemaCatalogError("protected schema artifact digest does not match")
@@ -200,10 +230,12 @@ class NativeMCPProtectedSchemaCatalog:
                 raise NativeSchemaCatalogError("protected schema artifact root is not an object")
             rows.append(NativeSchemaArtifact(
                 id=raw["id"], artifact_id=raw["artifact_id"], sha256=digest,
+                size_bytes=raw["size_bytes"],
                 schema_kind=raw["schema_kind"], native_package_id=raw["native_package_id"],
                 native_package_generation=raw["native_package_generation"],
                 adapter_id=raw["adapter_id"], action_id=raw["action_id"],
-                source_receipt_handle=raw["source_receipt_handle"], schema=_freeze(parsed),
+                source_receipt_handle=raw["source_receipt_handle"],
+                derivation_receipt_handle=derivation_handle, schema=_freeze(parsed),
             ))
         return cls(rows)
 
