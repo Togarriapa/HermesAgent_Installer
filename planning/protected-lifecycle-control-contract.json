@@ -1256,5 +1256,27 @@
       "installer-bootstrap-desktop"
     ],
     "acceptance": "Download/code correction only, actual isolated interpreter/reexec/setup/runtime/nativeall18/physicaltargetacceptance pending. Frozenbaseline unchanged."
+  },
+  "pinned_pyyaml_wheel_members_v131": {
+    "schema": 1,
+    "id": "pinned-pyyaml-wheel-members-v131",
+    "baseline_requirements": [
+      "official isolated installer bootstrap",
+      "HI-T03",
+      "AC01"
+    ],
+    "artifact_id": "installer-bootstrap-pyyaml603-cp314-linux-arm64",
+    "sha256": "501a031947e3a9025ed4405a168e6ef5ae3126c59f90ce0cd6f2bfc477be31b7",
+    "size_bytes": 766454,
+    "additional_exact_members": [
+      "_yaml/",
+      "_yaml/__init__.py"
+    ],
+    "rule": "Only this exact already pinned PyYAML 6.0.3 cp314 ARM64 wheel may materialize its compatibility package _yaml/__init__.py alongside yaml/ and exact pyyaml-6.0.3.dist-info/. No other _yaml descendants, dependency, version, wheel or source are authorized. All 28 measured archive members remain checked against actual immutable wheel bytes and RECORD, safe path/type/size/duplicate rules. Directory entries are structural, never scripts or executable hooks. Preserve existing isolated site root and actual yaml import/extension architecture probe.",
+    "evidence": "Release owner observed exact existing SHA/size from actual root bootstrap, 28 wheel members, including _yaml/ and _yaml/__init__.py; extraction previously rejected that pinned compatibility package. This is source extraction correction, not installed runtime or acceptance proof.",
+    "tasks": [
+      "HI-T131.1 release builder: exact compatibility-member extraction and negative member/path/type/RECORD tests; no global package install or online resolution"
+    ],
+    "status": "implementation and target acceptance pending"
   }
 }
