@@ -71,6 +71,122 @@ class ReviewedNativeRegistrationDefinition:
     action_bindings: tuple[NativeRegistrationActionBinding, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class ReviewedNativeRegistrationResultSchema:
+    """Source-pinned result schema contract; it is not a protected receipt."""
+
+    native_tool_name: str
+    schema_id: str
+    artifact_id: str
+    relative_path: str
+    sha256: str
+    size_bytes: int
+    handler_kind: str
+    schema: Mapping[str, Any]
+
+
+class NativeRegistrationResultSchemaDenied(ValueError):
+    """The reviewed bounded local result-schema artifacts drifted."""
+
+
+def reviewed_local_registration_result_schemas(
+        registrations: tuple[CapturedHermesRegistration, ...] | None = None,
+) -> tuple[ReviewedNativeRegistrationResultSchema, ...]:
+    """Load the eight source-pinned local schemas from the v112 artifact map.
+
+    This validates the released source contract and exact schema file bytes.
+    The returned rows are not selected protected schema receipts and cannot
+    independently make a native candidate executable.
+    """
+    captured = registrations if registrations is not None else capture_actual_hermes_registrations()
+    if not isinstance(captured, tuple) or len(captured) != 42:
+        raise NativeRegistrationResultSchemaDenied("all actual registration sources are required")
+    by_name = {row.native_tool_name: row for row in captured}
+    root = Path(__file__).resolve().parents[3]
+    map_path = root / "plans/amendments/2026-10-10-native-local-schema-artifacts-v112/native-local-schema-artifact-map-v1.json"
+    bounds_path = root / "plans/amendments/2026-10-10-native-local-result-bounds-v110/native-local-registration-results-v1.json"
+    try:
+        artifact_map = json.loads(map_path.read_text(encoding="utf-8"))
+        bounds = json.loads(bounds_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        raise NativeRegistrationResultSchemaDenied("reviewed local result schema source files are unavailable") from None
+    rows = artifact_map.get("artifact_rows") if isinstance(artifact_map, Mapping) else None
+    schemas = bounds.get("result_schemas") if isinstance(bounds, Mapping) else None
+    if (not isinstance(artifact_map, Mapping) or not isinstance(bounds, Mapping)
+            or artifact_map.get("schema") != 1 or bounds.get("schema") != 1
+            or not isinstance(rows, list) or len(rows) != 8 or not isinstance(schemas, Mapping)
+            or set(artifact_map) != {"schema", "artifact_rows", "publication", "native_schema_record_join",
+                                    "result_constraints"}
+                or set(bounds) != {"artifact_id", "result_schemas", "schema", "source_pins", "trust",
+                               "unavailable_reason", "unavailable_results", "validation_limits", "validators"}):
+        raise NativeRegistrationResultSchemaDenied("reviewed local result schema catalog has an unsupported shape")
+    expected_handlers = {
+        "agent37_discover_skills": "public-registry-read",
+        "agent37_inspect_skill": "public-registry-read",
+        "mcp_registry_discover": "public-registry-read",
+        "mcp_registry_inspect": "public-registry-read",
+        "resource_overlay_read": "owner-overlay",
+        "resource_overlay_write": "owner-overlay",
+        "resource_overlay_history": "owner-overlay",
+        "resource_overlay_delete": "owner-overlay",
+    }
+    if set(schemas) != set(expected_handlers):
+        raise NativeRegistrationResultSchemaDenied("reviewed result schemas do not cover the exact eight bounded local tools")
+    # The v110 claims are only accepted while their source implementation
+    # pins still match the actual registrations observed above.
+    source_pins = bounds.get("source_pins")
+    native_plugins_digest = hashlib.sha256(
+        (root / "src/hermes_installer/components/native_plugins.py").read_bytes()).hexdigest()
+    public_registries_digest = hashlib.sha256(
+        (root / "src/hermes_installer/components/public_registries.py").read_bytes()).hexdigest()
+    if (not isinstance(source_pins, Mapping)
+            or source_pins.get("src/hermes_installer/components/native_plugins.py") != native_plugins_digest
+            or native_plugins_digest != by_name["resource_overlay_read"].registration_source_sha256
+            or source_pins.get("src/hermes_installer/components/public_registries.py") != public_registries_digest):
+        raise NativeRegistrationResultSchemaDenied("bounded result schema source pins differ from actual handler modules")
+    output: list[ReviewedNativeRegistrationResultSchema] = []
+    seen: set[str] = set()
+    for raw in rows:
+        expected = {"tool_name", "schema_id", "artifact_id", "path", "sha256", "size_bytes",
+                    "schema_role", "handler_kind"}
+        if not isinstance(raw, Mapping) or set(raw) != expected:
+            raise NativeRegistrationResultSchemaDenied("local result schema artifact row is malformed")
+        tool = raw["tool_name"]
+        if (tool not in expected_handlers or tool in seen or tool not in by_name
+                or raw["handler_kind"] != expected_handlers[tool] or raw["schema_role"] != "result"
+                or raw["schema_id"] != f"installer-native-local-result:{tool}:v1"
+                or raw["artifact_id"] != raw["schema_id"]):
+            raise NativeRegistrationResultSchemaDenied("local result schema artifact identity is not source-reviewed")
+        relative = raw["path"]
+        if not isinstance(relative, str) or not relative.startswith(
+                "plans/amendments/2026-10-10-native-local-schema-artifacts-v112/"):
+            raise NativeRegistrationResultSchemaDenied("local result schema file is outside its fixed reviewed directory")
+        path = root / relative
+        try:
+            data = path.read_bytes()
+        except OSError:
+            raise NativeRegistrationResultSchemaDenied("local result schema artifact bytes are unavailable") from None
+        if (type(raw["size_bytes"]) is not int or len(data) != raw["size_bytes"]
+                or not isinstance(raw["sha256"], str)
+                or hashlib.sha256(data).hexdigest() != raw["sha256"]):
+            raise NativeRegistrationResultSchemaDenied("local result schema artifact bytes differ from the reviewed pin")
+        try:
+            parsed = json.loads(data)
+            canonical = _canonical(parsed)
+        except (ValueError, RecursionError):
+            raise NativeRegistrationResultSchemaDenied("local result schema artifact is invalid JSON") from None
+        if data not in {canonical, canonical + b"\n"} or parsed != schemas[tool]:
+            raise NativeRegistrationResultSchemaDenied("local schema artifact differs from its reviewed result definition")
+        seen.add(tool)
+        output.append(ReviewedNativeRegistrationResultSchema(
+            tool, raw["schema_id"], raw["artifact_id"], relative,
+            raw["sha256"], raw["size_bytes"], raw["handler_kind"], parsed,
+        ))
+    if seen != set(expected_handlers):
+        raise NativeRegistrationResultSchemaDenied("local result schema artifact coverage is incomplete")
+    return tuple(sorted(output, key=lambda row: row.native_tool_name))
+
+
 class NativeRegistrationDefinitionDenied(ValueError):
     """Actual captured registrations do not match the reviewed finite map."""
 

@@ -95,3 +95,40 @@ def test_source_reviewed_registration_map_rejects_unreviewed_actual_name():
         assert "does not cover" in str(exc)
     else:
         raise AssertionError("unreviewed Hermes tool registration was accepted")
+
+
+def test_eight_local_result_schemas_match_exact_artifacts_and_actual_source_pins():
+    from hermes_installer.authority.native_registration_projection import (
+        reviewed_local_registration_result_schemas,
+    )
+
+    rows = reviewed_local_registration_result_schemas()
+    assert len(rows) == 8
+    assert {row.native_tool_name for row in rows} == {
+        "agent37_discover_skills", "agent37_inspect_skill",
+        "mcp_registry_discover", "mcp_registry_inspect",
+        "resource_overlay_read", "resource_overlay_write",
+        "resource_overlay_history", "resource_overlay_delete",
+    }
+    assert all(row.schema_id == row.artifact_id for row in rows)
+    assert all(row.handler_kind in {"public-registry-read", "owner-overlay"} for row in rows)
+
+
+def test_local_result_schema_rejects_changed_artifact_bytes(monkeypatch, tmp_path):
+    from hermes_installer.authority import native_registration_projection as projection
+
+    original = projection.Path.read_bytes
+
+    def changed(path):
+        value = original(path)
+        if path.name == "agent37_discover_skills.result.schema.json":
+            return value + b" "
+        return value
+
+    monkeypatch.setattr(projection.Path, "read_bytes", changed)
+    try:
+        projection.reviewed_local_registration_result_schemas()
+    except ValueError as exc:
+        assert "differ from the reviewed pin" in str(exc)
+    else:
+        raise AssertionError("changed local result schema bytes were accepted")
