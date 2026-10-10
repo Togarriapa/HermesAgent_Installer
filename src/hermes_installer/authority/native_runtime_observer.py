@@ -411,6 +411,22 @@ class RootNativeOwnerOverlayInvocation:
         return "RootNativeOwnerOverlayInvocation(<root-private>)"
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class RootSelectedHealthOwnerInvocation:
+    """Current exact provider response and parsed health tool call."""
+
+    request_projection: Any = field(repr=False, compare=False)
+    provider_response: Any = field(repr=False, compare=False)
+    owner_invocation: RootNativeOwnerOverlayInvocation = field(repr=False, compare=False)
+    source_receipt_handles: tuple[str, ...]
+    source_receipt_ids: tuple[str, ...]
+    _registry: Any = field(repr=False, compare=False)
+    _issuer: object = field(repr=False, compare=False)
+
+    def __repr__(self) -> str:
+        return "RootSelectedHealthOwnerInvocation(<root-private>)"
+
+
 class NativeRuntimeObserverUnavailable(PermissionError):
     """Selected native runtime wiring or root observation is unavailable."""
 
@@ -539,6 +555,7 @@ class NativeInvocationRegistry:
         self._invocations: dict[str, _NativeInvocation] = {}
         self._owner_overlay_invocations: dict[str, RootNativeOwnerOverlayInvocation] = {}
         self._owner_overlay_consumed: set[str] = set()
+        self._health_selection_issuer = object()
         self._selected_application_invocations: dict[str, RootSelectedApplicationInvocation] = {}
         self._mcp_dispatches: dict[str, tuple[_NativeInvocation, RootNativeMCPInvocation]] = {}
         self._issued_handles: set[str] = set()
@@ -1360,6 +1377,178 @@ class NativeInvocationRegistry:
                     retire(current.selection.selection_handle)
             self._owner_overlay_consumed.add(invocation_handle)
             return row
+
+    def resolve_current_health_owner_invocation(
+            self, request_projection: Any, input_event: Any, *,
+            peer_uid: int, peer_pid: int, peer_pidfd: int,
+            live_producer_identity: Any, expected_profile_id: str,
+            expected_generation: str, expected_package_id: str,
+            expected_package_generation: str, expected_service_generation_digest: str,
+            expected_action_id: str) -> RootSelectedHealthOwnerInvocation:
+        """Resolve the unique consumed provider call causally descended from health input."""
+        from .native_request_observation import (
+            RootSelectedHealthNativeRequest, NativeRequestObservationRegistry,
+        )
+        from .native_input_observer import RootNativeInputEvent
+        if (type(request_projection) is not RootSelectedHealthNativeRequest
+                or type(request_projection._registry) is not NativeRequestObservationRegistry
+                or type(input_event) is not RootNativeInputEvent
+                or type(peer_uid) is not int or peer_uid <= 0
+                or type(peer_pid) is not int or peer_pid <= 0
+                or type(peer_pidfd) is not int or peer_pidfd < 0
+                or live_producer_identity is None):
+            raise AuthorityDenied("native.health.invocation", "health tool-call selection is malformed")
+        observation = request_projection.observation
+        request_projection._registry.verify_current_health_request_for_input(
+            request_projection, input_event,
+            live_producer_identity=live_producer_identity,
+            producer_pid=peer_pid, producer_profile_id=expected_profile_id,
+            producer_generation=expected_generation,
+            native_package_generation=expected_package_generation,
+        )
+        if (input_event.source_receipt_handle not in observation.parent_source_receipt_handles
+                or observation.producer_profile_id != expected_profile_id
+                or observation.producer_process_generation != expected_generation
+                or observation.native_package_generation != expected_package_generation):
+            raise AuthorityDenied("native.health.invocation_lineage", "request does not descend from the selected input")
+        current_identity = self.process_resolver(
+            peer_pid, peer_pidfd, profile_id=expected_profile_id, generation=expected_generation,
+        )
+        if current_identity != live_producer_identity:
+            raise AuthorityDenied("native.health.invocation_peer", "selected producer PIDFD changed")
+        with self._lock:
+            self._ensure_open()
+            self._prune_locked(self.monotonic())
+            candidates = tuple(
+                row for handle, row in self._owner_overlay_invocations.items()
+                if row.invocation_handle == handle
+                and row.native_request_handle == observation.native_request_handle
+                and row.producer_pid == peer_pid
+                and row.producer_identity == live_producer_identity
+                and row.invocation_handle in self._owner_overlay_consumed
+                and row.registration_id == "resource-overlay-store:tool:resource_overlay_read"
+                and row.method == "read"
+                and row.action_id == expected_action_id
+                and row.expires_monotonic > self.monotonic()
+            )
+        if len(candidates) != 1:
+            raise AuthorityDenied("native.health.invocation", "request has no unique consumed health tool call")
+        row = candidates[0]
+        response = row.response
+        try:
+            with self._lock:
+                if (self._responses.get(row.response_observation_handle) is not response
+                        or response.handle != row.response_observation_handle
+                        or response.metadata_taken is not True
+                        or response.native_request_handle != observation.native_request_handle
+                        or response.producer_identity != live_producer_identity
+                        or response.producer_pid != peer_pid
+                        or response.profile_id != expected_profile_id
+                        or response.generation != expected_generation
+                        or response.package_id != expected_package_id
+                        or response.native_package_generation != expected_package_generation
+                        or response.request_context.service_generation_digest
+                           != expected_service_generation_digest
+                        or response.expires_monotonic <= self.monotonic()
+                        or hashlib.sha256(response.response_bytes).hexdigest() != response.response_digest
+                        or response.response_status < 200 or response.response_status >= 300
+                        or input_event.source_receipt_handle not in response.receipt_handles):
+                    raise ValueError
+            args = _strict_native_json(row.canonical_arguments)
+            canonical_args = json.dumps(args, sort_keys=True, separators=(",", ":"),
+                                        ensure_ascii=False, allow_nan=False).encode("utf-8")
+            if (type(args) is not dict or args != {"record_id": "hermes-health-probe-v1"}
+                    or canonical_args != row.canonical_arguments
+                    or hashlib.sha256(canonical_args).hexdigest() != row.arguments_sha256
+                    or row.parent_source_receipt_handles != response.receipt_handles + (row.invocation_source_receipt_handle,)
+                    or row.invocation_source_receipt_handle not in row.parent_source_receipt_handles):
+                raise ValueError
+            identity = self.process_resolver(
+                peer_pid, peer_pidfd, profile_id=expected_profile_id,
+                generation=expected_generation,
+            )
+            gateway = self.process_resolver(
+                row.gateway_pid, row.gateway_pidfd,
+                profile_id=row.bridge.gateway_profile_id,
+                generation=row.bridge.gateway_generation,
+            )
+            proof = self._loaded_proof(response.observer_id, identity, peer_pid, peer_pidfd)
+            active = getattr(self.service, "active_owner_overlay_registry", None)
+            resolve_owner = getattr(active, "resolve_provider_tool_call", None)
+            if not callable(resolve_owner):
+                raise ValueError
+            current = resolve_owner(
+                "resource_overlay_read", peer_pid, peer_pidfd, expected_package_id,
+                expected_profile_id, expected_generation, expected_package_generation,
+                canonical_args,
+            )
+            with self.service._lock:
+                receipt_rows = tuple(
+                    self.service._source_receipt_handles.get(handle)
+                    for handle in (*response.receipt_handles, *row.parent_source_receipt_handles)
+                )
+            handles = tuple((*response.receipt_handles, *row.parent_source_receipt_handles))
+            if (identity != live_producer_identity or gateway != row.gateway_identity
+                    or proof != response.loaded_package_proof or current is None
+                    or current.selection.registration_id != row.registration_id
+                    or current.selection.adoption_sha256 != row.source_observer.selection.adoption_sha256
+                    or current.selection.operation_record != row.source_observer.selection.operation_record
+                    or len(receipt_rows) != len(handles) or any(receipt is None for receipt in receipt_rows)):
+                raise ValueError
+            by_handle = dict(zip(handles, receipt_rows, strict=True))
+            unique_handles = tuple(sorted(set(handles), key=lambda handle: by_handle[handle].receipt_id))
+            unique_rows = tuple(by_handle[handle] for handle in unique_handles)
+            for receipt in unique_rows:
+                self.service._verify_source_receipt(receipt, self.service._binding(receipt.uid))
+            receipt_ids = tuple(sorted(receipt.receipt_id for receipt in unique_rows))
+            if len(receipt_ids) != len(set(receipt_ids)):
+                raise ValueError
+            return RootSelectedHealthOwnerInvocation(
+                request_projection=request_projection,
+                provider_response=response,
+                owner_invocation=row,
+                source_receipt_handles=unique_handles,
+                source_receipt_ids=receipt_ids,
+                _registry=self, _issuer=self._health_selection_issuer,
+            )
+        except Exception:
+            raise AuthorityDenied("native.health.invocation", "current request/provider/tool source join is unavailable") from None
+        finally:
+            retire = getattr(locals().get("active"), "_retire", None)
+            if callable(retire) and locals().get("current") is not None:
+                retire(current.selection.selection_handle)
+
+    def verify_current_health_owner_invocation(
+            self, selected: RootSelectedHealthOwnerInvocation, input_event: Any, *,
+            peer_uid: int, peer_pid: int, peer_pidfd: int,
+            live_producer_identity: Any, expected_profile_id: str,
+            expected_generation: str, expected_package_id: str,
+            expected_package_generation: str, expected_service_generation_digest: str,
+            expected_action_id: str) -> RootSelectedHealthOwnerInvocation:
+        """Re-resolve the unique current consumed call and require same objects."""
+        if (type(selected) is not RootSelectedHealthOwnerInvocation
+                or selected._registry is not self
+                or selected._issuer is not self._health_selection_issuer):
+            raise AuthorityDenied("native.health.invocation", "issuer-owned tool-call projection is required")
+        current = self.resolve_current_health_owner_invocation(
+            selected.request_projection, input_event,
+            peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+            live_producer_identity=live_producer_identity,
+            expected_profile_id=expected_profile_id,
+            expected_generation=expected_generation,
+            expected_package_id=expected_package_id,
+            expected_package_generation=expected_package_generation,
+            expected_service_generation_digest=expected_service_generation_digest,
+            expected_action_id=expected_action_id,
+        )
+        if (current.owner_invocation is not selected.owner_invocation
+                or current.provider_response is not selected.provider_response
+                or current.request_projection.observation
+                   is not selected.request_projection.observation
+                or current.source_receipt_handles != selected.source_receipt_handles
+                or current.source_receipt_ids != selected.source_receipt_ids):
+            raise AuthorityDenied("native.health.invocation", "current owner call or source ancestry changed")
+        return selected
 
     def is_current_native_mcp_invocation(self, record: RootNativeMCPInvocation,
                                          peer_uid: int, peer_pid: int,

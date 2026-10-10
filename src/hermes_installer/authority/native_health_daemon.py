@@ -641,6 +641,7 @@ class RootHealthInputDeliveryRegistry:
             event = self.native_input_observer.record_selected_health_input(
                 observation_handle, process, artifact_id,
             )
+            self._verify_input_event_current(control_handle, observation_handle, event)
             material = admission._source_material
             payload = material._request_bytes
             if (type(event) is not RootNativeInputEvent
@@ -648,7 +649,7 @@ class RootHealthInputDeliveryRegistry:
                     or event.payload_size_bytes != len(payload)
                     or event.producer_profile_id != control.profile_id
                     or event.producer_generation != control.process_generation
-                    or event.native_loader_ready_event_id not in (None, ready_event_id)):
+                    or event.native_loader_ready_event_id != ready_event_id):
                 raise ValueError
             delivery = RootSelectedHealthInputDelivery(
                 delivery_handle=secrets.token_urlsafe(32),
@@ -694,6 +695,9 @@ class RootHealthInputDeliveryRegistry:
                     or delivery.payload_size_bytes != len(delivery._payload)
                     or self.runtime.service.monotonic() >= control.expires_monotonic):
                 raise ValueError
+            self._verify_input_event_current(
+                control_handle, observation, delivery.input_event,
+            )
             authority = self.manager.native_health_start_authority
             admission = self.manager.resolve_selected_health_admission(control_handle)
             if not authority.is_current(admission):
@@ -708,6 +712,31 @@ class RootHealthInputDeliveryRegistry:
                 raise AuthorityDenied("native.health.input", "health input delivery was already consumed")
             self._consumed.add(delivery.delivery_handle)
         return bytes(delivery._payload)
+
+    def _verify_input_event_current(self, control_handle: str, observation_handle: str,
+                                    event: Any) -> Any:
+        from .native_input_observer import RootNativeInputEvent
+        if type(event) is not RootNativeInputEvent:
+            raise AuthorityDenied("native.health.input", "root input observer returned an untyped event")
+        run = self.manager.resolve_selected_health_run(control_handle)
+        try:
+            if (event.producer_profile_id != run.profile_id
+                    or event.producer_generation != run.process_generation
+                    or event.native_loader_ready_event_id
+                       != self.manager.resolve_selected_health_loader_ready_event(control_handle)):
+                raise AuthorityDenied("native.health.input", "input event does not join the selected process and READY")
+            resolver = getattr(self.native_input_observer, "resolve_current_health_event", None)
+            if not callable(resolver):
+                raise AuthorityDenied("native.health.input", "current health input event resolver is unavailable")
+            current = resolver(event.input_event_id, observation_handle, run.process_identity)
+            if current is not event:
+                raise AuthorityDenied("native.health.input", "health input event issuer identity changed")
+            return current
+        finally:
+            try:
+                os.close(run.process_pidfd)
+            except OSError:
+                pass
 
     def verify_current(self, delivery: RootSelectedHealthInputDelivery,
                        control_handle: str) -> RootSelectedHealthInputDelivery:
@@ -733,6 +762,7 @@ class RootHealthInputDeliveryRegistry:
                 or delivery.payload_size_bytes != len(delivery._payload)
                 or delivery.payload_sha256 != hashlib.sha256(delivery._payload).hexdigest()):
             raise AuthorityDenied("native.health.input", "selected health input delivery is no longer current")
+        self._verify_input_event_current(control_handle, observation, delivery.input_event)
         return delivery
 
 

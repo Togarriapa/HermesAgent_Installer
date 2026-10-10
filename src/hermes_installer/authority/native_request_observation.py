@@ -42,6 +42,27 @@ class RootNativeRequestObservation:
     expires_monotonic: float
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class RootSelectedHealthNativeRequest:
+    """A current native-request observation selected by its real input parent.
+
+    The projection is an issuer-owned lookup result, not a caller-created
+    health event.  It retains the exact signed context, complete source
+    receipt closure, and canonical request bytes from the native request
+    observation registry.
+    """
+
+    observation: RootNativeRequestObservation
+    parent_context: HostContext
+    parent_source_receipts: tuple[SourceReceipt, ...]
+    canonical_request_bytes: bytes
+    _registry: Any
+    _issuer: object
+
+    def __repr__(self) -> str:
+        return "RootSelectedHealthNativeRequest(<root-private>)"
+
+
 @dataclass(slots=True)
 class _RequestRecord:
     observation: RootNativeRequestObservation
@@ -80,6 +101,7 @@ class NativeRequestObservationRegistry:
         self.process_resolver = process_resolver
         self.monotonic = monotonic
         self._records: dict[str, _RequestRecord] = {}
+        self._health_selection_issuer = object()
         self._native_handle_index: dict[str, str] = {}
         self._retry_claims: dict[tuple[str, str, int], float] = {}
         self._total_bytes = 0
@@ -305,6 +327,77 @@ class NativeRequestObservationRegistry:
         if receipt_handle is None:
             raise AuthorityDenied("native.request_observation", "native request handle has no retained observation")
         return self.resolve_native_request(receipt_handle, live_producer_identity)
+
+    def resolve_current_health_request_for_input(
+            self, input_event: Any, *, live_producer_identity: Any,
+            producer_pid: int, producer_profile_id: str, producer_generation: str,
+            native_package_generation: str) -> RootSelectedHealthNativeRequest:
+        """Select exactly one current request whose authenticated ancestry contains input."""
+        from .native_input_observer import RootNativeInputEvent
+        if (type(input_event) is not RootNativeInputEvent or live_producer_identity is None
+                or type(producer_pid) is not int or producer_pid <= 0
+                or not isinstance(producer_profile_id, str) or not producer_profile_id
+                or not isinstance(producer_generation, str) or not producer_generation
+                or not isinstance(native_package_generation, str) or not native_package_generation):
+            raise AuthorityDenied("native.request_health", "selected health request lookup is malformed")
+        with self._lock:
+            candidate_handles = tuple(
+                handle for handle, record in self._records.items()
+                if record.producer_pid == producer_pid
+                and record.producer_identity == live_producer_identity
+                and record.bridge.producer_profile_id == producer_profile_id
+                and record.bridge.producer_generation == producer_generation
+                and record.observation.native_package_generation == native_package_generation
+                and input_event.source_receipt_handle in record.observation.parent_source_receipt_handles
+            )
+        current: list[tuple[_RequestRecord, RootNativeRequestObservation]] = []
+        for receipt_handle in candidate_handles:
+            observation = self.resolve_native_request(receipt_handle, live_producer_identity)
+            with self._lock:
+                record = self._records.get(receipt_handle)
+            if (record is not None and record.observation is observation
+                    and record.producer_pid == producer_pid
+                    and input_event.source_receipt_handle in observation.parent_source_receipt_handles):
+                current.append((record, observation))
+        if len(current) != 1:
+            raise AuthorityDenied("native.request_health", "health input does not select exactly one current native request")
+        record, observation = current[0]
+        # The base resolver verified all retained receipts/capsules, signed
+        # context, current PIDFD identity and actual input-event membership.
+        # Return the full verified source closure, never only a convenient
+        # subset named by the health runner.
+        source_receipts = tuple(sorted(record.parent_receipts, key=lambda row: row.receipt_id))
+        expected_ids = tuple(sorted(row.receipt_id for row in record.parent_context.source_receipts))
+        if (tuple(row.receipt_id for row in source_receipts) != expected_ids
+                or len({row.receipt_id for row in source_receipts}) != len(source_receipts)
+                or observation.parent_closure_digest != canonical_digest(list(expected_ids))
+                or input_event.source_receipt_handle not in observation.parent_source_receipt_handles):
+            raise AuthorityDenied("native.request_health_lineage", "native request source closure is incomplete")
+        return RootSelectedHealthNativeRequest(
+            observation, record.parent_context, source_receipts,
+            bytes(record.canonical_request_bytes), self, self._health_selection_issuer,
+        )
+
+    def verify_current_health_request_for_input(
+            self, selected: RootSelectedHealthNativeRequest, input_event: Any, *,
+            live_producer_identity: Any, producer_pid: int, producer_profile_id: str,
+            producer_generation: str, native_package_generation: str
+            ) -> RootSelectedHealthNativeRequest:
+        if (type(selected) is not RootSelectedHealthNativeRequest
+                or selected._registry is not self or selected._issuer is not self._health_selection_issuer):
+            raise AuthorityDenied("native.request_health", "issuer-owned health request projection is required")
+        current = self.resolve_current_health_request_for_input(
+            input_event, live_producer_identity=live_producer_identity,
+            producer_pid=producer_pid, producer_profile_id=producer_profile_id,
+            producer_generation=producer_generation,
+            native_package_generation=native_package_generation,
+        )
+        if (current.observation is not selected.observation
+                or current.parent_context != selected.parent_context
+                or current.parent_source_receipts != selected.parent_source_receipts
+                or current.canonical_request_bytes != selected.canonical_request_bytes):
+            raise AuthorityDenied("native.request_health", "selected native request changed")
+        return selected
 
     def request_bytes(self, receipt_handle: str, live_producer_identity: Any) -> bytes:
         self.resolve_native_request(receipt_handle, live_producer_identity)
