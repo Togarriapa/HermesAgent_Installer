@@ -4109,7 +4109,7 @@ class RootSetupPolicyFactory:
                     or runnable_role_receipts._issuer.verify_current_role_receipt_projection(
                         runnable_role_receipts) is not runnable_role_receipts
                     or native_worker_generation_producer.recipe_registry.resolve_current_runnable_closure(
-                        native_policy_selection.selection_handle).role_closure_handle
+                        native_policy_selection).role_closure_handle
                        != runnable_role_receipts.closure_handle
                     or type(native_worker_recipe_handles) is not tuple
                     or len(native_worker_recipe_handles) != 1
@@ -8113,7 +8113,7 @@ class RootBootstrapSession:
                     self.resolve_current_native_worker_service_generation_producer()
                 recipe_registry = self.resolve_current_native_worker_recipe_registry()
                 closure = recipe_registry.resolve_current_runnable_closure(
-                    native_policy_selection.selection_handle)
+                    native_policy_selection)
                 role_registry = self._resolve_current_runnable_role_projection_registry()
                 role_registry.verify_current(closure)
                 runnable_role_receipts = self.resolve_current_runnable_role_receipt_projection(

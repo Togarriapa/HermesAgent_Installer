@@ -627,16 +627,23 @@ class RootSetupNativeWorkerRecipeRegistry:
 
     def resolve_current_runnable_closure(self, selection: Any) -> Any:
         """Return the exact held role closure joined when selected recipes were issued."""
+        from .bootstrap_runtime_factory import RootSelectedRunnableRoleClosure
         from .native_policy_preparation import RootNativePolicyPreparationSelection
+        closure = self._current_runnable_closure
         if (type(selection) is not RootNativePolicyPreparationSelection
                 or selection.selection_handle != self._current_selection_handle
-                or self._current_runnable_closure is None):
+                or len(selection.selected_worker_recipe_handles) != 1
+                or type(closure) is not RootSelectedRunnableRoleClosure):
             raise NativeWorkerRecipeUnavailable(
                 "current selected native policy has no retained runnable-role closure")
         current = self.binding.resolve_current_native_policy_selection(selection.selection_handle)
-        if current is not selection:
+        if (current is not selection
+                or self.runnable_roles.verify_current(closure) is not closure
+                or closure.setup_session_id != selection.setup_session_id
+                or closure.transaction_handle != selection.transaction_handle
+                or closure.prepared_generation_id != selection.prepared_generation_id):
             raise NativeWorkerRecipeUnavailable("native policy selection changed after role closure issuance")
-        return self.runnable_roles.verify_current(self._current_runnable_closure)
+        return closure
 
     def bind_selected_candidates(self, selection: Any) -> Any:
         """Bind pre-choice source receipts to the actual signed TTY choice."""
@@ -680,27 +687,6 @@ class RootSetupNativeWorkerRecipeRegistry:
             raise NativeWorkerRecipeUnavailable("final runnable closure does not join the exact selected recipe")
         self._current_runnable_closure = current
         return current
-
-    def resolve_current_runnable_closure(self, selection_handle: str) -> Any:
-        """Resolve the closure retained after the exact signed worker choice."""
-        from .bootstrap_runtime_factory import RootSelectedRunnableRoleClosure
-        from .native_policy_preparation import RootNativePolicyPreparationSelection
-        selection = self.binding.resolve_current_native_policy_selection(selection_handle)
-        closure = self._current_runnable_closure
-        if (type(selection) is not RootNativePolicyPreparationSelection
-                or selection.selection_handle != self._current_selection_handle
-                or len(selection.selected_worker_recipe_handles) != 1
-                or type(closure) is not RootSelectedRunnableRoleClosure):
-            raise NativeWorkerRecipeUnavailable(
-                "selected worker has no retained final runnable-role closure")
-        current = self.runnable_roles.verify_current(closure)
-        if (current is not closure
-                or current.setup_session_id != selection.setup_session_id
-                or current.transaction_handle != selection.transaction_handle
-                or current.prepared_generation_id != selection.prepared_generation_id):
-            raise NativeWorkerRecipeUnavailable(
-                "retained runnable-role closure differs from the current signed worker choice")
-        return closure
 
     def close(self) -> None:
         """Release only root-held duplicate work-root descriptors."""
