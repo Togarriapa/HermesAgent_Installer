@@ -224,3 +224,9 @@ Preactive qualification runtime proof v130: `plans/amendments/2026-10-10-preacti
 - [ ] SK-T155.1 Broker/release/toolchain producer: exact held finite policy member/current selected dependency joins, no disconnected artifact authority.
 
 - [ ] SK-T157.1 Builder/broker/backend source producer: actual finite backend policy/wheel/license/CAS observer and closure consumer with meaningful denial tests.
+
+- [ ] SK-T161.1 application builder/factory/custody: Implement sealed finite app admission/private FixedBuildProfile/output/service held inputs and one-use setup grant adapter; actual managed runner union/currentness/cleanup/denial tests.
+
+- [ ] SK-T161.2 application builder/source broker: Implement fixed standalone multistep driver, provide actual committed source/member pins for Sol review, finite mount/argv/phase recipe and genuine terminal/archive/extraction/probe receipts.
+
+- [ ] SK-T168.1 Application builder/materializer/selection/execution: regular held PM interpreter entrypoint, finite source shebang normalization and final manifest/probe joins.

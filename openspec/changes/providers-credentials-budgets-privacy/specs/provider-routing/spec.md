@@ -321,3 +321,10 @@ The installer SHALL validate raw root-observed result bytes against the exact se
 #### Scenario: Worker supplies a ToolMessage without a completed root result
 - **WHEN** no matching current root invocation/result/schema observation exists
 - **THEN** source capture denies and no worker message or generic object schema supplies authority
+
+### Requirement: MCP discovery capture v171
+The installer SHALL separately validate and retain actual selected MCP discovery responses before deriving schemas, without treating metadata as tool execution.
+
+#### Scenario: Tools call is labelled discovery
+- **WHEN** actual retained request method is tools/call
+- **THEN** the selected tool result schema gate applies and discovery profile cannot bypass it
