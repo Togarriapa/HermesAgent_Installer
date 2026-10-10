@@ -1043,7 +1043,6 @@
       "resource_generation": "actual selected Resources generation digest",
       "profile_id": "selected native service profile",
       "profile_generation": "opaque current process generation",
-      "service_generation_digest": "actual active service snapshot digest",
       "materialization_receipt_handle": "root retained actual NativeMaterializationReceipt",
       "materialized_member_path": "exact root compiler selected relative YAML member; no request path",
       "materialized_member_sha256": "SHA256 actual transformed YAML bytes",
@@ -1059,7 +1058,8 @@
     },
     "API": "RootRuntimeBindings.resolve_selected_resource_execution(resource_id,*,resource_generation,profile_id)->SelectedResourceExecution root-private; verifies active snapshot digest/current profile/generation, held materialization receipt and actual immutable source/declaration/transformed member bytes. Resolves effective_spec only from parsed actual transformed YAML .spec after source+member+canonical spec hashes match. Never derives target/capability/delegation from YAML; these come from row verified protected selections. Unknown/extra/duplicate rows rejected. No mutable crosswalk alone proof.",
     "ingress_API": "RootRuntimeBindings.resolve_selected_ingress_binding(resource_id,source_issuer_id,controller_role_id)->RootSelectedIngressBinding; root-only sealed immutable result fields selected_execution,source_issuer_record,controller_role_record,backend_enrollment,scope_binding,credential_role_bindings,service_generation_digest,expires_monotonic. Exact source_issuer_id equals observer_enrollment_id and role joins resource_controller_roles.id. Each row joins same resource/profile/resource generation and separately current process/service generations. Actual held controller kernel/role proof required before ingress observation; row is selection, not process proof.",
-    "webhook_scope_keys": "GitHub scope fixed_fields use exact github_repository_id (positive integer) and github_repository_full_name (bounded owner/name string) derived authenticated selected repository enrollment. Registry notice uses resources_repository string fixed to Togarriapa/HermesAgent_Resources plus resources_revision exact selected immutable source lock. Validate actual payload repository.id/full_name against GitHub keys. Never alias declaration repository text to authenticated numeric repository identity."
+    "webhook_scope_keys": "GitHub scope fixed_fields use exact github_repository_id (positive integer) and github_repository_full_name (bounded owner/name string) derived authenticated selected repository enrollment. Registry notice uses resources_repository string fixed to Togarriapa/HermesAgent_Resources plus resources_revision exact selected immutable source lock. Validate actual payload repository.id/full_name against GitHub keys. Never alias declaration repository text to authenticated numeric repository identity.",
+    "nonrecursive_snapshot_join": "Row has no service_generation_digest field. Enclosing service_generations.generation_digest authenticates all rows using existing canonical snapshot hash rules. Resolved root DTO attaches the verified enclosing digest after parsing; runtime receipt/proof compares that external digest. Never serialize containing digest back into hashed rows."
   },
   "resource_child_process_start_route": {
     "schema": 1,

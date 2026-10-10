@@ -13,7 +13,6 @@
     "application_id": "closed selected component inventory ID",
     "profile_id": "selected native profile",
     "profile_generation": "opaque process generation",
-    "service_generation_digest": "active snapshot SHA256",
     "principal_id": "verified current selected principal",
     "adapter_id": "reviewed installed finite adapter ID",
     "source_identity": "exact pinned component source URL/identity",
@@ -50,5 +49,6 @@
   "dispatch_API": "RootRuntimeBindings.resolve_selected_application_runtime(application_id,profile_id)->RootSelectedApplicationRuntime; joins active row/source/runtime/root/schema/account/provider/consent selections. AuthorityService.dispatch_selected_application(invocation_context_handle,application_id,canonical_arguments)->RootApplicationRunReceipt; root resolves actual admitted invocation/source closure, exact schema and finite protected operation recipe, issues independent one-use selected task-style grant with distinct controller vs selected application subject, starts only current selected root environment via existing ManagedProcessEffectHandler. No caller roots/runner/argv/capability fields; WorkloadScheduler production constructor consumes root-selected DTOs only.",
   "result_receipt": "RootApplicationRunReceipt fields schema,receipt_handle,application_id,profile_id,profile_generation,service_generation_digest,source_receipt_handle,runtime_receipt_handle,operation_id,request_sha256,terminal_receipt_handle,result_capsule_handle,state(complete|failed|cancelled|ambiguous),issued_monotonic,expires_monotonic. Complete requires actual terminal success and selected artifact result validator; source/runtime receipt alone never functional acceptance.",
   "bounds": "All IDs use existing strict protected ID validator; SHA fields lowercase64hex; exact unknown/duplicate keys denied. Source/runtime proofs root signed/domain separated or sealed registry objects, receipt currentness and owned file identity mandatory. Missing ARM64, account, license or lazy-download-free locked environment leaves selected action unavailable with exact next step. On-demand local fixtures and original optional Jarvis application are distinct from deferred future JARVIS sources.",
-  "evidence": "Actual pinned local fixtures via selected source/runtime/operation, changed source/runtime/schema/account/gen/metered budget/argv/root negatives, effect failure and no acceptance from inventory/source alone."
+  "evidence": "Actual pinned local fixtures via selected source/runtime/operation, changed source/runtime/schema/account/gen/metered budget/argv/root negatives, effect failure and no acceptance from inventory/source alone.",
+  "nonrecursive_snapshot_join": "Active row omits its containing service_generation_digest. Root resolved DTO/issued runtime receipt attaches the verified enclosing digest after canonical snapshot parsing; receipt records stored outside the enclosing snapshot cannot recursively embed themselves into it. Definition/source/runtime member digests are independently observed prepublication."
 }
