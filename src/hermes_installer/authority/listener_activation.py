@@ -9,9 +9,11 @@ an in-process socketpair as a process identity.
 from __future__ import annotations
 
 import array
+import base64
 import fcntl
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -72,6 +74,9 @@ _HEALTH_INTENT_FIELDS = frozenset({
 _HEALTH_JOURNAL_FIELDS = frozenset({
     "schema", "activation_id", "intent_body", "intent_sha256", "state",
     "accepted_monotonic", "completion_handle", "completion_sha256",
+})
+_HEALTH_JOURNAL_EVIDENCE_FIELDS = frozenset({
+    "health_receipt_body", "health_receipt_sha256", "health_event_proof",
 })
 _HEALTH_COMPLETION_FIELDS = frozenset({
     "schema", "completion_handle", "intent_handle", "intent_sha256",
@@ -149,6 +154,156 @@ def _activation_generation_rows(generation: Any, publication: Any, endpoint: Any
 
 def _digest(value: Any) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
+
+
+def _health_identifier(value: Any) -> bool:
+    return type(value) is str and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", value) is not None
+
+
+def _validate_health_receipt_evidence(value: Mapping[str, Any],
+                                      completion: Mapping[str, Any]) -> None:
+    """Validate the persisted original observer receipt and exact event closure."""
+    from .native_health_observer import RootNativeHealthEvent, RootNativeHealthReceipt
+
+    receipt_body = value.get("health_receipt_body")
+    receipt_sha = value.get("health_receipt_sha256")
+    proof_rows = value.get("health_event_proof")
+    receipt_fields = set(RootNativeHealthReceipt.__dataclass_fields__)
+    event_fields = set(RootNativeHealthEvent.__dataclass_fields__)
+    if (not isinstance(receipt_body, dict) or set(receipt_body) != receipt_fields
+            or not isinstance(receipt_sha, str) or not _HEX64.fullmatch(receipt_sha)
+            or receipt_sha != _digest(receipt_body)
+            or not isinstance(proof_rows, list) or not 5 <= len(proof_rows) <= 6):
+        raise ValueError("durable health receipt evidence has an invalid closed schema")
+    receipt = RootNativeHealthReceipt(**receipt_body)
+    completion_handles = ("completion_handle", "intent_handle", "publication_receipt_handle",
+                         "health_receipt_handle", "terminal_receipt_handle")
+    completion_identifiers = ("committed_transaction_id", "bootstrap_transaction_handle",
+                              "generation_id", "result_schema_id", "daemon_invocation_id")
+    completion_digests = ("intent_sha256", "service_generation_digest", "publication_sha256",
+                          "source_choice_signed_record_sha256", "health_definition_sha256",
+                          "health_receipt_sha256", "result_sha256", "parent_closure_digest",
+                          "daemon_actor_witness_sha256")
+    completed_at = completion.get("completed_monotonic")
+    if (completion.get("schema") != 1
+            or any(type(completion.get(name)) is not str
+                   or re.fullmatch(r"[A-Za-z0-9_-]{32,128}", completion[name]) is None
+                   for name in completion_handles)
+            or any(not _health_identifier(completion.get(name))
+                   for name in completion_identifiers)
+            or type(completion.get("daemon_unit_id")) is not str
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:@-]{0,255}", completion["daemon_unit_id"]) is None
+            or any(type(completion.get(name)) is not str
+                   or _HEX64.fullmatch(completion[name]) is None
+                   for name in completion_digests)
+            or type(completion.get("daemon_pid")) is not int or completion["daemon_pid"] <= 1
+            or type(completion.get("daemon_start_ticks")) is not int
+            or completion["daemon_start_ticks"] <= 0
+            or isinstance(completed_at, bool) or type(completed_at) not in (int, float)
+            or not math.isfinite(completed_at)):
+        raise ValueError("completed health witness has invalid typed fields")
+    if (receipt.status != "passed"
+            or completion.get("health_receipt_handle") != receipt.health_receipt_handle
+            or completion.get("health_receipt_sha256") != receipt_sha
+            or completion.get("committed_transaction_id") != receipt.committed_enrollment_receipt_id
+            or completion.get("bootstrap_transaction_handle") != receipt.bootstrap_transaction_handle
+            or completion.get("service_generation_digest") != receipt.service_generation_digest
+            or completion.get("result_schema_id") != receipt.result_schema_id
+            or completion.get("result_sha256") != receipt.result_sha256
+            or completion.get("parent_closure_digest") != receipt.parent_closure_digest
+            or completion.get("terminal_receipt_handle") != receipt.terminal_receipt_handle):
+        raise ValueError("completion row differs from the retained original health receipt")
+
+    events: list[RootNativeHealthEvent] = []
+    encoded_rows: list[dict[str, Any]] = []
+    for raw in proof_rows:
+        if not isinstance(raw, dict) or set(raw) != event_fields:
+            raise ValueError("health event proof row differs from the exact event schema")
+        row = dict(raw)
+        encoded = row.get("result_bytes")
+        if encoded is not None:
+            if not isinstance(encoded, str):
+                raise ValueError("health event result bytes are not canonical base64 text")
+            try:
+                decoded = base64.b64decode(encoded, validate=True)
+            except Exception:
+                raise ValueError("health event result bytes are malformed base64") from None
+            if base64.b64encode(decoded).decode("ascii") != encoded:
+                raise ValueError("health event result bytes are not canonical base64")
+            row["result_bytes"] = decoded
+        event = RootNativeHealthEvent(**row)
+        if (not _health_identifier(event.event_id)
+                or event.event_kind not in {"loader-ready", "native-request", "provider-result",
+                                             "tool-invocation", "tool-result", "terminal"}
+                or any(not _health_identifier(getattr(event, name)) for name in (
+                    "operation_id", "enrollment_id", "profile_id", "process_generation",
+                    "process_id", "package_id"))
+                or any(not _HEX64.fullmatch(getattr(event, name)) for name in (
+                    "service_generation_digest", "compiled_closure_sha256", "parent_closure_digest"))
+                or type(event.process_pid) is not int or event.process_pid <= 1
+                or type(event.process_uid) is not int or event.process_uid <= 0
+                or any(isinstance(number, bool) or type(number) not in (int, float)
+                       or not math.isfinite(number) for number in (
+                           event.observed_monotonic, event.expires_monotonic))
+                or event.expires_monotonic <= event.observed_monotonic
+                or type(event.cleanup_verified) is not bool
+                or any(value is not None and not isinstance(value, str) for value in (
+                    event.loader_ready_event_id, event.native_request_event_id,
+                    event.provider_result_event_id, event.tool_invocation_event_id,
+                    event.tool_result_event_id, event.terminal_receipt_handle,
+                    event.result_schema_id, event.loaded_proof_id, event.action_id,
+                    event.provider_result_reference, event.invocation_handle,
+                    event.terminal_status))):
+            raise ValueError("health event proof row has invalid typed values")
+        events.append(event)
+        encoded_rows.append(raw)
+    if ([row.event_id for row in events] != sorted(row.event_id for row in events)
+            or len({row.event_id for row in events}) != len(events)):
+        raise ValueError("health event proof rows are duplicated or not canonically ordered")
+    by_kind = {row.event_kind: row for row in events}
+    required = {"loader-ready", "native-request", "tool-invocation", "tool-result", "terminal"}
+    if receipt.provider_result_event_id is not None:
+        required.add("provider-result")
+    if set(by_kind) != required:
+        raise ValueError("health event proof does not contain the receipt's exact role closure")
+    loader, request = by_kind["loader-ready"], by_kind["native-request"]
+    invocation, result, terminal = (by_kind["tool-invocation"], by_kind["tool-result"],
+                                    by_kind["terminal"])
+    provider = by_kind.get("provider-result")
+    if (loader.event_id != receipt.loader_ready_event_id
+            or request.event_id != receipt.native_request_event_id
+            or (provider.event_id if provider else None) != receipt.provider_result_event_id
+            or invocation.event_id != receipt.tool_invocation_event_id
+            or result.event_id != receipt.tool_result_event_id
+            or terminal.terminal_receipt_handle != receipt.terminal_receipt_handle
+            or loader.loader_ready_event_id != loader.event_id
+            or request.native_request_event_id != request.event_id
+            or request.provider_result_event_id != (provider.event_id if provider else None)
+            or (provider is not None and (provider.provider_result_event_id != provider.event_id
+                                          or provider.native_request_event_id != request.event_id))
+            or invocation.tool_invocation_event_id != invocation.event_id
+            or invocation.native_request_event_id != request.event_id
+            or invocation.provider_result_reference != (provider.event_id if provider else None)
+            or result.tool_result_event_id != result.event_id
+            or result.tool_invocation_event_id != invocation.event_id
+            or result.result_schema_id != receipt.result_schema_id
+            or not isinstance(result.result_bytes, bytes)
+            or hashlib.sha256(result.result_bytes).hexdigest() != receipt.result_sha256
+            or terminal.event_kind != "terminal" or terminal.terminal_status != "succeeded"
+            or terminal.cleanup_verified is not True):
+        raise ValueError("health event proof does not join the original receipt or terminal")
+    first = events[0]
+    for event in events:
+        if ((event.operation_id, event.enrollment_id, event.profile_id,
+             event.process_generation, event.service_generation_digest, event.process_id,
+             event.process_pid, event.process_uid, event.package_id,
+             event.compiled_closure_sha256, event.parent_closure_digest)
+                != (receipt.operation_id, receipt.enrollment_id, receipt.profile_id,
+                    receipt.process_generation, receipt.service_generation_digest,
+                    receipt.process_id, first.process_pid, first.process_uid,
+                    first.package_id, first.compiled_closure_sha256,
+                    receipt.parent_closure_digest)):
+            raise ValueError("health events do not share the retained receipt's process closure")
 
 
 def _read_proc_start_ticks(proc_root: Path, pid: int) -> int:
@@ -747,9 +902,13 @@ class RootSetupHealthIntentJournal:
             if len(raw) != info.st_size or len(raw) > _MAX_MESSAGE * 4:
                 raise ValueError("health intent record changed while reading")
             value = json.loads(bytes(raw).decode("utf-8"), object_pairs_hook=_unique_pairs)
+            allowed_fields = {
+                _HEALTH_JOURNAL_FIELDS,
+                _HEALTH_JOURNAL_FIELDS | {"completion_body"},
+                _HEALTH_JOURNAL_FIELDS | {"completion_body"} | _HEALTH_JOURNAL_EVIDENCE_FIELDS,
+            }
             if (not isinstance(value, dict)
-                    or set(value) not in {_HEALTH_JOURNAL_FIELDS,
-                                          _HEALTH_JOURNAL_FIELDS | {"completion_body"}}):
+                    or set(value) not in allowed_fields):
                 raise ValueError("health intent journal fields differ from its closed schema")
             body = value.get("intent_body")
             if (value.get("schema") != 1 or value.get("activation_id") != self.activation_id
@@ -772,6 +931,9 @@ class RootSetupHealthIntentJournal:
                         or value.get("completion_handle") != completion.get("completion_handle")
                         or value.get("completion_sha256") != _digest(completion)):
                     raise ValueError("completed health witness differs from its durable CAS row")
+                _validate_health_receipt_evidence(value, completion)
+            elif _HEALTH_JOURNAL_EVIDENCE_FIELDS.intersection(value):
+                raise ValueError("health receipt evidence exists before completion")
             return value, _digest(value), (info.st_dev, info.st_ino)
         except Exception:
             raise ListenerActivationUnavailable("health intent record failed closed validation") from None
@@ -934,15 +1096,29 @@ class RootSetupHealthIntentJournal:
             os.close(lockfd)
 
     def commit_completion(self, intent_handle: str, intent_sha256: str,
-                          completion_body: Mapping[str, Any]) -> tuple[str, str]:
+                          completion_body: Mapping[str, Any], *,
+                          health_receipt_body: Mapping[str, Any],
+                          health_event_proof: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]]
+                          ) -> tuple[str, str]:
         """Commit only an actual consumer-issued closed witness after its own revalidation."""
         if (self.receiver is None or self.active_receipt is None
                 or not isinstance(completion_body, Mapping)
                 or set(completion_body) != _HEALTH_COMPLETION_FIELDS
                 or completion_body.get("schema") != 1
                 or completion_body.get("intent_handle") != intent_handle
-                or completion_body.get("intent_sha256") != intent_sha256):
+                or completion_body.get("intent_sha256") != intent_sha256
+                or not isinstance(health_receipt_body, Mapping)
+                or not isinstance(health_event_proof, (tuple, list))):
             raise ListenerActivationUnavailable("health completion is not the exact daemon-owned witness")
+        receipt_body = dict(health_receipt_body)
+        event_proof = [dict(row) if isinstance(row, Mapping) else row for row in health_event_proof]
+        receipt_sha256 = _digest(receipt_body)
+        evidence = {
+            "health_receipt_body": receipt_body,
+            "health_receipt_sha256": receipt_sha256,
+            "health_event_proof": event_proof,
+        }
+        _validate_health_receipt_evidence(evidence, completion_body)
         accepted = self.resolve_current_accepted_intent_for_handle(
             intent_handle, self.receiver, self.active_receipt)
         lockfd = self._lock()
@@ -952,6 +1128,7 @@ class RootSetupHealthIntentJournal:
             if value["state"] == "completed":
                 existing = value["completion_body"]
                 if (existing != dict(completion_body)
+                        or any(value.get(key) != item for key, item in evidence.items())
                         or value["completion_sha256"] != _digest(existing)):
                     raise ListenerActivationUnavailable("completed health witness conflicts with prior CAS")
                 return existing["completion_handle"], value["completion_sha256"]
@@ -976,6 +1153,7 @@ class RootSetupHealthIntentJournal:
             value["completion_handle"] = completion_body["completion_handle"]
             value["completion_sha256"] = _digest(dict(completion_body))
             value["completion_body"] = dict(completion_body)
+            value.update(evidence)
             self._replace(value, identity)
             return value["completion_handle"], value["completion_sha256"]
         finally:
@@ -1020,6 +1198,80 @@ class RootSetupHealthIntentJournal:
                     or value.get("completion_sha256") != _digest(completion)):
                 raise ListenerActivationUnavailable("completed health intent and witness are not a current durable pair")
             return MappingProxyType(dict(intent)), MappingProxyType(dict(completion))
+        finally:
+            fcntl.flock(lockfd, fcntl.LOCK_UN)
+            os.close(lockfd)
+
+    def resolve_current_completed_for_intent(
+            self, intent_handle: str
+    ) -> tuple[str, str, Mapping[str, Any]]:
+        """Reopen the unique completion after a lost reply without rerunning health."""
+        if self.receiver is not None and self.active_receipt is not None:
+            self.receiver.observe_active_current(self.active_receipt)
+        lockfd = self._lock()
+        try:
+            value, _digest_value, _identity = self._read()
+            body = value.get("completion_body")
+            if (value.get("state") != "completed" or not isinstance(body, dict)
+                    or value.get("intent_body", {}).get("intent_handle") != intent_handle
+                    or body.get("intent_handle") != intent_handle
+                    or value.get("completion_handle") != body.get("completion_handle")
+                    or value.get("completion_sha256") != _digest(body)):
+                raise ListenerActivationUnavailable("intent has no unique current completed witness")
+            if self.receiver is not None and self.active_receipt is not None:
+                self.receiver.observe_active_current(self.active_receipt)
+            return (body["completion_handle"], value["completion_sha256"],
+                    MappingProxyType(dict(body)))
+        finally:
+            fcntl.flock(lockfd, fcntl.LOCK_UN)
+            os.close(lockfd)
+
+    def resolve_current_intent_state(self, intent_handle: str) -> str:
+        """Read only the current durable state; this never authorizes a rerun."""
+        if (self.receiver is None or self.active_receipt is None
+                or not isinstance(intent_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", intent_handle)):
+            raise ListenerActivationUnavailable("current daemon intent state is unavailable")
+        self.receiver.observe_active_current(self.active_receipt)
+        lockfd = self._lock()
+        try:
+            value, _digest_value, _identity = self._read()
+            if value.get("intent_body", {}).get("intent_handle") != intent_handle:
+                raise ListenerActivationUnavailable("health intent handle is not the unique current intent")
+            state = value.get("state")
+            if state not in {"accepted", "started", "completed", "denied", "cancelled"}:
+                raise ListenerActivationUnavailable("health intent is not durably accepted")
+            self.receiver.observe_active_current(self.active_receipt)
+            return state
+        finally:
+            fcntl.flock(lockfd, fcntl.LOCK_UN)
+            os.close(lockfd)
+
+    def resolve_current_completed_health_proof(
+            self, intent_handle: str, completion_handle: str
+    ) -> tuple[Mapping[str, Any], Mapping[str, Any], tuple[Mapping[str, Any], ...]]:
+        """Return the validated completion plus its retained original receipt/events."""
+        if self.receiver is not None and self.active_receipt is not None:
+            self.receiver.observe_active_current(self.active_receipt)
+        lockfd = self._lock()
+        try:
+            value, _digest_value, _identity = self._read()
+            if (value.get("state") != "completed"
+                    or value.get("intent_body", {}).get("intent_handle") != intent_handle
+                    or value.get("completion_handle") != completion_handle):
+                raise ListenerActivationUnavailable("health proof is not the current completed intent")
+            completion = value["completion_body"]
+            _validate_health_receipt_evidence(value, completion)
+            if (completion.get("completion_handle") != completion_handle
+                    or value.get("completion_sha256") != _digest(completion)):
+                raise ListenerActivationUnavailable("health proof completion digest is stale")
+            if self.receiver is not None and self.active_receipt is not None:
+                self.receiver.observe_active_current(self.active_receipt)
+            return (
+                MappingProxyType(dict(completion)),
+                MappingProxyType(dict(value["health_receipt_body"])),
+                tuple(MappingProxyType(dict(row)) for row in value["health_event_proof"]),
+            )
         finally:
             fcntl.flock(lockfd, fcntl.LOCK_UN)
             os.close(lockfd)
