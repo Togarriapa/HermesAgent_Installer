@@ -203,8 +203,8 @@ class RootNativeRegistrationProjectionRegistry:
                 raise ValueError
             coverage = self.resolve_source_coverage()
             if (coverage.prepared_generation_id != selection.prepared_generation_id
-                    or not secrets.compare_digest(selection._registry_seal,
-                                                  self._binding._session._factory._native_assembly_seal)):
+                    or selection._registry_seal is not
+                       self._binding._session._factory._native_assembly_seal):
                 raise ValueError
             bundle = build_root_native_registration_projection(selection, definitions)
             self._bundles[selection.selection_handle] = bundle
@@ -1074,8 +1074,9 @@ def reviewed_packaged_registration_result_schemas(
         contract = json.loads((root / "planning/native-package-binding-contract.json").read_text(encoding="utf-8"))
         v121 = contract["financial_alias_source_bound_v121"]
         v120 = contract["financial_web_results_v120"]
+        v140 = contract["registration_source_pin_refinement_v140"]["source_record"]
+        v141 = contract["registration_source_pin_refinement_v141"]["source_record"]
         by_tool = {row["tool_name"]: row for row in v120["schema_artifacts"]}
-        source_pins = v120["source_pins"]
         rows = [
             {"tool_name": "financial_data_read", "schema_id": v121["schema_id"],
              "artifact_id": v121["artifact_id"], "path": v121["path"],
@@ -1088,10 +1089,8 @@ def reviewed_packaged_registration_result_schemas(
     source_by_name = {row.native_tool_name: row for row in captured}
     expected_adapters = {"financial_data_read": "financial-data-hub", "web_retrieve": "web"}
     expected_source_paths = {
-        "financial_data_read": ("src/hermes_installer/components/plugin_finance.py",
-                                source_pins["plugin_finance.py"]),
-        "web_retrieve": ("src/hermes_installer/components/plugin_local_voice_web.py",
-                         source_pins["plugin_local_voice_web.py"]),
+        "financial_data_read": (v141["relative_path"], v141["sha256"]),
+        "web_retrieve": (v140["relative_path"], v140["sha256"]),
     }
     output = list(local)
     for row in rows:

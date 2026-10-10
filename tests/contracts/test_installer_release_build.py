@@ -726,7 +726,10 @@ def test_bootstrap_transition_descriptor_rejects_duplicate_and_extra_identity_fi
 
 def test_fixed_reexec_driver_is_static_and_has_no_caller_identity_channel():
     source = release_build._fixed_reexec_entry_code()
+    argv = release_build._fixed_reexec_argv(Path("/fixed/runtime/python"))
     compile(source, "<fixed-reexec-entry>", "exec")
+    assert argv[:5] == ["/fixed/runtime/python", "-B", "-I", "-S", "-c"]
+    assert argv[5] == source
     assert "os.read(3, 4097)" in source
     assert "F_GET_SEALS" in source and "O_NOFOLLOW" in source
     assert "sys.argv" not in source and "os.environ" not in source

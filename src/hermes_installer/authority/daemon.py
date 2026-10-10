@@ -197,7 +197,8 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
                                      if runtime_bindings is not None else None),
         service_generation_digest=enrollment.protected_enrollment_digest,
     )
-    service.root_runtime_bindings = runtime_bindings
+    if runtime_bindings is not None:
+        service.attach_root_runtime_bindings(runtime_bindings)
     service_ref["service"] = service
     authority_runtime = None
     if runtime_bindings is not None and artifact_catalog is not None:
