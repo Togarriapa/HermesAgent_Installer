@@ -1382,15 +1382,28 @@ def _verify_candidate_index(payload: bytes) -> None:
             "registration_source_receipt_handle", "handler_kind", "handler_id",
             "selector_fields", "action_bindings", "observer_enrollment_ids",
         }
+        source_registration_fields = (registration_fields - {"argument_schema", "result_schema"}) | {
+            "argument_schema_id", "result_schema_id", "generation"}
         registration_ids = set()
-        for row in registration_rows:
-            if not isinstance(row, dict) or set(row) != registration_fields:
+        for index, row in enumerate(registration_rows):
+            if (not isinstance(row, dict) or frozenset(row) not in {
+                    frozenset(registration_fields), frozenset(source_registration_fields)}):
                 raise NativeOutputReceiptDenied("native registration projection row is malformed")
+            source_projection = set(row) == source_registration_fields
+            if source_projection and not isinstance(value["candidates"][index], dict):
+                raise NativeOutputReceiptDenied("native source registration candidate is malformed")
+            argument_schema = (value["candidates"][index].get("argument_schema")
+                               if source_projection else row["argument_schema"])
+            result_schema = (value["candidates"][index].get("result_schema")
+                             if source_projection else row["result_schema"])
+            if source_projection and (any(not isinstance(row[key], str) or not _valid_identifier(row[key])
+                                          for key in ("argument_schema_id", "result_schema_id", "generation"))):
+                raise NativeOutputReceiptDenied("native source registration schema/generation keys are malformed")
             reg_id = row["registration_id"]
             if (not isinstance(reg_id, str) or not _valid_identifier(reg_id)
-                    or reg_id in registration_ids or not isinstance(row["argument_schema"], dict)
-                    or not isinstance(row["result_schema"], dict)
-                    or row["native_schema_sha256"] != hashlib.sha256(_canonical(row["argument_schema"])).hexdigest()
+                    or reg_id in registration_ids or not isinstance(argument_schema, dict)
+                    or not isinstance(result_schema, dict)
+                    or row["native_schema_sha256"] != hashlib.sha256(_canonical(argument_schema)).hexdigest()
                     or not isinstance(row["registration_source_sha256"], str)
                     or not _HEX.fullmatch(row["registration_source_sha256"])
                     or not isinstance(row["registration_source_receipt_handle"], str)
@@ -1434,11 +1447,14 @@ def _verify_candidate_index(payload: bytes) -> None:
             raise NativeOutputReceiptDenied("native candidate tool and adapter/action identities must be unique")
         if is_projected:
             registration = registration_rows[index]
+            compare_fields = ("native_tool_name", "adapter_id", "native_server_name", "toolset", "family",
+                              "native_schema_sha256", "observer_enrollment_ids", "handler_kind")
+            if "argument_schema" in registration:
+                compare_fields += ("argument_schema", "result_schema")
+            elif registration["generation"] != value["generation"]:
+                raise NativeOutputReceiptDenied("native source registration generation differs from package")
             if (candidate["registration_id"] != registration["registration_id"]
-                    or any(candidate.get(key) != registration.get(key) for key in (
-                        "native_tool_name", "adapter_id", "native_server_name", "toolset", "family",
-                        "argument_schema", "result_schema", "native_schema_sha256",
-                        "observer_enrollment_ids", "handler_kind"))):
+                    or any(candidate.get(key) != registration.get(key) for key in compare_fields)):
                 raise NativeOutputReceiptDenied("native candidate differs from its projected registration")
         names.add(name)
         actions.add(action)

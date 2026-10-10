@@ -265,6 +265,19 @@ def build_root_native_registration_projection(
         raise NativeRegistrationProjectionDenied("selected registration source/schema/action joins are unavailable")
 
     try:
+        session = definitions.release_module_receipts[0]._session
+        if session._resolve_current_native_bootstrap_assembly(selection.selection_handle) is not selection:
+            raise ValueError
+        if (session._factory._native_assembly_seal is not definitions._registry_seal
+                or session._native_assembly_definitions.get(selection.selection_handle) is not definitions):
+            raise ValueError
+        policy = session.resolve_current_prepared_native_policy_records(
+            selection.native_policy_preparation_handle)
+        expected_registrations = {row["registration_id"] for row in policy.registration_records}
+        expected_actions = {row["action_binding_id"] for row in policy.action_records}
+        expected_workflows = {row["id"] for row in policy.workflow_records}
+        if not expected_registrations:
+            raise ValueError
         captured = capture_actual_hermes_registrations()
         source_rows = observe_root_native_registrations(definitions.release_module_receipts, captured)
         source_by_name = {row.native_tool_name: row for row in source_rows}
@@ -289,7 +302,10 @@ def build_root_native_registration_projection(
                     or receipt.artifact_id in receipts):
                 raise ValueError
             receipts[receipt.artifact_id] = (receipt, payload)
-        expected_packaged = {row.artifact_id for row in reviewed_packaged_registration_result_schemas(captured)}
+        expected_names = {row.native_tool_name for row in source_rows
+                          if row.registration_id in expected_registrations}
+        expected_packaged = {row.artifact_id for row in reviewed_packaged_registration_result_schemas(captured)
+                             if row.native_tool_name in expected_names}
         if set(receipts) != expected_packaged:
             raise ValueError
 
@@ -384,7 +400,7 @@ def build_root_native_registration_projection(
                     or not isinstance(issuer["source_action_ids"], (tuple, list))
                     or not issuer["source_action_ids"]):
                 raise ValueError
-        if len(action_rows) != 61 or len(workflow_rows) != 2:
+        if set(action_rows) != expected_actions or set(workflow_rows) != expected_workflows:
             raise ValueError
         expected_families = {
             "agent-live-wallet", "agent-sandbox-wallet", "agent37-discovery",
@@ -397,7 +413,8 @@ def build_root_native_registration_projection(
         if {row.family for row in reviewed} != expected_families:
             raise ValueError
         registration_rows = tuple(definitions.registration_records)
-        if len(registration_rows) != 42:
+        if ({row["registration_id"] for row in registration_rows} != expected_registrations
+                or len(registration_rows) != len(expected_registrations)):
             raise ValueError
 
         projections: list[RootNativeRegistrationProjection] = []
@@ -570,12 +587,13 @@ def build_root_native_registration_projection(
                 "action_id": lexical, "argument_schema": dict(argument_schema),
                 "result_schema": dict(result_schema), "native_schema_sha256": source.native_schema_sha256,
                 "observer_enrollment_ids": list(observer_ids), "native_server_name": native_server_name,
-                "description": source.description, "registration_id": source.registration_id,
+                "description": next(row.description for row in captured if row.native_tool_name == name),
+                "registration_id": source.registration_id,
                 "toolset": source.toolset, "family": source.family,
                 "handler_kind": source_definition.handler_kind,
             }))
 
-        if names_seen != set(source_by_name) or len(projections) != 42:
+        if names_seen != expected_names or len(projections) != len(expected_registrations):
             raise ValueError
         return RootNativeRegistrationProjectionBundle(tuple(projections), tuple(candidates))
     except NativeRegistrationProjectionDenied:

@@ -2403,7 +2403,7 @@
   },
   "selected_native_executable_closure_v179": {
     "amendment": "plans/amendments/2026-10-10-selected-native-executable-closure-v179.md",
-    "implementation_complete": false,
+    "implementation_complete": true,
     "target_acceptance_complete": false,
     "order": [
       "current choice/source/schema/owned target/effect",
@@ -2411,6 +2411,7 @@
       "retained exact selected projector",
       "five output assembler",
       "separate loaded-process and live acceptance"
-    ]
+    ],
+    "evidence": "docs/native-selected-source-composition-v179.md"
   }
 }
