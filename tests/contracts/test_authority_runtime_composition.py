@@ -230,8 +230,9 @@ def test_native_action_resolver_uses_exact_selected_workflow_and_schema_bytes():
         bindings, enrollment_catalog=catalog, artifact_catalog=SimpleNamespace(artifacts=artifacts),
         native_bridges={"bridge:one": bridge},
         native_schema_artifact_records=({
-            "id": "schema:lookup:arguments", "artifact_id": "artifact:schema",
-            "sha256": schema_digest, "schema_kind": "arguments",
+                "id": "schema:lookup:arguments", "artifact_id": "artifact:schema",
+                "sha256": schema_digest, "size_bytes": len(schema_bytes),
+                "derivation_receipt_handle": None, "schema_kind": "arguments",
             "native_package_id": package.package_id,
             "native_package_generation": package.generation,
             "adapter_id": adapter.adapter_id, "action_id": adapter.action_id,
@@ -239,8 +240,9 @@ def test_native_action_resolver_uses_exact_selected_workflow_and_schema_bytes():
         },),
     )
     schema_records = ({
-        "id": "schema:lookup:arguments", "artifact_id": "artifact:schema",
-        "sha256": schema_digest, "schema_kind": "arguments",
+            "id": "schema:lookup:arguments", "artifact_id": "artifact:schema",
+            "sha256": schema_digest, "size_bytes": len(schema_bytes),
+            "derivation_receipt_handle": None, "schema_kind": "arguments",
         "native_package_id": package.package_id,
         "native_package_generation": package.generation,
         "adapter_id": adapter.adapter_id, "action_id": adapter.action_id,
