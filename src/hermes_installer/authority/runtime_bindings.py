@@ -7,8 +7,11 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
 import re
+import stat
 from dataclasses import dataclass
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
@@ -76,6 +79,14 @@ class SelectedProcessOperation:
     service_gid: int
 
 
+def _freeze_application_json(value: Any) -> Any:
+    if isinstance(value, dict):
+        return MappingProxyType({key: _freeze_application_json(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_application_json(item) for item in value)
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class RootRuntimeBindings:
     """The immutable handler registrations and selectors for one daemon load."""
@@ -115,6 +126,9 @@ class RootRuntimeBindings:
     native_materialization: Any | None = None
     native_registry: Any | None = None
     native_discoveries: Mapping[str, Any] = MappingProxyType({})
+    artifact_staging_directory: Path | None = None
+    application_source_receipts: Any | None = None
+    application_runtime_receipts: Any | None = None
 
     def resolve_composio_channel_enrollment(self, enrollment_id: str,
                                             resource_generation: str) -> Mapping[str, Any]:
@@ -376,6 +390,141 @@ class RootRuntimeBindings:
             if artifact is None or artifact.sha256 != digest:
                 raise EnrollmentDenied(f"selected application {label} is absent or changed in the root artifact catalog")
         return selected
+
+    def resolve_selected_application_runtime(
+        self, application_id: str, profile_id: str,
+    ) -> Any:
+        """Resolve a selected app only after current source/runtime proof checks.
+
+        The protected row is selection metadata. Receipt registries reopen their
+        own immutable roots and revalidate the exact service-generation digest;
+        this method never promotes row fields or artifact presence into proof.
+        """
+        selected = self.resolve_selected_application_runtime_record(
+            application_id, profile_id=profile_id,
+        )
+        row = selected.record
+        if row.get("enabled") is not True:
+            raise EnrollmentDenied("selected application is disabled by protected prerequisites")
+        source_registry = self.application_source_receipts
+        runtime_registry = self.application_runtime_receipts
+        if (source_registry is None or runtime_registry is None
+                or not callable(getattr(source_registry, "resolve", None))
+                or not callable(getattr(runtime_registry, "resolve", None))):
+            raise EnrollmentDenied("selected application source/runtime receipt registries are unavailable")
+        try:
+            source_receipt = source_registry.resolve(
+                row["source_generation_receipt_handle"],
+                application_id=application_id,
+                service_generation_digest=selected.service_generation_digest,
+            )
+            runtime_receipt = runtime_registry.resolve(
+                row["runtime_receipt_handle"],
+                application_id=application_id,
+                source_receipt_handle=row["source_generation_receipt_handle"],
+                service_generation_digest=selected.service_generation_digest,
+            )
+        except Exception:
+            raise EnrollmentDenied("selected application source/runtime receipt is absent, expired, or stale") from None
+        if (getattr(source_receipt, "handle", None) != row["source_generation_receipt_handle"]
+                or getattr(source_receipt, "application_id", None) != application_id
+                or getattr(source_receipt, "service_generation_digest", None) != selected.service_generation_digest
+                or getattr(source_receipt, "source_identity", None) != row["source_identity"]
+                or getattr(source_receipt, "source_revision", None) != row["source_revision"]
+                or getattr(source_receipt, "source_tree_sha256", None) != row["source_tree_sha256"]
+                or getattr(source_receipt, "generation_manifest_sha256", None)
+                != row["source_generation_manifest_sha256"]
+                or getattr(runtime_receipt, "handle", None) != row["runtime_receipt_handle"]
+                or getattr(runtime_receipt, "application_id", None) != application_id
+                or getattr(runtime_receipt, "source_receipt_handle", None)
+                != row["source_generation_receipt_handle"]
+                or getattr(runtime_receipt, "service_generation_digest", None)
+                != selected.service_generation_digest
+                or getattr(runtime_receipt, "runtime_id", None) != row["runtime_id"]
+                or getattr(runtime_receipt, "runtime_manifest_sha256", None) != row["runtime_manifest_sha256"]
+                or getattr(runtime_receipt, "lock_sha256", None) != row["lock_sha256"]):
+            raise EnrollmentDenied("selected application receipts do not match the active protected row")
+        request_schema = self._read_selected_application_schema(
+            row["request_schema_id"], row["request_schema_sha256"],
+        )
+        from .application_runtime import RootSelectedApplicationRuntime
+        return RootSelectedApplicationRuntime(
+            application_id=application_id,
+            profile_id=profile_id,
+            profile_generation=row["profile_generation"],
+            principal_id=row["principal_id"],
+            adapter_id=row["adapter_id"],
+            source_identity=row["source_identity"],
+            source_revision=row["source_revision"],
+            source_tree_sha256=row["source_tree_sha256"],
+            source_generation_receipt_handle=row["source_generation_receipt_handle"],
+            source_generation_manifest_sha256=row["source_generation_manifest_sha256"],
+            runtime_id=row["runtime_id"],
+            runtime_receipt_handle=row["runtime_receipt_handle"],
+            runtime_manifest_sha256=row["runtime_manifest_sha256"],
+            lock_sha256=row["lock_sha256"],
+            work_root_id=row["work_root_id"],
+            data_root_id=row["data_root_id"],
+            operation_id=row["operation_id"],
+            process_start_target=row["process_start_target"],
+            request_schema_id=row["request_schema_id"],
+            request_schema_sha256=row["request_schema_sha256"],
+            result_schema_id=row["result_schema_id"],
+            result_validator_artifact_id=row["result_validator_artifact_id"],
+            result_validator_sha256=row["result_validator_sha256"],
+            capability_ids=tuple(row["capability_ids"]),
+            provider_route_ids=tuple(row["provider_route_ids"]),
+            credential_reference_ids=tuple(row["credential_reference_ids"]),
+            account_eligibility_receipt_handle=row["account_eligibility_receipt_handle"],
+            memory_owner_generation=row["memory_owner_generation"],
+            max_lifetime_seconds=row["max_lifetime_seconds"],
+            max_memory_bytes=row["max_memory_bytes"],
+            max_workers=row["max_workers"],
+            metered_budget_usd=str(row["metered_budget_usd"]),
+            enabled=row["enabled"],
+            service_generation_digest=selected.service_generation_digest,
+            source_receipt=source_receipt,
+            runtime_receipt=runtime_receipt,
+            request_schema=request_schema,
+        )
+
+    def _read_selected_application_schema(self, artifact_id: str, expected_sha256: str) -> Mapping[str, Any]:
+        catalog = self.artifact_catalog
+        staging_root = self.artifact_staging_directory
+        if catalog is None or staging_root is None:
+            raise EnrollmentDenied("selected application request schema artifact reader is unavailable")
+        try:
+            artifact = catalog.resolve(artifact_id, expected_sha256, staging_root, expected_uid=0)
+            fd = os.open(artifact.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            try:
+                info = os.fstat(fd)
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o222
+                        or info.st_size > 1024 * 1024 or info.st_size != artifact.size_bytes):
+                    raise ValueError("schema artifact custody or size is invalid")
+                chunks: list[bytes] = []
+                remaining = info.st_size
+                while remaining:
+                    chunk = os.read(fd, min(65536, remaining))
+                    if not chunk:
+                        raise ValueError("schema artifact changed while reading")
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                raw = b"".join(chunks)
+                if os.read(fd, 1):
+                    raise ValueError("schema artifact grew while reading")
+            finally:
+                os.close(fd)
+            if hashlib.sha256(raw).hexdigest() != expected_sha256:
+                raise ValueError("schema artifact digest changed while reading")
+            value = json.loads(raw.decode("utf-8"))
+            canonical = json.dumps(value, sort_keys=True, separators=(",", ":"),
+                                   ensure_ascii=False, allow_nan=False).encode("utf-8")
+            if (not isinstance(value, dict) or canonical != raw
+                    or hashlib.sha256(canonical).hexdigest() != expected_sha256):
+                raise ValueError("schema artifact is not canonical protected JSON")
+            return _freeze_application_json(value)
+        except Exception:
+            raise EnrollmentDenied("selected application request schema artifact is absent or changed") from None
 
     def resolve_channel_delivery_binding(
         self, binding_id: str, profile_id: str, process_generation: str,
@@ -958,6 +1107,8 @@ def build_root_runtime_bindings(
     native_materialization: Any | None = None,
     native_registry: Any | None = None,
     native_discoveries: Mapping[str, Any] | None = None,
+    application_source_receipts: Any | None = None,
+    application_runtime_receipts: Any | None = None,
 ) -> RootRuntimeBindings:
     """Build root handlers only from service-generation records already verified.
 
@@ -1204,6 +1355,9 @@ def build_root_runtime_bindings(
         native_materialization=native_materialization,
         native_registry=native_registry,
         native_discoveries=MappingProxyType(dict(native_discoveries or {})),
+        artifact_staging_directory=Path(enrollment.artifact_staging_directory),
+        application_source_receipts=application_source_receipts,
+        application_runtime_receipts=application_runtime_receipts,
     )
 
 
