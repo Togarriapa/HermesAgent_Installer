@@ -41,6 +41,16 @@ def test_public_registry_contract_rejects_broadened_source_catalog():
         "reviewed-finite-public-registry-source-contract",)
 
 
+def test_plugin_target_contract_rejects_changed_source_owned_routes():
+    source = (ROOT / "src/hermes_installer/components/native_plugins.py").read_text()
+    changed = source.replace('service_id="registry:modelcontextprotocol"',
+                             'service_id="registry:unreviewed"')
+
+    with pytest.raises(NativeComponentTargetPending):
+        RootNativeComponentTargetRegistry._verify_plugin_target_source(
+            "mcp-registry", changed.encode())
+
+
 def test_target_source_inventory_is_descriptive_and_unconfigured_families_stay_pending():
     assert set(_SOURCE_CONTRACTS) == {
         "agent37-discovery", "mcp-registry", "resource-overlay-store",

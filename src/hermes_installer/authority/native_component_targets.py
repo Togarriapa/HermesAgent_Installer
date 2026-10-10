@@ -274,20 +274,29 @@ class RootNativeComponentTargetRegistry:
             classes = {node.name: node for node in module.body if isinstance(node, ast.ClassDef)}
             if component_id == "resource-overlay-store":
                 node = classes["ResourceOverlayStoreImplementation"]
-                methods = {item.name for item in node.body if isinstance(item, ast.FunctionDef)}
-                if not {"register"}.issubset(methods):
+                literals = {item.value for item in ast.walk(node)
+                            if isinstance(item, ast.Constant) and isinstance(item.value, str)}
+                if ("register" not in {item.name for item in node.body if isinstance(item, ast.FunctionDef)}
+                        or not {"local_overlay_store", "resource_overlay_", "read", "write", "history",
+                                "delete", "expected_revision"} <= literals):
                     raise ValueError
-                # The root-owned CAS implementation and its profile view are
-                # pinned in the imported source closure, not accepted from a
-                # caller-supplied adapter.
-                ast.parse(source)
             elif component_id == "mcp-registry":
                 node = classes["MCPRegistryImplementation"]
-                if "register" not in {item.name for item in node.body if isinstance(item, ast.FunctionDef)}:
+                literals = {item.value for item in ast.walk(node)
+                            if isinstance(item, ast.Constant) and isinstance(item.value, str)}
+                if ("register" not in {item.name for item in node.body if isinstance(item, ast.FunctionDef)}
+                        or not {"registry:modelcontextprotocol", "mcp_registry_discover",
+                                "mcp_registry_inspect", "discover-servers",
+                                "inspect-server-metadata"} <= literals):
                     raise ValueError
             elif component_id == "agent37-discovery":
                 node = classes["Agent37DiscoveryImplementation"]
-                if "register" not in {item.name for item in node.body if isinstance(item, ast.FunctionDef)}:
+                literals = {item.value for item in ast.walk(node)
+                            if isinstance(item, ast.Constant) and isinstance(item.value, str)}
+                if ("register" not in {item.name for item in node.body if isinstance(item, ast.FunctionDef)}
+                        or not {"registry:agent37", "agent37_discover_skills",
+                                "agent37_inspect_skill", "discover-skill-candidates",
+                                "inspect-public-metadata"} <= literals):
                     raise ValueError
         except Exception:
             raise NativeComponentTargetPending(
