@@ -388,3 +388,10 @@ Root service process lane v236: planning/root-service-process-authority-lane-v23
 Root process proof joins v236b: planning/root-service-process-proof-joins-v236b.json requires actual primaryhermes/default health-home FD/PM/currentcore binding, runtime service epoch/current adapter revision, distinct published declaration source proof and schema4 preserving exact v225schema3. No inferred profile field, claimdigest alias or restored setupseal. Existing236tasks/allACOPEN.
 
 Cold process custody v236b: planning/root-service-process-cold-source-custody-v236b.json supersedes post-compose-only declaration construction with independent verification-only selected-key/journal/core/heldsource custody before strict parsing, then genuine dormant runtime ordinary adoptedchoice revalidation before all serving/effects. Existing tasks/allAC OPEN.
+
+
+## Remote output receipt pipeline v239
+
+See `planning/preactive-remote-build-output-receipts-v239.json`: executor-owned terminal membership precedes exact adapter observation, immutable CAS/attestation and root-held data-root materialization. Only genuine typed proofs mint v209/v202 runtime receipts; v225 owns publication/restart adoption. Existing scopes/deadlines and all AC remain open.
+
+The v239 aggregate also consumes exact root-issued enrollment reservation and prepared source/NSS network policy selection; actual postpublication kernel/network lease is separate and mandatory. No caller ID or future generation is inferred.

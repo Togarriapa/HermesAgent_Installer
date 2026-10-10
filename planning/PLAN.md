@@ -221,3 +221,8 @@ v237: `plans/amendments/2026-10-10-preactive-native-build-manager-composition-v2
 
 
 v238: `plans/amendments/2026-10-10-xpra-native-source-policy-v238.md` / `planning/xpra-native-source-policy-v238.json`; RT-T238.1/.2 and VD-T238.3 OPEN. Concrete399DEB/8Python bounded signed-source policy+keyring tuples, exact dependency/license edges; acquisition only/no native runtime/Pi acceptance.
+
+
+## v239 Remote output/CAS/materialization producer
+
+`planning/preactive-remote-build-output-receipts-v239.json` adds the genuine terminal-to-CAS/attestation-to-materialization edge required by v202/v209/v225/v237. RT-T239.1/.2/.3/VD-T239.4 and all AC remain open. No unrelated FixedBuildProfile or active service identity is inferred.

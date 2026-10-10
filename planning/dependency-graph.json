@@ -3628,5 +3628,29 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "preactive_remote_build_output_receipts_v239": {
+    "contract": "planning/preactive-remote-build-output-receipts-v239.json",
+    "tasks": {
+      "RT-T239.1": [
+        "RT-T209.2",
+        "RT-T237.1"
+      ],
+      "RT-T239.2": [
+        "RT-T239.1",
+        "RT-T212.1"
+      ],
+      "RT-T239.3": [
+        "RT-T239.2",
+        "RT-T222.1"
+      ],
+      "VD-T239.4": [
+        "RT-T239.1",
+        "RT-T239.2",
+        "RT-T239.3"
+      ]
+    },
+    "owner": "luna_remote_receipt_pipeline with central runtime and native executor owners",
+    "acceptance": "All AC OPEN"
   }
 }
