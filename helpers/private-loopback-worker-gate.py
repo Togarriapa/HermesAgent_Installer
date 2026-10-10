@@ -31,7 +31,8 @@ MAX_GATE_FRAME = 8192
 GATE_FD = 3
 LOADER_FD = 4
 _FRAME = struct.Struct("!I")
-CONTRACT_PATH = "/run/hermes-installer/private-loopback/contract.json"
+CONTRACT_PATH_RE = re.compile(
+    r"/run/hermes-installer/native-worker-contracts/[0-9a-f]{32}/contract\.json\Z")
 FIELDS = frozenset({
     "schema", "purpose", "nonce", "network_id", "service_generation_digest",
     "enrollment_id", "profile_id", "generation", "uid", "gid",
@@ -59,10 +60,13 @@ def _unique_pairs(pairs):
 def _read_contract():
     fd = -1
     try:
-        fd = os.open(CONTRACT_PATH, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        contract_path = os.environ.get("HERMES_NATIVE_WORKER_CONTRACT_PATH", "")
+        if not CONTRACT_PATH_RE.fullmatch(contract_path):
+            raise GateError("root-owned native gate contract path is unavailable")
+        fd = os.open(contract_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
                      | getattr(os, "O_CLOEXEC", 0))
         info = os.fstat(fd)
-        path_info = os.stat(CONTRACT_PATH, follow_symlinks=False)
+        path_info = os.stat(contract_path, follow_symlinks=False)
         flags = fcntl.fcntl(fd, fcntl.F_GETFL)
         if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
                 or stat.S_IMODE(info.st_mode) & 0o222

@@ -140,6 +140,62 @@ class LoadedNativePackageProof:
 
 
 @dataclass(frozen=True, slots=True)
+class RootSelectedHealthLoadedPackageProof:
+    """Health-specific package identity joined to the manager's kernel mount receipt."""
+
+    process_id: str
+    profile_id: str
+    generation: str
+    kernel_uid: int
+    package_id: str
+    compiled_closure_sha256: str
+    service_generation_digest: str
+    mount_proof: LoadedNativePackageProof
+    observed_monotonic: float
+
+    @property
+    def proof_id(self) -> str:
+        """Stable identity for this freshly observed package mount.
+
+        ``observed_monotonic`` is deliberately excluded: callers reobserve the
+        same kernel mount at each health boundary, so a fresh observation must
+        retain the same source identity without pretending it is the old
+        observation.  The underlying receipt and live process identity remain
+        part of the digest.
+        """
+        mount = self.mount_proof.mount
+        return canonical_digest({
+            "schema": 1,
+            "process_id": self.process_id,
+            "profile_id": self.profile_id,
+            "generation": self.generation,
+            "kernel_uid": self.kernel_uid,
+            "package_id": self.package_id,
+            "compiled_closure_sha256": self.compiled_closure_sha256,
+            "service_generation_digest": self.service_generation_digest,
+            "pid_start_ticks": self.mount_proof.pid_start_ticks,
+            "cgroup_identity": self.mount_proof.cgroup_identity,
+            "namespace_identity": self.mount_proof.namespace_identity,
+            "executable_sha256": self.mount_proof.executable_sha256,
+            "mount": {
+                "package_id": mount.package_id,
+                "profile_id": mount.profile_id,
+                "generation": mount.generation,
+                "service_mount_id": mount.service_mount_id,
+                "compiled_closure_sha256": mount.compiled_closure_sha256,
+                "entrypoint_sha256": mount.entrypoint_sha256,
+                "resolver_sha256": mount.resolver_sha256,
+                "mount_path": mount.mount_path,
+                "mount_source_device": mount.mount_source_device,
+                "mount_source_inode": mount.mount_source_inode,
+                "manifest_sha256": mount.manifest_sha256,
+                "verified_mount_options": mount.verified_mount_options,
+                "private_propagation": mount.private_propagation,
+            },
+        })
+
+
+@dataclass(frozen=True, slots=True)
 class ProcessCleanupProof:
     """Root-observed teardown facts for one managed generation."""
 
@@ -341,6 +397,100 @@ class RootSelectedHealthControl:
         return "RootSelectedHealthControl(<root-private>)"
 
 
+@dataclass(frozen=True, slots=True)
+class RootSelectedHealthTerminalReceipt:
+    """Root-observed native health process terminal and verified cleanup."""
+
+    schema: int
+    terminal_receipt_handle: str
+    control_handle: str
+    process_id: str
+    profile_id: str
+    generation: str
+    service_generation_digest: str
+    process_uid: int
+    process_gid: int
+    unit: str
+    cgroup: str
+    start_ticks: int
+    exit_code: int | None
+    timed_out: bool
+    cancelled: bool
+    started_monotonic: float
+    finished_monotonic: float
+    stdout_size_bytes: int
+    stderr_size_bytes: int
+    stdout_sha256: str
+    stderr_sha256: str
+    output_overflow: bool
+    loader_ready_event_id: str
+    cgroup_empty: bool
+    main_pidfd_gone: bool
+    launcher_reaped: bool
+    cleanup_verified: bool
+    observed_monotonic: float
+
+    def __post_init__(self) -> None:
+        if (type(self.schema) is not int or self.schema != 1
+                or any(not isinstance(getattr(self, name), str) or not getattr(self, name)
+                       for name in ("terminal_receipt_handle", "control_handle", "process_id",
+                                    "profile_id", "generation", "unit", "cgroup",
+                                    "loader_ready_event_id"))
+                or not re.fullmatch(r"[0-9a-f]{64}", self.service_generation_digest)
+                or not re.fullmatch(r"[0-9a-f]{64}", self.stdout_sha256)
+                or not re.fullmatch(r"[0-9a-f]{64}", self.stderr_sha256)
+                or type(self.process_uid) is not int or self.process_uid <= 0
+                or type(self.process_gid) is not int or self.process_gid < 0
+                or type(self.start_ticks) is not int or self.start_ticks <= 0
+                or (self.exit_code is not None and type(self.exit_code) is not int)
+                or type(self.timed_out) is not bool or type(self.cancelled) is not bool
+                or type(self.output_overflow) is not bool
+                or any(type(getattr(self, name)) is not int or getattr(self, name) < 0
+                       for name in ("stdout_size_bytes", "stderr_size_bytes"))
+                or any(type(getattr(self, name)) not in (int, float)
+                       or not math.isfinite(getattr(self, name))
+                       for name in ("started_monotonic", "finished_monotonic", "observed_monotonic"))
+                or self.finished_monotonic < self.started_monotonic
+                or type(self.cgroup_empty) is not bool or type(self.main_pidfd_gone) is not bool
+                or type(self.launcher_reaped) is not bool or type(self.cleanup_verified) is not bool
+                or not self.cleanup_verified or not self.cgroup_empty
+                or not self.main_pidfd_gone or not self.launcher_reaped):
+            raise ValueError("selected health terminal receipt is malformed or lacks cleanup proof")
+
+
+@dataclass(frozen=True, slots=True)
+class RootSelectedHealthInputWriteReceipt:
+    """Actual single write of one source-issued selected health request."""
+
+    schema: int
+    receipt_handle: str
+    control_handle: str
+    input_event_id: str
+    observation_handle: str
+    loader_ready_event_id: str
+    process_id: str
+    process_generation: str
+    payload_sha256: str
+    payload_size_bytes: int
+    written_monotonic: float
+
+    def __post_init__(self) -> None:
+        if (self.schema != 1
+                or not re.fullmatch(r"[0-9a-f]{32}", self.receipt_handle)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.control_handle)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", self.input_event_id)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.observation_handle)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", self.loader_ready_event_id)
+                or not re.fullmatch(r"[0-9a-f]{32}", self.process_id)
+                or not isinstance(self.process_generation, str) or not self.process_generation
+                or not re.fullmatch(r"[0-9a-f]{64}", self.payload_sha256)
+                or type(self.payload_size_bytes) is not int
+                or not 0 < self.payload_size_bytes <= 262144
+                or isinstance(self.written_monotonic, bool)
+                or not isinstance(self.written_monotonic, (int, float))
+                or not math.isfinite(self.written_monotonic)):
+            raise ValueError("selected health input write receipt is malformed")
+
 @dataclass(slots=True)
 class _Handle:
     process_id: str
@@ -378,6 +528,7 @@ class _Handle:
     native_loader_observation_handle: str | None = None
     native_loader_ready_event_id: str | None = None
     native_worker_launch_proof: Any | None = None
+    native_worker_observed_view: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -969,6 +1120,13 @@ class ManagedProcessEffectHandler:
         ] = {}
         self._health_controls: dict[str, tuple[RootSelectedHealthControl, _Handle, Any, object]] = {}
         self._health_observation_handles: dict[str, str] = {}
+        self._health_terminal_receipts: dict[
+            str, tuple[RootSelectedHealthTerminalReceipt, float]
+        ] = {}
+        self._health_input_write_receipts: dict[
+            str, tuple[RootSelectedHealthInputWriteReceipt, float]
+        ] = {}
+        self._health_input_write_pending: set[str] = set()
         self.native_health_start_authority: Any | None = None
         self._protected_enrollment_catalog: Any | None = None
         self._private_loopback_endpoint_leases: dict[str, tuple[Any, Any, Any]] = {}
@@ -1131,6 +1289,7 @@ class ManagedProcessEffectHandler:
     def _private_native_worker_gate_barrier(
             self, proof: Any, channel: Any, *, unit: str, contract_sha256: str,
             nonce: str, helper_path: Path, interpreter_path: Path,
+            contract_path: Path,
             cancelled: Callable[[], bool], deadline: float,
             allowed_bind: bool, allowed_connect: bool
             ) -> tuple[int, int, int, str, int, int, int, str, str, str]:
@@ -1166,9 +1325,10 @@ class ManagedProcessEffectHandler:
             self.verify_current_native_worker_launch(proof)
             observed = self._observe_native_gate_mainpid(
                 unit, expected_pid=selected["pid"], helper_path=helper_path,
-                interpreter_path=interpreter_path,
+                interpreter_path=interpreter_path, contract_path=contract_path,
                 expected_uid=selected["uid"], expected_gid=selected["gid"])
             pidfd, namespace_fd = observed["pidfd"], observed["namespace_fd"]
+            self._verify_selected_native_worker_view(observed["pid"], proof)
             namespace = os.fstat(namespace_fd)
             if (observed["start_ticks"] != selected["start_ticks"]
                     or observed["pid"] != selected["pid"]
@@ -1204,9 +1364,10 @@ class ManagedProcessEffectHandler:
             self.verify_current_native_worker_launch(proof)
             current = self._observe_native_gate_mainpid(
                 unit, expected_pid=observed["pid"], helper_path=helper_path,
-                interpreter_path=interpreter_path,
+                interpreter_path=interpreter_path, contract_path=contract_path,
                 expected_uid=observed["uid"], expected_gid=observed["gid"])
             try:
+                self._verify_selected_native_worker_view(observed["pid"], proof)
                 namespace_now = os.fstat(namespace_fd)
                 if (current["start_ticks"] != observed["start_ticks"]
                         or current["cgroup"] != observed["cgroup"]
@@ -1241,6 +1402,7 @@ class ManagedProcessEffectHandler:
 
     def _observe_native_gate_mainpid(self, unit: str, *, expected_pid: int,
                                     helper_path: Path, interpreter_path: Path,
+                                    contract_path: Path,
                                     expected_uid: int, expected_gid: int) -> dict[str, Any]:
         """Read exact fixed-unit/process facts and retain fresh kernel handles."""
         properties = {name: self._show(unit, name) for name in (
@@ -1248,6 +1410,8 @@ class ManagedProcessEffectHandler:
             "FragmentPath", "ExecStart", "Environment", "EnvironmentFiles", "User",
             "Group", "KillMode", "RuntimeMaxUSec", "SocketBindDeny",
             "IPAddressDeny", "PrivateNetwork", "RestrictAddressFamilies",
+            "ProtectSystem", "ProtectHome", "PrivateMounts",
+            "TemporaryFileSystem", "InaccessiblePaths",
         )}
         try:
             pid = int(properties["MainPID"])
@@ -1263,6 +1427,17 @@ class ManagedProcessEffectHandler:
                     or Path(cgroup).name != unit
                     or fragment.parent != Path("/run/systemd/transient")
                     or fragment.name != unit
+                    or properties["ProtectSystem"] != "strict"
+                    or properties["ProtectHome"] != "tmpfs"
+                    or properties["PrivateMounts"] != "yes"
+                    or set(properties["TemporaryFileSystem"].split()) != {
+                        "/var/lib/hermes-installer:ro,nosuid,nodev",
+                        "/run/hermes-installer:ro,nosuid,nodev",
+                        "/hermes/.native-output:ro,noexec,nosuid,nodev,mode=0711,uid=0,gid=0",
+                    }
+                    or set(properties["InaccessiblePaths"].split()) != {
+                        "/etc/hermes-installer", "/etc/ssh", "/etc/ssl/private",
+                    }
                     or not stat.S_ISREG(fragment_info.st_mode) or fragment_info.st_uid != 0
                     or fragment_info.st_mode & 0o022
                     or exec_start.count(str(interpreter_path)) != 1
@@ -1294,13 +1469,18 @@ class ManagedProcessEffectHandler:
             command = [item.decode("utf-8", "strict") for item in command if item]
             if command != [str(interpreter_path), "-I", str(helper_path)]:
                 raise ValueError("MainPID argv is not the fixed isolated gate helper")
+            self._verify_process_elf_dependencies(pid, interpreter_path,
+                                                  expected_uid, expected_gid)
             environment = self._read_environment(pid)
             if (environment.get("LISTEN_PID") != str(pid)
                     or environment.get("LISTEN_FDS") != "2"
                     or environment.get("LISTEN_FDNAMES")
                        != "hermes-private-loopback-gate:hermes-loader-progress"
+                    or environment.get("HERMES_NATIVE_WORKER_CONTRACT_PATH")
+                       != str(contract_path)
                     or any(key not in {"HOME", "HERMES_HOME", "PATH", "LANG", "LISTEN_PID",
-                                       "LISTEN_FDS", "LISTEN_FDNAMES"} for key in environment)
+                                       "LISTEN_FDS", "LISTEN_FDNAMES",
+                                       "HERMES_NATIVE_WORKER_CONTRACT_PATH"} for key in environment)
                     or environment.get("HOME") != "/hermes"
                     or environment.get("HERMES_HOME") != "/hermes"
                     or environment.get("PATH") != "/usr/bin:/bin"
@@ -1331,6 +1511,243 @@ class ManagedProcessEffectHandler:
                     except OSError:
                         pass
             raise AuthorityDenied("native_worker.gate", "systemd MainPID identity is not fixed and current") from None
+
+    @staticmethod
+    def _verify_process_elf_dependencies(pid: int, executable: Path,
+                                         expected_uid: int, expected_gid: int) -> None:
+        """Prove PT_INTERP and loaded DT_NEEDED members resolve in this mount ns."""
+        from hermes_installer.authority.host_tool_observation import _elf_dynamic
+        proc_root = Path(f"/proc/{pid}/root")
+        interp, _needed = _elf_dynamic(executable)
+        if not isinstance(interp, str) or not interp.startswith("/"):
+            raise ValueError("ELF interpreter path is not absolute")
+        interpreter = os.stat(str(proc_root / interp.lstrip("/")), follow_symlinks=True)
+        readable = 0o400 if interpreter.st_uid == expected_uid else (
+            0o040 if interpreter.st_gid == expected_gid else 0o004)
+        if (not stat.S_ISREG(interpreter.st_mode) or interpreter.st_uid != 0
+                or interpreter.st_gid != 0 or interpreter.st_mode & 0o022
+                or not interpreter.st_mode & readable):
+            raise ValueError("ELF interpreter is not a regular file in worker namespace")
+        try:
+            raw_maps = Path(f"/proc/{pid}/maps").read_text(encoding="utf-8", errors="strict")
+        except OSError:
+            raise ValueError("worker ELF mappings are unavailable") from None
+        if len(raw_maps) > 1024 * 1024:
+            raise ValueError("worker ELF mapping table exceeds bound")
+        mapped: dict[tuple[int, int], tuple[Path, os.stat_result]] = {}
+        for line in raw_maps.splitlines():
+            fields = line.split(maxsplit=5)
+            if len(fields) != 6 or not fields[5].startswith("/"):
+                continue
+            name = fields[5]
+            if name.endswith(" (deleted)"):
+                raise ValueError("worker has a deleted mapped ELF member")
+            path = Path(name)
+            try:
+                info = os.stat(str(proc_root / name.lstrip("/")), follow_symlinks=True)
+            except OSError:
+                raise ValueError("worker mapped ELF path cannot be re-opened") from None
+            mapped[(info.st_dev, info.st_ino)] = (path, info)
+            if len(mapped) > 512:
+                raise ValueError("worker mapped ELF member count exceeds bound")
+        if (interpreter.st_dev, interpreter.st_ino) not in mapped:
+            raise ValueError("worker PT_INTERP inode is not actually mapped")
+
+        needed_names: set[str] = set()
+        inspected: set[tuple[int, int]] = set()
+        for mapped_path, info in tuple(mapped.values()):
+            if not (mapped_path.name.endswith(".so") or ".so." in mapped_path.name):
+                continue
+            identity = (info.st_dev, info.st_ino)
+            if identity in inspected:
+                continue
+            inspected.add(identity)
+            try:
+                _loader, needed = _elf_dynamic(proc_root / mapped_path.relative_to("/"))
+            except Exception:
+                raise ValueError("mapped ELF dependency could not be inspected") from None
+            needed_names.update(needed)
+        try:
+            _loader, direct_needed = _elf_dynamic(executable)
+        except Exception:
+            raise ValueError("selected executable dependencies could not be inspected") from None
+        needed_names.update(direct_needed)
+
+        for name in needed_names:
+            if (not isinstance(name, str) or not name or "/" in name or "\x00" in name):
+                raise ValueError("ELF dependency name is malformed")
+            resolved = False
+            for mapped_path, info in mapped.values():
+                candidate = proc_root / mapped_path.parent.relative_to("/") / name
+                try:
+                    candidate_info = os.stat(candidate, follow_symlinks=True)
+                except OSError:
+                    continue
+                if (candidate_info.st_dev, candidate_info.st_ino) != (info.st_dev, info.st_ino):
+                    continue
+                if (info.st_uid != 0 or info.st_gid != 0 or info.st_mode & 0o022
+                        or not info.st_mode & (0o400 if info.st_uid == expected_uid else
+                                               0o040 if info.st_gid == expected_gid else 0o004)):
+                    raise ValueError("mapped ELF dependency is not immutable root-owned readable source")
+                resolved = True
+                break
+            if not resolved:
+                raise ValueError("DT_NEEDED member did not resolve to a loaded inode")
+
+    def _materialize_selected_native_worker_view(
+            self, profile: ManagedProfileCustody, proof: Any, process_id: str,
+            helper_path: Path, interpreter_path: Path,
+            native_mount_source: Path, native_mount_receipt: NativePackageMountReceipt,
+            contract_path: Path, contract_sha256: str,
+            ) -> Any:
+        """Issue the exact v192 closed source view; incomplete visibility denies."""
+        from hermes_installer.authority.native_worker_launch import (
+            RootSelectedNativeWorkerView, RootSelectedNativeWorkerViewMount,
+        )
+        owner = self._native_worker_launch_owner
+        if (owner is None or self.verify_current_native_worker_launch(proof) is not proof
+                or not re.fullmatch(r"[0-9a-f]{32}", process_id)):
+            raise AuthorityDenied("native_worker.view", "current selected view owner is unavailable")
+        runtime = proof._runtime_projection
+        identity = proof._pm_identity
+        release = owner.runtime.controller_release_receipt
+        release.verify_current()
+
+        def access_bits(info: os.stat_result, *, directory: bool) -> bool:
+            bit = 0o1 if directory else 0o4
+            if info.st_uid == profile.owner_uid:
+                bit <<= 6
+            elif info.st_gid == profile.owner_gid:
+                bit <<= 3
+            return bool(info.st_mode & bit)
+
+        def exact_source(path: Path, expected: tuple[int, int] | None,
+                         *, directory: bool) -> os.stat_result:
+            info = path.lstat()
+            if (stat.S_ISLNK(info.st_mode)
+                    or (directory and not stat.S_ISDIR(info.st_mode))
+                    or (not directory and not stat.S_ISREG(info.st_mode))
+                    or info.st_uid != 0 or info.st_gid != 0
+                    or info.st_mode & 0o022
+                    or not access_bits(info, directory=directory)
+                    or expected is not None and (info.st_dev, info.st_ino) != expected):
+                raise AuthorityDenied(
+                    "native_worker.view_visibility",
+                    "selected root source is not held, immutable, or readable by the worker UID")
+            return info
+
+        mounts: list[RootSelectedNativeWorkerViewMount] = []
+
+        def add(kind: str, handle: str, source: Path, expected: tuple[int, int] | None,
+                closure: str, target: str, *, directory: bool, noexec: bool) -> None:
+            if (not isinstance(handle, str) or not handle
+                    or not re.fullmatch(r"[0-9a-f]{64}", closure)
+                    or not target.startswith("/") or "\x00" in target):
+                raise AuthorityDenied("native_worker.view", "selected source view row is malformed")
+            info = exact_source(source, expected, directory=directory)
+            mounts.append(RootSelectedNativeWorkerViewMount(
+                schema=1, view_kind=kind, source_root_receipt_handle=handle,
+                source_host_root_path=source, source_root_device=info.st_dev,
+                source_root_inode=info.st_ino, source_closure_sha256=closure,
+                worker_mount_path=target, read_only=True, noexec=noexec,
+            ))
+
+        row = proof._network_projection.runtime_record
+        output_rows = row.get("native_output_member_records")
+        if (not isinstance(output_rows, (list, tuple)) or len(output_rows) != 5):
+            raise AuthorityDenied("native_worker.view", "selected native output member set is incomplete")
+        add("pm-venv", identity.pm_runtime_receipt_handle,
+            runtime.pm_venv_root_path,
+            (runtime.pm_venv_root_device, runtime.pm_venv_root_inode),
+            identity.runtime_closure_sha256, "/hermes/.native/pm",
+            directory=True, noexec=False)
+        add("pm-base", identity.pm_runtime_receipt_handle,
+            runtime.pm_base_root_path,
+            (runtime.pm_base_root_device, runtime.pm_base_root_inode),
+            row["pm_base_closure_sha256"], str(runtime.pm_base_root_path),
+            directory=True, noexec=False)
+        output_root_info = runtime.native_output_root_path.lstat()
+        if ((output_root_info.st_dev, output_root_info.st_ino)
+                != (runtime.native_output_root_device, runtime.native_output_root_inode)):
+            raise AuthorityDenied("native_worker.view", "selected native output root inode changed")
+        output_seen: set[str] = set()
+        for item in output_rows:
+            relative = item.get("relative_path") if isinstance(item, Mapping) else None
+            if (not isinstance(relative, str) or not relative
+                    or relative.startswith("/") or "\\" in relative
+                    or any(part in {"", ".", ".."} for part in relative.split("/"))
+                    or relative in output_seen):
+                raise AuthorityDenied("native_worker.view", "selected native output member path is malformed")
+            output_seen.add(relative)
+            member_path = runtime.native_output_root_path.joinpath(*relative.split("/"))
+            member_info = exact_source(member_path, (item["device"], item["inode"]), directory=False)
+            if (item.get("kind") != "regular-file" or item.get("owner_uid") != 0
+                    or item.get("owner_gid") != 0 or not access_bits(member_info, directory=False)
+                    or hashlib.sha256(member_path.read_bytes()).hexdigest() != item.get("sha256")):
+                raise AuthorityDenied("native_worker.view_visibility",
+                                      "selected native output member is not readable or current")
+            target = "/hermes/.native-output/" + relative
+            mounts.append(RootSelectedNativeWorkerViewMount(
+                1, "native-runtime-output-member", runtime.native_output_root_receipt_handle,
+                member_path, member_info.st_dev, member_info.st_ino, item["sha256"],
+                target, True, True))
+        add("native-package", native_mount_receipt.service_mount_id,
+            native_mount_source,
+            (native_mount_receipt.mount_source_device, native_mount_receipt.mount_source_inode),
+            native_mount_receipt.compiled_closure_sha256,
+            native_mount_receipt.mount_path, directory=True, noexec=True)
+
+        runtime_root = release.release_root / "runtime"
+        runtime_info = exact_source(runtime_root, None, directory=True)
+        release_rows = sorted((item.relative_path, item.sha256, item.size_bytes, item.mode)
+                              for item in release.files if item.relative_path.startswith("runtime/"))
+        if not release_rows:
+            raise AuthorityDenied("native_worker.view", "installed interpreter runtime closure is empty")
+        runtime_digest = hashlib.sha256(json.dumps(
+            release_rows, separators=(",", ":"), ensure_ascii=True).encode("ascii")).hexdigest()
+        mounts.append(RootSelectedNativeWorkerViewMount(
+            1, "gate-interpreter-runtime", release.deployment_receipt_sha256,
+            runtime_root, runtime_info.st_dev, runtime_info.st_ino, runtime_digest,
+            str(runtime_root), True, False))
+        helper_info = exact_source(helper_path, None, directory=False)
+        helper_row = next((item for item in release.files
+                           if item.relative_path == "helpers/private-loopback-worker-gate.py"
+                           and item.roles == ("network-startup-helper",)), None)
+        if helper_row is None:
+            raise AuthorityDenied("native_worker.view", "installed fixed helper role is unavailable")
+        mounts.append(RootSelectedNativeWorkerViewMount(
+            1, "gate-helper", release.deployment_receipt_sha256,
+            helper_path, helper_info.st_dev, helper_info.st_ino, helper_row.sha256,
+            str(helper_path), True, False))
+        contract_info = exact_source(contract_path, None, directory=False)
+        if (stat.S_IMODE(contract_info.st_mode) != 0o444
+                or hashlib.sha256(contract_path.read_bytes()).hexdigest() != contract_sha256):
+            raise AuthorityDenied("native_worker.view", "selected worker contract changed before view issue")
+        mounts.append(RootSelectedNativeWorkerViewMount(
+            1, "gate-contract", "contract-" + process_id,
+            contract_path, contract_info.st_dev, contract_info.st_ino, contract_sha256,
+            str(contract_path), True, True))
+        release.verify_current()
+        rows = [{
+            "schema": item.schema, "view_kind": item.view_kind,
+            "source_root_receipt_handle": item.source_root_receipt_handle,
+            "source_host_root_path": str(item.source_host_root_path),
+            "source_root_device": item.source_root_device,
+            "source_root_inode": item.source_root_inode,
+            "source_closure_sha256": item.source_closure_sha256,
+            "worker_mount_path": item.worker_mount_path,
+            "read_only": item.read_only, "noexec": item.noexec,
+        } for item in mounts]
+        view_sha = hashlib.sha256(json.dumps(rows, sort_keys=True, separators=(",", ":"),
+                                             ensure_ascii=True).encode("ascii")).hexdigest()
+        view = RootSelectedNativeWorkerView(
+            process_id=process_id, worker_executable_path=proof.worker_executable_path,
+            worker_argv=proof.worker_argv, worker_environment=proof.worker_environment,
+            selected_view_sha256=view_sha, mounts=tuple(mounts),
+            _launch_handle=proof.launch_handle, _issuer=owner._issuer,
+        )
+        owner.attach_selected_worker_view(proof, view)
+        return view
 
     def _start_native_worker_gate(self, profile: ManagedProfileCustody, proof: Any, *,
                                   selection: Any, operation_recipe: Mapping[str, Any],
@@ -1369,10 +1786,13 @@ class ManagedProcessEffectHandler:
         if (launch_deadline <= now or process_expiry <= now
                 or process_expiry - now > 30.0
                 or not isinstance(proof.argv, tuple) or not proof.argv
-                or proof.argv[0] != str(proof.executable_path)
-                or tuple(proof.argv[1:]) != (
+                or proof.worker_executable_path != "/hermes/.native/pm/" +
+                   Path(proof._pm_identity.runtime_relative).relative_to(
+                       Path(proof._pm_identity.runtime_venv_relative)).as_posix()
+                or proof.worker_argv[0] != proof.worker_executable_path
+                or tuple(proof.worker_argv[1:]) != (
                     "-m", "hermes_cli.main", "chat", "--query-file", "-", "--oneshot", "--quiet")
-                or dict(proof.environment) != {"HOME": "/hermes", "HERMES_HOME": "/hermes"}
+                or dict(proof.worker_environment) != {"HOME": "/hermes", "HERMES_HOME": "/hermes"}
                 or operation_recipe.get("stdin_mode") != "bounded-typed-bytes"
                 or isinstance(operation_recipe.get("max_lifetime_seconds"), bool)
                 or not isinstance(operation_recipe.get("max_lifetime_seconds"), int)
@@ -1382,6 +1802,8 @@ class ManagedProcessEffectHandler:
         unit = "hermes-installer-" + uuid.uuid4().hex + ".service"
         parent_fd = child_fd = namespace_fd = -1
         artifact_mount_dir: Path | None = None
+        native_mount_source: Path | None = None
+        native_mount_receipt: NativePackageMountReceipt | None = None
         channel = None
         loader_channel = None
         contract_path: Path | None = None
@@ -1399,15 +1821,29 @@ class ManagedProcessEffectHandler:
         try:
             self._require_systemd_openfile()
             helper_path, interpreter_path, _helper_digest, _interpreter_digest = owner.resolve_gate_runtime()
+            # Native module execution consumes only the package closure selected
+            # by the registered profile resolver.  It uses the same verified,
+            # staged mount path and loader observer as the ordinary native
+            # package path; the fixed gate never invents a second package view.
+            native_mount_source, native_mount_receipt = self._prepare_native_package_mount(
+                profile, process_id)
+            if native_mount_receipt is None or native_mount_source is None:
+                raise AuthorityDenied("native.mount", "selected native worker package closure is unavailable")
             parent_fd = os.dup(parent_liveness_fd)
             if _pidfd_exited(parent_fd):
                 raise AuthorityDenied("native_worker.parent", "root daemon lifetime anchor is not live")
             artifact_mount_dir = _artifact_mount_slot(profile.owner_uid, process_id)
+            contract_parent = Path("/run/hermes-installer/native-worker-contracts")
+            self._ensure_root_runtime_directory(contract_parent, 0o711)
+            contract_directory = contract_parent / process_id
+            contract_directory.mkdir(mode=0o711)
+            os.chown(contract_directory, 0, 0)
+            os.chmod(contract_directory, 0o711)
+            contract_path = contract_directory / "contract.json"
             self._ensure_root_runtime_directory(Path("/run/hermes-installer/private-loopback"), 0o700)
             channels_root = Path("/run/hermes-installer/private-loopback/channels")
             self._ensure_root_runtime_directory(channels_root, 0o700)
             channel = create_root_private_loopback_gate_channel(channels_root)
-            contract_path = channel.socket_directory / "contract.json"
             network = proof._network_projection.network_record
             if (network.get("role") != "af-unix"
                     or network.get("worker_profile_id") != profile.profile_id
@@ -1423,9 +1859,9 @@ class ManagedProcessEffectHandler:
                 "gid": profile.owner_gid, "role": "af-unix",
                 "allowed_bind_port": None, "allowed_connect_port": None,
                 "denied_port": 14500,
-                "application_executable": str(proof.executable_path),
-                "application_argv": list(proof.argv),
-                "application_environment": dict(proof.environment),
+                "application_executable": proof.worker_executable_path,
+                "application_argv": list(proof.worker_argv),
+                "application_environment": dict(proof.worker_environment),
             }
             contract_bytes = json.dumps(contract, sort_keys=True, separators=(",", ":"),
                                         ensure_ascii=True, allow_nan=False).encode("ascii")
@@ -1439,6 +1875,10 @@ class ManagedProcessEffectHandler:
                     or hashlib.sha256(contract_path.read_bytes()).hexdigest()
                        != hashlib.sha256(contract_bytes).hexdigest()):
                 raise AuthorityDenied("native_worker.contract", "root-owned fixed contract changed")
+            view = self._materialize_selected_native_worker_view(
+                profile, proof, process_id, helper_path, interpreter_path,
+                native_mount_source, native_mount_receipt, contract_path,
+                hashlib.sha256(contract_bytes).hexdigest())
             self._ensure_root_runtime_directory(Path("/run/hermes-installer/native-loader"), 0o700)
             loader_channel = create_native_loader_channel(Path("/run/hermes-installer/native-loader"))
             socket_root = profile.authority_socket or Path(
@@ -1467,17 +1907,24 @@ class ManagedProcessEffectHandler:
                 "--property=RestrictSUIDSGID=yes", "--property=RestrictNamespaces=user",
                 "--property=RestrictAddressFamilies=AF_UNIX", "--property=PrivateNetwork=yes",
                 "--property=IPAddressDeny=any", "--property=SocketBindDeny=any",
-                "--property=InaccessiblePaths=/etc/hermes-installer -/var/lib/hermes-installer /etc/ssh /etc/ssl/private",
                 "--property=" + channel.systemd_open_file_property,
                 "--property=" + loader_channel.systemd_open_file_property,
-                "--property=BindReadOnlyPaths=" + str(contract_path)
-                    + ":/run/hermes-installer/private-loopback/contract.json",
+                "--property=PrivateMounts=yes", "--property=MountFlags=private",
+                "--property=InaccessiblePaths=/etc/hermes-installer /etc/ssh /etc/ssl/private",
+                "--property=TemporaryFileSystem=/var/lib/hermes-installer:ro,nosuid,nodev",
+                "--property=TemporaryFileSystem=/run/hermes-installer:ro,nosuid,nodev",
+                "--property=TemporaryFileSystem=/hermes/.native-output:ro,noexec,nosuid,nodev,mode=0711,uid=0,gid=0",
                 "--property=BindPaths=" + str(profile.data_root)
                     + f":/hermes/profiles/{profile.profile_id}",
                 "--property=BindPaths=" + str(profile.home_root) + ":/hermes",
                 "--property=BindPaths=" + str(profile.work_root) + ":/workspace",
                 "--property=BindPaths=" + str(socket_root) + ":" + str(socket_root),
             ]
+            for mount in view.mounts:
+                properties.append("--property=BindReadOnlyPaths="
+                                  + str(mount.source_host_root_path) + ":" + mount.worker_mount_path)
+                if mount.noexec:
+                    properties.append("--property=NoExecPaths=" + mount.worker_mount_path)
             if profile.memory_max_bytes is not None:
                 properties.append(f"--property=MemoryMax={profile.memory_max_bytes}")
             if profile.cpu_quota_percent is not None:
@@ -1485,12 +1932,13 @@ class ManagedProcessEffectHandler:
             if profile.io_weight is not None:
                 properties.append(f"--property=IOWeight={profile.io_weight}")
             environment = {"HOME": "/hermes", "HERMES_HOME": "/hermes",
-                           "PATH": "/usr/bin:/bin", "LANG": "C"}
+                           "PATH": "/usr/bin:/bin", "LANG": "C",
+                           "HERMES_NATIVE_WORKER_CONTRACT_PATH": str(contract_path)}
             command = [str(self.systemd_run), "--system", "--unit=" + unit,
                        "--service-type=exec", "--wait", "--collect", "--pipe", "--quiet",
                        "--working-directory=/hermes", *properties,
                        *("--setenv=" + key + "=" + value for key, value in sorted(environment.items())),
-                       str(interpreter_path), "-I", str(helper_path)]
+                str(interpreter_path), "-I", str(helper_path)]
             require_live_start()
             if (not contract_path.is_file()
                     or hashlib.sha256(contract_path.read_bytes()).hexdigest()
@@ -1508,7 +1956,8 @@ class ManagedProcessEffectHandler:
                 proof, channel, unit=unit,
                 contract_sha256=hashlib.sha256(contract_bytes).hexdigest(),
                 nonce=channel.nonce, helper_path=helper_path,
-                interpreter_path=interpreter_path, cancelled=cancelled,
+                interpreter_path=interpreter_path, contract_path=contract_path,
+                cancelled=cancelled,
                 deadline=launch_deadline, allowed_bind=allowed_bind,
                 allowed_connect=allowed_connect)
             (pid, ticks, child_fd, cgroup, net_dev, net_ino, namespace_fd,
@@ -1520,7 +1969,9 @@ class ManagedProcessEffectHandler:
                     props = {name: self._show(unit, name) for name in (
                         "MainPID", "InvocationID", "ControlGroup", "FragmentPath", "ExecStart",
                         "EnvironmentFiles", "KillMode", "RuntimeMaxUSec", "SocketBindDeny",
-                        "PrivateNetwork", "RestrictAddressFamilies", "User", "IPAddressDeny")}
+                        "PrivateNetwork", "RestrictAddressFamilies", "User", "IPAddressDeny",
+                        "ProtectSystem", "ProtectHome", "PrivateMounts",
+                        "TemporaryFileSystem", "InaccessiblePaths")}
                     ticks_now, cgroup_now, device_now, inode_now = _pid_identity(pid)
                     commandline = [item.decode("utf-8", "strict") for item in
                                    Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0") if item]
@@ -1538,15 +1989,31 @@ class ManagedProcessEffectHandler:
                             and props["RestrictAddressFamilies"].split() == ["AF_UNIX"]
                             and props["IPAddressDeny"] in {"0.0.0.0/0 ::/0", "any"}
                             and props["User"] == profile.service_user
+                            and props["ProtectSystem"] == "strict"
+                            and props["ProtectHome"] == "tmpfs"
+                            and props["PrivateMounts"] == "yes"
+                            and set(props["TemporaryFileSystem"].split()) == {
+                                "/var/lib/hermes-installer:ro,nosuid,nodev",
+                                "/run/hermes-installer:ro,nosuid,nodev",
+                                "/hermes/.native-output:ro,noexec,nosuid,nodev,mode=0711,uid=0,gid=0",
+                            }
+                            and set(props["InaccessiblePaths"].split()) == {
+                                "/etc/hermes-installer", "/etc/ssh", "/etc/ssl/private",
+                            }
                             and (ticks_now, cgroup_now, device_now, inode_now)
                                 == (ticks, cgroup, proof.executable_device, proof.executable_inode)
-                            and exe_path == str(proof.executable_path)
-                            and commandline == list(proof.argv)
+                            and exe_path == proof.worker_executable_path
+                            and commandline == list(proof.worker_argv)
                             and environment_now == {
-                                "HOME": "/hermes", "HERMES_HOME": "/hermes",
+                                **dict(proof.worker_environment),
                                 "LISTEN_PID": str(pid), "LISTEN_FDS": "1",
                                 "LISTEN_FDNAMES": "hermes-loader-progress",
                             }
+                            and self._verify_selected_native_worker_view(pid, proof)
+                            and self._verify_native_package_mount(pid, native_mount_receipt)
+                            and self._verify_process_elf_dependencies(
+                                pid, proof.executable_path,
+                                profile.owner_uid, profile.owner_gid) is None
                             and not _pidfd_exited(child_fd)):
                         break
                 except (OSError, UnicodeError, ValueError, AuthorityDenied):
@@ -1591,12 +2058,15 @@ class ManagedProcessEffectHandler:
                 process_id, profile, unit, cgroup, launcher, parent_fd, child_fd, pid, ticks,
                 f"mnt:{mnt};net:{net}", selected_principal, selected_namespace,
                 self.monotonic(), process_expiry, int(operation_recipe["max_output_bytes"]),
-                artifact_mount_dir, network_namespace_fd=namespace_fd,
+                artifact_mount_dir, native_mount_source=native_mount_source,
+                native_mount_receipt=native_mount_receipt,
+                network_namespace_fd=namespace_fd,
                 lock=threading.RLock(), registered_profile=profile,
                 native_worker_launch_proof=proof)
             child_fd = namespace_fd = parent_fd = -1
             with self._lock:
                 self._handles[process_id] = handle
+            self._verify_native_package_mount(pid, native_mount_receipt)
             if not loader_channel._transferred:
                 binding = getattr(profile.native_package, "binding", profile.native_package)
                 entrypoint_artifact_id = getattr(binding, "entrypoint_artifact_id", None)
@@ -1617,6 +2087,8 @@ class ManagedProcessEffectHandler:
                 process_id, cancelled=lambda: cancelled() or _pidfd_exited(handle.parent_pidfd))
             if not handle.native_loader_ready_event_id:
                 raise AuthorityDenied("native.loader", "fixed app process did not report actual loader READY")
+            handle.native_worker_observed_view = self.observe_native_worker_view(
+                pid, handle.child_pidfd, proof)
             threading.Thread(target=self._watch_parent, args=(handle,), daemon=True,
                              name="hermes-native-worker-watch").start()
             return _response(200, {"schema": 1, "process_id": process_id, "pid": pid,
@@ -1649,6 +2121,11 @@ class ManagedProcessEffectHandler:
                     _remove_artifact_mount(artifact_mount_dir)
                 except Exception:
                     pass
+            if native_mount_source is not None:
+                try:
+                    self._remove_native_staging(native_mount_source)
+                except Exception:
+                    pass
             raise
         finally:
             if contract_path is not None:
@@ -1656,6 +2133,10 @@ class ManagedProcessEffectHandler:
                     contract_info = contract_path.lstat()
                     if contract_info.st_uid == 0 and stat.S_ISREG(contract_info.st_mode):
                         contract_path.unlink()
+                except OSError:
+                    pass
+                try:
+                    contract_path.parent.rmdir()
                 except OSError:
                     pass
             for resource in (channel, loader_channel):
@@ -1711,6 +2192,9 @@ class ManagedProcessEffectHandler:
         profile = admission._service_profile
         operation = admission._process_operation
         controller = admission._controller_lease
+        authority_branch = getattr(admission, "authority_branch", "setup-local")
+        if authority_branch not in {"setup-local", "daemon-committed"}:
+            raise AuthorityDenied("native.health.controller", "health admission authority branch is unavailable")
         if (type(profile) is not ManagedProfileCustody
                 or self.profiles.get(profile.profile_id) is not profile
                 or profile.profile_id != admission.profile_id
@@ -1743,6 +2227,10 @@ class ManagedProcessEffectHandler:
                 or getattr(controller, "proof_sha256", None) != verified_effect.controller_proof_sha256
                 or not controller.is_current()):
             raise AuthorityDenied("native.health.binding", "health start proof differs from the selected profile")
+        if authority_branch == "daemon-committed":
+            self._verify_root_daemon_health_controller(controller, verified_effect)
+        elif type(controller).__name__ == "RootDaemonHealthControllerLease":
+            raise AuthorityDenied("native.health.controller", "daemon controller cannot back a setup-local admission")
         operation_recipe = (profile.operation_recipes or {}).get(admission.operation_id)
         if (not isinstance(operation_recipe, Mapping)
                 or operation_recipe.get("target") not in (None, verified_effect.target)
@@ -1918,6 +2406,139 @@ class ManagedProcessEffectHandler:
             raise AuthorityDenied("native.health.control", "selected health control is stale")
         return retained[0]
 
+    def resolve_selected_health_admission(self, control_handle: str) -> Any:
+        """Borrow the exact current sealed start admission retained by this control."""
+        control = self.resolve_selected_health_control(control_handle)
+        with self._lock:
+            retained = self._health_controls.get(control_handle)
+        authority = self.native_health_start_authority
+        if (retained is None or retained[0] is not control or authority is None
+                or not authority.is_current(retained[2])
+                or not control.is_current()):
+            raise AuthorityDenied("native.health.admission", "selected health admission is no longer current")
+        return retained[2]
+
+    def resolve_selected_health_run(self, control_handle: str) -> Any:
+        """Build the observer's run DTO from one exact committed daemon admission.
+
+        The returned descriptor is borrowed for the duration of observer
+        ``begin_selected_health``; its PIDFD is a temporary duplicate that the
+        caller must close after the observer takes its own retained duplicate.
+        No ancestry digest is inferred here.  The v194 observer receives
+        ``parent_closure_digest=None`` and validates each event's own source
+        receipt ancestry before issuing the aggregate run proof.
+        """
+        from hermes_installer.authority.native_health_observer import (
+            RootDaemonHealthControllerLease,
+            RootNativeHealthStartAdmission,
+            RootSelectedNativeHealthRun,
+        )
+        from hermes_installer.authority.native_health_daemon import RootDaemonNativeHealthStartMaterial
+
+        control = self.resolve_selected_health_control(control_handle)
+        admission = self.resolve_selected_health_admission(control_handle)
+        if (type(admission) is not RootNativeHealthStartAdmission
+                or getattr(admission, "authority_branch", None) != "daemon-committed"
+                or type(admission._controller_lease) is not RootDaemonHealthControllerLease
+                or not admission._controller_lease.is_current()
+                or not control.is_current()
+                or not self.native_health_start_authority.is_current(admission)):
+            raise AuthorityDenied("native.health.run", "current daemon-committed health admission is unavailable")
+        material = getattr(admission, "_source_material", None)
+        if type(material) is not RootDaemonNativeHealthStartMaterial:
+            raise AuthorityDenied("native.health.run", "typed current daemon health source material is unavailable")
+        definition = getattr(material, "_health_definition", None)
+        if (not isinstance(definition, Mapping)
+                or not isinstance(definition.get("health_action_id"), str)
+                or not isinstance(definition.get("health_result_schema_id"), str)
+                or not definition["health_action_id"]
+                or definition["health_result_schema_id"] != material.health_result_schema_id
+                or type(material.health_provider_required) is not bool
+                or material.profile_id != control.profile_id
+                or material.process_generation != control.process_generation
+                or material.enrollment_id != control.enrollment_id
+                or material.service_generation_digest != control.service_generation_digest
+                or material.operation_id != control.operation_id
+                or material.health_fixture_artifact_id != control.health_fixture_artifact_id
+                or material.health_fixture_sha256 != control.health_fixture_sha256):
+            raise AuthorityDenied("native.health.run", "source-defined health action or result schema is unavailable")
+
+        process_lease = self.resolve_selected_health_process(control_handle)
+        try:
+            with self._lock:
+                retained = self._health_controls.get(control_handle)
+            if retained is None or retained[0] is not control or retained[1].stopped:
+                raise AuthorityDenied("native.health.run", "selected health manager handle is stale")
+            managed = retained[1]
+            if (process_lease.process_id != control.process_id
+                    or process_lease.profile_id != control.profile_id
+                    or process_lease.generation != control.process_generation
+                    or process_lease.uid != managed.profile.owner_uid
+                    or process_lease.gid != managed.profile.owner_gid
+                    or _pidfd_exited(process_lease.pidfd)):
+                raise AuthorityDenied("native.health.run", "manager process lease differs from committed admission")
+            process_identity = self.resolve_live_peer(
+                process_lease.pid, process_lease.pidfd,
+                profile_id=control.profile_id, generation=control.process_generation)
+            loaded_package = self.resolve_selected_health_loaded_package(control_handle)
+            proof = self.resolve_selected_health_launch_proof(control_handle)
+            observed_view = self._handles[control.process_id].native_worker_observed_view
+            if (process_identity is None or loaded_package is None
+                    or loaded_package.profile_id != control.profile_id
+                    or loaded_package.generation != control.process_generation
+                    or loaded_package.kernel_uid != process_lease.uid
+                    or observed_view is None
+                    or self.verify_current_native_worker_view(proof, observed_view) is not observed_view
+                    or not self.native_health_start_authority.is_current(admission)
+                    or not admission._controller_lease.is_current()
+                    or not control.is_current()):
+                raise AuthorityDenied("native.health.run", "same worker, package, or selected view is no longer current")
+            run_fields = getattr(RootSelectedNativeHealthRun, "__dataclass_fields__", {})
+            if "intent_handle" not in run_fields or "parent_closure_digest" not in run_fields:
+                # Older observers collapsed distinct source event ancestry
+                # into one closure.  They cannot safely consume v194 material.
+                raise AuthorityDenied("native.health.run", "v194 event-specific health observer is required")
+            run_pidfd = os.dup(process_lease.pidfd)
+            try:
+                return RootSelectedNativeHealthRun(
+                    operation_id=control.operation_id,
+                    enrollment_id=control.enrollment_id,
+                    profile_id=control.profile_id,
+                    process_generation=control.process_generation,
+                    service_generation_digest=control.service_generation_digest,
+                    bootstrap_transaction_handle=control.bootstrap_transaction_handle,
+                    committed_enrollment_receipt_id=control.committed_enrollment_receipt_id,
+                    intent_handle=admission.admission_handle,
+                    process_id=control.process_id,
+                    process_pid=process_lease.pid,
+                    process_pidfd=run_pidfd,
+                    process_uid=process_lease.uid,
+                    process_identity=process_identity,
+                    package_id=material.native_package_id,
+                    compiled_closure_sha256=material.native_closure_sha256,
+                    loaded_package_proof=loaded_package,
+                    fixture_artifact_id=control.health_fixture_artifact_id,
+                    fixture_sha256=control.health_fixture_sha256,
+                    health_action_id=definition["health_action_id"],
+                    result_schema_id=definition["health_result_schema_id"],
+                    provider_required=bool(material.health_provider_required),
+                    parent_closure_digest=None,
+                    expires_monotonic=min(
+                        control.expires_monotonic, admission.expires_monotonic,
+                        admission._controller_lease.expires_monotonic,
+                        process_lease.expires_monotonic, proof.expires_monotonic,
+                        observed_view.expires_monotonic, self.monotonic() + 30.0),
+                )
+            except BaseException:
+                os.close(run_pidfd)
+                raise
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("native.health.run", "selected health run DTO could not be constructed") from None
+        finally:
+            process_lease.close()
+
     def resolve_selected_health_process(self, control_handle: str) -> ManagedProcessIdentityLease:
         """Return an owned duplicate PIDFD for the exact health-control child."""
         control = self.resolve_selected_health_control(control_handle)
@@ -1933,6 +2554,62 @@ class ManagedProcessEffectHandler:
                 lease.close()
             raise AuthorityDenied("native.health.identity", "selected health PIDFD identity is unavailable")
         return lease
+
+    def resolve_selected_health_loaded_package(
+            self, control_handle: str) -> RootSelectedHealthLoadedPackageProof:
+        """Reobserve the exact package mount selected by current health source material."""
+        control = self.resolve_selected_health_control(control_handle)
+        admission = self.resolve_selected_health_admission(control_handle)
+        with self._lock:
+            retained = self._health_controls.get(control_handle)
+        if retained is None or retained[0] is not control:
+            raise AuthorityDenied("native.health.package", "selected health process is stale")
+        handle = retained[1]
+        material = getattr(admission, "_source_material", None)
+        package = getattr(handle.registered_profile, "native_package", None)
+        binding = getattr(package, "binding", package)
+        if (material is None or handle.stopped or handle.native_worker_launch_proof is None
+                or not self.native_health_start_authority.is_current(admission)
+                or not control.is_current() or binding is None
+                or getattr(binding, "package_id", None) != material.native_package_id
+                or getattr(binding, "generation", None) != material.native_package_generation
+                or getattr(binding, "compiled_closure_sha256", None) != material.native_closure_sha256
+                or handle.profile.service_generation_digest != control.service_generation_digest):
+            raise AuthorityDenied("native.health.package", "selected committed package binding is unavailable")
+        proof = self.resolve_loaded_native_package(control.process_id, control.process_generation)
+        if (proof is None or proof.profile_id != control.profile_id
+                or proof.generation != control.process_generation
+                or proof.kernel_uid != handle.profile.owner_uid
+                or proof.mount.package_id != material.native_package_id
+                or proof.mount.compiled_closure_sha256 != material.native_closure_sha256
+                or proof.mount.service_mount_id != binding.service_mount_id
+                or not self.native_health_start_authority.is_current(admission)
+                or not control.is_current()):
+            raise AuthorityDenied("native.health.package", "loaded native package mount differs from selected source")
+        return RootSelectedHealthLoadedPackageProof(
+            process_id=proof.process_id, profile_id=proof.profile_id,
+            generation=proof.generation, kernel_uid=proof.kernel_uid,
+            package_id=material.native_package_id,
+            compiled_closure_sha256=material.native_closure_sha256,
+            service_generation_digest=control.service_generation_digest,
+            mount_proof=proof, observed_monotonic=proof.observed_monotonic,
+        )
+
+    def resolve_loaded_selected_health_package(
+            self, process_id: str, generation: str) -> RootSelectedHealthLoadedPackageProof:
+        """Resolve loaded health package by the exact observer's run identity."""
+        if (not isinstance(process_id, str) or not re.fullmatch(r"[0-9a-f]{32}", process_id)
+                or not isinstance(generation, str) or not generation):
+            raise AuthorityDenied("native.health.package", "health run package selector is malformed")
+        with self._lock:
+            matches = [control_handle for control_handle, (control, handle, _admission, _seal)
+                       in self._health_controls.items()
+                       if control.process_id == process_id
+                       and control.process_generation == generation
+                       and handle.process_id == process_id and not handle.stopped]
+        if len(matches) != 1:
+            raise AuthorityDenied("native.health.package", "health run does not identify one retained process")
+        return self.resolve_selected_health_loaded_package(matches[0])
 
     def resolve_selected_health_observation_handle(self, control_handle: str) -> str:
         """Resolve the actual observer run handle for the exact live health control."""
@@ -1960,6 +2637,307 @@ class ManagedProcessEffectHandler:
                 or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", event_id)):
             raise AuthorityDenied("native.health.loader", "actual manager loader READY event is unavailable")
         return event_id
+
+    def write_selected_health_input(self, control_handle: str, delivery: Any,
+                                    delivery_registry: Any
+                                    ) -> RootSelectedHealthInputWriteReceipt:
+        """Reserve one bounded receipt slot before consuming the source event."""
+        self.resolve_selected_health_control(control_handle)
+        with self._lock:
+            now = self.monotonic()
+            for key, (_receipt, expiry) in tuple(self._health_input_write_receipts.items()):
+                if expiry <= now:
+                    self._health_input_write_receipts.pop(key, None)
+            if (any(receipt.control_handle == control_handle
+                    for receipt, _expiry in self._health_input_write_receipts.values())
+                    or control_handle in self._health_input_write_pending
+                    or len(self._health_input_write_receipts) + len(self._health_input_write_pending) >= 256):
+                raise AuthorityDenied("native.health.input", "selected input already consumed or receipt capacity is full")
+            self._health_input_write_pending.add(control_handle)
+        try:
+            return self._write_selected_health_input_reserved(
+                control_handle, delivery, delivery_registry)
+        finally:
+            with self._lock:
+                self._health_input_write_pending.discard(control_handle)
+
+    def _write_selected_health_input_reserved(self, control_handle: str, delivery: Any,
+                                             delivery_registry: Any
+                                             ) -> RootSelectedHealthInputWriteReceipt:
+        """Consume one source-issued request and write it once to the live worker."""
+        from hermes_installer.authority.native_health_daemon import (
+            RootHealthInputDeliveryRegistry, RootSelectedHealthInputDelivery,
+        )
+        from hermes_installer.authority.native_input_observer import RootNativeInputEvent
+
+        control = self.resolve_selected_health_control(control_handle)
+        if (type(delivery_registry) is not RootHealthInputDeliveryRegistry
+                or type(delivery) is not RootSelectedHealthInputDelivery
+                or delivery.control_handle != control_handle
+                or type(delivery.input_event) is not RootNativeInputEvent):
+            raise AuthorityDenied("native.health.input", "selected input delivery is foreign or malformed")
+        with self._lock:
+            if any(receipt.control_handle == control_handle
+                   for receipt, _expiry in self._health_input_write_receipts.values()):
+                raise AuthorityDenied("native.health.input", "selected health input was already consumed")
+            retained = self._health_controls.get(control_handle)
+        if retained is None or retained[0] is not control:
+            raise AuthorityDenied("native.health.input", "selected health process control is stale")
+        handle, admission = retained[1], retained[2]
+        if (handle.stopped or handle.launcher.stdin is None
+                or delivery.observation_handle != self.resolve_selected_health_observation_handle(control_handle)
+                or delivery.loader_ready_event_id != self.resolve_selected_health_loader_ready_event(control_handle)
+                or type(delivery.payload_size_bytes) is not int
+                or not 0 < delivery.payload_size_bytes <= 262144
+                or not re.fullmatch(r"[0-9a-f]{64}", delivery.payload_sha256)
+                or not control.is_current()
+                or not self.native_health_start_authority.is_current(admission)):
+            raise AuthorityDenied("native.health.input", "selected request, READY, or source admission is stale")
+        owner = self._native_worker_launch_owner
+        proof = handle.native_worker_launch_proof
+        if (owner is None or proof is None
+                or owner.verify_current_native_worker_launch(proof) is not proof
+                or proof.profile_id != control.profile_id
+                or proof.profile_generation != control.process_generation):
+            raise AuthorityDenied("native.health.input", "same-worker launch proof is no longer current")
+        try:
+            payload = delivery_registry.consume_for_manager(control_handle, delivery)
+        except Exception:
+            raise AuthorityDenied("native.health.input", "source request event was not consumable") from None
+        if (type(payload) is not bytes or len(payload) != delivery.payload_size_bytes
+                or hashlib.sha256(payload).hexdigest() != delivery.payload_sha256
+                or not control.is_current()
+                or not self.native_health_start_authority.is_current(admission)
+                or owner.verify_current_native_worker_launch(proof) is not proof):
+            try:
+                handle.launcher.stdin.close()
+            except Exception:
+                pass
+            try:
+                self._stop(handle, timeout=5.0, preserve_health_observation=True)
+            except Exception:
+                pass
+            raise AuthorityDenied("native.health.input", "consumed request differs from current source custody")
+        digest = hashlib.sha256(payload).hexdigest()
+        stream = handle.launcher.stdin
+        deadline = min(control.expires_monotonic, handle.expires, self.monotonic() + 5.0)
+        offset = 0
+        try:
+            fd = stream.fileno()
+            while offset < len(payload):
+                if (self.monotonic() >= deadline or not control.is_current()
+                        or not self.native_health_start_authority.is_current(admission)
+                        or owner.verify_current_native_worker_launch(proof) is not proof
+                        or _pidfd_exited(handle.child_pidfd)):
+                    raise AuthorityDenied("native.health.input", "selected request expired during write")
+                _readable, writable, _errors = select.select([], [fd], [],
+                    min(.05, max(.001, deadline - self.monotonic())))
+                if not writable:
+                    continue
+                try:
+                    count = os.write(fd, payload[offset:offset + 65536])
+                except BlockingIOError:
+                    continue
+                if count <= 0:
+                    raise OSError("selected request pipe made no write progress")
+                offset += count
+            stream.close()  # EOF is part of the one-turn request framing.
+        except Exception:
+            try:
+                stream.close()
+            except Exception:
+                pass
+            try:
+                self._stop(handle, timeout=5.0, preserve_health_observation=True)
+            except Exception:
+                pass
+            raise AuthorityDenied("native.health.input", "selected request write or EOF could not be proved") from None
+        event_id = delivery.input_event.input_event_id
+        receipt = RootSelectedHealthInputWriteReceipt(
+            schema=1, receipt_handle=uuid.uuid4().hex, control_handle=control_handle,
+            input_event_id=event_id, observation_handle=delivery.observation_handle,
+            loader_ready_event_id=delivery.loader_ready_event_id,
+            process_id=handle.process_id, process_generation=handle.profile.generation,
+            payload_sha256=digest, payload_size_bytes=len(payload), written_monotonic=self.monotonic(),
+        )
+        with self._lock:
+            now = self.monotonic()
+            for key, (_old, expiry) in tuple(self._health_input_write_receipts.items()):
+                if expiry <= now:
+                    self._health_input_write_receipts.pop(key, None)
+            if len(self._health_input_write_receipts) >= 256:
+                raise AuthorityDenied("native.health.input", "selected input receipt registry is full")
+            self._health_input_write_receipts[receipt.receipt_handle] = (receipt, now + 30.0)
+        return receipt
+
+    def resolve_selected_health_launch_proof(self, control_handle: str) -> Any:
+        """Borrow the exact retained current launch proof without transferring custody."""
+        control = self.resolve_selected_health_control(control_handle)
+        with self._lock:
+            retained = self._health_controls.get(control_handle)
+            owner = self._native_worker_launch_owner
+        if (retained is None or retained[0] is not control or owner is None
+                or not control.is_current()):
+            raise AuthorityDenied("native.health.launch", "selected health native launch is stale")
+        proof = retained[1].native_worker_launch_proof
+        if proof is None or owner.verify_current_native_worker_launch(proof) is not proof:
+            raise AuthorityDenied("native.health.launch", "current manager-held native launch proof is unavailable")
+        # Borrowed in-process only. The manager remains the proof/FD issuer and
+        # closes it after exact process cleanup; consumers must not call close.
+        return proof
+
+    def wait_selected_health_terminal(self, control_handle: str, *,
+                                      deadline_monotonic: float,
+                                      cancelled: Callable[[], bool]) -> RootSelectedHealthTerminalReceipt:
+        """Observe exact native health exit, drain bounded output, and prove cleanup.
+
+        Semantic request/tool/result facts remain the health event registry's
+        job. This receipt supplies only the manager's actual terminal and
+        stopped-cgroup/PIDFD evidence.
+        """
+        control = self.resolve_selected_health_control(control_handle)
+        if (isinstance(deadline_monotonic, bool)
+                or not isinstance(deadline_monotonic, (int, float))
+                or not math.isfinite(deadline_monotonic)
+                or not callable(cancelled)):
+            raise AuthorityDenied("native.health.terminal", "health terminal deadline or cancellation is invalid")
+        with self._lock:
+            retained = self._health_controls.get(control_handle)
+            input_written = any(receipt.control_handle == control_handle
+                                for receipt, _expiry in self._health_input_write_receipts.values())
+        if retained is None or retained[0] is not control or not input_written:
+            raise AuthorityDenied("native.health.terminal", "health process control or one-use input receipt is stale")
+        handle, admission = retained[1], retained[2]
+        deadline = min(float(deadline_monotonic), control.expires_monotonic, handle.expires)
+        if deadline <= self.monotonic():
+            raise AuthorityDenied("native.health.terminal", "health process lifetime already expired")
+        streams = {"stdout": handle.launcher.stdout, "stderr": handle.launcher.stderr}
+        eof = {name: stream is None for name, stream in streams.items()}
+        digests = {"stdout": hashlib.sha256(), "stderr": hashlib.sha256()}
+        sizes = {"stdout": 0, "stderr": 0}
+        overflow = False
+        timed_out = False
+        was_cancelled = False
+
+        def drain(readable: list[int]) -> None:
+            nonlocal overflow
+            for name, stream in streams.items():
+                if stream is None or eof[name] or stream.fileno() not in readable:
+                    continue
+                try:
+                    chunk = os.read(stream.fileno(), 65536)
+                except BlockingIOError:
+                    continue
+                except OSError:
+                    chunk = b""
+                if not chunk:
+                    eof[name] = True
+                    continue
+                sizes[name] += len(chunk)
+                if sizes["stdout"] + sizes["stderr"] > handle.output_cap:
+                    overflow = True
+                    continue
+                digests[name].update(chunk)
+
+        while handle.launcher.poll() is None:
+            try:
+                if cancelled() or _pidfd_exited(handle.parent_pidfd):
+                    was_cancelled = True
+                    break
+                if (self.monotonic() >= deadline
+                        or self.native_health_start_authority is None
+                        or not self.native_health_start_authority.is_current(admission)
+                        or not admission._controller_lease.is_current()):
+                    was_cancelled = True
+                    timed_out = self.monotonic() >= deadline
+                    break
+                proof = handle.native_worker_launch_proof
+                owner = self._native_worker_launch_owner
+                if proof is None or owner is None:
+                    was_cancelled = True
+                    break
+                owner.verify_current_native_worker_launch(proof)
+            except Exception:
+                was_cancelled = True
+                break
+            fds = [stream.fileno() for name, stream in streams.items()
+                   if stream is not None and not eof[name]]
+            if fds:
+                readable, _, _ = select.select(fds, [], [], min(.05, max(.001, deadline - self.monotonic())))
+                drain(readable)
+            else:
+                time.sleep(min(.025, max(.001, deadline - self.monotonic())))
+            if overflow:
+                was_cancelled = True
+                break
+
+        if handle.launcher.poll() is None and not was_cancelled and self.monotonic() >= deadline:
+            timed_out = True
+        # Natural exit still requires a bounded final drain before cgroup
+        # cleanup; a stream that never reaches EOF remains incomplete.
+        for _ in range(32):
+            if all(eof.values()) or overflow:
+                break
+            fds = [stream.fileno() for name, stream in streams.items()
+                   if stream is not None and not eof[name]]
+            if not fds:
+                break
+            readable, _, _ = select.select(fds, [], [], .01)
+            if not readable:
+                if handle.launcher.poll() is None:
+                    break
+                continue
+            drain(readable)
+        if overflow:
+            was_cancelled = True
+        cleanup = self._stop(handle, timeout=5.0, preserve_health_observation=True)
+        finished = self.monotonic()
+        digest_value = lambda name: digests[name].hexdigest()
+        receipt = RootSelectedHealthTerminalReceipt(
+            schema=1, terminal_receipt_handle=uuid.uuid4().hex,
+            control_handle=control.control_handle, process_id=handle.process_id,
+            profile_id=handle.profile.profile_id, generation=handle.profile.generation,
+            service_generation_digest=control.service_generation_digest,
+            process_uid=handle.profile.owner_uid, process_gid=handle.profile.owner_gid,
+            unit=handle.unit, cgroup=handle.cgroup, start_ticks=handle.start_ticks,
+            exit_code=handle.launcher.returncode, timed_out=timed_out, cancelled=was_cancelled,
+            started_monotonic=handle.started, finished_monotonic=finished,
+            stdout_size_bytes=sizes["stdout"], stderr_size_bytes=sizes["stderr"],
+            stdout_sha256=digest_value("stdout"), stderr_sha256=digest_value("stderr"),
+            output_overflow=overflow,
+            loader_ready_event_id=handle.native_loader_ready_event_id or "",
+            cgroup_empty=cleanup.cgroup_empty, main_pidfd_gone=cleanup.main_pidfd_gone,
+            launcher_reaped=cleanup.launcher_reaped,
+            cleanup_verified=cleanup.cleanup_verified, observed_monotonic=finished,
+        )
+        with self._lock:
+            now = self.monotonic()
+            for key, (_old, expiry) in tuple(self._health_terminal_receipts.items()):
+                if expiry <= now:
+                    self._health_terminal_receipts.pop(key, None)
+            if len(self._health_terminal_receipts) >= 256:
+                raise AuthorityDenied("native.health.terminal", "health terminal receipt registry is full")
+            self._health_terminal_receipts[receipt.terminal_receipt_handle] = (receipt, now + 30.0)
+        return receipt
+
+    def resolve_selected_health_terminal_receipt(
+            self, control_handle: str, terminal_receipt_handle: str
+            ) -> RootSelectedHealthTerminalReceipt:
+        if (not isinstance(control_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", control_handle)
+                or not isinstance(terminal_receipt_handle, str)
+                or not re.fullmatch(r"[0-9a-f]{32}", terminal_receipt_handle)):
+            raise AuthorityDenied("native.health.terminal", "health terminal receipt selector is malformed")
+        with self._lock:
+            entry = self._health_terminal_receipts.get(terminal_receipt_handle)
+            if entry is None:
+                raise AuthorityDenied("native.health.terminal", "health terminal receipt is unavailable")
+            receipt, expiry = entry
+            if (expiry <= self.monotonic() or receipt.control_handle != control_handle
+                    or receipt.terminal_receipt_handle != terminal_receipt_handle):
+                self._health_terminal_receipts.pop(terminal_receipt_handle, None)
+                raise AuthorityDenied("native.health.terminal", "health terminal receipt is stale or mismatched")
+            return receipt
 
     def set_task_input_coordinator(self, coordinator: Any) -> None:
         """Install the concrete root-native pre-stdin coordinator once."""
@@ -2672,6 +3650,160 @@ class ManagedProcessEffectHandler:
                 # this bounded code is sufficient to diagnose kernel proof.
                 self._diagnostic_sink(("native-mount-verification-failed:" + failure_code).encode("ascii"))
             raise AuthorityDenied("native.mount_effect", "kernel did not establish the exact private read-only package mount") from None
+        return True
+
+    def _verify_selected_native_worker_view(self, pid: int, proof: Any) -> bool:
+        """Reobserve every selected v192 root inside this exact worker mount ns."""
+        from hermes_installer.authority.native_worker_launch import RootSelectedNativeWorkerView
+        owner = self._native_worker_launch_owner
+        view = (owner.resolve_selected_native_worker_view(proof) if owner is not None else None)
+        if (type(view) is not RootSelectedNativeWorkerView
+                or view._launch_handle != proof.launch_handle
+                or view.selected_view_sha256 != proof.selected_view_sha256
+                or not view.mounts or len(view.mounts) > 16):
+            raise AuthorityDenied("native_worker.view", "issuer-held selected worker view is unavailable")
+        try:
+            raw = Path(f"/proc/{pid}/mountinfo").read_text(encoding="ascii")
+            if len(raw) > 4 * 1024 * 1024:
+                raise ValueError("worker mount table exceeds bound")
+            parsed = []
+            for line in raw.splitlines():
+                fields = line.split()
+                if "-" not in fields:
+                    continue
+                separator = fields.index("-")
+                mountpoint = re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), fields[4])
+                parsed.append((mountpoint, fields, separator))
+            targets = [mount.worker_mount_path for mount in view.mounts]
+            if len(set(targets)) != len(targets):
+                raise ValueError("selected mount target is duplicated")
+            for mount in view.mounts:
+                candidates = [(fields, sep) for target, fields, sep in parsed
+                              if target == mount.worker_mount_path]
+                if len(candidates) != 1:
+                    raise ValueError("selected root mount is absent or ambiguous")
+                fields, separator = candidates[0]
+                options = set(fields[5].split(","))
+                propagation = fields[6:separator]
+                if ({"ro", "nosuid", "nodev"} - options
+                        or mount.noexec and "noexec" not in options
+                        or not mount.noexec and "noexec" in options
+                        or any(item.startswith(("shared:", "master:", "propagate_from:"))
+                               for item in propagation)):
+                    raise ValueError("selected root mount options changed")
+                source_info = mount.source_host_root_path.lstat()
+                target_info = os.stat(f"/proc/{pid}/root{mount.worker_mount_path}",
+                                      follow_symlinks=False)
+                if ((source_info.st_dev, source_info.st_ino)
+                        != (mount.source_root_device, mount.source_root_inode)
+                        or (target_info.st_dev, target_info.st_ino)
+                        != (mount.source_root_device, mount.source_root_inode)):
+                    raise ValueError("selected root source or worker target inode changed")
+                if mount.view_kind == "native-runtime-output-member":
+                    if (not stat.S_ISREG(target_info.st_mode)
+                            or hashlib.sha256(Path(
+                                f"/proc/{pid}/root{mount.worker_mount_path}").read_bytes()).hexdigest()
+                               != mount.source_closure_sha256):
+                        raise ValueError("selected generated member bytes changed in worker view")
+            if any(mount.view_kind == "native-runtime-output-member" for mount in view.mounts):
+                target_rows = [(fields, separator) for target, fields, separator in parsed
+                               if target == "/hermes/.native-output"]
+                if len(target_rows) != 1:
+                    raise ValueError("synthetic generated-output root mount is absent or ambiguous")
+                target_fields, target_separator = target_rows[0]
+                target_options = set(target_fields[5].split(","))
+                if (target_fields[target_separator + 1] != "tmpfs"
+                        or {"ro", "nosuid", "nodev", "noexec"} - target_options):
+                    raise ValueError("synthetic generated-output root is not a private read-only tmpfs")
+                output_root = os.stat(f"/proc/{pid}/root/hermes/.native-output",
+                                      follow_symlinks=False)
+                if (not stat.S_ISDIR(output_root.st_mode) or output_root.st_uid != 0
+                        or output_root.st_gid != 0 or stat.S_IMODE(output_root.st_mode) != 0o711):
+                    raise ValueError("synthetic generated-output target root is not private root custody")
+            return True
+        except (OSError, ValueError, IndexError, UnicodeError):
+            raise AuthorityDenied(
+                "native_worker.view_effect",
+                "kernel did not establish the exact selected private read-only view") from None
+
+    def observe_native_worker_view(self, pid: int, pidfd: int, proof: Any) -> Any:
+        """Issue a manager-held observation only for the actual selected worker."""
+        owner = self._native_worker_launch_owner
+        if owner is None or self.verify_current_native_worker_launch(proof) is not proof:
+            raise AuthorityDenied("native_worker.view", "selected native worker owner is unavailable")
+        with self._lock:
+            matches = [handle for handle in self._handles.values()
+                       if handle.native_worker_launch_proof is proof
+                       and handle.pid == pid and handle.child_pidfd >= 0
+                       and not handle.stopped]
+        if (len(matches) != 1 or type(pid) is not int or pid <= 0
+                or type(pidfd) is not int or pidfd < 0
+                or self._pidfd_target(pidfd) != pid or _pidfd_exited(pidfd)):
+            raise AuthorityDenied("native_worker.view", "selected worker PIDFD is not manager-held")
+        handle = matches[0]
+        try:
+            ticks, cgroup, _device, _inode = _pid_identity(pid)
+            if (ticks != handle.start_ticks or cgroup != handle.cgroup
+                    or self._pids(cgroup) != (pid,)):
+                raise ValueError("selected process changed cgroup or start identity")
+            status = Path(f"/proc/{pid}/status").read_text(encoding="ascii").splitlines()
+            uid_fields = next(item for item in status if item.startswith("Uid:")).split()[1:]
+            gid_fields = next(item for item in status if item.startswith("Gid:")).split()[1:]
+            if (len(uid_fields) != 4 or any(int(value) != handle.profile.owner_uid for value in uid_fields)
+                    or len(gid_fields) != 4 or any(int(value) != handle.profile.owner_gid for value in gid_fields)):
+                raise ValueError("selected worker UID/GID changed")
+            mnt = os.stat(f"/proc/{pid}/ns/mnt").st_ino
+            net = os.stat(f"/proc/{pid}/ns/net").st_ino
+            if (mnt == os.stat("/proc/self/ns/mnt").st_ino
+                    or net == os.stat("/proc/self/ns/net").st_ino):
+                raise ValueError("selected worker namespaces are not private")
+            self._verify_selected_native_worker_view(pid, proof)
+            observed = owner.issue_observed_native_worker_view(
+                proof, process_id=handle.process_id, process_pid=pid,
+                process_start_ticks=ticks, cgroup_identity=cgroup,
+                process_uid=handle.profile.owner_uid, process_gid=handle.profile.owner_gid,
+                mount_namespace_inode=mnt, network_namespace_inode=net,
+                observed_monotonic=self.monotonic())
+            handle.native_worker_observed_view = observed
+            return observed
+        except Exception:
+            raise AuthorityDenied("native_worker.view", "current selected worker view could not be observed") from None
+
+    def verify_current_native_worker_view(self, proof: Any, observed_view: Any) -> Any:
+        """Recheck typed mount observation against the same live worker PIDFD."""
+        from hermes_installer.authority.native_worker_launch import RootObservedNativeWorkerView
+        owner = self._native_worker_launch_owner
+        if (owner is None or type(observed_view) is not RootObservedNativeWorkerView
+                or self.verify_current_native_worker_launch(proof) is not proof):
+            raise AuthorityDenied("native_worker.view", "observed native view is foreign or stale")
+        owner.verify_current_observed_native_worker_view(proof, observed_view)
+        with self._lock:
+            handle = self._handles.get(observed_view.process_id)
+        if (handle is None or handle.native_worker_launch_proof is not proof
+                or handle.native_worker_observed_view is not observed_view
+                or handle.stopped or handle.pid != observed_view.process_pid
+                or self._pidfd_target(handle.child_pidfd) != handle.pid
+                or _pidfd_exited(handle.child_pidfd)):
+            raise AuthorityDenied("native_worker.view", "observed native view no longer belongs to a live worker")
+        try:
+            ticks, cgroup, _device, _inode = _pid_identity(handle.pid)
+            status = Path(f"/proc/{handle.pid}/status").read_text(encoding="ascii").splitlines()
+            uids = next(line for line in status if line.startswith("Uid:")).split()[1:]
+            gids = next(line for line in status if line.startswith("Gid:")).split()[1:]
+            mnt = os.stat(f"/proc/{handle.pid}/ns/mnt").st_ino
+            net = os.stat(f"/proc/{handle.pid}/ns/net").st_ino
+            self._verify_selected_native_worker_view(handle.pid, proof)
+            if (ticks != observed_view.process_start_ticks
+                    or cgroup != observed_view.cgroup_identity
+                    or len(uids) != 4 or any(int(uid) != observed_view.process_uid for uid in uids)
+                    or len(gids) != 4 or any(int(gid) != observed_view.process_gid for gid in gids)
+                    or mnt != observed_view.mount_namespace_inode
+                    or net != observed_view.network_namespace_inode
+                    or self._pids(cgroup) != (handle.pid,)):
+                raise ValueError("selected worker process, namespace, or cgroup changed")
+        except Exception:
+            raise AuthorityDenied("native_worker.view", "observed native view changed during recheck") from None
+        return observed_view
 
     def _verify_xauthority_mount(self, pid: int, receipt: XauthorityMountReceipt) -> None:
         failure_code = "procfs"
@@ -3642,8 +4774,83 @@ class ManagedProcessEffectHandler:
             lease.close()
             effect.close()
 
+    def _verify_root_daemon_health_controller(self, proof: Any, effect: Any) -> None:
+        """Reobserve the exact installed daemon lease used for v191 health admission."""
+        from hermes_installer.authority import native_health_observer
+        RootDaemonHealthControllerLease = getattr(
+            native_health_observer, "RootDaemonHealthControllerLease", None)
+        try:
+            if (RootDaemonHealthControllerLease is None
+                    or type(proof) is not RootDaemonHealthControllerLease
+                    or effect.role != "health" or effect.admission_kind != "health"
+                    or proof.proof_handle != effect.controller_proof_handle
+                    or proof.proof_sha256 != effect.controller_proof_sha256
+                    or not isinstance(proof.unit_id, str)
+                    or not re.fullmatch(r"hermes-installer-[0-9a-f]{32}\.service", proof.unit_id)
+                    or not isinstance(proof.invocation_id, str)
+                    or not re.fullmatch(r"[0-9a-f]{32}", proof.invocation_id)
+                    or proof.uid != 0 or proof.gid != 0
+                    or proof.expires_monotonic <= self.monotonic()
+                    or not proof.is_current()):
+                raise ValueError("daemon controller lease is stale")
+            pid, pidfd = proof.pid, proof.pidfd
+            if (type(pid) is not int or pid <= 0 or type(pidfd) is not int or pidfd < 0
+                    or self._pidfd_target(pidfd) != pid or _pidfd_exited(pidfd)):
+                raise ValueError("daemon controller PIDFD changed")
+            ticks, cgroup, _device, _inode = _pid_identity(pid)
+            status = Path(f"/proc/{pid}/status").read_text(encoding="ascii").splitlines()
+            uids = next(line for line in status if line.startswith("Uid:")).split()[1:]
+            gids = next(line for line in status if line.startswith("Gid:")).split()[1:]
+            observed_namespaces = tuple(
+                os.stat(f"/proc/{pid}/ns/{name}").st_ino for name in ("mnt", "net"))
+            unit = proof.unit_id
+            values = {name: self._show(unit, name) for name in (
+                "LoadState", "ActiveState", "MainPID", "InvocationID", "ControlGroup")}
+            if (len(uids) != 4 or any(int(uid) != 0 for uid in uids)
+                    or len(gids) != 4 or any(int(gid) != 0 for gid in gids)
+                    or ticks != proof.start_ticks or cgroup != proof.cgroup_identity
+                    or cgroup != "/system.slice/" + unit
+                    or observed_namespaces != (proof.mount_namespace_inode,
+                                               proof.network_namespace_inode)
+                    or values["LoadState"] != "loaded"
+                    or values["ActiveState"] not in {"active", "activating"}
+                    or values["MainPID"] != str(pid)
+                    or values["InvocationID"] != proof.invocation_id
+                    or values["ControlGroup"] != proof.cgroup_identity):
+                raise ValueError("daemon systemd unit or process identity changed")
+            executable_fd = os.open(f"/proc/{pid}/exe", os.O_RDONLY | os.O_CLOEXEC)
+            try:
+                executable_info = os.fstat(executable_fd)
+                digest = hashlib.sha256()
+                offset = 0
+                if not stat.S_ISREG(executable_info.st_mode) or executable_info.st_size > 256 * 1024 * 1024:
+                    raise ValueError("daemon executable exceeds its observation bound")
+                while offset < executable_info.st_size:
+                    block = os.pread(executable_fd, min(1024 * 1024,
+                                                       executable_info.st_size - offset), offset)
+                    if not block:
+                        raise ValueError("daemon executable was truncated")
+                    digest.update(block)
+                    offset += len(block)
+                if digest.hexdigest() != proof.executable_sha256:
+                    raise ValueError("daemon executable digest changed")
+            finally:
+                os.close(executable_fd)
+            if (self._pidfd_target(pidfd) != pid or _pidfd_exited(pidfd)
+                    or _pid_identity(pid)[:2] != (ticks, cgroup)
+                    or not proof.is_current()):
+                raise ValueError("daemon controller changed during re-observation")
+        except (OSError, ValueError, StopIteration, TypeError, AttributeError):
+            raise AuthorityDenied(
+                "native.health.controller", "current daemon health controller identity is unavailable") from None
+
     def _verify_root_controller_identity(self, proof: Any, effect: Any) -> None:
         """Compare the authority-retained setup actor with live kernel identity."""
+        from hermes_installer.authority import native_health_observer
+        RootDaemonHealthControllerLease = getattr(
+            native_health_observer, "RootDaemonHealthControllerLease", None)
+        if RootDaemonHealthControllerLease is not None and type(proof) is RootDaemonHealthControllerLease:
+            return self._verify_root_daemon_health_controller(proof, effect)
         try:
             pid = int(proof.pid)
             pidfd = int(proof.pidfd)
@@ -6179,7 +7386,9 @@ class ManagedProcessEffectHandler:
             "NoNewPrivileges", "IPAddressDeny", "PrivateNetwork", "RestrictAddressFamilies", "ProtectHome",
             "ProtectProc", "ProcSubset", "User", "SupplementaryGroups", "RuntimeMaxUSec", "MemoryMax",
             "CPUQuotaPerSecUSec", "IOWeight", "LoadState", "ActiveState", "MainPID", "InvocationID",
-            "FragmentPath", "ExecStart", "Environment", "EnvironmentFiles", "SocketBindDeny"}
+            "FragmentPath", "ExecStart", "Environment", "EnvironmentFiles", "SocketBindDeny",
+            "ProtectSystem", "ProtectHome", "PrivateMounts",
+            "TemporaryFileSystem", "InaccessiblePaths"}
         if prop not in allowed or not unit.startswith("hermes-installer-") or not unit.endswith(".service"):
             raise AuthorityDenied("process.manager", "manager property or unit is outside the fixed set")
         result = subprocess.run([str(self.systemctl), "--system", "show", "--property=" + prop, "--value", unit],
@@ -6228,7 +7437,8 @@ class ManagedProcessEffectHandler:
                 out[name] = "unavailable"
         return out
 
-    def _stop(self, handle: _Handle, *, timeout: float) -> ProcessCleanupProof:
+    def _stop(self, handle: _Handle, *, timeout: float,
+              preserve_health_observation: bool = False) -> ProcessCleanupProof:
         with handle.lock:
             if handle.stopped:
                 with self._lock:
@@ -6280,7 +7490,7 @@ class ManagedProcessEffectHandler:
                     if retained[1] is handle:
                         self._health_controls.pop(control_handle, None)
                         observation = self._health_observation_handles.pop(control_handle, None)
-                        if observation is not None:
+                        if observation is not None and not preserve_health_observation:
                             health_observations.append(observation)
             if self.native_health_start_authority is not None:
                 for observation in health_observations:
@@ -6305,18 +7515,12 @@ class ManagedProcessEffectHandler:
                     raise AuthorityDenied("native.loader", "loader observer disappeared during cleanup")
                 store.revoke_process(handle.process_id, handle.profile.generation)
             native_proof = handle.native_worker_launch_proof
-            handle.native_worker_launch_proof = None
-            if native_proof is not None:
-                try:
-                    native_proof.close()
-                    owner = self._native_worker_launch_owner
-                    if owner is not None:
-                        owner.release_selection(native_proof._selection)
-                except Exception:
-                    # The process has already been observed stopped and its
-                    # descriptors are still owner-cleaned below.  A stale
-                    # proof issuer cannot authorize a replacement start.
-                    pass
+            observed_view = handle.native_worker_observed_view
+            handle.native_worker_observed_view = None
+            if observed_view is not None:
+                owner = self._native_worker_launch_owner
+                if owner is not None:
+                    owner.retire_observed_native_worker_view(observed_view)
             try:
                 _remove_artifact_mount(handle.artifact_mount_dir)
             finally:
@@ -6326,6 +7530,17 @@ class ManagedProcessEffectHandler:
                 finally:
                     if handle.xauthority_mount_source is not None:
                         self._remove_native_staging(handle.xauthority_mount_source)
+            handle.native_worker_launch_proof = None
+            if native_proof is not None:
+                try:
+                    native_proof.close()
+                    owner = self._native_worker_launch_owner
+                    if owner is not None:
+                        owner.release_selection(native_proof._selection)
+                except Exception:
+                    # A stale issuer cannot authorize a replacement start;
+                    # currentness remains denied and the source close is idempotent.
+                    pass
             parent_gone = _pidfd_exited(handle.parent_pidfd)
             evidence = {
                 "process_id": handle.process_id, "generation": handle.profile.generation,

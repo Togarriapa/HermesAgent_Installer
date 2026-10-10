@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from dataclasses import replace
 import hashlib
 import json
 import os
@@ -15,6 +16,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+import pytest
 
 from hermes_installer.managed_process import (
     ManagedProcessError,
@@ -30,7 +32,9 @@ from hermes_installer.managed_process import (
     provision_service_identity,
 )
 from hermes_installer.managed_process_custodian import (
-    ManagedProcessEffectHandler, ManagedProfileCustody, _argv_matches_recipe,
+    LoadedNativePackageProof, ManagedProcessEffectHandler, ManagedProfileCustody,
+    NativePackageMountReceipt, RootSelectedHealthLoadedPackageProof, _argv_matches_recipe,
+    RootSelectedHealthInputWriteReceipt, RootSelectedHealthTerminalReceipt,
 )
 from hermes_installer.state import Journal, OwnedRoot
 from hermes_installer.authority.client import AuthorityClient
@@ -39,6 +43,65 @@ from hermes_installer.authority.types import (
     AuthorityDenied, EffectAuthorization, HostContext, Sensitivity, VerifiedEffectAuthorization,
     canonical_digest,
 )
+
+
+def test_selected_health_receipts_require_single_write_and_verified_cleanup():
+    with pytest.raises(ValueError, match="input write receipt is malformed"):
+        RootSelectedHealthInputWriteReceipt(
+            schema=1, receipt_handle="a" * 32, control_handle="c" * 32,
+            input_event_id="i" * 16, observation_handle="o" * 32,
+            loader_ready_event_id="r" * 16, process_id="p" * 32,
+            process_generation="generation-1", payload_sha256="d" * 64,
+            payload_size_bytes=0, written_monotonic=1.0,
+        )
+
+    fields = dict(
+        schema=1, terminal_receipt_handle="t" * 32, control_handle="c" * 32,
+        process_id="p" * 32, profile_id="profile-1", generation="generation-1",
+        service_generation_digest="d" * 64, process_uid=1001, process_gid=1001,
+        unit="hermes-installer-" + "a" * 32 + ".service", cgroup="/system.slice/test.service",
+        start_ticks=1, exit_code=0, timed_out=False, cancelled=False,
+        started_monotonic=1.0, finished_monotonic=2.0, stdout_size_bytes=0,
+        stderr_size_bytes=0, stdout_sha256=hashlib.sha256(b"").hexdigest(),
+        stderr_sha256=hashlib.sha256(b"").hexdigest(), output_overflow=False,
+        loader_ready_event_id="r" * 16, cgroup_empty=True, main_pidfd_gone=True,
+        launcher_reaped=True, cleanup_verified=True, observed_monotonic=2.0,
+    )
+    receipt = RootSelectedHealthTerminalReceipt(**fields)
+    assert receipt.cleanup_verified and receipt.exit_code == 0
+    with pytest.raises(ValueError, match="lacks cleanup proof"):
+        RootSelectedHealthTerminalReceipt(**{**fields, "main_pidfd_gone": False})
+
+
+def test_selected_health_loaded_package_identity_survives_fresh_observation_only():
+    mount = NativePackageMountReceipt(
+        package_id="native-package", profile_id="profile-1", generation="generation-1",
+        service_mount_id="mount-1", compiled_closure_sha256="a" * 64,
+        entrypoint_sha256="b" * 64, resolver_sha256="c" * 64,
+        mount_path="/hermes/native", mount_source_device=11, mount_source_inode=12,
+        manifest_sha256="d" * 64,
+    )
+
+    def selected(observed: float, receipt=mount):
+        process = LoadedNativePackageProof(
+            "p" * 32, "profile-1", "generation-1", 1001, 44,
+            "/system.slice/worker.service", "mnt:3;net:4", "e" * 64,
+            receipt, observed,
+        )
+        return RootSelectedHealthLoadedPackageProof(
+            process_id=process.process_id, profile_id=process.profile_id,
+            generation=process.generation, kernel_uid=process.kernel_uid,
+            package_id=receipt.package_id,
+            compiled_closure_sha256=receipt.compiled_closure_sha256,
+            service_generation_digest="f" * 64, mount_proof=process,
+            observed_monotonic=observed,
+        )
+
+    first, refreshed = selected(1.0), selected(2.0)
+    assert first.proof_id == refreshed.proof_id
+    assert first.observed_monotonic != refreshed.observed_monotonic
+    changed = selected(2.0, replace(mount, mount_source_inode=99))
+    assert changed.proof_id != first.proof_id
 
 
 class _FixtureAuthorityVerifier(AuthorityClient):

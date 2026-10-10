@@ -4,6 +4,8 @@ import json
 import os
 import socket
 import threading
+import importlib.util
+from pathlib import Path
 
 import pytest
 
@@ -17,6 +19,22 @@ from hermes_installer.authority.private_loopback_worker_gate import (
     validate_gate_result,
 )
 from hermes_installer.authority.types import AuthorityDenied
+
+
+def test_helper_contract_reader_rejects_caller_selected_filesystem_paths(monkeypatch):
+    helper_path = (Path(__file__).resolve().parents[2]
+                   / "helpers" / "private-loopback-worker-gate.py")
+    spec = importlib.util.spec_from_file_location("hermes_private_gate_contract_test", helper_path)
+    assert spec is not None and spec.loader is not None
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    monkeypatch.setenv("HERMES_NATIVE_WORKER_CONTRACT_PATH", "/etc/passwd")
+    with pytest.raises(helper.GateError, match="contract path"):
+        helper._read_contract()
+    monkeypatch.setenv("HERMES_NATIVE_WORKER_CONTRACT_PATH",
+                       "/run/hermes-installer/private-loopback/contract.json")
+    with pytest.raises(helper.GateError, match="contract path"):
+        helper._read_contract()
 
 
 def _awaiting(channel, nonce, contract):
