@@ -366,6 +366,15 @@ class RootOwnedFilesystemSelectionRegistry:
             raise RootFilesystemSelectionDenied("model-store registry is closed")
         try:
             self._session._check_live()
+            row = self._session._authorization.root_journal_root
+            if (self.root_journal.root_id != row.get("root_id")
+                    or str(self.root_journal.path) != row.get("absolute_path")
+                    or self.root_journal.device != row.get("device")
+                    or self.root_journal.inode != row.get("inode")
+                    or self.root_journal.generation != row.get("generation")):
+                raise ValueError("root journal binding changed")
+            _verify_secure_directory(self.root_journal.path, self.root_journal.device,
+                                     self.root_journal.inode, 0, 0o700)
             if self.authority.authority_epoch != self._authority_epoch:
                 raise ValueError("authority epoch changed")
         except Exception:
