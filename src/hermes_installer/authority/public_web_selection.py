@@ -146,7 +146,7 @@ def collect_root_tty_public_web_scope_configuration(
                 or identity.namespace.selection_handle != target.namespace_selection_handle):
             raise PublicWebSelectionDenied("target no longer belongs to the current principal and namespace")
         value = {
-            "enrollment_id": "scope-" + secrets.token_hex(16),
+            "enrollment_id": target.enrollment_id,
             "target_id": target.target_id,
             "generation": target.profile_generation,
             "principal_id": identity.principal.principal_id,
