@@ -38,16 +38,10 @@ class SelectedNativeWindow:
     remote_enrollment_id: str
     native_profile_id: str
     native_generation: str
-    native_uid: int
-    native_cgroup_id: str
-    allowed_executable_sha256s: tuple[str, ...]
     display_server_profile_id: str
     display_server_generation: str
     display_name: str
-    xauthority_path: str
-    xauthority_device: int
-    xauthority_inode: int
-    xauthority_uid: int
+    xauthority_receipt_handle: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,14 +254,32 @@ class RootRuntimeBindings:
         )
 
     def selected_native_window(self, remote_enrollment_id: str) -> SelectedNativeWindow:
-        """Resolve a native window only when an actual Xauthority startup receipt exists.
+        """Return only the selected identity and opaque receipt handle.
 
-        The active catalog stores only the opaque receipt handle. This host build
-        does not yet contain the root-private receipt registry that can turn that
-        handle into a no-follow path/inode proof, so the window stays unavailable.
+        Physical Xauthority identity comes from the root startup receipt, never
+        from this selection row or a caller-provided path.
         """
-        self._remote_observation_join(remote_enrollment_id)
-        raise EnrollmentDenied("selected native window has no installed Xauthority startup receipt resolver")
+        observation, remote = self._remote_observation_join(remote_enrollment_id)
+        profile_id = remote.get("native_desktop_profile_id")
+        generation = remote.get("native_generation")
+        if not isinstance(profile_id, str) or not isinstance(generation, str):
+            raise EnrollmentDenied("selected native window process binding is incomplete")
+        native = self.process_profiles.get(profile_id)
+        display = self.process_profiles.get(observation["display_server_profile_id"])
+        if (native is None or native.generation != generation
+                or native.enrollment_id != observation["native_window_enrollment_id"]
+                or display is None or display.generation != observation["display_server_generation"]
+                or profile_id == observation["display_server_profile_id"]):
+            raise EnrollmentDenied("selected native window has stale process profile bindings")
+        return SelectedNativeWindow(
+            remote_enrollment_id=remote_enrollment_id,
+            native_profile_id=profile_id,
+            native_generation=generation,
+            display_server_profile_id=display.profile_id,
+            display_server_generation=display.generation,
+            display_name=observation["display_name"],
+            xauthority_receipt_handle=observation["xauthority_receipt_handle"],
+        )
 
     def resolve_resource_credential_binding(
         self, backend_enrollment_id: str, source_placeholder: str, usage: str, *,

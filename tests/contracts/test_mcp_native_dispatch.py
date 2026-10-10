@@ -108,7 +108,10 @@ class NativeMCPRegistrationIndexTests(unittest.TestCase):
 
     def test_handler_uses_lexical_root_binding_and_only_fixed_dispatch_arguments(self):
         from hermes_installer.authority.types import BrokeredEffectResponse, NativeInvocationBinding
-        from hermes_installer.native_invocations import _CURRENT_BINDING, canonical_tool_arguments
+        from hermes_installer.native_invocations import (
+            _CURRENT_BINDING, _CURRENT_MCP_RESULT, _CURRENT_TOOL_CALL_ID,
+            canonical_tool_arguments,
+        )
 
         arguments = {"file_key": "root-selected-file"}
         registration = self.index.resolve(self.schema["name"], self.schema)
@@ -130,14 +133,24 @@ class NativeMCPRegistrationIndexTests(unittest.TestCase):
 
             def dispatch_native_mcp(self, handle, canonical_arguments):
                 self.calls.append((handle, canonical_arguments))
-                return BrokeredEffectResponse(200, b"{\"ok\":true}", {}, "mcp-receipt")
+                return BrokeredEffectResponse(
+                    200, b"{\"ok\":true}", {}, "mcp-receipt",
+                    source_receipt_handle="h" * 40,
+                )
 
         authority = Authority()
         handler = build_handler(authority, registration)
         token = _CURRENT_BINDING.set(binding)
+        call_token = _CURRENT_TOOL_CALL_ID.set("call-1")
+        result_token = _CURRENT_MCP_RESULT.set(None)
         try:
             self.assertEqual(handler(arguments), '{"ok":true}')
+            self.assertEqual(_CURRENT_MCP_RESULT.get(), (
+                registration.native_tool_name, b'{"ok":true}', "h" * 40,
+            ))
         finally:
+            _CURRENT_MCP_RESULT.reset(result_token)
+            _CURRENT_TOOL_CALL_ID.reset(call_token)
             _CURRENT_BINDING.reset(token)
         self.assertEqual(authority.calls, [("i" * 40, canonical_tool_arguments(arguments))])
 
