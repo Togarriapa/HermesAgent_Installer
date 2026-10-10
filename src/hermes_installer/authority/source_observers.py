@@ -70,6 +70,10 @@ class SourceObserverEnrollment:
     max_event_bytes: int = MAX_OBSERVED_SOURCE_BYTES
     lease_seconds: int = 30
     native_package_generation: str | None = None
+    # Finite provider enrollment IDs from the exact protected SourceIssuerRecord.
+    # These are only candidate routes; current consent and route policy are
+    # rechecked by the root issuer before any ceiling is minted.
+    private_provider_route_ids: tuple[str, ...] = ()
 
     @classmethod
     def from_protected_record(cls, record: Mapping[str, Any]) -> "SourceObserverEnrollment":
@@ -81,7 +85,8 @@ class SourceObserverEnrollment:
             "source_action_id", "target_id", "recipient",
             "allowed_parent_source_kinds",
         }
-        optional = {"max_event_bytes", "lease_seconds", "native_package_generation"}
+        optional = {"max_event_bytes", "lease_seconds", "native_package_generation",
+                    "private_provider_route_ids"}
         if (not isinstance(record, Mapping) or set(record) - (required | optional)
                 or required - set(record) or not isinstance(record["allowed_parent_source_kinds"], list)
                 or len(record["allowed_parent_source_kinds"]) > len(_ALLOWED_SOURCE_KINDS)
@@ -90,6 +95,10 @@ class SourceObserverEnrollment:
             raise AuthorityDenied("source.enrollment", "protected source observer schema is invalid")
         values = dict(record)
         values["allowed_parent_source_kinds"] = frozenset(values["allowed_parent_source_kinds"])
+        if "private_provider_route_ids" in values:
+            if not isinstance(values["private_provider_route_ids"], (list, tuple)):
+                raise AuthorityDenied("source.enrollment", "protected private provider route IDs are invalid")
+            values["private_provider_route_ids"] = tuple(values["private_provider_route_ids"])
         try:
             return cls(**values)
         except (ValueError, TypeError):
@@ -109,6 +118,13 @@ class SourceObserverEnrollment:
         return parsed
 
     def __post_init__(self) -> None:
+        if (not isinstance(self.private_provider_route_ids, tuple)
+                or len(self.private_provider_route_ids) > 64
+                or len(set(self.private_provider_route_ids)) != len(self.private_provider_route_ids)
+                or any(not isinstance(item, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", item)
+                       for item in self.private_provider_route_ids)
+                or (self.private_provider_route_ids and self.source_kind != "native-input")):
+            raise ValueError("private provider route IDs must be a finite unique protected tuple")
         for name in (
             "observer_enrollment_id", "origin_id", "profile_id", "principal_id",
             "namespace_id", "enrollment_id", "generation", "package_id", "role_id",
@@ -202,6 +218,11 @@ class VerifiedSourceObservation:
     expires_monotonic: float
     proof_nonce: str
     _issuer_token: object = field(repr=False, compare=False)
+    # Present only for the selected pre-stdin native input route. This exact
+    # object is retained and revalidated by RootNativeExecutionSelectionRegistry.
+    selected_execution: Any = field(default=None, repr=False, compare=False)
+    private_provider_route_ids: tuple[str, ...] = ()
+    private_consent_selection_handle: str | None = None
 
     def __post_init__(self) -> None:
         if (not isinstance(self.payload_bytes, bytes) or not self.payload_bytes
@@ -213,6 +234,13 @@ class VerifiedSourceObservation:
                 or len(self.parent_receipt_handles) > MAX_PARENT_RECEIPTS
                 or not self.authority_epoch
                 or not isinstance(self.proof_nonce, str) or not 32 <= len(self.proof_nonce) <= 128
+                or not isinstance(self.private_provider_route_ids, tuple)
+                or len(self.private_provider_route_ids) > 64
+                or len(set(self.private_provider_route_ids)) != len(self.private_provider_route_ids)
+                or any(not isinstance(item, str) for item in self.private_provider_route_ids)
+                or (self.private_consent_selection_handle is not None
+                    and (not isinstance(self.private_consent_selection_handle, str)
+                         or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.private_consent_selection_handle)))
                 or self.expires_monotonic <= self.issued_monotonic):
             raise AuthorityDenied("source.observation", "root source observation is malformed")
 
@@ -351,6 +379,7 @@ class SourceObserverRegistry:
         self._receipt_slots_reserved = 0
         self._proof_token = object()
         self._proofs_pending: dict[str, int] = {}
+        self._selected_input_proofs: dict[str, tuple[Any, Any]] = {}
         self._lock = threading.RLock()
         self._closed = False
 
@@ -486,7 +515,9 @@ class SourceObserverRegistry:
 
     def capture_observed_source(self, observer_enrollment_id: str, event_record_id: str,
                                 payload_bytes: bytes,
-                                parent_receipt_handles: Sequence[str] = ()) -> SourceReceiptHandle:
+                                parent_receipt_handles: Sequence[str] = (), *,
+                                _selected_execution: Any = None,
+                                _selection_registry: Any = None) -> SourceReceiptHandle:
         """Consume one root-observed event and ask AuthorityService to issue its handle."""
         if (not isinstance(observer_enrollment_id, str)
                 or not isinstance(event_record_id, str) or not 32 <= len(event_record_id) <= 128):
@@ -612,13 +643,32 @@ class SourceObserverRegistry:
                 expires_monotonic=event.expires,
                 proof_nonce=secrets.token_urlsafe(32),
                 _issuer_token=self._proof_token,
+                selected_execution=_selected_execution,
+                private_provider_route_ids=(observer.private_provider_route_ids
+                                            if _selected_execution is not None else ()),
+                private_consent_selection_handle=(
+                    getattr(_selected_execution, "private_consent_selection_handle", None)
+                    if _selected_execution is not None else None),
             )
             with self._lock:
                 if proof.proof_nonce in self._proofs_pending:
                     raise AuthorityDenied("source.observation", "root observation proof nonce collided")
                 self._proofs_pending[proof.proof_nonce] = id(proof)
+                if _selected_execution is not None:
+                    self._selected_input_proofs[proof.proof_nonce] = (
+                        _selected_execution,
+                        # Preserve the exact root registry which selected it;
+                        # service revalidation cannot use a caller selector.
+                        _selection_registry,
+                    )
                 proof_registered = True
-            result = self.service.issue_observed_source(proof)
+            issue_selected = getattr(self.service, "issue_selected_input_source", None)
+            if _selected_execution is not None:
+                if not callable(issue_selected):
+                    raise AuthorityDenied("source.native_input", "selected private input issuer is unavailable")
+                result = issue_selected(proof)
+            else:
+                result = self.service.issue_observed_source(proof)
             if not isinstance(result, SourceReceiptHandle):
                 raise AuthorityDenied("source.issuer", "root authority did not return an opaque receipt handle")
             with self.service._lock:
@@ -707,6 +757,7 @@ class SourceObserverRegistry:
             if proof_registered and proof is not None:
                 with self._lock:
                     self._proofs_pending.pop(proof.proof_nonce, None)
+                    self._selected_input_proofs.pop(proof.proof_nonce, None)
             raise
         finally:
             if reserved_receipt_slot:
@@ -851,7 +902,8 @@ class SourceObserverRegistry:
             )
             return self.capture_observed_source(
                 observer_enrollment_id, event_id, payload_bytes,
-                parent_receipt_handles,
+                parent_receipt_handles, _selected_execution=selected,
+                _selection_registry=selection_registry,
             )
         except BaseException:
             # record_observed_event takes ownership once invoked and closes the
@@ -1097,11 +1149,51 @@ class SourceObserverRegistry:
         """
         if not isinstance(observation, VerifiedSourceObservation):
             raise AuthorityDenied("source.observation", "observation proof is not registry-issued")
+        if observation.selected_execution is not None:
+            raise AuthorityDenied("source.observation", "selected native input requires its dedicated issuer")
         with self._lock:
             expected_identity = self._proofs_pending.pop(observation.proof_nonce, None)
         if (observation._issuer_token is not self._proof_token
                 or expected_identity != id(observation)):
             raise AuthorityDenied("source.observation", "observation proof is forged, stale, or already consumed")
+        return True
+
+    def consume_selected_input_observation(self, observation: VerifiedSourceObservation,
+                                           selected_execution: Any) -> bool:
+        """Consume a selected native-input proof only through its exact live selection.
+
+        AuthorityService uses this dedicated root-only call before signing the
+        native-input receipt. It prevents the generic private-source issuer
+        from bypassing the selected private route/consent ceiling calculation.
+        """
+        if (not isinstance(observation, VerifiedSourceObservation)
+                or selected_execution is not observation.selected_execution):
+            raise AuthorityDenied("source.native_input", "selected input proof does not match its retained selection")
+        with self._lock:
+            expected = self._proofs_pending.get(observation.proof_nonce)
+            retained = self._selected_input_proofs.get(observation.proof_nonce)
+            if (observation._issuer_token is not self._proof_token
+                    or expected != id(observation) or retained is None
+                    or retained[0] is not selected_execution or retained[1] is None):
+                raise AuthorityDenied("source.native_input", "selected input proof is forged or stale")
+            try:
+                current = retained[1].resolve_current_execution(selected_execution)
+            except Exception:
+                current = None
+            observer = self.observers.get(observation.observer_enrollment_id)
+            if (current is not selected_execution or observer is None
+                    or observer.source_kind != "native-input"
+                    or observation.private_provider_route_ids != observer.private_provider_route_ids
+                    or observation.profile_id != selected_execution.profile_id
+                    or observation.generation != selected_execution.generation
+                    or observation.package_id != selected_execution.native_package_id
+                    or observation.source_action_id != selected_execution.source_action_id):
+                raise AuthorityDenied("source.native_input", "selected input binding or route catalog changed")
+            if observation.private_consent_selection_handle != getattr(
+                    selected_execution, "private_consent_selection_handle", None):
+                raise AuthorityDenied("source.native_input", "private consent selection differs from retained input")
+            self._proofs_pending.pop(observation.proof_nonce, None)
+            self._selected_input_proofs.pop(observation.proof_nonce, None)
         return True
 
     def _resolve_parent_closure(self, observer: SourceObserverEnrollment,
@@ -1328,6 +1420,7 @@ class SourceObserverRegistry:
             self._pending.clear()
             self._pending_bytes = 0
             self._proofs_pending.clear()
+            self._selected_input_proofs.clear()
             for binding in self._receipt_process_bindings.values():
                 os.close(binding.pidfd)
             self._receipt_process_bindings.clear()
@@ -1371,6 +1464,7 @@ class RootSelectedNativeExecution:
     source_action_id: str
     service_generation_digest: str
     expires_monotonic: float
+    private_consent_selection_handle: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if (type(self.schema) is not int or self.schema != 1
@@ -1383,6 +1477,9 @@ class RootSelectedNativeExecution:
                        for name in ("profile_id", "generation", "native_package_id",
                                     "native_package_generation", "observer_enrollment_id",
                                     "source_action_id", "service_generation_digest"))
+                or (self.private_consent_selection_handle is not None
+                    and (not isinstance(self.private_consent_selection_handle, str)
+                         or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.private_consent_selection_handle)))
                 or not math.isfinite(self.expires_monotonic)):
             raise ValueError("selected native execution binding is malformed")
 
@@ -1543,6 +1640,8 @@ class RootNativeExecutionSelectionRegistry:
             source_action_id=adapter.action_id,
             service_generation_digest=self.service.service_generation_digest,
             expires_monotonic=expiry,
+            private_consent_selection_handle=getattr(
+                admission_handle, "private_consent_selection_handle", None),
         )
         record = _SelectedNativeExecutionRecord(
             selected, binding, observer, package, adapter, self.service.authority_epoch)
@@ -1603,6 +1702,22 @@ class RootNativeExecutionSelectionRegistry:
                 or package.generation != (observer.native_package_generation or observer.generation)):
             raise AuthorityDenied("resource.native_selection", "selected package action closure changed")
         return selected_execution
+
+    def resolve_selection_handle(self, selection_handle: str) -> RootSelectedNativeExecution:
+        """Resolve an opaque root-issued handle to its exact live selection.
+
+        This is an in-process root lookup for turn-delivery composition. A
+        worker presenting the same string over RPC cannot select a task.
+        """
+        if (not isinstance(selection_handle, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{32,128}", selection_handle) is None):
+            raise AuthorityDenied("resource.native_selection", "selected execution handle is malformed")
+        with self._lock:
+            record = self._selections.get(selection_handle)
+            if record is None:
+                raise AuthorityDenied("resource.native_selection", "selected execution handle is unknown or consumed")
+            selected = record.selection
+        return self.resolve_current_execution(selected)
 
     def attach_native_input_target_resolver(self, resolver: Any) -> None:
         """Attach the concrete PIDFD/loaded-package target resolver exactly once."""
@@ -1791,11 +1906,12 @@ class NativeInitialInputDelivery:
                 or type(self.input_size_bytes) is not int
                 or not 1 <= self.input_size_bytes <= MAX_OBSERVED_SOURCE_BYTES
                 or not math.isfinite(self.expires_monotonic)
-                or self.turn_handle is not None and re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.turn_handle) is None):
+                or (self.turn_handle is not None
+                    and re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.turn_handle) is None)):
             raise ValueError("native initial-input delivery response is malformed")
 
     def to_wire(self) -> dict[str, Any]:
-        result = {
+        wire = {
             "schema": self.schema,
             "source_receipt_handle": self.source_receipt_handle,
             "selected_execution_handle": self.selected_execution_handle,
@@ -1804,8 +1920,8 @@ class NativeInitialInputDelivery:
             "expires_monotonic": self.expires_monotonic,
         }
         if self.turn_handle is not None:
-            result["turn_handle"] = self.turn_handle
-        return result
+            wire["turn_handle"] = self.turn_handle
+        return wire
 
 
 @dataclass(slots=True)
@@ -1821,6 +1937,7 @@ class _PendingNativeInputDelivery:
     authority_epoch: str
     service_generation_digest: str
     expires_monotonic: float
+    turn_handle: str | None = None
     state: str = "pending"
     response: NativeInitialInputDelivery | None = None
 
@@ -1866,7 +1983,7 @@ class RootNativeInputDeliveryRegistry:
                    process_custody_registry)
 
     def queue_selected_input(self, selected_execution: RootSelectedNativeExecution,
-                             event: Any) -> None:
+                             event: Any, *, turn_handle: str | None = None) -> None:
         """Retain an actual root-captured input event until its producer takes it."""
         from .native_input_observer import RootNativeInputEvent
 
@@ -1883,7 +2000,9 @@ class RootNativeInputDeliveryRegistry:
                 or event.parent_closure_digest != selected.execution_handle.parent_closure_digest
                 or event.expires_monotonic <= self.monotonic()
                 or event.native_loader_ready_event_id
-                != self.selected_executions.loader_ready_event_id(selected)):
+                != self.selected_executions.loader_ready_event_id(selected)
+                or (turn_handle is not None
+                    and re.fullmatch(r"[A-Za-z0-9_-]{32,128}", turn_handle) is None)):
             raise AuthorityDenied("native.input.delivery", "captured event differs from selected native task")
         source = self.source_observers
         with source._lock:
@@ -1936,7 +2055,7 @@ class RootNativeInputDeliveryRegistry:
             service_generation_digest=selected.service_generation_digest,
             expires_monotonic=min(
                 float(event.expires_monotonic), float(delivery.expires),
-                float(selected.expires_monotonic)),
+                float(selected.expires_monotonic)), turn_handle=turn_handle,
         )
         with self._changed:
             self._prune_locked(self.monotonic())
@@ -1980,6 +2099,7 @@ class RootNativeInputDeliveryRegistry:
                 input_sha256=row.event.payload_sha256,
                 input_size_bytes=row.event.payload_size_bytes,
                 expires_monotonic=row.expires_monotonic,
+                turn_handle=row.turn_handle,
             )
         except BaseException:
             with self._changed:

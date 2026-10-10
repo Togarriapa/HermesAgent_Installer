@@ -103,11 +103,22 @@ effects.
 # Root source-event authority
 
 Root timer, webhook, and channel adapters must be attached to the active
-`ResourceEventContextIssuer` inside the authority process. An attached producer
-receives an opaque per-instance capability and can create a one-use
-`RootResourceSourceEventProof` only at its native accepted-event seam. The
-proof is not serializable and carries the exact canonical event bytes plus an
-opaque producer observation that is revalidated when consumed. Before an
+`ResourceEventContextIssuer` inside the authority process by
+`register_selected_source_producer(producer, selected_ingress_binding=...)`.
+The issuer accepts only the exact protected `RootSelectedIngressBinding` and a
+concrete producer with a one-use `consume_verified_raw_observation` method;
+there is no caller-supplied boolean validator or caller-selected mint API.
+After live custody resolution, the producer passes its exact pending opaque
+observation to `mint_selected_source_proof(capability,
+controller_proof=proof, raw_observation=observation)`. The issuer creates a
+sealed immutable raw snapshot and one-use `RootResourceSourceEventProof` whose
+payload is the exact original input bytes. It separately derives the canonical
+v67 envelope from the selected schema and validated event fields; the signed
+receipt covers the envelope while the retained record binds the raw bytes,
+digest, replay key, and observation time. Webhook event schemas are selected by
+the root-only `selected_protocol_schema(resource_id, generation,
+source_issuer_id, source_kind)` resolver and checked against the pinned
+artifact IDs/hashes; an absent or unknown mapping denies registration. Before an
 event or receipt exists, `RootResourceControllerRegistry` resolves the
 selected role/issuer/backend through `resolve_selected_ingress_controller` and
 retains a one-use `RootIngressControllerProof` backed by live systemd MainPID,
