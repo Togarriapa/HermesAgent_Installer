@@ -6,10 +6,12 @@ from types import ModuleType
 from types import SimpleNamespace
 
 from hermes_installer.authority.native_runtime_observer import (
+    NativeActionSelection,
     NativeInvocationContextProvider,
     NativeInvocationRegistry,
     NativeRuntimeObserver,
     NativeRuntimeObserverUnavailable,
+    _NativeInvocation,
     _ObservedProviderResponse,
 )
 from hermes_installer.authority.types import AuthorityDenied, HostContext, Sensitivity, canonical_digest
@@ -331,6 +333,74 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             provider(adapter_id="adapter-a", action_id="action-a", arguments_sha256="a" * 64,
                      purpose="native-hermes-chat", intent="x")
+
+    def test_native_mcp_invocation_is_root_consumed_once_and_revalidated(self):
+        import hashlib
+        import threading
+        from types import SimpleNamespace
+
+        identity = SimpleNamespace(kernel_uid=2001, profile_id="profile-a", generation="generation-a")
+        gateway_identity = SimpleNamespace(kernel_uid=0, profile_id="gateway", generation="gateway-gen")
+        bridge = SimpleNamespace(gateway_profile_id="gateway", gateway_generation="gateway-gen")
+        proof = object()
+        observer = SimpleNamespace(observer_enrollment_id="observer-id")
+        receipt = SimpleNamespace(profile_id="profile-a", process_generation="generation-a",
+                                  uid=2001, monotonic_expires_at=30.0)
+        service = SimpleNamespace(service_generation_digest="c" * 64,
+                                  _source_receipt_handles={"receipt-handle": receipt},
+                                  _lock=threading.RLock())
+        source_observers = SimpleNamespace(
+            observers={"observer-id": observer},
+            _resolve_package_role=lambda _observer: (object(), object()),
+            _resolve_loaded_package_proof=lambda *args, **kwargs: proof,
+        )
+        args = b'{"city":"Lisbon"}'
+        digest = hashlib.sha256(args).hexdigest()
+        action = NativeActionSelection("package-a", "profile-a", "generation-a",
+                                       "hermes-installer.native-mcp-dispatch.v1",
+                                       "mcp-row-a", lambda value: value == args)
+        registry = object.__new__(NativeInvocationRegistry)
+        registry.service = service
+        registry.source_observers = source_observers
+        registry.monotonic = lambda: 10.0
+        registry.process_resolver = lambda pid, _fd, *, profile_id, generation: (
+            identity if pid == 41 and profile_id == "profile-a" and generation == "generation-a"
+            else gateway_identity if pid == 51 and profile_id == "gateway" and generation == "gateway-gen"
+            else None
+        )
+        registry.action_resolver = lambda _bridge, _identity, _name: action
+        registry._lock = threading.RLock()
+        registry._closed = False
+        registry._responses = {}
+        registry._deliveries = {}
+        registry._calls = {}
+        registry._issued_handles = {"i" * 40}
+        invocation = _NativeInvocation(
+            invocation_handle="i" * 40, response_handle="r" * 40,
+            observed_call_handle="o" * 40, bridge=bridge,
+            producer_identity=identity, producer_pid=41, producer_pidfd=141,
+            gateway_identity=gateway_identity, gateway_pid=51, gateway_pidfd=151,
+            package_id="package-a", profile_id="profile-a", generation="generation-a",
+            adapter_id="hermes-installer.native-mcp-dispatch.v1", action_id="mcp-row-a",
+            tool_name="weather.lookup", arguments_sha256=digest,
+            parent_closure_digest="d" * 64, receipt_handles=("receipt-handle",),
+            observer_id="observer-id", loaded_package_proof=proof,
+            expires_monotonic=25.0, service_generation_digest="c" * 64,
+        )
+        registry._invocations = {invocation.invocation_handle: invocation}
+        registry._mcp_dispatches = {}
+
+        result = registry.consume_native_mcp_invocation(2001, 41, 141,
+                                                        invocation.invocation_handle, args)
+        self.assertEqual(result.tool_name, "weather.lookup")
+        self.assertEqual(result.action_id, "mcp-row-a")
+        self.assertEqual(result.source_receipt_handles, ("receipt-handle",))
+        self.assertTrue(registry.is_current_native_mcp_invocation(result, 2001, 41, 141))
+        with self.assertRaises(AuthorityDenied):
+            registry.consume_native_mcp_invocation(2001, 41, 141,
+                                                   invocation.invocation_handle, args)
+        service.service_generation_digest = "e" * 64
+        self.assertFalse(registry.is_current_native_mcp_invocation(result, 2001, 41, 141))
 
 if __name__ == "__main__":
     unittest.main()
