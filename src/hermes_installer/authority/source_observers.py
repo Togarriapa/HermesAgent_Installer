@@ -222,6 +222,7 @@ class VerifiedSourceObservation:
     # object is retained and revalidated by RootNativeExecutionSelectionRegistry.
     selected_execution: Any = field(default=None, repr=False, compare=False)
     private_provider_route_ids: tuple[str, ...] = ()
+    private_consent_selection_handle: str | None = None
 
     def __post_init__(self) -> None:
         if (not isinstance(self.payload_bytes, bytes) or not self.payload_bytes
@@ -237,6 +238,9 @@ class VerifiedSourceObservation:
                 or len(self.private_provider_route_ids) > 64
                 or len(set(self.private_provider_route_ids)) != len(self.private_provider_route_ids)
                 or any(not isinstance(item, str) for item in self.private_provider_route_ids)
+                or (self.private_consent_selection_handle is not None
+                    and (not isinstance(self.private_consent_selection_handle, str)
+                         or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.private_consent_selection_handle)))
                 or self.expires_monotonic <= self.issued_monotonic):
             raise AuthorityDenied("source.observation", "root source observation is malformed")
 
@@ -642,6 +646,9 @@ class SourceObserverRegistry:
                 selected_execution=_selected_execution,
                 private_provider_route_ids=(observer.private_provider_route_ids
                                             if _selected_execution is not None else ()),
+                private_consent_selection_handle=(
+                    getattr(_selected_execution, "private_consent_selection_handle", None)
+                    if _selected_execution is not None else None),
             )
             with self._lock:
                 if proof.proof_nonce in self._proofs_pending:
@@ -1182,6 +1189,9 @@ class SourceObserverRegistry:
                     or observation.package_id != selected_execution.native_package_id
                     or observation.source_action_id != selected_execution.source_action_id):
                 raise AuthorityDenied("source.native_input", "selected input binding or route catalog changed")
+            if observation.private_consent_selection_handle != getattr(
+                    selected_execution, "private_consent_selection_handle", None):
+                raise AuthorityDenied("source.native_input", "private consent selection differs from retained input")
             self._proofs_pending.pop(observation.proof_nonce, None)
             self._selected_input_proofs.pop(observation.proof_nonce, None)
         return True
@@ -1410,6 +1420,7 @@ class SourceObserverRegistry:
             self._pending.clear()
             self._pending_bytes = 0
             self._proofs_pending.clear()
+            self._selected_input_proofs.clear()
             for binding in self._receipt_process_bindings.values():
                 os.close(binding.pidfd)
             self._receipt_process_bindings.clear()
@@ -1453,6 +1464,7 @@ class RootSelectedNativeExecution:
     source_action_id: str
     service_generation_digest: str
     expires_monotonic: float
+    private_consent_selection_handle: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if (type(self.schema) is not int or self.schema != 1
@@ -1465,6 +1477,9 @@ class RootSelectedNativeExecution:
                        for name in ("profile_id", "generation", "native_package_id",
                                     "native_package_generation", "observer_enrollment_id",
                                     "source_action_id", "service_generation_digest"))
+                or (self.private_consent_selection_handle is not None
+                    and (not isinstance(self.private_consent_selection_handle, str)
+                         or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.private_consent_selection_handle)))
                 or not math.isfinite(self.expires_monotonic)):
             raise ValueError("selected native execution binding is malformed")
 
@@ -1625,6 +1640,8 @@ class RootNativeExecutionSelectionRegistry:
             source_action_id=adapter.action_id,
             service_generation_digest=self.service.service_generation_digest,
             expires_monotonic=expiry,
+            private_consent_selection_handle=getattr(
+                admission_handle, "private_consent_selection_handle", None),
         )
         record = _SelectedNativeExecutionRecord(
             selected, binding, observer, package, adapter, self.service.authority_epoch)
