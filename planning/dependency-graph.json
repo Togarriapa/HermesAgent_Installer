@@ -3790,5 +3790,22 @@
       "VD-T248.3"
     ],
     "acceptance": "open"
+  },
+  "version_aware_predecessor_verification_v249": {
+    "amendment": "plans/amendments/2026-10-10-version-aware-predecessor-verification-v249.md",
+    "contract": "planning/version-aware-predecessor-verification-v249.json",
+    "tasks": {
+      "BD-T249.1": [
+        "BD-T242.1"
+      ],
+      "LC-T249.2": [
+        "BD-T249.1"
+      ],
+      "VD-T249.3": [
+        "BD-T249.1",
+        "LC-T249.2"
+      ]
+    },
+    "acceptance": "open"
   }
 }

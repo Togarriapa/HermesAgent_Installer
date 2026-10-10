@@ -310,3 +310,8 @@ v242 pre-v235 bridge: `plans/amendments/2026-10-10-preinstalled-source-update-en
 
 
 v247 narrow source-update leaf review: `plans/amendments/2026-10-10-source-update-entry-source-review-v247.md` / `planning/source-update-entry-source-review-v247.json`. Exact7b7f source root_setup0b7d7203/71543 replaces only two existing static tuple literals after publication. Current verified predecessor/TTY/source actor/FD3 gates and safe fixed source retry retained; no recipe/catalog or broader source approval. Genuine full positive/unexcluded/Pi and all tasks/AC OPEN.
+
+
+## Immutable historical predecessor refinement v249
+
+Preserve BD-F03/LC-F03/AC01..02 and v235/v242. Use exact source-reviewed historical whole cohort and dedicated predecessor-only receipt in `planning/version-aware-predecessor-verification-v249.json`; old installed code never becomes current actor. Full closed release/pointer custody and original deadlines remain; no target acceptance.

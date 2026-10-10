@@ -225,3 +225,8 @@ Preserve AC13..15 and v244. Exact-wheel held policy/eligibility and root-only bo
 ### Gateway license policy role correction v248b
 
 Apply `planning/gateway-license-policy-release-role-v248b.json`: existing gateway-source-member for the exact separate policy row, no generic source enum or inclusion in application input closure. RT-T248.1/.2 and VD-T248.3 remain open.
+
+
+## Immutable historical predecessor refinement v249
+
+Preserve BD-F03/LC-F03/AC01..02 and v235/v242. Use exact source-reviewed historical whole cohort and dedicated predecessor-only receipt in `planning/version-aware-predecessor-verification-v249.json`; old installed code never becomes current actor. Full closed release/pointer custody and original deadlines remain; no target acceptance.

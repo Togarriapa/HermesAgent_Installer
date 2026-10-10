@@ -114,3 +114,10 @@ First source bootstrap actor v62: `plans/amendments/2026-10-10-first-source-boot
 
 
 - [ ] BD-T242.1 / VD-T242.2 (v247): Apply only exact reviewed root_setup two-table tuples and run unexcluded coherent source-update checks plus genuine full old/pre-v235 predecessor and target evidence; source approval remains separate from completion.
+
+
+## Immutable historical predecessor refinement v249
+
+- [ ] BD-T249.1 Implement internally selected reviewed whole historical cohort and distinct sealed predecessor receipt without old code execution/current actor weakening.
+- [ ] LC-T249.2 Wire observe/admission/reexec snapshot/rollback through same predecessor verifier and original pointer/closure custody.
+- [ ] VD-T249.3 Verify genuine historical/current predecessor positives, spoof/tamper/mixed/unknown cohort failures and real source-update/rollback; Pi acceptance separately open.

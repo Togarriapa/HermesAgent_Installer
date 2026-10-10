@@ -268,3 +268,10 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 ### Gateway license policy role correction v248b
 
 Apply `planning/gateway-license-policy-release-role-v248b.json`: existing gateway-source-member for the exact separate policy row, no generic source enum or inclusion in application input closure. RT-T248.1/.2 and VD-T248.3 remain open.
+
+
+## Immutable historical predecessor refinement v249
+
+- [ ] BD-T249.1 Implement internally selected reviewed whole historical cohort and distinct sealed predecessor receipt without old code execution/current actor weakening.
+- [ ] LC-T249.2 Wire observe/admission/reexec snapshot/rollback through same predecessor verifier and original pointer/closure custody.
+- [ ] VD-T249.3 Verify genuine historical/current predecessor positives, spoof/tamper/mixed/unknown cohort failures and real source-update/rollback; Pi acceptance separately open.
