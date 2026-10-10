@@ -13,6 +13,7 @@ from hermes_installer.authority.runtime_root_custody import (
     RuntimeRootCustodyUnavailable,
     _SEAL,
     _open_fixed_directory,
+    _open_journal_owned_directory,
     _read_journal,
     _write_journal,
 )
@@ -73,6 +74,58 @@ class RuntimeRootCustodyLinuxTests(unittest.TestCase):
             after = os.lstat(self.base / "hermes-installer")
             self.assertEqual((before.st_dev, before.st_ino), (after.st_dev, after.st_ino))
             self.assertEqual(stat.S_IMODE(after.st_mode), 0o700)
+        finally:
+            os.close(run_fd)
+
+    def test_interrupted_journaled_staging_create_resumes_same_inode(self) -> None:
+        run_fd = os.open(self.base, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        journal_dir = self.base / "journal"
+        journal_dir.mkdir(mode=0o700)
+        staging = ".hermes-authority-root-fixture"
+        try:
+            os.mkdir(staging, 0o711, dir_fd=run_fd)
+            staged_fd = os.open(staging, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=run_fd)
+            try:
+                info = os.fstat(staged_fd)
+                document = {"schema": 1, "journal": {"root_id": "fixture"},
+                            "prefix": {"state": "pending", "staging": staging,
+                                       "device": info.st_dev, "inode": info.st_ino}, "authority": None}
+                _write_journal(journal_dir, document)
+            finally:
+                os.close(staged_fd)
+            recovered_fd, recovered, created = _open_journal_owned_directory(
+                run_fd, "hermes-installer", document["prefix"], 0o711, [],
+                journal_dir, document, "prefix")
+            try:
+                self.assertFalse(created)
+                self.assertEqual((recovered.st_dev, recovered.st_ino), (info.st_dev, info.st_ino))
+                self.assertEqual(_read_journal(journal_dir)["prefix"],
+                                 {"state": "owned", "device": info.st_dev, "inode": info.st_ino})
+            finally:
+                os.close(recovered_fd)
+        finally:
+            os.close(run_fd)
+
+    def test_interrupted_create_never_adopts_a_racing_foreign_final(self) -> None:
+        run_fd = os.open(self.base, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        journal_dir = self.base / "journal"
+        journal_dir.mkdir(mode=0o700)
+        staging = ".hermes-authority-root-fixture"
+        try:
+            os.mkdir(staging, 0o711, dir_fd=run_fd)
+            staged = os.stat(staging, dir_fd=run_fd, follow_symlinks=False)
+            os.mkdir("hermes-installer", 0o711, dir_fd=run_fd)
+            foreign = os.stat("hermes-installer", dir_fd=run_fd, follow_symlinks=False)
+            document = {"schema": 1, "journal": {"root_id": "fixture"},
+                        "prefix": {"state": "pending", "staging": staging,
+                                   "device": staged.st_dev, "inode": staged.st_ino}, "authority": None}
+            _write_journal(journal_dir, document)
+            with self.assertRaises(RuntimeRootCustodyUnavailable):
+                _open_journal_owned_directory(run_fd, "hermes-installer", document["prefix"],
+                                              0o711, [], journal_dir, document, "prefix")
+            after = os.stat("hermes-installer", dir_fd=run_fd, follow_symlinks=False)
+            self.assertEqual((after.st_dev, after.st_ino), (foreign.st_dev, foreign.st_ino))
+            self.assertEqual(os.stat(staging, dir_fd=run_fd).st_ino, staged.st_ino)
         finally:
             os.close(run_fd)
 
