@@ -383,3 +383,4 @@ Active authority aggregate v231: planning/active-authority-receipt-aggregate-v23
 ## Retained qualification terminal v233
 
 See `planning/retained-qualification-oneshot-terminal-v233.json`: literal active/exited is terminal only with exact retained invocation/exit tuple, zero MainPID, dead PIDFD and empty owned cgroup. Result proof remains independent; collect only the verified quiescent owned unit after consumption, without lease renewal.
+Root service process lane v236: planning/root-service-process-authority-lane-v236.json requires actual selected6operation source declaration, separate strict protected root service binding and genuine resource-task/health admission issuer/consume; local user overlay ceiling and allow_effect remain unchanged. No weakened process validators/fakecaps or launchproof-as-grant. HI-T236.1/.2/VD-T236.3 OPEN; all AC OPEN.

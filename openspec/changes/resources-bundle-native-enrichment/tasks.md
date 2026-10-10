@@ -166,3 +166,7 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 - [ ] HI-T231.1: Implement actual retained active authority aggregate, pure root rendering and strict local-owner/Authentik identity-domain parsing using exact current source/runtime/NSS/effect receipts.
 - [ ] BD-T231.2: Consume the sealed aggregate in active compiler/publisher and reuse its exact generation in activation; preserve separate v214 crosswalk and absent optional remote.
 - [ ] VD-T231.3: Verify complete genuine receipt-to-core-to-publication/enrollment pipeline and tamper/currentness/deadline/retry/restart failures; target acceptance separately OPEN.
+
+- [ ] HI-T236.1: Produce actual selected reviewed six-operation process declaration and strict protected root-service process binding separately from local user overlay caps.
+- [ ] HI-T236.2: Integrate typed current source/task/health/control process admission and one-use consume into actual root manager paths; preserve all kernel and child authority checks.
+- [ ] VD-T236.3: Verify strict dual domain enrollment plus genuine task/health process effects, unchanged user ceiling and replay/currentness/sibling isolation failures; target acceptance separate.
