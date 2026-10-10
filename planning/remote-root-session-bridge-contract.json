@@ -513,6 +513,41 @@
         "rules_API": "Root private network owner compiles exact nft inet table hermes_installer_private only inside retained selected netns from listener/client row foreign keys and actual NSS exclusive role UIDs. Atomic nft transaction default drop input/output/forward plus only exact mapped UID/address/TCPport/conntrack direction rules above. Readback ruleset digest and actual netns interface/routes/manager bind BPF properties included in existing network receipt. Missing kernel/nft/manager support denies, no broad allow fallback.",
         "roles": "Remote group: gateway TCP client\u2192xpra display listener127.0.0.1:14500; Desktop uses selected Xauthority/X11 AF_UNIX and receives no TCP allow by default. Public cloudflared origin is only selected protected gateway AF_UNIX HTTP socket, outside isolated Xpra namespace; official cloudflared unix origin transport supports this. Provider group separate: native producer TCP client\u2192protected provider gateway listener port selected enrollment, gateway root RPC\u2192root broker upstream, no internet in pair netns. No other endpoints or ephemeral listener ports.",
         "runtime_evidence": "Actual installed systemd/nft/kernel tool artifact identities+SHA/versions/root-owned origin resolved from protected host tool catalog before rule application; no fabricated preknown host hash or global package replacement. Linux probes must prove allowed connect/reply, wrong UID/port/address/bind, sibling/host/external/DNS/IPv6 deny, changed netns/rules/cgroup/member UID invalidation. Source documentation supports mechanism; it does not prove actual target support."
+      },
+      "host_tool_variants": {
+        "artifact_id": "installer-private-loopback-nft-tool-variants-v1",
+        "source_path": "plans/amendments/2026-10-10-private-loopback-host-tool-pins-v103/nft-tool-variants-v1.json",
+        "installed_path": "templates/nft-tool-variants-v1.json",
+        "roles": [
+          "template"
+        ],
+        "sha256": "38737df6f1b2b15746646ceb57d14f80a92e70f001da320cffcd7694381a4e54",
+        "size_bytes": 3436,
+        "variant_ids": [
+          "nft-ubuntu24.04-arm64-1.0.9-1ubuntu0.1",
+          "nft-ubuntu24.04-amd64-1.0.9-1ubuntu0.1",
+          "nft-debian13-arm64-1.1.3-1"
+        ],
+        "root_call": "Private loopback network owner resolves_selected_nft_tool(current_verified_host_package_set_receipt,selected_network_binding)->RootSelectedNftTool. Actual receipt is root held readonly distribution package observation, exact installed package/current distro/architecture/executable and dependency closure, never Coral build/task receipt or caller version string. If no such actual package evidence adapter is implemented, deny with exact prerequisite rather than manufacture RootPackageSetReceipt.",
+        "tool_fields": [
+          "variant_id",
+          "package_name",
+          "version",
+          "distribution",
+          "release",
+          "architecture",
+          "package_sha256",
+          "executable_artifact_id",
+          "executable_sha256",
+          "dependency_closure_sha256",
+          "package_set_receipt_handle",
+          "executable_device",
+          "executable_inode",
+          "expires_monotonic"
+        ],
+        "checks": "Exact actual installed /usr/sbin/nft member re-open nofollow/root-owned executable/nonwritable; actual executable hash matches measured variant and package member, exact libnftables1 + current verified runtime dependency closure. Debian executable null is nonoperational pending actual source-backed executable measurement, not wildcard. Root retains fd/dev/inode/package-set lookup; recheck before apply/readback. OS/kernel/systemd actual held current host tool receipts remain distinct, never package hash as executable hash. Existing policy selected nft variant remains private root compiled host selection; no worker selector/catalog authority.",
+        "recipe": "Only fixed root nft check/apply/readback recipes inside exact retained namespace: check/apply root compiled nft transaction via bounded stdin (-c -f - / -f -), readback -j list ruleset; never worker script/file/argv. Receipt binds actual rules bytes digest, namespace inode/member UIDs/policy/manager/kernel observation; actual positive and denial probes required. All namespace mutation confined root-owned selected netns, no host firewall table/global package replacement.",
+        "measurement": "Owner measured signed apt-get update indexes plus apt-get download and isolated extraction; no target install. Ubuntu InRelease noble SHA cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0 and noble-updates33628844ee026b3c2563454ba83358b662721ed053d00ec3977a18653b10d6dd as evidence of the recorded extraction, not long-lived unverified index acceptance. Actual each acquisition revalidates current trusted distribution signatures/exact pinned package fields. These fixtures do not qualify physical Pi support."
       }
     },
     "root_launch_admission": {
