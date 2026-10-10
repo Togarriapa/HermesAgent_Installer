@@ -1987,6 +1987,48 @@ class InstalledBootstrapPolicyResolver:
             _fail("prepared authority base must bind the exact empty root-journal service snapshot")
 
     @staticmethod
+    def _validate_active_catalog_selections(catalogs: Mapping[str, tuple[Mapping[str, Any], ...]],
+                                            base: Mapping[str, Any]) -> None:
+        """Require active policy catalog selections to match their digest-bound rows."""
+        from .enrollment import _validate_service_generations
+        generation = base.get("service_generations")
+        if (not isinstance(generation, dict)
+                or generation == {"root_binding": "prepared_service_generation.exact_empty_snapshot"}):
+            _fail("active bootstrap policy requires a complete digest-bound service generation")
+        try:
+            normalized = _validate_service_generations(generation)
+        except Exception:
+            _fail("active bootstrap policy service generation is malformed or has broken joins")
+        joins = {
+            "protected_devices": "protected_devices",
+            "protected_build_records": "protected_build_records",
+            "native_packages": "native_packages",
+            "memory_enrollments": "memory_enrollments",
+            "operation_parameter_schemas": "operation_parameter_schemas",
+            "source_issuers": "source_issuers",
+            "resource_jobs": "resource_jobs",
+            "remote_session_enrollments": "remote_session_enrollments",
+            "resource_backend_enrollments": "resource_backend_enrollments",
+            "resource_body_recipes": "resource_body_recipes",
+            "resource_scope_bindings": "resource_scope_bindings",
+            "resource_validators": "resource_validators",
+            "root_journal_roots": "root_journal_roots",
+            "resource_controller_roles": "resource_controller_roles",
+            "native_mcp_tool_bindings": "native_mcp_tool_bindings",
+            "remote_observation_enrollments": "remote_observation_enrollments",
+            "native_schema_artifacts": "native_schema_artifacts",
+            "composio_channel_enrollments": "composio_channel_enrollments",
+            "channel_delivery_bindings": "channel_delivery_bindings",
+            "selected_resource_executions": "selected_resource_executions",
+            "selected_application_runtimes": "selected_application_runtimes",
+        }
+        for selected_name, generation_name in joins.items():
+            selected = tuple(_plain_json(row) for row in catalogs[selected_name])
+            actual = tuple(_plain_json(row) for row in normalized[generation_name])
+            if selected != actual:
+                _fail("active catalog selection differs from its digest-bound service-generation rows")
+
+    @staticmethod
     def _selection_row(value: Any, keys: set[str]) -> dict[str, Any]:
         if not isinstance(value, dict) or set(value) != keys:
             _fail("installed root selection row has unknown or missing fields")
@@ -4016,6 +4058,7 @@ class RootBootstrapSession:
         self._native_component_target_registry: Any | None = None
         self._native_registration_projection_registry: Any | None = None
         self._native_source_definition_registry: Any | None = None
+        self._native_schema_derivation_registry: Any | None = None
         self._native_policy_choices: dict[str, Any] = {}
         self._native_policy_tty_proofs: dict[str, Any] = {}
         self._native_policy_records_by_selection: dict[str, Any] = {}
@@ -4098,17 +4141,21 @@ class RootBootstrapSession:
             from .native_registration_projection import RootNativeRegistrationProjectionRegistry
             from .native_policy_preparation import RootNativePolicyPreparationRegistry
             from .native_source_definitions import RootNativeSourceDefinitionRegistry
+            from .native_schema_derivation import RootNativeSchemaDerivationRegistry
             journal = self._current_root_journal_selection().path
             binding = self._selected_installation
             targets = RootNativeComponentTargetRegistry.from_root_setup(binding, principal, journal)
             projections = RootNativeRegistrationProjectionRegistry.from_root_setup(binding, journal)
             source_definitions = RootNativeSourceDefinitionRegistry.from_selected_installation(binding)
+            schema_derivations = RootNativeSchemaDerivationRegistry.from_root_setup(binding, journal)
             registry = RootNativePolicyPreparationRegistry.from_root_setup(
                 binding, principal, targets, binding, projections, binding, journal)
             registry.attach_source_definition_registry(source_definitions)
+            registry.attach_schema_derivation_registry(schema_derivations)
             self._native_component_target_registry = targets
             self._native_registration_projection_registry = projections
             self._native_source_definition_registry = source_definitions
+            self._native_schema_derivation_registry = schema_derivations
             self._native_policy_preparation_registry = registry
         self._verify_current_setup_controller()
         return self._native_policy_preparation_registry
