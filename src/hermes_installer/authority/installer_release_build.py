@@ -2863,6 +2863,56 @@ def _read_private_json(path: Path, maximum: int) -> dict[str, Any]:
         os.close(fd)
 
 
+def _ensure_fixed_deployment_parent() -> None:
+    """Create only the root-owned fixed state prefix needed on first install."""
+    _require_linux_root()
+    varlib_fd = _open_secure_directory(Path("/var/lib"), expected_uid=0)
+    app_fd = deployments_fd = -1
+    try:
+        app_fd = _ensure_owned_directory_child(varlib_fd, "hermes-installer")
+        deployments_fd = _ensure_owned_directory_child(app_fd, "deployments")
+        for parent_fd, name, held_fd in ((varlib_fd, "hermes-installer", app_fd),
+                                         (app_fd, "deployments", deployments_fd)):
+            current_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                                 dir_fd=parent_fd)
+            try:
+                held, current = os.fstat(held_fd), os.fstat(current_fd)
+                if (current.st_uid != 0 or stat.S_IMODE(current.st_mode) != 0o700
+                        or current.st_dev != held.st_dev or current.st_ino != held.st_ino):
+                    raise InstallerReleaseBuildError("fixed deployment parent changed during provisioning")
+            finally:
+                os.close(current_fd)
+    finally:
+        if deployments_fd >= 0:
+            os.close(deployments_fd)
+        if app_fd >= 0:
+            os.close(app_fd)
+        os.close(varlib_fd)
+
+
+def _ensure_owned_directory_child(parent_fd: int, name: str) -> int:
+    if name not in {"hermes-installer", "deployments"}:
+        raise InstallerReleaseBuildError("directory target is outside fixed installer state")
+    try:
+        os.mkdir(name, 0o700, dir_fd=parent_fd)
+    except FileExistsError:
+        pass
+    except OSError:
+        raise InstallerReleaseBuildError("fixed deployment parent cannot be provisioned") from None
+    else:
+        os.fsync(parent_fd)
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                     dir_fd=parent_fd)
+    except OSError:
+        raise InstallerReleaseBuildError("fixed deployment parent is not a nofollow directory") from None
+    info = os.fstat(fd)
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o700):
+        os.close(fd)
+        raise InstallerReleaseBuildError("fixed deployment parent ownership or mode conflicts")
+    return fd
+
+
 def _read_deployment_predecessor() -> DeploymentPredecessor:
     parent_path = Path("/var/lib/hermes-installer/deployments")
     parent_fd = _open_secure_directory(parent_path, expected_uid=0)
@@ -2903,6 +2953,7 @@ def observe_deployment_predecessor() -> VerifiedDeploymentPredecessor:
     no caller path, bool, or parsed mapping is accepted as evidence.
     """
     _require_linux_root()
+    _ensure_fixed_deployment_parent()
     predecessor = _read_deployment_predecessor()
     now = time.monotonic()
     if predecessor.state == "absent":
