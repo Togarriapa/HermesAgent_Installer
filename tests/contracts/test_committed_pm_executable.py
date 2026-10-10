@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,6 +11,11 @@ from hermes_installer.authority.committed_pm_executable import (
     CommittedPMExecutableUnavailable,
     RootActiveCommittedPMExecutableResolver,
     _canonical,
+    _fresh_active_lease,
+    _require_same_current_adoption,
+    _require_not_revoked,
+    _select_exact_adoption,
+    _valid_active_adoption_window,
     _verify_revocation_index,
     _verify_signed_choice,
 )
@@ -105,6 +111,9 @@ def test_revocation_index_is_verified_and_any_selected_record_remains_denied():
         service_generation_digest="5" * 64,
         release_deployment_receipt_sha256="4" * 64,
     )
+    _require_not_revoked(claims["selection_handle"], {})
+    with pytest.raises(ValueError, match="durable revocation"):
+        _require_not_revoked(claims["selection_handle"], index)
     record["signature"] = "0" * 64
     with pytest.raises(ValueError, match="signature"):
         _verify_revocation_index(
@@ -112,3 +121,31 @@ def test_revocation_index_is_verified_and_any_selected_record_remains_denied():
             service_generation_digest="5" * 64,
             release_deployment_receipt_sha256="4" * 64,
         )
+
+
+def test_timely_adoption_remains_current_after_original_setup_deadline():
+    # This signed setup window ended long ago; current active publication and
+    # revocation checks, rather than that expired setup window, govern this lease.
+    assert _valid_active_adoption_window(10.0, 20.0, 19.0)
+    assert not _valid_active_adoption_window(10.0, 20.0, 20.01)
+    assert not _valid_active_adoption_window(10.0, 20.0, 9.99)
+    assert not _valid_active_adoption_window(None, 20.0, 19.0)
+    lease = _fresh_active_lease(100.0)
+    assert 0.0 < lease - 100.0 <= 30.0
+
+
+def test_missing_duplicate_or_replaced_publication_adoption_is_denied():
+    adoption = SimpleNamespace(
+        selection_handle="a" * 64, purpose="native-policy-preparation",
+        signed_record_sha256="1" * 64, publication_receipt_handle="publication-a",
+    )
+    assert _select_exact_adoption([adoption], "a" * 64) is adoption
+    with pytest.raises(ValueError, match="unique signed native choice adoption"):
+        _select_exact_adoption([], "a" * 64)
+    with pytest.raises(ValueError, match="unique signed native choice adoption"):
+        _select_exact_adoption([adoption, adoption], "a" * 64)
+    current = SimpleNamespace(**vars(adoption))
+    _require_same_current_adoption(current, adoption, "publication-a")
+    current.publication_receipt_handle = "publication-b"
+    with pytest.raises(ValueError, match="adoption changed"):
+        _require_same_current_adoption(current, adoption, "publication-a")
