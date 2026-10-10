@@ -133,7 +133,7 @@ _INSTALLER_MEMBER_PINS = {
          "f5e9fcb74b555dcd5d98bc37eec29c42cbe85f3793cf43f2dc97536b030d1b26", 22_679),
     "lib/python/hermes_installer/registry/resource_backends.py":
         ("installer-module:hermes_installer.registry.resource_backends",
-         "e59813aa36754a0e08fece9c9c2a83ec9c21a6807935a6c83f7b09cca6792414", 27_026),
+         "b7e3fb94b20a21c03c7ae521bea1ca808f7de323c5edd0c3d6d9741b29174843", 27_262),
 }
 _PRODUCER_MEMBER = (
     "lib/python/hermes_installer/authority/native_worker_start_recipe.py",
