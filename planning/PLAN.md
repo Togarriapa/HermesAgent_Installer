@@ -92,3 +92,6 @@ Same-worker namespace v190: `plans/amendments/2026-10-10-same-worker-namespace-h
 
 
 Two-actor health v191: `plans/amendments/2026-10-10-two-actor-health-commit-custody-v191.md`; HI-T191.1 → HI-T191.2 → HI-T191.3 → VD-T191.4 OPEN. Independent daemon commit/source proof and actual source run/completion; no setup-session copy or ACK health. All AC01..18 OPEN.
+
+
+Native selected views v192: `plans/amendments/2026-10-10-native-worker-selected-view-paths-v192.md`; HI-T192.1 → VD-T192.2 OPEN, source host identity distinct from actual worker mount/argv, full PM/native closure preserved. All AC01..18 OPEN.
