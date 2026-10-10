@@ -1,0 +1,3 @@
+# Xpra managed transform v106
+
+Refines existing HI-T09/HI-T13 managed source transformation: protected finite build target, actual official PM executable receipt distinct from archive SHA, exact installed stdlib module pin, regular compiled input plus exact five source link reconstruction and dynamic output specification. Producer belongs to build attestation owner; remote owns source/module/patch receipt. See adjacent exact JSON and live protected-runtime-assembly-contract. No native active-before-build cycle, new capabilities, fabricated executable hash or preknown output success. Local output measurements remain fixtures. All implementation/acceptance gates open; frozen baseline unchanged.

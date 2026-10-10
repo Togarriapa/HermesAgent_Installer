@@ -1,0 +1,3 @@
+# Native local result bounds v110
+
+HI08/v99 all18 source registration refinement: eight actual public-registry/owner-overlay tools lack effect action result schemas. Pin exact source handler closed envelopes/unions and explicit bounded recursive public JSON transport budget; public result remains untrusted and no authority. Actual module hashes verified against owner checkout. Other finance/wallet/backend source-receipt passthroughs remain unavailable until typed backend result schema, not generic object promotion. Exact artifact joins required before executable index; source-only inventory not authority. Original all18 and acceptance remain open; baseline unchanged.

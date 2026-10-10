@@ -139,5 +139,84 @@
     "runtime_preparation": "Existing RootSelectedInstallationBinding.resolve_application_runtime_preparation(application_id,source_receipt_handle,selected_lock_receipt_handle)->RootApplicationRuntimePreparationSelection BEFORE active application runtime row. Sealed setup source-owned finite builder/probe/artifact selection, actual dedicated component identity/root/toolchain/dependency lock manifest and source receipt/current controller; actual installed reviewed compiler/probe module full origin closure. No active application runtime receipt required to run its own bounded qualification probe. It grants only preparation/probe, not product workload or account/network access. Root runtime environment builder must resolve exact pinned platform/license/dependency artifacts with unreviewed lazy installs disabled; missing source lock/native ARM facts remains unavailable.",
     "probe_API": "run_selected_runtime_probe(preparation_selection_handle)->RootApplicationRuntimeProbeReceipt. Same dedicated application role/grant/owned custody route, fixed root-installed independently reviewed ABI/version/import-origin probe artifact and finite selected module list; no caller Python expression/import name/argv/network. Receipt schema,handle,application_id,preparation_selection_handle,source_receipt_handle,lock_sha256,runtime_manifest_sha256,toolchain_artifact_receipt_handles,terminal_receipt_handle,python_version,SOABI,machine,platform,import_origins_sha256,service_selection_digest,issued_monotonic,expires_monotonic,signature. Root verifies actual executable/environment member SHA/dev/inode/ownership/current source/lock and full imported selected origins against observed protected environment, not self-claimed stdout. record_observed_environment consumes THIS actual probe and held environment manifest; source RuntimeReview/Coral/HermesPM receipts are not substitutes.",
     "evidence": "Actual prepared locked isolated env probe then current active selected application fixture workflow, root managed effects and validated artifact capsule positive; controller/subject mismatch, raw roots/argv/caller grants, wrong app/source/runtime/ABI/schema/step/limits/budget/account, failed/ambiguous terminal, incomplete graph/render/browser/STT fixtures denied. Source/runtime probe is qualification not product functional/live acceptance. AllACpending."
+  },
+  "request_source_v107": {
+    "schema": 1,
+    "requirements": [
+      "SK-F03",
+      "R0067",
+      "R0138",
+      "AC12"
+    ],
+    "source_fact": {
+      "module": "hermes_installer.components.workloads",
+      "sha256": "1cf74bc94fd809636bd6102a0c601e6a9455b5c31701b20ee8bd41cb2ff9f71a",
+      "existing_dto": "Workload(id:str,arguments:Mapping[str,object])",
+      "production_native_mapping": null,
+      "finding": "Only four fixture recipes and test callsites exist. No native registration/action can be inferred for them."
+    },
+    "selected_rows_addition": "selected_application_runtimes remains exact v90 row. Do not add fictitious native action ID. Root workflow selection is a separate non-wire root-retained receipt joined to current enclosing active generation and current selected_application_runtimes row. Existing runtime row adapter_id remains actual workload adapter, not native tool registration.",
+    "owner_module": "hermes_installer.authority.application_workload_execution",
+    "producer": "RootApplicationWorkloadAuthority.observe_selected_qualification_request(root_setup_session_handle,workflow_id) -> opaque RootApplicationQualificationRequest handle",
+    "producer_checks": "Resolve current actual root installer setup actor/TTY controller lease, selected principal/private profile and selected application row independently; workflow_id is a finite non-authority request selector, exact source-owned mapping only. No caller Workload, argv/roots/URLs/source labels/grants. Root builds canonical Workload bytes, retaining actual source/controller/session provenance. Root-selected owned fixture receipt supplies browser URL. Never mark this fixture request as operational native source.",
+    "request_fields": [
+      "schema",
+      "request_handle",
+      "request_id",
+      "purpose",
+      "workflow_id",
+      "application_id",
+      "adapter_id",
+      "profile_id",
+      "profile_generation",
+      "principal_id",
+      "namespace_id",
+      "enclosing_service_generation_digest",
+      "selected_runtime_row_sha256",
+      "setup_session_id",
+      "controller_binding_handle",
+      "source_receipt_handles",
+      "source_context_digest",
+      "canonical_workload_sha256",
+      "argument_schema_id",
+      "fixture_receipt_handle",
+      "issued_monotonic",
+      "expires_monotonic",
+      "revocation_epoch"
+    ],
+    "purpose": "installer-application-qualification",
+    "canonical_workload": "UTF8 JSON sort_keys/separators compact/ensure_ascii=False over exact object {id:<fixed workload_id>,arguments:<root projected object>}; retained original observed request bytes and SHA separate from derived Workload digest. Admission binds both digests. No native canonical argument mutation/rename or action-name inference.",
+    "mapping": [
+      {
+        "workflow_id": "qualify-browser-use-v1",
+        "application_id": "browser-use",
+        "workload_id": "browser-fixture",
+        "argument_schema": {
+          "fixture_url": "exact endpoint from current retained root owned browser fixture server receipt only"
+        }
+      },
+      {
+        "workflow_id": "qualify-graphify-v1",
+        "application_id": "graphify",
+        "workload_id": "graphify-code-fixture",
+        "argument_schema": {}
+      },
+      {
+        "workflow_id": "qualify-hyperframes-v1",
+        "application_id": "hyperframes",
+        "workload_id": "hyperframes-render-fixture",
+        "argument_schema": {}
+      },
+      {
+        "workflow_id": "qualify-scrapegraph-v1",
+        "application_id": "scrapegraph-ai",
+        "workload_id": "scrapegraph-local-fixture",
+        "argument_schema": {}
+      }
+    ],
+    "resolver": "resolve_selected_qualification_request(request_handle) -> same sealed RootApplicationQualificationRequest plus private retained canonical_workload_bytes/controller/source closure. Non-consuming currentness check; admit_selected_workload consumes request once atomically with v104 admission, independently revalidates source/runtime/profile/generation/consent/account/budget/controller/expiry and exact schema. No authority from copied DTO.",
+    "native_route": "Actual future/source-reviewed native registration request must use protected explicit registration_id/action_id/argument projection and root invocation resolver. No current such row exists for these four fixture IDs, so native adapter route denies rather than guessing app_id from action arguments. Original application requirements remain open and fixtures are not substitute production completion.",
+    "consent": "At admission resolve actual native private-input consent for an observed native request, or current root installer qualification consent bound to the root setup subject/purpose and finite selected private routes. A snapshot account flag/credential ref or fixture request itself is not egress consent. v100 current consent registry may be reused only if exact purpose/selection/source matches; no extra active row inferred.",
+    "status": "Actual producer/runner/runtime/functional application acceptance pending; all18ACopen"
   }
 }
