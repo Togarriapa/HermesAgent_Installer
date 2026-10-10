@@ -360,3 +360,5 @@ Finite fixture-owned NSS subject v206: `plans/amendments/2026-10-10-fixture-subj
 Bootstrap handoff TTY reconfirmation v208: new explicit same-SHA observation after slow acquisition, same original controller/action/source/runtime joins, unchanged60s proof TTL and one-use transition. planning/bootstrap-handoff-tty-reconfirmation-v208.json; BD-T208.1/VD-T208.2 OPEN.
 
 Handoff reconfirmation source review v211: exact26cf root_setup sole leaf replacement in planning/bootstrap-handoff-reconfirmation-source-review-v211.json; all other source rows unchanged, no wider runtime cohort. BD-T208.1/VD-T208.2 pin application/unexcluded checks/target evidence OPEN.
+
+FD3 handoff verification: the fixed re-exec must explicitly clear and read back close-on-exec after descriptor placement, including the source-already-3 case, before passing the sealed transition to the same process image.

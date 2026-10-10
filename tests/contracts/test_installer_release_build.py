@@ -1360,6 +1360,68 @@ def test_fixed_reexec_driver_is_static_and_has_no_caller_identity_channel():
     assert "candidate_git_sha" not in source.split("transport =", 1)[0]
 
 
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="FD_CLOEXEC exec semantics require Linux")
+def test_bootstrap_fd3_survives_exec_and_same_fd_cloexec_is_repaired():
+    if not hasattr(os, "memfd_create"):
+        pytest.skip("sealed memfd is a Linux kernel facility")
+    descriptor = os.memfd_create("handoff-exec-test", os.MFD_ALLOW_SEALING | os.MFD_CLOEXEC)
+    saved_fd3 = None
+    try:
+        try:
+            saved_fd3 = os.dup(3)
+        except OSError:
+            pass
+        os.dup2(descriptor, 3, inheritable=False)
+        if descriptor != 3:
+            os.close(descriptor)
+        body = release_build._canonical_json({
+            "schema": 1, "handoff_handle": "h" * 43, "nonce": "n" * 43,
+        })
+        os.write(3, body)
+        seals = (release_build.fcntl.F_SEAL_WRITE | release_build.fcntl.F_SEAL_GROW
+                 | release_build.fcntl.F_SEAL_SHRINK | release_build.fcntl.F_SEAL_SEAL)
+        release_build.fcntl.fcntl(3, release_build.fcntl.F_ADD_SEALS, seals)
+        assert release_build.fcntl.fcntl(3, release_build.fcntl.F_GETFD) & release_build.fcntl.FD_CLOEXEC
+
+        release_build._install_bootstrap_transition_fd3(3)
+        assert not release_build.fcntl.fcntl(3, release_build.fcntl.F_GETFD) & release_build.fcntl.FD_CLOEXEC
+        code = ("import fcntl,os,sys; fd=3; "
+                "assert fcntl.fcntl(fd,fcntl.F_GET_SEALS) & 15 == 15; "
+                "assert os.read(fd,4097) == " + repr(body) + "; sys.exit(0)")
+        pid = os.fork()
+        if pid == 0:
+            try:
+                os.execve(sys.executable, [sys.executable, "-I", "-S", "-c", code],
+                          {"PATH": "/usr/bin:/bin"})
+            except BaseException:
+                os._exit(120)
+        _, status = os.waitpid(pid, 0)
+        assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
+
+        # The negative exec control proves the positive result depends on the
+        # explicit inheritance fix, rather than an ambient descriptor leak.
+        os.set_inheritable(3, False)
+        pid = os.fork()
+        if pid == 0:
+            try:
+                os.execve(sys.executable, [sys.executable, "-I", "-S", "-c",
+                                           "import os,sys; "
+                                           "exec(\"try: os.fstat(3)\\nexcept OSError: sys.exit(5)\\nsys.exit(0)\")"],
+                          {"PATH": "/usr/bin:/bin"})
+            except BaseException:
+                os._exit(120)
+        _, status = os.waitpid(pid, 0)
+        assert os.WIFEXITED(status) and os.WEXITSTATUS(status) != 0
+    finally:
+        try:
+            os.close(3)
+        except OSError:
+            pass
+        if saved_fd3 is not None:
+            os.dup2(saved_fd3, 3, inheritable=True)
+            os.close(saved_fd3)
+
+
 def test_runtime_handoff_cannot_be_constructed_without_registry_seal():
     with pytest.raises(TypeError, match="only be issued"):
         release_build.RootBootstrapRuntimeHandoff(object(), schema=1)

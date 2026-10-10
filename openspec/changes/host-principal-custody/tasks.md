@@ -451,3 +451,7 @@ Existing HI-T173.1/HI-T178.2/HI-T197.3/VD-T197.4 include exact fixture subject N
 - [ ] VD-T208.2: Verify slow acquisition, mismatch/drift/replay/expiry failures and review actual source pins/target result separately.
 
 - [ ] BD-T208.1 / VD-T208.2 (v211): Apply exact reviewed root_setup tuple only, run full unexcluded regressions and retain genuine target handoff evidence.
+
+- [x] BD-T208.1 FD3 defect: explicitly clear and verify close-on-exec for the same-fd placement case; preserve seals and handoff identity checks.
+- [x] VD-T208.2 FD3 regression: real ARM64 Linux Python 3.14 fork/exec positive and CLOEXEC negative controls; repository Linux integration test added.
+- [ ] VD-T208.2 target: repeat exact handoff on enrolled Pi and retain genuine target result; development container evidence is not Pi acceptance.

@@ -1148,3 +1148,7 @@ The installer SHALL apply only the root_setup source tuple in planning/bootstrap
 #### Scenario: Previous root setup source pin differs
 - **WHEN** the previous expected tuple rejects committed reconfirmation bytes
 - **THEN** only the reviewed root_setup leaf is replaced and full unexcluded verification remains required without target acceptance inference
+
+#### Scenario: Sealed handoff memfd is already descriptor 3
+- **WHEN** the fixed same-process re-exec installs its sealed transition memfd and that source descriptor is already 3 with close-on-exec set
+- **THEN** it explicitly clears and verifies close-on-exec on descriptor 3 before exec, and the child validates the same sealed bytes and journal binding

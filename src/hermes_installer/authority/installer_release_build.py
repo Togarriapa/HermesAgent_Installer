@@ -2267,8 +2267,7 @@ class RootBootstrapRuntimeHandoffRegistry:
         if memfd is None:
             raise BootstrapEnrollmentPending("sealed runtime descriptor is not retained")
         try:
-            os.dup2(memfd, 3, inheritable=True)
-            os.lseek(3, 0, os.SEEK_SET)
+            _install_bootstrap_transition_fd3(memfd)
             if memfd != 3:
                 os.close(memfd)
             self._memfds.pop(handoff.handoff_handle, None)
@@ -4283,6 +4282,20 @@ def _handoff_from_record(record: Mapping[str, Any]) -> RootBootstrapRuntimeHando
 def _fixed_reexec_argv(executable: Path) -> list[str]:
     """Start the sealed runtime without bytecode writes to its closure."""
     return [str(executable), "-B", "-I", "-S", "-c", _fixed_reexec_entry_code()]
+
+
+def _install_bootstrap_transition_fd3(memfd: int) -> None:
+    """Install the sealed transition memfd as inheritable descriptor 3."""
+    if memfd != 3:
+        os.dup2(memfd, 3, inheritable=True)
+    # dup2(fd, fd) is a kernel no-op. Explicitly clear CLOEXEC even when the
+    # memfd itself was allocated as descriptor 3, then verify the exec contract.
+    os.set_inheritable(3, True)
+    flags = fcntl.fcntl(3, fcntl.F_GETFD)
+    if flags & fcntl.FD_CLOEXEC or not os.get_inheritable(3):
+        raise BootstrapEnrollmentPending("sealed bootstrap descriptor is not inheritable")
+    os.fstat(3)
+    os.lseek(3, 0, os.SEEK_SET)
 
 
 def _fixed_reexec_entry_code() -> str:

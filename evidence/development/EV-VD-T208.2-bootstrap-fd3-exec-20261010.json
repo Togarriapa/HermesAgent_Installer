@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "requirements": ["BD-F02", "BD-T208.1", "VD-T208.2"],
+  "finding": {
+    "boundary": "RootBootstrapRuntimeHandoffRegistry.reexec_selected_bootstrap",
+    "cause": "When the CLOEXEC memfd is already descriptor 3, CPython 3.14 os.dup2(fd, fd, inheritable=True) reaches the kernel dup2 identity case, which leaves FD_CLOEXEC set; exec then closes descriptor 3 before the fixed source bootstrap reads it.",
+    "reproduction": "On ARM64 Linux Python 3.14.7, memfd_create returned 3 with F_GETFD=1; os.dup2(3, 3, inheritable=True) left F_GETFD=1 and get_inheritable(3)=false. The Pi trace does not include memfd allocation order, so occurrence of this exact branch on that target remains unproven.",
+    "repair": "After optional duplication, explicitly os.set_inheritable(3, True), verify F_GETFD has no FD_CLOEXEC and get_inheritable is true, fstat descriptor 3, and rewind it before exec."
+  },
+  "validation": {
+    "runtime": "ARM64 Linux Docker, python:3.14.7-slim image sha256:1195f96420d020fef9906988b14813d770ced8a16651abc546efb60e50b56d00",
+    "source_mount": "Read-only bind of this checkout; container removed after test.",
+    "positive": "Actual fork/exec retained sealed descriptor 3; child verified all four required seals and exact body; parent decoded exact descriptor.",
+    "negative": "CLOEXEC left set caused exec child os.fstat(3) to fail with EBADF.",
+    "repo_test": "PYTHONPATH=src Python3.14 pytest tests/contracts/test_installer_release_build.py: 56 passed, 8 skipped on Darwin host; Linux positive/negative exec exercised against the exact helper in ARM64 container.",
+    "root_setup_test": "PYTHONPATH=src python3.14 -m pytest -q tests/contracts/test_root_setup.py: 28 passed.",
+    "target_acceptance": "OPEN; no Raspberry Pi handoff or installation acceptance claimed."
+  },
+  "source_pin": {
+    "base_commit": "bd56513e3ba18ba81d360c68dc73ae7a52aea419",
+    "candidate_commit": "this evidence and code are committed together; identify by containing commit",
+    "root_setup_v211_pin": "unchanged",
+    "installed_release_builder_pin": "no builder self-pin added; future selected candidate source bytes remain bound by existing source CAS; target run remains required"
+  }
+}

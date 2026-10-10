@@ -143,3 +143,5 @@ Refinement v207: plans/amendments/2026-10-10-raspberry-pi-nft-dependency-observa
 Bootstrap handoff TTY reconfirmation v208: plans/amendments/2026-10-10-bootstrap-handoff-tty-reconfirmation-v208.md; BD-T208.1/VD-T208.2 OPEN; new explicit sameSHA/currentsamecontroller proof after staging, no blindTTLrenewal/allACOPEN.
 
 Bootstrap reconfirmation source review v211: plans/amendments/2026-10-10-bootstrap-handoff-reconfirmation-source-review-v211.md; exact26cf/root_setup sole leaf, BD-T208.1/VD-T208.2 application/tests/targetOPEN; no widercohort/allACOPEN.
+
+Bootstrap FD3 exec regression evidence: `evidence/development/EV-VD-T208.2-bootstrap-fd3-exec-20261010.json`. Python3.14/Linux ARM64 reproduced the CLOEXEC memfd-at-FD3 self-dup failure and verified explicit clear/readback plus sealed descriptor survival across exec. Unit/isolated-container checks pass; actual Pi handoff remains open.
