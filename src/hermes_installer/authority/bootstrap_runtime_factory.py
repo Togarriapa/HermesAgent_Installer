@@ -4426,9 +4426,9 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentPending("native result schema artifact ID is malformed")
         from .native_registration_projection import (
             RootNativeRegistrationResultSchemaReceiptRegistry,
-            reviewed_local_registration_result_schemas,
+            reviewed_packaged_registration_result_schemas,
         )
-        reviewed = reviewed_local_registration_result_schemas()
+        reviewed = reviewed_packaged_registration_result_schemas()
         matches = [row for row in reviewed if row.artifact_id == artifact_id]
         if len(matches) != 1:
             raise BootstrapEnrollmentPending("native result schema is outside the exact reviewed local set")
@@ -4450,7 +4450,8 @@ class RootBootstrapSession:
                 expected_uid=0,
             )
             self._native_schema_receipt_registry = RootNativeRegistrationResultSchemaReceiptRegistry(
-                observer, self._factory._receipt_registry, self._authorization)
+                observer, self._factory._receipt_registry, self._authorization,
+                release=self._factory._release, actor=self._factory._actor)
         binding = (prepared.provision_receipt_handle, prepared.generation_id)
         if self._native_schema_receipt_registry_minted_for not in {None, binding}:
             self._native_schema_receipts.clear()
