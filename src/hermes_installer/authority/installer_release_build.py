@@ -68,6 +68,32 @@ COMPOSIO_POLICY_TEMPLATE_PATH = "plans/amendments/2026-10-10-prepared-base-reade
 COMPOSIO_POLICY_TEMPLATE_ID = "installer-composio-whatsapp-catalog-read-policy-v1"
 COMPOSIO_POLICY_TEMPLATE_SHA256 = "319076116a060e371c10886e5c2cfea274ed4d985aa03f5e66a4f611f949cfc5"
 COMPOSIO_POLICY_TEMPLATE_BYTES = 528
+EXISTING_MODEL_STORE_TEMPLATE_PATH = (
+    "plans/amendments/2026-10-10-existing-model-store-selection-source-v139/"
+    "existing-model-store-root-template-v1.json")
+EXISTING_MODEL_STORE_TEMPLATE_ID = "installer-existing-model-store-root-template-v1"
+EXISTING_MODEL_STORE_TEMPLATE_SHA256 = "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f"
+EXISTING_MODEL_STORE_TEMPLATE_BYTES = 712
+REVIEWED_SOURCE_MODULES = (
+    ("hermes_installer.components.native_plugins",
+     "src/hermes_installer/components/native_plugins.py",
+     "lib/python/hermes_installer/components/native_plugins.py",
+     "a027311518a746a6b1bcd126fc677190f4fe0ec2ac91b941872b3cdc542a79e7", 28_259, "module"),
+    ("hermes_installer.components.public_registries",
+     "src/hermes_installer/components/public_registries.py",
+     "lib/python/hermes_installer/components/public_registries.py",
+     "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f", 29_374, "module"),
+    ("hermes_installer.native_invocations", "src/hermes_installer/native_invocations.py",
+     "src/hermes_installer/native_invocations.py",
+     "78a3452289df5b7343e5c650ad4260d51b3aa1056e2eedea02cc3a0bff7b8226", 40_107, "source-module"),
+    ("hermes_installer.native_boundary", "src/hermes_installer/native_boundary.py",
+     "src/hermes_installer/native_boundary.py",
+     "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb", 14_356, "source-module"),
+    ("hermes_installer.authority.native_source_definitions",
+     "src/hermes_installer/authority/native_source_definitions.py",
+     "lib/python/hermes_installer/authority/native_source_definitions.py",
+     "ca57637fd1eea4df70549391ba91b14b3842806ef6b789a4baa9d8954c7fdc22", 16_819, "module"),
+)
 REVIEWED_CAPABILITY_MAP_PATH = "plans/amendments/2026-10-10-reviewed-native-capability-selection-v91/reviewed-native-capability-map-v1.json"
 REVIEWED_CAPABILITY_MAP_ID = "installer-reviewed-native-capability-map-v1"
 REVIEWED_CAPABILITY_MAP_SHA256 = "41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565"
@@ -98,8 +124,9 @@ BOOTSTRAP_PYYAML_BYTES = 766_454
 BOOTSTRAP_DEPENDENCY_ARTIFACT_ID = "installer-bootstrap-pyyaml603-cp314-linux-arm64"
 BOOTSTRAP_RUNTIME_TTL_SECONDS = 600.0
 RELEASE_MANIFEST_PATH = "release-manifest.json"
-RELEASE_ROLES = frozenset({"launcher", "interpreter", "module", "template", "plan",
-                           "artifact-catalog", "bootstrap-policy", "baseline", "amendment"})
+RELEASE_ROLES = frozenset({"launcher", "interpreter", "module", "source-module", "template", "plan",
+                           "artifact-catalog", "bootstrap-policy", "baseline", "amendment",
+                           "runtime-member"})
 SOURCE_CAS_V65_ROOT = Path("/var/lib/hermes-installer/source-cas/installer")
 STAGED_LAUNCHER_SOURCE = "scripts/hermes-installer-root-setup"
 STAGED_LAUNCHER_PATH = "bin/hermes-installer-root-setup"
@@ -111,6 +138,7 @@ STAGED_IDENTITY_TEMPLATE_PATH = "templates/authentik-policy-template-v1.json"
 STAGED_PREPARED_BASE_TEMPLATE_PATH = "templates/prepared-authority-base-template-v1.json"
 STAGED_RECEIPT_BINDINGS_TEMPLATE_PATH = "templates/bootstrap-receipt-bindings-template-v1.json"
 STAGED_COMPOSIO_POLICY_TEMPLATE_PATH = "templates/composio-whatsapp-catalog-read-policy-v1.json"
+STAGED_EXISTING_MODEL_STORE_TEMPLATE_PATH = "templates/existing-model-store-root-template-v1.json"
 STAGED_REVIEWED_CAPABILITY_MAP_PATH = "templates/reviewed-native-capability-map-v1.json"
 STAGED_CATALOG_PATH = "catalog/artifacts.json"
 ROOT_PLAN_TEMPLATE_ARTIFACT_IDS = (
@@ -131,6 +159,14 @@ _DEPLOYMENT_PREDECESSOR_RECEIPTS: dict[str, tuple["VerifiedDeploymentPredecessor
 
 class InstallerReleaseBuildError(BootstrapEnrollmentError):
     """Candidate source or release-build custody failed verification."""
+
+
+def _runtime_output_roles(relative_path: str) -> tuple[str, ...]:
+    if relative_path == STAGED_INTERPRETER_PATH:
+        return ("interpreter",)
+    if relative_path.startswith("runtime/"):
+        return ("runtime-member",)
+    raise InstallerReleaseBuildError("runtime output path is outside the fixed interpreter closure")
 
 
 @dataclass(frozen=True, slots=True)
@@ -2339,18 +2375,48 @@ class VerifiedInstallerReleaseBuildReceipt:
             raise InstallerReleaseBuildError("sealed manifest does not describe the retained role closure")
 
     def open_file(self, relative_path: str) -> int:
-        self.verify_current()
+        # The publisher verifies the complete sealed closure before copying and
+        # again before committing its pointer.  Repeating that whole-tree hash
+        # here for every member turns a linear publication into O(files * tree
+        # size).  Keep each copy independently bound to its exact retained row:
+        # a no-follow FD, complete byte hash, metadata identity, and the same
+        # live receipt/root custody checks.  The publisher's final full verify
+        # detects sibling changes and additions before pointer publication.
+        self._verify_live_root()
         row = next((item for item in self.files if item.relative_path == relative_path), None)
         if row is None:
             raise InstallerReleaseBuildError("publisher requested a file outside the sealed output closure")
         fd = _open_relative(self._root_fd, relative_path, os.O_RDONLY)
-        info = os.fstat(fd)
-        digest, size = _hash_fd(fd, MAX_SOURCE_FILE_BYTES)
-        if digest != row.sha256 or size != row.size_bytes or info.st_dev != row.device or info.st_ino != row.inode:
+        try:
+            before = os.fstat(fd)
+            digest, size = _hash_fd(fd, MAX_SOURCE_FILE_BYTES)
+            after = os.fstat(fd)
+            self._verify_live_root()
+            if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                    or before.st_uid != self._expected_uid or before.st_dev != row.device
+                    or before.st_ino != row.inode or stat.S_IMODE(before.st_mode) != row.mode
+                    or before.st_size != row.size_bytes or digest != row.sha256 or size != row.size_bytes
+                    or (before.st_dev, before.st_ino, before.st_mode, before.st_size, before.st_nlink,
+                        before.st_uid, before.st_mtime_ns, before.st_ctime_ns)
+                    != (after.st_dev, after.st_ino, after.st_mode, after.st_size, after.st_nlink,
+                        after.st_uid, after.st_mtime_ns, after.st_ctime_ns)):
+                raise InstallerReleaseBuildError("release output changed while opening sealed file")
+            os.lseek(fd, 0, os.SEEK_SET)
+            return fd
+        except BaseException:
             os.close(fd)
-            raise InstallerReleaseBuildError("release output changed while opening sealed file")
-        os.lseek(fd, 0, os.SEEK_SET)
-        return fd
+            raise
+
+    def _verify_live_root(self) -> None:
+        if self._seal is not _SEAL or self._closed or self._consumed or self._root_fd < 0:
+            raise BootstrapEnrollmentPending("release build receipt is absent or already consumed")
+        if time.monotonic() >= self.expires_monotonic:
+            raise BootstrapEnrollmentPending("release build receipt expired before stage publication")
+        root = os.fstat(self._root_fd)
+        if (not stat.S_ISDIR(root.st_mode) or root.st_uid != self._expected_uid
+                or stat.S_IMODE(root.st_mode) & 0o077 or root.st_dev != self._root_device
+                or root.st_ino != self._root_inode):
+            raise InstallerReleaseBuildError("release build output root custody changed")
 
     def open_manifest(self) -> int:
         self.verify_current()
@@ -2501,7 +2567,8 @@ class RootInstalledReleaseBuilder:
         try:
             digest, size, body = _hash_and_read_fd(runtime_fd, MAX_SOURCE_FILE_BYTES)
             _write_relative(output_fd, STAGED_INTERPRETER_PATH, body, mode=0o555)
-            staged.append((STAGED_INTERPRETER_PATH, digest, size, 0o555, ("interpreter",)))
+            staged.append((STAGED_INTERPRETER_PATH, digest, size, 0o555,
+                           _runtime_output_roles(STAGED_INTERPRETER_PATH)))
         finally:
             os.close(runtime_fd)
         for row in interpreter.files:
@@ -2517,9 +2584,10 @@ class RootInstalledReleaseBuilder:
             path = "runtime/" + row.relative_path
             if path == STAGED_INTERPRETER_PATH:
                 continue
-            _write_relative(output_fd, path, body, mode=0o555 if row.mode & 0o111 else 0o444)
+            mode = 0o555 if row.mode & 0o111 else 0o444
+            _write_relative(output_fd, path, body, mode=mode)
             staged.append((path, row.sha256, row.size_bytes,
-                           0o555 if row.mode & 0o111 else 0o444, ("interpreter",)))
+                           mode, _runtime_output_roles(path)))
         for source_path, target, role, expected_sha256, expected_size in (
             (PLAN_TEMPLATE_PATH, STAGED_PLAN_TEMPLATE_PATH, "template", PLAN_TEMPLATE_SHA256, PLAN_TEMPLATE_BYTES),
             (COMPILER_TEMPLATE_PATH, STAGED_COMPILER_TEMPLATE_PATH, "template",
@@ -2532,6 +2600,8 @@ class RootInstalledReleaseBuilder:
              RECEIPT_BINDINGS_TEMPLATE_SHA256, RECEIPT_BINDINGS_TEMPLATE_BYTES),
             (COMPOSIO_POLICY_TEMPLATE_PATH, STAGED_COMPOSIO_POLICY_TEMPLATE_PATH, "template",
              COMPOSIO_POLICY_TEMPLATE_SHA256, COMPOSIO_POLICY_TEMPLATE_BYTES),
+            (EXISTING_MODEL_STORE_TEMPLATE_PATH, STAGED_EXISTING_MODEL_STORE_TEMPLATE_PATH, "template",
+             EXISTING_MODEL_STORE_TEMPLATE_SHA256, EXISTING_MODEL_STORE_TEMPLATE_BYTES),
             (REVIEWED_CAPABILITY_MAP_PATH, STAGED_REVIEWED_CAPABILITY_MAP_PATH, "template",
              REVIEWED_CAPABILITY_MAP_SHA256, REVIEWED_CAPABILITY_MAP_BYTES),
             (CATALOG_SOURCE_PATH, STAGED_CATALOG_PATH, "artifact-catalog", None, None),
@@ -2572,6 +2642,16 @@ class RootInstalledReleaseBuilder:
                 raise InstallerReleaseBuildError("loaded module digest differs from the exact source module")
             self._copy_source(source, output_fd, source_rel, target, ("module",))
             staged.append(self._last_output_row)
+        staged_paths = {row[0] for row in staged}
+        for _name, source_rel, target, expected_digest, expected_size, role in REVIEWED_SOURCE_MODULES:
+            source_row = source_files.get(source_rel)
+            if (source_row is None or source_row.sha256 != expected_digest
+                    or source_row.size_bytes != expected_size):
+                raise InstallerReleaseBuildError("finite native target source module differs from its reviewed pin")
+            if target not in staged_paths:
+                self._copy_source(source, output_fd, source_rel, target, (role,))
+                staged.append(self._last_output_row)
+                staged_paths.add(target)
         return staged
 
     def _copy_source(self, source: VerifiedInstallerDistributionReceipt, output_fd: int,
@@ -2701,6 +2781,7 @@ def _bootstrap_after_reexec() -> Any:
             or interpreter.runtime_prefix_sha256 != handoff.runtime_closure_sha256
             or interpreter.executable_sha256 != handoff.expected_executable_sha256):
         raise InstallerReleaseBuildError("observed root actor interpreter differs from the consumed handoff")
+    _load_installed_setup_module_closure()
     actor_verifier = RootSourceBootstrapActorVerifier.from_verified_source(
         distribution_registry, interpreter_registry)
     actor = actor_verifier.verify_current(distribution_handle, interpreter_handle)
@@ -2741,6 +2822,29 @@ def _bootstrap_after_reexec() -> Any:
         raise BootstrapEnrollmentPending("installed lifecycle launcher exec returned unexpectedly")
     finally:
         installed.close()
+
+
+def _load_installed_setup_module_closure() -> None:
+    """Load the exact future installed-launcher imports into the observed source closure.
+
+    The first-source actor execs the installed launcher after publishing its
+    release. Importing these fixed modules now lets the normal source actor
+    verifier bind their actual selected SourceCAS bytes into the release, so
+    the installed launcher does not depend on checkout-only Python modules.
+    No setup action is invoked here.
+    """
+    import importlib
+
+    for name in (
+        "hermes_installer.root_setup",
+        "hermes_installer.authority.installer_release",
+        "hermes_installer.authority.bootstrap_runtime_factory",
+    ):
+        try:
+            importlib.import_module(name)
+        except ImportError:
+            raise BootstrapEnrollmentPending(
+                "installed root setup module closure is unavailable from selected source") from None
 
 
 def _verify_frozen_baseline(root_fd: int, rows: tuple[DistributionFile, ...]) -> str:
@@ -3327,6 +3431,66 @@ def _open_secure_directory(path: Path, *, expected_uid: int) -> int:
     finally:
         if current >= 0:
             os.close(current)
+
+
+def ensure_initial_setup_fixed_prefixes() -> None:
+    """Create only the two fixed first-install config directories, without repair.
+
+    The installed root actor needs these directories before constructing its
+    credential-vault and first-selection registries. Existing objects are
+    observed and must already have the exact reviewed owner, group, and mode;
+    this routine never chmods, chowns, follows, or replaces an existing path.
+    """
+    if os.geteuid() != 0 or not sys.platform.startswith("linux"):
+        raise InstallerReleaseBuildError("initial setup prefixes require the installed Linux root actor")
+    etc_fd = _open_secure_directory(Path("/etc"), expected_uid=0)
+    try:
+        _ensure_owned_child_directory(etc_fd, "hermes-installer", 0o755)
+        setup_fd = os.open("hermes-installer", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                           dir_fd=etc_fd)
+        try:
+            _ensure_owned_child_directory(setup_fd, "credentials", 0o700)
+        finally:
+            os.close(setup_fd)
+    finally:
+        os.close(etc_fd)
+
+
+def _ensure_owned_child_directory(parent_fd: int, name: str, mode: int, *,
+                                  expected_uid: int = 0, expected_gid: int = 0) -> None:
+    if (name not in {"hermes-installer", "credentials"}
+            or (name == "hermes-installer" and mode != 0o755)
+            or (name == "credentials" and mode != 0o700)
+            or type(expected_uid) is not int or type(expected_gid) is not int):
+        raise InstallerReleaseBuildError("first-install directory is outside its fixed layout")
+    created = False
+    try:
+        os.mkdir(name, mode, dir_fd=parent_fd)
+        created = True
+    except FileExistsError:
+        pass
+    try:
+        child_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                           dir_fd=parent_fd)
+    except OSError:
+        raise InstallerReleaseBuildError("fixed first-install directory is not a real directory") from None
+    try:
+        info = os.fstat(child_fd)
+        if not stat.S_ISDIR(info.st_mode):
+            raise InstallerReleaseBuildError("fixed first-install path is not a directory")
+        if created:
+            # Only the directory exclusively created above may be normalized.
+            os.fchown(child_fd, expected_uid, expected_gid)
+            os.fchmod(child_fd, mode)
+            os.fsync(child_fd)
+            info = os.fstat(child_fd)
+        if (info.st_uid != expected_uid or info.st_gid != expected_gid
+                or stat.S_IMODE(info.st_mode) != mode):
+            raise InstallerReleaseBuildError("fixed first-install directory has conflicting custody or mode")
+    finally:
+        os.close(child_fd)
+    if created:
+        os.fsync(parent_fd)
 
 
 def _relative_below(root: Path, path: Path) -> str:

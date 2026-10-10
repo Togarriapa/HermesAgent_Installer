@@ -630,6 +630,11 @@ class _NativePluginContextResultAdapter:
         package = object.__getattribute__(self, "_NativePluginContextResultAdapter__package")
         adapter_id = object.__getattribute__(self, "_NativePluginContextResultAdapter__adapter_id")
         candidate = package.candidate(name)
+        # The pinned Hermes ``PluginContext.register_tool`` API receives the
+        # argument JSON Schema itself in ``schema``; name and description are
+        # separate parameters. Keep this comparison aligned with that API.
+        expected_schema = (None if candidate is None
+                           else _thaw_frozen_json(candidate.argument_schema))
         if (candidate is None or candidate.is_native_mcp or candidate.adapter_id != adapter_id
                 or candidate.native_server_name != "hermes-installer"
                 or toolset != candidate.toolset or description != candidate.description
@@ -1622,6 +1627,8 @@ def predeclare_selected_native_package(plugin_manager: object, package: Selected
                 registered = set()
                 setattr(plugin_manager, "_hermes_installer_native_registered_adapters", registered)
             registered.add(_adapter_id)
+
+            # The selected-package finalizer owns the phase-1 progress frame.
         module.register = register
         prepared[adapter_id] = module
     # Publish atomically after every adapter and key has been validated.

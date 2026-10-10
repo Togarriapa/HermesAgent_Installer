@@ -4,8 +4,11 @@ import builtins
 import contextlib
 import io
 import os
+import subprocess
+import tempfile
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import hermes_installer.root_setup as root_setup
@@ -22,6 +25,31 @@ from hermes_installer.root_setup import (
 
 
 class RootSetupBoundaryTests(unittest.TestCase):
+    def test_installed_launcher_disables_runtime_bytecode_writes(self) -> None:
+        source = Path(__file__).parents[2] / "scripts/hermes-installer-root-setup"
+        with tempfile.TemporaryDirectory() as temporary:
+            release = Path(temporary) / "release"
+            launcher = release / "bin/hermes-installer-root-setup"
+            interpreter = release / "runtime/bin/python"
+            capture = Path(temporary) / "argv.txt"
+            launcher.parent.mkdir(parents=True)
+            interpreter.parent.mkdir(parents=True)
+            launcher.write_bytes(source.read_bytes())
+            launcher.chmod(0o755)
+            interpreter.write_text(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE\"\n",
+                encoding="utf-8",
+            )
+            interpreter.chmod(0o755)
+
+            environment = {**os.environ, "CAPTURE": str(capture)}
+            result = subprocess.run([str(launcher), "install"], env=environment,
+                                    capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
+            args = capture.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(args[:4], ["-B", "-I", "-S", "-c"])
+            self.assertEqual(args[-1], "install")
+
     def test_candidate_choice_is_exact_root_tty_input_and_one_use(self) -> None:
         registry = RootBootstrapCandidateSelectionRegistry()
         candidate = "a" * 40
@@ -197,6 +225,43 @@ class RootSetupBoundaryTests(unittest.TestCase):
         bootstrap.assert_not_called()
         self.assertEqual(result.state, RootSetupState.PENDING)
 
+    def test_first_install_ensures_fixed_prefixes_before_credential_vault_composition(self) -> None:
+        from hermes_installer.authority.bootstrap_enrollment import BootstrapEnrollmentPending
+
+        class Held:
+            def close(self):
+                pass
+
+            def verify_current(self, *_args):
+                pass
+
+        predecessor = type("Predecessor", (), {
+            "state": "present-verified", "verified_release_receipt_handle": "held-release",
+            "verify_current": lambda self: None,
+        })()
+        actor = Held()
+        release = Held()
+
+        def compose_initial(*_args, **_kwargs):
+            self.assertTrue(ensure_prefixes.called)
+            raise BootstrapEnrollmentPending("composition fixture stop")
+
+        with patch.object(root_setup, "_require_root_linux"), \
+             patch("hermes_installer.authority.installer_release_build.observe_deployment_predecessor",
+                   return_value=predecessor), \
+             patch("hermes_installer.authority.installer_release_build.resolve_verified_deployment_release",
+                   return_value=Held()), \
+             patch("hermes_installer.authority.installer_release.InstalledRootReleaseVerifier.from_current_root_process",
+                   return_value=(release, actor)), \
+             patch.object(root_setup.Path, "lstat", side_effect=FileNotFoundError), \
+             patch("hermes_installer.authority.installer_release_build.ensure_initial_setup_fixed_prefixes") as ensure_prefixes, \
+             patch("hermes_installer.authority.bootstrap_runtime_factory.RootInitialSetupAggregate",
+                   side_effect=compose_initial):
+            result = run_root_setup_action(RootSetupAction.INSTALL)
+        ensure_prefixes.assert_called_once_with()
+        self.assertEqual(result.state, RootSetupState.PENDING)
+        self.assertEqual(result.phase, "runtime")
+
     def test_unverifiable_present_predecessor_fails_without_bootstrap_or_actor_fallback(self) -> None:
         from hermes_installer.authority.installer_release_build import InstallerReleaseBuildError
 
@@ -228,6 +293,29 @@ class RootSetupBoundaryTests(unittest.TestCase):
         self.assertIn("controlling terminal", output.getvalue())
         self.assertNotIn("sudo -- hermes-installer-root-setup install", output.getvalue())
         self.assertNotIn("/tmp", output.getvalue())
+
+    def test_qualification_dispatch_is_finite_and_never_enters_setup_lifecycle(self) -> None:
+        with patch("hermes_installer.root_setup.sys.stdin.isatty", return_value=True), \
+             patch("hermes_installer.root_setup.sys.stderr.isatty", return_value=True), \
+             patch("hermes_installer.root_setup._require_root_linux"), \
+             patch("hermes_installer.root_setup.run_root_setup_action",
+                   side_effect=AssertionError("qualification must not run install/resume/update")), \
+             patch("hermes_installer.root_setup._run_installed_qualification", return_value=4) as dispatch:
+            code = main(["qualify", "--suite", "resource-cron-task-v1"])
+        dispatch.assert_called_once_with("resource-cron-task-v1")
+        self.assertEqual(code, 4)
+
+    def test_qualification_rejects_missing_or_unreviewed_suite(self) -> None:
+        with self.assertRaises(SystemExit):
+            main(["qualify"])
+        with self.assertRaises(SystemExit):
+            main(["qualify", "--suite", "caller-selected-suite"])
+        with self.assertRaises(SystemExit):
+            main(["qualify", "--suite", "resource-cron-task-v1", "--suite", "display-xauthority-v1"])
+        with self.assertRaises(SystemExit):
+            main(["--suite", "resource-cron-task-v1", "qualify"])
+        with self.assertRaises(SystemExit):
+            main(["install", "--suite", "resource-cron-task-v1"])
 
 
 if __name__ == "__main__":

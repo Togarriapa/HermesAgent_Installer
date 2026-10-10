@@ -37,6 +37,8 @@ Fresh Access membership checks use a second least-privilege credential scoped to
 
 An exact current-policy decision requires repeated bounded reads of the same application, complete bounded policy set and selected OTP provider. Resolver, API, cancellation or time-bound failure denies. The runtime lock contains only the dedicated component environment. The separate CI fixture lock targets x86-64 Python 3.13 and is test-only; it does not replace the hash-pinned ARM64 Python 3.14 runtime lock or prove Pi readiness.
 
+The remote-security CI job runs contract fixtures with `unittest` discovery and installs only its pinned JWT, cryptography, HTTP and WebSocket test dependencies. Its Xpra source fixture uses the repository root emitted by `git archive` and checks the complete regular-file, directory, executable-mode and five approved symlink-target closure before expanding aliases. This job contributes fixture evidence for AC13–AC15; passing it does not satisfy their separate Cloudflare-account or Pi-target acceptance evidence.
+
 Host startup and shutdown still require the installer-owned systemd/cgroup supervisor and native service acceptance. A fixture UID exchange proves the Linux peer-credential boundary only; it is not proof of systemd custody, Pi identity, Access-policy propagation, Desktop sandbox, or Xpra process/window confinement.
 # Root tunnel credential and origin readiness
 

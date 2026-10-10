@@ -1,0 +1,192 @@
+{
+  "schema_version": 1,
+  "record_kind": "operator_reported_read_only_sudo_diagnostic",
+  "state": "report_only",
+  "authenticated": false,
+  "acceptance_record_emitted": false,
+  "accepted_target_result": false,
+  "target": {
+    "connect_device_id": "48dfbc75-8877-40bb-b391-9b08301911ad",
+    "target_name": "PI-HERMES",
+    "owner": "admin",
+    "uid": 1000,
+    "gid": 1000,
+    "architecture": "aarch64",
+    "model": "Raspberry Pi 5 Model B Rev 1.1"
+  },
+  "stage": {
+    "path": "/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/acceptance/sudo-diagnostic-post-enable-20261010",
+    "owner": "admin",
+    "mode": "0700"
+  },
+  "observations": [
+    {
+      "purpose": "verify noninteractive sudo authorization after user enablement",
+      "command_summary": "timeout 5s sudo -n /usr/bin/true",
+      "started_at": "2026-10-10T08:50:36Z",
+      "ended_at": "2026-10-10T08:50:36Z",
+      "exit_code": 0,
+      "timed_out": false,
+      "stdout": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "stderr": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "effect_limit": "Only /usr/bin/true was executed through sudo; no installer or service mutation occurred."
+    },
+    {
+      "purpose": "read-only identity, selected existing service, and listening-socket inventory",
+      "command_summary": "sudo -n id; read-only systemctl show for cloudflared-hermes.service and hermes-pi-testd.service; ss -ltnp",
+      "started_at": "2026-10-10T08:51:02Z",
+      "ended_at": "2026-10-10T08:51:02Z",
+      "exit_code": 0,
+      "timed_out": false,
+      "stdout": {
+        "bytes": 1413,
+        "sha256": "a0e1342f2c074537cf56752b971947471bdd4e77501e6fd73688fdf2a9b03f3a"
+      },
+      "stderr": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "observed_identity": "uid=0",
+      "existing_services": [
+        {"unit": "cloudflared-hermes.service", "loaded": true, "active_state": "inactive", "sub_state": "dead", "modified": false},
+        {"unit": "hermes-pi-testd.service", "loaded": true, "active_state": "inactive", "sub_state": "dead", "modified": false}
+      ],
+      "listeners": [
+        {"port": 111, "process": "rpcbind/systemd"},
+        {"port": 22, "process": "sshd"},
+        {"address": "127.0.0.1", "port": 9119, "process": "socat", "pid": 1285923},
+        {"port": 42537, "process": "containerd", "pid": 963},
+        {"port": 8000, "process": "docker-proxy", "pid": 1973057}
+      ],
+      "effect_limit": "Inventory only. Foreign services and processes were preserved; no service, listener, account, or installation changes occurred."
+    },
+    {
+      "purpose": "check sudo availability for reading the expected installed release and deployment roots",
+      "command_summary": "sudo -n stat and sudo -n namei checks of the fixed release/state/current-receipt paths",
+      "commands": [
+        "sudo -n /usr/bin/stat -c '%n uid=%u gid=%g mode=%a type=%F links=%h' -- /usr/lib/hermes-installer/releases /var/lib/hermes-installer /var/lib/hermes-installer/deployments/current.json",
+        "sudo -n /usr/bin/namei -l -- /usr/lib/hermes-installer/releases /var/lib/hermes-installer /var/lib/hermes-installer/deployments/current.json"
+      ],
+      "started_at": "2026-10-10T09:16:45Z",
+      "ended_at": "2026-10-10T09:16:45Z",
+      "exit_code": 1,
+      "timed_out": false,
+      "stdout": {
+        "bytes": 58,
+        "sha256": "75c29648a10af6298e88142c676c0a472fd76903938c6168bfefd4984cc720d2",
+        "path": "/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/acceptance/sudo-diagnostic-post-enable-20261010/roots.stdout"
+      },
+      "stderr": {
+        "bytes": 58,
+        "sha256": "684fdb5bda20eb59c961402f8710d2e4d9b633aded9d9d332db5bd9cc2c4be4f",
+        "path": "/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/acceptance/sudo-diagnostic-post-enable-20261010/roots.stderr"
+      },
+      "exit_record_path": "/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/acceptance/sudo-diagnostic-post-enable-20261010/roots.exit",
+      "start_time_path": "/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/acceptance/sudo-diagnostic-post-enable-20261010/roots-start.utc",
+      "end_time_path": "/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/acceptance/sudo-diagnostic-post-enable-20261010/roots-end.utc",
+      "result": "sudo was no longer noninteractive; no privileged root stat succeeded",
+      "effect_limit": "The attempted check did not stat or mutate the protected roots."
+    },
+    {
+      "purpose": "unprivileged discovery of expected installer release and state paths after sudo expiry",
+      "command_summary": "stat and namei checks on fixed installer paths; no privileged execution",
+      "started_at": "2026-10-10T09:17:17Z",
+      "ended_at": "2026-10-10T09:17:17Z",
+      "wrapper_exit_code": 0,
+      "inner_exit_codes": {"stat": 1, "namei": 1},
+      "commands": [
+        "stat -c '%n uid=%u gid=%g mode=%a type=%F links=%h' -- /usr/lib/hermes-installer/releases /var/lib/hermes-installer /var/lib/hermes-installer/deployments/current.json",
+        "namei -l -- /usr/lib/hermes-installer/releases /var/lib/hermes-installer /var/lib/hermes-installer/deployments/current.json"
+      ],
+      "privilege": "unprivileged admin UID 1000",
+      "stdout": {
+        "bytes": 585,
+        "sha256": "2855774f4e989207f0530f911db2e7fe33c7995694a397be4cb17b6bddc09bdc",
+        "path": "/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/acceptance/sudo-diagnostic-post-enable-20261010/roots-admin.stdout"
+      },
+      "stderr": {
+        "bytes": 256,
+        "sha256": "637100de8aa52c8784c0f43cf980bbf113f571d774558613b9ff755f2be2e601",
+        "path": "/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/acceptance/sudo-diagnostic-post-enable-20261010/roots-admin.stderr"
+      },
+      "queried_paths": [
+        "/usr/lib/hermes-installer/releases",
+        "/var/lib/hermes-installer",
+        "/var/lib/hermes-installer/deployments/current.json"
+      ],
+      "result": "All queried installer release/state/current-receipt paths were absent; namei observed existing parent directories through /usr/lib and /var/lib as root:root 0755 and no symlink before the missing hermes-installer component.",
+      "effect_limit": "Unprivileged metadata lookup only; no installation or filesystem mutation occurred."
+    },
+    {
+      "purpose": "recheck noninteractive sudo after a later user-reported enablement",
+      "command_summary": "timeout 5s sudo -n /usr/bin/true",
+      "started_at": "2026-10-10T09:48:11Z",
+      "ended_at": "2026-10-10T09:48:11Z",
+      "shell_identity": {"uid": 1000, "user": "admin"},
+      "exit_code": 1,
+      "timed_out": false,
+      "stdout": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "stderr": {
+        "bytes": 29,
+        "sha256": "9b3a3b7a78f239c4473bb193476b1a860c91f1c2b4fab9c7639eceea414a60fb"
+      },
+      "stderr_summary": "sudo: a password is required",
+      "stage_path": "/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/acceptance/sudo-state-check-20261010T0918Z",
+      "stage_owner_uid": 1000,
+      "stage_owner_gid": 1000,
+      "stage_mode": "0700",
+      "output_files_retained": true,
+      "output_filenames_reported": false,
+      "effect_limit": "No command was run with elevated privileges; only a sudo availability check was attempted."
+    }
+  ],
+  "retention": {
+    "output_paths_known_for_some_observations": true,
+    "09_16_root_check_output_paths_returned": true,
+    "09_48_sudo_check_output_filenames_returned": false,
+    "raw_outputs_copied": false
+  },
+  "supersedes": {
+    "prior_observation": "The 2026-10-10T07:17:38Z sudo -n result was exit 1 and password-required before user enablement; sudo was temporarily available at 08:50:36Z and 08:51:02Z, then unavailable noninteractively at 09:16:45Z and again at 09:48:11Z after the latest user-reported enablement.",
+    "scope": "The 2026-10-10T09:48:11Z check was the fresh check after the latest user-reported enablement and returned password-required. It is the latest measured privilege state in this record; no later enablement or check is claimed. These observations do not alter acceptance state."
+  },
+  "acceptance_assertions": {
+    "AC01": null,
+    "AC02": null,
+    "AC03": null,
+    "AC04": null,
+    "AC05": null,
+    "AC06": null,
+    "AC07": null,
+    "AC08": null,
+    "AC09": null,
+    "AC10": null,
+    "AC11": null,
+    "AC12": null,
+    "AC13": null,
+    "AC14": null,
+    "AC15": null,
+    "AC16": null,
+    "AC17": null,
+    "AC18": null
+  },
+  "not_observed": [
+    "privileged installer execution or deployment",
+    "service activation, adoption, or mutation",
+    "privileged confirmation of the release/state roots (the subsequent check was unprivileged and found them absent)",
+    "resolution of listener-port conflicts",
+    "Cloudflare or other account mutation",
+    "native profile/plugin operation",
+    "authenticated enrolled-target Result"
+  ],
+  "claim_limit": "These bounded read-only commands show sudo availability and current service/listener observations only. All AC01-AC18 remain open."
+}

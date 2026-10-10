@@ -11,6 +11,8 @@ from unittest.mock import patch
 from hermes_installer.authority.source_observers import (
     LiveSourceProducer,
     NativeInitialInputDelivery,
+    PendingPublicNativeInputDisclosure,
+    RootPublicNativeInputObservation,
     RootNativeExecutionSelectionRegistry,
     RootSelectedNativeExecution,
     SourceObserverEnrollment,
@@ -301,6 +303,29 @@ def _consumer_context(service, receipt, *, profile="gateway-profile", uid=2002):
 
 
 class SourceObserverContracts(unittest.TestCase):
+    def test_public_input_observation_is_digest_only_and_public_classification_is_typed(self):
+        fields = dict(
+            observation_handle="o" * 40,
+            disclosure_observation_handle="d" * 40,
+            retained_input_selection_handle="s" * 40,
+            input_sha256=_digest("a"), input_size_bytes=1,
+            source_observation_handle="n" * 40,
+            public_permission_selection_handle="p" * 40,
+            principal_id="principal", profile_id="profile", namespace_id="namespace",
+            profile_generation="generation", service_generation_digest=_digest("b"),
+            source_classification=Sensitivity.PUBLIC,
+            parent_source_receipt_handles=("parent-handle",),
+            controller_binding_handle="controller-binding",
+            issued_monotonic=10.0, expires_monotonic=20.0,
+            _issuer_token=object(),
+        )
+        proof = RootPublicNativeInputObservation(**fields)
+        self.assertFalse(hasattr(proof, "payload_bytes"))
+        self.assertFalse(hasattr(proof, "parent_receipts"))
+        with self.assertRaises(ValueError):
+            RootPublicNativeInputObservation(
+                **{**fields, "source_classification": Sensitivity.PRIVATE})
+
     def test_private_provider_route_candidates_are_finite_and_protected(self):
         fields = dict(
             observer_enrollment_id="observer.native.primary", source_kind="native-input",
@@ -313,15 +338,23 @@ class SourceObserverContracts(unittest.TestCase):
             capture_schema_id="schema.capture.request", source_action_id="authenticated-input",
             target_id="provider.fixed", recipient="public-provider",
             allowed_parent_source_kinds=[], private_provider_route_ids=["route.private.codex"],
+            public_web_scope_ids=["scope.public.alpha", "scope.public.beta"],
         )
         selected = SourceObserverEnrollment.from_protected_record(fields)
         self.assertEqual(selected.private_provider_route_ids, ("route.private.codex",))
+        self.assertEqual(selected.public_web_scope_ids,
+                         ("scope.public.alpha", "scope.public.beta"))
         legacy = dict(fields)
         legacy.pop("private_provider_route_ids")
+        legacy.pop("public_web_scope_ids")
         self.assertEqual(SourceObserverEnrollment.from_protected_record(legacy).private_provider_route_ids, ())
+        self.assertEqual(SourceObserverEnrollment.from_protected_record(legacy).public_web_scope_ids, ())
         with self.assertRaises(AuthorityDenied):
             SourceObserverEnrollment.from_protected_record(
                 {**fields, "private_provider_route_ids": ["route.private.codex", "route.private.codex"]})
+        with self.assertRaises(AuthorityDenied):
+            SourceObserverEnrollment.from_protected_record(
+                {**fields, "public_web_scope_ids": ["scope.public.beta", "scope.public.alpha"]})
 
     def setUp(self):
         self.service = _Service()
@@ -384,6 +417,46 @@ class SourceObserverContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             selections._private_consent_selection_handle(self.enrollment, running)
         self.addCleanup(self.registry.close)
+
+    def test_public_permission_selection_is_independent_and_never_coexists_with_private_choice(self):
+        handle = "p" * 43
+        principal = SimpleNamespace(
+            uid=self.enrollment.producer_uid,
+            profile_id=self.enrollment.profile_id,
+            principal_id=self.enrollment.principal_id,
+            namespace_id=self.enrollment.namespace_id,
+        )
+
+        class _PermissionRegistry:
+            service = self.service
+
+            def selection_handle_for_current_profile(self, selected):
+                if selected is not principal:
+                    raise AuthorityDenied("permission.selection", "wrong principal")
+                return handle
+
+        self.service.public_input_permission_registry = _PermissionRegistry()
+        self.service.bindings_by_uid = {principal.uid: principal}
+        selections = object.__new__(RootNativeExecutionSelectionRegistry)
+        selections.service = self.service
+        running = SimpleNamespace(source=SimpleNamespace(
+            profile_id=principal.profile_id,
+            principal_id=principal.principal_id,
+            namespace_id=principal.namespace_id,
+        ))
+        self.assertEqual(
+            selections._public_input_permission_selection_handle(self.enrollment, running), handle)
+        class _PrivateRegistry:
+            service = self.service
+
+            def selection_handle_for_current_profile(self, selected):
+                if selected is not principal:
+                    raise AuthorityDenied("consent.selection", "wrong principal")
+                return "q" * 43
+
+        self.service.private_input_consent_registry = _PrivateRegistry()
+        with self.assertRaises(AuthorityDenied):
+            selections._validate_input_permission_choice(self.enrollment, running)
 
     def test_native_input_delivery_wire_is_bounded_and_contains_no_payload(self):
         delivery = NativeInitialInputDelivery(
@@ -709,6 +782,60 @@ class SourceObserverContracts(unittest.TestCase):
         self.assertNotIn(str(result), self.service._source_receipt_handles)
         self.assertFalse(input_delivery.cancel_selected_input(selected))
         self.assertFalse(self.registry.revoke_source_handle(result))
+
+    def test_public_input_capture_waits_for_exact_root_tty_disclosure(self):
+        observer = replace(self.enrollment, public_web_scope_ids=("scope.public.alpha",))
+        self.registry.observers = {observer.observer_enrollment_id: observer}
+        selected = RootSelectedNativeExecution(
+            schema=1, selection_handle="u" * 43, kind="resource-task",
+            execution_handle=SimpleNamespace(parent_closure_digest=_digest("c")),
+            process_handle=SimpleNamespace(process_id="managed-task-process"),
+            observer_enrollment_id=observer.observer_enrollment_id,
+            profile_id=observer.profile_id, generation=observer.generation,
+            native_package_id=observer.package_id,
+            native_package_generation=observer.native_package_generation,
+            source_action_id=observer.source_action_id,
+            service_generation_digest=_digest("2"), expires_monotonic=39.0,
+            private_consent_selection_handle=None,
+            public_input_permission_selection_handle="p" * 43,
+        )
+        target = SimpleNamespace(
+            process_id="managed-task-process", profile_id=self.identity.profile_id,
+            generation=self.identity.generation, peer_pid=733, peer_pidfd=901,
+            uid=self.identity.kernel_uid, live_peer_identity=self.identity,
+            loaded_package_proof=self.registry.loaded_package_proof_resolver(
+                self.identity, observer, peer_pid=733, peer_pidfd=901),
+            service_generation_digest=_digest("2"), expires_monotonic=39.0,
+        )
+
+        class _Selection:
+            def resolve_current_execution(self, candidate):
+                if candidate is not selected:
+                    raise AuthorityDenied("resource.native_selection", "forged selection")
+                return candidate
+
+            def consume_selected_native_input_target(self, candidate, received):
+                if candidate is not selected or received is not target:
+                    raise AuthorityDenied("resource.native_target", "forged target")
+                return received
+
+        pending = self.registry.capture_selected_native_input_for_disclosure(
+            observer.observer_enrollment_id, payload_bytes=b"exact public prompt",
+            parent_context=_context(self.service, b"exact public prompt"),
+            selected_execution=selected, target=target,
+            selection_registry=_Selection(),
+        )
+        self.assertIs(type(pending), PendingPublicNativeInputDisclosure)
+        self.assertEqual(self.service.observations, [])
+        observation = self.registry.resolve_current_retained_selected_input(
+            pending.retained_observed_input_handle, pending.selected_execution_handle)
+        self.assertEqual(observation.payload_bytes, b"exact public prompt")
+        self.assertEqual(observation.payload_sha256, hashlib.sha256(b"exact public prompt").hexdigest())
+        self.assertIs(self.registry.resolve_current_selected_execution(selected.selection_handle), selected)
+        self.assertTrue(self.registry.cancel_pending_public_input_disclosure(
+            pending.retained_observed_input_handle, pending.selected_execution_handle))
+        self.assertFalse(self.registry.verify_current_retained_selected_input(
+            pending.retained_observed_input_handle, pending.selected_execution_handle))
 
     def test_root_recipe_capsule_is_resolved_from_signed_receipt_and_consumed_once(self):
         event_id = self.record()

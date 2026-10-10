@@ -208,12 +208,155 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
             artifact_catalog=artifact_catalog, vault=vault,
         )
     service.root_authority_runtime = authority_runtime
-    # Memory stays unavailable until the active service-generation records
-    # join typed MemoryServiceEnrollment values to a protected root-journal
-    # resolver and the per-step HI12 effect issuer. The older memory_providers
-    # sidecar and a guessed /var/lib path are not authority to create state or
-    # register effects.
+    if authority_runtime is not None:
+        authority_runtime = _finalize_active_setup_choice_registry(
+            service=service, enrollment=enrollment, bindings=runtime_bindings,
+            runtime=authority_runtime,
+        )
+        service.root_authority_runtime = authority_runtime
+        authority_runtime = _finalize_active_memory_lifecycle(
+            service=service, enrollment=enrollment, bindings=runtime_bindings,
+            runtime=authority_runtime,
+        )
+        service.root_authority_runtime = authority_runtime
+    # The listener cannot accept effects until both post-compose finalization
+    # phases above have returned. Memory lifecycle evidence is deliberately
+    # composed only after the durable setup-choice registry is attached.
     return service, enrollment
+
+
+def _finalize_active_setup_choice_registry(*, service: AuthorityService,
+                                           enrollment: Any, bindings: Any,
+                                           runtime: Any) -> Any:
+    """Complete the durable-choice graph after its signer runtime is active.
+
+    The authority signer deliberately requires ``service.root_authority_runtime``
+    to already be the fully composed object. This is therefore a second,
+    one-time composition phase before the daemon returns the service to its
+    listener. Missing release/publication/journal evidence leaves choice-based
+    routes unavailable; a partial attachment is a startup error.
+    """
+    from dataclasses import replace
+    from .runtime_composition import RootAuthorityRuntime, _AUTHORITY_JOURNAL_ROOT_ID
+
+    if (type(runtime) is not RootAuthorityRuntime or runtime.service is not service
+            or runtime.bindings is not bindings or bindings is not service.root_runtime_bindings):
+        raise AuthorityDenied("setup.choice", "active setup-choice composition has no exact root runtime")
+    if getattr(bindings, "root_setup_choice_registry", None) is not None:
+        raise AuthorityDenied("setup.choice", "durable setup-choice registry was already attached")
+
+    release = runtime.controller_release_receipt
+    actor = runtime.controller_actor_observation
+    if release is None or actor is None:
+        try:
+            from .installer_release import InstalledRootReleaseVerifier
+            release, actor = InstalledRootReleaseVerifier.from_current_root_process()
+            runtime = replace(runtime, controller_release_receipt=release,
+                              controller_actor_observation=actor)
+            service.root_authority_runtime = runtime
+        except Exception as exc:
+            return replace(
+                runtime,
+                consent_unavailable_reason=(
+                    f"active setup-choice registry lacks the installed release/actor proof ({type(exc).__name__})"
+                ),
+            )
+
+    registry = None
+    try:
+        from .root_setup_choices import RootSetupChoiceRegistry
+        from .setup_policy_publication import PolicyPublicationReceiptResolver
+
+        if (enrollment.protected_enrollment_digest != bindings.service_generation_digest
+                or enrollment.protected_enrollment_digest != service.service_generation_digest):
+            raise AuthorityDenied("setup.choice", "active enrollment digest changed during finalization")
+        publication = PolicyPublicationReceiptResolver.resolve_current()
+        journal = bindings.resolve_root_journal(
+            _AUTHORITY_JOURNAL_ROOT_ID,
+            expected_active_generation_digest=enrollment.protected_enrollment_digest,
+        )
+        registry = RootSetupChoiceRegistry.from_root_runtime(
+            release, publication, service, journal,
+        )
+        bindings.attach_root_setup_choice_registry(registry, service)
+        from .root_runtime_foreground_tty import RootRuntimeForegroundTTYObserver
+        foreground_tty = RootRuntimeForegroundTTYObserver.from_root_runtime(
+            verified_installer_release=release,
+            current_installed_actor_verifier=actor,
+            active_bindings=bindings,
+            root_journal=journal,
+        )
+        registry.attach_foreground_tty_observer(foreground_tty)
+        runtime = replace(runtime, root_setup_choice_registry=registry,
+                          consent_unavailable_reason=None)
+        return runtime
+    except Exception as exc:
+        if (registry is not None
+                or getattr(bindings, "root_setup_choice_registry", None) is not None
+                or getattr(service, "_root_setup_choice_registry", None) is not None):
+            raise AuthorityDenied(
+                "setup.choice", "durable setup-choice attachment was partial; restart the root service",
+            ) from None
+        return replace(
+            runtime,
+            consent_unavailable_reason=(
+                f"durable active setup-choice registry is unavailable ({type(exc).__name__})"
+            ),
+        )
+
+
+def _finalize_active_memory_lifecycle(*, service: AuthorityService,
+                                      enrollment: Any, bindings: Any,
+                                      runtime: Any) -> Any:
+    """Compose memory lifecycle once, after durable choices are attached.
+
+    This phase deliberately reuses the exact memory runtime and network lease
+    resolver created by core composition. It does not rebuild services,
+    listeners, or providers, and does not substitute capture consent for the
+    explicit adopted service-enable choice.
+    """
+    from dataclasses import replace
+    from .runtime_composition import RootAuthorityRuntime
+
+    if type(runtime) is not RootAuthorityRuntime or runtime.service is not service or runtime.bindings is not bindings:
+        raise AuthorityDenied("memory.lifecycle", "post-choice lifecycle composition lacks the exact active runtime")
+    if not enrollment.memory_enrollments:
+        return runtime
+    choices = runtime.root_setup_choice_registry
+    if (choices is None or bindings.root_setup_choice_registry is not choices
+            or getattr(service, "_root_setup_choice_registry", None) is not choices):
+        return replace(
+            runtime,
+            memory_lifecycle_unavailable_reason="durable adopted memory service-enable choice is unavailable",
+        )
+
+    memory_runtime = runtime.memory_runtime
+    network_resolver = None
+    if isinstance(memory_runtime, Mapping):
+        connector = memory_runtime.get("namespace_connector")
+        network_resolver = getattr(connector, "private_network_lease_resolver", None)
+    try:
+        from .memory_runtime_composition import compose_root_memory_runtime
+        composed = compose_root_memory_runtime(
+            bindings=bindings, enrollment=enrollment,
+            memory_runtime=memory_runtime, service=service,
+            root_setup_choice_registry=choices,
+            vault=runtime.vault,
+            network_lease_resolver=network_resolver,
+            monotonic=service.monotonic,
+        )
+        return replace(
+            runtime,
+            memory_runtime_composition=composed,
+            memory_lifecycle_unavailable_reason=composed.unavailable_reason,
+        )
+    except Exception as exc:
+        return replace(
+            runtime,
+            memory_lifecycle_unavailable_reason=(
+                f"post-choice root memory lifecycle composition rejected ({type(exc).__name__})"
+            ),
+        )
 
 
 def serve_authority(service: AuthorityService, *, socket_gid_by_uid: Mapping[int, int],

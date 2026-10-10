@@ -18,6 +18,7 @@ from hermes_installer.protected_enrollment import (
     ProtectedDeviceCatalog,
     ProtectedEnrollmentCatalog,
     ProtectedRootJournalCatalog,
+    RootSelectedPublicWebScope,
     _canonical,
     _parse_profile,
 )
@@ -237,14 +238,22 @@ def test_private_memory_catalog_getters_rejoin_exact_service_routes_and_endpoint
         private_memory_model_selections=[_private_model_row()],
     )
     endpoint = catalog.resolve_private_memory_endpoint_binding("endpoint-selection-a")
+    selected_endpoint = catalog.resolve_private_memory_endpoint_for_service(
+        "service-a", "memory-gen-a", "profile-a", "principal-a",
+    )
     model = catalog.resolve_private_memory_model_binding("model-selection-a", "endpoint-selection-a")
     assert endpoint.service_generation_digest == catalog.digest
+    assert selected_endpoint is endpoint
     assert model.endpoint_binding_id == endpoint.binding_id
-    assert resolved_routes == ["memory-search-v1", "memory-search-v1", "memory-search-v1"]
+    assert resolved_routes == ["memory-search-v1"] * 4
     with pytest.raises(EnrollmentDenied, match="another endpoint"):
         catalog.resolve_private_memory_model_binding("model-selection-a", "other-endpoint")
     with pytest.raises(EnrollmentDenied, match="absent or stale"):
         catalog.resolve_private_memory_model_binding("unknown-model")
+    with pytest.raises(EnrollmentDenied, match="no unique selected endpoint"):
+        catalog.resolve_private_memory_endpoint_for_service(
+            "service-a", "memory-gen-a", "profile-a", "other-principal",
+        )
 
 
 def test_private_memory_catalog_denies_stale_process_join_and_unknown_model_endpoint(monkeypatch):
@@ -773,6 +782,131 @@ def test_v113_native_workflow_refs_are_ordered_and_owned_by_the_registration():
     with pytest.raises(EnrollmentDenied, match="workflow action belongs to another adapter"):
         NativePackageBinding.from_protected_record({**row, "action_records": [action, wrong_adapter],
                                                      "workflow_records": [foreign_workflow]})
+
+
+def test_public_web_scope_parser_binds_canonical_payload_and_rejects_unsafe_targets():
+    raw = {
+        "enrollment_id": "web-scope-a", "target_id": "docs-a", "generation": "process-g1",
+        "principal_id": "principal-a", "profile_id": "profile-a", "recipient": "recipient-a",
+        "targets": [{"hostname": "docs.example.org", "path_prefixes": ["/api", "/docs"],
+                     "query_keys": ["lang", "q"]}],
+        "request_bytes_limit": 8192, "response_bytes_limit": 65536, "deadline_seconds": 10,
+        "target_selection_handle": "selection-a", "configuration_observation_handle": "observation-a",
+        "configuration_sha256": "a" * 64, "target_contract_artifact_id": "contract-a",
+        "target_contract_sha256": "b" * 64, "target_contract_source_receipt_handle": "receipt-a",
+    }
+    parsed = RootSelectedPublicWebScope.from_protected_record(
+        raw, service_generation_digest="c" * 64,
+    )
+    payload = {key: raw[key] for key in (
+        "enrollment_id", "target_id", "generation", "principal_id", "profile_id", "recipient",
+        "targets", "request_bytes_limit", "response_bytes_limit", "deadline_seconds",
+    )}
+    assert parsed.enrolled_scope.target == "plugin:web:docs-a:process-g1"
+    assert parsed.enrolled_scope.targets[0].hostname == "docs.example.org"
+    canonical_payload = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode("utf-8")
+    assert parsed.scope_payload == canonical_payload
+    assert parsed.scope_payload_sha256 == hashlib.sha256(canonical_payload).hexdigest()
+    assert type(parsed.enrolled_scope.deadline_seconds) is int
+    assert parsed.service_generation_digest == "c" * 64
+
+    for bad in (
+        {**raw, "extra": True},
+        {**raw, "targets": [{**raw["targets"][0], "hostname": "127.0.0.1"}]},
+        {**raw, "targets": [{**raw["targets"][0], "hostname": "docs.example.org."}]},
+        {**raw, "targets": [{**raw["targets"][0], "path_prefixes": ["/docs/../private"]}]},
+        {**raw, "targets": [{**raw["targets"][0], "path_prefixes": ["/docs/%2e%2e/private"]}]},
+        {**raw, "targets": [{**raw["targets"][0], "path_prefixes": ["/docs", "/api"]}]},
+        {**raw, "targets": [{**raw["targets"][0], "query_keys": ["access_token"]}]},
+        {**raw, "deadline_seconds": True},
+        {**raw, "response_bytes_limit": 2_097_153},
+        {**raw, "configuration_sha256": "A" * 64},
+    ):
+        with pytest.raises(EnrollmentDenied):
+            RootSelectedPublicWebScope.from_protected_record(
+                bad, service_generation_digest="c" * 64,
+            )
+
+
+def test_public_web_scope_catalog_joins_exact_action_issuer_and_process_epoch(monkeypatch):
+    from hermes_installer.authority.enrollment import SourceIssuerRecord
+
+    profile = SimpleNamespace(profile_id="profile-a", generation="process-g1",
+                              principal_id="principal-a", enrollment_id="service-a")
+    action = {
+        "action_binding_id": "web:action:read", "adapter_id": "web",
+        "action_id": "read", "manifest_sha256": "1" * 64,
+        "adapter_artifact_id": "adapter-code", "adapter_sha256": "2" * 64,
+        "argument_schema_id": "web-args", "result_schema_id": "web-result",
+        "effect_enrollment_id": "web-scope-a", "operation": "plugin.web.read",
+        "capability": "plugin:web", "target_id": "plugin:web:docs-a:process-g1",
+        "recipient": "recipient-a", "generation": "package-g1", "observer_enrollment_ids": [],
+    }
+    package = {
+        "package_id": "package-a", "profile_id": "profile-a", "generation": "package-g1",
+        "profile_generation": "process-g1", "source_revision": "rev-a",
+        "source_tree_sha256": "3" * 64, "compiled_closure_artifact_id": "closure-a",
+        "compiled_closure_sha256": "4" * 64, "entrypoint_artifact_id": "entry-a",
+        "entrypoint_sha256": "5" * 64, "resolver_artifact_id": "resolver-a",
+        "resolver_sha256": "6" * 64, "service_package_root_id": "root-a",
+        "service_mount_id": "mount-a", "adapter_records": [], "action_records": [action],
+        "registration_records": [], "workflow_records": [], "process_role_records": [],
+    }
+    issuer = SourceIssuerRecord(
+        "native-input", "profile-a", "role-a", "7" * 64, "capture-v1", (),
+        "process-g1", "observer-a", ("authenticated-input",), (), ("web-scope-a",),
+    )
+    raw_scope = {
+        "enrollment_id": "web-scope-a", "target_id": "docs-a", "generation": "process-g1",
+        "principal_id": "principal-a", "profile_id": "profile-a", "recipient": "recipient-a",
+        "targets": [{"hostname": "docs.example.org", "path_prefixes": ["/docs"], "query_keys": ["q"]}],
+        "request_bytes_limit": 8192, "response_bytes_limit": 65536, "deadline_seconds": 10,
+        "target_selection_handle": "selection-a", "configuration_observation_handle": "observation-a",
+        "configuration_sha256": "8" * 64, "target_contract_artifact_id": "contract-a",
+        "target_contract_sha256": "9" * 64, "target_contract_source_receipt_handle": "receipt-a",
+    }
+    monkeypatch.setattr(ProtectedEnrollmentCatalog, "resolve", lambda self, *_args: profile)
+    catalog = ProtectedEnrollmentCatalog(
+        {("service-a", "process-g1"): profile}, digest="c" * 64,
+        native_packages=[package], source_issuers=[issuer], public_web_scopes=[raw_scope],
+    )
+    selected = catalog.resolve_current_public_web_scopes(
+        ["web-scope-a"], principal_id="principal-a", profile_id="profile-a",
+        profile_generation="process-g1", service_generation_digest="c" * 64,
+    )
+    assert len(selected) == 1
+    assert selected[0].target_selection_handle == "selection-a"
+    assert catalog.resolve_current_public_web_scopes(
+        [], principal_id="principal-a", profile_id="profile-a",
+        profile_generation="process-g1", service_generation_digest="c" * 64,
+    ) == ()
+    with pytest.raises(EnrollmentDenied, match="principal/profile generation"):
+        catalog.resolve_current_public_web_scopes(
+            ["web-scope-a"], principal_id="other", profile_id="profile-a",
+            profile_generation="process-g1", service_generation_digest="c" * 64,
+        )
+    with pytest.raises(EnrollmentDenied, match="stale generation"):
+        catalog.resolve_current_public_web_scopes(
+            ["web-scope-a"], principal_id="principal-a", profile_id="profile-a",
+            profile_generation="process-g1", service_generation_digest="d" * 64,
+        )
+    with pytest.raises(EnrollmentDenied, match="source issuer"):
+        ProtectedEnrollmentCatalog(
+            {("service-a", "process-g1"): profile}, digest="c" * 64,
+            native_packages=[package], source_issuers=[
+                SourceIssuerRecord("native-input", "profile-a", "role-a", "7" * 64,
+                                   "capture-v1", (), "other-generation", "observer-a",
+                                   ("authenticated-input",), (), ("web-scope-a",)),
+            ], public_web_scopes=[raw_scope],
+        )
+    with pytest.raises(EnrollmentDenied, match="sorted by enrollment ID"):
+        ProtectedEnrollmentCatalog(
+            {("service-a", "process-g1"): profile}, digest="c" * 64,
+            native_packages=[package], source_issuers=[issuer],
+            public_web_scopes=[raw_scope, {**raw_scope, "generation": "process-g2"}],
+        )
 
 
 def test_memory_connector_route_binds_variant_port_and_exact_route():

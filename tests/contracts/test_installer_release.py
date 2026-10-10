@@ -11,7 +11,9 @@ from unittest.mock import patch
 
 from hermes_installer.authority.installer_release import (
     DEPLOYMENT_RECEIPT_PATH, InstalledRootReleaseVerifier, InstallerReleaseError,
-    RootActorObservation, VerifiedInstallerReleaseReceipt, _open_verified_fd,
+    RootActorObservation, VerifiedInstallerReleaseReceipt, VerifiedReleaseFile,
+    REVIEWED_SOURCE_MODULES, REVIEWED_SOURCE_ARTIFACTS, FIXED_TEMPLATES, LAUNCHER_PATH, INTERPRETER_PATH,
+    PLAN_PATH, ARTIFACT_CATALOG_PATH, REQUIRED_LAUNCHER_MODULES, _fixed_roles, _open_verified_fd,
     _read_fixed_file, _safe_relative, _verify_complete_tree, _SEAL,
     _artifact_id_for, _module_name, _validate_fixed_layout_role,
 )
@@ -89,7 +91,7 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
             _validate_fixed_layout_role("plans/bootstrap-policy-v1.json",
                                         "1" * 64, 10, ["bootstrap-policy"])
 
-    def test_current_fixed_template_closure_matches_v72_v77_v81_pins(self):
+    def test_current_fixed_template_closure_includes_literal_existing_model_store_root(self):
         from hermes_installer.authority.installer_release import FIXED_TEMPLATES
         expected = {
             "templates/root-setup-plan-template-v1.json":
@@ -101,17 +103,125 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
             "templates/composio-whatsapp-catalog-read-policy-v1.json":
                 ("installer-composio-whatsapp-catalog-read-policy-v1",
                  "319076116a060e371c10886e5c2cfea274ed4d985aa03f5e66a4f611f949cfc5", 528),
+            "templates/existing-model-store-root-template-v1.json":
+                ("installer-existing-model-store-root-template-v1",
+                 "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f", 712),
         }
         actual = {path: (artifact_id, digest, size)
                   for artifact_id, path, digest, size in FIXED_TEMPLATES}
         for path, value in expected.items():
             self.assertEqual(actual[path], value)
-        self.assertEqual(len(actual), 6)
+        self.assertEqual(len(actual), 8)
+        self.assertEqual(
+            _artifact_id_for("templates/existing-model-store-root-template-v1.json", ["template"]),
+            "installer-existing-model-store-root-template-v1",
+        )
+        _validate_fixed_layout_role(
+            "templates/existing-model-store-root-template-v1.json",
+            "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f",
+            712, ["template"],
+        )
         with self.assertRaises(InstallerReleaseError):
             _validate_fixed_layout_role(
                 "templates/composio-whatsapp-catalog-read-policy-v1.json",
                 "0" * 64, 528, ["template"],
             )
+
+    def test_reviewed_native_source_modules_are_finite_pinned_release_rows(self):
+        expected = {
+            "installer-module:hermes_installer.components.native_plugins": (
+                "lib/python/hermes_installer/components/native_plugins.py",
+                "a027311518a746a6b1bcd126fc677190f4fe0ec2ac91b941872b3cdc542a79e7", 28_259, "module"),
+            "installer-module:hermes_installer.components.public_registries": (
+                "lib/python/hermes_installer/components/public_registries.py",
+                "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f", 29_374, "module"),
+            "installer-native-invocations-module-v137": (
+                "src/hermes_installer/native_invocations.py",
+                "78a3452289df5b7343e5c650ad4260d51b3aa1056e2eedea02cc3a0bff7b8226", 40_107, "source-module"),
+            "installer-native-boundary-module-v137": (
+                "src/hermes_installer/native_boundary.py",
+                "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb", 14_356, "source-module"),
+            "installer-native-source-definitions-module-v137": (
+                "lib/python/hermes_installer/authority/native_source_definitions.py",
+                "ca57637fd1eea4df70549391ba91b14b3842806ef6b789a4baa9d8954c7fdc22", 16_819, "module"),
+        }
+        self.assertEqual({artifact_id: (path, digest, size, role)
+                          for artifact_id, path, digest, size, role in REVIEWED_SOURCE_MODULES}, expected)
+        rows = [
+            VerifiedReleaseFile("installer-root-setup-launcher-v1", ("launcher",), LAUNCHER_PATH,
+                                "1" * 64, 1, 1, 1, 0o555),
+            VerifiedReleaseFile("installer-root-setup-interpreter-v1", ("interpreter",), INTERPRETER_PATH,
+                                "2" * 64, 1, 1, 2, 0o555),
+            VerifiedReleaseFile("installer-root-setup-plan-v1", ("plan",), PLAN_PATH,
+                                "3" * 64, 1, 1, 3, 0o444),
+            VerifiedReleaseFile("installer-protected-artifact-catalog-v1", ("artifact-catalog",),
+                                ARTIFACT_CATALOG_PATH, "4" * 64, 1, 1, 4, 0o444),
+        ]
+        rows.extend(VerifiedReleaseFile(artifact_id, ("template",), path, digest, size, 1, 10 + i, 0o444)
+                    for i, (artifact_id, path, digest, size) in enumerate(FIXED_TEMPLATES))
+        rows.extend(VerifiedReleaseFile(artifact_id, (role,), path, digest, size, 1, 100 + i, 0o444)
+                    for i, (artifact_id, path, digest, size, role) in enumerate(REVIEWED_SOURCE_MODULES))
+        rows.extend(VerifiedReleaseFile(artifact_id, ("module",), path, f"{i + 8:064x}", 100 + i,
+                                        1, 300 + i, 0o444)
+                    for i, (artifact_id, path) in enumerate(REQUIRED_LAUNCHER_MODULES))
+        rows.append(VerifiedReleaseFile("runtime-member:python3", ("runtime-member",),
+                                        "runtime/bin/python3", "7" * 64, 1, 1, 7, 0o555))
+        rows.extend((
+            VerifiedReleaseFile("baseline-file", ("baseline",), "plans/2026-10-09-v1/file.json",
+                                "5" * 64, 1, 1, 200, 0o444),
+            VerifiedReleaseFile("amendment-file", ("amendment",), "plans/amendments/ref/file.json",
+                                "6" * 64, 1, 1, 201, 0o444),
+        ))
+        self.assertEqual(_fixed_roles(rows, "closure.json"), ("installer-root-setup-plan-v1", "3" * 64))
+        bad = list(rows)
+        index = next(i for i, row in enumerate(bad) if row.artifact_id == REVIEWED_SOURCE_MODULES[0][0])
+        row = bad[index]
+        bad[index] = VerifiedReleaseFile(row.artifact_id, row.roles, row.relative_path,
+                                         "0" * 64, row.size_bytes, row.device, row.inode, row.mode)
+        with self.assertRaises(InstallerReleaseError):
+            _fixed_roles(bad, "closure.json")
+        worker = next(i for i, row in enumerate(rows)
+                      if row.artifact_id == "installer-native-invocations-module-v137")
+        bad_role = list(rows)
+        row = bad_role[worker]
+        bad_role[worker] = VerifiedReleaseFile(row.artifact_id, ("module",), row.relative_path,
+                                               row.sha256, row.size_bytes, row.device, row.inode, row.mode)
+        with self.assertRaises(InstallerReleaseError):
+            _fixed_roles(bad_role, "closure.json")
+
+    def test_glm_source_artifact_ids_bind_exact_baseline_and_amendment_members(self):
+        repo = Path(__file__).parents[2]
+        expected = {
+            "installer-application-toolchain-source-policy-v144": (
+                "plans/amendments/2026-10-10-hyperframes-toolchain-source-v144/hyperframes-toolchain-source-v1.json",
+                "81b9e3655ddb627c46d828690687a1600fd9a7455af4c4fc5a90c32b3991a5d6", 7_060, "amendment"),
+            "installer-application-pep517-backend-sources-v1": (
+                "plans/amendments/2026-10-10-pep517-backend-source-closure-v152/application-pep517-backend-source-table-v1.json",
+                "c7d64c6ca0a186437d32b8093df0be0a3dc660fc721172e7ce1a56fd5a87c623", 15_907, "amendment"),
+            "glm52-artifact-metadata-v1": (
+                "planning/glm52-artifact-metadata.json",
+                "b42e3fa6fd5c287b95fcda4d370697bd4c0ef226767ddc08fae4e5bebcfecd1a", 56_232, "baseline"),
+            "glm52-upstream-mit-license-cf457fa": (
+                "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-upstream-MIT-LICENSE.txt",
+                "f4a18c6ae40b0a8e7d2b7667f52f6e1994e54a46430d2e172b73cb8c9b5eb0d7", 1_065, "amendment"),
+            "glm52-quantized-readme-6bbb01e": (
+                "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-quantized-README.md",
+                "85fc4cf947276c376f09ad1226926ebc03eefbb99d184cd05f34412d32d8406b", 17_468, "amendment"),
+            "installer-native-input-capture-profile-v1": (
+                "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-input-capture-profile-v1.json",
+                "bfdf7175ee1df681b60ab4b707ffe9d314d8cc7fdc5a30a56e19d2cb1372c1d0", 837, "amendment"),
+            "installer-native-tool-result-capture-profile-v1": (
+                "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-tool-result-capture-profile-v1.json",
+                "470fcc43b3d268a6594e0d6bdf2c635ba3bf4e6cd0cfe2dfcd57840d7bee105a", 984, "amendment"),
+            "installer-native-provider-result-capture-profile-v1": (
+                "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-provider-result-capture-profile-v1.json",
+                "a2c6ae9243a7854f114ed492afd395d867f02ed58d50a3f1692fe0ea7efbd8eb", 993, "amendment"),
+        }
+        self.assertEqual({artifact_id: (path, digest, size, role)
+                          for artifact_id, path, digest, size, role in REVIEWED_SOURCE_ARTIFACTS}, expected)
+        for path, digest, size, _role in expected.values():
+            body = (repo / path).read_bytes()
+            self.assertEqual((len(body), hashlib.sha256(body).hexdigest()), (size, digest))
 
     def test_open_verified_file_checks_digest_and_rejects_symlink(self):
         with tempfile.TemporaryDirectory() as td:

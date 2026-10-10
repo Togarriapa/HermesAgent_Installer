@@ -78,9 +78,19 @@ class ArtifactManifest:
     @classmethod
     def from_metadata(cls, path: Path) -> "ArtifactManifest":
         try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
+            return cls.from_metadata_bytes(path.read_bytes())
         except (OSError, json.JSONDecodeError) as exc:
             raise ArtifactError(f"cannot read pinned model metadata: {exc}") from exc
+
+    @classmethod
+    def from_metadata_bytes(cls, data: bytes) -> "ArtifactManifest":
+        """Parse already-observed metadata bytes without reopening a caller path."""
+        if type(data) is not bytes or len(data) > 8 * 1024 * 1024:
+            raise ArtifactError("pinned model metadata exceeds the fixed byte bound")
+        try:
+            raw = json.loads(data.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ArtifactError(f"cannot parse pinned model metadata: {exc}") from exc
         if raw.get("modelId") != MODEL_ID or raw.get("sha") != MODEL_REVISION:
             raise ArtifactError("GLM artifact identity or revision differs from the reviewed GLM-5.2 pin")
         tags = set(raw.get("tags", ()))

@@ -4006,9 +4006,11 @@ class ManagedProcessEffectHandler:
                 "--property=RuntimeDirectory=hermes-installer/display",
                 "--property=RuntimeDirectoryMode=0755",
                 "--property=PrivateMounts=yes", "--property=MountFlags=private",
+                # The source stage is already a private self-bind with the
+                # kernel-enforced ro,nosuid,nodev,noexec flags. The readonly
+                # file bind inherits those per-mount flags; systemd exposes
+                # no per-path properties for the remaining mount flags.
                 "--property=NoExecPaths=/run/hermes-installer/display/Xauthority",
-                "--property=NoSuidPaths=/run/hermes-installer/display/Xauthority",
-                "--property=NoDevicePaths=/run/hermes-installer/display/Xauthority",
             ))
         if profile.memory_max_bytes is not None:
             properties.append(f"--property=MemoryMax={profile.memory_max_bytes}")
@@ -4263,8 +4265,7 @@ class ManagedProcessEffectHandler:
                                 "-p", "StatusText", "-p", "ControlGroup", "-p", "PrivateNetwork",
                                 "-p", "RestrictAddressFamilies", "-p", "RuntimeDirectory",
                                 "-p", "RuntimeDirectoryMode", "-p", "PrivateMounts",
-                                "-p", "MountFlags", "-p", "NoExecPaths", "-p", "NoSuidPaths",
-                                "-p", "NoDevicePaths"]),
+                                "-p", "MountFlags", "-p", "NoExecPaths"]),
                             (b"unit-journal", ["/usr/bin/journalctl", "--system", "--no-pager",
                                 "-n", "8", "-o", "cat", "--unit", unit]),
                         ):

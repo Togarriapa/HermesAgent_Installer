@@ -178,6 +178,9 @@ def _empty_prepared_service_generation(root_journal_root: Mapping[str, Any], *,
         # These rows require separately verified root endpoint/model receipts;
         # a prepared snapshot must not derive or activate them.
         "private_memory_endpoint_selections": [], "private_memory_model_selections": [],
+        # Public web scopes are separately selected and published with native
+        # effects; an empty prepared snapshot must carry the strict catalog key.
+        "public_web_scopes": [],
         "root_journal_roots": [rows],
     }
     value["generation_digest"] = hashlib.sha256(_canonical_json(value)).hexdigest()

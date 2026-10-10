@@ -661,6 +661,9 @@ _OPTIONAL_KERNEL_TEMPLATES = {
     "sit0": "sit", "ip6tnl0": "ip6tnl", "ip6gre0": "ip6gre",
 }
 _NLMSG_ALIGNTO = 4
+# Rtnetlink includes these counters in link dumps. Loopback probes naturally
+# change them, so they are not part of the interface topology proof.
+_VOLATILE_LINK_ATTRIBUTE_TYPES = frozenset({7, 23})  # IFLA_STATS, IFLA_STATS64
 
 
 def _align4(value: int) -> int:
@@ -681,6 +684,15 @@ def _attributes(data: bytes) -> list[tuple[int, bytes]]:
         result.append((attr_type & 0x3FFF, data[offset + 4:offset + length]))
         offset += _align4(length)
     return result
+
+
+def _canonical_link_attributes(attrs: Sequence[tuple[int, bytes]]) -> list[dict[str, Any]]:
+    """Retain stable raw link attributes while excluding live traffic counters."""
+    return [
+        {"type": kind, "value": value.hex()}
+        for kind, value in sorted(attrs, key=lambda item: (item[0], item[1]))
+        if kind not in _VOLATILE_LINK_ATTRIBUTE_TYPES
+    ]
 
 
 def _rtnetlink_dump(message_type: int, body: bytes) -> list[bytes]:
@@ -761,7 +773,7 @@ def _kernel_topology() -> dict[str, Any]:
             "link_ifindex": struct.unpack("=I", by_type[5][0][:4])[0] if by_type.get(5) else None,
             "link_netnsid": struct.unpack("=i", by_type[37][0][:4])[0] if by_type.get(37) else None,
             "address_hex": by_type.get(1, [b""])[0].hex(), "config": info_data,
-            "attributes": [{"type": kind, "value": value.hex()} for kind, value in attrs],
+            "attributes": _canonical_link_attributes(attrs),
         })
     links.sort(key=lambda row: (row["name"], row["ifindex"]))
 

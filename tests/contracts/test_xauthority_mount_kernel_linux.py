@@ -128,6 +128,7 @@ class XauthorityMountKernelTests(unittest.TestCase):
             "try: open(p,'ab').write(b'x'); denied=False\n"
             "except OSError: denied=True\n"
             f"r={{'sha256':hashlib.sha256(raw).hexdigest(),'size':len(raw),"
+            "'xauthority_env':os.environ.get('XAUTHORITY')==p,"
             f"'device':os.stat(p).st_dev,'inode':os.stat(p).st_ino,"
             f"'ro':'ro' in opts,'nosuid':'nosuid' in opts,'nodev':'nodev' in opts,"
             f"'noexec':'noexec' in opts,'private':not any(x.startswith(('shared:','master:','propagate_from:')) for x in prop),"
@@ -195,7 +196,7 @@ class XauthorityMountKernelTests(unittest.TestCase):
         self.assertEqual(observed["size"], binding.source_size)
         self.assertEqual((observed["device"], observed["inode"]),
                          (stage_receipt.mount_source_device, stage_receipt.mount_source_inode))
-        for flag in ("ro", "nosuid", "nodev", "noexec", "private", "write_denied"):
+        for flag in ("xauthority_env", "ro", "nosuid", "nodev", "noexec", "private", "write_denied"):
             self.assertTrue(observed[flag], flag)
 
         cleanup = handler._stop(handle, timeout=5)
