@@ -171,6 +171,7 @@ class RootRuntimeBindings:
             raise EnrollmentDenied("public web target selection registry is unavailable")
         try:
             current = registry.resolve_current_target_handle(scope.target_selection_handle)
+            current_payload = registry.resolve_current_scope_payload(scope.target_selection_handle)
         except Exception:
             raise EnrollmentDenied("public web target selection is no longer current") from None
         if type(current) is not RootPreparedNativeTargetSelection:
@@ -187,8 +188,21 @@ class RootRuntimeBindings:
             or current.target_contract_sha256 != scope.target_contract_sha256
             or current.target_contract_source_receipt_handle != scope.target_contract_source_receipt_handle
             or getattr(current, "scope_payload_sha256", None) != scope.scope_payload_sha256
+            or current_payload != scope.scope_payload
+            or hashlib.sha256(current_payload).hexdigest() != scope.scope_payload_sha256
         ):
             raise EnrollmentDenied("public web selection differs from its retained target receipt")
+
+    def verify_current_public_web_scope_provenance(self, scope: Any) -> bool:
+        """Boolean currentness seam consumed by the public permission registry."""
+        from ..protected_enrollment import RootSelectedPublicWebScope
+        if type(scope) is not RootSelectedPublicWebScope:
+            return False
+        try:
+            current = self.resolve_public_web_scope(scope.enrollment_id, scope.generation)
+        except Exception:
+            return False
+        return current == scope
 
     def resolve_private_memory_engine_selection(self, selection_id: str, *,
                                                 service_generation_digest: str) -> Mapping[str, Any]:
