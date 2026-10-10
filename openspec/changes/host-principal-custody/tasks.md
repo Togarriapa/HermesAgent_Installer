@@ -309,3 +309,5 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 - [ ] HI-T166.1 Fixture key/publisher/authority: restricted prepublication envelope signer and same-key service adoption, source/currentness/domain negatives.
 
 - [ ] HI-T167.1 Fixture session/publisher/enrollment: historical session file never restores live authority; fresh current lease required.
+
+- [ ] SK-T168.1 Application builder/materializer/selection/execution: regular held PM interpreter entrypoint, finite source shebang normalization and final manifest/probe joins.

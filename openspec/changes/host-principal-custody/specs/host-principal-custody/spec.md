@@ -710,3 +710,10 @@ The installer SHALL retain live fixture session authority only in its current se
 #### Scenario: Historical session file is reopened
 - **WHEN** no current genuine fixture lease and session registry membership exist
 - **THEN** the historical file cannot authorize an effect
+
+### Requirement: Application Python entrypoint relocation v168
+The installer SHALL bind the regular environment interpreter to actual held PM executable bytes and normalize only source-reviewed console script shebangs to its selected final generation.
+
+#### Scenario: Script requests ambient interpreter
+- **WHEN** installed script depends on /usr/bin/env or an unrelated interpreter path
+- **THEN** materialization denies until exact selected interpreter normalization is verified
