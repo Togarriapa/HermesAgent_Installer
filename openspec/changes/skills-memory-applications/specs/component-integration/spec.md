@@ -788,3 +788,52 @@ The installer SHALL reobserve current authorization for status and stop after in
 #### Scenario: Memory service outlives its start proof
 - **WHEN** the original short admission expires while the owned process remains within its original deadline
 - **THEN** productive control requires a fresh same-process admission and revocation cleanup remains bound to retained PIDFD ownership without extending the old proof
+
+### Requirement: Completed source choice ordering v146
+The installer SHALL distinguish held root observation from completed signed choice and full source verification, accurately name release identity and authenticate complete public scope payloads from retained configuration.
+
+#### Scenario: Fixed root is observed before child choice
+- **WHEN** only the fixed model store root is held
+- **THEN** no completed choice or model source proof is signed until the actual TTY selection and applicable source evidence exist
+
+### Requirement: Lock-derived hash-constrained offline dependency install v147
+The installer SHALL preserve the original selected lock while deriving hashed requirements and installing only the verified target-active package closure offline, and SHALL require a separate actual noneditable source-project wheel and environment probe before qualification.
+
+#### Scenario: Export omits source project
+- **WHEN** the hash-constrained dependency install succeeds using no-emit-project
+- **THEN** no application runtime is qualified until its exact source-built project wheel and complete installed origin/probe receipts also pass
+
+### Requirement: Offline probe interpreter provenance v148
+The installer SHALL distinguish the container interpreter used in dependency recipe experiments from genuine selected PM runtime observations.
+
+#### Scenario: Container version matches selected PM version
+- **WHEN** the fixture interpreter reports Python3.14.7
+- **THEN** no PM origin or actual setup environment receipt is inferred from that version match
+
+### Requirement: Selected large toolchain source observation v150
+The installer SHALL obtain Node and Bun source bytes through a finite selected-plan-bound held artifact observation before toolchain extraction.
+
+#### Scenario: Toolchain private CAS has no selected source observation
+- **WHEN** an archive was independently fetched without the actual selected source observer
+- **THEN** it cannot mint a trusted toolchain receipt merely from matching local CAS syntax
+
+### Requirement: Stable private binding and current observation separation v151
+The installer SHALL select private endpoint/model binding IDs before startup and resolve genuine current runtime observations only after actual listener/load/source proof.
+
+#### Scenario: Configured private endpoint has no live process
+- **WHEN** only the protected endpoint binding exists
+- **THEN** no runtime route or deployment receipt is fabricated from that configured identity
+
+### Requirement: Separate finite PEP517 backend closure v152
+The installer SHALL bind project wheel builds to exact separately reviewed backend source/license/CAS receipts rather than claiming absent backend packages belong to the runtime lock.
+
+#### Scenario: Backend adds an undeclared build requirement
+- **WHEN** a backend requests a package outside the selected reviewed offline closure
+- **THEN** the build denies without fetching network packages or widening the original lock and backend table
+
+### Requirement: Toolchain policy member binding v155
+The installer SHALL resolve the selected finite Node/Bun policy from its exact reviewed release member before source acquisition.
+
+#### Scenario: Source policy member is absent from the selected release
+- **WHEN** an otherwise cataloged tool is requested without the reviewed selected policy member
+- **THEN** acquisition denies and no caller artifact ID or invented plan field substitutes for that member proof
