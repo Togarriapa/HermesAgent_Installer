@@ -3820,5 +3820,24 @@
       ]
     },
     "acceptance": "All AC OPEN"
+  },
+  "official_desktop_native_source_policy_v251": {
+    "contract": "planning/official-desktop-native-source-policy-v251.json",
+    "amendment": "plans/amendments/2026-10-11-official-desktop-native-source-policy-v251.md",
+    "tasks": {
+      "RT-T251.1": [
+        "RT-T226.1",
+        "RT-T240.1"
+      ],
+      "RT-T251.2": [
+        "RT-T251.1",
+        "RT-T240.2"
+      ],
+      "VD-T251.3": [
+        "RT-T251.1",
+        "RT-T251.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }

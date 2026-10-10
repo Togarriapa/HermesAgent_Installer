@@ -1,0 +1,95 @@
+{
+  "schema": 1,
+  "scope": "Desktop-specific source observations only; no native CAS/current-runtime acceptance",
+  "roots": [
+    "build-essential",
+    "pkgconf",
+    "libx11-dev",
+    "libxi-dev",
+    "libxkbfile-dev",
+    "libgtk-3-0t64",
+    "libnss3",
+    "libatk-bridge2.0-0t64",
+    "libatk1.0-0t64",
+    "libgbm1",
+    "libasound2t64",
+    "libxshmfence1",
+    "libxrandr2",
+    "libxdamage1",
+    "libxfixes3",
+    "libxcomposite1",
+    "libxext6",
+    "libx11-xcb1",
+    "libxcb1",
+    "libxcb-dri3-0",
+    "libdrm2",
+    "libxss1",
+    "libxtst6",
+    "libxkbcommon0",
+    "libatspi2.0-0t64",
+    "libcups2t64",
+    "libpango-1.0-0",
+    "libcairo2",
+    "libglib2.0-0t64",
+    "libdbus-1-3",
+    "libnspr4",
+    "libexpat1",
+    "libudev1",
+    "gpgv",
+    "debian-archive-keyring"
+  ],
+  "archive_count": 253,
+  "archive_total_bytes": 169912236,
+  "expanded_total_bytes": 744817279,
+  "archive_members": 20381,
+  "member_kind_counts": {
+    "directory": 6042,
+    "regular": 12483,
+    "symlink": 1854,
+    "hardlink": 2
+  },
+  "signed_metadata": [
+    {
+      "suite": "trixie",
+      "member": "InRelease",
+      "sha256": "0584fba32e13e0ab8285fb16c27adea1ec03a73669c18702821094fd6ca86675",
+      "size_bytes": 140421
+    },
+    {
+      "suite": "trixie",
+      "member": "Release",
+      "sha256": "8604eb6fba4e103b48f029f4d945e8c96d07a418b663de8386617d0b78bd3bcf",
+      "size_bytes": 138611
+    },
+    {
+      "suite": "trixie",
+      "member": "Packages.xz",
+      "sha256": "be16b37b2f740f066ea93d35d56f04f94d63693e5a3eb421b052bf86fae75bcd",
+      "size_bytes": 9614192
+    },
+    {
+      "suite": "trixie-security",
+      "member": "InRelease",
+      "sha256": "7b9edb9ce81edb7bb0fcde19cfc18ab7a8320a39d0e0738c4abeda00935e1337",
+      "size_bytes": 43409
+    },
+    {
+      "suite": "trixie-security",
+      "member": "Release",
+      "sha256": "1e345e2ce16f244d336ddd7f1c0423047093dba30467fcb964f6014d0cd704b2",
+      "size_bytes": 41758
+    },
+    {
+      "suite": "trixie-security",
+      "member": "Packages.xz",
+      "sha256": "7ec328f19a94ed917518688f16977287222fd7871dbf90377ff9fafd0712c4c7",
+      "size_bytes": 265812
+    }
+  ],
+  "signature_verifier": "Actual cached native ARM64 sqv verified both original InRelease messages against exact keyring bytes, authenticated Release bytes match; retained verification stdout.",
+  "dependency_version_errors": 0,
+  "dependency_edge_count": 752,
+  "copyright_reference_count": 253,
+  "copyright_alias_count": 29,
+  "diagnostic": "Roots derive from actual native Dockerfile+HUD cc/X11/Xi source and Electron native ELF dependency inspection. Installed-image versions and previous successful native/AppDir experiments are diagnostic only. Signed highest-version candidate rows independently selected through dpkg comparisons; no Xpra authority reused. Existing CPython/Node/Electron/npm receipt lanes remain distinct."
+}

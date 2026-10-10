@@ -1,0 +1,150 @@
+[
+  {
+    "artifact_id": "official-desktop-sevenzip-linux-arm64-1.0.0-v1",
+    "url": "https://github.com/electron-userland/electron-builder-binaries/releases/download/7zip@1.0.0/7zip-linux-arm64.tar.gz",
+    "filename": "7zip-linux-arm64.tar.gz",
+    "sha256": "5aff5034206b78f8261249ceb922b5c7e04c9bdb733784d8f5b6df9732cf1f79",
+    "size_bytes": 1194987,
+    "max_download_bytes": 1194987,
+    "members": [
+      {
+        "path": "7zip/LICENSE.txt",
+        "mode": 511,
+        "size_bytes": 6341,
+        "sha256": "7b7022cccdee7bddd07f5fd847161e33551cec411e9c9967c14008ee36d5ce3f"
+      },
+      {
+        "path": "7zip/bin/7zz",
+        "mode": 493,
+        "size_bytes": 2452800,
+        "sha256": "ea6a2595eba6441e1e60ddaa47d73d849e99ef2ba18d3f386557cdcb9dc9cebd"
+      },
+      {
+        "path": "7zip/bin/7za",
+        "kind": "symlink",
+        "mode": 511,
+        "target": "7zz",
+        "target_sha256": "209db65b34cde17728061ddbfa9f97caffdf769872e7b56d1542c06ba2f916ec",
+        "target_size_bytes": 3,
+        "size_bytes": 0
+      },
+      {
+        "path": "7zip/COPYING",
+        "mode": 511,
+        "size_bytes": 27032,
+        "sha256": "1e7e6bae5a5bde32f1ae5a7c37a082d1ab03cf89354f7f936ac40be9e39a6531"
+      }
+    ],
+    "expanded_bytes": 2486173,
+    "member_count": 4,
+    "integrity": null,
+    "license_members": [
+      "7zip/LICENSE.txt",
+      "7zip/COPYING"
+    ],
+    "purpose": "isolated prepared packaging tool only; no service/runtime receipt"
+  },
+  {
+    "artifact_id": "official-desktop-icons-wasm-vips-0.0.17-v1",
+    "url": "https://registry.npmjs.org/wasm-vips/-/wasm-vips-0.0.17.tgz",
+    "filename": "wasm-vips-0.0.17.tgz",
+    "sha256": "9aa8610ad7418312a890070065f7d38d8567842ed26dd221afc62e71d7a77d02",
+    "size_bytes": 5086755,
+    "max_download_bytes": 5086755,
+    "members": [
+      {
+        "path": "package/LICENSE",
+        "mode": 420,
+        "size_bytes": 1086,
+        "sha256": "9cbb5847deb22dffbdd860fe659a122d61c144e52cbd3a97d4bb858c5fb9cef6"
+      },
+      {
+        "path": "package/lib/vips-es6.js",
+        "mode": 420,
+        "size_bytes": 90326,
+        "sha256": "30796f9995ace452fda06441ee5d47708783dc60848ccc4edd0d19362f57b8b4"
+      },
+      {
+        "path": "package/lib/vips-node.js",
+        "mode": 420,
+        "size_bytes": 96712,
+        "sha256": "0eea18c2196069c1b0f637bc88a2e7ea5cf2191d9fc2f2b088d36cab537c870b"
+      },
+      {
+        "path": "package/lib/vips.js",
+        "mode": 420,
+        "size_bytes": 90571,
+        "sha256": "fff57a9be54f68bbe886707642bc2dd2a81b1c22a9eefeb0f45189328b33ef06"
+      },
+      {
+        "path": "package/package.json",
+        "mode": 420,
+        "size_bytes": 2148,
+        "sha256": "8b9c6d66708969804376d79fb8fbb4f739c024d0500f8096e46781e2ffe1c7d7"
+      },
+      {
+        "path": "package/versions.json",
+        "mode": 420,
+        "size_bytes": 431,
+        "sha256": "3e9037a93fa41c63cdaa68df7332350b5f00b76088ef8b2968dd65e145935379"
+      },
+      {
+        "path": "package/README.md",
+        "mode": 420,
+        "size_bytes": 5294,
+        "sha256": "6774862f5f1667b22772b5b46d5925b92e5a461538cef4ea87fdb3eec3fef813"
+      },
+      {
+        "path": "package/THIRD-PARTY-NOTICES.md",
+        "mode": 420,
+        "size_bytes": 3347,
+        "sha256": "a90e0018788519398cbf936d4d3fb113331ef40c873048ce83690902ec332399"
+      },
+      {
+        "path": "package/lib/vips-node.mjs",
+        "mode": 420,
+        "size_bytes": 96852,
+        "sha256": "8d290bdbdf1ed1f09e4886366e9ed0b07167e9933e466980c2bd0e90476cd0cf"
+      },
+      {
+        "path": "package/lib/vips.d.ts",
+        "mode": 420,
+        "size_bytes": 262468,
+        "sha256": "2b5a24c559255fee3c340c2a68c0aeedd0a15cf2df442325bae328fcb7325296"
+      },
+      {
+        "path": "package/lib/vips-heif.wasm",
+        "mode": 493,
+        "size_bytes": 4669481,
+        "sha256": "44e310c40b9e161dfeda7e987f59f01fe651bf0129919c50312aad26fcf3b8e2"
+      },
+      {
+        "path": "package/lib/vips-jxl.wasm",
+        "mode": 493,
+        "size_bytes": 2331404,
+        "sha256": "14ec3483d321ea69f92128dcd811ff4dc5ff3f4649f8d6c1a709d701c6a5a5eb"
+      },
+      {
+        "path": "package/lib/vips-resvg.wasm",
+        "mode": 493,
+        "size_bytes": 1554546,
+        "sha256": "c120db0f8a3cfaf7082db69fac77c2dd5e9667a4e479f14853df824f68008372"
+      },
+      {
+        "path": "package/lib/vips.wasm",
+        "mode": 493,
+        "size_bytes": 5894485,
+        "sha256": "0c19401655a0b17fad246d1df83af3c0f125bf3a53a984cf748619ffeb38ab62"
+      }
+    ],
+    "expanded_bytes": 15099151,
+    "member_count": 14,
+    "integrity": "sha512-nhkqUNJDUymImoXGrVfImC4wzIFTb9KfBpAngb7dcEQNPP1gVTx4+WL3VVVDSXQpMsyeacsQDOx0+DM33Rpurg==",
+    "license_members": [
+      "package/LICENSE",
+      "package/THIRD-PARTY-NOTICES.md",
+      "package/versions.json"
+    ],
+    "purpose": "isolated prepared packaging tool only; no service/runtime receipt"
+  }
+]

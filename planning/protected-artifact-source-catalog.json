@@ -357,5 +357,210 @@
       "issuer_relative_path": "html5/xpra-html5-v20.tar.gz"
     },
     "status": "actual reviewed source bytes/observations only; bundled whole-license/build/session current receipts pending"
+  },
+  "official_desktop_native_sources_v251": {
+    "contract": "planning/official-desktop-native-source-policy-v251.json",
+    "source_policy": {
+      "artifact_id": "official-desktop-native-source-policy-v1",
+      "role": "official-desktop-native-source-policy-v1",
+      "path": "plans/amendments/2026-10-11-official-desktop-native-source-policy-v251/official-desktop-native-source-policy-v1.json",
+      "sha256": "da9824cd5a6c59ff0bd7b3a9200c30ce938ae138d2d3e943081ce24339868592",
+      "size_bytes": 233871,
+      "keyring_artifact_id": "official-desktop-debian-archive-keyring-2025.1-v1",
+      "keyring_sha256": "506b815cbb32d9b6066b4a2aa524071e071761e7e7f68c3ac74f3061ba852017",
+      "policy_keys": [
+        "dependency_selections",
+        "license_closure_sha256",
+        "license_references",
+        "origin_rows",
+        "package_rows",
+        "python_rows",
+        "required_package_roots",
+        "schema"
+      ],
+      "package_row_fields": [
+        "architecture",
+        "depends",
+        "filename",
+        "license_sha256",
+        "multi_arch",
+        "name",
+        "origin_id",
+        "pre_depends",
+        "provides",
+        "sha256",
+        "size_bytes",
+        "version"
+      ],
+      "origin_row_fields": [
+        "architecture",
+        "base_url",
+        "keyring_member_id",
+        "kind",
+        "maximum_metadata_bytes",
+        "origin_id",
+        "release_label",
+        "release_origin",
+        "suite",
+        "valid_signers"
+      ],
+      "dependency_selection_fields": [
+        "package",
+        "field",
+        "group_index",
+        "dependency"
+      ],
+      "license_reference_fields": [
+        "license_package",
+        "license_path",
+        "license_size_bytes",
+        "links",
+        "package"
+      ],
+      "license_rule": "Exactly one reference per package; license_sha256 is SHA256 of copyright bytes at license_package/license_path. Reopen every alias link within usr/share/doc against signed archive origins, maximum16 hops, reject cycles/escapes/missing targets. license_closure_sha256 hashes canonical UTF8 JSON array sorted by name of {kind:debian,name,license_sha256}, separators comma/colon, no newline. Policy SHA separately binds all references.",
+      "dependency_rule": "Preserve signed Depends/Pre-Depends comma groups and alternatives, Provides/version, architecture and Multi-Arch. Each explicit selection satisfies its original signed relation and full transitive closure using Debian version comparison; :native is arm64; :any requires permitted signed Multi-Arch/architecture semantics, never strip qualifiers or guess alternatives.",
+      "signature_rule": "Fresh actual held verifier/keyring proves exact official origin, codename,suite,architecture and current date/Valid-Until; authenticated Release binds exact Packages SHA/size, row binds archive SHA/size. No stale observation grants current proof; absent trusted verifier denies.",
+      "source_counts": {
+        "archive_count": 253,
+        "archive_total_bytes": 169912236,
+        "expanded_total_bytes": 744817279,
+        "archive_members": 20381,
+        "member_kind_counts": {
+          "directory": 6042,
+          "regular": 12483,
+          "symlink": 1854,
+          "hardlink": 2
+        },
+        "dependency_edge_count": 752,
+        "copyright_reference_count": 253
+      },
+      "roots": [
+        "build-essential",
+        "pkgconf",
+        "libx11-dev",
+        "libxi-dev",
+        "libxkbfile-dev",
+        "libgtk-3-0t64",
+        "libnss3",
+        "libatk-bridge2.0-0t64",
+        "libatk1.0-0t64",
+        "libgbm1",
+        "libasound2t64",
+        "libxshmfence1",
+        "libxrandr2",
+        "libxdamage1",
+        "libxfixes3",
+        "libxcomposite1",
+        "libxext6",
+        "libx11-xcb1",
+        "libxcb1",
+        "libxcb-dri3-0",
+        "libdrm2",
+        "libxss1",
+        "libxtst6",
+        "libxkbcommon0",
+        "libatspi2.0-0t64",
+        "libcups2t64",
+        "libpango-1.0-0",
+        "libcairo2",
+        "libglib2.0-0t64",
+        "libdbus-1-3",
+        "libnspr4",
+        "libexpat1",
+        "libudev1",
+        "gpgv",
+        "debian-archive-keyring"
+      ],
+      "python_rows": []
+    },
+    "packaging_policy": {
+      "artifact_id": "official-desktop-packaging-source-policy-v1",
+      "role": "official-desktop-packaging-source-policy-v1",
+      "path": "plans/amendments/2026-10-11-official-desktop-native-source-policy-v251/official-desktop-packaging-source-policy-v1.json",
+      "sha256": "167040297792248eccc7d96fcba42421c77eba070d38941df4f8386fa2b802df",
+      "size_bytes": 5219,
+      "source_only": "7zip official observed archive with LGPL/unRAR/BSD notices and exact 7za->7zz link; licensed official npm wasm-vips archive with SRI and MIT/third-party notices. No blanket MIT assertion. No use of unlicensed icons bundle wrapper."
+    },
+    "evidence_members": [
+      {
+        "relative_path": "plans/amendments/2026-10-11-official-desktop-native-source-policy-v251/debian-archive-keyring-2025.1.pgp",
+        "sha256": "506b815cbb32d9b6066b4a2aa524071e071761e7e7f68c3ac74f3061ba852017",
+        "size_bytes": 55918,
+        "mode": "0444"
+      },
+      {
+        "relative_path": "plans/amendments/2026-10-11-official-desktop-native-source-policy-v251/debian-control-observations.json",
+        "sha256": "22e03975fd01c00438b08b09c09fdafe14dc706b2c4391b4b056e462e501efad",
+        "size_bytes": 62450,
+        "mode": "0444"
+      },
+      {
+        "relative_path": "plans/amendments/2026-10-11-official-desktop-native-source-policy-v251/debian-origin-link-observations.json",
+        "sha256": "786c2d2536243cf6da5f8a266ad24c6f9c21ea022ad22f597be67d2860e57d1f",
+        "size_bytes": 569402,
+        "mode": "0444"
+      },
+      {
+        "relative_path": "plans/amendments/2026-10-11-official-desktop-native-source-policy-v251/diagnostic-native-root-observation.txt",
+        "sha256": "33d53b38de7bed073f380e642fd6b0f70a48d518d8a20a79bc5b5bf874344146",
+        "size_bytes": 533,
+        "mode": "0444"
+      },
+      {
+        "relative_path": "plans/amendments/2026-10-11-official-desktop-native-source-policy-v251/official-desktop-native-source-policy-v1.json",
+        "sha256": "da9824cd5a6c59ff0bd7b3a9200c30ce938ae138d2d3e943081ce24339868592",
+        "size_bytes": 233871,
+        "mode": "0444"
+      },
+      {
+        "relative_path": "plans/amendments/2026-10-11-official-desktop-native-source-policy-v251/official-desktop-packaging-source-policy-v1.json",
+        "sha256": "167040297792248eccc7d96fcba42421c77eba070d38941df4f8386fa2b802df",
+        "size_bytes": 5219,
+        "mode": "0444"
+      },
+      {
+        "relative_path": "plans/amendments/2026-10-11-official-desktop-native-source-policy-v251/packaging-COPYING",
+        "sha256": "1e7e6bae5a5bde32f1ae5a7c37a082d1ab03cf89354f7f936ac40be9e39a6531",
+        "size_bytes": 27032,
+        "mode": "0444"
+      },
+      {
+        "relative_path": "plans/amendments/2026-10-11-official-desktop-native-source-policy-v251/packaging-LICENSE.txt",
+        "sha256": "7b7022cccdee7bddd07f5fd847161e33551cec411e9c9967c14008ee36d5ce3f",
+        "size_bytes": 6341,
+        "mode": "0444"
+      },
+      {
+        "relative_path": "plans/amendments/2026-10-11-official-desktop-native-source-policy-v251/packaging-THIRD-PARTY-NOTICES.md",
+        "sha256": "a90e0018788519398cbf936d4d3fb113331ef40c873048ce83690902ec332399",
+        "size_bytes": 3347,
+        "mode": "0444"
+      },
+      {
+        "relative_path": "plans/amendments/2026-10-11-official-desktop-native-source-policy-v251/packaging-source-observations.json",
+        "sha256": "3df12575f50e3d6cd5eabeaf843bfa29a6122faab6d3a3178a1b103fe1fe3856",
+        "size_bytes": 4950,
+        "mode": "0444"
+      },
+      {
+        "relative_path": "plans/amendments/2026-10-11-official-desktop-native-source-policy-v251/packaging-versions.json",
+        "sha256": "3e9037a93fa41c63cdaa68df7332350b5f00b76088ef8b2968dd65e145935379",
+        "size_bytes": 431,
+        "mode": "0444"
+      },
+      {
+        "relative_path": "plans/amendments/2026-10-11-official-desktop-native-source-policy-v251/signed-metadata-verification.txt",
+        "sha256": "11bc4d12b0839bdd78a93a24302a4f4f5c89be95bea1a21fdfb267f158c3e4d9",
+        "size_bytes": 205,
+        "mode": "0444"
+      },
+      {
+        "relative_path": "plans/amendments/2026-10-11-official-desktop-native-source-policy-v251/source-observation-evidence.json",
+        "sha256": "6a32ef9bf6c493aa24f87188707e99cc368759b8ca898c3c07cbd71d31c5808d",
+        "size_bytes": 2895,
+        "mode": "0444"
+      }
+    ],
+    "authority": "source-only distinct Desktop held release members; actual issuer/current proof/production review required"
   }
 }

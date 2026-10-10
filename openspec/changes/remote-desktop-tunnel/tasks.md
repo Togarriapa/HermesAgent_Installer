@@ -245,3 +245,12 @@ Apply `planning/gateway-license-policy-release-role-v248b.json`: existing gatewa
 - [ ] VD-T250.2 Verify independent raw archive facts and preserve currentness/managed runtime gates; all AC OPEN.
 
 Exact contract: `planning/xpra-link-count-correction-v250.json`.
+
+
+## v251 Desktop native source and packaging
+
+- [ ] RT-T251.1 Implement distinct held Desktop policy/verifier/one-use grant/CAS and native provider; exact signed253 package and licensing closure, failure/currentness/cancellation effects.
+- [ ] RT-T251.2 Produce independently observed native/sysroot/prepared packaging manifests with actual offline compiler/HUD/Electron ABI and licensed owned PNG toolset, preserve sandbox/stamp and v240 fixed driver.
+- [ ] VD-T251.3 Exercise changed signature/index/hash/control/relations/license/links, wrong issuer/role/choice/controller, cancellation, PNG failures and actual managed ARM64 output; genuine runtime/Pi acceptance separately open.
+
+Exact contract: `planning/official-desktop-native-source-policy-v251.json`; all AC OPEN.

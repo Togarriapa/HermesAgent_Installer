@@ -223,3 +223,18 @@ Preserve BD-F03/LC-F03/AC01..02 and v235/v242. Use exact source-reviewed histori
 Append-only v250 corrects only v245 cohort count: original399 signed-policy archives contain3093 symlinks and zero hardlinks; original graph file/hash remain correct. Preserve all source/currentness/private-root/transform/runtime gates.
 
 Exact contract: `planning/xpra-link-count-correction-v250.json`.
+
+
+## v251 Desktop native signed-source policy
+
+Extends frozen v226/v229/v240 for R0028/R0035/R0037/R0203/R0204/R0211. This append-only source contract supplies the previously missing genuine Desktop-specific policy; it does not approve a runtime or modify earlier plans.
+
+The exact contract is `planning/official-desktop-native-source-policy-v251.json`. The immutable source policy contains 35 Desktop compiler/HUD/Electron native roots, 253 official signed Debian arm64/all rows (169,912,236 archive bytes), 752 exact selected dependency edges and 253 copyright references. Direct original archive inspection observes 744,817,279 expanded bytes, 1,854 symlinks and two hardlinks. Source Release/Packages/archives were independently verified; actual ARM64 sqv authenticated both InRelease messages against the retained keyring. Installed-image facts only selected roots and never substitute for signed source or current runtime receipts. Reuse of cached public source bytes does not reuse Xpra authority.
+
+Native owner implements the closed Desktop policy/verifier/request/grant/quarantine/CAS types and composes them inside its existing current native provider. The contract fixes signatures, descriptor currentness, original root choice/controller/PM/NSS/transaction joins, one-use budget, full signed dependency/control/license proof and protected private CAS. Missing trusted verifier or current proof denies acquisition admission. No generic apt install, caller URL, script execution, global Python downgrade or Xpra receipt alias is authorized.
+
+Packaging uses the measured official 7zip archive and official npm wasm-vips 0.0.17, retaining actual licenses and third-party notices. The unlicensed upstream icons wrapper is excluded. Driver owner supplies independently implemented `desktop_icon_set.mjs`, stages it as the prepared icons tool and uses the exact licensed vips JS/WASM. Its finite PNG-only interface and bounds are in the separate source packaging policy. The actual offline ARM64 helper experiment is an observation, not a source-code pin or prepared packaging receipt; effect/dimension and rejection tests plus committed source review must precede issuance.
+
+Actual native/sysroot/package manifests project held current receipt objects. Exact official PM314, Node26 build, Electron40.10.2 binary/headers, native compiler and ELF dependency identities remain separate. Private origin-bound link resolution and hardlink materialization cannot access ambient paths. Preserve the v240 fixed prepared AppDir invocation, honest source stamp, enabled Electron sandbox and final installed ownership/mode proof.
+
+RT-T251.1 → RT-T251.2 → VD-T251.3 are OPEN. Luna native owner implements actual acquisition/CAS/provider; Luna Desktop owner implements actual native/package driver and licensed icons integration. Whole-build caps and packaged renderer/backend qualification remain genuinely pending. No null managed plan may execute; all AC and Pi acceptance remain OPEN. Baseline and older amendments remain unchanged.

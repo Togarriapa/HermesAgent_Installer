@@ -1354,3 +1354,17 @@ The implementation SHALL interpret the v238/v245 cohort as3093 original archive 
 #### Scenario: Inferred or changed hardlink
 - **WHEN** a hardlink is inferred from the earlier count summary or original kind/origin changes
 - **THEN** materializer admission SHALL deny rather than reinterpret the immutable source graph
+
+
+## ADDED Requirements
+
+### Requirement: Desktop native source policy v251
+The installer SHALL consume the exact held Desktop-specific signed native and licensed packaging policy in `planning/official-desktop-native-source-policy-v251.json`, retaining original root choice/controller/PM/NSS/current receipt authority, and SHALL deny native/package output when signature, dependency, license, provenance or bounded managed execution proof is absent.
+
+#### Scenario: Changed Desktop source or unavailable current native proof
+- **WHEN** selected Desktop acquisition has a changed signed row, license, link origin, issuer, controller or receipt, or lacks real native/package output or measured whole-build limits
+- **THEN** the operation is unavailable with journaled owned recovery and no runtime acceptance, caller override, Xpra alias or null-plan execution
+
+#### Scenario: Licensed fixed prepared Linux icons tool
+- **WHEN** the genuine current Desktop packaging issuer retains the exact official 7zip and licensed wasm-vips sources and reviewed owned PNG-only helper with independent offline effect proof
+- **THEN** only the bounded prepared Linux toolset is admitted, preserving notices, source identity, sandbox and complete AppDir observer requirements
