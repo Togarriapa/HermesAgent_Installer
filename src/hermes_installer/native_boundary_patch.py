@@ -17,6 +17,138 @@ HERMES_SOURCE_COMMIT = "7085fbf7753266fc4943c55ac04926186bc90005"
 
 
 _FILES = {
+    # The installer writes a separate overlay, while the PM runtime imports
+    # Hermes as two regular Python packages.  Put a hash-pinned path extender
+    # in each package initializer so the overlay's patched leaf modules win
+    # and unpatched modules continue to resolve from the selected source tree.
+    "hermes_cli/__init__.py": {
+        "source_sha256": "6a4ab05b8621ec1cd66a5abbe30fa32ed5bddddea95903036da01f0af1af94ce",
+        "edits": ((
+            "_stdio_repaired = _ensure_utf8()\n",
+            "_stdio_repaired = _ensure_utf8()\n\n"
+            "# Installer-owned overlay support: keep the pristine selected Hermes\n"
+            "# package on the extended path while allowing reviewed leaf overrides.\n"
+            "from pkgutil import extend_path as _extend_path\n"
+            "__path__ = _extend_path(__path__, __name__)\n",
+            1,
+        ),),
+    },
+    "agent/__init__.py": {
+        "source_sha256": "21cdce89e9ffdb847634bf498b087410cd191a1e375db43928735846fb7ddc86",
+        "edits": ((
+            "from . import jiter_preload as _jiter_preload\n",
+            "# Permit exact reviewed installer leaf overrides from the separate overlay.\n"
+            "from pkgutil import extend_path as _extend_path\n"
+            "__path__ = _extend_path(__path__, __name__)\n"
+            "from . import jiter_preload as _jiter_preload\n",
+            1,
+        ),),
+    },
+    "tools/__init__.py": {
+        "source_sha256": "7bca460f476ac9ace706c8cfd07e98f8aae34d839862f0f68abafc3a8397cf35",
+        "edits": ((
+            "\n\n\ndef check_file_requirements():\n",
+            "\n\n# Allow only the hash-pinned installer leaf overlay to precede this pristine package.\n"
+            "from pkgutil import extend_path as _extend_path\n"
+            "__path__ = _extend_path(__path__, __name__)\n"
+            "\n\ndef check_file_requirements():\n",
+            1,
+        ),),
+    },
+    "hermes_cli/plugins.py": {
+        "source_sha256": "a618a69581355e5fe56cb3d2250fc02647315359aae7fa0e6bd4dccc4ed3d3ad",
+        "edits": (
+            (
+                "        manifests: list[PluginManifest] = self._collect_directory_manifests()\n",
+                "        manifests: list[PluginManifest] = self._collect_directory_manifests()\n"
+                "        from hermes_installer.native_plugin_loader import install_selected_native_plugins\n"
+                "        try:\n"
+                "            manifests = install_selected_native_plugins(self, manifests)\n"
+                "        except Exception:\n"
+                "            logger.warning(\"Root-selected native plugins are unavailable; skipping this cohort\")\n",
+                1,
+            ),
+            (
+                "        self._notify_plugin_loaded(loaded_before)\n",
+                "        self._notify_plugin_loaded(loaded_before)\n"
+                "        from hermes_installer.native_plugin_loader import finish_selected_native_plugin_discovery\n"
+                "        finish_selected_native_plugin_discovery(self)\n",
+                1,
+            ),
+        ),
+    },
+    "hermes_cli/main.py": {
+        "source_sha256": "a6293934e0ef99849d7a2f3c040256c2466f6fc0382b876bf750f8bd8e6cb912",
+        "edits": ((
+            "        if _qfile == \"-\":\n"
+            "            args.query = sys.stdin.read()\n",
+            "        if _qfile == \"-\":\n"
+            "            try:\n"
+            "                from hermes_installer.native_invocations import read_selected_native_input\n"
+            "                args.query = read_selected_native_input(sys.stdin.buffer)\n"
+            "            except Exception:\n"
+            "                print(\"Error: --query-file stdin did not match the selected root input\", file=sys.stderr)\n"
+            "                sys.exit(2)\n",
+            1,
+        ),),
+    },
+    "tools/mcp_tool_registration.py": {
+        "source_sha256": "7e73a415283c5255fedeb9318fceeb556eb31a19cea2e9bd3d9fdfc0f9297ade",
+        "edits": ((
+            "    ``_server_tool_scopes`` records the registering scope (default: this scope's own).\"\"\"\n"
+            "    from tools.registry import registry\n",
+            "    ``_server_tool_scopes`` records the registering scope (default: this scope's own).\"\"\"\n"
+            "    from hermes_installer.native_plugin_loader import filter_unselected_native_mcp_candidates\n"
+            "    candidates = filter_unselected_native_mcp_candidates(name, candidates)\n"
+            "    if not candidates:\n"
+            "        return []\n"
+            "    from tools.registry import registry\n",
+            1,
+        ),),
+    },
+    "tools/mcp_tool_discovery.py": {
+        "source_sha256": "cf2dc204fd293727e0e13a045428152f8e1925aa48ea521f6ec97035dd1e86d9",
+        "edits": ((
+            "    each); it only affects which servers start, not which names ``-t`` validation can see.\"\"\"\n"
+            "    with _owner_secret_scope():",
+            "    each); it only affects which servers start, not which names ``-t`` validation can see.\"\"\"\n"
+            "    from hermes_installer.native_plugin_loader import prepare_native_mcp_candidate_discovery\n"
+            "    # The installer profile has no worker-configured MCP authority.\n"
+            "    # Return only candidates installed from the sealed root index;\n"
+            "    # do not connect mcp_servers or load schema-cache handlers.\n"
+            "    return list(prepare_native_mcp_candidate_discovery())\n"
+            "    with _owner_secret_scope():",
+            1,
+        ),),
+    },
+    "agent/turn_facade.py": {
+        "source_sha256": "e9176a8ae1d7822fa45c75b680d5ae4be7c949e49c877673aea867cc146856a0",
+        "edits": (
+            (
+                "            if task_started:\n"
+                "                task_finished = True\n"
+                "                finish_task_run(**task_context, result=result)\n"
+                "            return result\n",
+                "            if task_started:\n"
+                "                task_finished = True\n"
+                "                finish_task_run(**task_context, result=result)\n"
+                "            from hermes_installer.native_invocations import finish_selected_native_turn\n"
+                "            finish_selected_native_turn(self, result)\n"
+                "            return result\n",
+                1,
+            ),
+            (
+                "                    with suppress(Exception):\n"
+                "                        _review_queue.note_turn_finished()\n",
+                "                    with suppress(Exception):\n"
+                "                        _review_queue.note_turn_finished()\n"
+                "                    with suppress(Exception):\n"
+                "                        from hermes_installer.native_invocations import clear_native_turn_scope\n"
+                "                        clear_native_turn_scope()\n",
+                1,
+            ),
+        ),
+    },
     "agent/chat_completion_helpers.py": {
         "source_sha256": "fbd79987a8257f79de6ed291d398f455456385f828631dd8d9d0e6cea3ba46f2",
         "edits": (
@@ -24,23 +156,50 @@ _FILES = {
                 "    if agent.api_mode == \"codex_responses\":\n"
                 "        return agent._run_codex_stream(api_kwargs, client=make_client(\"codex_stream_request\"),\n",
                 "    if agent.api_mode == \"codex_responses\":\n"
-                "        from hermes_installer.native_boundary import prepare_provider_request\n"
-                "        api_kwargs = prepare_provider_request(api_kwargs, purpose=\"native-primary\")\n"
+                "        from hermes_installer.native_invocations import prepare_native_provider_request\n"
+                "        api_kwargs = prepare_native_provider_request(api_kwargs, purpose=\"native-primary\")\n"
                 "        return agent._run_codex_stream(api_kwargs, client=make_client(\"codex_stream_request\"),\n",
                 1,
             ),
             (
                 "    return request_client.chat.completions.create(**api_kwargs)\n",
-                "    from hermes_installer.native_boundary import prepare_provider_request\n"
-                "    api_kwargs = prepare_provider_request(api_kwargs, purpose=\"native-primary\")\n"
-                "    return request_client.chat.completions.create(**api_kwargs)\n",
+                "    from hermes_installer.native_invocations import prepare_native_provider_request\n"
+                "    api_kwargs = prepare_native_provider_request(api_kwargs, purpose=\"native-primary\")\n"
+                "    from hermes_installer.native_boundary import take_prepared_native_request_handle\n"
+                "    native_request_handle = take_prepared_native_request_handle()\n"
+                "    response = request_client.chat.completions.with_raw_response.create(**api_kwargs)\n"
+                "    from hermes_installer.native_invocations import install_provider_response_tool_calls\n"
+                "    install_provider_response_tool_calls(agent, response, native_request_handle)\n"
+                "    return response.parse()\n",
+                1,
+            ),
+            (
+                "        for chunk in _iter_provider_stream_chunks(stream, response=lambda: self._attempt_stream_response):\n"
+                "            self._count_chunk(_diag, chunk)\n",
+                "        for chunk in _iter_provider_stream_chunks(stream, response=lambda: self._attempt_stream_response):\n"
+                "            self._count_chunk(_diag, chunk)\n",
                 1,
             ),
             (
                 "        return request_client.chat.completions.create(**stream_kwargs)\n",
-                "        from hermes_installer.native_boundary import prepare_provider_request\n"
-                "        stream_kwargs = prepare_provider_request(stream_kwargs, purpose=\"native-primary\")\n"
-                "        return request_client.chat.completions.create(**stream_kwargs)\n",
+                "        from hermes_installer.native_invocations import prepare_native_provider_request\n"
+                "        stream_kwargs = prepare_native_provider_request(stream_kwargs, purpose=\"native-primary\")\n"
+                "        from hermes_installer.native_boundary import take_prepared_native_request_handle\n"
+                "        native_request_handle = take_prepared_native_request_handle()\n"
+                "        stream = request_client.chat.completions.create(**stream_kwargs)\n"
+                "        from hermes_installer.native_invocations import attach_provider_stream_capture\n"
+                "        attach_provider_stream_capture(stream, native_request_handle)\n"
+                "        return stream\n",
+                1,
+            ),
+            (
+                "        if stream.final_response is not None:\n"
+                "            return self._adopt_final_response(stream.final_response)\n",
+                "        if stream.final_response is not None:\n"
+                "            return self._adopt_final_response(stream.final_response)\n"
+                "        if finish_reason is not None and not runaway:\n"
+                "            from hermes_installer.native_invocations import finish_provider_stream_response\n"
+                "            finish_provider_stream_response(self.agent, stream)\n",
                 1,
             ),
             (
@@ -87,8 +246,8 @@ _FILES = {
             (
                 "def _create_with_progress(\n",
                 "def _prepare_native_aux_request(kwargs: dict[str, Any]) -> dict[str, Any]:\n"
-                "    from hermes_installer.native_boundary import prepare_provider_request\n"
-                "    return prepare_provider_request(kwargs, purpose=\"native-auxiliary\")\n"
+                "    from hermes_installer.native_invocations import prepare_native_provider_request\n"
+                "    return prepare_native_provider_request(kwargs, purpose=\"native-auxiliary\")\n"
                 "\n\n"
                 "def _create_with_progress(\n",
                 1,
@@ -132,10 +291,23 @@ _FILES = {
             (
                 "    messages.append(tool_message)\n"
                 "    if not _flush_session_db_after_tool_progress(agent, messages, stage=f\"tool result {function_name}\"):",
-                "    from hermes_installer.native_boundary import record_tool_result\n"
-                "    record_tool_result(messages, tool_message)\n"
                 "    messages.append(tool_message)\n"
+                "    from hermes_installer.native_invocations import record_native_tool_result\n"
+                "    record_native_tool_result(agent, messages, tool_message, function_result)\n"
                 "    if not _flush_session_db_after_tool_progress(agent, messages, stage=f\"tool result {function_name}\"):",
+                1,
+            ),
+            (
+                "    _advance_start_order(lambda: _begin_tool_execution(agent, ref, display_index))\n"
+                "    return _run_with_activity_heartbeat(agent, ref.name, lambda: execute(ref.args))\n",
+                "    _advance_start_order(lambda: _begin_tool_execution(agent, ref, display_index))\n"
+                "    def _invoke_observed_tool_call():\n"
+                "        from hermes_installer.native_invocations import dispatch_observed_tool_call\n"
+                "        return dispatch_observed_tool_call(\n"
+                "            agent, tool_call_id=ref.call_id, tool_name=ref.name, arguments=ref.args,\n"
+                "            execute=lambda: execute(ref.args),\n"
+                "        )\n"
+                "    return _run_with_activity_heartbeat(agent, ref.name, _invoke_observed_tool_call)\n",
                 1,
             ),
         ),
@@ -190,7 +362,7 @@ def _ensure_overlay_parent(overlay: Path, relative_path: str, *, create: bool) -
 
 
 def apply_native_boundary_overlay(source_root: Path, overlay_root: Path) -> dict[str, str]:
-    """Create/verify the three-file HI08 overlay without modifying upstream files."""
+    """Create/verify the reviewed HI08 provider, tool, and native plugin overlay."""
     source = Path(source_root).resolve(strict=True)
     overlay = Path(overlay_root).resolve(strict=False)
     if source == overlay or source in overlay.parents:

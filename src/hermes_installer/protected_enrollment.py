@@ -7,6 +7,7 @@ host handlers. Callers provide opaque IDs and generation only.
 from __future__ import annotations
 
 import hashlib
+import grp
 import json
 import os
 import pwd
@@ -14,7 +15,7 @@ import re
 import stat
 import unicodedata
 from dataclasses import dataclass, replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
@@ -350,6 +351,7 @@ class ProtectedEnrollmentCatalog:
 
     def __init__(self, records: Mapping[tuple[str, str], HostServiceProfile], *, digest: str,
                  native_packages: list[Mapping[str, Any]] | None = None,
+                 source_issuers: tuple[Any, ...] | list[Any] | None = None,
                  memory_enrollments: Mapping[tuple[str, str], Any] | None = None,
                  parameter_schemas: list[Mapping[str, Any]] | None = None):
         if not records:
@@ -364,6 +366,26 @@ class ProtectedEnrollmentCatalog:
                 raise EnrollmentDenied("native package generation is duplicated")
             parsed_native[key] = package
         self._native_packages = MappingProxyType(parsed_native)
+        issuer_by_id: dict[str, Any] = {}
+        for issuer in source_issuers or ():
+            observer_id = getattr(issuer, "observer_enrollment_id", None)
+            if not isinstance(observer_id, str) or observer_id in issuer_by_id:
+                raise EnrollmentDenied("active source issuer observer ID is invalid or duplicated")
+            issuer_by_id[observer_id] = issuer
+        observer_joins: dict[str, NativeSourceObserverJoin] = {}
+        for package in parsed_native.values():
+            for adapter in package.adapter_records.values():
+                for observer_id in adapter.observer_enrollment_ids:
+                    issuer = issuer_by_id.get(observer_id)
+                    if issuer is None or observer_id in observer_joins:
+                        raise EnrollmentDenied("native adapter observer reference is absent or ambiguous")
+                    if (getattr(issuer, "producer_profile_id", None) != package.profile_id
+                            or getattr(issuer, "generation", None) != package.generation
+                            or getattr(issuer, "producer_role_artifact_id", None) != adapter.adapter_artifact_id
+                            or getattr(issuer, "producer_role_sha256", None) != adapter.adapter_sha256):
+                        raise EnrollmentDenied("native adapter observer does not match the active issuer role")
+                    observer_joins[observer_id] = NativeSourceObserverJoin(issuer, package, adapter)
+        self._source_observer_joins = MappingProxyType(observer_joins)
         self._memory_enrollments = MappingProxyType(dict(memory_enrollments or {}))
         parsed_schemas = {}
         for raw in parameter_schemas or []:
@@ -395,9 +417,28 @@ class ProtectedEnrollmentCatalog:
             raise EnrollmentDenied("native package belongs to a stale service generation")
         return row
 
+    def resolve_profile_native_package(self, profile_id: str, generation: str) -> "NativePackageBinding":
+        """Resolve the single protected package selected for one current process role."""
+        selected_profile = _id(profile_id, "native package profile ID")
+        selected_generation = _id(generation, "native package process generation")
+        matches = [row for row in self._native_packages.values()
+                   if row.profile_id == selected_profile and row.generation == selected_generation]
+        if len(matches) != 1:
+            raise EnrollmentDenied("native peer has no unique current protected package role")
+        services = [record for record in self._records.values()
+                    if record.profile_id == selected_profile and record.generation == selected_generation]
+        if len(services) != 1:
+            raise EnrollmentDenied("native peer package has no unique current service generation")
+        self.resolve(services[0].enrollment_id, selected_generation)
+        return matches[0]
+
     @property
     def parameter_schemas(self) -> Mapping[str, OperationParameterSchema]:
         return self._parameter_schemas
+
+    @property
+    def source_observer_joins(self) -> Mapping[str, NativeSourceObserverJoin]:
+        return self._source_observer_joins
 
     @classmethod
     def from_file(cls, path: Path, *, signature_verifier: Callable[[bytes, str], bool],
@@ -426,6 +467,7 @@ class ProtectedEnrollmentCatalog:
     def from_verified_records(cls, raw_records: list[Mapping[str, Any]], *,
                               protected_digest: str, expected_uid: int = 0,
                               native_packages: list[Mapping[str, Any]] | None = None,
+                              source_issuers: tuple[Any, ...] | list[Any] | None = None,
                               memory_enrollments: Mapping[tuple[str, str], Any] | None = None,
                               parameter_schemas: list[Mapping[str, Any]] | None = None) -> "ProtectedEnrollmentCatalog":
         """Build from records already authenticated by the root enrollment loader."""
@@ -442,6 +484,7 @@ class ProtectedEnrollmentCatalog:
             profile.roots.validate(root_uid=expected_uid)
             records[key] = profile
         return cls(records, digest=protected_digest, native_packages=native_packages,
+                   source_issuers=source_issuers,
                    memory_enrollments=memory_enrollments,
                    parameter_schemas=parameter_schemas)
 
@@ -463,6 +506,15 @@ class ProtectedEnrollmentCatalog:
                 or hashlib.sha256(executable.read_bytes()).hexdigest() != profile.executable_sha256):
             raise EnrollmentDenied("enrolled service executable changed or is not executable")
         return profile
+
+    def resolve_profile_generation(self, profile_id: str, generation: str) -> HostServiceProfile:
+        selected_profile = _id(profile_id, "service profile ID")
+        selected_generation = _id(generation, "service generation")
+        matches = [profile for (enrollment_id, current_generation), profile in self._records.items()
+                   if profile.profile_id == selected_profile and current_generation == selected_generation]
+        if len(matches) != 1:
+            raise EnrollmentDenied("service profile generation is absent or ambiguous")
+        return self.resolve(matches[0].enrollment_id, selected_generation)
 
     def resolve_package_runtime(self, enrollment_id: str, generation: str,
                                 package_set_id: str, build_catalog: "ProtectedBuildCatalog",
@@ -768,6 +820,8 @@ class NativeAdapterBinding:
     target_id: str
     recipient: str
     generation: str
+    observer_enrollment_ids: tuple[str, ...]
+    workflow_bindings: tuple[Mapping[str, str], ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -814,7 +868,8 @@ class NativePackageBinding:
         adapters: dict[str, NativeAdapterBinding] = {}
         fields = {"adapter_id", "manifest_sha256", "adapter_artifact_id", "adapter_sha256",
                   "action_id", "argument_schema_id", "result_schema_id", "effect_enrollment_id",
-                  "operation", "capability", "target_id", "recipient", "generation"}
+                  "operation", "capability", "target_id", "recipient", "generation",
+                  "observer_enrollment_ids", "workflow_bindings"}
         for raw in raw_adapters:
             if not isinstance(raw, Mapping) or set(raw) != fields:
                 raise EnrollmentDenied("protected native adapter fields are invalid")
@@ -829,6 +884,38 @@ class NativePackageBinding:
                 raise EnrollmentDenied("native adapter operation is outside fixed plugin verbs")
             if _id(raw["generation"], "native adapter generation") != _id(item["generation"], "generation"):
                 raise EnrollmentDenied("native adapter generation differs from its package")
+            raw_observers = raw["observer_enrollment_ids"]
+            if (not isinstance(raw_observers, list) or len(raw_observers) > 128
+                    or any(not isinstance(value, str) for value in raw_observers)
+                    or len(set(raw_observers)) != len(raw_observers)):
+                raise EnrollmentDenied("native adapter observer references are malformed")
+            observer_ids = tuple(_id(value, "native observer enrollment ID")
+                                 for value in raw_observers)
+            raw_workflows = raw["workflow_bindings"]
+            workflow_fields = {
+                "external_tool_name", "external_action_id", "external_argument_schema_id",
+                "external_result_schema_id", "workflow_artifact_id", "workflow_sha256",
+            }
+            if not isinstance(raw_workflows, list) or len(raw_workflows) > 61:
+                raise EnrollmentDenied("native adapter workflow bindings are malformed")
+            workflows: list[Mapping[str, str]] = []
+            workflow_keys: set[tuple[str, str, str, str]] = set()
+            for workflow in raw_workflows:
+                if not isinstance(workflow, Mapping) or set(workflow) != workflow_fields:
+                    raise EnrollmentDenied("native adapter workflow fields are invalid")
+                if (not isinstance(workflow["workflow_sha256"], str)
+                        or not re.fullmatch(r"[0-9a-f]{64}", workflow["workflow_sha256"])):
+                    raise EnrollmentDenied("native workflow digest is invalid")
+                selected = {name: _id(workflow[name], f"native workflow {name}")
+                            for name in workflow_fields - {"workflow_sha256"}}
+                selected["workflow_sha256"] = workflow["workflow_sha256"]
+                identity = (selected["external_tool_name"], selected["external_action_id"],
+                            selected["external_argument_schema_id"],
+                            selected["external_result_schema_id"])
+                if identity in workflow_keys:
+                    raise EnrollmentDenied("native adapter workflow action is duplicated")
+                workflow_keys.add(identity)
+                workflows.append(MappingProxyType(selected))
             adapters[adapter_id] = NativeAdapterBinding(
                 adapter_id, raw["manifest_sha256"], _id(raw["adapter_artifact_id"], "adapter artifact ID"),
                 raw["adapter_sha256"], _id(raw["action_id"], "native action ID"),
@@ -837,6 +924,7 @@ class NativePackageBinding:
                 _id(raw["effect_enrollment_id"], "effect enrollment ID"), operation,
                 _id(raw["capability"], "native capability"), _id(raw["target_id"], "native target ID"),
                 _id(raw["recipient"], "native recipient"), raw["generation"],
+                observer_ids, tuple(workflows),
             )
         return cls(
             _id(item["package_id"], "native package ID"), _id(item["profile_id"], "profile ID"),
@@ -847,6 +935,74 @@ class NativePackageBinding:
             item["resolver_sha256"], _id(item["service_package_root_id"], "service package root ID"),
             _id(item["service_mount_id"], "service mount ID"), MappingProxyType(adapters),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class NativeCandidateIndexManifestEntry:
+    """Fixed root-selected index member named by the pinned entrypoint manifest."""
+
+    artifact_id: str
+    relative_path: str
+    sha256: str
+    size_bytes: int
+
+    @classmethod
+    def from_entrypoint_manifest(
+        cls, manifest: Mapping[str, Any], binding: Any,
+    ) -> "NativeCandidateIndexManifestEntry | None":
+        """Parse the nested member pin after the enclosing manifest is verified.
+
+        Missing candidate_index means pre-discovery is unavailable. This method
+        does not read the manifest artifact, verify its enclosing digest, or
+        claim that the closure mount/member bytes have been checked.
+        """
+        if not isinstance(manifest, Mapping):
+            raise EnrollmentDenied("native entrypoint manifest binding is unavailable")
+        try:
+            package_id = _id(getattr(binding, "package_id"), "native package ID")
+            profile_id = _id(getattr(binding, "profile_id"), "native profile ID")
+            generation = _id(getattr(binding, "generation"), "native package generation")
+        except (AttributeError, TypeError, ValueError, EnrollmentDenied):
+            raise EnrollmentDenied("native entrypoint manifest binding is unavailable") from None
+        if (manifest.get("schema") != 1 or manifest.get("package_id") != package_id
+                or manifest.get("profile_id") != profile_id
+                or manifest.get("generation") != generation):
+            raise EnrollmentDenied("native entrypoint manifest does not join the protected package")
+        raw = manifest.get("candidate_index")
+        if raw is None:
+            return None
+        fields = {"artifact_id", "relative_path", "sha256", "size_bytes"}
+        if not isinstance(raw, Mapping) or set(raw) != fields:
+            raise EnrollmentDenied("native candidate index manifest pin fields are invalid")
+        expected_id = f"native-candidate-index:{package_id}:{generation}"
+        if (raw["artifact_id"] != expected_id
+                or raw["relative_path"] != "catalog/native-candidates.json"):
+            raise EnrollmentDenied("native candidate index is not the fixed package closure member")
+        digest, size = raw["sha256"], raw["size_bytes"]
+        if (not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                or type(size) is not int or not 1 <= size <= 2 * 1024 * 1024):
+            raise EnrollmentDenied("native candidate index digest or size is invalid")
+        closure_files = manifest.get("closure_files")
+        if not isinstance(closure_files, list):
+            raise EnrollmentDenied("native entrypoint closure file list is invalid")
+        members = [item for item in closure_files
+                   if isinstance(item, Mapping)
+                   and item.get("relative_path") == "catalog/native-candidates.json"]
+        if len(members) != 1:
+            raise EnrollmentDenied("native candidate index is absent or ambiguous in the closure manifest")
+        member = members[0]
+        if member.get("sha256") != digest or member.get("size_bytes") != size:
+            raise EnrollmentDenied("native candidate index pin differs from its closure file record")
+        return cls(expected_id, "catalog/native-candidates.json", digest, size)
+
+
+@dataclass(frozen=True, slots=True)
+class NativeSourceObserverJoin:
+    """Metadata-only source join; it is not a loaded-closure or peer proof."""
+
+    issuer: Any
+    package: NativePackageBinding
+    adapter: NativeAdapterBinding
 
 
 def _parse_profile(item: Any) -> HostServiceProfile:
@@ -1138,6 +1294,73 @@ class ProtectedDeviceCatalog:
 
 
 @dataclass(frozen=True, slots=True)
+class RootJournalSelection:
+    root_id: str
+    path: Path
+    device: int
+    inode: int
+    generation: str
+    service_generation_digest: str
+
+
+class ProtectedRootJournalCatalog:
+    """Resolve opaque root journal IDs only from the active generation snapshot."""
+
+    def __init__(self, records: Mapping[str, Mapping[str, Any]], *, generation_digest: str):
+        if not re.fullmatch(r"[0-9a-f]{64}", generation_digest):
+            raise EnrollmentDenied("root journal catalog generation digest is invalid")
+        self.generation_digest = generation_digest
+        self._records = MappingProxyType({key: MappingProxyType(dict(row))
+                                          for key, row in records.items()})
+
+    @classmethod
+    def from_protected_records(cls, records: list[Mapping[str, Any]], *,
+                               generation_digest: str) -> "ProtectedRootJournalCatalog":
+        parsed: dict[str, Mapping[str, Any]] = {}
+        fields = {"root_id", "absolute_path", "owner_uid", "owner_gid", "mode",
+                  "device", "inode", "generation", "purpose"}
+        for row in records:
+            if not isinstance(row, Mapping) or set(row) != fields:
+                raise EnrollmentDenied("protected root journal record fields are invalid")
+            root_id = _id(row["root_id"], "root journal ID")
+            if root_id in parsed:
+                raise EnrollmentDenied("protected root journal ID is duplicated")
+            path = _absolute(row["absolute_path"], "root journal path")
+            numbers = (row["owner_uid"], row["owner_gid"], row["mode"], row["device"], row["inode"])
+            if (any(type(value) is not int for value in numbers)
+                    or row["owner_uid"] != 0 or row["owner_gid"] != 0
+                    or row["mode"] != 0o700 or row["device"] < 0 or row["inode"] <= 0
+                    or row["purpose"] != "authority-journal"):
+                raise EnrollmentDenied("protected root journal identity or purpose is invalid")
+            generation = _id(row["generation"], "root journal generation")
+            parsed[root_id] = MappingProxyType({
+                **dict(row), "absolute_path": path, "generation": generation,
+            })
+        return cls(parsed, generation_digest=generation_digest)
+
+    def resolve(self, root_id: str, *, expected_active_generation_digest: str) -> RootJournalSelection:
+        if expected_active_generation_digest != self.generation_digest:
+            raise EnrollmentDenied("root journal selection belongs to a stale active generation")
+        selected_id = _id(root_id, "root journal ID")
+        row = self._records.get(selected_id)
+        if row is None:
+            raise EnrollmentDenied("root journal ID is not active")
+        path = row["absolute_path"]
+        try:
+            _owned_path(path, uid=0, directory=True)
+            info = path.stat(follow_symlinks=False)
+        except (OSError, EnrollmentDenied):
+            raise EnrollmentDenied("root journal path custody is unavailable") from None
+        if (stat.S_IMODE(info.st_mode) != row["mode"] or info.st_gid != row["owner_gid"]
+                or info.st_dev != row["device"] or info.st_ino != row["inode"]):
+            raise EnrollmentDenied("root journal path identity changed")
+        return RootJournalSelection(
+            selected_id, path, info.st_dev, info.st_ino, row["generation"],
+            self.generation_digest,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class FixedBuildOutputSpec:
     relative_path: str
     kind: str
@@ -1160,13 +1383,15 @@ def _freeze_build_facts(value: Any) -> Any:
 class FixedBuildProfile:
     target_id: str
     generation: str
+    build_service_enrollment_id: str
+    build_service_generation: str
     source_artifact_id: str
     source_sha256: str
     toolchain_artifact_id: str
     toolchain_sha256: str
     builder_artifact_id: str
     builder_sha256: str
-    argv_recipe: tuple[str, ...]
+    argv_recipe: tuple[Mapping[str, Any], ...]
     environment: Mapping[str, str]
     max_lifetime_seconds: int
     output_root_id: str
@@ -1175,21 +1400,62 @@ class FixedBuildProfile:
     output_specs: Mapping[str, FixedBuildOutputSpec]
     service_generation_digest: str = ""
 
+    @staticmethod
+    def _parse_argv_recipe(value: Any) -> tuple[Mapping[str, Any], ...]:
+        """Parse the active generation's tagged, root-only build argv grammar."""
+        mount_ids = {"builder", "source", "toolchain", "work", "output"}
+        if not isinstance(value, list) or not value or len(value) > 128:
+            raise EnrollmentDenied("fixed native build argv recipe is malformed")
+        parsed: list[Mapping[str, Any]] = []
+        for node in value:
+            if not isinstance(node, Mapping):
+                raise EnrollmentDenied("fixed build argv nodes must use tagged objects")
+            if set(node) == {"literal"}:
+                literal = node["literal"]
+                if (not isinstance(literal, str) or len(literal) > 4096
+                        or any(char in literal for char in ("\x00", "\n", "\r"))
+                        or "${" in literal or "`" in literal):
+                    raise EnrollmentDenied("fixed build argv literal is malformed")
+                parsed.append(MappingProxyType({"literal": literal}))
+                continue
+            if set(node) != {"build_path"} or not isinstance(node["build_path"], Mapping):
+                raise EnrollmentDenied("fixed build argv node has unknown tags or fields")
+            path_node = node["build_path"]
+            if set(path_node) != {"mount_id", "relative_path"}:
+                raise EnrollmentDenied("fixed build path node fields are invalid")
+            mount_id, relative_path = path_node["mount_id"], path_node["relative_path"]
+            if (not isinstance(mount_id, str) or mount_id not in mount_ids
+                    or not isinstance(relative_path, str) or "\\" in relative_path
+                    or "\x00" in relative_path):
+                raise EnrollmentDenied("fixed build path mount is not in the protected catalog")
+            if relative_path:
+                path = PurePosixPath(relative_path)
+                if (path.is_absolute() or path.as_posix() != relative_path
+                        or any(part in {"", ".", ".."} for part in path.parts)):
+                    raise EnrollmentDenied("fixed build path is not a normalized relative path")
+            parsed.append(MappingProxyType({"build_path": MappingProxyType({
+                "mount_id": mount_id, "relative_path": relative_path,
+            })}))
+        if parsed[0] != {"build_path": {"mount_id": "builder", "relative_path": ""}}:
+            raise EnrollmentDenied("fixed build argv[0] must be the enrolled builder executable mount")
+        return tuple(parsed)
+
     @classmethod
     def from_protected_record(cls, item: Mapping[str, Any]) -> "FixedBuildProfile":
         required = {"target_id", "generation", "source_artifact_id", "source_sha256", "toolchain_artifact_id",
                     "toolchain_sha256", "builder_artifact_id", "builder_sha256", "argv_recipe", "environment",
-                    "max_lifetime_seconds", "output_root_id", "output_root", "output_owner_uid", "output_specs"}
+                    "max_lifetime_seconds", "output_root_id", "output_root", "output_owner_uid", "output_specs",
+                    "build_service_enrollment_id", "build_service_generation"}
         if set(item) != required or item.get("target_id") not in {"coral-cpython-build:start", "colibri-source-build:start"}:
             raise EnrollmentDenied("fixed native build profile is unknown or malformed")
         for name in ("source_sha256", "toolchain_sha256", "builder_sha256"):
             if not isinstance(item[name], str) or not re.fullmatch(r"[0-9a-f]{64}", item[name]):
                 raise EnrollmentDenied("fixed build source/toolchain/builder digest is invalid")
-        recipe, env, outputs = item["argv_recipe"], item["environment"], item["output_specs"]
-        if (not isinstance(recipe, list) or not recipe or any(not isinstance(arg, str) or "\x00" in arg for arg in recipe)
-                or not isinstance(env, dict) or any(not isinstance(k, str) or not isinstance(v, str) or "\x00" in v for k, v in env.items())
+        recipe_value, env, outputs = item["argv_recipe"], item["environment"], item["output_specs"]
+        if (not isinstance(env, dict) or any(not isinstance(k, str) or not isinstance(v, str) or "\x00" in v for k, v in env.items())
                 or not isinstance(outputs, list) or not outputs or len(outputs) > 64):
             raise EnrollmentDenied("fixed native build recipe or outputs are malformed")
+        recipe = cls._parse_argv_recipe(recipe_value)
         if (set(env) - _BUILD_ENV
                 or any(re.search(r"token|secret|credential|password|api[_-]?key", key, re.I) for key in env)
                 or any("\n" in value or "\r" in value or "$" in value or "`" in value for value in env.values())):
@@ -1242,19 +1508,19 @@ class FixedBuildProfile:
                 or output_specs[name].target_facts != _freeze_build_facts(expected["target_facts"])
                 for name, expected in expected_specs.items()):
             raise EnrollmentDenied("fixed build output constraints differ from the reviewed target profile")
-        if (not Path(recipe[0]).is_absolute()
-                or Path(recipe[0]).name.casefold() in {"sh", "bash", "dash", "zsh"}
-                or any(token in {"-c", "-e", "--command"} for token in recipe[1:])
-                or any("{caller" in token or "${" in token for token in recipe)):
+        if any(node.get("literal") in {"-c", "-e", "--command"} for node in recipe[1:]
+               if "literal" in node):
             raise EnrollmentDenied("fixed native build recipe cannot select shell or caller code")
         lifetime, owner_uid = item["max_lifetime_seconds"], item["output_owner_uid"]
         if type(lifetime) is not int or not 1 <= lifetime <= 600 or type(owner_uid) is not int or owner_uid <= 0:
             raise EnrollmentDenied("fixed native build deadline is invalid")
         return cls(_id(item["target_id"], "build target"), _id(item["generation"], "generation"),
+                   _id(item["build_service_enrollment_id"], "build service enrollment"),
+                   _id(item["build_service_generation"], "build service generation"),
                    _id(item["source_artifact_id"], "source artifact ID"), item["source_sha256"],
                    _id(item["toolchain_artifact_id"], "toolchain artifact ID"), item["toolchain_sha256"],
                    _id(item["builder_artifact_id"], "builder artifact ID"), item["builder_sha256"],
-                   tuple(recipe), MappingProxyType(dict(env)), lifetime,
+                   recipe, MappingProxyType(dict(env)), lifetime,
                    _id(item["output_root_id"], "output root ID"),
                    _absolute(item["output_root"], "build output root"), owner_uid,
                    MappingProxyType(output_specs))
@@ -1295,3 +1561,28 @@ class ProtectedBuildCatalog:
         if profile is None:
             raise EnrollmentDenied("fixed build profile generation is stale")
         return profile
+
+    def resolve_service(self, target_id: str, generation: str,
+                        service_catalog: ProtectedEnrollmentCatalog
+                        ) -> tuple[FixedBuildProfile, HostServiceProfile]:
+        """Join one build profile to its exact currently selected service identity."""
+        profile = self.resolve(target_id, generation)
+        service = service_catalog.resolve(
+            profile.build_service_enrollment_id, profile.build_service_generation)
+        try:
+            account = pwd.getpwnam(service.service_user)
+            group = grp.getgrgid(service.service_gid)
+            primary_members = {
+                row.pw_name for row in pwd.getpwall()
+                if row.pw_gid == service.service_gid
+            }
+        except KeyError:
+            raise EnrollmentDenied("dedicated build service account or group is unavailable") from None
+        if (service.operation_targets.get("process.start") != profile.target_id
+                or service.service_uid != profile.output_owner_uid
+                or service.service_uid <= 0 or service.service_gid <= 0
+                or account.pw_uid != service.service_uid or account.pw_gid != service.service_gid
+                or group.gr_mem and set(group.gr_mem) != {service.service_user}
+                or primary_members != {service.service_user}):
+            raise EnrollmentDenied("fixed build profile does not join its dedicated selected service")
+        return profile, service

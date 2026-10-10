@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import tempfile
 import time
 import unittest
@@ -8,8 +9,9 @@ from types import SimpleNamespace
 
 from hermes_installer.policy import (
     BudgetLedger, DispatchPolicy, Dispatcher, PolicyDenied, ProviderResponse,
-    Sensitivity, default_public_route,
+    Sensitivity, default_public_route, normalize_chat_request,
 )
+from hermes_installer.authority.types import VerifiedEffectAuthorization
 from hermes_installer.state import OwnedRoot
 
 MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
@@ -24,14 +26,21 @@ class FakeAuthority:
     def authorize_effect(self, context, *, capability, target, recipient, request_digest, retry_index):
         binding = (capability, target, recipient, request_digest, retry_index)
         self.authorizations.append(binding)
-        grant = SimpleNamespace(monotonic_expires_at=time.monotonic() + 20, binding=binding)
+        issued = time.monotonic()
+        grant = SimpleNamespace(
+            monotonic_expires_at=issued + 20, issued_at_monotonic=issued,
+            capability=capability, target=target, recipient=recipient,
+            request_digest=request_digest, retry_index=retry_index, binding=binding,
+        )
         self.grants.append(grant)
         return grant
 
     def verify_effect(self, grant, context, *, capability, target, recipient, request_digest, retry_index):
         binding = (capability, target, recipient, request_digest, retry_index)
         self.verifications.append(binding)
-        return grant.binding == binding
+        if grant.binding != binding:
+            raise PermissionError("fixture effect binding mismatch")
+        return VerifiedEffectAuthorization(grant, "provider.dispatch", time.monotonic(), "fixture-receipt")
 
 
 class BrokerTransport:
@@ -44,14 +53,17 @@ class BrokerTransport:
         return self.response
 
 
-def host_context(*, sensitivity="public", capabilities=frozenset({"provider-inference", "provider-tool-call"})):
+def host_context(*, sensitivity="public", capabilities=frozenset({"provider-inference", "provider-tool-call"}),
+                 final_payload_digest=None):
     return SimpleNamespace(
         principal_id="host-principal", profile_id="hermes-public", namespace_id="ns-7", uid=1000,
         purpose="native-hermes-chat", intent_id="intent-9", trace_id="trace-1",
         lineage_hash="lineage-hash", policy_revision="policy-r4",
         issued_at_monotonic=time.monotonic(), monotonic_expires_at=time.monotonic() + 30,
         capabilities=capabilities,
-        nonce="context-nonce", signature="host-signature", sensitivity=sensitivity,
+        nonce="context-nonce", grant_id="context-grant",
+        signature="host-signature", sensitivity=sensitivity,
+        final_payload_digest=final_payload_digest,
     )
 
 
@@ -70,7 +82,9 @@ class ProviderAuthorityDispatchTests(unittest.TestCase):
             dispatcher = self.make_dispatcher(td, authority, transport)
             payload = (b'{"messages":[{"role":"user","content":"use a tool"}],'
                        b'"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]}')
-            dispatcher.dispatch(host_context(), MODEL, payload, input_tokens=10,
+            normalized = normalize_chat_request(payload, MODEL, 8)
+            context = host_context(final_payload_digest=hashlib.sha256(normalized).hexdigest())
+            dispatcher.dispatch(context, MODEL, payload, input_tokens=10,
                                 output_token_limit=8, tool_request=False)
             self.assertEqual(len(transport.calls), 1)
             expected = authority.authorizations[0]

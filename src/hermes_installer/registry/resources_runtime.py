@@ -17,6 +17,7 @@ import stat
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
 
@@ -177,6 +178,7 @@ class BrokeredEffectResponse(Protocol):
 class AuthorityClient(Protocol):
     def context(self, *, purpose: str, intent: str, operation: str,
                 source_contexts: Sequence[HostContext] = (),
+                source_receipt_handles: Sequence[str] = (),
                 final_payload_digest: str | None = None,
                 trace_id: str | None = None, lease_seconds: float = 30.0,
                 cancelled: Callable[[], bool] | None = None) -> HostContext: ...
@@ -216,6 +218,21 @@ class NativePluginImplementation(Protocol):
 
 class PluginAdapterRegistry(Protocol):
     def resolve_plugin_adapter(self, adapter_id: str) -> NativePluginImplementation | None: ...
+
+
+class PluginEffectsFacade(Protocol):
+    """Local facade over exact root-selected plugin actions.
+
+    This is the canonical native package binding surface. Implementations
+    resolve the adapter/action, schema, operation, target and recipient from
+    the live protected package binding, then preserve trusted invocation
+    lineage while dispatching. Callers provide only action arguments and
+    optional idempotency/confirmation references, never authority metadata.
+    """
+
+    def invoke(self, adapter_id: str, action_id: str, arguments: Mapping[str, Any],
+               idempotency_key: str | None = None,
+               opaque_confirmation_attestation_id: str | None = None) -> object: ...
 
 
 class ReviewedPluginAdapterRegistry:
@@ -704,6 +721,133 @@ class SelectedResourceRegistry:
         return row
 
 
+def selected_resource_specs_by_generation(
+    selected_resources: SelectedResourceRegistry,
+) -> Mapping[tuple[str, str], Mapping[str, Any]]:
+    """Project protected selected specs into the root controller lookup shape.
+
+    Root source controllers key a selected spec by ``(resource_id,
+    resource_generation)``. This projection accepts only the immutable typed
+    registry loaded from protected selection and rejects collisions across
+    resource kinds or source identities instead of silently choosing one.
+    """
+    if not isinstance(selected_resources, SelectedResourceRegistry):
+        raise TypeError("typed protected selected resources are required")
+    specs: dict[tuple[str, str], Mapping[str, Any]] = {}
+    for selected in selected_resources.rows:
+        key = (selected.identity.resource_id, selected.generation_digest)
+        if key in specs:
+            raise ResourceRuntimeError("selected resource ID and generation are ambiguous")
+        specs[key] = selected.effective_spec
+    return MappingProxyType(specs)
+
+
+def selected_resource_registry_from_verified_materialization(
+    native_registry: Any,
+    discovery: Any,
+    selected_rows: Sequence[SelectedResourceExecution],
+    *,
+    expected_generation_digest: str,
+) -> SelectedResourceRegistry:
+    """Join protected selections to the effective specs from a verified source.
+
+    Selection rows carry root-issued effect authority, but their effective
+    specification is not trusted as source. This boundary reloads every row
+    from the verified ``NativeRegistry``/``NativeDiscovery`` pair, validates
+    its source identity and content digest, then copies only the canonical
+    effective spec into a fresh immutable selection registry.
+    """
+    from .native import NativeDiscovery, NativeRegistry
+
+    if (not isinstance(native_registry, NativeRegistry)
+            or not isinstance(discovery, NativeDiscovery)
+            or discovery.source_revision != native_registry.source.revision
+            or discovery.catalog_version != native_registry.source.catalog_version):
+        raise ResourceRuntimeError("verified native registry and discovery are required")
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_generation_digest):
+        raise ResourceRuntimeError("protected active resource generation digest is invalid")
+
+    canonical: dict[tuple[str, str, str], tuple[ResourceIdentity, Mapping[str, Any]]] = {}
+    for resolved in discovery.resources:
+        if not resolved.provenance_verified:
+            raise ResourceRuntimeError("native discovery contains unverified source provenance")
+        # Re-run source resolution instead of accepting the Discovery object's
+        # effective_spec, which is a convenient DTO and can be reconstructed.
+        advertised = resolved.resource
+        try:
+            source_resolved = native_registry.resolver.resolve(
+                (f"{advertised.kind.value}/{advertised.id}@={advertised.version}",)
+            )
+        except Exception:
+            raise ResourceRuntimeError("verified native source no longer resolves") from None
+        resource_match = next((entry for entry in source_resolved
+                               if (entry.resource.kind, entry.resource.id, entry.resource.version)
+                               == (advertised.kind, advertised.id, advertised.version)), None)
+        if resource_match is None or resource_match.resource.digest != advertised.digest:
+            raise ResourceRuntimeError("native discovery identity differs from verified source resolution")
+        resolved = resource_match
+        resource = resolved.resource
+        kind = resource.kind.value
+        key = (kind, resource.id, resource.version)
+        source_key = f"{kind}/{resource.id}@{resource.version}"
+        source_path = native_registry.paths.get(source_key)
+        raw = native_registry.resolver.raw.get(source_key)
+        if (not source_path or raw is None or raw.repository != native_registry.source.repository
+                or raw.selected_revision != native_registry.source.revision
+                or raw.observed_revision != native_registry.source.revision
+                or raw.content_digest != resource.digest
+                or native_registry.resolver.document_digest(raw.document) != resource.digest):
+            raise ResourceRuntimeError("native discovery identity does not match the verified source pin")
+
+        # NativeRegistry applies this one installer-owned rewrite both when it
+        # materializes the declaration and when it builds the runtime adapter.
+        spec = dict(resolved.effective_spec or resource.body)
+        if kind == "crons" and resource.id in {"resource-sync", "daily-resource-reconcile"}:
+            action = spec.get("action")
+            if not isinstance(action, Mapping):
+                raise ResourceRuntimeError("verified update cron has no selected action")
+            action = dict(action)
+            action.pop("repository", None)
+            action.pop("ref", None)
+            action.update({
+                "type": "installer-resource-candidate-assessment",
+                "source": {
+                    "kind": "installer-bundle",
+                    "path": f"resources/vendor/hermes-agent-resources-{native_registry.source.catalog_version}",
+                    "catalogVersion": native_registry.source.catalog_version,
+                    "revision": native_registry.source.revision,
+                },
+                "mode": "candidate-assessment",
+            })
+            spec["action"] = action
+        if key in canonical:
+            raise ResourceRuntimeError("verified native discovery contains a duplicate resource identity")
+        canonical[key] = (
+            ResourceIdentity(resource.id, kind, resource.version, source_path,
+                             native_registry.source.revision, resource.digest),
+            MappingProxyType(spec),
+        )
+
+    joined: list[SelectedResourceExecution] = []
+    seen: set[tuple[str, str, str]] = set()
+    for selected in selected_rows:
+        if not isinstance(selected, SelectedResourceExecution):
+            raise TypeError("root selected resource rows must use the typed execution contract")
+        key = (selected.identity.kind, selected.identity.resource_id, selected.identity.version)
+        verified = canonical.get(key)
+        if verified is None or key in seen or selected.identity != verified[0]:
+            raise ResourceRuntimeError("protected selection does not match a unique verified resource declaration")
+        seen.add(key)
+        joined.append(SelectedResourceExecution(
+            identity=verified[0], generation_digest=expected_generation_digest,
+            effective_spec=dict(verified[1]), capability=selected.capability,
+            target=selected.target, operation=selected.operation,
+            recipient=selected.recipient, delegation_id=selected.delegation_id,
+            profile_id=selected.profile_id, enabled=selected.enabled,
+        ))
+    return SelectedResourceRegistry(joined, expected_generation_digest=expected_generation_digest)
+
+
 class SelectedResourceUnavailable(ResourceRuntimeError):
     """The selected source item lacks a protected execution target or dependency."""
 
@@ -723,13 +867,7 @@ def _cron_profile_prompt(selected: SelectedResourceExecution,
     mode = action.get("mode")
     if action.get("type") == "installer-resource-candidate-assessment":
         source = action["source"]
-        try:
-            root = target.artifact_root.resolve(strict=True)
-            bundle = (root / source["path"]).resolve(strict=True)
-        except OSError:
-            raise SelectedResourceUnavailable("pinned Resources snapshot is unavailable under the selected Hermes artifact root") from None
-        if not bundle.is_relative_to(root) or not bundle.is_dir():
-            raise SelectedResourceUnavailable("pinned Resources snapshot is not present under the selected Hermes artifact root")
+        bundle = _verified_installed_resource_bundle(target, source)
         return (
             "Assess only the installer-owned, pinned Resources snapshot at " + str(bundle)
             + f" (source revision {source['revision']}, catalog {source['catalogVersion']}). "
@@ -756,6 +894,74 @@ def _cron_profile_prompt(selected: SelectedResourceExecution,
     )
 
 
+def _verified_installed_resource_bundle(
+    target: HermesProfileExecutionTarget, source: Mapping[str, Any],
+) -> Path:
+    """Resolve a complete expanded snapshot against the wheel's pinned bundle.
+
+    The installer package archive is authoritative input; the source checkout's
+    ``resources/vendor`` tree is never consulted. The Hermes child can only use
+    the expanded copy under its root-enrolled immutable artifact root, so check
+    every path, byte and executable mode before placing that path in a prompt.
+    A directory containing only the selected cron manifest is not sufficient.
+    """
+    from hermes_installer.registry.source import RegistrySourceError, load_bundled_source
+
+    try:
+        pinned = load_bundled_source()
+    except (OSError, ValueError, RegistrySourceError):
+        raise SelectedResourceUnavailable("packaged installer Resources archive cannot be verified") from None
+    if (source.get("catalogVersion") != pinned.catalog_version
+            or source.get("revision") != pinned.revision):
+        raise SelectedResourceUnavailable("cron source identity differs from the packaged installer Resources pin")
+    raw_path = source.get("path")
+    if (not isinstance(raw_path, str) or raw_path.startswith("/")
+            or any(part in {"", ".", ".."} for part in raw_path.split("/"))):
+        raise SelectedResourceUnavailable("cron Resources bundle path is not a safe relative path")
+    try:
+        root = target.artifact_root.resolve(strict=True)
+        bundle = root.joinpath(*raw_path.split("/")).resolve(strict=True)
+        if not bundle.is_relative_to(root) or not bundle.is_dir():
+            raise OSError("bundle directory is not contained by artifact root")
+        if bundle != root.joinpath(*raw_path.split("/")):
+            raise OSError("bundle path contains a symlink")
+
+        observed_files: dict[str, tuple[bytes, int]] = {}
+        total_bytes = 0
+        for current, directories, names in os.walk(bundle, topdown=True, followlinks=False):
+            current_path = Path(current)
+            if current_path.is_symlink():
+                raise OSError("bundle directory contains a symlink")
+            for name in tuple(directories):
+                child = current_path / name
+                info = child.lstat()
+                if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
+                    raise OSError("bundle contains an unsafe directory")
+            for name in names:
+                file_path = current_path / name
+                info = file_path.lstat()
+                if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
+                    raise OSError("bundle contains a non-regular file")
+                relative = file_path.relative_to(bundle).as_posix()
+                content = file_path.read_bytes()
+                total_bytes += len(content)
+                if total_bytes > 16 * 1024 * 1024:
+                    raise OSError("bundle exceeds its pinned expanded-size bound")
+                observed_files[relative] = (content, stat.S_IMODE(info.st_mode))
+        if set(observed_files) != set(pinned.files):
+            raise OSError("bundle file set differs from the packaged pinned snapshot")
+        for relative, expected in pinned.files.items():
+            content, mode = observed_files[relative]
+            if content != expected or mode != pinned.file_modes[relative]:
+                raise OSError("bundle bytes or executable mode differ from the packaged pinned snapshot")
+    except (OSError, ValueError):
+        raise SelectedResourceUnavailable(
+            "complete pinned Resources snapshot is not materialized under the selected Hermes artifact root; "
+            "stage the verified package-data bundle before enabling this cron"
+        ) from None
+    return bundle
+
+
 def _cron_recipe_is_supported(selected: SelectedResourceExecution) -> bool:
     try:
         _validate_cron(selected.effective_spec, expected_source_revision=selected.identity.source_revision)
@@ -776,73 +982,18 @@ def build_cron_resource_effect_handler(
     profile_targets: SelectedHermesProfileResolver,
     authority_service: RootDelegatedEffectService,
 ) -> Callable[..., Mapping[str, Any]]:
-    """Build a root-only cron adapter for one selected resource.
+    """Reject the retired direct cron effect path.
 
-    The parent grant arrives through AuthorityService's fixed handler surface.
-    The selected ledger resolves both resource and profile identities; the
-    handler accepts no prompt, endpoint, argv, account, or profile override.
-    A second one-use child grant is issued by the root service for `process.start`.
+    Cron invocations now require a root-observed timer event, admitted resource
+    job, and per-child task receipt. This legacy function accepted a worker
+    payload containing profile/time fields and launched via the old ``-p/-z``
+    CLI path, so it must never produce an effect handler.
     """
     if identity.kind != "crons":
         raise ValueError("cron resource handler requires a cron identity")
-
-    def handle(*, context: HostContext, authorization: EffectAuthorization,
-               payload: bytes, timeout: float, peer_pid: int,
-               cancelled: Callable[[], bool]) -> Mapping[str, Any]:
-        selected = selected_resources.resolve(identity)
-        if (selected is None or not selected.enabled or selected.operation != "resource.cron.run"
-                or authorization.target != selected.target
-                or authorization.capability != selected.capability
-                or authorization.recipient != selected.recipient
-                or authorization.request_digest != hashlib.sha256(payload).hexdigest()):
-            raise SelectedResourceUnavailable("cron is not enabled in the protected selected-resource catalog")
-        try:
-            request = json.loads(payload)
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            raise ResourceRuntimeError("scheduled invocation payload is malformed") from None
-        if not isinstance(request, dict) or set(request) != {"profile_id", "scheduled_for"}:
-            raise ResourceRuntimeError("scheduled invocation accepts only its selected profile and schedule instant")
-        if request["profile_id"] != selected.profile_id:
-            raise ResourceRuntimeError("scheduled invocation profile differs from root selection")
-        scheduled_for = request["scheduled_for"]
-        if not isinstance(scheduled_for, str) or not re.fullmatch(
-            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})", scheduled_for
-        ):
-            raise ResourceRuntimeError("scheduled invocation time must be an explicit ISO-8601 instant")
-        if not _cron_instant_matches(selected.effective_spec, scheduled_for):
-            raise ResourceRuntimeError("scheduled instant does not match the selected cron expression")
-        profile_id = selected.profile_id
-        if profile_id is None:
-            raise SelectedResourceUnavailable("selected cron has no resolved Hermes profile")
-        target = profile_targets.resolve_profile(profile_id)
-        if target is None or target.profile_id != profile_id:
-            raise SelectedResourceUnavailable("selected Hermes profile has no protected custody target")
-        prompt = _cron_profile_prompt(selected, scheduled_for, target)
-        from hermes_installer.authority import canonical_bytes
-        from hermes_installer.authority.client import canonical_profile_target, profile_launch_envelope
-
-        process_target = canonical_profile_target(profile_id, target.executable, target.data_root)
-        argv = [str(target.executable.resolve(strict=True)), "-p", profile_id, "-z", prompt]
-        launch = profile_launch_envelope(
-            target=process_target, profile_id=profile_id, executable=target.executable,
-            artifact_sha256=target.artifact_sha256, artifact_root=target.artifact_root,
-            cwd=target.cwd, data_root=target.data_root, argv=argv,
-            env_allowlist=target.env_allowlist,
-            child_artifact_refs=target.child_artifact_refs,
-            max_lifetime_seconds=target.max_lifetime_seconds,
-            max_output_bytes=target.max_output_bytes, stdin_mode="closed",
-        )
-        response = authority_service.perform_delegated_effect(
-            authorization, delegation_id=selected.delegation_id,
-            payload=canonical_bytes(launch), peer_pid=peer_pid,
-            timeout=min(timeout, float(target.max_lifetime_seconds)), cancelled=cancelled,
-        )
-        if isinstance(response, Mapping):
-            return response
-        return {"status": response.status, "body": response.body,
-                "headers": dict(response.headers), "receipt_id": response.receipt_id}
-
-    return handle
+    raise SelectedResourceUnavailable(
+        "direct cron effects are retired; use the root-observed resource-job admission and task runner"
+    )
 
 
 def build_selected_resource_effect_handlers(
@@ -850,27 +1001,19 @@ def build_selected_resource_effect_handlers(
     selected_resources: SelectedResourceRegistry,
     profile_targets: SelectedHermesProfileResolver,
     authority_service: RootDelegatedEffectService,
-) -> dict[tuple[str, str], Callable[..., Mapping[str, Any]]]:
-    """Build concrete handlers for enabled root-selected cron profile runs.
+) -> Mapping[tuple[str, str], Callable[..., Mapping[str, Any]]]:
+    """Return no direct resource effects; jobs must use the protected job authority.
 
-    Call during root `AuthorityService` assembly with selection records read
-    from protected host custody. The returned map uses the service's exact
-    `(operation, protected target)` key. Unenrolled, disabled, channel, webhook,
-    bundle, plugin, and MCP records do not receive an effect handler here.
+    This helper existed before RB07. Registering its cron handler would bypass
+    root event-source admission and call the legacy direct profile launcher.
+    The actual job authority owns event, per-child grants, cancellation and
+    result-capsule dispatch; the old resource-effect map is intentionally not
+    an alternate route.
     """
-    handlers: dict[tuple[str, str], Callable[..., Mapping[str, Any]]] = {}
-    for selected in selected_resources.rows:
-        if (not selected.enabled or selected.identity.kind != "crons"
-                or not _cron_recipe_is_supported(selected)):
-            continue
-        key = (selected.operation, selected.target)
-        if key in handlers:
-            raise ValueError("multiple selected resources resolve to the same protected effect target")
-        handlers[key] = build_cron_resource_effect_handler(
-            selected.identity, selected_resources=selected_resources,
-            profile_targets=profile_targets, authority_service=authority_service,
-        )
-    return handlers
+    del selected_resources, profile_targets, authority_service
+    from types import MappingProxyType
+
+    return MappingProxyType({})
 
 
 def selected_resource_effect_blockers(
@@ -886,12 +1029,29 @@ def selected_resource_effect_blockers(
         if selected.identity.kind == "crons":
             if not _cron_recipe_is_supported(selected):
                 reason = "the selected cron action has no reviewed local Hermes execution recipe"
-            elif selected.profile_id is None or profile_targets is None or profile_targets.resolve_profile(selected.profile_id) is None:
+            elif selected.profile_id is None or profile_targets is None:
                 reason = "the selected cron profile lacks a custody-resolved pinned Hermes process target"
             else:
-                # Handler factory assembly also needs a fixed root delegation
-                # rule for this exact selected resource and child process.
-                continue
+                selected_profile = profile_targets.resolve_profile(selected.profile_id)
+                if selected_profile is None:
+                    reason = "the selected cron profile lacks a custody-resolved pinned Hermes process target"
+                else:
+                    action = selected.effective_spec.get("action")
+                    if action.get("type") == "installer-resource-candidate-assessment":
+                        try:
+                            _verified_installed_resource_bundle(selected_profile, action["source"])
+                        except SelectedResourceUnavailable as exc:
+                            reasons[key] = str(exc)
+                            continue
+                    # A profile-launch handler is only the effect backend. Until a
+                    # root-owned timer producer captures an actual due event and
+                    # the job admission path mints a fresh child grant, a selected
+                    # cron must not appear operational merely because its target
+                    # and launch recipe resolve.
+                    reason = (
+                        "the protected timer event issuer and fresh resource-job "
+                        "child-admission handler are not registered"
+                    )
         elif selected.identity.kind == "channels":
             reason = "the official Hermes channel connector and protected account enrollment are unavailable"
         elif selected.identity.kind == "webhooks":
@@ -924,6 +1084,10 @@ def invoke_fixed_resource_effect(
         raise TypeError("trusted NativePluginRuntimeContext is required")
     if not isinstance(intent, str) or not intent or len(intent) > 512:
         raise ResourceRuntimeError("resource effect intent is invalid")
+    if effect.operation.startswith("resource."):
+        raise SelectedResourceUnavailable(
+            "worker-originated resource effects are retired; use protected root event and job admission"
+        )
     if purpose not in {"native-hermes-chat", "native-hermes-cron", "native-hermes-webhook", "native-hermes-channel"}:
         raise ResourceRuntimeError("resource effect purpose is not a reviewed Hermes execution source")
     if type(retry_index) is not int or not 0 <= retry_index <= 100:
@@ -945,7 +1109,8 @@ def invoke_fixed_resource_effect(
     if not source_contexts:
         raise ResourceRuntimeError("trusted Hermes invocation lineage is unavailable")
     issued = context.authority.context(
-        purpose=purpose, intent=intent, source_contexts=source_contexts,
+        purpose=purpose, intent=intent, operation=effect.operation,
+        source_contexts=source_contexts, final_payload_digest=digest,
         trace_id=None, lease_seconds=30.0, cancelled=cancelled,
     )
     grant = context.authority.authorize_effect(
@@ -974,20 +1139,17 @@ def invoke_scheduled_profile_run(
     retry_index: int = 0,
     cancelled: Callable[[], bool] | None = None,
 ) -> BrokeredEffectResponse:
-    """Submit a scheduled profile run through the root's fixed Hermes adapter.
+    """Reject legacy worker-originated timer invocation values.
 
-    A schedule is provenance only. The root adapter must resolve the selected
-    profile and independently authorize all work and delivery recipients.
+    Timer events must enter through the protected root controller and resource
+    job admission path; a native plugin call cannot assert a schedule, profile,
+    or due time in an effect payload.
     """
     if context.identity.kind != "crons" or effect.operation != "resource.cron.run":
         raise ResourceRuntimeError("scheduled profiles require a cron identity and fixed resource.cron.run operation")
-    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", profile_id):
-        raise ResourceRuntimeError("scheduled profile identity is invalid")
-    if not isinstance(scheduled_for, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})", scheduled_for):
-        raise ResourceRuntimeError("scheduled invocation time must be an explicit ISO-8601 instant")
-    return invoke_fixed_resource_effect(
-        context, effect, {"profile_id": profile_id, "scheduled_for": scheduled_for},
-        intent=intent, purpose="native-hermes-cron", retry_index=retry_index, cancelled=cancelled,
+    del profile_id, scheduled_for, intent, retry_index, cancelled
+    raise SelectedResourceUnavailable(
+        "worker-originated cron effects are retired; submit a root-observed event through resource-job admission"
     )
 
 
@@ -1190,22 +1352,37 @@ def materialize_runtime_resource(
         registration = _registration(identity, adapter_id, catalog_version, effective_spec, enabled=False)
     elif kind == "plugins":
         try:
-            from hermes_installer.components.native_plugins import native_plugin_handler_available
+            from hermes_installer.components.native_plugins import (
+                native_plugin_handler_available,
+                resolve_native_plugin_adapter,
+            )
 
+            contract = resolve_native_plugin_adapter(resource_id)
             available = native_plugin_handler_available(resource_id)
-        except ImportError:
+            adapter_blocker = contract.blocker
+        except (ImportError, KeyError):
             available = False
+            adapter_blocker = "No reviewed native plugin adapter contract is installed."
         # Handler resolvability is a separate fact from Hermes discovery. The
         # installer-owned PluginContext loader is not packaged yet, so the
         # resource must not be emitted at a path that Hermes could import.
-        adapter_id = resource_id if available else None
+        # Keep the canonical adapter identity in the crosswalk even when its
+        # implementation is missing; readiness/blockers carry that separate
+        # fact and never imply Hermes discovery or activation.
+        adapter_id = resource_id
         native_path = None
         discoverability = ("reviewed register(ctx) implementation exists; trusted Hermes loader is not packaged"
                            if available else "no reviewed native PluginContext handler is installed")
         invocation = ("pending installer-owned PluginContext loader and runtime-context injection"
                       if available else "unavailable until a source-backed register(ctx) handler is installed")
-        blockers = (("Package the installer-owned trusted PluginContext loader and verify Hermes discovery/runtime context.",)
-                    if available else (f"{_PLUGIN_NEXT_STEP}: {resource_id}.",))
+        pending = []
+        if adapter_blocker:
+            pending.append(f"{resource_id}: {adapter_blocker}.")
+        if available:
+            pending.append("Package the installer-owned trusted PluginContext loader and verify Hermes discovery/runtime context.")
+        elif not adapter_blocker:
+            pending.append(f"{_PLUGIN_NEXT_STEP}: {resource_id}.")
+        blockers = tuple(pending)
         registration = None
     else:  # guarded by _safe_identity
         raise ResourceRuntimeError(f"unsupported runtime resource kind: {kind}")

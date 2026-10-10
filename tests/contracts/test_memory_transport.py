@@ -1,172 +1,123 @@
-"""Fixed memory HTTP framing and connector denial tests (SK01, SK-T01)."""
-import json
-import time
+"""Legacy raw HTTP path is closed; only the compound executor can be wired."""
 import unittest
+import socket
+import threading
+from types import SimpleNamespace
 
-from hermes_installer.memory.enrollment import MemoryServiceEnrollment, ROUTES, SOURCE_PINS
-from hermes_installer.memory.transport import (
-    MemoryServiceIPC, MemoryTransportDenied, MemoryTransportUnavailable,
+from hermes_installer.memory.transport import MemoryServiceIPC, MemoryTransportUnavailable
+from hermes_installer.memory.compound import MemoryServiceRequest
+from hermes_installer.memory.namespace_connector import (
+    MemoryNamespaceDenied, read_bounded_http_response, _frame,
 )
 
 
 class Context:
     profile_id = "profile-one"
     namespace_id = "namespace-one"
-    principal_id = "principal-one"
-    trace_id = "trace-one"
 
 
-class Authorization:
-    pass
+class ForbiddenConnectorFactory:
+    def __init__(self):
+        self.calls = []
 
-
-class Stream:
-    def __init__(self, response):
-        self.response = response
-        self.writes = []
-        self.closed = False
-
-    def write(self, data):
-        self.writes.append(data)
-        return len(data)
-
-    def read(self, max_bytes):
-        if self.response is None:
-            return b""
-        data, self.response = self.response[:max_bytes], self.response[max_bytes:]
-        return data
-
-    def close(self):
-        self.closed = True
-
-
-class Connector:
-    def __init__(self, stream):
-        self.stream = stream
-        self.opens = []
-
-    def open(self, **kwargs):
-        self.opens.append(kwargs)
-        return self.stream
-
-
-def enrollment():
-    provider, variant = "agentmemory", "default"
-    routes = ROUTES[provider][variant]
-    return MemoryServiceEnrollment.from_protected_record({
-        "target_id": "memory-agentmemory:profile-one",
-        "provider": provider,
-        "backend_variant": variant,
-        "profile_id": "profile-one",
-        "principal_id": "principal-one",
-        "service_enrollment_id": "memory-service-one",
-        "source_revision": SOURCE_PINS[provider],
-        "service_generation": "generation-eight",
-        "namespace_identity": "namespace-one",
-        "literal_loopback_port": 3111,
-        "fixed_route_map": {
-            key: {"method": route.method, "path": route.path, "body": route.body}
-            for key, route in routes.items()
-        },
-        "data_root_id": "memory-data-one",
-        "auth_reference_id": "vault-ref-one",
-        "fixed_project_account_user_scope": {
-            "project_id": "project-one", "account_id": "account-one",
-            "user_id": "profile-one",
-        },
-        "memory_owner_generation": 3,
-        "private_extraction_embedding_routes": {
-            "extract": "private-extract-one", "embed": "private-embed-one",
-        },
-        "background_consent_revision": "memory-consent-v1",
-        "limits": {
-            "request_bytes": 262144, "response_bytes": 2097152,
-            "result_limit": 100, "operation_timeout_seconds": 15,
-            "whole_compound_timeout_seconds": 60,
-        },
-    })
-
-
-def make_ipc(stream, calls):
-    client = Connector(stream)
-
-    def factory(**kwargs):
-        calls.append(kwargs)
-        return client
-
-    return MemoryServiceIPC(
-        {("profile-one", "namespace-one", "agentmemory"): enrollment()},
-        factory), client
-
-
-def response(status=200, body=b'{"healthy":true}', extra_headers=b""):
-    head = (f"HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\n"
-            f"Content-Length: {len(body)}\r\n").encode("ascii")
-    return head + extra_headers + b"Connection: close\r\n\r\n" + body
+    def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+        raise AssertionError("raw memory connector must never open")
 
 
 class MemoryTransportTests(unittest.TestCase):
-    def test_frames_only_fixed_route_and_opens_enrolled_target_generation(self):
-        calls = []
-        ipc, client = make_ipc(Stream(response()), calls)
-        result = ipc.request(context=Context(), authorization=Authorization(),
-            service_id="memory-service-one", service_generation="generation-eight",
-            provider="agentmemory", route_id="agentmemory-ready",
-            session_id="trace-one", deadline_monotonic=time.monotonic()+5,
-            payload=b'{"schema":1}', timeout=2, peer_pid=1001,
-            peer_pidfd=None, cancelled=lambda: False)
+    def test_raw_http_is_unavailable_before_connector_open(self):
+        factory = ForbiddenConnectorFactory()
+        ipc = MemoryServiceIPC({}, factory)
+        with self.assertRaisesRegex(MemoryTransportUnavailable, "fixed compound executor"):
+            ipc.request(
+                context=Context(), authorization=object(), service_id="service-one",
+                service_generation="generation-one", provider="agentmemory",
+                route_id="agentmemory-search", session_id="trace-one",
+                deadline_monotonic=9999999999.0, payload=b'{"schema":1}', timeout=1.0,
+                peer_pid=10, peer_pidfd=None, cancelled=lambda: False,
+            )
+        self.assertEqual(factory.calls, [])
+
+    def test_root_serializer_adds_only_the_enrolled_credential_codec(self):
+        enrollment = SimpleNamespace(
+            provider="agentmemory", fixed_route_map={"agentmemory-search": object()},
+            literal_loopback_port=3111,
+        )
+        request = MemoryServiceRequest(
+            "POST", "/agentmemory/smart-search", (), b'{"query":"synthetic"}',
+            "memory-auth-profile-one",
+        )
+        frame = _frame(enrollment=enrollment, route_id="agentmemory-search",
+                       request=request, secret="root-vault-secret", maximum_bytes=4096)
+        header, body = frame.split(b"\r\n\r\n", 1)
+        self.assertIn(b"Authorization: Bearer root-vault-secret", header)
+        self.assertNotIn(b"X-API-Key", header)
+        self.assertEqual(body, request.body)
+        self.assertNotIn(b"root-vault-secret", body)
+
+    def test_unauthed_doctor_probes_do_not_resolve_or_emit_memory_credentials(self):
+        for provider, route_id, path, port in (
+            ("openviking", "openviking-ready", "/ready", 1933),
+            ("agentmemory", "agentmemory-ready", "/agentmemory/livez", 3111),
+        ):
+            with self.subTest(provider=provider):
+                enrollment = SimpleNamespace(
+                    provider=provider, fixed_route_map={route_id: object()},
+                    literal_loopback_port=port)
+                request = MemoryServiceRequest("GET", path, (("accept", "application/json"),),
+                                               b"", "unused-auth-reference")
+                frame = _frame(enrollment=enrollment, route_id=route_id,
+                               request=request, secret=None, maximum_bytes=4096)
+                header, body = frame.split(b"\r\n\r\n", 1)
+                self.assertIn(f"GET {path} HTTP/1.1".encode(), header)
+                self.assertNotIn(b"Authorization:", header)
+                self.assertNotIn(b"X-API-Key:", header)
+                self.assertNotIn(b"Content-Length:", header)
+                self.assertEqual(body, b"")
+
+    def test_bounded_response_parser_accepts_one_exact_json_frame(self):
+        reader, writer = socket.socketpair()
+        response = b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\n\r\n{"ok":true}'
+        thread = threading.Thread(target=lambda: (writer.sendall(response), writer.close()))
+        thread.start()
+        try:
+            result = read_bounded_http_response(
+                reader, maximum_body=64, deadline=10**12, cancelled=lambda: False)
+        finally:
+            reader.close()
+            thread.join(timeout=1)
         self.assertEqual(result.status, 200)
-        self.assertEqual(result.body, b'{"healthy":true}')
-        self.assertEqual(client.opens, [{
-            "enrollment_id": "memory-service-one", "generation": "generation-eight",
-            "target_id": "memory-agentmemory:profile-one",
-            "approved_route_id": "agentmemory-ready", "session_id": "trace-one",
-            "deadline": client.opens[0]["deadline"],
-        }])
-        self.assertEqual(len(client.stream.writes), 1)
-        request = client.stream.writes[0]
-        self.assertTrue(request.startswith(b"GET /agentmemory/livez HTTP/1.1\r\n"))
-        self.assertIn(b"Host: 127.0.0.1:3111\r\n", request)
-        self.assertNotIn(b"Authorization:", request)
-        self.assertTrue(client.stream.closed)
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(len(calls[0]["request_digest"]), 64)
+        self.assertEqual(result.body, b'{"ok":true}')
 
-    def test_wrong_service_generation_or_principal_denies_before_connector(self):
-        for changes in ({"service_generation": "generation-seven"}, {"principal": "sibling"}):
-            calls = []
-            ipc, _ = make_ipc(Stream(response()), calls)
-            context = Context()
-            if "principal" in changes:
-                context.principal_id = changes["principal"]
-            with self.assertRaises(MemoryTransportDenied):
-                ipc.request(context=context, authorization=Authorization(),
-                    service_id="memory-service-one",
-                    service_generation=changes.get("service_generation", "generation-eight"),
-                    provider="agentmemory", route_id="agentmemory-ready",
-                    session_id="trace-one", deadline_monotonic=time.monotonic()+5,
-                    payload=b'{"schema":1}', timeout=2, peer_pid=1001,
-                    peer_pidfd=None, cancelled=lambda: False)
-            self.assertEqual(calls, [])
-
-    def test_unknown_route_redirect_and_oversized_response_fail_closed(self):
-        calls = []
-        ipc, _ = make_ipc(Stream(response()), calls)
-        args = dict(context=Context(), authorization=Authorization(),
-            service_id="memory-service-one", service_generation="generation-eight",
-            provider="agentmemory", session_id="trace-one",
-            deadline_monotonic=time.monotonic()+5, payload=b'{"schema":1}',
-            timeout=2, peer_pid=1001, peer_pidfd=None, cancelled=lambda: False)
-        with self.assertRaises(MemoryTransportDenied):
-            ipc.request(route_id="openviking-find", **args)
-        self.assertEqual(calls, [])
-        ipc, _ = make_ipc(Stream(response(302)), calls)
-        with self.assertRaises(MemoryTransportDenied):
-            ipc.request(route_id="agentmemory-ready", **args)
-        oversized = b"x" * (2 * 1024 * 1024 + 1)
-        ipc, _ = make_ipc(Stream(response(body=oversized)), calls)
-        with self.assertRaises(MemoryTransportUnavailable):
-            ipc.request(route_id="agentmemory-ready", **args)
+    def test_bounded_response_parser_rejects_ambiguous_and_truncated_frames(self):
+        invalid = (
+            b'HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\n{}',
+            b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 2\r\n\r\n{}',
+            b'HTTP/1.1 302 Found\r\nContent-Length: 2\r\n\r\n{}',
+        )
+        for response in invalid:
+            with self.subTest(response=response[:32]):
+                reader, writer = socket.socketpair()
+                writer.sendall(response)
+                writer.close()
+                try:
+                    with self.assertRaises(MemoryNamespaceDenied):
+                        read_bounded_http_response(
+                            reader, maximum_body=64, deadline=10**12,
+                            cancelled=lambda: False)
+                finally:
+                    reader.close()
+        reader, writer = socket.socketpair()
+        writer.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n{}')
+        writer.close()
+        try:
+            with self.assertRaisesRegex(RuntimeError, "truncated"):
+                read_bounded_http_response(
+                    reader, maximum_body=64, deadline=10**12,
+                    cancelled=lambda: False)
+        finally:
+            reader.close()
 
 
 if __name__ == "__main__":

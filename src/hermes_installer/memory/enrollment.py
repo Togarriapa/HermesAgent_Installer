@@ -80,15 +80,102 @@ ROOT_MEMORY_FIELDS = frozenset({
     "target_id", "provider", "backend_variant", "profile_id", "principal_id",
     "service_enrollment_id", "source_revision", "service_generation",
     "namespace_identity", "literal_loopback_port", "fixed_route_map",
-    "data_root_id", "auth_reference_id", "fixed_project_account_user_scope",
+    "data_root_id", "authority_state_root_id", "auth_reference_id", "fixed_project_account_user_scope",
     "memory_owner_generation", "private_extraction_embedding_routes",
-    "background_consent_revision", "limits",
+    "background_consent_revision", "limits", "lifecycle_binding",
 })
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$")
 
 
 class MemoryEnrollmentError(ValueError):
     """Protected memory enrollment is incomplete or differs from its pinned catalog."""
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryLifecycleBinding:
+    """Digest-covered selected start/readiness recipe for one service generation."""
+
+    service_enrollment_id: str
+    service_generation: str
+    start_operation_id: str
+    start_parameter_schema_id: str
+    prestart_receipt_handles: tuple[str, ...]
+    readiness_route_id: str
+    readiness_schema_id: str
+    restart_policy: str
+    maximum_restart_attempts: int
+    original_deadline_seconds: int
+
+    @classmethod
+    def from_protected_record(cls, value: Mapping[str, Any], *, provider: str,
+                              backend_variant: str, service_enrollment_id: str,
+                              service_generation: str,
+                              fixed_route_map: Mapping[str, MemoryRouteRecipe]
+                              ) -> "MemoryLifecycleBinding":
+        fields = {
+            "service_enrollment_id", "service_generation", "start_operation_id",
+            "start_parameter_schema_id", "prestart_receipt_handles", "readiness_route_id",
+            "readiness_schema_id", "restart_policy", "maximum_restart_attempts",
+            "original_deadline_seconds",
+        }
+        if not isinstance(value, Mapping) or set(value) != fields:
+            raise MemoryEnrollmentError("memory lifecycle binding fields differ from SK-T01")
+        if (value["service_enrollment_id"] != service_enrollment_id
+                or value["service_generation"] != service_generation):
+            raise MemoryEnrollmentError("memory lifecycle binding differs from selected service generation")
+        if value["start_parameter_schema_id"] != "no-caller-parameters-v1":
+            raise MemoryEnrollmentError("memory startup parameters must use the protected empty schema")
+
+        expected_start = {
+            ("openviking", "default"): "memory-openviking-serve-v1",
+            ("agentmemory", "default"): "memory-agentmemory-serve-v1",
+            ("claude-mem", "worker-observation"): "memory-claude-mem-worker-observation-serve-v1",
+            ("claude-mem", "server-v1-sqlite"): "memory-claude-mem-server-v1-sqlite-serve-v1",
+            ("claude-mem", "server-v1-postgres"): "memory-claude-mem-server-v1-postgres-serve-v1",
+        }.get((provider, backend_variant))
+        if expected_start is None or value["start_operation_id"] != expected_start:
+            raise MemoryEnrollmentError("memory startup operation differs from the pinned provider variant")
+
+        expected_ready = {
+            ("openviking", "default"): "openviking-ready",
+            ("agentmemory", "default"): "agentmemory-ready",
+            ("claude-mem", "server-v1-sqlite"): "claude-sqlite-ready",
+            ("claude-mem", "server-v1-postgres"): "claude-postgres-ready",
+        }.get((provider, backend_variant))
+        readiness_route_id = value["readiness_route_id"]
+        recipe = fixed_route_map.get(readiness_route_id) if isinstance(readiness_route_id, str) else None
+        if (expected_ready is None or readiness_route_id != expected_ready or recipe is None
+                or value["readiness_schema_id"] != recipe.result_schema_id):
+            raise MemoryEnrollmentError("memory readiness route/schema is not source-pinned for the selected variant")
+
+        receipts = value["prestart_receipt_handles"]
+        if (not isinstance(receipts, (tuple, list)) or not receipts
+                or any(not isinstance(handle, str) or not _ID.fullmatch(handle) for handle in receipts)
+                or len(set(receipts)) != len(receipts)):
+            raise MemoryEnrollmentError("memory startup requires distinct protected prestart receipts")
+        restart_policy = value["restart_policy"]
+        retries = value["maximum_restart_attempts"]
+        if restart_policy not in {"manual-owned-restart", "bounded-owned-restart"}:
+            raise MemoryEnrollmentError("memory restart policy is not a fixed owned policy")
+        if type(retries) is not int or not 0 <= retries <= 3:
+            raise MemoryEnrollmentError("memory restart attempts exceed the bounded lifecycle policy")
+        if restart_policy == "manual-owned-restart" and retries != 0:
+            raise MemoryEnrollmentError("manual memory restart policy cannot authorize automatic retries")
+        deadline = value["original_deadline_seconds"]
+        if type(deadline) is not int or not 1 <= deadline <= 600:
+            raise MemoryEnrollmentError("memory lifecycle deadline exceeds the fixed bound")
+        return cls(
+            service_enrollment_id=service_enrollment_id,
+            service_generation=service_generation,
+            start_operation_id=expected_start,
+            start_parameter_schema_id="no-caller-parameters-v1",
+            prestart_receipt_handles=tuple(receipts),
+            readiness_route_id=readiness_route_id,
+            readiness_schema_id=recipe.result_schema_id,
+            restart_policy=restart_policy,
+            maximum_restart_attempts=retries,
+            original_deadline_seconds=deadline,
+        )
 
 
 def _id(value: Any, label: str) -> str:
@@ -113,10 +200,12 @@ class MemoryServiceEnrollment:
     data_root_id: str
     auth_reference_id: str
     fixed_project_account_user_scope: Mapping[str, str]
+    authority_state_root_id: str
     memory_owner_generation: int
     private_extraction_embedding_routes: Mapping[str, str]
     background_consent_revision: str
     limits: Mapping[str, int]
+    lifecycle_binding: MemoryLifecycleBinding | None = None
 
     @classmethod
     def from_protected_record(cls, record: Mapping[str, Any]) -> "MemoryServiceEnrollment":
@@ -134,7 +223,8 @@ class MemoryServiceEnrollment:
         if record["source_revision"] != SOURCE_PINS[provider]:
             raise MemoryEnrollmentError("memory source revision differs from the reviewed pin")
         for field in ("principal_id", "service_enrollment_id", "namespace_identity",
-                      "data_root_id", "auth_reference_id", "background_consent_revision"):
+                      "data_root_id", "authority_state_root_id", "auth_reference_id",
+                      "background_consent_revision"):
             _id(record[field], field)
         generation = record["service_generation"]
         if not isinstance(generation, str) or not _ID.fullmatch(generation):
@@ -203,6 +293,15 @@ class MemoryServiceEnrollment:
                 raise MemoryEnrollmentError(f"memory {key} exceeds the approved connector bound")
             checked_limits[key] = value
 
+        lifecycle_record = record["lifecycle_binding"]
+        if lifecycle_record is None:
+            lifecycle_binding = None
+        else:
+            lifecycle_binding = MemoryLifecycleBinding.from_protected_record(
+                lifecycle_record, provider=provider, backend_variant=variant,
+                service_enrollment_id=record["service_enrollment_id"],
+                service_generation=generation, fixed_route_map=routes)
+
         return cls(
             target_id=f"memory-{provider}:{profile}", provider=provider,
             backend_variant=variant, profile_id=profile,
@@ -212,10 +311,13 @@ class MemoryServiceEnrollment:
             service_generation=generation,
             namespace_identity=record["namespace_identity"],
             literal_loopback_port=port, fixed_route_map=routes,
-            data_root_id=record["data_root_id"], auth_reference_id=record["auth_reference_id"],
+             data_root_id=record["data_root_id"],
+             auth_reference_id=record["auth_reference_id"],
             fixed_project_account_user_scope=scope_values,
+            authority_state_root_id=record["authority_state_root_id"],
             memory_owner_generation=record["memory_owner_generation"],
             private_extraction_embedding_routes=private_route_values,
             background_consent_revision=record["background_consent_revision"],
             limits=checked_limits,
+            lifecycle_binding=lifecycle_binding,
         )

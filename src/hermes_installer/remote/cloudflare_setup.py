@@ -6,6 +6,8 @@ from typing import Any,Callable,Mapping
 from .cloudflare import CloudflareClient,CloudflareError
 from .config import RemoteSetup
 from .lifecycle import OwnedResource,RemoteJournal,RemotePhase
+from ..authority.remote_origin import (ProtectedTunnelTokenReceipt, RootOriginReadinessReceipt,
+    ReceiptSigner, RemoteOriginDenied, verify_origin_receipt, verify_token_receipt)
 
 class RemoteConflict(RuntimeError): pass
 class PolicyReadReferenceRequired(RuntimeError):
@@ -25,9 +27,9 @@ class PreparedAccessResources:
 
 class RemoteCloudflareProvisioner:
     """Only the caller-owned checkpoint callback persists state under process_lock."""
-    def __init__(self,client:CloudflareClient,setup:RemoteSetup,journal:RemoteJournal,*,checkpoint:Callable[[RemoteJournal],None],origin_ready:Callable[[],bool],policy_read_check:Callable[[RemoteJournal],Any]|None=None,gateway_port:int=8765):
+    def __init__(self,client:CloudflareClient,setup:RemoteSetup,journal:RemoteJournal,*,checkpoint:Callable[[RemoteJournal],None],policy_read_check:Callable[[RemoteJournal],Any]|None=None,gateway_port:int=8765):
         self.client,self.setup,self.journal=client,setup,journal
-        self.checkpoint,self.origin_ready,self.policy_read_check,self.gateway_port=checkpoint,origin_ready,policy_read_check,gateway_port
+        self.checkpoint,self.policy_read_check,self.gateway_port=checkpoint,policy_read_check,gateway_port
         self.account,self.zone=setup.zone.account_id,setup.zone.zone_id
         self.marker="HermesInstaller:"+journal.operation_id
         self.tunnel_name="hermes-installer-"+hashlib.sha256((journal.operation_id+setup.hostname).encode()).hexdigest()[:20]
@@ -203,9 +205,19 @@ class RemoteCloudflareProvisioner:
             self.journal.error_code="ACCESS_SETUP_INCOMPLETE"
             self.checkpoint(self.journal)
             raise
-    def provision_protected(self, *, runtime_token_writer: Callable[[str], None] | None = None):
-        if not callable(runtime_token_writer):
-            raise CloudflareError("A protected tunnel-token file writer is required before tunnel or DNS activation")
+    def provision_protected(self, *, runtime_token_writer: Callable[..., ProtectedTunnelTokenReceipt] | None = None,
+                            setup_transaction_handle: str | None = None,
+                            tunnel_enrollment_id: str | None = None,
+                            tunnel_generation: str | None = None,
+                            remote_enrollment_id: str | None = None,
+                            origin_receipt: RootOriginReadinessReceipt | None = None,
+                            receipt_signer: ReceiptSigner | None = None):
+        """Require root-signed origin and protected-token receipts before DNS."""
+        if (not callable(runtime_token_writer) or not setup_transaction_handle
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,256}", setup_transaction_handle)
+                or not tunnel_enrollment_id
+                or not tunnel_generation or not remote_enrollment_id or receipt_signer is None):
+            raise CloudflareError("Protected writer, active enrollment binding and receipt verifier are required")
         self._preflight() # no resource mutation before exact hostname conflicts are checked
         try:
             access=self.prepare_access_resources()
@@ -236,14 +248,29 @@ class RemoteCloudflareProvisioner:
                 raise CloudflareError("Fresh protected Access policy verification failed; hostname remains unpublished") from None
             self.journal.completed.add("policy_read_verified")
             self.checkpoint(self.journal)
-            if not self.origin_ready():raise CloudflareError("Loopback gateway is not ready; hostname remains unpublished")
+            if not verify_origin_receipt(origin_receipt, receipt_signer,
+                                         selected_enrollment_id=remote_enrollment_id):
+                self.journal.phase=RemotePhase.ACCESS_READY
+                self.journal.error_code="ORIGIN_READINESS_NOT_VERIFIED"
+                self.journal.completed.discard("origin_ready")
+                self.checkpoint(self.journal)
+                raise CloudflareError("Root origin readiness receipt is absent, stale or invalid; hostname remains unpublished")
             if self.journal.phase.value not in {RemotePhase.ORIGIN_READY.value,RemotePhase.TUNNEL_READY.value,RemotePhase.ACTIVE.value}:
                 self.journal.phase=RemotePhase.ORIGIN_READY
                 self.journal.completed.add("origin_ready")
                 self.checkpoint(self.journal)
             tunnel,token=self.ensure_tunnel()
             try:
-                runtime_token_writer(token)
+                receipt = runtime_token_writer(
+                    tunnel_enrollment_id, token.encode("ascii"),
+                    setup_transaction_handle=setup_transaction_handle, account_id=self.account,
+                    tunnel_id=tunnel, generation=tunnel_generation,
+                )
+                if (not verify_token_receipt(receipt, receipt_signer,
+                                             selected_enrollment_id=tunnel_enrollment_id)
+                        or receipt.tunnel_id != tunnel or receipt.generation != tunnel_generation
+                        or receipt.owner_uid != 0 or receipt.mode != 0o400):
+                    raise RemoteOriginDenied("protected token receipt did not match the selected root sink")
             except Exception:
                 # Never include the token, callback exception, or path in the
                 # journal/error surface. Public routing has not been activated.
@@ -279,9 +306,19 @@ class RemoteCloudflareProvisioner:
             except Exception:pass
             raise
 
-    def provision(self, *, runtime_token_writer: Callable[[str], None] | None = None):
+    def provision(self, *, runtime_token_writer: Callable[..., ProtectedTunnelTokenReceipt] | None = None,
+                  setup_transaction_handle: str | None = None,
+                  tunnel_enrollment_id: str | None = None,
+                  tunnel_generation: str | None = None,
+                  remote_enrollment_id: str | None = None,
+                  origin_receipt: RootOriginReadinessReceipt | None = None,
+                  receipt_signer: ReceiptSigner | None = None):
         """Compatibility name; protected verification and token storage are mandatory."""
-        return self.provision_protected(runtime_token_writer=runtime_token_writer)
+        return self.provision_protected(runtime_token_writer=runtime_token_writer,
+            setup_transaction_handle=setup_transaction_handle,
+            tunnel_enrollment_id=tunnel_enrollment_id, tunnel_generation=tunnel_generation,
+            remote_enrollment_id=remote_enrollment_id, origin_receipt=origin_receipt,
+            receipt_signer=receipt_signer)
     def rollback(self):
         """Delete only journal-created, marker-matching resources in reverse order."""
         from .lifecycle import RemotePhase

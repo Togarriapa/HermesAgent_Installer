@@ -6,7 +6,6 @@ import tempfile
 import threading
 import time
 from contextlib import closing
-from types import ModuleType
 import unittest
 from pathlib import Path
 import base64
@@ -23,10 +22,14 @@ from hermes_installer.registry.resources_runtime import (
     ReplayStoreFull,
     SelectedResourceExecution,
     SelectedResourceRegistry,
+    selected_resource_specs_by_generation,
+    selected_resource_registry_from_verified_materialization,
     ResourceRuntimeError,
+    SelectedResourceUnavailable,
     WebhookVerifier,
     SQLiteReplayStore,
     create_native_plugin_handler,
+    build_cron_resource_effect_handler,
     build_selected_resource_effect_handlers,
     selected_resource_effect_blockers,
     invoke_channel_route,
@@ -35,7 +38,10 @@ from hermes_installer.registry.resources_runtime import (
     invoke_scheduled_profile_run,
     invoke_webhook_delivery,
     materialize_runtime_resource,
+    _verified_installed_resource_bundle,
 )
+from hermes_installer.registry.source import load_bundled_source
+from hermes_installer.registry.native import NativeRegistry
 from hermes_installer.state import Journal, OwnedRoot
 
 
@@ -132,15 +138,21 @@ class ResourcesRuntimeTests(unittest.TestCase):
     def test_channel_cron_and_webhook_are_typed_fixed_hermes_operations(self):
         channel, channel_auth = self._context(kind="channels", name="discord")
         channel_effect = FixedResourceEffect("channel.route", "resource:channels/discord@1.0.0", None, "resource.channel.route")
-        invoke_channel_route(channel, channel_effect, direction="inbound", conversation_id="c-1", content="hi", intent="inbound")
-        payload = channel_auth.calls[-1][2]["payload"]
-        self.assertIn(b'"profile_id":"hermes"', payload)
-        self.assertEqual(channel_auth.calls[0][1]["purpose"], "native-hermes-channel")
+        with self.assertRaisesRegex(SelectedResourceUnavailable, "protected root event and job admission"):
+            invoke_channel_route(
+                channel, channel_effect, direction="inbound", conversation_id="c-1",
+                content="unverified", intent="inbound",
+            )
+        self.assertEqual(channel_auth.calls, [])
 
         cron, cron_auth = self._context(kind="crons", name="daily")
         cron_effect = FixedResourceEffect("cron.run", "resource:crons/daily@1.0.0", None, "resource.cron.run")
-        invoke_scheduled_profile_run(cron, cron_effect, profile_id="hermes", scheduled_for="2026-10-09T12:00:00Z", intent="scheduled")
-        self.assertEqual(cron_auth.calls[0][1]["purpose"], "native-hermes-cron")
+        with self.assertRaisesRegex(ResourceRuntimeError, "worker-originated cron effects are retired"):
+            invoke_scheduled_profile_run(
+                cron, cron_effect, profile_id="hermes", scheduled_for="2026-10-09T12:00:00Z",
+                intent="scheduled",
+            )
+        self.assertEqual(cron_auth.calls, [])
 
         webhook, webhook_auth = self._context(kind="webhooks", name="hook")
         receipt = type("Receipt", (), {
@@ -148,8 +160,9 @@ class ResourcesRuntimeTests(unittest.TestCase):
             "body": b'{"x":1}', "body_sha256": hashlib.sha256(b'{"x":1}').hexdigest(), "received_at": 1.0,
         })()
         webhook_effect = FixedResourceEffect("webhook.deliver", "resource:webhooks/hook@1.0.0", None, "resource.webhook.deliver")
-        invoke_webhook_delivery(webhook, webhook_effect, receipt, intent="verified webhook")
-        self.assertEqual(webhook_auth.calls[0][1]["purpose"], "native-hermes-webhook")
+        with self.assertRaisesRegex(SelectedResourceUnavailable, "protected root event and job admission"):
+            invoke_webhook_delivery(webhook, webhook_effect, receipt, intent="unverified receipt")
+        self.assertEqual(webhook_auth.calls, [])
 
     def test_bundle_recruitment_cannot_escape_resolved_roster(self):
         context, authority = self._context(kind="bundles", name="research-agent")
@@ -158,6 +171,13 @@ class ResourcesRuntimeTests(unittest.TestCase):
             invoke_internal_bundle_recruitment(
                 context, effect, request_id="0123456789abcdef", user_request="research",
                 resolved_roster=("researcher",), selected_roster=("administrator",), intent="work request",
+            )
+        self.assertEqual(authority.calls, [])
+        with self.assertRaisesRegex(SelectedResourceUnavailable, "protected root event and job admission"):
+            invoke_internal_bundle_recruitment(
+                context, effect, request_id="0123456789abcdef", user_request="research",
+                resolved_roster=("researcher", "analyst"), selected_roster=("researcher",),
+                intent="caller-supplied bundle request",
             )
         self.assertEqual(authority.calls, [])
 
@@ -293,117 +313,159 @@ class ResourcesRuntimeTests(unittest.TestCase):
         self.assertFalse(artifact.readiness.materialized)
         self.assertTrue(any("PluginContext loader" in blocker for blocker in artifact.blockers))
 
-    def test_selected_cron_handler_delegates_only_the_pinned_profile_launch(self):
+    def test_plugin_keeps_canonical_adapter_and_specific_pending_blocker(self):
+        from hermes_installer.components.native_plugins import NATIVE_PLUGIN_ADAPTERS
+
+        contract = next(row for row in NATIVE_PLUGIN_ADAPTERS if row.blocker)
+        artifact = materialize_runtime_resource(
+            "plugins", contract.resource_id, "1.0.0",
+            f"plugins/{contract.resource_id}.yaml", {"name": contract.resource_id},
+            {}, "a" * 40, "2.3.1",
+        )
+        self.assertEqual(artifact.adapter_id, contract.adapter_id)
+        self.assertIsNone(artifact.native_path)
+        self.assertFalse(artifact.readiness.materialized)
+        self.assertIn(f"{contract.resource_id}: {contract.blocker}.", artifact.blockers)
+        if contract.handler_available:
+            self.assertTrue(any("trusted PluginContext loader" in blocker for blocker in artifact.blockers))
+        else:
+            self.assertIn("no reviewed native PluginContext handler is installed", artifact.discoverability)
+
+    def test_legacy_cron_effects_are_not_registered_or_effectful(self):
+        identity = ResourceIdentity(
+            "daily-review", "crons", "1.0.0", "crons/daily-review.yaml", "a" * 40, "b" * 64,
+        )
+        selected = SelectedResourceExecution(
+            identity=identity, generation_digest="c" * 64,
+            effective_spec={
+                "schedule": "0 1 * * *", "timezone": "Europe/Lisbon",
+                "action": {"type": "profile-run", "mode": "agent-runtime-health-report", "profile": "hermes"},
+                "requires": {"profiles": ["hermes"]},
+                "runtime": {"engine": "hermes-cron", "profileSelection": "registry-action-profile"},
+                "policy": {"authorityFromSchedule": "deny", "staticRecipientListAsAuthority": "deny"},
+            },
+            capability="resource.cron.run", target="resource:crons/daily-review@1.0.0",
+            operation="resource.cron.run", recipient=None, delegation_id="legacy-cron-delegation",
+            profile_id="hermes", enabled=True,
+        )
+        registry = SelectedResourceRegistry((selected,))
+        root_specs = selected_resource_specs_by_generation(registry)
+        self.assertIs(root_specs[(selected.identity.resource_id, selected.generation_digest)],
+                      selected.effective_spec)
+        with self.assertRaises(TypeError):
+            root_specs[(selected.identity.resource_id, selected.generation_digest)] = {}
+
+        class Service:
+            calls = 0
+
+            def perform_delegated_effect(self, *args, **kwargs):
+                self.calls += 1
+                raise AssertionError("legacy resource effect must never dispatch")
+
+        service = Service()
+        handlers = build_selected_resource_effect_handlers(
+            selected_resources=registry, profile_targets=object(), authority_service=service,
+        )
+        self.assertEqual(dict(handlers), {})
+        class Profiles:
+            def resolve_profile(self, profile_id):
+                return type("SelectedProfile", (), {"profile_id": profile_id})()
+
+        blockers = selected_resource_effect_blockers(registry, profile_targets=Profiles())
+        self.assertIn("protected timer event issuer", blockers[(selected.operation, selected.target)])
+        with self.assertRaisesRegex(SelectedResourceUnavailable, "direct cron effects are retired"):
+            build_cron_resource_effect_handler(
+                identity, selected_resources=registry, profile_targets=object(), authority_service=service,
+            )
+        with self.assertRaisesRegex(ResourceRuntimeError, "worker-originated cron effects are retired"):
+            cron_context, cron_authority = self._context(kind="crons", name="daily-review")
+            invoke_scheduled_profile_run(
+                cron_context,
+                FixedResourceEffect(
+                    "resource.cron.run", selected.target, None, "resource.cron.run",
+                ),
+                profile_id="attacker-selected-profile", scheduled_for="2026-10-10T01:00:00Z",
+                intent="model supplied schedule",
+            )
+        self.assertEqual(cron_authority.calls, [])
+        self.assertEqual(service.calls, 0)
+
+    def test_root_spec_projection_rejects_cross_kind_identity_collision(self):
+        first = SelectedResourceExecution(
+            identity=ResourceIdentity("same", "crons", "1.0.0", "crons/a.yaml", "a" * 40, "b" * 64),
+            generation_digest="c" * 64, effective_spec={}, capability="cron.run",
+            target="resource:crons/same@1.0.0", operation="resource.cron.run",
+            recipient=None, delegation_id="delegation-cron", profile_id="profile", enabled=False,
+        )
+        second = SelectedResourceExecution(
+            identity=ResourceIdentity("same", "webhooks", "1.0.0", "webhooks/a.yaml", "a" * 40, "d" * 64),
+            generation_digest="c" * 64, effective_spec={}, capability="webhook.deliver",
+            target="resource:webhooks/same@1.0.0", operation="resource.webhook.deliver",
+            recipient=None, delegation_id="delegation-webhook", profile_id="profile", enabled=False,
+        )
+        with self.assertRaisesRegex(ResourceRuntimeError, "ID and generation are ambiguous"):
+            selected_resource_specs_by_generation(SelectedResourceRegistry((first, second)))
+
+    def test_selected_specs_are_reloaded_from_pinned_verified_materialization(self):
+        source = load_bundled_source()
+        registry = NativeRegistry.from_verified_source(source)
+        discovery = registry.discover(("crons/resource-sync",))
+        resolved = next(item for item in discovery.resources
+                        if item.resource.id == "resource-sync")
+        identity = ResourceIdentity(
+            resolved.resource.id, resolved.resource.kind.value, resolved.resource.version,
+            registry.paths[f"crons/{resolved.resource.id}@{resolved.resource.version}"],
+            source.revision, resolved.resource.digest,
+        )
+        selected = SelectedResourceExecution(
+            identity=identity, generation_digest="c" * 64,
+            effective_spec={"action": {"type": "caller-forged"}},
+            capability="resource.cron.run",
+            target=f"resource:crons/{identity.resource_id}@{identity.version}",
+            operation="resource.cron.run", recipient=None,
+            delegation_id="selected-cron", profile_id="hermes", enabled=True,
+        )
+        joined = selected_resource_registry_from_verified_materialization(
+            registry, discovery, (selected,), expected_generation_digest="c" * 64,
+        )
+        effective = joined.rows[0].effective_spec
+        self.assertEqual(effective["action"]["type"], "installer-resource-candidate-assessment")
+        self.assertEqual(effective["action"]["source"]["revision"], source.revision)
+        self.assertNotEqual(effective["action"]["type"], "caller-forged")
+
+        tampered_identity = ResourceIdentity(
+            identity.resource_id, identity.kind, identity.version, identity.source_path,
+            "f" * 40, identity.content_digest,
+        )
+        tampered = SelectedResourceExecution(
+            identity=tampered_identity, generation_digest="c" * 64,
+            effective_spec={}, capability=selected.capability, target=selected.target,
+            operation=selected.operation, recipient=None, delegation_id=selected.delegation_id,
+            profile_id=selected.profile_id, enabled=True,
+        )
+        with self.assertRaisesRegex(ResourceRuntimeError, "does not match"):
+            selected_resource_registry_from_verified_materialization(
+                registry, discovery, (tampered,), expected_generation_digest="c" * 64,
+            )
+
+    def test_candidate_assessment_rejects_partial_or_unpinned_bundle_artifact(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             bundle = root / "resources/vendor/hermes-agent-resources-2.3.1"
             bundle.mkdir(parents=True)
-            revision = "a" * 40
-            identity = ResourceIdentity("daily-review", "crons", "1.0.0", "crons/daily-review.yaml", revision, "b" * 64)
-            spec = {
-                "schedule": "0 1 * * *", "timezone": "UTC",
-                "action": {
-                    "type": "installer-resource-candidate-assessment", "mode": "candidate-assessment",
-                    "profile": "hermes", "source": {
-                        "kind": "installer-bundle", "catalogVersion": "2.3.1",
-                        "path": "resources/vendor/hermes-agent-resources-2.3.1", "revision": revision,
-                    },
-                },
-                "requires": {"profiles": ["hermes"]},
-                "runtime": {"engine": "hermes-cron", "profileSelection": "registry-action-profile"},
-                "policy": {"authorityFromSchedule": "deny", "staticRecipientListAsAuthority": "deny"},
-            }
-            selected = SelectedResourceExecution(
-                identity=identity, generation_digest="c" * 64, effective_spec=spec,
-                capability="resource.cron.run", target="resource:crons/daily-review@1.0.0",
-                operation="resource.cron.run", recipient=None, delegation_id="cron-to-profile",
-                profile_id="hermes", enabled=True,
-            )
-            # Root-owned action data cannot be mutated after selection.
-            spec["action"]["mode"] = "changed"
-            with self.assertRaises(TypeError):
-                selected.effective_spec["action"]["mode"] = "changed"
-
-            executable = root / "venv/bin/hermes"
-            executable.parent.mkdir(parents=True)
-            executable.write_text("fixture", encoding="utf-8")
-            data_root = root / "profiles/hermes"
-            data_root.mkdir(parents=True)
             target = HermesProfileExecutionTarget(
-                profile_id="hermes", executable=executable,
+                profile_id="hermes", executable=root / "hermes",
                 artifact_sha256="d" * 64, artifact_root=root, cwd=root,
-                data_root=data_root, env_allowlist={"PATH": "/usr/bin"},
-                child_artifact_refs={"artifact:resources:" + "e" * 64: "e" * 64},
+                data_root=root / "profiles/hermes", env_allowlist={"PATH": "/usr/bin"},
             )
-            class Profiles:
-                def resolve_profile(self, profile_id):
-                    return target if profile_id == "hermes" else None
-
-            class Service:
-                def __init__(self):
-                    self.call = None
-                def perform_delegated_effect(self, authorization, **kwargs):
-                    self.call = (authorization, kwargs)
-                    return {"status": "accepted"}
-
-            service = Service()
-            handlers = build_selected_resource_effect_handlers(
-                selected_resources=SelectedResourceRegistry((selected,)),
-                profile_targets=Profiles(), authority_service=service,
-            )
-            self.assertEqual(
-                selected_resource_effect_blockers(
-                    SelectedResourceRegistry((selected,)), profile_targets=Profiles(),
-                ),
-                {},
-            )
-            handler = handlers[(selected.operation, selected.target)]
-            request = {"profile_id": "hermes", "scheduled_for": "2026-10-10T01:00:00Z"}
-            payload = json.dumps(request, sort_keys=True, separators=(",", ":")).encode()
-            authorization = type("Authorization", (), {
-                "target": selected.target, "capability": selected.capability,
-                "recipient": None, "request_digest": hashlib.sha256(payload).hexdigest(),
-            })()
-
-            authority_package = ModuleType("hermes_installer.authority")
-            authority_package.__path__ = []
-            authority_package.canonical_bytes = lambda value: json.dumps(
-                value, sort_keys=True, separators=(",", ":"), default=str,
-            ).encode()
-            authority_client = ModuleType("hermes_installer.authority.client")
-            authority_client.canonical_profile_target = lambda *args: "profile:hermes"
-            def launch_envelope(**kwargs):
-                return {
-                    "target": kwargs["target"], "profile_id": kwargs["profile_id"],
-                    "executable": str(kwargs["executable"].resolve()),
-                    "artifact_sha256": kwargs["artifact_sha256"],
-                    "artifact_root": str(kwargs["artifact_root"].resolve()),
-                    "cwd": str(kwargs["cwd"].resolve()),
-                    "data_root": str(kwargs["data_root"].resolve()),
-                    "argv": list(kwargs["argv"]), "env_allowlist": dict(kwargs["env_allowlist"]),
-                    "child_artifact_refs": dict(kwargs["child_artifact_refs"]),
-                    "max_lifetime_seconds": kwargs["max_lifetime_seconds"],
-                    "max_output_bytes": kwargs["max_output_bytes"],
-                    "stdin_mode": kwargs["stdin_mode"],
-                }
-            authority_client.profile_launch_envelope = launch_envelope
-            authority_package.client = authority_client
-            with patch.dict("sys.modules", {
-                "hermes_installer.authority": authority_package,
-                "hermes_installer.authority.client": authority_client,
-            }):
-                result = handler(
-                    context=object(), authorization=authorization, payload=payload,
-                    timeout=60.0, peer_pid=123, cancelled=lambda: False,
-                )
-            self.assertEqual(result, {"status": "accepted"})
-            self.assertEqual(service.call[1]["delegation_id"], "cron-to-profile")
-            launch = json.loads(service.call[1]["payload"])
-            self.assertEqual(launch["profile_id"], "hermes")
-            self.assertEqual(launch["target"], "profile:hermes")
-            self.assertEqual(launch["argv"][:3], [str(executable.resolve()), "-p", "hermes"])
-            self.assertIn("Assess only the installer-owned", launch["argv"][4])
-            self.assertEqual(launch["child_artifact_refs"], target.child_artifact_refs)
+            pinned = load_bundled_source()
+            source = {
+                "catalogVersion": pinned.catalog_version,
+                "revision": pinned.revision,
+                "path": "resources/vendor/hermes-agent-resources-" + pinned.catalog_version,
+            }
+            with self.assertRaisesRegex(ResourceRuntimeError, "complete pinned Resources snapshot"):
+                _verified_installed_resource_bundle(target, source)
 
     def test_selected_cron_without_reviewed_action_has_exact_pending_reason(self):
         identity = ResourceIdentity("sync", "crons", "1.0.0", "crons/sync.yaml", "a" * 40, "b" * 64)
@@ -424,19 +486,51 @@ class ResourcesRuntimeTests(unittest.TestCase):
                       selected_resource_effect_blockers(registry)[key])
         with self.assertRaisesRegex(ValueError, "active generation"):
             SelectedResourceRegistry((selected,), expected_generation_digest="d" * 64)
-            self.assertEqual(service.call[1]["peer_pid"], 123)
-            self.assertLessEqual(service.call[1]["timeout"], 600.0)
 
-            spoofed = {"profile_id": "other", "scheduled_for": "2026-10-10T01:00:00Z"}
-            spoofed_bytes = json.dumps(spoofed, sort_keys=True, separators=(",", ":")).encode()
-            spoofed_authorization = type("Authorization", (), {
-                "target": selected.target, "capability": selected.capability,
-                "recipient": None, "request_digest": hashlib.sha256(spoofed_bytes).hexdigest(),
-            })()
-            with self.assertRaisesRegex(ResourceRuntimeError, "differs from root selection"):
-                handler(context=object(), authorization=spoofed_authorization, payload=spoofed_bytes,
-                        timeout=60.0, peer_pid=123, cancelled=lambda: False)
-            self.assertEqual(json.loads(service.call[1]["payload"]), launch)
+    def test_candidate_assessment_blocker_names_missing_full_packaged_source_tree(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bundle = root / "resources/vendor/hermes-agent-resources-2.3.1"
+            bundle.mkdir(parents=True)
+            pinned = load_bundled_source()
+            target = HermesProfileExecutionTarget(
+                profile_id="hermes", executable=root / "venv/bin/hermes",
+                artifact_sha256="d" * 64, artifact_root=root, cwd=root,
+                data_root=root / "profiles/hermes", env_allowlist={"PATH": "/usr/bin"},
+            )
+            class Profiles:
+                def resolve_profile(self, profile_id):
+                    return target if profile_id == "hermes" else None
+
+            identity = ResourceIdentity(
+                "resource-sync", "crons", "1.0.0", "crons/resource-sync.yaml",
+                pinned.revision, "b" * 64,
+            )
+            selected = SelectedResourceExecution(
+                identity=identity, generation_digest="c" * 64,
+                effective_spec={
+                    "schedule": "0 1 * * *", "timezone": "UTC",
+                    "action": {
+                        "type": "installer-resource-candidate-assessment",
+                        "mode": "candidate-assessment", "profile": "hermes",
+                        "source": {
+                            "kind": "installer-bundle", "path": "resources/vendor/hermes-agent-resources-2.3.1",
+                            "catalogVersion": pinned.catalog_version, "revision": pinned.revision,
+                        },
+                    },
+                    "requires": {"profiles": ["hermes"]},
+                    "runtime": {"engine": "hermes-cron", "profileSelection": "registry-action-profile"},
+                    "policy": {"authorityFromSchedule": "deny", "staticRecipientListAsAuthority": "deny"},
+                },
+                capability="resource.cron.run", target="resource:crons/resource-sync@1.0.0",
+                operation="resource.cron.run", recipient=None, delegation_id="cron-to-profile",
+                profile_id="hermes", enabled=True,
+            )
+            reason = selected_resource_effect_blockers(
+                SelectedResourceRegistry((selected,)), profile_targets=Profiles(),
+            )[(selected.operation, selected.target)]
+            self.assertIn("complete pinned Resources snapshot", reason)
+            self.assertIn("stage the verified package-data bundle", reason)
 
     def test_profile_overlay_is_private_cas_and_soft_delete(self):
         with tempfile.TemporaryDirectory() as temp:

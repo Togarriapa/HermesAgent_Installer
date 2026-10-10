@@ -197,7 +197,9 @@ def _websocket_client_frame(opcode: int, payload: bytes) -> bytes:
     return prefix + mask + masked
 
 
-def _websocket_handshake(sock: socket.socket, route: Route, timeout: float) -> None:
+def _websocket_handshake(sock: socket.socket, route: Route, timeout: float, *,
+                         after_send: Callable[[int], None] | None = None,
+                         after_receive: Callable[[int], None] | None = None) -> None:
     """Negotiate the one fixed Xpra binary WebSocket origin/path/subprotocol."""
     key = base64.b64encode(secrets.token_bytes(16)).decode("ascii")
     request = (
@@ -252,12 +254,16 @@ def _websocket_handshake(sock: socket.socket, route: Route, timeout: float) -> N
 
 
 def _websocket_read(stream: _Stream, amount: int, timeout: float,
-                    cancelled: Callable[[], bool]) -> bytes:
+                    cancelled: Callable[[], bool],
+                    before_receive: Callable[[], None] | None = None,
+                    after_receive: Callable[[int], None] | None = None) -> bytes:
     """Return only payload bytes from complete, unmasked server binary frames."""
     if stream.ws_buffer is None:
         stream.ws_buffer = bytearray()
     buffer = stream.ws_buffer
+    consumed = False
     def need(count: int) -> None:
+        nonlocal consumed
         while len(buffer) < count:
             chunk = None
             deadline = min(stream.expires, time.monotonic() + timeout)
@@ -270,7 +276,12 @@ def _websocket_read(stream: _Stream, amount: int, timeout: float,
                 readable, _, _ = select.select([stream.sock], [], [], min(0.05, remaining))
                 if readable:
                     try:
+                        if not consumed and before_receive is not None:
+                            before_receive()
+                            consumed = True
                         chunk = stream.sock.recv(max(4096, count - len(buffer)))
+                        if chunk and after_receive is not None:
+                            after_receive(len(chunk))
                     except (OSError, TimeoutError):
                         raise AuthorityDenied("connector.read", "WebSocket frame read failed") from None
                     if not chunk:
@@ -456,7 +467,8 @@ class FixedServiceConnector:
                                "expires_monotonic": stream.expires, "max_frame_bytes": route.max_frame_bytes,
                                "remaining_byte_budget": stream.remaining})
 
-    def _connect_namespace(self, lease: NamespaceLease, route: Route, timeout: float) -> socket.socket:
+    def _connect_namespace(self, lease: NamespaceLease, route: Route, timeout: float,
+                            before_connect: Callable[[], None] | None = None) -> socket.socket:
         if not hasattr(os, "setns") and not self._test_allow_current_namespace:
             raise AuthorityDenied("connector.unavailable", "Linux network namespace entry is unavailable")
         result: list[socket.socket] = []
@@ -464,6 +476,7 @@ class FixedServiceConnector:
         done = threading.Event()
         def worker() -> None:
             original = None
+            sock = None
             try:
                 if not self._test_allow_current_namespace:
                     if not hasattr(os, "setns") or lease.namespace_fd < 0:
@@ -472,9 +485,13 @@ class FixedServiceConnector:
                     os.setns(lease.namespace_fd, getattr(os, "CLONE_NEWNET", 0))
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM | socket.SOCK_CLOEXEC)
                 sock.settimeout(timeout)
+                if before_connect is not None:
+                    before_connect()
                 sock.connect(("127.0.0.1", route.port))
                 result.append(sock)
             except BaseException as exc:
+                if sock is not None:
+                    sock.close()
                 failure.append(exc)
             finally:
                 if original is not None:
@@ -499,7 +516,10 @@ class FixedServiceConnector:
         return result[0]
 
     def _recv_bounded(self, stream: _Stream, amount: int, timeout: float,
-                      cancelled: Callable[[], bool]) -> bytes:
+                      cancelled: Callable[[], bool],
+                      before_receive: Callable[[], None] | None = None,
+                      after_receive: Callable[[int], None] | None = None) -> bytes:
+        consumed = False
         deadline = min(stream.expires, self.monotonic() + timeout)
         while True:
             if cancelled() or not _pidfd_alive(stream.owner_pidfd) or not _pidfd_alive(stream.lease.pidfd):
@@ -514,15 +534,24 @@ class FixedServiceConnector:
             try:
                 readable, _, _ = select.select([stream.sock], [], [], min(0.05, remaining))
                 if readable:
-                    return stream.sock.recv(amount)
+                    if not consumed and before_receive is not None:
+                        before_receive()
+                        consumed = True
+                    data = stream.sock.recv(amount)
+                    if data and after_receive is not None:
+                        after_receive(len(data))
+                    return data
             except (OSError, TimeoutError) as exc:
                 self._dispose(stream)
                 raise AuthorityDenied("connector.read", "fixed service read failed") from exc
 
     def _send_bounded(self, stream: _Stream, data: bytes, timeout: float,
-                      cancelled: Callable[[], bool]) -> None:
+                      cancelled: Callable[[], bool],
+                      before_send: Callable[[], None] | None = None,
+                      after_send: Callable[[int], None] | None = None) -> None:
         deadline = min(stream.expires, self.monotonic() + timeout)
         cursor = 0
+        consumed = False
         while cursor < len(data):
             if cancelled() or not _pidfd_alive(stream.owner_pidfd) or not _pidfd_alive(stream.lease.pidfd):
                 self._dispose(stream)
@@ -534,10 +563,15 @@ class FixedServiceConnector:
             try:
                 _, writable, _ = select.select([], [stream.sock], [], min(0.05, remaining))
                 if writable:
+                    if not consumed and before_send is not None:
+                        before_send()
+                        consumed = True
                     sent = stream.sock.send(data[cursor:])
                     if sent == 0:
                         raise OSError("fixed stream closed while writing")
                     cursor += sent
+                    if after_send is not None:
+                        after_send(sent)
             except (OSError, TimeoutError) as exc:
                 self._dispose(stream)
                 raise AuthorityDenied("connector.write", "fixed service write failed") from exc
@@ -659,6 +693,217 @@ class FixedServiceConnector:
             self._dispose(stream)
         return _json_response({"schema": 1, "closed": True})
 
+    def _remote_open(self, binding: Any, payload: bytes, *, timeout: float,
+                     peer_uid: int, peer_pid: int, peer_pidfd: int,
+                     cancelled: Callable[[], bool], before_connect: Callable[[], None],
+                     seal: object,
+                     resolve_lease: Callable[[Any, Route], NamespaceLease] | None = None,
+                     after_open_send: Callable[[int], None] | None = None,
+                     after_open_receive: Callable[[int], None] | None = None
+                     ) -> Mapping[str, Any]:
+        """Root-only open path; the HI13/HI12 consumer runs before connect."""
+        if seal is not _REMOTE_SESSION_SEAL:
+            raise AuthorityDenied("connector.remote-session", "root connector seal is invalid")
+        expected = open_request_bytes(
+            enrollment_id=binding.enrollment_id, generation=binding.native_generation,
+            target_id=binding.target_id, route_id=binding.route_id,
+            session_id=binding.session_id, deadline=binding.lease_expires_monotonic)
+        if payload != expected or not _pidfd_alive(peer_pidfd) or cancelled():
+            raise AuthorityDenied("connector.remote-binding", "root open payload or identity is stale")
+        route = ROUTES.get((binding.target_id, binding.route_id))
+        if (route is None or route.profile_id != binding.native_profile_id
+                or binding.target_id != "xpra-native"
+                or binding.action not in {"asset-read", "websocket-attach"}
+                or (binding.action == "asset-read") != (route.protocol == "xpra-http")):
+            raise AuthorityDenied("connector.route", "root open target or route is outside fixed Xpra policy")
+        now = self.monotonic()
+        deadline = binding.lease_expires_monotonic
+        if (isinstance(deadline, bool) or not isinstance(deadline, (int, float))
+                or not math.isfinite(deadline) or not now < deadline <= now + self.limits.max_lease_seconds):
+            raise AuthorityDenied("connector.deadline", "root open deadline is invalid")
+        with self._lock:
+            self._reap_expired_locked(now)
+            if len(self._streams) + self._opening >= self.limits.max_sessions:
+                raise AuthorityDenied("connector.capacity", "connector session capacity is exhausted")
+            self._opening += 1
+        lease: NamespaceLease | None = None
+        retained_pidfd = -1
+        sock: socket.socket | None = None
+        try:
+            if resolve_lease is None:
+                lease = self.resolve(binding.enrollment_id, route.profile_id,
+                                     binding.native_generation, binding.target_id, binding.route_id)
+            else:
+                lease = resolve_lease(binding, route)
+            if (lease.generation != binding.native_generation or not _pidfd_alive(lease.pidfd)
+                    or not _pidfd_alive(peer_pidfd) or cancelled()):
+                raise AuthorityDenied("connector.identity", "current root service or gateway identity is unavailable")
+            retained_pidfd = os.dup(peer_pidfd)
+            sock = self._connect_namespace(lease, route,
+                                           min(timeout, self.limits.max_open_timeout),
+                                           before_connect=before_connect)
+            if route.protocol == "websocket":
+                _websocket_handshake(sock, route, min(timeout, self.limits.max_open_timeout),
+                                     after_send=after_open_send, after_receive=after_open_receive)
+            if cancelled() or not _pidfd_alive(peer_pidfd) or not _pidfd_alive(lease.pidfd):
+                raise AuthorityDenied("connector.cancelled", "root connector open ended after cancellation")
+        except BaseException:
+            if lease is not None:
+                lease.close()
+            if sock is not None:
+                sock.close()
+            if retained_pidfd >= 0:
+                os.close(retained_pidfd)
+            with self._lock:
+                self._opening -= 1
+            raise
+        connector_id = uuid.uuid4().hex
+        stream = _Stream(connector_id, route, sock, lease, peer_uid, peer_pid,
+                         retained_pidfd, binding.token_fingerprint, binding.session_id,
+                         float(deadline), route.max_session_bytes, lock=threading.Lock())
+        with self._lock:
+            self._opening -= 1
+            self._streams[connector_id] = stream
+        return _json_response({"schema": 1, "connector_id": connector_id,
+                               "generation": binding.native_generation,
+                               "expires_monotonic": stream.expires,
+                               "max_frame_bytes": route.max_frame_bytes,
+                               "remaining_byte_budget": stream.remaining})
+
+    def _remote_stream(self, binding: Any, connector_id: str, sequence: int,
+                       peer_uid: int, peer_pid: int, peer_pidfd: int,
+                       cancelled: Callable[[], bool]) -> _Stream:
+        if (type(connector_id) is not str or not _ID.fullmatch(connector_id)
+                or type(sequence) is not int or sequence < 0
+                or binding.connector_handle != connector_id
+                or binding.next_sequence != sequence):
+            raise AuthorityDenied("connector.frame", "root connector handle or sequence is stale")
+        with self._lock:
+            stream = self._streams.get(connector_id)
+        if stream is None:
+            raise AuthorityDenied("connector.closed", "root connector handle is unavailable")
+        now = self.monotonic()
+        deadline = binding.frame_deadline_monotonic
+        if (stream.owner_uid != peer_uid or stream.owner_pid != peer_pid
+                or stream.session_id != binding.session_id
+                or stream.route.target_id != binding.target_id or stream.route.route_id != binding.route_id
+                or stream.lease.generation != binding.native_generation
+                or not _pidfd_alive(stream.owner_pidfd) or not _pidfd_alive(stream.lease.pidfd)
+                or not _pidfd_alive(peer_pidfd) or cancelled()
+                or now >= stream.expires
+                or isinstance(deadline, bool) or not isinstance(deadline, (int, float))
+                or not math.isfinite(deadline) or not now < deadline <= min(now + 5.0, stream.expires)):
+            self._dispose(stream)
+            raise AuthorityDenied("connector.peer", "root connector frame binding, generation, or deadline is stale")
+        if stream.sequence != sequence:
+            raise AuthorityDenied("connector.replay", "root connector frame sequence was replayed")
+        return stream
+
+    def _remote_write(self, binding: Any, connector_id: str, sequence: int,
+                      data: bytes, payload: bytes, *, timeout: float, peer_uid: int,
+                      peer_pid: int, peer_pidfd: int, cancelled: Callable[[], bool],
+                      before_send: Callable[[], None], seal: object,
+                      after_send: Callable[[int], None] | None = None) -> int:
+        if seal is not _REMOTE_SESSION_SEAL or not isinstance(data, bytes) or not data:
+            raise AuthorityDenied("connector.remote-session", "root connector write input is invalid")
+        body = {"schema": 1, "target_id": binding.target_id, "route_id": binding.route_id,
+                "connector_id": connector_id, "session_id": binding.session_id,
+                "generation": binding.native_generation,
+                "deadline": binding.frame_deadline_monotonic,
+                "sequence": sequence, "data_b64": base64.b64encode(data).decode("ascii")}
+        if payload != canonical_bytes(body):
+            raise AuthorityDenied("connector.remote-binding", "root write payload is not canonical")
+        stream = self._remote_stream(binding, connector_id, sequence, peer_uid, peer_pid,
+                                     peer_pidfd, cancelled)
+        if len(data) > stream.route.max_frame_bytes or len(data) > stream.remaining:
+            self._dispose(stream)
+            raise AuthorityDenied("connector.frame", "root write exceeds its fixed byte budget")
+        with _exclusive(stream):
+            if cancelled():
+                self._dispose(stream)
+                raise AuthorityDenied("connector.cancelled", "root connector write was cancelled")
+            requested = len(data)
+            framed = data
+            if stream.route.protocol == "websocket":
+                framed = _websocket_client_frame(2, data)
+            elif stream.route.protocol in {"xpra-http", "openai-http"}:
+                if stream.http_request_sent:
+                    raise AuthorityDenied("connector.protocol", "fixed HTTP route permits one request per stream")
+                framed = _parse_http_frame(data, stream.route)
+                stream.http_request_sent = True
+            if len(framed) > stream.remaining:
+                self._dispose(stream)
+                raise AuthorityDenied("connector.frame", "framed request exceeds connector byte budget")
+            self._send_bounded(stream, framed, timeout, cancelled, before_send=before_send,
+                               after_send=after_send)
+            stream.remaining -= requested
+            stream.sequence += 1
+        return requested
+
+    def _remote_read(self, binding: Any, connector_id: str, sequence: int,
+                     maximum_bytes: int, payload: bytes, *, timeout: float,
+                     peer_uid: int, peer_pid: int, peer_pidfd: int,
+                     cancelled: Callable[[], bool], before_receive: Callable[[], None],
+                     seal: object, after_receive: Callable[[int], None] | None = None
+                     ) -> tuple[bytes, bool]:
+        if seal is not _REMOTE_SESSION_SEAL or type(maximum_bytes) is not int:
+            raise AuthorityDenied("connector.remote-session", "root connector read input is invalid")
+        body = {"schema": 1, "target_id": binding.target_id, "route_id": binding.route_id,
+                "connector_id": connector_id, "session_id": binding.session_id,
+                "generation": binding.native_generation,
+                "deadline": binding.frame_deadline_monotonic,
+                "sequence": sequence, "max_bytes": maximum_bytes}
+        if payload != canonical_bytes(body):
+            raise AuthorityDenied("connector.remote-binding", "root read payload is not canonical")
+        stream = self._remote_stream(binding, connector_id, sequence, peer_uid, peer_pid,
+                                     peer_pidfd, cancelled)
+        if not 1 <= maximum_bytes <= stream.route.max_frame_bytes:
+            raise AuthorityDenied("connector.frame", "root read limit exceeds fixed bound")
+        with _exclusive(stream):
+            if cancelled():
+                self._dispose(stream)
+                raise AuthorityDenied("connector.cancelled", "root connector read was cancelled")
+            amount = min(maximum_bytes, stream.remaining)
+            try:
+                if stream.route.protocol == "websocket":
+                    data = _websocket_read(stream, amount, timeout, cancelled,
+                                           before_receive=before_receive, after_receive=after_receive)
+                else:
+                    data = self._recv_bounded(stream, amount, timeout, cancelled,
+                                              before_receive=before_receive, after_receive=after_receive)
+            except AuthorityDenied:
+                self._dispose(stream)
+                raise
+            stream.sequence += 1
+            stream.remaining -= len(data)
+            if not data:
+                self._dispose(stream)
+            return data, not data
+
+    def _remote_close(self, binding: Any, connector_id: str, authorization: Any,
+                      payload: bytes, *, peer_uid: int, peer_pid: int, peer_pidfd: int,
+                      before_close: Callable[[], None], cleanup: bool, seal: object) -> None:
+        if seal is not _REMOTE_SESSION_SEAL:
+            raise AuthorityDenied("connector.remote-session", "root connector seal is invalid")
+        if cleanup and authorization is None:
+            with self._lock:
+                stream = self._streams.get(connector_id)
+            if stream is not None:
+                self._dispose(stream)
+            return
+        sequence = getattr(authorization, "sequence", -1)
+        body = {"schema": 1, "target_id": binding.target_id, "route_id": binding.route_id,
+                "connector_id": connector_id, "session_id": binding.session_id,
+                "generation": binding.native_generation,
+                "deadline": binding.frame_deadline_monotonic, "sequence": sequence}
+        if payload != canonical_bytes(body):
+            raise AuthorityDenied("connector.remote-binding", "root close payload is not canonical")
+        stream = self._remote_stream(binding, connector_id, sequence, peer_uid, peer_pid,
+                                     peer_pidfd, binding.cancelled)
+        with _exclusive(stream):
+            before_close()
+            self._dispose(stream)
+
     def _dispose(self, stream: _Stream) -> None:
         with self._lock:
             if self._streams.pop(stream.connector_id, None) is not stream:
@@ -744,53 +989,51 @@ class RemoteServiceConnectorBackend:
 
     def __init__(self, connector: FixedServiceConnector, *,
                  validate_binding: Callable[[Any, str, int], bool],
+                 consume_effect: Callable[..., bool],
                  cancelled: Callable[[Any], bool] | None = None):
-        if not callable(validate_binding):
-            raise ValueError("root remote-session binding validator is required")
+        if not callable(validate_binding) or not callable(consume_effect):
+            raise ValueError("root remote-session validator and HI12 effect consumer are required")
         self.connector = connector
         self.validate_binding = validate_binding
+        self.consume_effect = consume_effect
         self.cancelled = cancelled or (lambda binding: bool(binding.cancelled()))
         self._handles: dict[str, tuple[str, str]] = {}
         self._lock = threading.RLock()
 
-    def _authorized_call(self, binding: Any, authorization: Any, operation: str,
-                         payload: bytes, peer_uid: int, peer_pid: int,
-                         peer_pidfd: int | None, timeout: float,
-                         cancelled: Callable[[], bool], *,
-                         remote_session_seal: object | None = None,
-                         expected_deadline: float,
-                         expected_sequence: int | None = None,
-                         expected_maximum_bytes: int | None = None) -> Mapping[str, Any]:
-        context = getattr(authorization, "host_context", None)
-        grant = getattr(authorization, "effect_authorization", None)
-        if (getattr(authorization, "operation", None) != operation
-                or getattr(authorization, "target_id", None) != binding.target_id
-                or getattr(authorization, "route_id", None) != binding.route_id
-                or getattr(authorization, "session_id", None) != binding.session_id
-                or getattr(authorization, "generation", None) != binding.native_generation
-                or getattr(authorization, "deadline", None) != expected_deadline
-                or (expected_sequence is not None
-                    and getattr(authorization, "sequence", None) != expected_sequence)
-                or (expected_maximum_bytes is not None
-                    and getattr(authorization, "maximum_bytes", None) != expected_maximum_bytes)
-                or getattr(authorization, "request_digest", None) != canonical_digest(payload)
-                or not isinstance(context, HostContext) or not isinstance(grant, EffectAuthorization)
-                or context.uid != peer_uid or context.profile_id != binding.native_profile_id
-                or context.generation != binding.native_generation
-                or context.enrollment_id != binding.enrollment_id
-                or context.intent_id != binding.session_id):
-            raise AuthorityDenied("connector.remote-binding", "HI13 operation is not root-bound to the admitted service")
-        result = getattr(self.connector, operation.rsplit(".", 1)[1])(
-            context=context, authorization=grant, payload=payload, timeout=timeout,
-            peer_pid=peer_pid, peer_pidfd=peer_pidfd, cancelled=cancelled,
-            **({"_remote_session_seal": remote_session_seal} if remote_session_seal is not None else {}))
-        try:
-            value = json.loads(result["body"])
-        except (KeyError, ValueError, UnicodeDecodeError, TypeError) as exc:
-            raise AuthorityDenied("connector.response", "root fixed connector returned a malformed effect result") from exc
-        if result.get("status") != 200 or not isinstance(value, dict) or value.get("schema") != 1:
-            raise AuthorityDenied("connector.response", "root fixed connector rejected a HI13 operation")
-        return value
+    def _authorize(self, binding: Any, authorization: Any, operation: str,
+                   payload: bytes, sequence: int, peer_uid: int,
+                   peer_pid: int, peer_pidfd: int) -> Callable[[], None]:
+        from hermes_installer.authority.remote_sessions import InternalRemoteConnectorAuthorization
+        now = time.monotonic()
+        deadline = (binding.lease_expires_monotonic if operation == "connector.open"
+                    else binding.frame_deadline_monotonic)
+        if (not isinstance(authorization, InternalRemoteConnectorAuthorization)
+                or authorization.effective_principal_id != binding.principal_id
+                or authorization.effective_native_profile_id != binding.native_profile_id
+                or authorization.effective_native_generation != binding.native_generation
+                or authorization.controller_gateway_identity_digest != binding.gateway_identity.identity_digest
+                or authorization.controller_gateway_generation != binding.gateway_generation
+                or authorization.remote_session_id != binding.session_id
+                or authorization.token_fingerprint != binding.token_fingerprint
+                or authorization.policy_revision != binding.policy_revision
+                or authorization.policy_config_digest != binding.policy_config_digest
+                or authorization.service_generation_digest != binding.service_generation_digest
+                or authorization.connector_target_id != binding.target_id
+                or authorization.route_id != binding.route_id
+                or authorization.operation != operation
+                or authorization.canonical_payload_sha256 != hashlib.sha256(payload).hexdigest()
+                or authorization.sequence != sequence
+                or authorization.issued_monotonic > now
+                or not now < authorization.expires_monotonic <= min(deadline, binding.lease_expires_monotonic)
+                or self.validate_binding(binding, operation, sequence) is not True):
+            raise AuthorityDenied("connector.remote-authorization", "HI13 authorization is stale or not bound to this effect")
+
+        def consume() -> None:
+            if self.consume_effect(
+                    authorization, binding, operation, payload, sequence,
+                    peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd) is not True:
+                raise AuthorityDenied("connector.remote-authorization", "HI12 connector grant consumption failed")
+        return consume
 
     @staticmethod
     def _peer(binding: Any, peer_uid: int, peer_pid: int, peer_pidfd: int | None) -> None:
@@ -823,8 +1066,6 @@ class RemoteServiceConnectorBackend:
     def open(self, binding: Any, *, authorization: Any, peer_uid: int, peer_pid: int,
              peer_pidfd: int | None) -> str:
         self._peer(binding, peer_uid, peer_pid, peer_pidfd)
-        if self.validate_binding(binding, "connector.open", 0) is not True:
-            raise AuthorityDenied("connector.remote-session", "root remote session is not current for connector open")
         if binding.target_id != "xpra-native" or binding.route_id not in {"xpra-http", "xpra-websocket"}:
             raise AuthorityDenied("connector.route", "HI13 Xpra connector route is not fixed and enrolled")
         if binding.action not in {"asset-read", "websocket-attach"}:
@@ -837,12 +1078,14 @@ class RemoteServiceConnectorBackend:
                                      generation=binding.native_generation,
                                      target_id=binding.target_id, route_id=binding.route_id,
                                      session_id=binding.session_id, deadline=deadline)
-        value = self._authorized_call(binding, authorization, "connector.open", payload,
-                                      peer_uid, peer_pid, peer_pidfd,
-                                      self._frame_timeout(binding),
-                                      lambda: self.cancelled(binding), remote_session_seal=_REMOTE_SESSION_SEAL,
-                                      expected_deadline=deadline, expected_sequence=0,
-                                      expected_maximum_bytes=0)
+        before_connect = self._authorize(binding, authorization, "connector.open", payload,
+                                         0, peer_uid, peer_pid, peer_pidfd)
+        result = self.connector._remote_open(
+            binding, payload, timeout=self._frame_timeout(binding), peer_uid=peer_uid,
+            peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+            cancelled=lambda: self.cancelled(binding), before_connect=before_connect,
+            seal=_REMOTE_SESSION_SEAL)
+        value = json.loads(result["body"])
         connector_id = _valid_id(value.get("connector_id"), "connector_id")
         if value.get("generation") != binding.native_generation:
             stream = self.connector._streams.get(connector_id)
@@ -884,8 +1127,8 @@ class RemoteServiceConnectorBackend:
             owner = self._handles.get(connector_handle)
         if owner != (binding.session_id, route_id):
             raise AuthorityDenied("connector.handle", "root connector handle belongs to another HI13 session")
-        if self.validate_binding(binding, "connector." + verb, sequence) is not True:
-            raise AuthorityDenied("connector.remote-session", "root remote session is not current for this frame")
+        if binding.next_sequence != sequence or binding.connector_handle != connector_handle:
+            raise AuthorityDenied("connector.replay", "frame differs from current root connector state")
         self._refresh_root_lease(binding, connector_handle)
         body: dict[str, Any] = {"schema": 1, "target_id": binding.target_id,
                                 "route_id": route_id, "connector_id": connector_handle,
@@ -902,64 +1145,51 @@ class RemoteServiceConnectorBackend:
                 raise AuthorityDenied("connector.frame", "write frame is outside its fixed bound")
             body["data_b64"] = base64.b64encode(data_bytes).decode("ascii")
         payload = canonical_bytes(body)
-        value = self._authorized_call(binding, authorization, "connector." + verb, payload,
-                                      peer_uid, peer_pid, peer_pidfd,
-                                      self._frame_timeout(binding),
-                                      lambda: cancelled() or self.cancelled(binding),
-                                      expected_deadline=binding.frame_deadline_monotonic,
-                                      expected_sequence=sequence,
-                                      expected_maximum_bytes=(max_bytes if verb == "read" else len(data_bytes)))
-        if value.get("sequence") != sequence:
-            raise AuthorityDenied("connector.replay", "root connector frame receipt sequence is invalid")
+        before_effect = self._authorize(binding, authorization, "connector." + verb, payload,
+                                        sequence, peer_uid, peer_pid, peer_pidfd)
         if verb == "read":
-            try:
-                data = base64.b64decode(value["data_b64"], validate=True)
-            except (KeyError, ValueError, TypeError) as exc:
-                raise AuthorityDenied("connector.response", "root connector read result is malformed") from exc
-            if len(data) > max_bytes:
-                raise AuthorityDenied("connector.response", "root connector read exceeds its authorized bound")
+            data, eof = self.connector._remote_read(
+                binding, connector_handle, sequence, max_bytes, payload,
+                timeout=self._frame_timeout(binding), peer_uid=peer_uid, peer_pid=peer_pid,
+                peer_pidfd=peer_pidfd, cancelled=lambda: cancelled() or self.cancelled(binding),
+                before_receive=before_effect, seal=_REMOTE_SESSION_SEAL)
             if not data:
                 self._forget(connector_handle)
-            return data, not data
-        if value.get("written") != len(data_bytes):
-            raise AuthorityDenied("connector.response", "root connector write receipt is invalid")
-        return len(data_bytes)
+            return data, eof
+        return self.connector._remote_write(
+            binding, connector_handle, sequence, data_bytes, payload,
+            timeout=self._frame_timeout(binding), peer_uid=peer_uid, peer_pid=peer_pid,
+            peer_pidfd=peer_pidfd, cancelled=lambda: cancelled() or self.cancelled(binding),
+            before_send=before_effect, seal=_REMOTE_SESSION_SEAL)
 
     def close(self, binding: Any, connector_handle: str, *, authorization: Any | None,
-              cleanup: bool = False) -> None:
+              cleanup: bool = False, peer_uid: int | None = None,
+              peer_pid: int | None = None, peer_pidfd: int | None = None) -> None:
         with self._lock:
             owner = self._handles.get(connector_handle)
         if owner != (binding.session_id, binding.route_id):
             return
         if cleanup and authorization is None:
-            stream = self.connector._streams.get(connector_handle)
-            if stream is not None:
-                self.connector._dispose(stream)
+            self.connector._remote_close(
+                binding, connector_handle, None, b"", peer_uid=0, peer_pid=0, peer_pidfd=-1,
+                before_close=lambda: None, cleanup=True, seal=_REMOTE_SESSION_SEAL)
             self._forget(connector_handle)
             return
-        # Cleanup is root-triggered and remains allowed after lease expiry.
-        # The coordinator validates the one-use close grant before dispatch;
-        # teardown itself sends no data and must still work after expiry.
+        if peer_uid is None or peer_pid is None or peer_pidfd is None:
+            raise AuthorityDenied("connector.close", "current gateway peer is required to consume close authorization")
         sequence = getattr(authorization, "sequence", -1)
-        deadline = getattr(authorization, "deadline", binding.frame_deadline_monotonic)
         payload = canonical_bytes({"schema": 1, "target_id": binding.target_id,
                                    "route_id": binding.route_id, "connector_id": connector_handle,
                                    "session_id": binding.session_id,
                                    "generation": binding.native_generation,
-                                   "deadline": deadline, "sequence": sequence})
-        if (getattr(authorization, "operation", None) != "connector.close"
-                or getattr(authorization, "target_id", None) != binding.target_id
-                or getattr(authorization, "session_id", None) != binding.session_id
-                or getattr(authorization, "route_id", None) != binding.route_id
-                or getattr(authorization, "generation", None) != binding.native_generation
-                or getattr(authorization, "deadline", None) != deadline
-                or getattr(authorization, "request_digest", None) != canonical_digest(payload)
-                or type(sequence) is not int or sequence < 0
-                or (not cleanup and self.validate_binding(binding, "connector.close", sequence) is not True)):
-            raise AuthorityDenied("connector.close", "root close authorization is missing")
-        stream = self.connector._streams.get(connector_handle)
-        if stream is not None:
-            self.connector._dispose(stream)
+                                   "deadline": binding.frame_deadline_monotonic,
+                                   "sequence": sequence})
+        before_close = self._authorize(binding, authorization, "connector.close", payload,
+                                       sequence, peer_uid, peer_pid, peer_pidfd)
+        self.connector._remote_close(
+            binding, connector_handle, authorization, payload, peer_uid=peer_uid,
+            peer_pid=peer_pid, peer_pidfd=peer_pidfd, before_close=before_close,
+            cleanup=cleanup, seal=_REMOTE_SESSION_SEAL)
         self._forget(connector_handle)
 
     def _forget(self, connector_handle: str) -> None:
@@ -967,8 +1197,439 @@ class RemoteServiceConnectorBackend:
             self._handles.pop(connector_handle, None)
 
 
+@dataclass(frozen=True, slots=True)
+class SetupProbeAssetResponse:
+    status: int
+    headers: Mapping[str, str]
+    body: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteProbeByteSnapshot:
+    """Immutable byte/effect counters for one authenticated root probe window."""
+
+    read_bytes: int
+    write_bytes: int
+    open_effects: int
+    frame_effects: int
+
+
+class SetupProbeConnectorBackend:
+    """Setup-only Xpra broker driven by root probe handles and one-use HI12 grants.
+
+    This private adapter is intentionally separate from the public HI13 session
+    backend. It accepts no HTTP request bytes, path, URL, or caller-selected
+    route; assets are selected by opaque manifest ID and WebSocket frames are
+    binary-only through the fixed ``xpra-native`` routes.
+    """
+
+    def __init__(self, connector: FixedServiceConnector, *, catalog: Any,
+                 process_manager: Any, probe_authority: Any,
+                 resolve_probe_connector_binding: Callable[[str, int, int, int], Any],
+                 resolve_probe_asset_path: Callable[[Any, str], str],
+                 advance_sequence: Callable[..., bool] | None = None,
+                 verify_observer_capability: Callable[[Any], bool] | None = None,
+                 monotonic: Callable[[], float] = time.monotonic):
+        from hermes_installer.authority.remote_probe_connector_authority import SetupProbeConnectorAuthority
+        if (not isinstance(probe_authority, SetupProbeConnectorAuthority)
+                or not callable(resolve_probe_connector_binding)
+                or not callable(resolve_probe_asset_path)):
+            raise ValueError("root setup authority, binding, asset, and sequence APIs are required")
+        if advance_sequence is None:
+            advance_sequence = getattr(probe_authority, "advance_probe_connector_sequence", None)
+        if not callable(advance_sequence):
+            raise ValueError("root probe authority must provide atomic sequence advancement")
+        self.connector = connector
+        self.catalog = catalog
+        self.process_manager = process_manager
+        self.authority = probe_authority
+        self.resolve_binding = resolve_probe_connector_binding
+        self.resolve_asset_path = resolve_probe_asset_path
+        self.advance_sequence = advance_sequence
+        self.verify_observer_capability = verify_observer_capability
+        self.monotonic = monotonic
+        self._probe_ledger_lock = threading.RLock()
+        self._probe_ledger: dict[tuple[str, str, str], list[int]] = {}
+
+    def snapshot_remote_probe_bytes(self, capability: Any) -> RemoteProbeByteSnapshot:
+        """Return root-owned counters only for a live, root-verified observer capability."""
+        try:
+            verified = (callable(self.verify_observer_capability)
+                        and self.verify_observer_capability(capability) is True)
+            issued = getattr(capability, "issued_monotonic", None)
+            expires = getattr(capability, "expires_monotonic", None)
+            gateway_digest = getattr(capability, "gateway_identity_digest", None)
+            native_enrollment = getattr(capability, "native_enrollment_id", None)
+            session_id = getattr(capability, "session_id", None)
+            now = self.monotonic()
+            valid = (verified
+                     and type(issued) in {int, float} and type(expires) in {int, float}
+                     and math.isfinite(issued) and math.isfinite(expires)
+                     and issued <= now < expires and expires - issued <= 25.0
+                     and type(gateway_digest) is str
+                     and re.fullmatch(r"[0-9a-f]{64}", gateway_digest) is not None
+                     and type(native_enrollment) is str and bool(_ID.fullmatch(native_enrollment))
+                     and type(session_id) is str and bool(_ID.fullmatch(session_id)))
+        except Exception:
+            valid = False
+        if not valid:
+            raise AuthorityDenied("connector.ledger", "root observer capability is unavailable or expired")
+        key = (gateway_digest, native_enrollment, session_id)
+        with self._probe_ledger_lock:
+            counts = tuple(self._probe_ledger.get(key, (0, 0, 0, 0)))
+        return RemoteProbeByteSnapshot(*counts)
+
+    def _record_probe_effect(self, binding: Any, operation: str) -> None:
+        key = (binding.gateway_identity_digest, binding.native_enrollment_id, binding.session_id)
+        index = 2 if operation == "connector.open" else 3
+        with self._probe_ledger_lock:
+            counts = self._probe_ledger.setdefault(key, [0, 0, 0, 0])
+            counts[index] += 1
+
+    def _record_probe_bytes(self, binding: Any, direction: str, count: int) -> None:
+        if type(count) is not int or count <= 0:
+            return
+        key = (binding.gateway_identity_digest, binding.native_enrollment_id, binding.session_id)
+        index = 0 if direction == "read" else 1
+        with self._probe_ledger_lock:
+            counts = self._probe_ledger.setdefault(key, [0, 0, 0, 0])
+            counts[index] += count
+
+    def _current(self, handle: str, uid: int, pid: int, pidfd: int,
+                 action: str, asset_id: str | None,
+                 connector_id: str | None = None) -> Any:
+        from hermes_installer.authority.remote_probe_connector_authority import RootSetupProbeBinding
+        if (type(uid) is not int or type(pid) is not int or pid <= 0
+                or type(pidfd) is not int or pidfd < 0):
+            raise AuthorityDenied("connector.peer", "probe peer identity is invalid")
+        try:
+            value = self.resolve_binding(handle, uid, pid, pidfd)
+        except Exception as exc:
+            raise AuthorityDenied("connector.probe", "current setup probe binding is unavailable") from exc
+        now = self.monotonic()
+        if (not isinstance(value, RootSetupProbeBinding) or value.probe_handle != handle
+                or value.selected_action != action or value.selected_asset_id != asset_id
+                or value.connector_handle != connector_id
+                or value.enrollment_id != value.native_enrollment_id
+                or value.target_id != "xpra-native" or value.connector_target_id != "xpra-native"
+                or value.approved_route_ids != ("xpra-http", "xpra-websocket")
+                or value.cancelled() or not now < value.expires_monotonic
+                or not now < value.frame_deadline_monotonic
+                <= min(now + 5.0, value.expires_monotonic)):
+            raise AuthorityDenied("connector.probe", "setup probe is expired or outside fixed Xpra scope")
+        return value
+
+    @staticmethod
+    def _route(binding: Any) -> str:
+        return "xpra-websocket" if binding.selected_action == "websocket-attach" else "xpra-http"
+
+    @staticmethod
+    def _view(binding: Any, connector_id: str | None = None) -> Any:
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            enrollment_id=binding.native_enrollment_id,
+            native_generation=binding.native_generation,
+            native_profile_id=binding.native_profile_id,
+            target_id="xpra-native", route_id=SetupProbeConnectorBackend._route(binding),
+            session_id=binding.session_id,
+            lease_expires_monotonic=binding.expires_monotonic,
+            frame_deadline_monotonic=binding.frame_deadline_monotonic,
+            action="websocket-attach" if binding.selected_action == "websocket-attach" else "asset-read",
+            token_fingerprint=hashlib.sha256(("setup-probe:" + binding.probe_actor_identity_digest).encode()).hexdigest(),
+            connector_handle=connector_id, next_sequence=binding.next_sequence,
+            cancelled=binding.cancelled)
+
+    def _resolve_lease(self, binding: Any, route: Route) -> NamespaceLease:
+        enrollment_id = getattr(binding, "native_enrollment_id", getattr(binding, "enrollment_id", None))
+        generation = getattr(binding, "native_generation", None)
+        profile_id = getattr(binding, "native_profile_id", None)
+        try:
+            protected = self.catalog.resolve_connector_route(
+                enrollment_id, generation,
+                "xpra-native", route.route_id)
+        except Exception as exc:
+            raise AuthorityDenied("connector.route", "protected Xpra route resolution failed") from exc
+        if (protected.target_id != "xpra-native" or protected.route_id != route.route_id
+                or protected.profile_id != profile_id
+                or protected.generation != generation):
+            raise AuthorityDenied("connector.route", "catalog route differs from the selected native service")
+        lease = self.process_manager.resolve_namespace_lease(protected)
+        if (lease is None or lease.generation != generation
+                or lease.namespace_identity != protected.namespace_identity):
+            if lease is not None:
+                lease.close()
+            raise AuthorityDenied("connector.identity", "current native service namespace is unavailable")
+        return lease
+
+    def _effect(self, handle: str, binding: Any, operation: str, payload: bytes,
+                sequence: int, uid: int, pid: int, pidfd: int) -> None:
+        from hermes_installer.authority.remote_probe_connector_authority import InternalProbeConnectorAuthorization
+        auth = self.authority.issue_probe_connector_effect(
+            handle, operation, payload, sequence, peer_uid=uid, peer_pid=pid, peer_pidfd=pidfd)
+        expected_deadline = (binding.expires_monotonic if operation == "connector.open"
+                             else binding.frame_deadline_monotonic)
+        if (not isinstance(auth, InternalProbeConnectorAuthorization)
+                or auth.probe_handle != handle or auth.operation != operation
+                or auth.frame_sequence != sequence or auth.route_id != self._route(binding)
+                or auth.target_id != "xpra-native" or auth.connector_target_id != "xpra-native"
+                or auth.enrollment_id != binding.native_enrollment_id
+                or auth.session_id != binding.session_id
+                or auth.selected_action != binding.selected_action
+                or auth.selected_asset_id != binding.selected_asset_id
+                or auth.connector_handle != binding.connector_handle
+                or auth.asset_ids != binding.asset_ids
+                or auth.native_enrollment_id != binding.native_enrollment_id
+                or auth.native_identity_digest != binding.native_identity_digest
+                or auth.native_profile_id != binding.native_profile_id
+                or auth.native_generation != binding.native_generation
+                or auth.gateway_identity_digest != binding.gateway_identity_digest
+                or auth.gateway_profile_id != binding.gateway_profile_id
+                or auth.gateway_generation != binding.gateway_generation
+                or auth.probe_actor_identity_digest != binding.probe_actor_identity_digest
+                or auth.setup_transaction_digest != binding.setup_transaction_digest
+                or auth.setup_actor_identity_digest != binding.setup_actor_identity_digest
+                or auth.probe_role_sha256 != binding.probe_role_sha256
+                or auth.policy_revision != binding.policy_revision
+                or auth.policy_config_digest != binding.policy_config_digest
+                or auth.next_sequence != binding.next_sequence
+                or auth.frame_sequence != sequence
+                or auth.effect_sequence != binding.effect_sequence
+                or auth.service_generation_digest != binding.service_generation_digest
+                or auth.canonical_payload_sha256 != hashlib.sha256(payload).hexdigest()
+                or auth.issued_monotonic > self.monotonic()
+                or auth.expires_monotonic != expected_deadline
+                or auth.expires_monotonic <= self.monotonic()):
+            raise AuthorityDenied("connector.authorization", "one-use setup grant is stale or mismatched")
+        if self.authority.consume_probe_connector_effect(
+                auth, handle, operation, payload, sequence,
+                peer_uid=uid, peer_pid=pid, peer_pidfd=pidfd) is not True:
+            raise AuthorityDenied("connector.authorization", "HI12 setup connector effect was denied")
+        self._record_probe_effect(binding, operation)
+
+    def _open(self, handle: str, binding: Any, uid: int, pid: int, pidfd: int) -> tuple[str, Mapping[str, Any]]:
+        view = self._view(binding)
+        payload = open_request_bytes(enrollment_id=binding.native_enrollment_id,
+            generation=binding.native_generation, target_id="xpra-native", route_id=self._route(binding),
+            session_id=binding.session_id, deadline=binding.expires_monotonic)
+        def before_connect() -> None:
+            self._effect(handle, binding, "connector.open", payload, 0, uid, pid, pidfd)
+        result = self.connector._remote_open(
+            view, payload, timeout=min(2.0, binding.expires_monotonic - self.monotonic()),
+            peer_uid=uid, peer_pid=pid, peer_pidfd=pidfd,
+            cancelled=lambda: binding.cancelled() or self.monotonic() >= binding.expires_monotonic,
+            before_connect=before_connect, seal=_REMOTE_SESSION_SEAL,
+            resolve_lease=self._resolve_lease,
+            after_open_send=lambda count: self._record_probe_bytes(binding, "write", count),
+            after_open_receive=lambda count: self._record_probe_bytes(binding, "read", count))
+        body = json.loads(result["body"])
+        connector_id = body.get("connector_id")
+        if (not isinstance(connector_id, str) or not _ID.fullmatch(connector_id)
+                or binding.connector_handle is not None):
+            raise AuthorityDenied("connector.response", "root setup open returned an invalid handle")
+        self._advance(handle, binding, "connector.open", connector_id, uid, pid, pidfd)
+        return connector_id, body
+
+    def _advance(self, handle: str, binding: Any, operation: str, connector_id: str,
+                 uid: int, pid: int, pidfd: int) -> None:
+        if self.advance_sequence(handle, binding.effect_sequence, binding.next_sequence,
+                operation, connector_id,
+                peer_uid=uid, peer_pid=pid, peer_pidfd=pidfd) is not True:
+            stream = self.connector._streams.get(connector_id)
+            if stream is not None:
+                self.connector._dispose(stream)
+            raise AuthorityDenied("connector.sequence", "probe frame sequence update was rejected")
+        stream = self.connector._streams.get(connector_id)
+        if stream is not None and operation in {"connector.read", "connector.write"}:
+            stream.sequence = binding.next_sequence + 1
+
+    def _close(self, handle: str, connector_id: str, action: str, asset_id: str | None,
+               uid: int, pid: int, pidfd: int) -> None:
+        stream = self.connector._streams.get(connector_id)
+        if stream is None:
+            return
+        try:
+            binding = self._current(handle, uid, pid, pidfd, action, asset_id, connector_id)
+        except AuthorityDenied:
+            self.connector._dispose(stream)  # root cleanup after cancel/expiry; no forwarded data
+            return
+        seq = binding.next_sequence
+        body = {"schema": 1, "target_id": "xpra-native", "route_id": stream.route.route_id,
+                "connector_id": connector_id, "session_id": binding.session_id,
+                "generation": binding.native_generation, "deadline": binding.frame_deadline_monotonic,
+                "sequence": seq}
+        payload = canonical_bytes(body)
+        from types import SimpleNamespace
+        try:
+            self.connector._remote_close(
+                self._view(binding, connector_id), connector_id, SimpleNamespace(sequence=seq), payload,
+                peer_uid=uid, peer_pid=pid, peer_pidfd=pidfd,
+                before_close=lambda: self._effect(handle, binding, "connector.close", payload,
+                                                  seq, uid, pid, pidfd),
+                cleanup=False, seal=_REMOTE_SESSION_SEAL)
+            self._advance(handle, binding, "connector.close", connector_id, uid, pid, pidfd)
+        except AuthorityDenied:
+            stream = self.connector._streams.get(connector_id)
+            if stream is not None:
+                self.connector._dispose(stream)
+            raise
+
+    def read_asset(self, root_probe_handle: str, asset_id: str, method: str, *,
+                   peer_uid: int, peer_pid: int, peer_pidfd: int) -> SetupProbeAssetResponse:
+        action = {"GET": "asset-get", "HEAD": "asset-head"}.get(method, "")
+        binding = self._current(root_probe_handle, peer_uid, peer_pid, peer_pidfd, action, asset_id)
+        if asset_id not in binding.asset_ids:
+            raise AuthorityDenied("connector.asset", "asset ID is not in the selected root manifest")
+        from hermes_installer.remote.http_framing import HTTPFrameError, build_asset_request, read_asset_response
+        try:
+            path = self.resolve_asset_path(binding, asset_id)
+            if (not isinstance(path, str) or hashlib.sha256(
+                    b"hermes-client-asset-v1\0" + path.encode("utf-8")).hexdigest() != asset_id):
+                raise ValueError("unrecognized root asset mapping")
+            request = build_asset_request(method, path, canonicalize=canonical_asset)
+        except Exception as exc:
+            raise AuthorityDenied("connector.asset", "root asset mapping is outside the pinned manifest") from exc
+        connector_id, _ = self._open(root_probe_handle, binding, peer_uid, peer_pid, peer_pidfd)
+        try:
+            current = self._current(root_probe_handle, peer_uid, peer_pid, peer_pidfd,
+                                    action, asset_id, connector_id)
+            seq = current.next_sequence
+            write_body = {"schema": 1, "target_id": "xpra-native", "route_id": "xpra-http",
+                "connector_id": connector_id, "session_id": current.session_id,
+                "generation": current.native_generation, "deadline": current.frame_deadline_monotonic,
+                "sequence": seq, "data_b64": base64.b64encode(request).decode("ascii")}
+            write_payload = canonical_bytes(write_body)
+            count = self.connector._remote_write(
+                self._view(current, connector_id), connector_id, seq, request, write_payload,
+                timeout=min(5.0, current.frame_deadline_monotonic - self.monotonic()),
+                peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+                cancelled=current.cancelled,
+                before_send=lambda: self._effect(root_probe_handle, current, "connector.write",
+                    write_payload, seq, peer_uid, peer_pid, peer_pidfd), seal=_REMOTE_SESSION_SEAL,
+                after_send=lambda sent: self._record_probe_bytes(current, "write", sent))
+            if count != len(request):
+                raise AuthorityDenied("connector.write", "asset request was not fully sent")
+            self._advance(root_probe_handle, current, "connector.write", connector_id,
+                          peer_uid, peer_pid, peer_pidfd)
+
+            def read_one(maximum: int) -> bytes:
+                frame = self._current(root_probe_handle, peer_uid, peer_pid, peer_pidfd,
+                                      action, asset_id, connector_id)
+                seq_read = frame.next_sequence
+                read_body = {"schema": 1, "target_id": "xpra-native", "route_id": "xpra-http",
+                    "connector_id": connector_id, "session_id": frame.session_id,
+                    "generation": frame.native_generation, "deadline": frame.frame_deadline_monotonic,
+                    "sequence": seq_read, "max_bytes": maximum}
+                read_payload = canonical_bytes(read_body)
+                data, _eof = self.connector._remote_read(
+                    self._view(frame, connector_id), connector_id, seq_read, maximum, read_payload,
+                    timeout=min(5.0, frame.frame_deadline_monotonic - self.monotonic()),
+                    peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+                    cancelled=frame.cancelled,
+                    before_receive=lambda: self._effect(root_probe_handle, frame, "connector.read",
+                        read_payload, seq_read, peer_uid, peer_pid, peer_pidfd), seal=_REMOTE_SESSION_SEAL,
+                    after_receive=lambda count: self._record_probe_bytes(frame, "read", count))
+                self._advance(root_probe_handle, frame, "connector.read", connector_id,
+                              peer_uid, peer_pid, peer_pidfd)
+                return data
+            try:
+                result = read_asset_response(read_one, method=method)
+            except HTTPFrameError as exc:
+                raise AuthorityDenied("connector.http-response", "Xpra response failed fixed framing") from exc
+            return SetupProbeAssetResponse(result.status, result.headers, result.body)
+        finally:
+            self._close(root_probe_handle, connector_id, action, asset_id,
+                        peer_uid, peer_pid, peer_pidfd)
+
+    def open_websocket(self, root_probe_handle: str, *, peer_uid: int,
+                       peer_pid: int, peer_pidfd: int) -> "SetupProbeConnectorStream":
+        binding = self._current(root_probe_handle, peer_uid, peer_pid, peer_pidfd,
+                                "websocket-attach", None)
+        connector_id, opened = self._open(root_probe_handle, binding, peer_uid, peer_pid, peer_pidfd)
+        return SetupProbeConnectorStream(self, root_probe_handle, connector_id,
+                                         peer_uid, peer_pid, peer_pidfd,
+                                         opened["max_frame_bytes"])
+
+
+@dataclass(slots=True)
+class SetupProbeConnectorStream:
+    backend: SetupProbeConnectorBackend
+    root_probe_handle: str
+    connector_id: str
+    peer_uid: int
+    peer_pid: int
+    peer_pidfd: int
+    max_frame_bytes: int
+    closed: bool = False
+
+    def _current(self) -> Any:
+        if self.closed:
+            raise AuthorityDenied("connector.closed", "setup WebSocket stream is closed")
+        return self.backend._current(self.root_probe_handle, self.peer_uid, self.peer_pid,
+                                     self.peer_pidfd, "websocket-attach", None, self.connector_id)
+
+    def write(self, data: bytes) -> int:
+        if not isinstance(data, bytes) or not data or len(data) > self.max_frame_bytes:
+            raise AuthorityDenied("connector.frame", "setup WebSocket input exceeds its binary bound")
+        binding = self._current()
+        seq = binding.next_sequence
+        payload = canonical_bytes({"schema": 1, "target_id": "xpra-native",
+            "route_id": "xpra-websocket", "connector_id": self.connector_id,
+            "session_id": binding.session_id, "generation": binding.native_generation,
+            "deadline": binding.frame_deadline_monotonic, "sequence": seq,
+            "data_b64": base64.b64encode(data).decode("ascii")})
+        count = self.backend.connector._remote_write(
+            self.backend._view(binding, self.connector_id), self.connector_id, seq,
+            data, payload, timeout=min(5.0, binding.frame_deadline_monotonic - self.backend.monotonic()),
+            peer_uid=self.peer_uid, peer_pid=self.peer_pid, peer_pidfd=self.peer_pidfd,
+            cancelled=binding.cancelled,
+            before_send=lambda: self.backend._effect(self.root_probe_handle, binding,
+                "connector.write", payload, seq, self.peer_uid, self.peer_pid, self.peer_pidfd),
+            seal=_REMOTE_SESSION_SEAL,
+            after_send=lambda count: self.backend._record_probe_bytes(binding, "write", count))
+        self.backend._advance(self.root_probe_handle, binding, "connector.write", self.connector_id,
+                              self.peer_uid, self.peer_pid, self.peer_pidfd)
+        return count
+
+    def read(self, maximum_bytes: int) -> bytes:
+        if type(maximum_bytes) is not int or not 1 <= maximum_bytes <= self.max_frame_bytes:
+            raise AuthorityDenied("connector.frame", "setup WebSocket read bound is invalid")
+        binding = self._current()
+        seq = binding.next_sequence
+        payload = canonical_bytes({"schema": 1, "target_id": "xpra-native",
+            "route_id": "xpra-websocket", "connector_id": self.connector_id,
+            "session_id": binding.session_id, "generation": binding.native_generation,
+            "deadline": binding.frame_deadline_monotonic, "sequence": seq,
+            "max_bytes": maximum_bytes})
+        data, eof = self.backend.connector._remote_read(
+            self.backend._view(binding, self.connector_id), self.connector_id, seq,
+            maximum_bytes, payload,
+            timeout=min(5.0, binding.frame_deadline_monotonic - self.backend.monotonic()),
+            peer_uid=self.peer_uid, peer_pid=self.peer_pid, peer_pidfd=self.peer_pidfd,
+            cancelled=binding.cancelled,
+            before_receive=lambda: self.backend._effect(self.root_probe_handle, binding,
+                "connector.read", payload, seq, self.peer_uid, self.peer_pid, self.peer_pidfd),
+            seal=_REMOTE_SESSION_SEAL,
+            after_receive=lambda count: self.backend._record_probe_bytes(binding, "read", count))
+        self.backend._advance(self.root_probe_handle, binding, "connector.read", self.connector_id,
+                              self.peer_uid, self.peer_pid, self.peer_pidfd)
+        if eof:
+            self.closed = True
+        return data
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        try:
+            self.backend._close(self.root_probe_handle, self.connector_id,
+                                "websocket-attach", None,
+                                self.peer_uid, self.peer_pid, self.peer_pidfd)
+        finally:
+            self.closed = True
+
+
 def build_remote_service_connector_backend(*, catalog: Any, process_manager: Any,
                                            validate_binding: Callable[[Any, str, int], bool],
+                                           consume_effect: Callable[..., bool],
                                            limits: ConnectorLimits = ConnectorLimits(),
                                            cancelled: Callable[[Any], bool] | None = None
                                            ) -> RemoteServiceConnectorBackend:
@@ -978,8 +1639,8 @@ def build_remote_service_connector_backend(*, catalog: Any, process_manager: Any
     caller-context handler map. The RemoteSessionAuthority must validate its
     opaque session and current gateway identity before each backend call.
     """
-    if not callable(validate_binding):
-        raise ValueError("root remote-session binding validator is required")
+    if not callable(validate_binding) or not callable(consume_effect):
+        raise ValueError("root remote-session validator and HI12 effect consumer are required")
 
     def resolve(enrollment_id: str, profile_id: str, generation: str,
                 target_id: str, route_id: str) -> NamespaceLease:
@@ -1001,6 +1662,7 @@ def build_remote_service_connector_backend(*, catalog: Any, process_manager: Any
 
     connector = FixedServiceConnector(resolve_service_namespace=resolve, limits=limits)
     return RemoteServiceConnectorBackend(connector, validate_binding=validate_binding,
+                                         consume_effect=consume_effect,
                                          cancelled=cancelled)
 
 

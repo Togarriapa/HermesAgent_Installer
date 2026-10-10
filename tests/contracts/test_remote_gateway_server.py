@@ -202,8 +202,10 @@ class RemoteGatewayRootBridgeTests(unittest.IsolatedAsyncioTestCase):
         from hermes_installer.remote.server import GatewayRuntime, create_app
         authority_module = types.ModuleType("hermes_installer.authority.remote_sessions")
         authority_module.RemoteAdmissionRequest = AdmissionRequest
-        sys.modules[authority_module.__name__] = authority_module
-        self.addCleanup(sys.modules.pop, authority_module.__name__, None)
+        modules_patch = unittest.mock.patch.dict(
+            sys.modules, {authority_module.__name__: authority_module})
+        modules_patch.start()
+        self.addCleanup(modules_patch.stop)
         self.authority = FixtureRootAuthority()
         self.root = RootRemoteSessionClient(self.authority, "desk.example.net", "https://desk.example.net",
                                             frozenset({"xpra-http"}), "xpra-websocket")

@@ -1,5 +1,6 @@
 """Effect and failure tests for pinned component archive staging."""
 import io
+import hashlib
 import json
 import tarfile
 import tempfile
@@ -14,7 +15,9 @@ from hermes_installer.components.source_bundle import (
     GitHubComponentSourceFetcher,
     HttpResponse,
     UrllibSourceTransport,
+    VerifiedComponentSource,
 )
+from hermes_installer.components.runtime_source import bind_component_runtime_source
 from hermes_installer.registry.generation import GenerationStore
 from hermes_installer.state import Journal, OwnedRoot, process_lock
 from hermes_installer.registry.source import _git_tree
@@ -190,6 +193,40 @@ class ComponentSourceBundleTests(unittest.TestCase):
                     journal.owned("generation")[0]["state"],
                 )
 
+    def test_pinned_obsidian_template_is_audit_only_during_full_source_import(self):
+        contract = resolve_component_adapter("obsidian-skills")
+        skill = (
+            b"---\nname: obsidian-markdown\ndescription: fixture\n---\n"
+            b"Use [text](url) as a template for external URLs.\n"
+        )
+        files = {
+            "skills/obsidian-markdown/SKILL.md": skill,
+            "skills/obsidian-markdown/references/PROPERTIES.md": b"YAML frontmatter.\n",
+        }
+        modes = {name: 0o644 for name in files}
+        tree_sha, _ = _git_tree(files, modes)
+        archive = archive_bytes(contract.source_identity, contract.revision, [
+            (name, body, modes[name], "file") for name, body in files.items()
+        ])
+        commit_url = (
+            f"https://api.github.com/repos/{contract.source_identity}/commits/{contract.revision}"
+        )
+        commit_body = json.dumps({
+            "sha": contract.revision,
+            "html_url": f"https://github.com/{contract.source_identity}/commit/{contract.revision}",
+            "commit": {"tree": {"sha": tree_sha}},
+        }).encode("utf-8")
+        fetcher = GitHubComponentSourceFetcher(FakeTransport([
+            HttpResponse(200, commit_url, commit_body),
+            HttpResponse(200,
+                f"https://codeload.github.com/{contract.source_identity}/legacy.tar.gz/{contract.revision}",
+                archive),
+        ]))
+
+        source = fetcher.fetch(contract)
+        self.assertEqual(skill, source.files["skills/obsidian-markdown/SKILL.md"])
+        self.assertIn("skills/obsidian-markdown/references/PROPERTIES.md", source.files)
+
     def test_rejects_path_escape_and_symlinks(self):
         contract = resolve_component_adapter("affaan-m/ECC")
         escape = archive_bytes(self.IDENTITY, self.REVISION, [
@@ -221,7 +258,71 @@ class ComponentSourceBundleTests(unittest.TestCase):
         with self.assertRaisesRegex(ComponentSourceError, "pinned repository"):
             self.make_fetcher(wrong)[0].fetch(contract)
 
-    def test_broken_skill_reference_fails_before_generation_staging(self):
+    def test_reviewed_document_link_is_preserved_then_compiled_as_regular_copy(self):
+        identity = "abi/screenshot-to-code"
+        revision = "d026163f586dfa8c5c10d28c36edd59a9d3b0e88"
+        target = b"# synthetic pinned documentation target\n"
+        link_blob = b"AGENTS.md"
+        files = {"AGENTS.md": target, "CLAUDE.md": link_blob, "LICENSE": b"fixture license\n"}
+        modes = {"AGENTS.md": 0o644, "CLAUDE.md": 0o120000, "LICENSE": 0o644}
+        tree, _ = _git_tree(files, modes)
+        digest = lambda body: hashlib.sha1(
+            b"blob " + str(len(body)).encode("ascii") + b"\0" + body
+        ).hexdigest()
+        with patch.multiple(
+            "hermes_installer.components.source_bundle",
+            _DOCUMENT_LINK_TREE=tree,
+            _DOCUMENT_LINK_BLOB=digest(link_blob),
+            _DOCUMENT_LINK_TARGET_BLOB=digest(target),
+            _DOCUMENT_LINK_TARGET_SHA256=hashlib.sha256(target).hexdigest(),
+            _DOCUMENT_LINK_TARGET_SIZE=len(target),
+        ):
+            api_url = f"https://api.github.com/repos/{identity}/commits/{revision}"
+            archive_url = f"https://codeload.github.com/{identity}/legacy.tar.gz/{revision}"
+            commit = json.dumps({
+                "sha": revision,
+                "html_url": f"https://github.com/{identity}/commit/{revision}",
+                "commit": {"tree": {"sha": tree}},
+            }).encode()
+            archive = archive_bytes(identity, revision, [
+                ("CLAUDE.md", "AGENTS.md", 0o777, "symlink"),
+                ("AGENTS.md", target, 0o644, "file"),
+                ("LICENSE", b"fixture license\n", 0o644, "file"),
+            ])
+            transport = FakeTransport([
+                HttpResponse(200, api_url, commit),
+                HttpResponse(200, archive_url, archive),
+            ])
+            source = GitHubComponentSourceFetcher(transport).fetch(
+                resolve_component_adapter("screenshot-to-code")
+            )
+            with tempfile.TemporaryDirectory() as temporary:
+                owned = OwnedRoot(Path(temporary) / "managed")
+                owned.ensure()
+                with process_lock(owned.path("installer.lock")):
+                    store = GenerationStore(owned, Journal(owned.path("journal.sqlite3")), mutation_locked=True)
+                    generation = bind_component_runtime_source(
+                        source, store, component_id="screenshot-to-code",
+                    )
+                    staged = generation.verify()
+                    self.assertEqual(target, (staged / "CLAUDE.md").read_bytes())
+                    self.assertFalse((staged / "CLAUDE.md").is_symlink())
+                    self.assertEqual(0o400, (staged / "CLAUDE.md").stat().st_mode & 0o777)
+                    manifest = json.loads(
+                        (staged / "INSTALLER-ORIGINAL-SOURCE-VIRTUAL-MANIFEST.json").read_text()
+                    )
+                    self.assertEqual("120000", manifest["original_link"]["git_mode"])
+                    self.assertEqual(digest(link_blob), manifest["original_link"]["git_blob_sha1"])
+                    self.assertEqual(hashlib.sha256(target).hexdigest(), manifest["compiled_copy"]["sha256"])
+
+        with self.assertRaisesRegex(ComponentSourceError, "unsupported link"):
+            GitHubComponentSourceFetcher()._unpack(
+                archive_bytes(identity, revision, [("other-link", "AGENTS.md", 0o777, "symlink")]),
+                identity,
+                revision,
+            )
+
+    def test_ecc_full_source_retains_broken_skill_for_quarantine_reporting(self):
         contract = resolve_component_adapter("affaan-m/ECC")
         broken = archive_bytes(self.IDENTITY, self.REVISION, [
             ("skills/demo/SKILL.md", b"[missing](scripts/missing.py)\n", 0o644, "file"),
@@ -230,8 +331,10 @@ class ComponentSourceBundleTests(unittest.TestCase):
         broken_tree_sha = _git_tree(
             broken_files, {"skills/demo/SKILL.md": 0o644}
         )[0]
-        with self.assertRaisesRegex(ComponentSourceError, "referenced file or directory is missing"):
-            self.make_fetcher(broken, broken_tree_sha)[0].fetch(contract)
+        source = self.make_fetcher(broken, broken_tree_sha)[0].fetch(contract)
+        self.assertEqual(b"[missing](scripts/missing.py)\n", source.files["skills/demo/SKILL.md"])
+        self.assertEqual("skills/demo/SKILL.md", source.quarantined_skill_problems[0][0])
+        self.assertIn("referenced file or directory is missing", source.quarantined_skill_problems[0][1][0])
 
 
 if __name__ == "__main__":

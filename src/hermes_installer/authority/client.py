@@ -21,8 +21,12 @@ from typing import Any, Callable, Mapping, Sequence
 
 from .types import (
     AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, HostContext,
-    NativeEventHandle, VerifiedEffectAuthorization, canonical_bytes, canonical_digest,
+    NativeEventHandle, NativeInvocationBinding, NativeInvocationContexts, NativeResponseMetadata,
+    NativeToolCallBinding,
+    RootCompletedNativeTurnPresentation,
+    VerifiedEffectAuthorization, canonical_bytes, canonical_digest, strict_json_loads,
 )
+from .process_controls import ProcessControlResponse
 
 _OPERATIONS = frozenset({
     "provider.dispatch", "mcp.request", "mcp.stdio", "memory.request", "memory.doctor",
@@ -44,6 +48,7 @@ _OPERATIONS = frozenset({
     "process.start", "process.status", "process.read",
     "process.write", "process.stop", "artifact.fetch", "package.install",
     "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
+    "resource.webhook.run", "resource.channel.run", "resource.bundle.node.run",
     "resource.job.admit", "resource.job.child.admit",
     "resource.orchestrator.recruit", "process.inspect", "connector.open",
     "connector.read", "connector.write", "connector.close",
@@ -215,6 +220,113 @@ class AuthorityClient:
             raise AuthorityDenied("source.delivery", "root returned a mismatched source receipt handle")
         return receipt_handle
 
+    def take_selected_native_input(self, *,
+                                   cancelled: Callable[[], bool] | None = None
+                                   ) -> "NativeInitialInputDelivery | None":
+        """Take this live producer's one queued native input, without selectors.
+
+        The root identifies the current execution solely from SO_PEERCRED and
+        the authenticated peer PIDFD. ``None`` means that no input is queued
+        yet; callers may only retry under their bounded selected startup wait.
+        """
+        from .source_observers import NativeInitialInputDelivery
+
+        result = self._rpc("native.input.take", {"schema": 1}, timeout=min(30.0, self.timeout),
+                           cancelled=cancelled)
+        if (not isinstance(result, dict) or type(result.get("schema")) is not int
+                or result["schema"] != 1):
+            raise AuthorityDenied("native.input.take", "authority returned a malformed input delivery")
+        if set(result) == {"schema", "state"} and result.get("state") == "pending":
+            return None
+        fields = {"schema", "source_receipt_handle", "selected_execution_handle",
+                  "input_sha256", "input_size_bytes", "expires_monotonic"}
+        if set(result) not in (fields, fields | {"turn_handle"}):
+            raise AuthorityDenied("native.input.take", "authority returned unexpected input delivery fields")
+        turn_handle = result.get("turn_handle")
+        if turn_handle is not None and (not isinstance(turn_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", turn_handle)):
+            raise AuthorityDenied("native.input.take", "authority returned a malformed turn handle")
+        try:
+            delivery = NativeInitialInputDelivery(**result)
+        except (TypeError, ValueError):
+            raise AuthorityDenied("native.input.take", "authority returned an invalid input delivery") from None
+        if not self.monotonic() < delivery.expires_monotonic <= self.monotonic() + 30.0:
+            raise AuthorityDenied("native.input.take", "authority returned an expired input delivery")
+        return delivery
+
+    def finish_selected_native_turn(
+        self, turn_handle: str, final_response_delivery_handle: str,
+    ) -> RootCompletedNativeTurnPresentation:
+        """Finish one peer-bound native turn and receive only its opaque receipt."""
+        for name, handle in (("turn", turn_handle),
+                             ("final response delivery", final_response_delivery_handle)):
+            if not isinstance(handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle):
+                raise AuthorityDenied("native.turn.finish", f"{name} handle is malformed")
+        result = self._rpc("native.turn.finish", {
+            "schema": 1,
+            "turn_handle": turn_handle,
+            "final_response_delivery_handle": final_response_delivery_handle,
+        })
+        presentation = RootCompletedNativeTurnPresentation.from_wire(result)
+        if (presentation.turn_handle != turn_handle
+                or presentation.state != "completed"
+                or not self.monotonic() < presentation.expires_monotonic):
+            raise AuthorityDenied("native.turn.finish", "root returned a stale or mismatched turn receipt")
+        return presentation
+
+    def begin_native_invocation(self, producer_context_handle: str,
+                                observed_call_handle: str,
+                                canonical_arguments: bytes) -> NativeInvocationBinding:
+        """Resolve one root-observed tool call to its registered action binding."""
+        import base64
+        for name, handle in (("producer context", producer_context_handle),
+                             ("observed call", observed_call_handle)):
+            if not isinstance(handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle):
+                raise AuthorityDenied("native.invocation", f"{name} handle is malformed")
+        if not isinstance(canonical_arguments, bytes) or not 1 <= len(canonical_arguments) <= 2 * 1024 * 1024:
+            raise AuthorityDenied("native.invocation", "canonical native arguments exceed their bound")
+        result = self._rpc("native.invocation.begin", {
+            "schema": 1, "producer_context_handle": producer_context_handle,
+            "observed_call_handle": observed_call_handle,
+            "canonical_arguments_b64": base64.b64encode(canonical_arguments).decode("ascii"),
+        })
+        binding = NativeInvocationBinding.from_wire(result, monotonic=self.monotonic)
+        import hashlib
+        if binding.arguments_sha256 != hashlib.sha256(canonical_arguments).hexdigest():
+            raise AuthorityDenied("native.invocation", "root invocation binding covers different arguments")
+        return binding
+
+    def get_invocation_contexts(self, invocation_handle: str) -> NativeInvocationContexts:
+        """Fetch root-registered source ancestry bound to this native peer."""
+        if not isinstance(invocation_handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", invocation_handle):
+            raise AuthorityDenied("native.invocation", "native invocation handle is malformed")
+        result = self._rpc("native.invocation.contexts", {
+            "schema": 1, "invocation_handle": invocation_handle,
+        })
+        contexts = NativeInvocationContexts.from_wire(result, monotonic=self.monotonic)
+        if contexts.invocation_handle != invocation_handle:
+            raise AuthorityDenied("native.invocation", "root invocation context belongs to another call")
+        return contexts
+
+    def take_native_response_metadata(self, response_delivery_handle: str,
+                                      response_body_sha256: str,
+                                      native_request_handle: str) -> NativeResponseMetadata:
+        """Take response metadata once, bound to the raw body and original HI11 request."""
+        if (not isinstance(response_delivery_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{43}", response_delivery_handle)
+                or not isinstance(native_request_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", native_request_handle)
+                or not isinstance(response_body_sha256, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", response_body_sha256)):
+            raise AuthorityDenied("native.response.take", "provider response lookup fields are malformed")
+        result = self._rpc("native.response.take", {
+            "schema": 1,
+            "delivery_handle": response_delivery_handle,
+            "response_body_sha256": response_body_sha256,
+            "native_request_handle": native_request_handle,
+        })
+        return NativeResponseMetadata.from_wire(result)
+
     def remote_sessions(self) -> Any:
         """Return typed HI13 calls over this client's authenticated Unix RPC.
 
@@ -286,7 +398,12 @@ class AuthorityClient:
             "normalized_payload": base64.b64encode(normalized_payload).decode("ascii"),
             "retry_index": retry_index,
         }, timeout=min(float(timeout), self.timeout), cancelled=cancelled)
-        if not isinstance(result, dict) or set(result) != {"status", "body", "headers", "receipt_id"}:
+        base_fields = {"status", "body", "headers", "receipt_id"}
+        native_fields = {"producer_context_handle", "tool_call_bindings"}
+        allowed_fields = (base_fields, base_fields | {"source_receipt_handle"},
+                          base_fields | native_fields,
+                          base_fields | native_fields | {"source_receipt_handle"})
+        if not isinstance(result, dict) or set(result) not in allowed_fields:
             raise AuthorityDenied("native.dispatch", "authority returned a malformed dispatch result")
         try:
             body = base64.b64decode(result["body"], validate=True)
@@ -299,7 +416,77 @@ class AuthorityClient:
                        or any(char in k + v for char in "\r\n\x00") for k, v in headers.items())
                 or not isinstance(result["receipt_id"], str) or not result["receipt_id"]):
             raise AuthorityDenied("native.dispatch", "authority dispatch response exceeds its bound")
-        return BrokeredEffectResponse(result["status"], body, dict(headers), result["receipt_id"])
+        source_handle = result.get("source_receipt_handle")
+        if source_handle is not None and (not isinstance(source_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", source_handle)):
+            raise AuthorityDenied("native.dispatch", "authority returned a malformed source result handle")
+        producer_handle = result.get("producer_context_handle")
+        tool_calls: tuple[NativeToolCallBinding, ...] = ()
+        if native_fields.issubset(result):
+            raw_calls = result["tool_call_bindings"]
+            if (not isinstance(raw_calls, list) or len(raw_calls) > 128
+                    or (producer_handle is None and raw_calls)
+                    or (producer_handle is not None and not 200 <= result["status"] < 300)):
+                raise AuthorityDenied("native.dispatch", "root provider invocation bindings are malformed")
+            if producer_handle is not None and (not isinstance(producer_handle, str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", producer_handle)):
+                raise AuthorityDenied("native.dispatch", "root provider context handle is malformed")
+            tool_calls = tuple(NativeToolCallBinding.from_wire(item) for item in raw_calls)
+        return BrokeredEffectResponse(result["status"], body, dict(headers), result["receipt_id"],
+                                      source_handle, producer_handle, tool_calls)
+
+    def dispatch_native_mcp(self, invocation_handle: str,
+                            canonical_arguments: bytes) -> BrokeredEffectResponse:
+        """Dispatch one root-observed native MCP tool call through the host.
+
+        The invocation handle is a lookup key for the lexical tool binding.
+        This request carries no caller-selected MCP service, tool, target,
+        capability, recipient, context, or effect grant.
+        """
+        import base64
+
+        if (not isinstance(invocation_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", invocation_handle)
+                or not isinstance(canonical_arguments, bytes)
+                or not 1 <= len(canonical_arguments) <= 2 * 1024 * 1024):
+            raise AuthorityDenied("native.mcp", "native MCP invocation is malformed or over its bound")
+        try:
+            parsed = strict_json_loads(canonical_arguments.decode("utf-8"))
+            if (not isinstance(parsed, dict)
+                    or canonical_bytes(parsed) != canonical_arguments):
+                raise ValueError
+        except (ValueError, TypeError, UnicodeError):
+            raise AuthorityDenied("native.mcp", "native MCP arguments are not a canonical JSON object") from None
+        result = self._rpc("native.mcp.dispatch", {
+            "schema": 1,
+            "invocation_handle": invocation_handle,
+            "canonical_arguments_b64": base64.b64encode(canonical_arguments).decode("ascii"),
+        })
+        base_fields = {"status", "body", "headers", "receipt_id"}
+        allowed = {frozenset(base_fields), frozenset(base_fields | {"source_receipt_handle"})}
+        if not isinstance(result, dict) or frozenset(result) not in allowed:
+            raise AuthorityDenied("native.mcp", "authority returned a malformed native MCP response")
+        try:
+            body = base64.b64decode(result["body"], validate=True)
+        except Exception:
+            raise AuthorityDenied("native.mcp", "authority returned a malformed native MCP body") from None
+        headers = result["headers"]
+        if (type(result["status"]) is not int or not 0 <= result["status"] <= 599
+                or len(body) > 4 * 1024 * 1024
+                or not isinstance(headers, dict) or len(headers) > 32
+                or any(not isinstance(key, str) or not isinstance(value, str)
+                       or any(char in key + value for char in "\r\n\x00")
+                       for key, value in headers.items())
+                or not isinstance(result["receipt_id"], str)
+                or not 1 <= len(result["receipt_id"]) <= 256):
+            raise AuthorityDenied("native.mcp", "authority native MCP response exceeds its bound")
+        source_handle = result.get("source_receipt_handle")
+        if source_handle is not None and (not isinstance(source_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", source_handle)):
+            raise AuthorityDenied("native.mcp", "authority returned a malformed result lineage handle")
+        return BrokeredEffectResponse(
+            result["status"], body, dict(headers), result["receipt_id"], source_handle,
+        )
 
     def authorize_effect(self, context: HostContext, *, capability: str,
                          target: str, recipient: str | None = None,
@@ -378,7 +565,9 @@ class AuthorityClient:
             raise AuthorityDenied("effect.cancelled", "effect was cancelled before response delivery")
         if self.monotonic() - started > timeout:
             raise AuthorityDenied("effect.deadline", "brokered effect exceeded its deadline")
-        if not isinstance(result, dict) or set(result) != {"status", "body", "headers", "receipt_id"}:
+        if (not isinstance(result, dict)
+                or set(result) not in ({"status", "body", "headers", "receipt_id"},
+                                      {"status", "body", "headers", "receipt_id", "source_receipt_handle"})):
             raise AuthorityDenied("effect.invalid", "broker effect response is malformed")
         import base64
         try:
@@ -394,7 +583,11 @@ class AuthorityClient:
                        or any(char in k + v for char in "\r\n\x00") for k, v in headers.items())
                 or not isinstance(result["receipt_id"], str) or not 1 <= len(result["receipt_id"]) <= 256):
             raise AuthorityDenied("effect.invalid", "broker effect response exceeds its bound")
-        return BrokeredEffectResponse(result["status"], body, dict(headers), result["receipt_id"])
+        source_handle = result.get("source_receipt_handle")
+        if source_handle is not None and (not isinstance(source_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", source_handle)):
+            raise AuthorityDenied("effect.invalid", "broker source result handle is malformed")
+        return BrokeredEffectResponse(result["status"], body, dict(headers), result["receipt_id"], source_handle)
 
     def dispatch_provider(self, authorization: EffectAuthorization, *, target: str,
                           recipient: str, request_digest: str, payload: bytes,
@@ -590,28 +783,30 @@ class AuthorityClient:
         return self.perform_effect(authorization, operation=operation, payload=payload,
                                    timeout=timeout, cancelled=cancelled)
 
+    def process_control_operation(self, operation: str, *, process_id: str,
+                                  generation: str, fields: Mapping[str, Any] | None = None,
+                                  timeout: float = 5.0,
+                                  cancelled: Callable[[], bool] | None = None) -> ProcessControlResponse:
+        """Ask root to resolve the live handle and perform one fixed control.
+
+        This is a single root RPC; callers provide no target, context,
+        capability, or grant. The root resolves all authorization bindings
+        from the active process registry and protected enrollment.
+        """
+        from .process_controls import process_control_operation
+        return process_control_operation(
+            self, operation, process_id=process_id, generation=generation,
+            fields=fields, timeout=timeout, cancelled=cancelled,
+        )
+
     def inspect_profile_process(self, process_id: str, generation: str, *,
                                 timeout: float = 5.0,
-                                cancelled: Callable[[], bool] | None = None) -> BrokeredEffectResponse:
-        """Inspect only a registered host process handle; callers never name a PID or path."""
-        if (not isinstance(process_id, str)
-                or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", process_id)
-                or not isinstance(generation, str)
-                or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", generation)):
-            raise AuthorityDenied("process.inspect", "opaque process handle or generation is invalid")
-        payload = canonical_bytes({"schema": 1, "process_id": process_id, "generation": generation})
-        digest = canonical_digest(payload)
-        context = self.context(
-            purpose="remote-process-inspection", intent=f"inspect:{process_id}:{generation}",
-            operation="process.inspect", final_payload_digest=digest,
-            lease_seconds=min(30.0, timeout), cancelled=cancelled)
-        target = f"{context.profile_id}:inspect"
-        authorization = self.authorize_effect(
-            context, capability="hermes-process-control", target=target,
-            recipient=None, request_digest=digest, retry_index=0)
-        response = self.process_control(authorization, operation="process.inspect", target=target,
-                                        payload=payload, timeout=timeout, cancelled=cancelled)
-        return response
+                                cancelled: Callable[[], bool] | None = None) -> ProcessControlResponse:
+        """Inspect through root's live process-handle resolver, never caller-derived targets."""
+        return self.process_control_operation(
+            "process.inspect", process_id=process_id, generation=generation,
+            fields={}, timeout=timeout, cancelled=cancelled,
+        )
 
     def fetch_artifact(self, authorization: EffectAuthorization, *, target: str,
                        artifact_id: str, sha256: str, max_bytes: int,
@@ -743,8 +938,8 @@ class AuthorityClient:
                 break
             if chunk == b"\n":
                 try:
-                    return json.loads(line.decode("ascii"))
-                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return strict_json_loads(line.decode("ascii"))
+                except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
                     raise AuthorityDenied("authority.protocol", "authority response is malformed") from None
             line.extend(chunk)
         raise AuthorityDenied("authority.bounds", "authority response is incomplete or oversized")

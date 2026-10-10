@@ -71,7 +71,9 @@ class HermesMCPConfigTests(unittest.TestCase):
 
     def test_profile_config_write_is_private_and_preserves_foreign_entries(self):
         with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
+            # macOS exposes temporary directories through /var -> /private/var.
+            # Pass the canonical, symlink-free selected Hermes home to the writer.
+            home = Path(temporary).resolve(strict=True)
             selected = home / "profiles" / "selected"
             selected.mkdir(mode=0o700, parents=True)
             os.chmod(home, 0o700)
@@ -113,6 +115,32 @@ class HermesMCPConfigTests(unittest.TestCase):
                     proposed={"installer-figma": self.ENTRY}, owned_fingerprints=None,
                     expected_owner_uid=os.geteuid(),
                 )
+
+    def test_profile_config_write_rolls_back_when_owner_journal_rejects_commit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary).resolve(strict=True)
+            selected = home / "profiles" / "selected"
+            selected.mkdir(mode=0o700, parents=True)
+            os.chmod(home, 0o700)
+            os.chmod(home / "profiles", 0o700)
+            os.chmod(selected, 0o700)
+            config = selected / "config.yaml"
+            original = b"model: GLM-5.2\n"
+            config.write_bytes(original)
+            os.chmod(config, 0o600)
+
+            def reject_commit(_owners, _digest):
+                raise OSError("journal unavailable")
+
+            with self.assertRaisesRegex(HermesMCPConfigError, "ownership"):
+                write_selected_profile_mcp_config(
+                    hermes_home=home, config_path=config,
+                    proposed={"installer-figma": self.ENTRY},
+                    owned_fingerprints=None, expected_owner_uid=os.geteuid(),
+                    commit_ownership=reject_commit,
+                )
+            self.assertEqual(config.read_bytes(), original)
+            self.assertFalse(any("rollback" in path.name for path in selected.iterdir()))
 
     def test_rejects_unknown_hermes_config_shape_without_destroying_it(self):
         with self.assertRaises(HermesMCPConfigError):

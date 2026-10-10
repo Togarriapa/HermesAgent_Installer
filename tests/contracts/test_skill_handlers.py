@@ -11,7 +11,9 @@ from hermes_installer.components.skill_handlers import (
 class SkillHandlerTests(unittest.TestCase):
     def test_discovers_separate_skill_trees_and_keeps_shared_root_references(self):
         files = {
-            "README.md": b"# Root\nShared reference.\n",
+            "README.md": b"# Root\n[shared helper](shared/helper.md)\n",
+            "shared/helper.md": b"Use [the fixture](assets/check.py).\n",
+            "shared/assets/check.py": b"print('shared fixture')\n",
             "skills/diagram/SKILL.md": (
                 b"---\nname: Diagram Export\ndescription: Render useful diagrams.\n---\n"
                 b"# Diagram Export\n[helper](scripts/render.py) [shared](../../README.md)\n"
@@ -26,6 +28,10 @@ class SkillHandlerTests(unittest.TestCase):
         self.assertEqual("skills/diagram", diagram.skill_directory)
         self.assertIn("skills/diagram/scripts/render.py", diagram.references)
         self.assertIn("README.md", diagram.references)
+        self.assertIn("shared/helper.md", diagram.references)
+        self.assertIn("shared/assets/check.py", diagram.references)
+        second = next(s for s in result.skills if s.name == "Second")
+        self.assertEqual((), second.references)
         self.assertEqual("f4547ee95f88e5b28a52517feff6b6c11cc657f9", diagram.revision)
 
     def test_broken_reference_prevents_discovery(self):

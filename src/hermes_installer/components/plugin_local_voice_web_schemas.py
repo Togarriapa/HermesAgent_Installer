@@ -13,7 +13,7 @@ from hermes_installer.components.plugin_effects import PluginActionSchema
 
 # Updated with the SHA-256 of plugin_local_voice_web.py before each published
 # source cohort. Selected enrollments must match this exact source digest.
-PLUGIN_LOCAL_VOICE_WEB_ADAPTER_SHA256 = "746802c4ef0664618978ca4218669524080b71893af637b8acb9a7728c254e1a"
+PLUGIN_LOCAL_VOICE_WEB_ADAPTER_SHA256 = "8acfd074698c12242efeab9059830db0388df2e24392d044cc0ab7696cf06487"
 
 
 def _freeze(value: Any) -> Any:
@@ -26,12 +26,14 @@ def _freeze(value: Any) -> Any:
 
 def _row(adapter: str, action: str, operation: str, arguments: dict[str, Any],
          result: dict[str, Any], *, expected_state: str = "read-complete",
-         requires_idempotency: bool = False) -> PluginActionSchema:
+         requires_idempotency: bool = False,
+         argument_schema_id: str | None = None,
+         result_schema_id: str | None = None) -> PluginActionSchema:
     return PluginActionSchema(
         adapter_id=adapter,
         action_id=action,
-        argument_schema_id=f"{adapter}.{action}.arguments.v1",
-        result_schema_id=f"{adapter}.{action}.result.v1",
+        argument_schema_id=argument_schema_id or f"{adapter}.{action}.arguments.v1",
+        result_schema_id=result_schema_id or f"{adapter}.{action}.result.v1",
         operation=operation,
         adapter_sha256=PLUGIN_LOCAL_VOICE_WEB_ADAPTER_SHA256,
         argument_schema=_freeze(arguments),
@@ -162,3 +164,20 @@ _rows = {
 }
 
 PLUGIN_ACTION_SCHEMAS = MappingProxyType(_rows)
+
+# Selected only by the root action enrollment's exact argument schema ID. The
+# fixed root workflow performs session open/capture/STT-or-TTS/close itself;
+# native tool handlers never issue child actions.
+PLUGIN_ACTION_SCHEMA_VARIANTS = MappingProxyType({
+    ("voice-pipeline", "voice_transcribe", "voice-transcribe-session-workflow-v1"):
+        _row("voice-pipeline", "voice_transcribe", "plugin.voice-pipeline.stt",
+             _obj({"mode": {"type": "string", "enum": ["general", "home_control"]}}, ["mode"]),
+             _stt_receipt(), argument_schema_id="voice-transcribe-session-workflow-v1",
+             result_schema_id="voice-pipeline.voice_transcribe.result.v1", requires_idempotency=True),
+    ("voice-pipeline", "voice_speak", "voice-speak-session-workflow-v1"):
+        _row("voice-pipeline", "voice_speak", "plugin.voice-pipeline.tts",
+             _obj({"text": _string(16_384, 1)}, ["text"]),
+             _obj({"audio_artifact": _artifact_receipt()}, ["audio_artifact"]),
+             argument_schema_id="voice-speak-session-workflow-v1",
+             result_schema_id="voice-pipeline.voice_speak.result.v1", requires_idempotency=True),
+})

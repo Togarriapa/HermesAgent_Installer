@@ -148,6 +148,14 @@ def build_memory_request(*, provider: str, route_id: str, recipe: Mapping[str, A
             raise MemoryRecipeDenied("AgentMemory search accepts only query and limit")
         query = _nonempty_text(body["query"], "query", 16384)
         payload = {"query": query, "limit": _positive_limit(body["limit"]), **forced}
+    elif provider == "openviking" and route_id == "openviking-ready" and body_recipe == "openviking-ready-empty-v1":
+        if body:
+            raise MemoryRecipeDenied("OpenViking readiness probe accepts no caller fields")
+        payload = {}
+    elif provider == "agentmemory" and route_id == "agentmemory-ready" and body_recipe == "agentmemory-livez-empty-v1":
+        if body:
+            raise MemoryRecipeDenied("AgentMemory liveness probe accepts no caller fields")
+        payload = {}
     elif provider == "agentmemory" and route_id == "agentmemory-capture" and body_recipe == "agentmemory-remember-owned-v1":
         if set(body) != {"content"}:
             raise MemoryRecipeDenied("AgentMemory capture accepts only content")
@@ -155,11 +163,13 @@ def build_memory_request(*, provider: str, route_id: str, recipe: Mapping[str, A
     elif provider == "openviking" and route_id == "openviking-find" and body_recipe == "openviking-find-owned-v1":
         if set(body) != {"query", "limit"}:
             raise MemoryRecipeDenied("OpenViking find accepts only query and limit")
-        # The provider project reference is opaque enrollment metadata, not
-        # an OpenViking URI. Until the protected resolver supplies a validated
-        # root-owned viking:// target, do not serialize a guessed search scope.
-        raise MemoryRecipeUnavailable(
-            "root-owned OpenViking target URI resolver is not enrolled")
+        # The upstream home alias resolves against the authenticated request
+        # identity. It avoids caller-supplied user IDs and never searches
+        # shared resources or skills. `read_content` and telemetry stay off.
+        payload = {"query": _nonempty_text(body["query"], "query", 16384),
+                   "target_uri": "viking://~/memories", "context_type": "memory",
+                   "limit": _positive_limit(body["limit"]), "read_content": False,
+                   "telemetry": False}
     elif provider == "openviking" and route_id == "openviking-session-capture":
         if body_recipe == "openviking-create-owned-session-v1":
             if body:
@@ -219,10 +229,15 @@ def build_memory_request(*, provider: str, route_id: str, recipe: Mapping[str, A
     credential = _opaque(recipe.get("credential_reference_id"), "vault credential reference")
     if type(maximum_bytes) is not int or not 1 <= maximum_bytes <= _MAX_BODY:
         raise MemoryRecipeDenied("enrolled request limit is invalid")
-    encoded = canonical_json(payload, maximum_bytes)
+    # The pinned probes are GETs with no request body. Do not synthesize JSON
+    # bytes for them: the endpoint contract is a bounded authenticated or
+    # unauthenticated status request, not a mutation.
+    encoded = b"" if method == "GET" and not payload else canonical_json(payload, maximum_bytes)
+    headers = (("accept", "application/json"),) if not encoded else (
+        ("accept", "application/json"), ("content-type", "application/json"))
     return MemoryServiceRequest(
         method=method, path=resolved_path,
-        headers=(("accept", "application/json"), ("content-type", "application/json")),
+        headers=headers,
         body=encoded, credential_reference_id=credential,
     )
 
@@ -252,10 +267,51 @@ def validate_compound_envelope(data: bytes, *, maximum_bytes: int = _MAX_BODY) -
 
 
 def validate_step_outcome(*, route_id: str, step_id: str, status: int,
-                          value: Any, expected_session_id: str | None = None) -> MemoryStepOutcome:
+                          value: Any, expected_session_id: str | None = None,
+                          scope_bindings: Mapping[str, Any] | None = None) -> MemoryStepOutcome:
     """Validate only known response families and root-captured identifiers."""
     if type(status) is not int or not 200 <= status < 300 or not isinstance(value, dict):
         raise MemoryRecipeUnavailable("memory service response is not a successful JSON object")
+    if route_id == "openviking-ready" and step_id == "ready":
+        if (set(value) != {"status", "checks"} or value.get("status") != "ready"
+                or not isinstance(value.get("checks"), dict)):
+            raise MemoryRecipeUnavailable("OpenViking readiness response is not a ready result")
+        checks = value["checks"]
+        expected_checks = {"agfs", "vectordb", "api_key_manager", "embedding", "ollama"}
+        if set(checks) != expected_checks:
+            raise MemoryRecipeUnavailable("OpenViking readiness check set differs from the pinned source")
+
+        def check_ok(check: Any) -> bool:
+            if isinstance(check, dict):
+                if set(check) - {"status", "checks"}:
+                    return False
+                state = check.get("status")
+                nested = check.get("checks")
+                if state not in {"ok", "not_configured", "not_supported"}:
+                    return False
+                return nested is None or (isinstance(nested, dict) and bool(nested)
+                                          and all(check_ok(item) for item in nested.values()))
+            return check in {"ok", "not_configured", "not_supported"}
+
+        if not all(check_ok(item) for item in checks.values()):
+            raise MemoryRecipeUnavailable("OpenViking has an unhealthy configured subsystem")
+        return MemoryStepOutcome({"service_ready": True, "checks": checks}, {})
+    if route_id == "agentmemory-ready" and step_id == "livez":
+        # The pinned CLI uses this endpoint to discover the optional viewer
+        # port. It proves that the REST process answered, not that the iii
+        # engine or memory retrieval is functional.
+        if set(value) != {"status", "service", "viewerPort", "viewerSkipped", "streamsPort"}:
+            raise MemoryRecipeUnavailable("AgentMemory liveness response differs from the pinned CLI schema")
+        viewer_port = value.get("viewerPort")
+        viewer_skipped = value.get("viewerSkipped")
+        streams_port = value.get("streamsPort")
+        if (value.get("status") != "ok" or value.get("service") != "agentmemory"
+                or (viewer_port is not None and
+                    (type(viewer_port) is not int or not 1 <= viewer_port <= 65535))
+                or type(viewer_skipped) is not bool
+                or type(streams_port) is not int or not 1 <= streams_port <= 65535):
+            raise MemoryRecipeUnavailable("AgentMemory liveness response differs from the pinned CLI schema")
+        return MemoryStepOutcome({"service_live": True, "memory_ready": False}, {})
     if route_id == "openviking-session-capture":
         if step_id == "create":
             result = value.get("result")
@@ -309,14 +365,71 @@ def validate_step_outcome(*, route_id: str, step_id: str, status: int,
         memory = value.get("memory")
         if value.get("success") is not True or not isinstance(memory, dict):
             raise MemoryRecipeUnavailable("AgentMemory remember response failed source schema")
-        memory_id = _opaque(memory.get("id"), "AgentMemory created memory ID")
+        try:
+            memory_id = _opaque(memory.get("id"), "AgentMemory created memory ID")
+        except MemoryRecipeDenied:
+            raise MemoryRecipeUnavailable(
+                "AgentMemory remember response contains an invalid owned ID") from None
         title = memory.get("title")
         if title is not None and (not isinstance(title, str) or len(title.encode("utf-8")) > 8192):
             raise MemoryRecipeUnavailable("AgentMemory created memory title is invalid")
         return MemoryStepOutcome({"success": True, "id": memory_id}, {"memory_id": memory_id})
     if route_id == "openviking-find":
-        raise MemoryRecipeUnavailable(
-            "OpenViking find result validator is not enrolled for the selected source schema")
+        if step_id != "find" or value.get("status") != "ok":
+            raise MemoryRecipeUnavailable("OpenViking find response failed source schema")
+        result = value.get("result")
+        if not isinstance(result, dict):
+            raise MemoryRecipeUnavailable("OpenViking find result is not an object")
+        allowed_result = {"memories", "resources", "skills", "total", "query_plan", "query_results"}
+        if set(result) - allowed_result or not {"memories", "resources", "skills", "total"} <= set(result):
+            raise MemoryRecipeUnavailable("OpenViking find result fields differ from the pinned schema")
+        for key in ("query_plan", "query_results"):
+            if key in result and result[key] is not None:
+                raise MemoryRecipeUnavailable("OpenViking find unexpectedly returned search-only metadata")
+        memories, resources, skills = result["memories"], result["resources"], result["skills"]
+        total = result["total"]
+        if (not isinstance(memories, list) or len(memories) > 100
+                or not isinstance(resources, list) or resources
+                or not isinstance(skills, list) or skills
+                or type(total) is not int or total < len(memories) or total > 10000):
+            raise MemoryRecipeUnavailable("OpenViking find result scope or bounds are invalid")
+        if not isinstance(scope_bindings, Mapping):
+            raise MemoryRecipeUnavailable("OpenViking authenticated user scope is unavailable")
+        user_id = _opaque(scope_bindings.get("backend_agent_ref"), "OpenViking user scope")
+        prefix = f"viking://user/{user_id}/memories/"
+        records = []
+        for hit in memories:
+            fields = {"uri", "context_type", "level", "abstract", "overview",
+                      "category", "score", "match_reason"}
+            if (not isinstance(hit, dict) or set(hit) - fields - {"content"}
+                    or not fields - {"overview"} <= set(hit) or "content" in hit):
+                raise MemoryRecipeUnavailable("OpenViking memory hit differs from the pinned schema")
+            uri = hit["uri"]
+            if (not isinstance(uri, str) or not uri.startswith(prefix)
+                    or len(uri.encode("utf-8")) > 4096 or any(ch in uri for ch in "\\?#%")
+                    or any(ord(ch) < 0x20 for ch in uri)):
+                raise MemoryRecipeUnavailable("OpenViking returned a URI outside the authenticated memory root")
+            suffix = uri[len(prefix):]
+            segments = suffix.split("/")
+            if not suffix or any(segment in {"", ".", ".."} for segment in segments):
+                raise MemoryRecipeUnavailable("OpenViking returned a malformed memory URI")
+            if hit["context_type"] != "memory" or type(hit["level"]) is not int or hit["level"] not in (0, 1, 2):
+                raise MemoryRecipeUnavailable("OpenViking returned a non-memory context")
+            abstract = hit["abstract"]
+            if not isinstance(abstract, str) or len(abstract.encode("utf-8")) > 8192:
+                raise MemoryRecipeUnavailable("OpenViking abstract is invalid or exceeds its bound")
+            overview = hit.get("overview")
+            if overview is not None and (not isinstance(overview, str) or len(overview.encode("utf-8")) > 32768):
+                raise MemoryRecipeUnavailable("OpenViking overview exceeds its bound")
+            for key in ("category", "match_reason"):
+                if not isinstance(hit[key], str) or len(hit[key].encode("utf-8")) > 4096:
+                    raise MemoryRecipeUnavailable("OpenViking context metadata is invalid")
+            score = hit["score"]
+            if type(score) not in (int, float) or not math.isfinite(score):
+                raise MemoryRecipeUnavailable("OpenViking search score is invalid")
+            display = abstract or overview or ""
+            records.append({"id": uri, "source": "openviking", "text": display[:8192]})
+        return MemoryStepOutcome({"records": records}, {})
     raise MemoryRecipeUnavailable("selected route has no semantic response validator")
 
 
@@ -413,6 +526,10 @@ class MemoryRouteRecipe:
         # route schemas. Other provider variants stay unavailable until their
         # own semantic request/response validators are implemented.
         catalog = {
+            "openviking-ready": ("default", "openviking-ready-request-v1",
+                "openviking-ready-result-v1",
+                (("ready", "GET", "/ready", "openviking-ready-empty-v1",
+                  "openviking-ready-result-v1", (), None),)),
             "agentmemory-search": ("default", "agentmemory-search-request-v1",
                 "agentmemory-search-result-v1",
                 (("search", "POST", "/agentmemory/smart-search",
@@ -421,6 +538,10 @@ class MemoryRouteRecipe:
                 "agentmemory-remember-result-v1",
                 (("capture", "POST", "/agentmemory/remember",
                   "agentmemory-remember-owned-v1", "agentmemory-remember-result-v1", (), None),)),
+            "agentmemory-ready": ("default", "agentmemory-ready-request-v1",
+                "agentmemory-livez-result-v1",
+                (("livez", "GET", "/agentmemory/livez", "agentmemory-livez-empty-v1",
+                  "agentmemory-livez-result-v1", (), None),)),
             "openviking-find": ("default", "openviking-find-request-v1",
                 "openviking-find-result-v1",
                 (("find", "POST", "/api/v1/search/find",

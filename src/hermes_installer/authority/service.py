@@ -21,6 +21,7 @@ import stat
 import struct
 import threading
 import time
+import base64
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -28,7 +29,8 @@ from typing import Any, Callable, Mapping, Protocol
 
 from .types import (
     AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, HostContext, Sensitivity, SourceReceipt,
-    canonical_digest,
+    RootSelectedServiceContext, RootSelectedServiceEffectGrant, VerifiedRootSelectedServiceEffect,
+    canonical_bytes, canonical_digest, strict_json_loads,
 )
 
 MAX_REQUEST = 4 * 1024 * 1024 + 16_384
@@ -61,6 +63,7 @@ _OPERATIONS = frozenset({
     "process.start", "process.status",
     "process.read", "process.write", "process.stop", "artifact.fetch", "package.install",
     "resource.cron.run", "resource.channel.route", "resource.webhook.deliver",
+    "resource.webhook.run", "resource.channel.run", "resource.bundle.node.run",
     "resource.job.admit", "resource.job.child.admit",
     "resource.orchestrator.recruit",
     "process.inspect", "connector.open", "connector.read",
@@ -147,6 +150,26 @@ class EffectHandler(Protocol):
                  cancelled: Callable[[], bool]) -> Mapping[str, Any]: ...
 
 
+class _RootDisplayReceiptSigner:
+    """In-process Xauthority receipt signer with an isolated signature domain."""
+
+    _DOMAIN = b"root-xauthority-startup-receipt-v1\x00"
+
+    def __init__(self, service: "AuthorityService"):
+        self._service = service
+
+    def sign(self, payload: bytes) -> bytes:
+        if not isinstance(payload, bytes) or len(payload) > 65_536:
+            raise AuthorityDenied("display.receipt", "display receipt payload exceeds its bound")
+        return hmac.new(self._service._key, self._DOMAIN + payload, hashlib.sha256).digest()
+
+    def verify(self, payload: bytes, signature: bytes) -> bool:
+        if (not isinstance(payload, bytes) or len(payload) > 65_536
+                or not isinstance(signature, bytes) or len(signature) != hashlib.sha256().digest_size):
+            return False
+        return hmac.compare_digest(self.sign(payload), signature)
+
+
 class DenyByDefaultPolicy:
     """Safe policy until protected purpose/capability rules are enrolled."""
 
@@ -183,11 +206,14 @@ class AuthorityService:
                  background_consent_active: Callable[[str], bool] | None = None,
                  delegations: Mapping[str, ChildDelegationRule] | None = None,
                  process_effect_handler: Any | None = None,
-                 native_bridge_broker: Any | None = None,
                  selected_operation_resolver: Callable[[str, str, str, str], Any] | None = None,
                  remote_session_authority: Any | None = None,
                  source_receipt_delivery: Any | None = None,
-                 source_observer_registry: Any | None = None):
+                 source_observer_registry: Any | None = None,
+                 native_runtime_observer: Any | None = None,
+                 native_invocation_registry: Any | None = None,
+                 memory_step_effect_authority: Any | None = None,
+                 service_generation_digest: str | None = None):
         if len(signing_key) < 32 or not key_id:
             raise ValueError("authority signing key must be protected and at least 256 bits")
         if not bindings_by_uid or any(uid != binding.uid for uid, binding in bindings_by_uid.items()):
@@ -216,11 +242,33 @@ class AuthorityService:
         self.authority_epoch = secrets.token_urlsafe(24)
         self.delegations = dict(delegations or {})
         self.process_effect_handler = process_effect_handler
-        self.native_bridge_broker = native_bridge_broker
+        self.native_bridge_broker = None
         self.selected_operation_resolver = selected_operation_resolver
         self.remote_session_authority = remote_session_authority
         self.source_receipt_delivery = source_receipt_delivery
         self.source_observer_registry = source_observer_registry
+        self.native_runtime_observer = native_runtime_observer
+        self.native_invocation_registry = native_invocation_registry
+        self.native_input_delivery_registry = None
+        self.native_turn_observation_registry = None
+        self.private_input_consent_registry = None
+        self.memory_capture_consent_registry = None
+        self.native_mcp_dispatcher = None
+        self.selected_application_router = None
+        self.memory_step_effect_authority = memory_step_effect_authority
+        self.resource_task_runner = None
+        self.resource_job_authority = None
+        self.resource_task_authority = None
+        self.resource_event_context_issuer = None
+        self.root_selected_startup_authority = None
+        self.root_selected_memory_authority = None
+        self._root_selected_service_effects: dict[str, dict[str, Any]] = {}
+        self._root_selected_nonce_states: dict[str, tuple[str, float]] = {}
+        self._root_selected_seal = object()
+        if (service_generation_digest is not None
+                and not re.fullmatch(r"[0-9a-f]{64}", service_generation_digest)):
+            raise ValueError("active service generation digest is invalid")
+        self.service_generation_digest = service_generation_digest
         if any(key != rule.delegation_id for key, rule in self.delegations.items()):
             raise ValueError("delegation map keys must match fixed enrollment IDs")
         self._delegated_parents: set[str] = set()
@@ -250,6 +298,1272 @@ class AuthorityService:
         self.source_observer_registry = registry
         if self.source_receipt_delivery is None and callable(getattr(registry, "take_source_receipt", None)):
             self.source_receipt_delivery = registry
+
+    def revoke_source_handle(self, handle: Any) -> bool:
+        """Revoke and scrub one root-retained source handle in-process only.
+
+        This is used by root input/task coordinators when delivery or startup
+        fails. It is deliberately not part of the worker RPC surface.
+        """
+        from .source_observers import SourceObserverRegistry, SourceReceiptHandle
+
+        registry = self.source_observer_registry
+        revoke = getattr(registry, "revoke_source_handle", None)
+        if (type(handle) is not SourceReceiptHandle
+                or type(registry) is not SourceObserverRegistry
+                or not callable(revoke)):
+            raise AuthorityDenied("source.capsule", "root source handle revocation is unavailable")
+        return revoke(handle)
+
+    def authorize_completed_memory_turn(
+        self, record: Any, *, enrollment: Any, transcript_sha256: str,
+        background_consent_handle: str, owner_generation: int,
+    ) -> tuple[HostContext, BackgroundConsent]:
+        """Issue a fresh PRIVATE memory-capture context from one retained turn.
+
+        This is a root-only coordinator call. The native turn registry must
+        still retain the exact completion object; the service then verifies
+        the complete signed source-receipt closure and the separate durable
+        capture opt-in before issuing per-job consent.
+        """
+        from ..memory.enrollment import MemoryServiceEnrollment
+        from .native_turn_observation import RootCompletedNativeTurn
+        from .root_memory_capture_consent import RootMemoryCaptureConsent, RootMemoryCaptureConsentRegistry
+
+        turn_registry = self.native_turn_observation_registry
+        consent_registry = self.memory_capture_consent_registry
+        if (type(record) is not RootCompletedNativeTurn
+                or type(enrollment) is not MemoryServiceEnrollment
+                or type(consent_registry) is not RootMemoryCaptureConsentRegistry
+                or turn_registry is None
+                or type(owner_generation) is not int
+                or owner_generation < 1
+                or not isinstance(transcript_sha256, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", transcript_sha256)
+                or transcript_sha256 != record.transcript_sha256
+                or not isinstance(background_consent_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", background_consent_handle)):
+            raise AuthorityDenied("memory.turn", "completed-turn capture request is malformed")
+        resolve_turn = getattr(turn_registry, "resolve_completed_turn", None)
+        if (not callable(resolve_turn)
+                or resolve_turn(record.receipt_handle) is not record
+                or record.expires_monotonic <= self.monotonic()
+                or self.service_generation_digest is None
+                or record.service_generation_digest != self.service_generation_digest
+                or record.profile_id != enrollment.profile_id
+                or enrollment.principal_id == ""
+                or enrollment.service_enrollment_id == ""
+                or enrollment.memory_owner_generation != owner_generation
+                or record.process_generation != self.profile_generations.get(record.profile_id)):
+            raise AuthorityDenied("memory.turn", "completed turn or selected memory generation is stale")
+
+        matching_bindings = [binding for binding in self.bindings_by_uid.values()
+                             if binding.profile_id == enrollment.profile_id]
+        if (len(matching_bindings) != 1
+                or matching_bindings[0].principal_id != enrollment.principal_id
+                or matching_bindings[0].namespace_id != enrollment.namespace_identity):
+            raise AuthorityDenied("memory.turn", "selected memory profile has no exact active principal")
+        binding = matching_bindings[0]
+        if (self.memory_owner_state is None
+                or self.memory_owner_state(enrollment.profile_id)
+                != (enrollment.provider, owner_generation)):
+            raise AuthorityDenied("memory.turn", "selected memory owner epoch is no longer active")
+
+        source_receipts = self._resolve_completed_turn_source_closure(record, binding)
+        selected_resolver = getattr(consent_registry, "resolve_selected_memory_binding", None)
+        resolve_consent = getattr(consent_registry, "resolve_capture_consent", None)
+        if not callable(selected_resolver) or not callable(resolve_consent):
+            raise AuthorityDenied("memory.consent", "root capture opt-in resolver is unavailable")
+        selected_memory_binding = selected_resolver(enrollment.service_enrollment_id)
+        if selected_memory_binding is not enrollment:
+            raise AuthorityDenied("memory.consent", "capture opt-in selected another memory enrollment")
+        capture_consent = resolve_consent(
+            background_consent_handle,
+            completed_turn_receipt_handle=record.receipt_handle,
+            selected_memory_binding=selected_memory_binding,
+        )
+        memory_consent_claims = getattr(capture_consent, "claims", None)
+        if (type(capture_consent) is not RootMemoryCaptureConsent
+                or capture_consent.state != "enabled"
+                or capture_consent.profile_id != enrollment.profile_id
+                or capture_consent.principal_id != enrollment.principal_id
+                or capture_consent.namespace_id != enrollment.namespace_identity
+                or capture_consent.service_enrollment_id != enrollment.service_enrollment_id
+                or capture_consent.service_generation != enrollment.service_generation
+                or capture_consent.memory_owner_generation != owner_generation
+                or capture_consent.provider != enrollment.provider
+                or not capture_consent.route_ids
+                or not capture_consent.private_recipient_ids
+                or not set(capture_consent.route_ids).issubset(enrollment.fixed_route_map)
+                or capture_consent.policy_revision != self._policy_revision()
+                or capture_consent.revocation_epoch < 1
+                or not callable(memory_consent_claims)):
+            raise AuthorityDenied("memory.consent", "current capture opt-in does not match selected memory")
+        self._verify_signature(
+            {"domain": "root-memory-capture-consent-v1", **memory_consent_claims()},
+            capture_consent.signature,
+        )
+
+        if not source_receipts or any(
+                receipt.native_process_identity != source_receipts[0].native_process_identity
+                for receipt in source_receipts):
+            raise AuthorityDenied("memory.turn", "turn source closure has no single verified native identity")
+        if len(source_receipts) > 64:
+            raise AuthorityDenied("memory.turn", "verified turn closure exceeds the context receipt bound")
+        lease = min(30.0, record.expires_monotonic - self.monotonic())
+        if lease <= 0:
+            raise AuthorityDenied("memory.turn", "completed-turn capture lease expired")
+        context_wire = self._issue_context(binding.uid, {
+            "purpose": "memory-capture",
+            "intent": f"memory-capture:{enrollment.provider}:{record.turn_handle}",
+            "trace_id": record.turn_handle,
+            "lease_seconds": lease,
+            "source_contexts": [],
+            "source_receipts": [receipt.to_wire() for receipt in source_receipts],
+            "final_payload_digest": transcript_sha256,
+            "operation": "memory.capture",
+        }, inherited_process_identity=source_receipts[0].native_process_identity)
+        context = HostContext.from_wire(context_wire)
+        if context.sensitivity not in {Sensitivity.PRIVATE, Sensitivity.CONFIDENTIAL, Sensitivity.UNKNOWN}:
+            raise AuthorityDenied("memory.turn", "memory capture context did not retain private sensitivity")
+        job_consent = self.create_background_consent(
+            context, provider_id=enrollment.provider, owner_generation=owner_generation,
+            ttl_seconds=max(1, min(300, int(lease))),
+        )
+        return context, job_consent
+
+    def _resolve_completed_turn_source_closure(
+        self, record: Any, binding: PrincipalBinding,
+    ) -> tuple[SourceReceipt, ...]:
+        """Resolve and authenticate every inner turn receipt plus ancestors."""
+        handles = tuple(dict.fromkeys((
+            record.input_receipt_handle, *record.request_receipt_handles,
+            *record.response_receipt_handles, *record.tool_result_receipt_handles,
+            *record.delegation_receipt_handles,
+        )))
+        if (not handles or len(handles) > 512
+                or any(not isinstance(handle, str)
+                       or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle)
+                       for handle in handles)):
+            raise AuthorityDenied("memory.turn", "completed turn has no bounded inner source closure")
+        with self._lock:
+            by_handle = self._source_receipt_handles
+            direct = []
+            for handle in handles:
+                receipt = by_handle.get(handle)
+                if receipt is None:
+                    raise AuthorityDenied("memory.turn", "completed turn source receipt is unavailable")
+                direct.append(receipt)
+            by_id: dict[str, tuple[str, SourceReceipt]] = {}
+            for handle, receipt in by_handle.items():
+                if receipt.receipt_id in by_id:
+                    raise AuthorityDenied("memory.turn", "root source receipt identifiers are ambiguous")
+                by_id[receipt.receipt_id] = (handle, receipt)
+            closure: dict[str, SourceReceipt] = {}
+            pending = list(direct)
+            while pending:
+                receipt = pending.pop()
+                if receipt.receipt_id in closure:
+                    continue
+                closure[receipt.receipt_id] = receipt
+                if len(closure) > 512:
+                    raise AuthorityDenied("memory.turn", "completed turn source closure exceeds its bound")
+                for parent_id in receipt.parent_receipt_ids:
+                    parent = by_id.get(parent_id)
+                    if parent is None:
+                        raise AuthorityDenied("memory.turn", "completed turn ancestor receipt is unavailable")
+                    pending.append(parent[1])
+        expected_digest = canonical_digest(sorted(closure))
+        if expected_digest != record.parent_closure_digest:
+            raise AuthorityDenied("memory.turn", "completed turn receipt closure digest changed")
+        result = tuple(closure[key] for key in sorted(closure))
+        for receipt in result:
+            self._verify_source_receipt(receipt, binding)
+            if (receipt.profile_id != record.profile_id
+                    or receipt.process_generation != record.process_generation
+                    or receipt.sensitivity not in {Sensitivity.PRIVATE, Sensitivity.CONFIDENTIAL, Sensitivity.UNKNOWN}):
+                raise AuthorityDenied("memory.turn", "completed turn receipt is bound to another profile or generation")
+        return result
+
+    def resolve_retained_source_receipt(
+        self, handle: Any, *, payload_digest: str,
+        profile_id: str | None = None, generation: str | None = None,
+    ) -> SourceReceipt:
+        """Resolve a root-retained receipt for another protected root verifier.
+
+        This is an in-process integrity check, not an RPC or receipt minting
+        API. Callers must already hold the opaque handle from a protected
+        registry; the exact stored, signed receipt is returned only if its
+        payload and any requested identity pins match.
+        """
+        from .source_observers import SourceReceiptHandle
+
+        if (type(handle) is not SourceReceiptHandle
+                or not isinstance(payload_digest, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", payload_digest)
+                or profile_id is not None and (not isinstance(profile_id, str) or not profile_id)
+                or generation is not None and (not isinstance(generation, str) or not generation)):
+            raise AuthorityDenied("source.receipt", "root retained receipt lookup is malformed")
+        with self._lock:
+            receipt = self._source_receipt_handles.get(str(handle))
+            if receipt is None:
+                raise AuthorityDenied("source.receipt", "root retained source receipt is unavailable")
+            if (receipt.payload_digest != payload_digest
+                    or profile_id is not None and receipt.profile_id != profile_id
+                    or generation is not None and receipt.process_generation != generation):
+                raise AuthorityDenied("source.receipt", "root retained source receipt binding does not match")
+            self._verify_source_receipt(receipt, self._binding(receipt.uid))
+            return receipt
+
+    def attach_native_runtime_observer(self, observer: Any) -> None:
+        """Attach the root-only post-effect observer exactly once after loading.
+
+        The observer itself must be built from selected effect and source
+        enrollments; no worker RPC can install or select observer IDs.
+        """
+        if (self.native_runtime_observer is not None
+                or not callable(getattr(observer, "observe_effect_result", None))
+                or not isinstance(getattr(observer, "effect_observer_ids", None), Mapping)):
+            raise AuthorityDenied("source.observer", "root native result observer binding is invalid")
+        self.native_runtime_observer = observer
+
+    def attach_native_invocation_registry(self, registry: Any) -> None:
+        """Attach the root-built observed-call registry once during startup."""
+        if (self.native_invocation_registry is not None
+                or not callable(getattr(registry, "begin_native_invocation", None))
+                or not callable(getattr(registry, "get_invocation_contexts", None))
+                or not callable(getattr(registry, "take_native_response_metadata", None))):
+            raise AuthorityDenied("native.invocation", "root invocation registry binding is invalid")
+        self.native_invocation_registry = registry
+
+    def attach_native_bridge_broker(self, broker: Any) -> None:
+        """Attach the one root-built native provider broker after registries exist."""
+        from .native_bridge import NativeBridgeBroker
+
+        if (self.native_bridge_broker is not None
+                or not isinstance(broker, NativeBridgeBroker)
+                or broker.service is not self
+                or self.process_effect_handler is None
+                or not isinstance(broker.bridges, Mapping) or not broker.bridges
+                or set(broker.root_selected_enrollments) != set(broker.bridges)
+                or broker.provider_response_registry is None
+                or broker.provider_response_registry is not self.native_invocation_registry
+                or not callable(broker.process_resolver)
+                or not callable(broker.canonicalizer)
+                or not re.fullmatch(r"[0-9a-f]{64}", broker.canonicalizer_sha256)):
+            raise AuthorityDenied("native.broker", "root native bridge broker binding is invalid")
+        self.native_bridge_broker = broker
+
+    def attach_native_mcp_dispatcher(self, dispatcher: Any) -> None:
+        """Attach the fixed root MCP dispatcher; it is never exposed as generic RPC."""
+        if (self.native_mcp_dispatcher is not None
+                or getattr(dispatcher, "service", None) is not self
+                or not callable(getattr(dispatcher, "dispatch_native_mcp", None))):
+            raise AuthorityDenied("native.mcp", "root native MCP dispatcher binding is invalid")
+        self.native_mcp_dispatcher = dispatcher
+
+    def attach_selected_application_router(self, router: Any) -> None:
+        """Attach the concrete root-selected application router once."""
+        from .application_runtime import RootSelectedApplicationRuntimeRouter
+
+        if (self.selected_application_router is not None
+                or type(router) is not RootSelectedApplicationRuntimeRouter
+                or router.service is not self
+                or not callable(getattr(router, "dispatch", None))):
+            raise AuthorityDenied("application.dispatch", "root selected application router is invalid")
+        self.selected_application_router = router
+
+    def dispatch_selected_application(
+        self, invocation_context_handle: str, application_id: str,
+        canonical_arguments: bytes, *, peer_uid: int, peer_pid: int,
+        peer_pidfd: int | None, cancelled: Callable[[], bool],
+    ) -> Any:
+        """Dispatch one invocation through the attached typed root router.
+
+        This in-process entrypoint carries kernel-authenticated peer identity
+        from its caller. The router resolves the selected application/action
+        and source closure; these arguments do not define a backend or target.
+        """
+        from .application_runtime import RootApplicationRunReceipt
+
+        router = self.selected_application_router
+        if (router is None or not isinstance(invocation_context_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", invocation_context_handle)
+                or not isinstance(application_id, str) or not application_id
+                or len(application_id) > 256
+                or not isinstance(canonical_arguments, bytes)
+                or not 1 <= len(canonical_arguments) <= 1_048_576
+                or type(peer_uid) is not int or peer_uid <= 0
+                or type(peer_pid) is not int or peer_pid <= 0
+                or type(peer_pidfd) is not int or peer_pidfd < 0
+                or not callable(cancelled) or cancelled()):
+            raise AuthorityDenied("application.dispatch", "selected application invocation is unavailable")
+        try:
+            receipt = router.dispatch(
+                invocation_context_handle, application_id, canonical_arguments,
+                peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+                cancelled=cancelled,
+            )
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("application.dispatch", "selected application invocation failed") from None
+        if type(receipt) is not RootApplicationRunReceipt or cancelled():
+            raise AuthorityDenied("application.dispatch", "application receipt is not root retained")
+        return receipt
+
+    def attach_native_input_delivery_registry(self, registry: Any) -> None:
+        """Attach the fixed selected-input queue/consumer once during assembly."""
+        from .source_observers import RootNativeInputDeliveryRegistry
+
+        if (self.native_input_delivery_registry is not None
+                or type(registry) is not RootNativeInputDeliveryRegistry
+                or getattr(registry, "service", None) is not self
+                or not callable(getattr(registry, "take_selected_native_input", None))):
+            raise AuthorityDenied("native.input.take", "root selected input delivery registry is invalid")
+        self.native_input_delivery_registry = registry
+
+    def attach_native_turn_observation_registry(self, registry: Any) -> None:
+        """Attach the exact root-native turn observer once during assembly."""
+        from .native_turn_observation import RootNativeTurnObservationRegistry
+
+        if (self.native_turn_observation_registry is not None
+                or type(registry) is not RootNativeTurnObservationRegistry
+                or getattr(registry, "service", None) is not self
+                or not callable(getattr(registry, "finish_selected_native_turn", None))):
+            raise AuthorityDenied("native.turn.finish", "root native turn registry binding is invalid")
+        self.native_turn_observation_registry = registry
+
+    def attach_private_input_consent_registry(self, registry: Any) -> None:
+        """Attach the root-held private-egress consent registry exactly once."""
+        from .root_private_input_consent import RootPrivateInputConsentRegistry
+
+        if (self.private_input_consent_registry is not None
+                or type(registry) is not RootPrivateInputConsentRegistry
+                or registry.service is not self):
+            raise AuthorityDenied("consent.attach", "root private-input consent registry is invalid")
+        self.private_input_consent_registry = registry
+
+    def attach_memory_capture_consent_registry(self, registry: Any) -> None:
+        """Attach the separate persistent memory-capture opt-in registry."""
+        from .root_memory_capture_consent import RootMemoryCaptureConsentRegistry
+
+        if (self.memory_capture_consent_registry is not None
+                or type(registry) is not RootMemoryCaptureConsentRegistry
+                or registry.service is not self):
+            raise AuthorityDenied("consent.attach", "root memory-capture consent registry is invalid")
+        self.memory_capture_consent_registry = registry
+
+    def root_display_receipt_signer(self) -> Any:
+        """Return the in-process, domain-separated signer used by Xauthority receipts."""
+        signer = _RootDisplayReceiptSigner(self)
+        if not callable(getattr(signer, "sign", None)) or not callable(getattr(signer, "verify", None)):
+            raise AuthorityDenied("display.receipt", "root display receipt signer is unavailable")
+        return signer
+
+    def attach_root_selected_startup_authority(self, authority: Any) -> None:
+        """Attach the retained selected-startup admission resolver once."""
+        from .selected_startup_authority import RootSelectedDisplayLaunchAuthority
+
+        if (self.root_selected_startup_authority is not None
+                or type(authority) is not RootSelectedDisplayLaunchAuthority
+                or getattr(authority, "authority_service", None) is not self
+                or not callable(getattr(authority, "resolve_current_admission", None))
+                or not callable(getattr(authority, "resolve_selected_recipe_binding", None))
+                or not callable(getattr(authority, "resolve_startup_controller_proof", None))
+                or not callable(getattr(authority, "is_current", None))):
+            raise AuthorityDenied("root-selected.attach", "startup authority binding is invalid")
+        self.root_selected_startup_authority = authority
+
+    def attach_root_selected_memory_authority(self, authority: Any) -> None:
+        """Attach the retained selected-memory lifecycle resolver once."""
+        from hermes_installer.memory.lifecycle_authority import RootMemoryServiceLifecycle
+
+        if (self.root_selected_memory_authority is not None
+                or type(authority) is not RootMemoryServiceLifecycle
+                or getattr(authority, "authority_service", None) is not self
+                or not callable(getattr(authority, "resolve_admission", None))
+                or not callable(getattr(authority, "resolve_admission", None))):
+            raise AuthorityDenied("root-selected.attach", "memory lifecycle authority binding is invalid")
+        self.root_selected_memory_authority = authority
+
+    def issue_root_selected_service_effect(
+        self, admission: Any, selected_recipe_binding: Any, action: str,
+        canonical_payload_bytes: bytes,
+    ) -> RootSelectedServiceEffectGrant:
+        """Mint one finite, root-local grant for an exact selected lifecycle action.
+
+        This API is deliberately in-process only. Its admission and recipe must
+        be retained typed objects from the startup or memory authority; no
+        worker RPC accepts these records.
+        """
+        authority, current_admission, binding = self._resolve_root_selected_binding(
+            admission, selected_recipe_binding, action,
+        )
+        if not isinstance(canonical_payload_bytes, bytes) or not 1 <= len(canonical_payload_bytes) <= 65_536:
+            raise AuthorityDenied("root-selected.issue", "selected service payload is outside its bound")
+        try:
+            decoded = strict_json_loads(canonical_payload_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            raise AuthorityDenied("root-selected.issue", "selected service payload is not canonical JSON") from None
+        if canonical_bytes(decoded) != canonical_payload_bytes:
+            raise AuthorityDenied("root-selected.issue", "selected service payload is not canonical JSON")
+        role = self._selected_binding_text(binding, "role")
+        enrollment_id = self._selected_binding_text(binding, "service_enrollment_id")
+        operation = self._selected_binding_text(binding, "operation")
+        if action not in {"start", "status", "stop"} or operation != f"process.{action}":
+            raise AuthorityDenied("root-selected.issue", "selected service action is not fixed")
+        expected_payload = getattr(binding, "payload", None)
+        if callable(expected_payload):
+            expected_bytes = expected_payload()
+        elif action == "start":
+            expected_bytes = canonical_bytes({
+                "schema": 1, "enrollment_id": enrollment_id,
+                "generation": self._selected_binding_text(binding, "generation"),
+                "operation_id": self._selected_binding_text(binding, "operation_id"),
+                "parameters": {},
+            })
+        elif action == "status":
+            process_id = getattr(binding, "process_id", None)
+            if not isinstance(process_id, str) or not process_id:
+                raise AuthorityDenied("root-selected.issue", "selected process control handle is unavailable")
+            expected_bytes = canonical_bytes({"schema": 1, "process_id": process_id,
+                                              "generation": self._selected_binding_text(binding, "generation")})
+        else:
+            process_id = getattr(binding, "process_id", None)
+            reason = getattr(binding, "stop_reason", None)
+            grace_seconds = getattr(binding, "stop_grace_seconds", None)
+            if (not isinstance(process_id, str) or not process_id
+                    or reason not in {"shutdown", "cancel", "rollback"}
+                    or type(grace_seconds) is not int or grace_seconds != 5):
+                raise AuthorityDenied("root-selected.issue", "selected stop recipe is unavailable")
+            expected_bytes = canonical_bytes({
+                "schema": 1, "process_id": process_id,
+                "generation": self._selected_binding_text(binding, "generation"),
+                "reason": reason, "grace_seconds": 5,
+            })
+        if not isinstance(expected_bytes, bytes) or expected_bytes != canonical_payload_bytes:
+            raise AuthorityDenied("root-selected.issue", "payload does not match the retained operation recipe")
+        capability = self._selected_binding_text(binding, "capability")
+        target = self._selected_binding_text(binding, "target")
+        rule = self.rules.get((capability, operation, target))
+        recipient = getattr(binding, "recipient", None)
+        if (rule is None or rule.operation != operation or rule.target != target
+                or rule.recipient != recipient):
+            raise AuthorityDenied("root-selected.issue", "selected operation has no exact protected rule")
+        profile = getattr(binding, "service_profile", None)
+        process_operation = getattr(binding, "process_operation", None)
+        if profile is None or process_operation is None:
+            raise AuthorityDenied("root-selected.issue", "selected managed operation is unavailable")
+        controller = self._resolve_root_selected_controller(authority, current_admission, binding)
+        try:
+            now = self.monotonic()
+            lease_deadlines = [now + MAX_EFFECT_LEASE]
+            for candidate in (getattr(current_admission, "expires_monotonic", None),
+                              getattr(controller, "expires_monotonic", None),
+                              getattr(binding, "deadline_monotonic", None)):
+                if isinstance(candidate, (int, float)) and not isinstance(candidate, bool):
+                    lease_deadlines.append(float(candidate))
+            expiry = min(lease_deadlines)
+            if expiry <= now:
+                raise AuthorityDenied("root-selected.issue", "selected service admission has expired")
+            sensitivity = getattr(binding, "sensitivity", getattr(current_admission, "sensitivity", Sensitivity.UNKNOWN))
+            try:
+                sensitivity = sensitivity if isinstance(sensitivity, Sensitivity) else Sensitivity(sensitivity)
+            except ValueError:
+                raise AuthorityDenied("root-selected.issue", "selected source sensitivity is invalid") from None
+            fields = {
+                "schema": 1, "context_id": secrets.token_urlsafe(24),
+                "admission_handle": self._selected_binding_text(current_admission, "admission_handle"),
+                "admission_kind": "memory" if current_admission is getattr(authority, "memory_admission", None) else
+                    ("memory" if type(current_admission).__module__.startswith("hermes_installer.memory.") else "startup"),
+                "controller_proof_sha256": self._selected_controller_digest(current_admission, binding, controller),
+                "selected_principal_id": self._selected_binding_text(binding, "principal_id"),
+                "selected_profile_id": self._selected_binding_text(binding, "profile_id"),
+                "selected_generation": self._selected_binding_text(binding, "generation"),
+                "selected_namespace_identity": self._selected_binding_text(binding, "namespace_identity"),
+                "selected_subject_uid": self._selected_binding_int(binding, "subject_uid", minimum=1),
+                "selected_subject_gid": self._selected_binding_int(binding, "subject_gid", minimum=0),
+                "service_generation_digest": self._selected_binding_digest(current_admission, binding),
+                "role": role, "action": action, "enrollment_id": enrollment_id,
+                "operation_id": self._selected_binding_text(binding, "operation_id"),
+                "operation": operation, "capability": capability, "target": target,
+                "source_closure_sha256": self._selected_binding_text(binding, "source_closure_sha256"),
+                "sensitivity": sensitivity,
+                "recipient": getattr(binding, "recipient", None),
+                "policy_revision": self._policy_revision(), "authority_epoch": self.authority_epoch,
+                "issued_monotonic": now, "expires_monotonic": expiry,
+                "nonce": secrets.token_hex(32),
+            }
+            context = RootSelectedServiceContext(**fields, signature=self._sign_root_selected(
+                "root-selected-service-context-v1", fields,
+            ))
+            payload_sha = hashlib.sha256(canonical_payload_bytes).hexdigest()
+            if not self.policy.allow_effect(context=context, rule=rule,
+                                            request_digest=payload_sha, retry_index=0):
+                raise AuthorityDenied("root-selected.issue", "current host policy denied selected service action")
+            context_sha = hashlib.sha256(self._canonical_root_selected(context.to_wire())).hexdigest()
+            nonce = secrets.token_hex(32)
+            grant_fields = {
+                "schema": 1, "grant_id": secrets.token_urlsafe(24),
+                "context_sha256": context_sha, "admission_handle": context.admission_handle,
+                "operation": operation, "capability": capability, "target": target,
+                "request_sha256": payload_sha,
+                "nonce": nonce, "issued_monotonic": now, "expires_monotonic": expiry,
+            }
+            grant = RootSelectedServiceEffectGrant(**grant_fields, signature=self._sign_root_selected(
+                "root-selected-service-effect-v1", grant_fields,
+            ))
+            with self._lock:
+                self._prune_root_selected_effects(now)
+                if nonce in self._root_selected_nonce_states or len(self._root_selected_effects) >= 10_000:
+                    raise AuthorityDenied("root-selected.issue", "selected service nonce registry is unavailable")
+                self._root_selected_nonce_states[nonce] = ("pending", expiry)
+                self._root_selected_service_effects[grant.grant_id] = {
+                    "grant": grant, "context": context, "admission": current_admission,
+                    "authority": authority, "binding": binding, "controller": controller,
+                    "seal": self._root_selected_seal, "state": "pending",
+                }
+            return grant
+        finally:
+            close = getattr(controller, "close", None)
+            if authority is self.root_selected_startup_authority and callable(close):
+                close()
+
+    def consume_root_selected_service_effect(
+        self, grant: RootSelectedServiceEffectGrant, admission: Any,
+        selected_profile: Any, canonical_payload_bytes: bytes,
+    ) -> VerifiedRootSelectedServiceEffect:
+        """Atomically spend a pending selected-service grant and seal its effect."""
+        if type(grant) is not RootSelectedServiceEffectGrant:
+            raise AuthorityDenied("root-selected.consume", "selected service grant has the wrong type")
+        now = self.monotonic()
+        self._verify_root_selected_signature("root-selected-service-effect-v1", grant.claims(), grant.signature)
+        payload_digest = hashlib.sha256(canonical_payload_bytes).hexdigest() if isinstance(canonical_payload_bytes, bytes) else ""
+        with self._lock:
+            self._prune_root_selected_effects(now)
+            entry = self._root_selected_service_effects.get(grant.grant_id)
+            if (entry is None or entry["grant"] is not grant or entry["state"] != "pending"
+                    or self._root_selected_nonce_states.get(grant.nonce) != ("pending", grant.expires_monotonic)
+                    or grant.expires_monotonic <= now or grant.request_sha256 != payload_digest
+                    or grant.admission_handle != getattr(admission, "admission_handle", None)):
+                raise AuthorityDenied("root-selected.consume", "selected service grant is stale, mismatched or spent")
+            authority, current_admission, binding = self._resolve_root_selected_binding(
+                admission, entry["binding"], entry["context"].action,
+            )
+            if (authority is not entry["authority"] or current_admission is not entry["admission"]
+                    or binding != entry["binding"] or selected_profile is not getattr(binding, "service_profile", None)
+                    or grant.operation != entry["context"].operation
+                    or grant.capability != entry["context"].capability
+                    or grant.target != entry["context"].target
+                    or hashlib.sha256(self._canonical_root_selected(entry["context"].to_wire())).hexdigest() != grant.context_sha256):
+                raise AuthorityDenied("root-selected.consume", "selected service binding changed")
+            self._verify_root_selected_signature(
+                "root-selected-service-context-v1", entry["context"].claims(), entry["context"].signature,
+            )
+            rule = self.rules.get((entry["context"].capability, entry["context"].operation,
+                                  entry["context"].target))
+            if (rule is None or rule.recipient != entry["context"].recipient
+                    or not self.policy.allow_effect(context=entry["context"], rule=rule,
+                                                    request_digest=grant.request_sha256, retry_index=0)):
+                raise AuthorityDenied("root-selected.consume", "current host policy denied selected service action")
+            controller = self._resolve_root_selected_controller(authority, current_admission, binding)
+            try:
+                if not controller.is_current():
+                    raise AuthorityDenied("root-selected.consume", "selected service controller is no longer live")
+            finally:
+                close = getattr(controller, "close", None)
+                if callable(close):
+                    close()
+            self._root_selected_nonce_states[grant.nonce] = ("consumed", grant.expires_monotonic)
+            entry["state"] = "consumed"
+            controller_handle = self._selected_binding_text(entry["context"], "admission_handle")
+            effect = VerifiedRootSelectedServiceEffect(
+                admission_handle=controller_handle,
+                admission_kind=entry["context"].admission_kind,
+                role=entry["context"].role, action=entry["context"].action,
+                profile_id=entry["context"].selected_profile_id,
+                enrollment_id=entry["context"].enrollment_id,
+                generation=entry["context"].selected_generation,
+                selected_principal_id=entry["context"].selected_principal_id,
+                selected_namespace_identity=entry["context"].selected_namespace_identity,
+                selected_subject_uid=entry["context"].selected_subject_uid,
+                selected_subject_gid=entry["context"].selected_subject_gid,
+                operation=entry["context"].operation, capability=entry["context"].capability,
+                target=entry["context"].target, request_sha256=grant.request_sha256,
+                controller_proof_handle=self._root_selected_controller_handle(entry["admission"]),
+                controller_proof_sha256=entry["context"].controller_proof_sha256,
+                service_generation_digest=entry["context"].service_generation_digest,
+                issued_monotonic=grant.issued_monotonic, expires_monotonic=grant.expires_monotonic,
+                context_sha256=grant.context_sha256,
+                operation_id=self._selected_binding_text(binding, "operation_id"),
+                recipe_sha256=self._selected_binding_text(binding, "recipe_sha256"),
+                source_closure_sha256=entry["context"].source_closure_sha256,
+                service_profile=binding.service_profile, process_operation=binding.process_operation,
+                _service=self, _nonce=grant.nonce,
+                _seal=self._root_selected_seal,
+            )
+            entry["verified"] = effect
+            return effect
+
+    def _resolve_root_selected_binding(self, admission: Any, binding: Any,
+                                       action: str) -> tuple[Any, Any, Any]:
+        startup = self.root_selected_startup_authority
+        memory = self.root_selected_memory_authority
+        if startup is not None and type(admission).__module__ == "hermes_installer.authority.selected_startup_authority":
+            authority = startup
+            current = authority.resolve_current_admission(admission.admission_handle)
+            stop_reason = getattr(binding, "stop_reason", "shutdown")
+            if action == "stop" and stop_reason not in {"shutdown", "cancel", "rollback"}:
+                raise AuthorityDenied("root-selected.binding", "selected stop reason is invalid")
+            if action != "stop" and getattr(binding, "stop_reason", None) is not None:
+                raise AuthorityDenied("root-selected.binding", "stop reason is only valid for stop")
+            selected = authority.resolve_selected_recipe_binding(
+                current, binding.role, action, _stop_reason=stop_reason,
+            )
+            expected = type(admission)
+        elif memory is not None and type(admission).__module__ == "hermes_installer.memory.lifecycle_authority":
+            authority = memory
+            current = authority.resolve_admission(admission.admission_handle)
+            reason = getattr(binding, "stop_reason", None)
+            try:
+                if action == "stop":
+                    selected = current.action(action, now=self.monotonic(), reason=reason)
+                else:
+                    selected = current.action(action, now=self.monotonic())
+            except (TypeError, ValueError):
+                raise AuthorityDenied("root-selected.binding", "selected memory action resolver is unavailable") from None
+            expected = type(admission)
+        else:
+            raise AuthorityDenied("root-selected.binding", "selected lifecycle admission is unavailable")
+        if (type(admission) is not expected or current is not admission or selected != binding
+                or getattr(selected, "service_profile", None) is not getattr(binding, "service_profile", None)
+                or getattr(selected, "process_operation", None) != getattr(binding, "process_operation", None)
+                or getattr(selected, "source_receipt_handles", None) != getattr(binding, "source_receipt_handles", None)
+                or not callable(getattr(authority, "is_current", None)) and authority is startup
+                or authority is startup and not authority.is_current(current)
+                or action not in {"start", "status", "stop"}
+                or getattr(binding, "action", None) != action):
+            raise AuthorityDenied("root-selected.binding", "selected lifecycle admission or recipe is stale")
+        if authority is memory:
+            if not current.is_current(now=self.monotonic()):
+                raise AuthorityDenied("root-selected.binding", "memory lifecycle admission is no longer current")
+        return authority, current, binding
+
+    def _resolve_root_selected_controller(self, authority: Any, admission: Any, binding: Any) -> Any:
+        admission_handle = self._selected_binding_text(admission, "admission_handle")
+        if authority is self.root_selected_startup_authority:
+            handle = self._selected_binding_text(admission, "controller_proof_handle")
+            proof = authority.resolve_startup_controller_proof(handle, admission_handle)
+        else:
+            proof = getattr(admission, "_controller_lease", None)
+        if proof is None or not callable(getattr(proof, "is_current", None)) or not proof.is_current():
+            raise AuthorityDenied("root-selected.controller", "selected service controller proof is stale")
+        return proof
+
+    @staticmethod
+    def _root_selected_controller_handle(admission: Any) -> str:
+        value = getattr(admission, "controller_proof_handle", None)
+        if value is None:
+            value = getattr(getattr(admission, "_controller_lease", None), "proof_handle", None)
+        if not isinstance(value, str) or not value:
+            raise AuthorityDenied("root-selected.controller", "controller proof handle is unavailable")
+        return value
+
+    def _selected_controller_digest(self, admission: Any, binding: Any, controller: Any) -> str:
+        value = getattr(binding, "controller_proof_sha256", None) or getattr(admission, "controller_proof_sha256", None)
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+            value = canonical_digest({"pid": getattr(controller, "pid", None),
+                                     "uid": getattr(controller, "uid", None),
+                                     "start_ticks": getattr(controller, "start_ticks", None),
+                                     "identity": getattr(controller, "kernel_identity", None)})
+        return value
+
+    def _selected_binding_digest(self, admission: Any, binding: Any) -> str:
+        value = getattr(binding, "service_generation_digest", None) or getattr(admission, "service_generation_digest", None)
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise AuthorityDenied("root-selected.binding", "selected service generation digest is invalid")
+        if self.service_generation_digest is not None and value != self.service_generation_digest:
+            raise AuthorityDenied("root-selected.binding", "selected service generation is stale")
+        return value
+
+    @staticmethod
+    def _selected_binding_text(binding: Any, name: str) -> str:
+        value = getattr(binding, name, None)
+        if not isinstance(value, str) or not value or len(value) > 512:
+            raise AuthorityDenied("root-selected.binding", f"selected binding {name} is invalid")
+        return value
+
+    @staticmethod
+    def _selected_binding_int(binding: Any, name: str, *, minimum: int) -> int:
+        value = getattr(binding, name, None)
+        if type(value) is not int or value < minimum:
+            raise AuthorityDenied("root-selected.binding", f"selected binding {name} is invalid")
+        return value
+
+    def _sign_root_selected(self, domain: str, claims: Mapping[str, Any]) -> str:
+        envelope = {"domain": domain, "key_id": self.key_id, "claims": dict(claims)}
+        encoded = self._canonical_root_selected(envelope)
+        return hmac.new(self._key, encoded, hashlib.sha256).hexdigest()
+
+    @staticmethod
+    def _canonical_root_selected(value: Mapping[str, Any]) -> bytes:
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+    def _verify_root_selected_signature(self, domain: str, claims: Mapping[str, Any], signature: str) -> None:
+        expected = self._sign_root_selected(domain, claims)
+        if not hmac.compare_digest(expected, signature):
+            raise AuthorityDenied("root-selected.signature", "selected service signature is invalid")
+
+    def _prune_root_selected_effects(self, now: float) -> None:
+        for grant_id, entry in tuple(self._root_selected_service_effects.items()):
+            if entry["grant"].expires_monotonic <= now:
+                self._root_selected_service_effects.pop(grant_id, None)
+        for nonce, (_state, expires) in tuple(self._root_selected_nonce_states.items()):
+            if expires <= now:
+                self._root_selected_nonce_states.pop(nonce, None)
+
+    def _is_current_root_selected_service_effect(self, effect: VerifiedRootSelectedServiceEffect,
+                                                seal: object) -> bool:
+        if seal is not self._root_selected_seal or effect._service is not self:
+            return False
+        with self._lock:
+            entry = self._root_selected_service_effects.get(next((key for key, item in self._root_selected_service_effects.items()
+                if item.get("verified") is effect), ""))
+            if (entry is None or entry["state"] != "consumed"
+                    or self._root_selected_nonce_states.get(effect._nonce)
+                    != ("consumed", effect.expires_monotonic)
+                    or effect.expires_monotonic <= self.monotonic()):
+                return False
+            try:
+                authority, admission, binding = self._resolve_root_selected_binding(
+                    entry["admission"], entry["binding"], effect.action,
+                )
+                controller = self._resolve_root_selected_controller(authority, admission, binding)
+                try:
+                    context = entry["context"]
+                    rule = self.rules.get((effect.capability, effect.operation, effect.target))
+                    return bool(
+                        context.authority_epoch == self.authority_epoch
+                        and context.policy_revision == self._policy_revision()
+                        and context.service_generation_digest == self._selected_binding_digest(admission, binding)
+                        and rule is not None and rule.recipient == context.recipient
+                        and self.policy.allow_effect(
+                            context=context, rule=rule, request_digest=effect.request_sha256,
+                            retry_index=0,
+                        )
+                        and controller.is_current()
+                    )
+                finally:
+                    close = getattr(controller, "close", None)
+                    if authority is self.root_selected_startup_authority and callable(close):
+                        close()
+            except Exception:
+                return False
+
+    def _close_root_selected_service_effect(self, effect: VerifiedRootSelectedServiceEffect,
+                                            seal: object) -> None:
+        if seal is not self._root_selected_seal or effect._service is not self:
+            return
+        with self._lock:
+            for grant_id, entry in tuple(self._root_selected_service_effects.items()):
+                if entry.get("verified") is effect:
+                    self._root_selected_service_effects.pop(grant_id, None)
+                    return
+
+    def attach_memory_step_effect_authority(self, authority: Any) -> None:
+        """Attach the root-only memory compound step issuer exactly once."""
+        if (self.memory_step_effect_authority is not None
+                or not callable(getattr(authority, "perform_memory_connector_step", None))):
+            raise AuthorityDenied("memory.step", "root memory step authority binding is invalid")
+        self.memory_step_effect_authority = authority
+
+    def attach_resource_task_runtime(self, runner: Any, job_authority: Any) -> None:
+        """Attach the reviewed root task runner and its exact admission authority once."""
+        from .resource_jobs import ResourceJobAuthority
+        from .resource_task_execution import RootResourceTaskRunner
+
+        if (self.resource_task_runner is not None or self.resource_job_authority is not None
+                or not isinstance(job_authority, ResourceJobAuthority)
+                or not isinstance(runner, RootResourceTaskRunner)
+                or runner.service is not self or runner.jobs is not job_authority
+                or job_authority.service is not self
+                or getattr(runner, "manager", None) is not self.process_effect_handler):
+            raise AuthorityDenied("resource.task", "root resource task runtime binding is invalid")
+        current_admission = getattr(job_authority, "is_admitted_task_current", None)
+        manager_current = getattr(self.process_effect_handler, "task_admission_current", None)
+        if (not callable(current_admission)
+                or manager_current not in (None, current_admission)):
+            raise AuthorityDenied("resource.task", "root task admission verifier is unavailable")
+        self.process_effect_handler.task_admission_current = current_admission
+        self.resource_task_runner = runner
+        self.resource_job_authority = job_authority
+
+    def attach_resource_task_authority(self, authority: Any) -> None:
+        """Attach the service-bound RB-T08 signer/consumer exactly once."""
+        from .resource_task_authority import RootResourceTaskAuthority
+
+        if (self.resource_task_authority is not None
+                or type(authority) is not RootResourceTaskAuthority
+                or authority.service is not self
+                or authority.jobs is not self.resource_job_authority):
+            raise AuthorityDenied("resource.task_authority", "root resource task authority is invalid")
+        self.resource_task_authority = authority
+
+    def issue_root_resource_task_start(self, child_admission: Any, task_source: Any,
+                                       task_admission: Any, selected_execution: Any, *,
+                                       task_handle: Any, controller: Any) -> Any:
+        authority = self.resource_task_authority
+        if authority is None:
+            raise AuthorityDenied("resource.task_start", "root resource task authority is unavailable")
+        return authority.issue_root_resource_task_start(
+            child_admission, task_source, task_admission, selected_execution,
+            task_handle=task_handle, controller=controller,
+        )
+
+    def consume_root_resource_task_start(self, grant: Any, child_admission: Any,
+                                         task_source: Any, task_admission: Any,
+                                         canonical_selection_payload: bytes, *,
+                                         task_handle: Any) -> Any:
+        authority = self.resource_task_authority
+        if authority is None:
+            raise AuthorityDenied("resource.task_start", "root resource task authority is unavailable")
+        return authority.consume_root_resource_task_start(
+            grant, child_admission, task_source, task_admission,
+            canonical_selection_payload, task_handle=task_handle,
+        )
+
+    def verify_consumed_resource_task_start(self, proof: Any, canonical_selection_payload: bytes, *,
+                                            task_admission: Any, selected_profile: Any) -> bool:
+        authority = self.resource_task_authority
+        return bool(authority is not None and authority.verify_consumed_start(
+            proof, canonical_selection_payload, task_admission=task_admission,
+            selected_profile=selected_profile,
+        ))
+
+    def attach_resource_event_context_issuer(self, issuer: Any) -> None:
+        """Attach the root source-event context issuer once during assembly."""
+        from .resource_event_issuance import ResourceEventContextIssuer
+
+        if (self.resource_event_context_issuer is not None
+                or not isinstance(issuer, ResourceEventContextIssuer)
+                or issuer.service is not self
+                or getattr(issuer.controller_registry, "service", None) is not self):
+            raise AuthorityDenied("resource.context", "root resource event issuer binding is invalid")
+        self.resource_event_context_issuer = issuer
+
+    def issue_resource_job_context(self, request: Any) -> tuple[HostContext, EffectAuthorization]:
+        """Root-only in-process issuance for one registered source event and DAG node.
+
+        This method is intentionally absent from the worker RPC operation table.
+        The concrete issuer consumes the controller registry's instance-scoped
+        request capability and independently revalidates the source, selected
+        node, controller, current consent, and canonical effect bytes.
+        """
+        from .resource_event_issuance import ResourceEventContextIssuer
+        from .resource_source_controllers import RootResourceJobContextRequest
+
+        issuer = self.resource_event_context_issuer
+        if (not isinstance(issuer, ResourceEventContextIssuer)
+                or not isinstance(request, RootResourceJobContextRequest)
+                or issuer.service is not self):
+            raise AuthorityDenied("resource.context", "root resource event context issuer is unavailable")
+        context, authorization = issuer.issue(request)
+        if (not isinstance(context, HostContext)
+                or not isinstance(authorization, EffectAuthorization)):
+            raise AuthorityDenied("resource.context", "root resource event issuer returned invalid authority")
+        binding = self._binding(context.uid)
+        self._verify_context_signature(context)
+        self._assert_current_context(context, binding, context.uid)
+        self._verify_grant_signature(authorization)
+        self._assert_grant_current(authorization, binding, authorization.uid)
+        rule = self.rules.get(("hermes-resource-runtime", request.operation,
+                               request.node.target))
+        if (context.operation != request.operation
+                or context.final_payload_digest != request.canonical_payload_sha256
+                or context.source_receipts
+                or authorization.operation != request.operation
+                or authorization.capability != "hermes-resource-runtime"
+                or authorization.target != request.node.target
+                or authorization.recipient != request.node.recipient
+                or authorization.request_digest != request.canonical_payload_sha256
+                or authorization.final_payload_digest != request.canonical_payload_sha256
+                or authorization.context_digest != _context_digest(context)
+                or authorization.source_receipts
+                or rule is None or rule.recipient != request.node.recipient):
+            raise AuthorityDenied("resource.context", "issued resource effect does not match its consumed event request")
+        return context, authorization
+
+    def launch_resource_profile_task(self, admission_handle: Any, node_id: str) -> Any:
+        """Root-private launch; worker RPC never accepts a task admission handle."""
+        from hermes_installer.registry.resource_jobs import RootResourceJobAdmissionHandle
+
+        runner = self.resource_task_runner
+        if (runner is None or not isinstance(admission_handle, RootResourceJobAdmissionHandle)
+                or not isinstance(node_id, str) or not node_id
+                or node_id != admission_handle.node_id
+                or not self.monotonic() < admission_handle.expires_monotonic):
+            raise AuthorityDenied("resource.task", "selected root task runner is unavailable or admission is stale")
+        return runner.launch_resource_profile_task(admission_handle, node_id)
+
+    def perform_admitted_resource_process_start(
+        self, admission: Any, task: Any, source: Any, controller: Any, selection: Any,
+        *, exact_stdin: bytes, timeout: float, cancelled: Callable[[], bool],
+    ) -> Any:
+        """Mint and consume one reduced process.start grant for a root task.
+
+        This fixed in-process seam is called only by ``RootResourceTaskRunner``.
+        It re-resolves the original signed source context and live controller,
+        derives the selected process target from protected enrollment, and
+        consumes a fresh child grant before custody writes the admitted stdin.
+        Parent receipts remain in the runner's private result lineage; they are
+        not replayed as child-profile bearer receipts.
+        """
+        from hermes_installer.managed_process_custodian import ManagedTaskHandle
+        from hermes_installer.registry.resource_jobs import (
+            RootAdmittedTask, RootAdmittedTaskSource, RootResourceJobAdmissionHandle,
+            RootTaskController,
+        )
+        from hermes_installer.registry.resource_backends import SelectedResourceProfileTask
+
+        jobs = self.resource_job_authority
+        manager = self.process_effect_handler
+        if (jobs is None or self.resource_task_runner is None
+                or not isinstance(admission, RootResourceJobAdmissionHandle)
+                or not isinstance(task, RootAdmittedTask)
+                or not isinstance(source, RootAdmittedTaskSource)
+                or not isinstance(controller, RootTaskController)
+                or not isinstance(selection, SelectedResourceProfileTask)
+                or manager is None or not isinstance(exact_stdin, bytes)
+                or not 1 <= len(exact_stdin) <= 262_144
+                or not callable(cancelled) or cancelled()
+                or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout) or not 0 < timeout <= 600):
+            raise AuthorityDenied("resource.task_start", "root task start binding is unavailable or malformed")
+        if (task.node_id != admission.node_id
+                or task.admission_id != admission.child_admission_id
+                or task.job_id != admission.job_id or task.backend_enrollment_id != admission.backend_enrollment_id
+                or task.resource_generation != admission.resource_generation
+                or task.process_enrollment_id != admission.process_enrollment_id
+                or task.process_generation != admission.process_generation
+                or task.native_package_id != admission.native_package_id
+                or task.native_package_generation != admission.native_package_generation
+                or task.operation_id != admission.operation_id
+                or task.task_body_recipe_id != admission.task_body_recipe_id
+                or task.task_request_schema_id != admission.task_request_schema_id
+                or task.task_payload_sha256 != admission.task_payload_sha256
+                or task.parent_closure_digest != admission.parent_closure_digest
+                or task.source_context_handle != source.source_context_handle
+                or task.parent_closure_digest != source.parent_closure_digest
+                or hashlib.sha256(exact_stdin).hexdigest() != task.stdin_sha256
+                or len(exact_stdin) != task.stdin_size_bytes
+                or source.expires_monotonic <= self.monotonic()
+                or admission.expires_monotonic <= self.monotonic()
+                or task.deadline_monotonic <= self.monotonic()
+                or controller.expires_monotonic <= self.monotonic()
+                or controller.service_generation_digest != self.service_generation_digest
+                or controller.controller_handle != source.controller_binding_handle
+                or controller.subject_profile_id != source.profile_id
+                or controller.subject_principal_id != source.principal_id
+                or controller.subject_namespace_id != source.namespace_id):
+            raise AuthorityDenied("resource.task_start", "admitted task, source or controller binding changed")
+
+        resolve_parent = getattr(jobs, "resolve_admitted_task_parent_context", None)
+        if not callable(resolve_parent):
+            raise AuthorityDenied("resource.task_start", "root source context resolver is unavailable")
+        parent = resolve_parent(admission, admission.node_id, task.source_context_handle)
+        if not isinstance(parent, HostContext):
+            raise AuthorityDenied("resource.task_start", "root source context is invalid")
+        parent_binding = self._binding(parent.uid)
+        self._verify_context_signature(parent)
+        self._assert_current_context(parent, parent_binding, parent.uid)
+        if (parent.profile_id != source.profile_id or parent.principal_id != source.principal_id
+                or parent.namespace_id != source.namespace_id
+                or parent.native_process_identity is None
+                or parent.sensitivity != source.sensitivity
+                or parent.generation != self.profile_generations.get(parent.profile_id)):
+            raise AuthorityDenied("resource.task_start", "original source context no longer matches its root lineage")
+
+        receipts = tuple(SourceReceipt.from_wire(json.loads(raw.decode("ascii")))
+                         for raw in source.signed_receipt_wires)
+        if (not receipts or {item.receipt_id for item in receipts}
+                != {item.receipt_id for item in parent.source_receipts}
+                or len(source.verified_source_receipt_handles) != len(receipts)):
+            raise AuthorityDenied("resource.task_start", "complete signed source receipt closure is unavailable")
+        for receipt in receipts:
+            self._verify_source_receipt(receipt, parent_binding)
+        expected_identity = self._native_process_identity(controller.pid, controller.uid)
+        live_resolver = getattr(manager, "resolve_live_peer", None)
+        if not callable(live_resolver) or controller.controller_profile_id is None:
+            raise AuthorityDenied("resource.task_start", "root controller process resolver is unavailable")
+        live_identity = live_resolver(
+            controller.pid, controller.pidfd, profile_id=controller.controller_profile_id,
+            generation=controller.controller_generation,
+        )
+        if (live_identity is None or live_identity != controller.identity
+                or controller.uid != parent.uid
+                or expected_identity != parent.native_process_identity
+                or any(item.native_process_identity != expected_identity for item in receipts)):
+            raise AuthorityDenied("resource.task_start", "source controller PIDFD identity is stale or mismatched")
+
+        resolve_operation = self.selected_operation_resolver
+        if not callable(resolve_operation):
+            raise AuthorityDenied("resource.task_start", "protected process.start selector is unavailable")
+        try:
+            selected = resolve_operation(
+                admission.process_enrollment_id, admission.process_generation,
+                "process.start", selection.operation_id,
+            )
+        except Exception:
+            raise AuthorityDenied("resource.task_start", "selected process operation is unavailable") from None
+        profile = getattr(manager, "profiles", {}).get(admission.profile_id)
+        child_bindings = [binding for binding in self.bindings_by_uid.values()
+                          if binding.profile_id == selection.profile_id]
+        child_binding = child_bindings[0] if len(child_bindings) == 1 else None
+        if (selected is None or profile is None or child_binding is None
+                or selection.profile_id != admission.profile_id
+                or selection.profile_generation != admission.profile_generation
+                or selection.process_enrollment_id != admission.process_enrollment_id
+                or selection.process_generation != admission.process_generation
+                or selection.process_start_target != admission.child_target_id
+                or selection.principal_id != child_binding.principal_id
+                or getattr(selected, "target", None) != selection.process_start_target
+                or getattr(selected, "profile_id", None) != profile.profile_id
+                or getattr(selected, "principal_id", None) != child_binding.principal_id
+                or getattr(selected, "service_uid", None) != child_binding.uid
+                or getattr(selected, "enrollment_id", None) != profile.enrollment_id
+                or getattr(selected, "generation", None) != profile.generation
+                or profile.profile_id != selection.profile_id
+                or profile.generation != selection.profile_generation
+                or profile.enrollment_id != selection.process_enrollment_id
+                or profile.owner_uid != child_binding.uid
+                or profile.owner_gid != getattr(selected, "service_gid", None)
+                or profile.generation != self.profile_generations.get(profile.profile_id)
+                or profile.operation_targets is None
+                or profile.operation_targets.get("process.start") != selection.process_start_target
+                or admission.child_capability != "hermes-profile-invoke"
+                or "hermes-profile-invoke" not in child_binding.capabilities):
+            raise AuthorityDenied("resource.task_start", "selected process recipe or root profile binding is stale")
+
+        selection_payload = canonical_bytes({
+            "schema": 1, "enrollment_id": profile.enrollment_id,
+            "generation": profile.generation,
+            "operation_id": selection.operation_id, "parameters": {},
+            "admission_handle": admission.handle_id,
+            "node_id": task.node_id,
+            "task_payload_sha256": task.task_payload_sha256,
+            "stdin_sha256": task.stdin_sha256,
+            "stdin_size_bytes": task.stdin_size_bytes,
+        })
+        request_digest = canonical_digest(selection_payload)
+        verify_admission = getattr(jobs, "is_admitted_task_current", None)
+        if (selection.operation_id != admission.operation_id
+                or selection.operation_id != task.operation_id
+                or selection.task_body_recipe_id != task.task_body_recipe_id
+                or selection.task_request_schema_id != task.task_request_schema_id
+                or hashlib.sha256(task.task_payload_bytes).hexdigest() != task.task_payload_sha256
+                or not callable(verify_admission)
+                or not verify_admission(task, selection_payload)):
+            raise AuthorityDenied("resource.task_start", "task recipe selection does not match its admission")
+        now = self.monotonic()
+        expiry = min(float(admission.expires_monotonic), float(task.deadline_monotonic),
+                     float(source.expires_monotonic), now + min(float(timeout), MAX_CONTEXT_LEASE))
+        if expiry <= now or cancelled():
+            raise AuthorityDenied("resource.task_start", "task start lease expired or was cancelled")
+        order = (Sensitivity.PUBLIC, Sensitivity.PRIVATE, Sensitivity.CONFIDENTIAL, Sensitivity.UNKNOWN)
+        sensitivity = max((parent.sensitivity, *(item.sensitivity for item in receipts)), key=order.index)
+        if sensitivity is Sensitivity.PUBLIC:
+            raise AuthorityDenied("resource.task_start", "resource task lineage cannot be public")
+        lineage_hash = canonical_digest({
+            "parent_context": _context_digest(parent),
+            "parent_closure_digest": source.parent_closure_digest,
+            "receipt_claims": sorted(canonical_digest(item.claims()) for item in receipts),
+            "controller_identity": expected_identity,
+            "task_payload_sha256": task.task_payload_sha256,
+            "stdin_sha256": task.stdin_sha256,
+            "selection_digest": request_digest,
+        })
+        enrollment_id = canonical_digest({
+            "uid": child_binding.uid, "principal_id": child_binding.principal_id,
+            "profile_id": child_binding.profile_id, "namespace_id": child_binding.namespace_id,
+            "generation": profile.generation, "authority_epoch": self.authority_epoch,
+        })
+        context = HostContext(
+            principal_id=child_binding.principal_id, profile_id=child_binding.profile_id,
+            namespace_id=child_binding.namespace_id, uid=child_binding.uid,
+            purpose="resource-profile-task", intent_id=canonical_digest({
+                "job_id": admission.job_id, "node_id": admission.node_id,
+                "attempt": admission.attempt_index, "task_sha256": task.task_payload_sha256,
+                "selection_digest": request_digest,
+            }), trace_id=parent.trace_id, sensitivity=sensitivity,
+            lineage_hash=lineage_hash, policy_revision=self._policy_revision(),
+            capabilities=child_binding.capabilities, issued_at_monotonic=now,
+            monotonic_expires_at=expiry, nonce=secrets.token_urlsafe(24),
+            grant_id=secrets.token_urlsafe(24), signature="pending",
+            source_receipts=(), final_payload_digest=request_digest,
+            enrollment_id=enrollment_id, generation=profile.generation,
+            operation="process.start", native_process_identity=expected_identity,
+        )
+        context = replace(context, signature=self._sign(context.claims()))
+        auth_wire = self._authorize_effect(child_binding.uid, {
+            "context": context.to_wire(), "capability": "hermes-profile-invoke",
+            "target": selection.process_start_target, "recipient": None,
+            "request_digest": request_digest, "retry_index": 0,
+        })
+        authorization = EffectAuthorization.from_wire(auth_wire)
+        self._verify_grant_signature(authorization)
+        self._assert_grant_current(authorization, child_binding, child_binding.uid)
+        self._assert_current_context(context, child_binding, child_binding.uid)
+        effect_rule = self.rules.get(("hermes-profile-invoke", "process.start", selection.process_start_target))
+        if (effect_rule is None or cancelled() or not self.policy.allow_effect(
+                context=context, rule=effect_rule,
+                request_digest=request_digest, retry_index=0)):
+            raise AuthorityDenied("resource.task_start", "fresh root process.start authorization is no longer active")
+        if not verify_admission(task, selection_payload):
+            raise AuthorityDenied("resource.task_start", "root task admission expired before launch")
+        self._consume(authorization)
+        start = getattr(manager, "start_selected_task", None)
+        if not callable(start):
+            raise AuthorityDenied("resource.task_start", "managed process task start is unavailable")
+        result = start(
+            profile, context, authorization, selection_payload,
+            task_admission=task, admission_handle=admission,
+            node_id=task.node_id, admitted_source=source,
+            exact_stdin=exact_stdin,
+            expected_stdin_sha256=task.stdin_sha256,
+            peer_pid=controller.pid, peer_pidfd=controller.pidfd,
+            timeout=min(float(timeout), max(0.001, expiry - now)), cancelled=cancelled,
+        )
+        if not isinstance(result, ManagedTaskHandle) or cancelled():
+            raise AuthorityDenied("resource.task_start", "managed process task did not start cleanly")
+        return result
+
+    def perform_root_admitted_resource_process_start(
+        self, admission: Any, task: Any, source: Any, controller: Any, selection: Any,
+        *, exact_stdin: bytes, timeout: float, cancelled: Callable[[], bool],
+    ) -> Any:
+        """Start a root-controlled admitted task with a distinct sealed proof.
+
+        Root controller identity is verified as provenance by the job and task
+        authorities. It is never passed as the selected child process's peer.
+        """
+        from .resource_task_authority import RootResourceTaskAuthority
+        from hermes_installer.registry.resource_jobs import (
+            RootAdmittedTask, RootAdmittedTaskSource, RootResourceJobAdmissionHandle,
+            RootTaskController,
+        )
+        from hermes_installer.registry.resource_backends import SelectedResourceProfileTask
+        from hermes_installer.managed_process_custodian import ManagedTaskHandle
+
+        jobs, authority, manager = (self.resource_job_authority,
+                                    self.resource_task_authority,
+                                    self.process_effect_handler)
+        if (jobs is None or type(authority) is not RootResourceTaskAuthority
+                or authority.service is not self or authority.jobs is not jobs
+                or manager is None
+                or not isinstance(admission, RootResourceJobAdmissionHandle)
+                or not isinstance(task, RootAdmittedTask)
+                or not isinstance(source, RootAdmittedTaskSource)
+                or not isinstance(controller, RootTaskController)
+                or controller.controller_kind not in {"root-scheduler", "root-webhook", "root-channel"}
+                or not isinstance(selection, SelectedResourceProfileTask)
+                or not isinstance(exact_stdin, bytes) or not 1 <= len(exact_stdin) <= 262_144
+                or not callable(cancelled) or cancelled()
+                or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout) or timeout <= 0):
+            raise AuthorityDenied("resource.task_start", "root-controlled selected task is unavailable")
+        if (jobs.verify_admitted_root_task_controller(admission, task, source, controller) is not True
+                or hashlib.sha256(exact_stdin).hexdigest() != task.stdin_sha256
+                or len(exact_stdin) != task.stdin_size_bytes
+                or task.node_id != admission.node_id or source.parent_closure_digest != task.parent_closure_digest
+                or self.monotonic() >= min(admission.expires_monotonic, task.deadline_monotonic,
+                                           source.expires_monotonic, controller.expires_monotonic)):
+            raise AuthorityDenied("resource.task_start", "root task provenance, input or lease changed")
+        child = jobs.resolve_task_child_admission(admission, admission.node_id)
+        profile = getattr(manager, "profiles", {}).get(selection.profile_id)
+        if profile is None:
+            raise AuthorityDenied("resource.task_start", "selected task process profile is unavailable")
+        payload = authority.selection_payload(admission, task, selection, profile)
+        grant = self.issue_root_resource_task_start(
+            child, source, task, selection, task_handle=admission, controller=controller,
+        )
+        proof = self.consume_root_resource_task_start(
+            grant, child, source, task, payload, task_handle=admission,
+        )
+        if (not self.verify_consumed_resource_task_start(
+                proof, payload, task_admission=task, selected_profile=profile)
+                or cancelled()):
+            raise AuthorityDenied("resource.task_start", "sealed root task proof is no longer current")
+        start = getattr(manager, "start_selected_resource_task", None)
+        coordinator = getattr(manager, "task_input_coordinator", None)
+        if not callable(start) or coordinator is None:
+            raise AuthorityDenied("resource.task_start", "root selected task custodian is unavailable")
+        result = start(
+            profile, proof, payload, task_admission=task,
+            admission_handle=admission, node_id=task.node_id, admitted_source=source,
+            exact_stdin=exact_stdin,
+            expected_stdin_sha256=task.stdin_sha256,
+            timeout=min(float(timeout), max(0.001, proof.authorization.expires_monotonic - self.monotonic())),
+            cancelled=cancelled, initial_input_coordinator=coordinator,
+        )
+        if not isinstance(result, ManagedTaskHandle) or cancelled():
+            raise AuthorityDenied("resource.task_start", "root selected task did not start cleanly")
+        return result
+
+    def consume_resource_task_completion(self, receipt: Any, *,
+                                         cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        """Consume the runner's one-use terminal/result capsule in-process only."""
+        from .resource_jobs import RootResourceProcessReceipt
+
+        runner = self.resource_task_runner
+        if runner is None or not isinstance(receipt, RootResourceProcessReceipt) or not callable(cancelled):
+            raise AuthorityDenied("resource.task_result", "root task result capsule is unavailable")
+        result = runner.consume_resource_task_completion(receipt, cancelled=cancelled)
+        if (not isinstance(result, Mapping)
+                or set(result) != {"status", "body", "headers", "receipt_id", "result_fields"}
+                or type(result["status"]) is not int or not 200 <= result["status"] < 300
+                or not isinstance(result["body"], bytes) or len(result["body"]) > MAX_RESPONSE
+                or not isinstance(result["headers"], Mapping) or len(result["headers"]) > 16
+                or not isinstance(result["receipt_id"], str) or not result["receipt_id"]
+                or not isinstance(result["result_fields"], Mapping)
+                or cancelled()):
+            raise AuthorityDenied("resource.task_result", "root task result capsule is malformed or cancelled")
+        return result
+
+    def perform_memory_connector_step(self, reservation_handle: str,
+                                     canonical_connector_payload_bytes: bytes,
+                                     serialized_service_request_sha256: str, *,
+                                     timeout: float,
+                                     cancelled: Callable[[], bool]) -> tuple[int, bytes]:
+        """Root-private fixed memory step call; never exposed as a worker RPC.
+
+        The attached typed authority must consume the durable one-use step
+        reservation, re-resolve the enrolled route and current consent, then
+        issue and consume a fresh connector HI12 grant before any service I/O.
+        """
+        authority = self.memory_step_effect_authority
+        if authority is None or not callable(getattr(authority, "perform_memory_connector_step", None)):
+            raise AuthorityDenied("memory.step", "root memory step effect authority is unavailable")
+        if (not isinstance(reservation_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", reservation_handle)
+                or not isinstance(canonical_connector_payload_bytes, bytes)
+                or not 1 <= len(canonical_connector_payload_bytes) <= 4 * 1024 * 1024
+                or not isinstance(serialized_service_request_sha256, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", serialized_service_request_sha256)
+                or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout) or not 0 < timeout <= MAX_CONTEXT_LEASE
+                or not callable(cancelled) or cancelled()):
+            raise AuthorityDenied("memory.step", "root memory step request is malformed, expired, or cancelled")
+        result = authority.perform_memory_connector_step(
+            reservation_handle, canonical_connector_payload_bytes,
+            serialized_service_request_sha256, timeout=float(timeout), cancelled=cancelled,
+        )
+        if (not isinstance(result, tuple) or len(result) != 2
+                or type(result[0]) is not int or not 100 <= result[0] <= 599
+                or not isinstance(result[1], bytes) or len(result[1]) > 4 * 1024 * 1024
+                or cancelled()):
+            raise AuthorityDenied("memory.step", "root memory connector returned an invalid or cancelled result")
+        return result
 
     def perform_delegated_effect(self, parent_authorization: EffectAuthorization, *,
                                  delegation_id: str, payload: bytes, peer_pid: int,
@@ -418,6 +1732,84 @@ class AuthorityService:
         return replace(receipt, signature=self._sign(receipt.claims()))
 
     def issue_observed_source(self, observation: Any) -> Any:
+        """Issue a source receipt for ordinary observed sources only.
+
+        Selected native input has a separate consent-bearing issuer below;
+        permitting it through this generic path would discard the recipient
+        ceiling derived from its selected profile choice.
+        """
+        if getattr(observation, "selected_execution", None) is not None:
+            raise AuthorityDenied("source.native_input", "selected input requires private-consent issuance")
+        return self._issue_observed_source(observation, selected_input_consent=None)
+
+    def issue_selected_input_source(self, observation: Any) -> Any:
+        """Mint selected native-input provenance with its private-route ceiling.
+
+        Consent is resolved from the root-derived selection handle and the
+        exact retained input proof. The generic source issuer cannot mint this
+        receipt, and no worker chooses recipients or increases the budget.
+        """
+        from .source_observers import VerifiedSourceObservation
+
+        registry = self.private_input_consent_registry
+        selected = getattr(observation, "selected_execution", None)
+        consent_handle = getattr(observation, "private_consent_selection_handle", None)
+        if (type(observation) is not VerifiedSourceObservation or selected is None
+                or observation.source_kind != "native-input"
+                or consent_handle is not None
+                and (not isinstance(consent_handle, str) or registry is None)):
+            raise AuthorityDenied("source.native_input", "selected input binding is unavailable")
+        if consent_handle is None:
+            if self.source_observer_registry is None:
+                raise AuthorityDenied("source.native_input", "root selected-input registry is unavailable")
+            return self._issue_observed_source(
+                observation, selected_input_consent=None, selected_input=True)
+        resolve = getattr(registry, "resolve_for_selected_input", None)
+        if not callable(resolve):
+            raise AuthorityDenied("source.native_input", "root private-input consent resolver is unavailable")
+        consent = resolve(consent_handle, observed_input_proof=observation,
+                          selected_input_binding=selected)
+        from .root_private_input_consent import RootPrivateInputConsent
+        if (type(consent) is not RootPrivateInputConsent
+                or consent.selection_handle != consent_handle
+                or consent.input_observation_handle != observation.proof_nonce
+                or consent.retained_input_selection_handle != selected.selection_handle
+                or consent.profile_id != observation.profile_id
+                or consent.principal_id != observation.principal_id
+                or consent.namespace_id != observation.namespace_id
+                or consent.profile_generation != observation.generation
+                or consent.service_generation_digest != self.service_generation_digest
+                or not set(consent.provider_route_ids).issubset(observation.private_provider_route_ids)
+                or not consent.private_recipient_ids
+                or consent.additional_metered_budget_usd != 0.0
+                or consent.policy_revision != self._policy_revision()
+                or consent.expires_monotonic <= self.monotonic()
+                or consent.issued_monotonic > self.monotonic()):
+            raise AuthorityDenied("source.native_input", "current private-input consent does not match selected input")
+        self._verify_signature({"domain": "root-private-input-consent-v1", **consent.claims()},
+                               consent.signature)
+        handle = self._issue_observed_source(
+            observation, selected_input_consent=consent, selected_input=True)
+        try:
+            from .source_observers import SourceReceiptHandle
+            if type(handle) is not SourceReceiptHandle:
+                raise AuthorityDenied("source.native_input", "private input issuer returned an invalid receipt handle")
+            retain = getattr(self.source_observer_registry, "retain_selected_input_consent", None)
+            if not callable(retain):
+                raise AuthorityDenied("source.native_input", "selected-input consent retention is unavailable")
+            retain(observation, selected, handle, consent)
+        except AuthorityDenied:
+            with self._lock:
+                self._source_receipt_handles.pop(str(handle), None)
+            raise
+        except Exception:
+            with self._lock:
+                self._source_receipt_handles.pop(str(handle), None)
+            raise AuthorityDenied("source.native_input", "selected-input consent association failed") from None
+        return handle
+
+    def _issue_observed_source(self, observation: Any, *, selected_input_consent: Any,
+                               selected_input: bool = False) -> Any:
         """Sign and retain one receipt from the root-only observer registry.
 
         This accepts the proof DTO produced after an enrolled source observer
@@ -431,8 +1823,14 @@ class AuthorityService:
         if not isinstance(observation, VerifiedSourceObservation):
             raise AuthorityDenied("source.observation", "only a root observer proof can issue source evidence")
         registry = self.source_observer_registry
-        consume_proof = getattr(registry, "consume_observation_proof", None)
-        if not callable(consume_proof) or consume_proof(observation) is not True:
+        if selected_input:
+            consume_proof = getattr(registry, "consume_selected_input_observation", None)
+            proof_ok = (callable(consume_proof)
+                        and consume_proof(observation, observation.selected_execution) is True)
+        else:
+            consume_proof = getattr(registry, "consume_observation_proof", None)
+            proof_ok = callable(consume_proof) and consume_proof(observation) is True
+        if not proof_ok:
             raise AuthorityDenied("source.observation", "proof is not issued by the active root source registry")
         context = observation.parent_context
         now = self.monotonic()
@@ -477,6 +1875,24 @@ class AuthorityService:
                 or context.native_process_identity != self._native_process_identity(
                     observation.producer_pid, observation.producer_uid)):
             raise AuthorityDenied("source.peer", "root observer producer identity is no longer current")
+        proof = observation.loaded_package_proof
+        if (self.service_generation_digest is None or proof is None
+                or getattr(proof, "service_generation_digest", None) != self.service_generation_digest
+                or getattr(proof, "target_peer_identity", None) != observation.target_peer_identity
+                or hashlib.sha256(observation.payload_bytes).hexdigest() != observation.payload_sha256):
+            raise AuthorityDenied("source.observation", "loaded source proof is not bound to the active generation")
+        try:
+            current_target_identity = resolve_live_peer(
+                observation.target_peer_pid, observation.target_peer_pidfd,
+                profile_id=observation.target_peer_profile_id,
+                generation=observation.target_peer_generation,
+            )
+        except Exception:
+            current_target_identity = None
+        if (current_target_identity is None
+                or current_target_identity != observation.target_peer_identity
+                or current_target_identity.kernel_uid != observation.target_peer_uid):
+            raise AuthorityDenied("source.target_peer", "root observer target peer identity is no longer current")
         binding = self._binding(context.uid)
         self._verify_context_signature(context)
         self._assert_current_context(context, binding, context.uid)
@@ -530,11 +1946,23 @@ class AuthorityService:
             raise AuthorityDenied("source.expired", "root observation lease is too short")
         receipt = self.issue_source_receipt(
             context, source_kind=observation.source_kind,
-            origin_id=f"{observation.origin_id}:{observation.event_record_id}",
+            # VerifiedSourceObservation.origin_id is already derived by the
+            # registry from its protected origin and event_record_id. Appending
+            # the event here a second time breaks the registry's receipt join.
+            origin_id=observation.origin_id,
             payload=observation.payload_bytes, ttl_seconds=ttl,
         )
+        recipient_ceiling = (frozenset() if selected_input_consent is None
+                             else frozenset(selected_input_consent.private_recipient_ids))
+        if selected_input_consent is not None:
+            parent_ceilings = [frozenset(item.recipient_ceiling) for item in observation.parent_receipts]
+            if parent_ceilings:
+                allowed = frozenset.intersection(*parent_ceilings)
+                if not recipient_ceiling.issubset(allowed):
+                    raise AuthorityDenied("source.ceiling", "private consent exceeds a verified parent recipient ceiling")
         receipt = replace(
-            receipt, parent_receipt_ids=tuple(sorted(parent_ids)), signature="pending",
+            receipt, parent_receipt_ids=tuple(sorted(parent_ids)),
+            recipient_ceiling=recipient_ceiling, signature="pending",
         )
         receipt = replace(receipt, signature=self._sign(receipt.claims()))
         handle = SourceReceiptHandle(secrets.token_urlsafe(32))
@@ -730,6 +2158,10 @@ class AuthorityService:
         if operation == "perform_effect":
             return self._perform_effect(uid, peer_pid, payload, cancelled=cancelled,
                                         peer_pidfd=peer_pidfd)
+        if operation == "process.control":
+            return self._dispatch_process_control(
+                uid, peer_pid, peer_pidfd, payload, cancelled=cancelled,
+            )
         if operation == "prepare_native_event":
             broker = self.native_bridge_broker
             if broker is None or peer_pidfd is None:
@@ -742,6 +2174,81 @@ class AuthorityService:
                 raise AuthorityDenied("native.unavailable", "native provider gateway is not enrolled")
             return broker.dispatch(uid=uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
                                    payload=payload, cancelled=cancelled)
+        if operation in {"native.invocation.begin", "native.invocation.contexts"}:
+            return self._dispatch_native_invocation(
+                operation, uid, peer_pid, peer_pidfd, payload,
+            )
+        if operation == "native.input.take":
+            return self._dispatch_native_input_take(
+                uid, peer_pid, peer_pidfd, payload, cancelled=cancelled,
+            )
+        if operation == "native.turn.finish":
+            return self._dispatch_native_turn_finish(
+                uid, peer_pid, peer_pidfd, payload, cancelled=cancelled,
+            )
+        if operation == "native.response.take":
+            registry = self.native_invocation_registry
+            if registry is None or peer_pidfd is None:
+                raise AuthorityDenied("native.response.take", "root provider response registry is unavailable")
+            expected = {"schema", "delivery_handle", "response_body_sha256", "native_request_handle"}
+            if (not isinstance(payload, dict) or set(payload) != expected
+                    or type(payload.get("schema")) is not int or payload["schema"] != 1
+                    or not isinstance(payload.get("delivery_handle"), str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{43}", payload["delivery_handle"])
+                    or not isinstance(payload.get("response_body_sha256"), str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", payload["response_body_sha256"])
+                    or not isinstance(payload.get("native_request_handle"), str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["native_request_handle"])):
+                raise AuthorityDenied("native.response.take", "provider response lookup request is malformed")
+            take = getattr(registry, "take_native_response_metadata", None)
+            if not callable(take):
+                raise AuthorityDenied("native.response.take", "root provider response lookup is unavailable")
+            metadata = take(
+                uid, peer_pid, peer_pidfd, payload["delivery_handle"],
+                payload["response_body_sha256"], payload["native_request_handle"],
+            )
+            result = metadata.to_wire() if callable(getattr(metadata, "to_wire", None)) else metadata
+            if (not isinstance(result, Mapping)
+                    and isinstance(getattr(result, "producer_context_handle", None), str)
+                    and isinstance(getattr(result, "tool_call_bindings", None), tuple)):
+                result = {
+                    "producer_context_handle": result.producer_context_handle,
+                    "tool_call_bindings": list(result.tool_call_bindings),
+                    "turn_handle": getattr(result, "turn_handle", None),
+                    "final_response_delivery_handle": getattr(result, "final_response_delivery_handle", None),
+                }
+            fields = {"producer_context_handle", "tool_call_bindings", "turn_handle",
+                      "final_response_delivery_handle"}
+            if (not isinstance(result, Mapping) or set(result) != fields
+                    or not isinstance(result["producer_context_handle"], str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", result["producer_context_handle"])
+                    or not isinstance(result["tool_call_bindings"], (list, tuple))
+                    or len(result["tool_call_bindings"]) > 128
+                    or result["turn_handle"] is not None
+                       and (not isinstance(result["turn_handle"], str)
+                            or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", result["turn_handle"]))
+                    or result["final_response_delivery_handle"] is not None
+                       and (not isinstance(result["final_response_delivery_handle"], str)
+                            or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}",
+                                                result["final_response_delivery_handle"]))):
+                raise AuthorityDenied("native.response.take", "root provider response metadata is invalid")
+            from .types import NativeToolCallBinding
+            calls = tuple(item if isinstance(item, NativeToolCallBinding)
+                          else NativeToolCallBinding.from_wire(item)
+                          for item in result["tool_call_bindings"])
+            if len({item.observed_call_handle for item in calls}) != len(calls):
+                raise AuthorityDenied("native.response.take", "root provider call handles are duplicated")
+            return {"producer_context_handle": result["producer_context_handle"],
+                    "tool_call_bindings": [item.to_wire() if callable(getattr(item, "to_wire", None))
+                                           else {"observed_call_handle": item.observed_call_handle,
+                                                 "provider_tool_call_id": item.provider_tool_call_id,
+                                                 "tool_name": item.tool_name,
+                                                 "arguments_sha256": item.arguments_sha256}
+                                           for item in calls],
+                    "turn_handle": result["turn_handle"],
+                    "final_response_delivery_handle": result["final_response_delivery_handle"]}
+        if operation == "native.mcp.dispatch":
+            return self._dispatch_native_mcp(uid, peer_pid, peer_pidfd, payload, cancelled=cancelled)
         if operation == "source.receipt.take":
             delivery = self.source_receipt_delivery
             if delivery is None or peer_pidfd is None:
@@ -768,6 +2275,293 @@ class AuthorityService:
                 operation, uid, peer_pid, peer_pidfd, payload,
             )
         raise AuthorityDenied("protocol.operation", "authority operation is unavailable")
+
+    def _dispatch_native_invocation(self, operation: str, peer_uid: int,
+                                    peer_pid: int, peer_pidfd: int | None,
+                                    payload: Any) -> Mapping[str, Any]:
+        """Resolve only root-observed invocation records for this live peer."""
+        registry = self.native_invocation_registry
+        if registry is None or peer_pidfd is None:
+            raise AuthorityDenied("native.invocation", "root observed invocation registry is unavailable")
+        if operation == "native.invocation.begin":
+            expected = {"schema", "producer_context_handle", "observed_call_handle",
+                        "canonical_arguments_b64"}
+            if (not isinstance(payload, dict) or set(payload) != expected
+                    or type(payload.get("schema")) is not int or payload["schema"] != 1
+                    or any(not isinstance(payload.get(key), str)
+                           or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload[key])
+                           for key in ("producer_context_handle", "observed_call_handle"))
+                    or not isinstance(payload.get("canonical_arguments_b64"), str)
+                    or len(payload["canonical_arguments_b64"]) > 2_800_000):
+                raise AuthorityDenied("native.invocation", "native invocation begin request is malformed")
+            try:
+                arguments = base64.b64decode(payload["canonical_arguments_b64"], validate=True)
+            except (ValueError, TypeError):
+                raise AuthorityDenied("native.invocation", "native invocation arguments are malformed") from None
+            if (not 1 <= len(arguments) <= 2 * 1024 * 1024
+                    or base64.b64encode(arguments).decode("ascii") != payload["canonical_arguments_b64"]):
+                raise AuthorityDenied("native.invocation", "native invocation arguments exceed their bound")
+            binding = registry.begin_native_invocation(
+                peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+                producer_context_handle=payload["producer_context_handle"],
+                observed_call_handle=payload["observed_call_handle"],
+                canonical_arguments=arguments,
+            )
+            result = binding.to_wire() if callable(getattr(binding, "to_wire", None)) else binding
+            fields = {"schema", "invocation_handle", "package_id", "profile_id", "generation",
+                      "adapter_id", "action_id", "arguments_sha256", "parent_closure_digest",
+                      "expires_monotonic", "binding_sha256"}
+            if not isinstance(result, Mapping) or set(result) != fields:
+                raise AuthorityDenied("native.invocation", "root invocation registry returned an invalid binding")
+            return dict(result)
+        expected = {"schema", "invocation_handle"}
+        if (not isinstance(payload, dict) or set(payload) != expected
+                or type(payload.get("schema")) is not int or payload["schema"] != 1
+                or not isinstance(payload.get("invocation_handle"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["invocation_handle"])):
+            raise AuthorityDenied("native.invocation", "native invocation context request is malformed")
+        contexts = registry.get_invocation_contexts(
+            peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+            invocation_handle=payload["invocation_handle"],
+        )
+        result = contexts.to_wire() if callable(getattr(contexts, "to_wire", None)) else contexts
+        fields = {"schema", "invocation_handle", "source_receipt_handles",
+                  "parent_closure_digest", "arguments_sha256", "expires_monotonic"}
+        if (not isinstance(result, Mapping) or set(result) != fields
+                or result.get("invocation_handle") != payload["invocation_handle"]
+                or not isinstance(result.get("source_receipt_handles"), (list, tuple))
+                or len(result["source_receipt_handles"]) > 128):
+            raise AuthorityDenied("native.invocation", "root invocation registry returned invalid ancestry")
+        return {**dict(result), "source_receipt_handles": list(result["source_receipt_handles"])}
+
+    def _dispatch_native_mcp(self, peer_uid: int, peer_pid: int,
+                             peer_pidfd: int | None, payload: Any,
+                             *, cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        """Dispatch one lexical native MCP call through the root-selected handler."""
+        import base64
+
+        dispatcher = self.native_mcp_dispatcher
+        if dispatcher is None or peer_pidfd is None:
+            raise AuthorityDenied("native.mcp", "root native MCP dispatcher is unavailable")
+        fields = {"schema", "invocation_handle", "canonical_arguments_b64"}
+        if (not isinstance(payload, dict) or set(payload) != fields
+                or type(payload.get("schema")) is not int or payload["schema"] != 1
+                or not isinstance(payload.get("invocation_handle"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["invocation_handle"])
+                or not isinstance(payload.get("canonical_arguments_b64"), str)
+                or len(payload["canonical_arguments_b64"]) > 2_800_000):
+            raise AuthorityDenied("native.mcp", "native MCP request fields are malformed")
+        try:
+            arguments = base64.b64decode(payload["canonical_arguments_b64"], validate=True)
+        except (ValueError, TypeError):
+            raise AuthorityDenied("native.mcp", "native MCP arguments are malformed") from None
+        if (not 1 <= len(arguments) <= 2 * 1024 * 1024
+                or base64.b64encode(arguments).decode("ascii") != payload["canonical_arguments_b64"]):
+            raise AuthorityDenied("native.mcp", "native MCP arguments exceed their bound")
+        try:
+            value = strict_json_loads(arguments.decode("utf-8"))
+            if not isinstance(value, dict) or canonical_bytes(value) != arguments:
+                raise ValueError
+        except (ValueError, TypeError, UnicodeError):
+            raise AuthorityDenied("native.mcp", "native MCP arguments are not canonical JSON") from None
+        if cancelled():
+            raise AuthorityDenied("native.mcp", "native MCP request was cancelled")
+        try:
+            response = dispatcher.dispatch_native_mcp(
+                peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+                invocation_handle=payload["invocation_handle"],
+                canonical_arguments=arguments, cancelled=cancelled,
+            )
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("native.mcp", "root native MCP dispatch failed") from None
+        if isinstance(response, BrokeredEffectResponse):
+            status, body, headers, receipt_id = (
+                response.status, response.body, response.headers, response.receipt_id,
+            )
+            source_handle = response.source_receipt_handle
+            if response.producer_context_handle is not None or response.tool_call_bindings:
+                raise AuthorityDenied("native.mcp", "native MCP response contains unrelated provider metadata")
+        elif isinstance(response, Mapping):
+            allowed = {"status", "body", "headers", "receipt_id"}
+            if set(response) not in (allowed, allowed | {"source_receipt_handle"}):
+                raise AuthorityDenied("native.mcp", "root native MCP response fields are malformed")
+            status, body, headers, receipt_id = (response["status"], response["body"],
+                                                 response["headers"], response["receipt_id"])
+            source_handle = response.get("source_receipt_handle")
+        else:
+            raise AuthorityDenied("native.mcp", "root native MCP response type is invalid")
+        if (type(status) is not int or not 0 <= status <= 599
+                or not isinstance(body, bytes) or len(body) > 4 * 1024 * 1024
+                or not isinstance(headers, Mapping) or len(headers) > 32
+                or any(not isinstance(key, str) or not isinstance(item, str)
+                       or any(char in key + item for char in "\r\n\x00")
+                       for key, item in headers.items())
+                or not isinstance(receipt_id, str) or not 1 <= len(receipt_id) <= 256
+                or source_handle is not None and (not isinstance(source_handle, str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", source_handle))):
+            raise AuthorityDenied("native.mcp", "root native MCP response exceeds its bound")
+        return {"status": status, "body": base64.b64encode(body).decode("ascii"),
+                "headers": dict(headers), "receipt_id": receipt_id,
+                **({"source_receipt_handle": source_handle} if source_handle is not None else {})}
+
+    def _dispatch_native_input_take(self, peer_uid: int, peer_pid: int,
+                                   peer_pidfd: int | None, payload: Any, *,
+                                   cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        """Take only the queued input selected for this live authenticated peer."""
+        from .source_observers import NativeInitialInputDelivery
+
+        registry = self.native_input_delivery_registry
+        if (registry is None or peer_pidfd is None
+                or not isinstance(payload, dict) or set(payload) != {"schema"}
+                or type(payload.get("schema")) is not int or payload["schema"] != 1):
+            raise AuthorityDenied("native.input.take", "selected native input delivery is unavailable")
+        if cancelled():
+            raise AuthorityDenied("native.input.take", "selected native input request was cancelled")
+        try:
+            delivery = registry.take_selected_native_input(
+                peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+            )
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("native.input.take", "selected native input lookup failed") from None
+        if delivery is None:
+            return {"schema": 1, "state": "pending"}
+        if type(delivery) is not NativeInitialInputDelivery:
+            raise AuthorityDenied("native.input.take", "root input registry returned an invalid delivery")
+        result = delivery.to_wire()
+        expected = {"schema", "source_receipt_handle", "selected_execution_handle",
+                    "input_sha256", "input_size_bytes", "expires_monotonic"}
+        if (not isinstance(result, Mapping) or set(result) not in (expected, expected | {"turn_handle"})
+                or type(result.get("schema")) is not int or result["schema"] != 1
+                or not isinstance(result.get("source_receipt_handle"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", result["source_receipt_handle"])
+                or not isinstance(result.get("selected_execution_handle"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", result["selected_execution_handle"])
+                or not isinstance(result.get("input_sha256"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", result["input_sha256"])
+                or type(result.get("input_size_bytes")) is not int
+                or not 1 <= result["input_size_bytes"] <= 1_048_576
+                or isinstance(result.get("expires_monotonic"), bool)
+                or type(result.get("expires_monotonic")) not in (int, float)
+                or not self.monotonic() < result["expires_monotonic"] <= self.monotonic() + 30.0
+                or result.get("turn_handle") is not None and (
+                    not isinstance(result.get("turn_handle"), str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", result["turn_handle"]))):
+            raise AuthorityDenied("native.input.take", "root input delivery fields exceed their bounds")
+        return dict(result)
+
+    def _dispatch_process_control(self, uid: int, peer_pid: int,
+                                  peer_pidfd: int | None, payload: Any, *,
+                                  cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        """Resolve an active process handle and authorize its fixed control verb.
+
+        The caller supplies only an opaque handle, generation, operation, and
+        bounded operation fields. The root process manager selects the profile
+        and target from its live handle registry; target/capability/grant are
+        never accepted from the worker.
+        """
+        if (peer_pidfd is None or not isinstance(payload, dict)
+                or set(payload) != {"schema", "operation", "process_id", "generation", "fields"}
+                or payload.get("schema") != 1):
+            raise AuthorityDenied("process.control", "process control request is malformed")
+        operation = payload.get("operation")
+        process_id, generation, fields = (payload.get("process_id"), payload.get("generation"),
+                                           payload.get("fields"))
+        if (operation not in {"process.status", "process.read", "process.write", "process.stop", "process.inspect"}
+                or not isinstance(process_id, str)
+                or not re.fullmatch(r"[0-9a-f]{32}", process_id)
+                or not isinstance(generation, str)
+                or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", generation)
+                or not isinstance(fields, dict)):
+            raise AuthorityDenied("process.control", "process control selection is invalid")
+        expected = {
+            "process.status": set(), "process.inspect": set(),
+            "process.stop": {"reason", "grace_seconds"},
+            "process.read": {"stream", "maximum_bytes"},
+            "process.write": {"data_bytes", "sequence"},
+        }[operation]
+        if set(fields) != expected:
+            raise AuthorityDenied("process.control", "process control fields do not match the fixed verb")
+        if operation == "process.read":
+            if (fields.get("stream") not in {"stdout", "stderr"}
+                    or type(fields.get("maximum_bytes")) is not int
+                    or not 1 <= fields["maximum_bytes"] <= 1_048_576):
+                raise AuthorityDenied("process.control", "process read bounds are invalid")
+        if operation == "process.write":
+            data = fields.get("data_bytes")
+            if (not isinstance(data, str) or len(data) > 349_528
+                    or type(fields.get("sequence")) is not int
+                    or fields["sequence"] < 0):
+                raise AuthorityDenied("process.control", "process write bounds are invalid")
+            try:
+                decoded = base64.b64decode(data, validate=True)
+            except Exception:
+                raise AuthorityDenied("process.control", "process write data is malformed") from None
+            if len(decoded) > 262_144 or base64.b64encode(decoded).decode("ascii") != data:
+                raise AuthorityDenied("process.control", "process write data exceeds its bound")
+        if operation == "process.stop":
+            if (fields.get("reason") not in {"cancel", "shutdown", "rollback"}
+                    or type(fields.get("grace_seconds")) is not int
+                    or not 0 <= fields["grace_seconds"] <= 10):
+                raise AuthorityDenied("process.control", "process stop bounds are invalid")
+
+        manager = self.process_effect_handler
+        resolver = getattr(manager, "resolve_process_operation", None)
+        if not callable(resolver):
+            raise AuthorityDenied("process.control", "root process handle resolver is unavailable")
+        try:
+            selected = resolver(process_id, generation, operation, peer_uid=uid,
+                                peer_pid=peer_pid, peer_pidfd=peer_pidfd)
+        except Exception:
+            selected = None
+        if (not isinstance(selected, tuple) or len(selected) != 2
+                or not isinstance(selected[1], str)):
+            raise AuthorityDenied("process.handle", "process handle is stale or not owned by this peer")
+        profile, target = selected
+        binding = self._binding(uid)
+        if (getattr(profile, "profile_id", None) != binding.profile_id
+                or getattr(profile, "generation", None) != generation
+                or self.profile_generations.get(binding.profile_id) != generation):
+            raise AuthorityDenied("process.binding", "process handle profile or generation changed")
+        enrolled_target = getattr(profile, "operation_targets", {}).get(operation)
+        if enrolled_target is None:
+            from hermes_installer.managed_process_custodian import (
+                process_control_target, process_inspect_target,
+            )
+            enrolled_target = (process_inspect_target(profile) if operation == "process.inspect"
+                               else process_control_target(profile, operation))
+        if target != enrolled_target:
+            raise AuthorityDenied("process.target", "process manager returned a non-enrolled control target")
+        rule = self.rules.get(("hermes-process-control", operation, target))
+        if rule is None or rule.recipient is not None:
+            raise AuthorityDenied("process.target", "process control effect is not enrolled")
+
+        request_body = {"schema": 1, "operation": operation,
+                        "process_id": process_id, "generation": generation,
+                        "fields": fields}
+        request_bytes = canonical_bytes(request_body)
+        request_digest = canonical_digest(request_bytes)
+        context_wire = self._issue_context(uid, {
+            "purpose": "managed-process-control",
+            "intent": f"{operation}:{process_id}:{generation}:{request_digest}",
+            "trace_id": secrets.token_urlsafe(24),
+            "lease_seconds": 5.0,
+            "source_contexts": [], "final_payload_digest": request_digest,
+            "operation": operation,
+        }, peer_pid=peer_pid)
+        grant_wire = self._authorize_effect(uid, {
+            "context": context_wire, "capability": rule.capability,
+            "target": target, "recipient": rule.recipient,
+            "request_digest": request_digest, "retry_index": 0,
+        }, peer_pid=peer_pid)
+        return self._perform_effect(uid, peer_pid, {
+            "authorization": grant_wire, "operation": operation,
+            "payload": base64.b64encode(request_bytes).decode("ascii"),
+            "timeout": 5.0,
+        }, cancelled=cancelled, peer_pidfd=peer_pidfd)
 
     def _dispatch_remote_session(self, operation: str, peer_uid: int, peer_pid: int,
                                  peer_pidfd: int | None, payload: Any) -> Mapping[str, Any]:
@@ -1309,8 +3103,73 @@ class AuthorityService:
                        for key, value in headers.items())
                 or not isinstance(receipt_id, str) or not 1 <= len(receipt_id) <= 256):
             raise AuthorityDenied("effect.response", "fixed effect response headers or receipt are invalid")
-        return {"status": response["status"], "body": base64.b64encode(body_bytes).decode("ascii"),
-                "headers": dict(headers), "receipt_id": receipt_id}
+        result: dict[str, Any] = {
+            "status": response["status"], "body": base64.b64encode(body_bytes).decode("ascii"),
+            "headers": dict(headers), "receipt_id": receipt_id,
+        }
+        observer = self.native_runtime_observer
+        observer_key = (rule.capability, rule.operation, rule.target)
+        observer_ids = getattr(observer, "effect_observer_ids", {}) if observer is not None else {}
+        if (observer is not None and observer_key in observer_ids
+                and 200 <= response["status"] < 300):
+            observe = getattr(observer, "observe_effect_result", None)
+            if not callable(observe):
+                raise AuthorityDenied("source.observer", "root native result observer is unavailable")
+            handle = observe(
+                service=self, context=context, authorization=grant,
+                operation=rule.operation, target=rule.target,
+                request_payload=body, request_sha256=grant.request_digest,
+                response_status=response["status"], result_payload=body_bytes,
+                peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+                cancelled=current_or_cancelled,
+            )
+            if not isinstance(handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle):
+                raise AuthorityDenied("source.observer", "root result observer returned an invalid receipt handle")
+            delivery = self.source_receipt_delivery
+            take = getattr(delivery, "take_source_receipt", None)
+            if not callable(take) or peer_pidfd is None:
+                raise AuthorityDenied("source.delivery", "peer-bound result receipt delivery is unavailable")
+            delivered = take(handle, peer_uid=uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd)
+            if str(delivered) != handle:
+                raise AuthorityDenied("source.delivery", "root delivered a different result receipt handle")
+            # The registry atomically marks this handle delivered to the exact
+            # live peer before the opaque reference enters the response.
+            result["source_receipt_handle"] = handle
+        return result
+
+    def _dispatch_native_turn_finish(self, peer_uid: int, peer_pid: int,
+                                     peer_pidfd: int | None, payload: Any, *,
+                                     cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        """Return only the opaque presentation from the authenticated turn registry."""
+        from .types import RootCompletedNativeTurnPresentation
+
+        registry = self.native_turn_observation_registry
+        fields = {"schema", "turn_handle", "final_response_delivery_handle"}
+        if (registry is None or peer_pidfd is None
+                or not isinstance(payload, dict) or set(payload) != fields
+                or type(payload.get("schema")) is not int or payload["schema"] != 1
+                or not isinstance(payload.get("turn_handle"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["turn_handle"])
+                or not isinstance(payload.get("final_response_delivery_handle"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["final_response_delivery_handle"])):
+            raise AuthorityDenied("native.turn.finish", "native turn finish request is malformed or unavailable")
+        if cancelled():
+            raise AuthorityDenied("native.turn.finish", "native turn finish request was cancelled")
+        try:
+            presentation = registry.finish_selected_native_turn(
+                peer_uid, peer_pid, peer_pidfd, payload["turn_handle"],
+                payload["final_response_delivery_handle"],
+            )
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("native.turn.finish", "root native turn verification failed") from None
+        if (type(presentation) is not RootCompletedNativeTurnPresentation
+                or presentation.turn_handle != payload["turn_handle"]
+                or presentation.state != "completed"
+                or presentation.expires_monotonic <= self.monotonic()):
+            raise AuthorityDenied("native.turn.finish", "root native turn presentation is invalid or expired")
+        return presentation.to_wire()
 
     def _parse_effect_request(self, uid: int, payload: Any, *, peer_pid: int | None = None
                               ) -> tuple[EffectAuthorization, HostContext, EffectRule]:
@@ -1514,8 +3373,8 @@ class AuthorityService:
                 break
             if chunk == b"\n":
                 try:
-                    return json.loads(data.decode("ascii"))
-                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return strict_json_loads(data.decode("ascii"))
+                except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
                     raise AuthorityDenied("protocol.json", "authority request is malformed") from None
             data.extend(chunk)
         raise AuthorityDenied("protocol.bounds", "authority request is incomplete or oversized")

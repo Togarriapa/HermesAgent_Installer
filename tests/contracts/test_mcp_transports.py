@@ -31,7 +31,7 @@ class FixtureAuthority:
 
 
 def fixture_context(*, loopback=False, stdio=False):
-    caps = {"mcp:fixture:connect", "mcp:fixture:read"}
+    caps = {"mcp:home-assistant:connect", "mcp:home-assistant:read"}
     if loopback:
         caps.add("mcp:test:loopback")
     if stdio:
@@ -77,11 +77,11 @@ class FakeManagedHandle:
 class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
     async def test_stdio_uses_only_supervised_handle_and_requires_host_grant(self):
         context, handle = fixture_context(stdio=True), FakeManagedHandle()
-        transport = StdioTransport(handle, service_id="fixture")
+        transport = StdioTransport(handle, service_id="home-assistant")
         with self.assertRaises(TransportError):
             await transport.request({"jsonrpc": "2.0", "id": 1, "method": "initialize"})
         self.assertEqual(handle.writes, [])
-        grant = FixtureAuthority()(context, "mcp:fixture:connect", "fixture-connect",
+        grant = FixtureAuthority()(context, "mcp:home-assistant:connect", "fixture-connect",
                                   time.monotonic(), 3, lambda: False)
         response = await transport.request(
             {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
@@ -93,8 +93,8 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_forged_stdio_handle_is_denied_before_any_child_io(self):
         context, handle = fixture_context(), FakeManagedHandle()
-        transport = StdioTransport(handle, service_id="fixture")
-        grant = FixtureAuthority()(context, "mcp:fixture:connect", "fixture-connect",
+        transport = StdioTransport(handle, service_id="home-assistant")
+        grant = FixtureAuthority()(context, "mcp:home-assistant:connect", "fixture-connect",
                                   time.monotonic(), 3, lambda: False)
         with self.assertRaises(TransportError):
             await transport.request({"jsonrpc": "2.0", "id": 1, "method": "initialize"},
@@ -176,139 +176,170 @@ class MCPTransportTests(unittest.IsolatedAsyncioTestCase):
 
         server = await asyncio.start_server(serve, "127.0.0.1", 0)
         port = server.sockets[0].getsockname()[1]
-        from pathlib import Path
         import os
-        import tempfile
-        import threading
 
-        from hermes_installer.authority.client import AuthorityClient
-        from hermes_installer.authority.service import (
-            AuthorityService, EffectRule, PrincipalBinding,
+        from hermes_installer.authority.types import (
+            BrokeredEffectResponse, EffectAuthorization, HostContext, Sensitivity,
         )
-        from hermes_installer.authority.types import Sensitivity
         from hermes_installer.mcp.broker import (
             ProtectedMCPService, build_mcp_handlers,
         )
 
-        class FixturePolicy:
-            revision = "mcp-http-fixture-v1"
+        uid = os.getuid()
+        capability_set = frozenset({
+            "mcp:home-assistant:connect", "mcp:home-assistant:read", "mcp:test:loopback",
+        })
+        service_record = ProtectedMCPService(
+            service_id="home-assistant", channel="http", allowed_tools=frozenset({"get_state"}),
+            transport_binding_id="fixture-binding", reviewed_revision="a" * 64,
+            selection_arguments={"get_state": ("entity_id",)},
+        )
 
-            def classify(self, *, purpose, intent, source_contexts, binding):
-                return Sensitivity.UNKNOWN, canonical_digest({
-                    "purpose": purpose, "intent": intent, "sources": [],
-                })
+        class FixtureCredentialHandle:
+            def headers_for(self, service_id, context, authorization):
+                if (service_id != "home-assistant"
+                        or context.principal_id != authorization.principal_id
+                        or authorization.capability not in {
+                            "mcp:home-assistant:connect", "mcp:home-assistant:read",
+                        }):
+                    raise PermissionError("fixture credential binding mismatch")
+                scope = authorization.capability
+                credential_scopes.append(scope)
+                return {"Authorization": "Bearer fixture-secret-canary"}
 
-            def allow_effect(self, *, context, rule, request_digest, retry_index):
-                return True
+        fixture_credential = FixtureCredentialHandle()
 
         class FixtureNetwork:
+            """Translate verified fixture grants to the client transport's test seam."""
             def __init__(self, bound_transport):
                 self.transport = bound_transport
 
             def exchange(self, request, *, context, authorization, timeout, cancelled):
+                if cancelled():
+                    raise PermissionError("fixture effect cancelled")
+                dispatch_context = fixture_context(loopback=True)
+                dispatch_authorization = FixtureAuthority()(
+                    dispatch_context, authorization.capability, authorization.intent_id,
+                    time.monotonic(), timeout, cancelled,
+                )
                 return asyncio.run(self.transport.request(
-                    request, dispatch_context=context,
-                    dispatch_authorization=authorization,
+                    request, dispatch_context=dispatch_context,
+                    dispatch_authorization=dispatch_authorization,
                 ))
 
-        uid, gid = os.getuid(), os.getgid()
-        capability_set = frozenset({
-            "mcp:fixture:connect", "mcp:fixture:read", "mcp:test:loopback",
-        })
-        binding = PrincipalBinding(
-            uid=uid, principal_id="fixture-principal", profile_id="fixture-profile",
-            namespace_id="fixture-namespace", capabilities=capability_set,
-        )
-        service_record = ProtectedMCPService(
-            service_id="fixture", channel="http", allowed_tools=frozenset({"get_state"}),
-            transport_binding_id="fixture-binding", reviewed_revision="a" * 64,
-            selection_arguments={"get_state": ("entity_id",)},
-        )
-        from hermes_installer.authority.enrollment import RootMCPCredentialHandle
-
-        class FixtureVault:
-            def resolve_reference(self, reference, *, peer_uid, required_scope, principal_id):
-                if (reference != "fixture-token" or peer_uid != uid
-                        or principal_id != binding.principal_id):
-                    raise PermissionError("fixture credential binding mismatch")
-                credential_scopes.append(required_scope)
-                return "fixture-secret-canary"
-
-        credential_handle = RootMCPCredentialHandle(
-            "fixture", "fixture-token", FixtureVault(),
-        )
         transport = StreamableHTTPTransport(
-            f"http://127.0.0.1:{port}/mcp", service_id="fixture",
-            credential_handle=credential_handle, timeout=2,
+            f"http://127.0.0.1:{port}/mcp", service_id="home-assistant",
+            credential_handle=fixture_credential, timeout=2,
         )
-        transport_factory = lambda _service, _context: FixtureNetwork(transport)
-        handlers = build_mcp_handlers({"fixture": service_record},
-                                      transport_factory=transport_factory)
-        rules = {}
-        for capability in ("mcp:fixture:connect", "mcp:fixture:read"):
-            rule = EffectRule(
-                capability=capability, operation="mcp.request", target="mcp:fixture:http",
-            )
-            rules[(rule.capability, rule.operation, rule.target)] = rule
-        authority_service = AuthorityService(
-            signing_key=b"fixture-authority-key-32-bytes-long!!",
-            key_id="mcp-http-fixture", bindings_by_uid={uid: binding},
-            rules=rules, handlers=handlers, policy=FixturePolicy(),
+
+        def exchange(_service, _context):
+            return FixtureNetwork(transport)
+
+        handlers = build_mcp_handlers(
+            {"home-assistant": service_record}, transport_factory=exchange,
         )
-        stop_event = threading.Event()
-        with tempfile.TemporaryDirectory(prefix="hermes-mcp-authority-") as temp:
-            socket_path = Path(temp) / "authority.sock"
-            listener = threading.Thread(
-                target=authority_service.serve_unix,
-                kwargs={
-                    "socket_path": socket_path, "socket_gid": gid,
-                    "stop_event": stop_event, "expected_uid": uid,
-                },
-                daemon=True,
-            )
-            listener.start()
-            deadline = time.monotonic() + 2
-            while not socket_path.exists() and time.monotonic() < deadline:
-                await asyncio.sleep(0.01)
-            authority = AuthorityClient(
-                socket_path, server_uid=uid, server_gid=gid, timeout=2,
-            )
-            client = MCPClient(
-                transport, {"get_state"}, service_id="fixture",
-                selection="sensor.office", authority_client=authority, timeout=2,
-                result_scrubber=lambda _value: {
-                    "content": [{"type": "text", "text": "Selected entity state read"}],
-                },
-            )
-            try:
-                async with server:
-                    await client.initialize()
-                    await client.discover()
-                    self.assertEqual([item["method"] for item in requests],
-                                     ["initialize", "notifications/initialized", "tools/list"])
-                    self.assertEqual(await client.call_read(
-                        "get_state", {"entity_id": "sensor.office"},
-                    ), {"content": [{"type": "text", "text": "Selected entity state read"}]})
-                    self.assertEqual(requests[-1]["params"]["arguments"]["entity_id"],
-                                     "sensor.office")
-                    self.assertTrue(all(credential_checks))
-                    self.assertEqual(set(credential_scopes), {
-                        "mcp:fixture:connect", "mcp:fixture:read",
-                    })
-                    await client.close()
-            finally:
-                stop_event.set()
-                listener.join(timeout=2)
-                server.close()
-                await server.wait_closed()
+
+        class FixtureAuthorityClient:
+            """A typed, exact-target authority fixture; not host acceptance evidence."""
+            def __init__(self):
+                self.context_value = None
+                self._counter = 0
+
+            def context(self, *, purpose, intent, operation, final_payload_digest,
+                        lease_seconds, cancelled):
+                if cancelled() or operation != "mcp.request":
+                    raise PermissionError("fixture authority denied context")
+                now = time.monotonic()
+                self._counter += 1
+                self.context_value = HostContext(
+                    principal_id="fixture-principal", profile_id="fixture-profile",
+                    namespace_id="fixture-namespace", uid=uid, purpose=purpose,
+                    intent_id=canonical_digest({"purpose": purpose, "intent": intent}),
+                    trace_id="mcp-http-fixture-trace", sensitivity=Sensitivity.UNKNOWN,
+                    lineage_hash="b" * 64, policy_revision="mcp-http-fixture-v1",
+                    capabilities=capability_set, issued_at_monotonic=now,
+                    monotonic_expires_at=now + lease_seconds,
+                    nonce=f"fixture-context-{self._counter}",
+                    grant_id=f"fixture-context-grant-{self._counter}",
+                    signature="fixture-context-signature",
+                    final_payload_digest=final_payload_digest, operation=operation,
+                )
+                return self.context_value
+
+            def authorize_effect(self, context, *, capability, target, recipient,
+                                 request_digest, retry_index, cancelled):
+                if (cancelled() or context is not self.context_value or recipient is not None
+                        or target != "mcp:home-assistant:http" or retry_index != 0
+                        or capability not in {"mcp:home-assistant:connect", "mcp:home-assistant:read"}
+                        or request_digest != context.final_payload_digest):
+                    raise PermissionError("fixture authority denied effect")
+                now = time.monotonic()
+                return EffectAuthorization(
+                    principal_id=context.principal_id, profile_id=context.profile_id,
+                    namespace_id=context.namespace_id, uid=context.uid,
+                    purpose=context.purpose, sensitivity=context.sensitivity,
+                    trace_id=context.trace_id, policy_revision=context.policy_revision,
+                    lineage_hash=context.lineage_hash, capability=capability,
+                    intent_id=context.intent_id, target=target, recipient=None,
+                    request_digest=request_digest, retry_index=retry_index,
+                    issued_at_monotonic=now, monotonic_expires_at=min(
+                        context.monotonic_expires_at, now + 5,
+                    ), grant_id=f"fixture-effect-grant-{self._counter}", nonce=f"fixture-effect-{self._counter}",
+                    context_digest=canonical_digest(context.claims()),
+                    signature="fixture-effect-signature",
+                    final_payload_digest=request_digest, operation="mcp.request",
+                )
+
+            def mcp_request(self, authorization, *, target, payload, timeout, cancelled):
+                if (cancelled() or self.context_value is None
+                        or target != "mcp:home-assistant:http" or target != authorization.target
+                        or authorization.operation != "mcp.request"
+                        or authorization.final_payload_digest != authorization.request_digest
+                        or authorization.context_digest != canonical_digest(self.context_value.claims())
+                        or canonical_digest(payload) != authorization.request_digest
+                        or timeout <= 0):
+                    raise PermissionError("fixture authority denied broker request")
+                result = handlers[("mcp.request", target)](
+                    context=self.context_value, authorization=authorization,
+                    payload=payload, timeout=timeout, cancelled=cancelled,
+                )
+                return BrokeredEffectResponse(**result)
+
+        authority = FixtureAuthorityClient()
+        client = MCPClient(
+            transport, {"get_state"}, service_id="home-assistant",
+            selection="sensor.office", authority_client=authority, timeout=2,
+            result_scrubber=lambda _value: {
+                "content": [{"type": "text", "text": "Selected entity state read"}],
+            },
+        )
+        try:
+            async with server:
+                await client.initialize()
+                await client.discover()
+                self.assertEqual([item["method"] for item in requests],
+                                 ["initialize", "notifications/initialized", "tools/list"])
+                self.assertEqual(await client.call_read(
+                    "get_state", {"entity_id": "sensor.office"},
+                ), {"content": [{"type": "text", "text": "Selected entity state read"}]})
+                self.assertEqual(requests[-1]["params"]["arguments"]["entity_id"],
+                                 "sensor.office")
+                self.assertTrue(all(credential_checks))
+                self.assertEqual(set(credential_scopes), {
+                    "mcp:home-assistant:connect", "mcp:home-assistant:read",
+                })
+                await client.close()
+        finally:
+            server.close()
+            await server.wait_closed()
 
     async def test_http_transport_rejects_private_network_without_host_capability(self):
         context, handle = fixture_context(loopback=False), FakeManagedHandle()
-        grant = FixtureAuthority()(context, "mcp:fixture:connect", "fixture-connect",
+        grant = FixtureAuthority()(context, "mcp:home-assistant:connect", "fixture-connect",
                                   time.monotonic(), 3, lambda: False)
         server = await asyncio.start_server(lambda r, w: None, "127.0.0.1", 0)
         port = server.sockets[0].getsockname()[1]
-        transport = StreamableHTTPTransport(f"http://127.0.0.1:{port}/mcp", service_id="fixture")
+        transport = StreamableHTTPTransport(f"http://127.0.0.1:{port}/mcp", service_id="home-assistant")
         try:
             with self.assertRaises(TransportError):
                 await transport.request({"jsonrpc": "2.0", "id": 1, "method": "initialize"},

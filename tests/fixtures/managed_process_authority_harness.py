@@ -63,30 +63,18 @@ async def main() -> None:
         print(json.dumps({"event": "started", **started}, sort_keys=True), flush=True)
         await asyncio.Event().wait()
 
-    async def control(operation: str, value: dict) -> dict:
-        body = canonical_bytes(value)
-        digest = canonical_digest(body)
-        context = client.context(
-            purpose="managed-process-control", intent=f"{operation}:{process_id}",
-            operation=operation, source_contexts=(start_context,),
-            final_payload_digest=digest, trace_id=start_context.trace_id,
-            lease_seconds=20,
+    async def control(operation: str, fields: dict) -> dict:
+        response = client.process_control_operation(
+            operation, process_id=process_id, generation=generation,
+            fields=fields, timeout=5.0,
         )
-        suffix = operation.rsplit(".", 1)[1]
-        target = (f"hermes-profile-control:{context.profile_id}:operation:{suffix}"
-                  if operation != "process.inspect" else context.profile_id + ":inspect")
-        grant = client.authorize_effect(
-            context, capability="hermes-process-control", target=target,
-            request_digest=digest, retry_index=0,
-        )
-        result = client.process_control(grant, operation=operation, target=target,
-                                        payload=body, timeout=5.0)
-        if result.status != 200:
-            raise RuntimeError(f"root {operation} denied")
-        return json.loads(result.body.decode("utf-8", "strict"))
+        return {"schema": response.schema, "process_id": response.process_id,
+                "generation": response.generation, "operation": response.operation,
+                "state": response.state, "result": dict(response.result),
+                "expires_monotonic": response.expires_monotonic}
 
-    identity = {"schema": 1, "process_id": process_id, "generation": generation}
-    inspection = await control("process.inspect", identity)
+    inspection = await control("process.inspect", {})
+    inspection.update(inspection["result"])
     members = inspection.get("processes", [])
     main_members = [member for member in members if member.get("role") == "main"]
     main_attestation = main_members[0].get("sandbox_attestation", {}) if main_members else {}
@@ -113,22 +101,21 @@ async def main() -> None:
         cursor = int(started["stdout_cursor"] if stream == "stdout" else started["stderr_cursor"])
         chunks = bytearray()
         while time.monotonic() < deadline and len(chunks) < 65536:
-            value = {**identity, "stream": stream, "after_cursor": cursor,
-                     "max_bytes": min(65536 - len(chunks), 65536)}
+            value = {"stream": stream,
+                     "maximum_bytes": min(65536 - len(chunks), 65536)}
             read = await control("process.read", value)
-            data = base64.b64decode(read["data"], validate=True)
-            if read["cursor"] < cursor or len(data) > 65536 - len(chunks):
-                raise RuntimeError("root stream cursor or byte bound regressed")
-            cursor = read["cursor"]
+            data = base64.b64decode(read["result"]["data_bytes"], validate=True)
+            if len(data) > 65536 - len(chunks):
+                raise RuntimeError("root stream byte bound regressed")
             chunks.extend(data)
-            if b"\n" in chunks or read["eof"]:
+            if b"\n" in chunks or read["result"]["eof"]:
                 break
             await asyncio.sleep(.05)
         return bytes(chunks)
 
     stdout = await read_line("stdout", 8.0)
     stderr = await read_line("stderr", 1.5)
-    stopped = await control("process.stop", identity)
+    stopped = await control("process.stop", {"reason": "shutdown", "grace_seconds": 5})
     print(json.dumps({"event": "stopped", "stdout": stdout.decode("utf-8", "strict"),
                       "stderr": stderr.decode("utf-8", "strict"),
                       "stdout_complete": b"\n" in stdout,
@@ -140,7 +127,7 @@ async def main() -> None:
                       "mount_namespace_inode": started["mount_namespace_inode"],
                       "network_namespace_inode": started["network_namespace_inode"],
                       "kernel_limits": started.get("kernel_limits", {}),
-                      "cleanup_verified": stopped.get("stopped") is True}, sort_keys=True), flush=True)
+                      "cleanup_verified": stopped.get("result", {}).get("closed") is True}, sort_keys=True), flush=True)
 
 
 if __name__ == "__main__":

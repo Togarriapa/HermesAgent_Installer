@@ -4,16 +4,16 @@ import hashlib, json, os, stat, time, uuid, re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+import asyncio
 import threading
 from .state import Journal, OwnedRoot, OwnershipError
-from .bootstrap_custody import BootstrapCustody
+from .bootstrap_custody import BootstrapCustody, RootSelectedHermesOperations
 
 HERMES_REPOSITORY = "https://github.com/NousResearch/hermes-agent.git"
 HERMES_COMMIT = "7085fbf7753266fc4943c55ac04926186bc90005"
 INSTALL_SCRIPT_BLOB = "055c725f114db694db751f34fd312e70f5ed90d8"
 INSTALL_SCRIPT_SHA256 = "034845e34289813ff5fb7fd3e071ec69f6b14aee8ba297a477b31dda6374cb86"
 INSTALL_SCRIPT_ARTIFACT_ID = "hermes-install-script-7085fbf77532"
-INSTALL_SCRIPT_URL = "https://raw.githubusercontent.com/NousResearch/hermes-agent/7085fbf7753266fc4943c55ac04926186bc90005/scripts/install.sh"
 _DIAGNOSTIC_PATTERNS = (
     re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/-]+=*"),
     re.compile(r"(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret|authorization)\s*[:=]\s*)[^\s,;]+"),
@@ -47,6 +47,7 @@ class BootstrapReport:
     desktop_built: bool
     configuration_state: str
     resume_command: str
+    fixture_only: bool = False
 
 def git_blob_sha1(data: bytes) -> str:
     return hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
@@ -80,60 +81,145 @@ class HermesBootstrap:
     def __init__(self, data_root: OwnedRoot, state: Journal, *, network: object | None = None,
                  runner: Callable | None = None, desktop_builder: Callable | None = None,
                  agent_probe: Callable | None = None, expected_script_blob: str = INSTALL_SCRIPT_BLOB,
-                 authority_client: object | None = None):
+                 authority_client: object | None = None,
+                 selected_operations: RootSelectedHermesOperations | None = None):
         self.data_root = data_root
         self.state = state
         self.network = network
-        self.runner = runner or self._run_process
-        self.desktop_builder = desktop_builder or self._run_desktop_source_build
-        self.agent_probe = agent_probe or self._verify_agent_runtime
+        self._default_runner = self._run_process
+        self._default_desktop_builder = self._run_desktop_source_build
+        self._default_agent_probe = self._verify_agent_runtime
+        self.runner = runner or self._default_runner
+        self.desktop_builder = desktop_builder or self._default_desktop_builder
+        self.agent_probe = agent_probe or self._default_agent_probe
         self.expected_script_blob = expected_script_blob
         self.install_dir = data_root.path("generations/hermes-agent-" + HERMES_COMMIT[:12])
         self.hermes_home = data_root.path("profiles/default")
         self.private_home = data_root.path("runtime/bootstrap-home")
-        self.script_path = data_root.path("cache/hermes-install-" + HERMES_COMMIT[:12] + ".sh")
         self.operation = "hermes-agent:" + HERMES_COMMIT
         self.custody = BootstrapCustody(authority_client, journal=state,
                                         journal_operation=self.operation)
+        if selected_operations is not None and type(selected_operations) is not RootSelectedHermesOperations:
+            raise TypeError("production bootstrap accepts only root-selected Hermes operations")
+        self.selected_operations = selected_operations
         self._active_diagnostic: str | None = None
         self._upstream_log_offset: int | None = None
         self._last_artifact_receipt_id: str | None = None
+        self.script_store_id: str | None = None
 
-    def _script_bytes(self) -> bytes:
+    def install_enrolled(self, *, timeout: float = 600.0,
+                         cancelled: Callable[[], bool] | None = None) -> BootstrapReport:
+        """Run the fixed root-selected recipes without physical caller launch data.
+
+        Terminal custody receipts record that an enrolled operation ran and
+        was reaped. Activation remains separate until HI08/HI11 observe native
+        Agent registration and a real request/result in this generation.
+        """
+        if self.selected_operations is None:
+            raise BootstrapError("A committed root enrollment is required before Hermes operations")
+        if not 30 <= timeout <= 600:
+            raise ValueError("Selected Hermes operation timeout must be between 30 and 600 seconds")
+        generation = self.selected_operations.generation_id
+        stage_log = f"runtime/logs/hermes-agent/{HERMES_COMMIT[:12]}/selected-stage.log"
+        self.state.record_owned("hermes-generation", generation, "staged")
+        self.state.checkpoint(self.operation, "running:selected-stage", {
+            "commit": HERMES_COMMIT, "generation_id": generation,
+            "generation_digest": self.selected_operations.generation_digest,
+            "operation_id": "hermes-agent-stage-v1", "resume": "hermes-installer resume",
+        })
+        statuses: list[StageStatus] = []
+        try:
+            stage = self.selected_operations.stage(timeout=timeout, cancelled=cancelled)
+        except BaseException as exc:
+            self._record_process_exception(exc, "selected-stage")
+            self.state.checkpoint(self.operation,
+                "cancelled:selected-stage" if isinstance(exc, (KeyboardInterrupt, asyncio.CancelledError)) else "failed:selected-stage", {
+                    "generation_id": generation, "error_type": type(exc).__name__,
+                    "cleanup_verified": getattr(exc, "cleanup_verified", None),
+                    "resume": "hermes-installer resume",
+                })
+            return BootstrapReport(HERMES_COMMIT, generation, "managed service home",
+                (StageStatus("selected-stage", "failed"),), False, False,
+                "pending: root stage operation failed or needs recovery", "hermes-installer resume", False)
+        self._persist_diagnostic(stage_log, bytearray(stage.result.diagnostic),
+                                 len(stage.result.diagnostic) >= 96 * 1024)
+        statuses.append(StageStatus("selected-stage",
+            "complete" if stage.operation_completed else "failed", stage.result.exit_code, stage_log))
+        self.state.event(self.operation, "selected-stage",
+            "completed" if stage.operation_completed else "failed", {
+                "operation_id": stage.operation_id, "enrollment_id": stage.enrollment_id,
+                "generation_id": generation, "generation_digest": stage.generation_digest,
+                "receipt_id": stage.result.receipt_id, "process_id": stage.result.process_id,
+                "cleanup_verified": stage.result.cleanup_verified,
+                "timed_out": stage.result.timed_out, "exit_code": stage.result.exit_code,
+                "diagnostic": stage_log,
+            })
+        if not stage.operation_completed:
+            self.state.checkpoint(self.operation, "failed:selected-stage", {
+                "generation_id": generation, "exit_code": stage.result.exit_code,
+                "timed_out": stage.result.timed_out, "diagnostic": stage_log,
+                "resume": "hermes-installer resume",
+            })
+            return BootstrapReport(HERMES_COMMIT, generation, "managed service home",
+                tuple(statuses), False, False,
+                "pending: root stage operation did not complete; user data was preserved",
+                "hermes-installer resume", False)
+        statuses.append(StageStatus("selected-health", "pending"))
+        self.state.checkpoint(self.operation, "pending:native-health-observation", {
+            "generation_id": generation, "generation_digest": self.selected_operations.generation_digest,
+            "health_operation_started": False,
+            "functional_agent_ready": False, "desktop_built": False,
+            "reason": "HI08/HI11 observer must own health process and native registration/request/result events",
+            "resume": "hermes-installer resume",
+        })
+        return BootstrapReport(HERMES_COMMIT, generation, "managed service home", tuple(statuses),
+            False, False,
+            "pending: native health observer and functional Agent evidence are required",
+            "hermes-installer resume", False)
+
+    def _has_fixture_overrides(self) -> bool:
+        return (self.runner is not self._default_runner
+                or self.desktop_builder is not self._default_desktop_builder
+                or self.agent_probe is not self._default_agent_probe)
+
+    def _stage_script_artifact(self) -> str:
         try:
             if self.network is not None:
-                # Test-only artifact fixture adapter; production uses the fixed
-                # artifact.fetch verb and never accepts a caller-provided URL.
+                # Fixture-only source seam. Production receives an opaque store
+                # ID from the protected artifact broker and never handles bytes.
                 response = self.network.fetch_artifact(artifact_id=INSTALL_SCRIPT_ARTIFACT_ID,
                     sha256=INSTALL_SCRIPT_SHA256, max_bytes=128 * 1024)
                 body = response.body
                 if response.status != 200:
                     raise BootstrapError("Pinned official Hermes installer artifact was not available")
                 self._last_artifact_receipt_id = str(getattr(response, "receipt_id", "fixture"))
+                if (git_blob_sha1(body) != self.expected_script_blob
+                        or not body.startswith(b"#!/usr/bin/env bash\n") or len(body) > 128 * 1024):
+                    raise BootstrapError("Pinned official Hermes installer content did not match its Git object identity")
+                digest = hashlib.sha256(body).hexdigest()
+                self.script_store_id = f"artifact:{INSTALL_SCRIPT_ARTIFACT_ID}:{digest}"
             else:
-                body, self._last_artifact_receipt_id = self.custody.fetch_artifact(
+                self.script_store_id, self._last_artifact_receipt_id = self.custody.fetch_artifact(
                     artifact_id=INSTALL_SCRIPT_ARTIFACT_ID, sha256=INSTALL_SCRIPT_SHA256,
                     max_bytes=128 * 1024)
         except BootstrapError:
             raise
         except Exception:
             raise BootstrapError("Pinned host download broker is unavailable or denied the official installer artifact") from None
-        if git_blob_sha1(body) != self.expected_script_blob:
-            raise BootstrapError("Pinned official Hermes installer content did not match its Git object identity")
-        if not body.startswith(b"#!/usr/bin/env bash\n") or len(body) > 128 * 1024:
-            raise BootstrapError("Pinned official Hermes installer format or size is invalid")
-        return body
+        if not self.script_store_id:
+            raise BootstrapError("Pinned official Hermes artifact broker did not return an immutable store reference")
+        return self.script_store_id
 
     def prepare(self) -> None:
         self.data_root.ensure()
         for relative in ("generations", "profiles", "runtime", "runtime/bootstrap-home", "runtime/bootstrap-home/share",
                          "runtime/bootstrap-home/config", "runtime/bootstrap-home/cache", "cache"):
             self.data_root.path(relative).mkdir(parents=True, exist_ok=True, mode=0o700)
-        content = self._script_bytes()
-        _write_private(self.script_path, content)
+        store_id = self._stage_script_artifact()
         self.state.event(self.operation, "download-broker", "artifact_staged", {
             "artifact_id": INSTALL_SCRIPT_ARTIFACT_ID,
             "sha256": INSTALL_SCRIPT_SHA256,
+            "store_id": store_id,
             "receipt_id": self._last_artifact_receipt_id,
         })
         self.hermes_home.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -159,52 +245,16 @@ class HermesBootstrap:
         return ["--commit", HERMES_COMMIT, "--dir", str(self.install_dir), "--hermes-home", str(self.hermes_home)]
 
     def _run_process(self, args: list[str], *, timeout: float, capture: bool = False, diagnostic_path: str | None = None) -> tuple[int, bytes]:
-        bash = Path("/bin/bash").resolve(strict=True)
-        if not bash.is_file() or not self.script_path.is_file() or self.script_path.is_symlink():
-            raise BootstrapError("Pinned Hermes installer inputs are unavailable for the managed process")
-        script_digest = hashlib.sha256(self.script_path.read_bytes()).hexdigest()
-        upstream_log = self.hermes_home / "logs" / "install.log"
-        self._upstream_log_offset = 0
-        try:
-            if upstream_log.is_symlink() or not upstream_log.is_file():
-                raise OSError
-            self._upstream_log_offset = upstream_log.stat().st_size
-        except OSError:
-            pass
-        step = args[args.index("--stage") + 1] if "--stage" in args else "manifest"
-        try:
-            result = self.custody.run_process(executable=bash,
-                artifact_root=self.data_root.root, cwd=self.data_root.root,
-                data_root=self.data_root.root, argv=[str(bash), str(self.script_path), *args],
-                env_allowlist=self._environment(), timeout=timeout,
-                child_artifact_hashes={str(self.script_path.resolve(strict=True)): script_digest})
-        except Exception as exc:
-            self._record_process_exception(exc, step)
-            self.state.event(self.operation, step, "custody_denied", {
-                "error_type": type(exc).__name__, "diagnostic": diagnostic_path or self._active_diagnostic,
-                "process_id": getattr(exc, "process_id", None),
-                "generation": getattr(exc, "generation", None),
-                "cleanup_verified": getattr(exc, "cleanup_verified", None),
-                "resume": "hermes-installer resume",
-            })
-            raise BootstrapError(
-                "Host-authorized Hermes process start or cleanup was unavailable; no unsafe fallback was used. "
-                "Resume after the protected process handler and script pin are enrolled."
-            ) from None
-        diagnostic = bytearray(result.diagnostic)
-        lock = threading.Lock()
-        truncated = threading.Event()
-        self._append_upstream_install_log(diagnostic, 96 * 1024, lock, truncated,
-                                          expected_uid=result.uid)
-        self._persist_diagnostic(diagnostic_path or self._active_diagnostic, diagnostic, truncated.is_set())
-        self.state.event(self.operation, step, "managed_process_finished", {
-            "receipt_id": result.receipt_id, "process_id": result.process_id,
-            "exit_code": result.exit_code, "timed_out": result.timed_out,
-            "cleanup_verified": result.cleanup_verified,
+        stage = args[args.index("--stage") + 1] if "--stage" in args else "installer"
+        self.state.event(self.operation, stage, "selected_operation_pending", {
             "diagnostic": diagnostic_path or self._active_diagnostic,
+            "reason": "root-local enrollment receipt and fixed recipe selection are not connected",
+            "resume": "hermes-installer resume",
         })
-        self._record_process_receipt(result, step)
-        return result.exit_code, result.stdout if capture else b""
+        raise BootstrapError(
+            "Root-enrolled Hermes stage operation is unavailable; no caller-selected "
+            "executable, path, argv, or environment was launched. Use hermes-installer resume."
+        )
 
     def _record_process_receipt(self, result: object, stage: str) -> None:
         process_id = getattr(result, "process_id", None)
@@ -453,39 +503,24 @@ class HermesBootstrap:
 
     def _run_managed_binary(self, executable: Path, argv: list[str], *, timeout: float,
                             env: dict[str, str], diagnostic_path: str | None) -> tuple[int, bytes]:
-        try:
-            result = self.custody.run_process(executable=executable,
-                artifact_root=self.install_dir, cwd=self.install_dir,
-                data_root=self.data_root.root, argv=argv, env_allowlist=env,
-                timeout=timeout)
-        except Exception as exc:
-            self._record_process_exception(exc, "managed-process")
-            self.state.event(self.operation, "managed-process", "custody_denied", {
-                "executable": executable.name,
-                "diagnostic": diagnostic_path,
-                "process_id": getattr(exc, "process_id", None),
-                "generation": getattr(exc, "generation", None),
-                "cleanup_verified": getattr(exc, "cleanup_verified", None),
-                "resume": "hermes-installer resume",
-            })
-            raise BootstrapError(
-                "Host-authorized Hermes process start or cleanup was unavailable; no unsafe fallback was used. "
-                "Resume after the protected process handler is enrolled."
-            ) from None
-        if diagnostic_path:
-            self._persist_diagnostic(diagnostic_path, bytearray(result.diagnostic), False)
-        self.state.event(self.operation, "managed-process", "completed", {
-            "receipt_id": result.receipt_id, "process_id": result.process_id,
-            "exit_code": result.exit_code, "timed_out": result.timed_out,
-            "cleanup_verified": result.cleanup_verified,
+        self.state.event(self.operation, "managed-process", "selected_operation_pending", {
+            "executable_label": executable.name,
             "diagnostic": diagnostic_path,
+            "reason": "caller-selected binaries are not an enrolled root recipe",
+            "resume": "hermes-installer resume",
         })
-        self._record_process_receipt(result, "managed-process")
-        return result.exit_code, result.stdout
+        raise BootstrapError(
+            "Caller-selected Hermes executable launch is disabled; wait for the "
+            "root-enrolled health operation and use hermes-installer resume."
+        )
 
     def install(self, *, include_desktop: bool = True, timeout_per_stage: float = 600) -> BootstrapReport:
         if not 30 <= timeout_per_stage <= 600:
             raise ValueError("Stage timeout must be between 30 and 600 seconds")
+        if self.selected_operations is not None:
+            # The selected root recipe itself is the only production launcher;
+            # legacy runner callbacks remain fixture-only below.
+            return self.install_enrolled(timeout=timeout_per_stage)
         try:
             self.prepare()
         except BaseException as exc:
@@ -626,6 +661,22 @@ class HermesBootstrap:
                     "effects_after": self._effect_snapshot(), "resume": "hermes-installer resume"})
                 raise BootstrapError(f"Hermes Desktop package was not produced (exit {code}); partial dist files do not establish a build; diagnostics: {desktop_diag}; use hermes-installer resume")
             self.state.event(self.operation, "desktop-product-build", "completed", {"exit_code": code, "package": "present"})
+        if self._has_fixture_overrides():
+            # Injected callbacks exercise installer mechanics only. They can
+            # never authorize an active generation, even if they return zero
+            # or True and create fixture files that resemble upstream output.
+            self.state.checkpoint(self.operation, "fixture-only", {
+                "commit": HERMES_COMMIT, "generation": str(self.install_dir),
+                "desktop_built": False, "agent_ready": False,
+                "configuration_state": "pending: fixture effects do not establish runtime readiness",
+            })
+            self.state.event(self.operation, "fixture-only", "not_activated", {
+                "reason": "test-injected callbacks are not root-selected stage or health receipts"})
+            self.state.record_owned("hermes-generation", str(self.install_dir), "staged")
+            return BootstrapReport(HERMES_COMMIT, str(self.install_dir), str(self.hermes_home),
+                tuple(statuses), False, False,
+                "pending: fixture callbacks cannot establish installed health",
+                "hermes-installer resume", True)
         self.state.checkpoint(self.operation, "complete", {
             "commit": HERMES_COMMIT, "generation": str(self.install_dir), "desktop_built": desktop_built,
             "configuration_state": "pending: provider and gateway setup were safely skipped",
@@ -640,7 +691,9 @@ class HermesBootstrap:
         return {"commit": HERMES_COMMIT, "generation": str(self.install_dir),
                 "hermes_home": str(self.hermes_home), "stages": self._completed_stages(),
                 "source_present": self.install_dir.is_dir(),
-                "complete": (self.install_dir / ".hermes-bootstrap-complete").is_file(),
+                "complete": (current is not None and current.get("status") == "complete"
+                    and any(row["resource_id"] == str(self.install_dir) and row["state"] == "installed"
+                            for row in self.state.owned("hermes-generation"))),
                 "operation": current, "events": self.state.events(self.operation)}
 
     def _diagnostic_summary(self, relative: str) -> list[str]:
