@@ -299,7 +299,7 @@ class RootResolvedHostTool:
         if type(self.observation_registry) is not HostToolObservationRegistry:
             raise ValueError("root nft tool must come from the host-tool observation registry")
         if (not isinstance(self.observation_handle, str)
-                or not re.fullmatch(r"[0-9a-f]{64}", self.observation_handle)
+                or not re.fullmatch(r"host-nft-observation:[0-9a-f]{48}", self.observation_handle)
                 or not isinstance(self.selected_network_key, tuple)
                 or len(self.selected_network_key) != 3
                 or not all(isinstance(item, str) and item for item in self.selected_network_key)):
