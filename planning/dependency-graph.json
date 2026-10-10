@@ -3487,5 +3487,22 @@
       ]
     },
     "acceptance": "All AC01..18 OPEN; implementation and target evidence separate"
+  },
+  "jarvis_runtime_source_pin_review_v228": {
+    "contract": "planning/jarvis-runtime-source-pin-review-v228.json",
+    "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+    "source_tree": "9928a1ca538d629f778e1823f2867a9646bcad75",
+    "task_dependencies": {
+      "VD-T180.6": [
+        "BD-T232.1"
+      ],
+      "VD-T183.5": [
+        "VD-T180.6"
+      ],
+      "VD-T232.2": [
+        "BD-T232.1"
+      ]
+    },
+    "acceptance": "All AC OPEN"
   }
 }

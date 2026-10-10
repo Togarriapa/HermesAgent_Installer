@@ -1,0 +1,475 @@
+{
+  "schema": 1,
+  "requirements": [
+    "BD-F02",
+    "HI-T149.1",
+    "VD-T180.6",
+    "VD-T183.5",
+    "BD-T232.1",
+    "VD-T232.2",
+    "RT-T213.1",
+    "VD-T213.3"
+  ],
+  "why": "Reviewed committed Jarvis profile/default alias, actual native profile materialization, durable PM runtime, per-task home/source custody and bounded pending diagnostics change finite installed module bytes. Stale outer release/catalog pins otherwise reject the actual source or omit delayed modules. This batch approves only exact frozen source tuples and closure membership, not runtime functionality.",
+  "source_snapshot": {
+    "commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+    "tree": "9928a1ca538d629f778e1823f2867a9646bcad75",
+    "custody": "Own true isolated clone /private/tmp/hermes-sol-source-freeze-8185-v228; committed blobs independently hashed; source frozen and no implementation/pins edited during review"
+  },
+  "reviewed_module_updates": [
+    {
+      "source_path": "src/hermes_installer/authority/active_policy_compiler.py",
+      "module": "hermes_installer.authority.active_policy_compiler",
+      "installed_path": "lib/python/hermes_installer/authority/active_policy_compiler.py",
+      "old_sha256": "61ae3576ac53e5ad5c6f1b0c74967110021fd961677353aae889b9f8bf04940b",
+      "old_size_bytes": 136868,
+      "sha256": "a9a0f983aeab2c47274c8a3f46155ac7f97ebd2264cb15d888d5379ed550f568",
+      "size_bytes": 147437,
+      "role": "module",
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "installed_artifact_id": "installer-module:hermes_installer.authority.active_policy_compiler",
+      "installed_mode": 292,
+      "preload": true,
+      "requirement_ids": [
+        "VD-T180.6",
+        "VD-T183.5"
+      ]
+    },
+    {
+      "source_path": "src/hermes_installer/authority/bootstrap_enrollment.py",
+      "module": "hermes_installer.authority.bootstrap_enrollment",
+      "installed_path": "lib/python/hermes_installer/authority/bootstrap_enrollment.py",
+      "old_sha256": "ae307ff841b29322ebd2ad06818e9f56a931f811fe789c1c3369a634188ed404",
+      "old_size_bytes": 144306,
+      "sha256": "d491638ae8a27a3d1a6d3392a50e5e2d41935a181f85a6ff0eac66756429296c",
+      "size_bytes": 147164,
+      "role": "module",
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "installed_artifact_id": "installer-module:hermes_installer.authority.bootstrap_enrollment",
+      "installed_mode": 292,
+      "preload": true,
+      "requirement_ids": [
+        "VD-T180.6",
+        "VD-T183.5"
+      ]
+    },
+    {
+      "source_path": "src/hermes_installer/authority/bootstrap_runtime_factory.py",
+      "module": "hermes_installer.authority.bootstrap_runtime_factory",
+      "installed_path": "lib/python/hermes_installer/authority/bootstrap_runtime_factory.py",
+      "old_sha256": "89fae27c0b8b4eeabc0c43ba0d56baa2780bc62e390a63cc6db8b1f88b028ead",
+      "old_size_bytes": 655738,
+      "sha256": "949e4bce79bfff32c9a8bb15152540968aca84b575d253725c80e3ecf23f64b7",
+      "size_bytes": 691421,
+      "role": "module",
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "installed_artifact_id": "installer-module:hermes_installer.authority.bootstrap_runtime_factory",
+      "installed_mode": 292,
+      "preload": true,
+      "requirement_ids": [
+        "VD-T180.6",
+        "VD-T183.5"
+      ]
+    },
+    {
+      "source_path": "src/hermes_installer/authority/committed_pm_executable.py",
+      "module": "hermes_installer.authority.committed_pm_executable",
+      "installed_path": "lib/python/hermes_installer/authority/committed_pm_executable.py",
+      "old_sha256": "9e8a3a28aa10e8f3e68431b5dcc8a0d51f2afa54c3d57c5e4dd7fda2826cfcf0",
+      "old_size_bytes": 43170,
+      "sha256": "11f6b8f7e46a57bf7056c4ab1b1ffb9f1665eecde5281d64843890f23aa84106",
+      "size_bytes": 45388,
+      "role": "module",
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "installed_artifact_id": "installer-module:hermes_installer.authority.committed_pm_executable",
+      "installed_mode": 292,
+      "preload": true,
+      "requirement_ids": [
+        "VD-T180.6",
+        "VD-T183.5"
+      ]
+    },
+    {
+      "source_path": "src/hermes_installer/authority/enrollment.py",
+      "module": "hermes_installer.authority.enrollment",
+      "installed_path": "lib/python/hermes_installer/authority/enrollment.py",
+      "old_sha256": "7ba9abef79744328ed3d5deefdf8b1815e532df295963fd72d8f9f476aa7f16e",
+      "old_size_bytes": 204399,
+      "sha256": "f98dcc6e89916a2b1dbef4af8544b38f6518da2a3ff35cfba3e18687d3a520a9",
+      "size_bytes": 206828,
+      "role": "module",
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "installed_artifact_id": "installer-module:hermes_installer.authority.enrollment",
+      "installed_mode": 292,
+      "preload": true,
+      "requirement_ids": [
+        "VD-T180.6",
+        "VD-T183.5"
+      ]
+    },
+    {
+      "source_path": "src/hermes_installer/authority/listener_activation.py",
+      "module": "hermes_installer.authority.listener_activation",
+      "installed_path": "lib/python/hermes_installer/authority/listener_activation.py",
+      "old_sha256": "64274d1dc9027b9c0c80fc31f95f292cf97b34d60f87769c1d0b472306a42869",
+      "old_size_bytes": 182234,
+      "sha256": "bdf0575eac51b8d247c741ca57535e956cbc879e5506f60fdc5bf4f50cd8d302",
+      "size_bytes": 197688,
+      "role": "module",
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "installed_artifact_id": "installer-module:hermes_installer.authority.listener_activation",
+      "installed_mode": 292,
+      "preload": true,
+      "requirement_ids": [
+        "VD-T180.6",
+        "VD-T183.5"
+      ]
+    },
+    {
+      "source_path": "src/hermes_installer/authority/native_worker_start_recipe.py",
+      "module": "hermes_installer.authority.native_worker_start_recipe",
+      "installed_path": "lib/python/hermes_installer/authority/native_worker_start_recipe.py",
+      "old_sha256": "e58acef2d612c10863654c05c0ade47a6e00f18d57f9e477c49ce35a957b560d",
+      "old_size_bytes": 20416,
+      "sha256": "87cc2071f39e4cc2fe636cc9005c39f3c21d1c57f412944de474d198d7144afd",
+      "size_bytes": 20416,
+      "role": "module",
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "installed_artifact_id": "installer-module:hermes_installer.authority.native_worker_start_recipe",
+      "installed_mode": 292,
+      "preload": true,
+      "requirement_ids": [
+        "VD-T180.6",
+        "VD-T183.5"
+      ]
+    },
+    {
+      "source_path": "src/hermes_installer/authority/runtime_composition.py",
+      "module": "hermes_installer.authority.runtime_composition",
+      "installed_path": "lib/python/hermes_installer/authority/runtime_composition.py",
+      "old_sha256": "f710ede7fe6a728a0e128f7f852ba15d604e423c19f860ee3adccdb2895f8f60",
+      "old_size_bytes": 116776,
+      "sha256": "b9b285f6d97b2fb851bae7809adeafb0927b07a6282c7bf74e1a135a665c2f9a",
+      "size_bytes": 120007,
+      "role": "module",
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "installed_artifact_id": "installer-module:hermes_installer.authority.runtime_composition",
+      "installed_mode": 292,
+      "preload": true,
+      "requirement_ids": [
+        "VD-T180.6",
+        "VD-T183.5"
+      ]
+    },
+    {
+      "source_path": "src/hermes_installer/authority/service.py",
+      "module": "hermes_installer.authority.service",
+      "installed_path": "lib/python/hermes_installer/authority/service.py",
+      "old_sha256": "64693b0be4ac7a8c80547db51517723a09054d56015d520dfc717386d35be3e3",
+      "old_size_bytes": 367542,
+      "sha256": "e7d8bd1ff1860df60caa892a0641abfb6386d44c117fb735bb8e304404006412",
+      "size_bytes": 369857,
+      "role": "module",
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "installed_artifact_id": "installer-module:hermes_installer.authority.service",
+      "installed_mode": 292,
+      "preload": true,
+      "requirement_ids": [
+        "VD-T180.6",
+        "VD-T183.5"
+      ]
+    },
+    {
+      "source_path": "src/hermes_installer/authority/setup_policy_publication.py",
+      "module": "hermes_installer.authority.setup_policy_publication",
+      "installed_path": "lib/python/hermes_installer/authority/setup_policy_publication.py",
+      "old_sha256": "bf6556d1402e03c924f913c39976d82403d1733673983f947edfabc7b3d7f34f",
+      "old_size_bytes": 110973,
+      "sha256": "0f1af94ac39dabb150a0e4d4a3c2e903883e6e3dd4eda3099ff57bfa9f40bddc",
+      "size_bytes": 149213,
+      "role": "module",
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "installed_artifact_id": "installer-module:hermes_installer.authority.setup_policy_publication",
+      "installed_mode": 292,
+      "preload": true,
+      "requirement_ids": [
+        "VD-T180.6",
+        "VD-T183.5"
+      ]
+    },
+    {
+      "source_path": "src/hermes_installer/managed_process_custodian.py",
+      "module": "hermes_installer.managed_process_custodian",
+      "installed_path": "lib/python/hermes_installer/managed_process_custodian.py",
+      "old_sha256": "1bb1267e5e95307da0bf78775a3450ce48a5762f8cff6e5600db2ba8af907657",
+      "old_size_bytes": 631187,
+      "sha256": "5a74aa6c256d6e26e21071c8726d409c5e414b34744d28077f794efd35ff0877",
+      "size_bytes": 636592,
+      "role": "module",
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "installed_artifact_id": "installer-module:hermes_installer.managed_process_custodian",
+      "installed_mode": 292,
+      "preload": true,
+      "requirement_ids": [
+        "VD-T180.6",
+        "VD-T183.5"
+      ]
+    },
+    {
+      "source_path": "src/hermes_installer/registry/resource_backends.py",
+      "module": "hermes_installer.registry.resource_backends",
+      "installed_path": "lib/python/hermes_installer/registry/resource_backends.py",
+      "old_sha256": "e59813aa36754a0e08fece9c9c2a83ec9c21a6807935a6c83f7b09cca6792414",
+      "old_size_bytes": 27026,
+      "sha256": "b7e3fb94b20a21c03c7ae521bea1ca808f7de323c5edd0c3d6d9741b29174843",
+      "size_bytes": 27262,
+      "role": "module",
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "installed_artifact_id": "installer-module:hermes_installer.registry.resource_backends",
+      "installed_mode": 292,
+      "preload": true,
+      "requirement_ids": [
+        "VD-T180.6",
+        "VD-T183.5"
+      ]
+    },
+    {
+      "source_path": "src/hermes_installer/root_setup.py",
+      "module": "hermes_installer.root_setup",
+      "installed_path": "lib/python/hermes_installer/root_setup.py",
+      "old_sha256": "5bd49b6e0105d65d342302df953ed41f6ab0f0edd2bb90d7e7c2b4b4ada30563",
+      "old_size_bytes": 62517,
+      "sha256": "39344727837d85224fda7cc721f2ad75521271df6c6e18f8a2cf5bd9cd1beae0",
+      "size_bytes": 62989,
+      "role": "module",
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "installed_artifact_id": "installer-module:hermes_installer.root_setup",
+      "installed_mode": 292,
+      "preload": true,
+      "requirement_ids": [
+        "VD-T180.6",
+        "VD-T183.5"
+      ]
+    }
+  ],
+  "new_reviewed_module_members": [
+    {
+      "module_name": "hermes_installer.authority.durable_pm_runtime",
+      "source_path": "src/hermes_installer/authority/durable_pm_runtime.py",
+      "installed_path": "lib/python/hermes_installer/authority/durable_pm_runtime.py",
+      "artifact_id": "installer-module:hermes_installer.authority.durable_pm_runtime",
+      "sha256": "45c7898f7f3cf371d07ff9bc7f37efa75c8160e6baabe314d0e82fc10988a520",
+      "size_bytes": 19104,
+      "role": "module",
+      "mode": 292,
+      "preload": true,
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "requirement_ids": [
+        "VD-T180.6",
+        "VD-T183.5"
+      ],
+      "source_authority": "exact verified installer candidate source snapshot plus held installed module receipt; no separate raw downloader identity"
+    },
+    {
+      "module_name": "hermes_installer.authority.native_profile_task_homes",
+      "source_path": "src/hermes_installer/authority/native_profile_task_homes.py",
+      "installed_path": "lib/python/hermes_installer/authority/native_profile_task_homes.py",
+      "artifact_id": "installer-module:hermes_installer.authority.native_profile_task_homes",
+      "sha256": "afa80f02065228d454811c0d2653e378d1a9e0bd6e0b494ae9a1536796eaec0f",
+      "size_bytes": 39348,
+      "role": "module",
+      "mode": 292,
+      "preload": true,
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "requirement_ids": [
+        "VD-T180.6",
+        "VD-T183.5"
+      ],
+      "source_authority": "exact verified installer candidate source snapshot plus held installed module receipt; no separate raw downloader identity"
+    },
+    {
+      "module_name": "hermes_installer.authority.selected_startup_intents",
+      "source_path": "src/hermes_installer/authority/selected_startup_intents.py",
+      "installed_path": "lib/python/hermes_installer/authority/selected_startup_intents.py",
+      "artifact_id": "installer-module:hermes_installer.authority.selected_startup_intents",
+      "sha256": "1da2c9a0dededd930fe98695455dc438a77572612a34b4774b134566ec2d262d",
+      "size_bytes": 28974,
+      "role": "module",
+      "mode": 292,
+      "preload": true,
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "requirement_ids": [
+        "VD-T180.6",
+        "VD-T183.5"
+      ],
+      "source_authority": "exact verified installer candidate source snapshot plus held installed module receipt; no separate raw downloader identity"
+    }
+  ],
+  "catalog_replacements": [
+    {
+      "artifact_id": "installer-reviewed-source-bootstrap-runtime-factory-v180",
+      "filename": "bootstrap_runtime_factory.py",
+      "source_url": "https://raw.githubusercontent.com/Togarriapa/HermesAgent_Installer/8185a3f59f1c153f68d8889b2fce8c96c51310e6/src/hermes_installer/authority/bootstrap_runtime_factory.py",
+      "version": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "sha256": "949e4bce79bfff32c9a8bb15152540968aca84b575d253725c80e3ecf23f64b7",
+      "size_bytes": 691421,
+      "max_bytes": 691421,
+      "archive_format": null,
+      "archive_root": null,
+      "max_tree_bytes": 1,
+      "tree_files": [],
+      "redirect_hosts": []
+    },
+    {
+      "artifact_id": "installer-native-hermes-worker-start-adapter-v183",
+      "filename": "native_worker_start_recipe.py",
+      "source_url": "https://raw.githubusercontent.com/Togarriapa/HermesAgent_Installer/8185a3f59f1c153f68d8889b2fce8c96c51310e6/src/hermes_installer/authority/native_worker_start_recipe.py",
+      "version": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "sha256": "87cc2071f39e4cc2fe636cc9005c39f3c21d1c57f412944de474d198d7144afd",
+      "size_bytes": 20416,
+      "max_bytes": 20416,
+      "archive_format": null,
+      "archive_root": null,
+      "max_tree_bytes": 1,
+      "tree_files": [],
+      "redirect_hosts": []
+    },
+    {
+      "artifact_id": "installer-module:hermes_installer.authority.native_worker_start_recipe",
+      "filename": "native_worker_start_recipe.py",
+      "source_url": "https://raw.githubusercontent.com/Togarriapa/HermesAgent_Installer/8185a3f59f1c153f68d8889b2fce8c96c51310e6/src/hermes_installer/authority/native_worker_start_recipe.py",
+      "version": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "sha256": "87cc2071f39e4cc2fe636cc9005c39f3c21d1c57f412944de474d198d7144afd",
+      "size_bytes": 20416,
+      "max_bytes": 20416,
+      "archive_format": null,
+      "archive_root": null,
+      "max_tree_bytes": 1,
+      "tree_files": [],
+      "redirect_hosts": []
+    },
+    {
+      "artifact_id": "installer-module:hermes_installer.registry.resource_backends",
+      "filename": "resource_backends.py",
+      "source_url": "https://raw.githubusercontent.com/Togarriapa/HermesAgent_Installer/8185a3f59f1c153f68d8889b2fce8c96c51310e6/src/hermes_installer/registry/resource_backends.py",
+      "version": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "sha256": "b7e3fb94b20a21c03c7ae521bea1ca808f7de323c5edd0c3d6d9741b29174843",
+      "size_bytes": 27262,
+      "max_bytes": 27262,
+      "archive_format": null,
+      "archive_root": null,
+      "max_tree_bytes": 1,
+      "tree_files": [],
+      "redirect_hosts": []
+    }
+  ],
+  "candidate_metadata_observations": [
+    {
+      "source_path": "src/hermes_installer/authority/installer_release_build.py",
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "sha256": "6355198dd122046469b7aba2d9c02ffae43fc17dd3b7263c1e782b560f06b12f",
+      "size_bytes": 258915,
+      "authority": "candidate-held source/import metadata only; not a new static catalog artifact or structural builder self-pin"
+    },
+    {
+      "source_path": "src/hermes_installer/authority/installer_release.py",
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "sha256": "aceb07d75a0723ae7abc80aba68aa544056ff9eec49885b73ca0af7190a3780e",
+      "size_bytes": 80261,
+      "authority": "candidate-held source/import metadata only; not a new static catalog artifact or structural builder self-pin"
+    },
+    {
+      "source_path": "src/hermes_installer/authority/native_materialization.py",
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "sha256": "81be2fae355d38bd5c6e623b731c01faf95a3267e1e6031c137afa94745aa657",
+      "size_bytes": 94827,
+      "authority": "candidate-held source/import metadata only; not a new static catalog artifact or structural builder self-pin"
+    },
+    {
+      "source_path": "src/hermes_installer/authority/resource_task_authority.py",
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "sha256": "f96d307cba01a6f8413132f1f2cbb3d04a8f57451e68c0e7b3afbea3b7db92e9",
+      "size_bytes": 30042,
+      "authority": "candidate-held source/import metadata only; not a new static catalog artifact or structural builder self-pin"
+    },
+    {
+      "source_path": "src/hermes_installer/authority/resource_task_execution.py",
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "sha256": "f460d7b7880f8fb0b98c5cf95a3fe949b57fc4d8ce1b98ae00dbc1811dd21c37",
+      "size_bytes": 32695,
+      "authority": "candidate-held source/import metadata only; not a new static catalog artifact or structural builder self-pin"
+    },
+    {
+      "source_path": "src/hermes_installer/authority/resource_jobs.py",
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "sha256": "abcc5652f098d946a26a01420ac3b0bcfc57f2bd5c296e7f97791ab55c225150",
+      "size_bytes": 180082,
+      "authority": "candidate-held source/import metadata only; not a new static catalog artifact or structural builder self-pin"
+    },
+    {
+      "source_path": "src/hermes_installer/registry/native.py",
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "sha256": "5475ebeee0b084747238b8af5d28d79d5b2f0d043a5dc84c0e6a776b5d150229",
+      "size_bytes": 25797,
+      "authority": "candidate-held source/import metadata only; not a new static catalog artifact or structural builder self-pin"
+    },
+    {
+      "source_path": "src/hermes_installer/registry/native_install.py",
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "sha256": "d201d857a61b075ab9dad046187bdc4b0227accc359d5c1347ad883c8c56f97c",
+      "size_bytes": 23630,
+      "authority": "candidate-held source/import metadata only; not a new static catalog artifact or structural builder self-pin"
+    },
+    {
+      "source_path": "src/hermes_installer/registry/resource_jobs.py",
+      "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+      "sha256": "ec71c650121c62c1000753baee410bcbd9907ae385eab1da6e76a0e1c93fb369",
+      "size_bytes": 96701,
+      "authority": "candidate-held source/import metadata only; not a new static catalog artifact or structural builder self-pin"
+    }
+  ],
+  "semantic_review": [
+    "Jarvis display name maps the actual upstream default alias while stable selected source/profile identities remain distinct; no rewriting other upstream profiles/skills or claiming native materialization is a functional task.",
+    "Native task home admission binds the selected_home_binding digest and exact current task/source/controller; already consumed source must remain current. Its independent held home FD survives the temporary source wrapper close. Manager mounts only that held directory and observes the selected inode at /hermes; no caller HOME or unrelated profile.",
+    "Durable PM verification retains the actual committed venv and base roots and exact active publication/crosswalk/signed choice. Duplicate FDs have recorded inode ownership and explicit transfer/release, avoiding closing a reused descriptor; no base archive hash replaces actual venv identity.",
+    "Runtime composition initializes the closed empty profile_task_adapters map before conditional jobs, preserving no-job composition and attaching the real home registry after current source controllers.",
+    "v232 implementation preserves exact base-only pending wrapping, nested account stage and both outer actor checks; formatter checks exact diagnostic type before generic pending and revalidates finite string stage. RuntimeError/syscall/authority/currentness/TTL checks remain unchanged.",
+    "Compiler/publication/enrollment/service/listener changes retain current protected authority core/native profile-home crosswalk and typed source/runtime/identity joins. Snapshot membership does not turn pending display/provider/source seams into active authority.",
+    "Nested native recipe resource_backends tuple already equals the independently measured committed backend bytes. No new recipe literal correction is required by pin application; parent recipe is measured after that correction."
+  ],
+  "application": {
+    "owner": "Luna source integrator after root publishes this spec-only review",
+    "outer_tables": [
+      "src/hermes_installer/authority/installer_release_build.py::REVIEWED_SOURCE_MODULES",
+      "src/hermes_installer/authority/installer_release.py::REVIEWED_SOURCE_MODULES"
+    ],
+    "update": "Replace only the thirteen listed old tuple digest/size values at their unchanged exact module/source/member/role identities in both tables. Add exactly the three new members with their measured digest/size and role module/mode0444. Do not widen roles/prefixes or add arbitrary candidate modules.",
+    "preload": "The existing installed verifier table-driven importer preloads the exact added module rows before actor capture. Add three fixed importlib.import_module calls for the named new modules within builder _load_installed_setup_module_closure before source actor observation. Keep root_setup/factory source bytes unchanged during pin application. This structural builder/verifier modification is candidate-held metadata, not a self-pin or a reason to fabricate future hashes.",
+    "catalog": "Replace exactly four existing catalog rows with catalog_replacements including immutable source URL/version/SHA/size/max_bytes; preserve artifact IDs and other fields. New snapshot-held modules do not require new downloaded catalog artifacts or colon-parser expansion.",
+    "plan_membership": "Preserve current finite PlanResolver membership and exact existing source/installed aliases. Do not grant executable/source-observer/backend authority from catalog presence. All module rows are read-only root release members.",
+    "nested_alias": "native_worker_start_recipe._INSTALLER_MEMBER_PINS resource_backends is already b7e3fb94b20a21c03c7ae521bea1ca808f7de323c5edd0c3d6d9741b29174843/27262; retain it. Factory reads current reviewed recipe pins dynamically; no factory source-self-hash literal.",
+    "order": [
+      "Publish this exact spec-only source review",
+      "Luna applies listed outer table/catalog/preload changes without modifying approved leaves",
+      "Root independently measures actual resulting structural metadata and confirms all leaf tuples/import closure",
+      "Run one coherent full suite/strict specs/baseline checks and actual isolated candidate/Pi staging separately"
+    ]
+  },
+  "validation": {
+    "independent_source_contracts": "54 passed, 4 skipped on dedicated Python3.14: task homes, durable PM, resource backends, native install handoff, root setup and setup choice contracts",
+    "independent_composition_intent_contracts": "13 passed: authority runtime composition and selected startup intent frames",
+    "owner_diagnostic_evidence": "Reported isolated ARM64 76 passed/1 unrelated test deselected, host65 passed/1 skipped for v232. Evidence records exact source checkpoint separately; no target cause established.",
+    "native_source_audit": "Root reports full actual native materialization 208 profiles/396 skills and sole default Jarvis. This establishes discovery/materialization only, not actual selected task/provider/process runtime acceptance.",
+    "linux_mount_fixture": "Actual ARM64/systemd bind fixture is partial filesystem effect evidence; source-recorded fixture uses direct effect and is not the production typed task-home issuer/handler.",
+    "required_failure_checks": [
+      "Changed/foreign leaf bytes, size, role, member path or source snapshot fail release staging/verification",
+      "Missing delayed module import/member fails before sealing; installed isolation must prove imports originate from staged release without checkout fallback",
+      "Stale publication/choice/controller/source or mismatched task home blocks admission",
+      "FD ownership transfer/close preserves unrelated reused descriptors",
+      "Malformed pending stage/subclass and original secret messages remain bounded",
+      "No-job composition retains empty typed adapters; absent real native/provider/display proof remains unavailable"
+    ],
+    "full_suite": "Root owns one full coherent suite after pin application; not duplicated or claimed passed here"
+  },
+  "acceptance": "Existing VD-T180.6/VD-T183.5/VD-T232.2 remain OPEN. All AC01..18 OPEN. No runtime/Pi/HA/account/provider/loaded worker acceptance; frozen baseline160 and prior amendments unchanged."
+}

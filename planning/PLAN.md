@@ -209,3 +209,6 @@ Typed initial pending diagnostics v232: `plans/amendments/2026-10-10-typed-initi
 
 BD-T232.1 source-fixture evidence: `evidence/development/EV-BD-T232.1-bootstrap-pending-diagnostics-20261010.json`; target stage/cause unknown, source review and all acceptance remain OPEN.
 Active authority retained receipt aggregate v231: plans/amendments/2026-10-10-active-authority-receipt-aggregate-v231.md; HI-T231.1 → BD-T231.2 → VD-T231.3 OPEN. Actual source/NSS/runtime/policy aggregate renders before publication, same generation activates afterward; prepared/active, local-owner/Authentik and optional remote remain distinct; all AC OPEN.
+
+
+v228 exact8185 source review: `plans/amendments/2026-10-10-jarvis-runtime-source-pin-review-v228.md`;13 outer leaf tuples +3 exact held module members/preloads +4 existing catalog rows. Existing VD-T180.6/VD-T183.5/VD-T232.2 OPEN; coherent full checks and actual runtime evidence pending. All AC OPEN.

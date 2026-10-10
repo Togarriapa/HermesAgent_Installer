@@ -1227,3 +1227,17 @@ The installer SHALL apply `planning/typed-initial-pending-diagnostics-v232.json`
 #### Scenario: Diagnostic field changed after construction
 - **WHEN** the step is non-string or absent from the finite catalog
 - **THEN** formatting returns the existing fixed generic pending message without secrets or authority relaxation
+
+
+## ADDED Requirements
+
+### Requirement: Exact Jarvis cohort source closure
+The installer SHALL apply the finite source membership and byte tuples in `planning/jarvis-runtime-source-pin-review-v228.json`, preserving the immutable selected source snapshot, held module custody and unchanged execution authority.
+
+#### Scenario: Delayed module is absent or comes from a checkout
+- **WHEN** any of the three selected fixed module members cannot be imported from the sealed installed release
+- **THEN** staging or actor verification fails without source fallback or expanded module-prefix authority
+
+#### Scenario: Materialization or direct mount fixture succeeds
+- **WHEN** exact source profiles/skills or isolated bind effects pass
+- **THEN** evidence retains that phase and does not promote task/provider/runtime/Pi acceptance
