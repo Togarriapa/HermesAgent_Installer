@@ -198,8 +198,15 @@ def test_runtime_dependency_receipt_requires_exact_locked_version():
 
 def test_runtime_lock_requires_version_and_hash_pins():
     lock = Path(__file__).parents[2] / release_build.RUNTIME_REQUIREMENTS_PATH
-    parsed = release_build._locked_package_versions(lock.read_bytes())
+    lock_bytes = lock.read_bytes()
+    parsed = release_build._locked_package_versions(lock_bytes)
     assert parsed["pyyaml"] == frozenset({"6.0.3"})
+    # Hash-locked requirements intentionally do not name a platform wheel;
+    # the provisioner selects the reviewed wheel by its exact digest.
+    assert release_build._lock_contains_exact_pyyaml(lock_bytes)
+    without_reviewed_wheel = lock_bytes.replace(
+        f"    --hash=sha256:{release_build.BOOTSTRAP_PYYAML_SHA256} \\\n".encode(), b"")
+    assert not release_build._lock_contains_exact_pyyaml(without_reviewed_wheel)
     with pytest.raises(release_build.InstallerReleaseBuildError):
         release_build._locked_package_versions(b"PyYAML==6.0.3\n")
 
