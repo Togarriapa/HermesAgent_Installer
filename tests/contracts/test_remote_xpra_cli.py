@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import os
-import shlex
 import subprocess
 import sys
 import unittest
@@ -37,7 +36,7 @@ checks = {
     "http_scripts": "no", "ssh_upgrade": False, "rfb_upgrade": 0,
     "rdp_upgrade": False, "daemon": False, "systemd_run": "no",
     "exit_with_children": True, "attach": False,
-    "html": "on", "start_child": [sys.argv[3]],
+    "html": "on", "start_child": [], "use_display": "no", "xvfb": sys.argv[3],
     "bind_tcp": ["127.0.0.1:14500"],
     "socket_dirs": [sys.argv[2]], "socket_permissions": "600",
 }
@@ -64,6 +63,7 @@ class PinnedXpraCliTests(unittest.TestCase):
             frozenset({"HermesDesktop"}), uid=1000,
             hermes_arguments=("--user-data-dir=/var/lib/hermes-remote/profile",),
             hermes_environment={"HERMES_HOME": "/opt/hermes"},
+            xvfb_artifact_ref="artifact:xvfb:" + "b" * 64,
         )
         command = build_xpra_command(spec, "/usr/bin/xpra", runtime)
         # Xpra's ``start-*`` spellings are mode aliases, not Boolean options.
@@ -71,6 +71,8 @@ class PinnedXpraCliTests(unittest.TestCase):
         # actual option switches; a bare --control is also an invalid bool
         # spelling (the supported value form is --control=no).
         self.assertEqual(command[1:3], ["seamless", ":81"])
+        self.assertFalse(any(item.startswith("--start-child") for item in command))
+        self.assertEqual(command[command.index("--xvfb") + 1], spec.xvfb_artifact_ref)
         for unsupported in (
             "--start-new-session", "--start-desktop", "--start-shadow",
             "--start-proxy", "--control",
@@ -83,7 +85,7 @@ class PinnedXpraCliTests(unittest.TestCase):
         )
         result = subprocess.run(
             [sys.executable, "-c", _PARSER_PROBE, json.dumps(command[1:]), str(runtime),
-             shlex.join([spec.hermes_executable, *spec.hermes_arguments])],
+             spec.xvfb_artifact_ref],
             capture_output=True, text=True, env=env, timeout=15,
         )
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)

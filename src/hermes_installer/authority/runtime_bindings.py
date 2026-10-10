@@ -14,10 +14,15 @@ from typing import Any, Callable, Mapping
 
 from hermes_installer.protected_enrollment import (
     EnrollmentDenied,
+    PrivateLoopbackNetworkEnrollment,
     ProtectedBuildCatalog,
     ProtectedDeviceCatalog,
     ProtectedEnrollmentCatalog,
     ProtectedRootJournalCatalog,
+    ProtectedSelectedResourceExecution,
+    SelectedApplicationRuntimeEnrollment,
+    RemoteStartupEnrollment,
+    RootSelectedRemoteStartup,
 )
 
 
@@ -102,6 +107,14 @@ class RootRuntimeBindings:
     resource_credential_bindings: Mapping[tuple[str, str], ResourceCredentialBinding] = MappingProxyType({})
     resource_controller_role_records: tuple[Mapping[str, Any], ...] = ()
     resource_backend_records: tuple[Mapping[str, Any], ...] = ()
+    remote_startup_records: tuple[Mapping[str, Any], ...] = ()
+    private_loopback_network_records: tuple[Mapping[str, Any], ...] = ()
+    selected_resource_execution_records: tuple[Mapping[str, Any], ...] = ()
+    resource_scope_binding_records: tuple[Mapping[str, Any], ...] = ()
+    selected_application_runtime_records: tuple[Mapping[str, Any], ...] = ()
+    native_materialization: Any | None = None
+    native_registry: Any | None = None
+    native_discoveries: Mapping[str, Any] = MappingProxyType({})
 
     def resolve_composio_channel_enrollment(self, enrollment_id: str,
                                             resource_generation: str) -> Mapping[str, Any]:
@@ -127,6 +140,242 @@ class RootRuntimeBindings:
         # Account/setup receipt handles still require their own root verifier;
         # this metadata accessor does not make discovery or labels proof.
         return row
+
+    def resolve_private_loopback_network(
+        self, network_id: str, *, service_generation_digest: str,
+    ) -> PrivateLoopbackNetworkEnrollment:
+        if service_generation_digest != self.enrollment_catalog.digest:
+            raise EnrollmentDenied("private loopback selection belongs to a stale service generation")
+        rows = [row for row in self.private_loopback_network_records if row.get("id") == network_id]
+        if len(rows) != 1:
+            raise EnrollmentDenied("private loopback network is absent or ambiguous")
+        network = PrivateLoopbackNetworkEnrollment.from_protected_record(
+            rows[0], digest=self.enrollment_catalog.digest,
+        )
+        for enrollment_id in network.member_enrollment_ids:
+            service = self.enrollment_catalog.resolve_enrollment(enrollment_id)
+            if service.namespace_identity != network.namespace_identity:
+                raise EnrollmentDenied("private loopback members do not join one protected namespace")
+        artifact = self.artifact_catalog.artifacts.get(network.policy_artifact_id)
+        if artifact is None or artifact.sha256 != network.policy_sha256:
+            raise EnrollmentDenied("private loopback policy artifact is absent or changed")
+        return network
+
+    def resolve_remote_startup(self, remote_enrollment_id: str) -> RootSelectedRemoteStartup:
+        """Resolve a finite active startup selection; runtime proofs remain separate."""
+        if not isinstance(remote_enrollment_id, str) or not remote_enrollment_id:
+            raise EnrollmentDenied("remote startup enrollment ID is invalid")
+        rows = [row for row in self.remote_startup_records
+                if row.get("remote_enrollment_id") == remote_enrollment_id]
+        if len(rows) != 1:
+            raise EnrollmentDenied("remote startup selection is absent or ambiguous")
+        startup = RemoteStartupEnrollment.from_protected_record(
+            rows[0], digest=self.enrollment_catalog.digest,
+        )
+        remote = self.remote_session_enrollments.get(remote_enrollment_id)
+        if remote is None or getattr(getattr(remote, "session", None), "enrollment_id", None) != remote_enrollment_id:
+            raise EnrollmentDenied("remote startup does not join a parsed active remote session")
+        try:
+            display = self.enrollment_catalog.resolve(startup.display_enrollment_id, startup.display_generation)
+            gateway = self.enrollment_catalog.resolve(startup.gateway_enrollment_id, startup.gateway_generation)
+            desktop = self.enrollment_catalog.resolve(startup.desktop_enrollment_id, startup.desktop_generation)
+            for service, operation_id in (
+                (display, startup.display_operation_id),
+                (gateway, startup.gateway_operation_id),
+                (desktop, startup.desktop_operation_id),
+            ):
+                binding = self.enrollment_catalog.resolve_operation(
+                    service.enrollment_id, service.generation, "process.start",
+                )
+                recipe = self.enrollment_catalog.resolve_launch_recipe(
+                    service.enrollment_id, service.generation, operation_id,
+                )
+                managed = self.process_profiles.get(service.profile_id)
+                if (binding.profile_id != service.profile_id or recipe.operation_id != operation_id
+                        or recipe.process_start_target != binding.target
+                        or managed is None or managed.generation != service.generation
+                        or managed.enrollment_id != service.enrollment_id
+                        or managed.owner_uid != service.service_uid or managed.owner_gid != service.service_gid):
+                    raise EnrollmentDenied("remote startup recipe does not join its selected process identity")
+            remote_row = next((row for row in self.remote_session_records
+                               if row.get("id") == remote_enrollment_id), None)
+            if (remote_row is None or remote_row.get("gateway_profile_id") != gateway.profile_id
+                    or remote_row.get("native_desktop_profile_id") != desktop.profile_id
+                    or remote_row.get("native_generation") != desktop.generation):
+                raise EnrollmentDenied("remote startup roles do not match the protected remote session")
+            observation, _ = self._remote_observation_join(remote_enrollment_id)
+            if (observation.get("display_server_profile_id") != display.profile_id
+                    or observation.get("display_server_generation") != display.generation
+                    or observation.get("native_window_enrollment_id") != desktop.enrollment_id
+                    or desktop.service_gid != display.service_gid):
+                raise EnrollmentDenied("remote startup does not join the selected native window and shared Xauthority reader group")
+            network = self.resolve_private_loopback_network(
+                startup.network_enrollment_id,
+                service_generation_digest=self.enrollment_catalog.digest,
+            )
+            selected = (display, gateway, desktop)
+            if (not {service.enrollment_id for service in selected}.issubset(network.member_enrollment_ids)
+                    or any(service.namespace_identity != network.namespace_identity for service in selected)):
+                raise EnrollmentDenied("remote startup roles do not join the selected private network")
+            overlay = self.artifact_catalog.artifacts.get(startup.xpra_xauthority_overlay_artifact_id)
+            if overlay is None or overlay.sha256 != startup.xpra_xauthority_overlay_sha256:
+                raise EnrollmentDenied("selected Xpra overlay pin is absent from the artifact catalog")
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            raise EnrollmentDenied("remote startup selection is stale or lacks a protected process join") from exc
+        return RootSelectedRemoteStartup(
+            startup=startup, remote_session=remote, display_service=display,
+            gateway_service=gateway, desktop_service=desktop, network=network,
+            service_generation_digest=self.enrollment_catalog.digest,
+            observation=MappingProxyType(dict(observation)),
+        )
+
+    def resolve_selected_resource_record(
+        self, resource_id: str, *, resource_generation: str, profile_id: str,
+    ) -> ProtectedSelectedResourceExecution:
+        """Resolve only protected selection metadata; materialization proof is separate."""
+        rows = [raw for raw in self.selected_resource_execution_records
+                if raw.get("resource_id") == resource_id
+                and raw.get("resource_generation") == resource_generation
+                and raw.get("profile_id") == profile_id]
+        if len(rows) != 1:
+            raise EnrollmentDenied("selected resource execution is absent or ambiguous")
+        selected = ProtectedSelectedResourceExecution.from_protected_record(
+            rows[0], service_generation_digest=self.enrollment_catalog.digest,
+        )
+        try:
+            service = self.enrollment_catalog.resolve_profile_generation(profile_id, selected.profile_generation)
+        except (AttributeError, TypeError, ValueError, PermissionError):
+            raise EnrollmentDenied("selected resource process generation is absent or stale") from None
+        if service.profile_id != selected.profile_id or service.generation != selected.profile_generation:
+            raise EnrollmentDenied("selected resource does not match its active service generation")
+        backends = [row for row in self.resource_backend_records
+                    if row.get("id") == selected.backend_enrollment_id]
+        if len(backends) != 1:
+            raise EnrollmentDenied("selected resource backend is absent or ambiguous")
+        backend = backends[0]
+        if (backend.get("resource_id") != selected.resource_id
+                or backend.get("profile_id") != selected.profile_id
+                or backend.get("profile_generation") != selected.profile_generation
+                or backend.get("generation") != selected.resource_generation
+                or backend.get("operation") != selected.operation
+                or backend.get("target_id") != selected.target_id
+                or backend.get("recipient") != selected.recipient
+                or backend.get("principal_id") != service.principal_id):
+            raise EnrollmentDenied("selected resource backend does not match the protected selection")
+        scopes = [row for row in self.resource_scope_binding_records
+                  if row.get("id") == backend.get("scope_binding_id")]
+        if (len(scopes) != 1 or scopes[0].get("resource_id") != selected.resource_id
+                or scopes[0].get("profile_id") != selected.profile_id
+                or scopes[0].get("profile_generation") != selected.profile_generation
+                or scopes[0].get("resource_generation") != selected.resource_generation
+                or scopes[0].get("backend_enrollment_id") != selected.backend_enrollment_id):
+            raise EnrollmentDenied("selected resource scope does not join its backend and generations")
+        rule = self.protected_rules.get((selected.capability, selected.operation, selected.target_id))
+        if rule is None or getattr(rule, "recipient", None) != selected.recipient:
+            raise EnrollmentDenied("selected resource capability and target lack an exact protected rule")
+        # This row contains only hashes and opaque handles. Do not treat it as
+        # an effective spec until a root-held materialization receipt resolver
+        # verifies the pinned source and transformed member bytes.
+        return selected
+
+    def resolve_selected_resource_execution(
+        self, resource_id: str, *, resource_generation: str, profile_id: str,
+    ) -> Any:
+        """Resolve executable resource authority only from a retained native receipt.
+
+        The active row is a selector, not an effective spec. A root materializer,
+        registry and discovery from the same verified assembly must revalidate
+        the original source and transformed member before creating the runtime
+        DTO consumed by handlers.
+        """
+        selected = self.resolve_selected_resource_record(
+            resource_id, resource_generation=resource_generation, profile_id=profile_id,
+        )
+        row = next(raw for raw in self.selected_resource_execution_records
+                   if raw.get("resource_id") == resource_id
+                   and raw.get("resource_generation") == resource_generation
+                   and raw.get("profile_id") == profile_id)
+        if (self.native_materialization is None or self.native_registry is None
+                or not isinstance(self.native_discoveries, Mapping)):
+            raise EnrollmentDenied("selected resource source/member receipt verifier is unavailable")
+        discovery = self.native_discoveries.get(selected.profile_id)
+        if discovery is None:
+            raise EnrollmentDenied("selected resource native discovery is unavailable")
+        try:
+            service = self.enrollment_catalog.resolve_profile_generation(
+                selected.profile_id, selected.profile_generation,
+            )
+            from hermes_installer.registry.resources_runtime import (
+                resolve_selected_resource_execution_from_materialization,
+            )
+            return resolve_selected_resource_execution_from_materialization(
+                native_materialization=self.native_materialization,
+                protected_selection=row,
+                native_registry=self.native_registry,
+                discovery=discovery,
+                enrollment_id=service.enrollment_id,
+                service_generation=service.generation,
+                service_generation_digest=selected.service_generation_digest,
+            )
+        except EnrollmentDenied:
+            raise
+        except Exception:
+            raise EnrollmentDenied("selected resource source/member receipt is stale or invalid") from None
+
+    def resolve_selected_application_runtime_record(
+        self, application_id: str, *, profile_id: str,
+    ) -> SelectedApplicationRuntimeEnrollment:
+        """Join active application metadata to its selected service recipe.
+
+        Receipt handles in this DTO remain selectors only. Actual immutable
+        source-generation and isolated-runtime receipt verification is a
+        separate required step before any application can execute.
+        """
+        rows = [row for row in self.selected_application_runtime_records
+                if row.get("application_id") == application_id and row.get("profile_id") == profile_id]
+        if len(rows) != 1:
+            raise EnrollmentDenied("selected application runtime is absent or ambiguous")
+        selected = SelectedApplicationRuntimeEnrollment.from_protected_record(
+            rows[0], service_generation_digest=self.enrollment_catalog.digest,
+        )
+        try:
+            service = self.enrollment_catalog.resolve_profile_generation(
+                selected.profile_id, selected.profile_generation,
+            )
+            recipe = self.enrollment_catalog.resolve_launch_recipe(
+                service.enrollment_id, service.generation, selected.record["operation_id"],
+            )
+            start = self.enrollment_catalog.resolve_operation(
+                service.enrollment_id, service.generation, "process.start",
+            )
+            managed = self.process_profiles.get(profile_id)
+        except (AttributeError, KeyError, TypeError, ValueError, PermissionError):
+            raise EnrollmentDenied("selected application service recipe is absent or stale") from None
+        if (service.principal_id != selected.record["principal_id"] or managed is None
+                or managed.generation != service.generation or managed.enrollment_id != service.enrollment_id
+                or managed.owner_uid != service.service_uid or managed.owner_gid != service.service_gid
+                or service.roots.work_id != selected.record["work_root_id"]
+                or service.roots.data_id != selected.record["data_root_id"]
+                or selected.record["max_lifetime_seconds"] > managed.max_lifetime_seconds
+                or selected.record["max_lifetime_seconds"] > recipe.recipe.max_lifetime_seconds
+                or managed.memory_max_bytes is None
+                or selected.record["max_memory_bytes"] > managed.memory_max_bytes
+                or selected.record["max_workers"] != 1
+                or selected.record["metered_budget_usd"] != 0
+                or recipe.process_start_target != selected.record["process_start_target"]
+                or start.target != selected.record["process_start_target"]):
+            raise EnrollmentDenied("selected application does not match its active service roots and recipe")
+        artifacts = getattr(self.artifact_catalog, "artifacts", None)
+        if not isinstance(artifacts, Mapping):
+            raise EnrollmentDenied("selected application artifact catalog is unavailable")
+        for artifact_id, digest, label in (
+            (selected.record["request_schema_id"], selected.record["request_schema_sha256"], "request schema"),
+            (selected.record["result_validator_artifact_id"], selected.record["result_validator_sha256"], "result validator"),
+        ):
+            artifact = artifacts.get(artifact_id)
+            if artifact is None or artifact.sha256 != digest:
+                raise EnrollmentDenied(f"selected application {label} is absent or changed in the root artifact catalog")
+        return selected
 
     def resolve_channel_delivery_binding(
         self, binding_id: str, profile_id: str, process_generation: str,
@@ -706,6 +955,9 @@ def build_root_runtime_bindings(
     signing_key: bytes | None = None,
     process_handler_options: Mapping[str, Any] | None = None,
     expected_uid: int = 0,
+    native_materialization: Any | None = None,
+    native_registry: Any | None = None,
+    native_discoveries: Mapping[str, Any] | None = None,
 ) -> RootRuntimeBindings:
     """Build root handlers only from service-generation records already verified.
 
@@ -724,7 +976,9 @@ def build_root_runtime_bindings(
         "resource_controller_role_records", "remote_observation_records",
         "native_schema_artifact_records",
         "composio_channel_enrollment_records", "channel_delivery_binding_records",
-        "resource_backend_enrollment_records",
+        "resource_backend_enrollment_records", "remote_startup_records",
+        "private_loopback_network_records", "selected_resource_execution_records",
+        "resource_scope_binding_records", "selected_application_runtime_records",
     )
     if any(not hasattr(enrollment, name) for name in required_attributes):
         raise EnrollmentDenied("verified generation, device, and build records are unavailable")
@@ -743,6 +997,7 @@ def build_root_runtime_bindings(
         source_issuers=getattr(enrollment, "source_issuers", None),
         memory_enrollments=getattr(enrollment, "memory_enrollments", None),
         parameter_schemas=getattr(enrollment, "operation_parameter_schemas", None),
+        selected_application_runtimes=getattr(enrollment, "selected_application_runtime_records", None),
     )
     build_catalog = ProtectedBuildCatalog.from_protected_records(
         builds, service_generation_digest=digest,
@@ -941,6 +1196,14 @@ def build_root_runtime_bindings(
         resource_credential_bindings=_derive_resource_credential_bindings(enrollment),
         resource_controller_role_records=tuple(enrollment.resource_controller_role_records),
         resource_backend_records=tuple(enrollment.resource_backend_enrollment_records),
+        remote_startup_records=tuple(enrollment.remote_startup_records),
+        private_loopback_network_records=tuple(enrollment.private_loopback_network_records),
+        selected_resource_execution_records=tuple(enrollment.selected_resource_execution_records),
+        resource_scope_binding_records=tuple(enrollment.resource_scope_binding_records),
+        selected_application_runtime_records=tuple(enrollment.selected_application_runtime_records),
+        native_materialization=native_materialization,
+        native_registry=native_registry,
+        native_discoveries=MappingProxyType(dict(native_discoveries or {})),
     )
 
 
@@ -991,7 +1254,8 @@ def _derive_source_observer_enrollments(*, catalog: Any, process_profiles: Mappi
                 "observer_enrollment_id": observer_id, "source_kind": source_kind,
                 "origin_id": observer_id, "profile_id": service.profile_id,
                 "principal_id": service.principal_id, "namespace_id": service.namespace_identity,
-                "enrollment_id": service.enrollment_id, "generation": package.generation,
+                "enrollment_id": service.enrollment_id, "generation": issuer.generation,
+                "native_package_generation": package.generation,
                 "producer_uid": service.service_uid,
                 "producer_executable_sha256": service.executable_sha256,
                 "package_id": package.package_id, "package_sha256": package.compiled_closure_sha256,
@@ -999,6 +1263,7 @@ def _derive_source_observer_enrollments(*, catalog: Any, process_profiles: Mappi
                 "role_sha256": adapter.adapter_sha256, "channel_id": issuer.issuer_channel_id,
                 "capture_schema_id": issuer.capture_schema_id, "source_action_id": action_id,
                 "target_id": adapter.target_id, "recipient": adapter.recipient,
+                "private_provider_route_ids": list(issuer.private_provider_route_ids),
                 "allowed_parent_source_kinds": sorted(parent_kinds),
             }
             if observer_id in result:

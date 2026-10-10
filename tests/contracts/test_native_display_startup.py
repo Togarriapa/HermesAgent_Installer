@@ -6,14 +6,18 @@ import stat
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 from hermes_installer.authority.native_display_startup import (
     NativeDisplayStartupDenied,
+    RootSelectedStartupGrant,
     SelectedDisplayStartup,
+    XAUTHORITY_MOUNT_TARGET,
     XauthorityStartupRegistry,
     encode_xauthority,
+    selected_start_payload,
 )
 from hermes_installer.authority.remote_origin import HMACReceiptSigner
 from hermes_installer.managed_process_custodian import ManagedProcessIdentityLease
@@ -32,6 +36,25 @@ class _Custody:
 
 
 class XauthorityEncodingTests(unittest.TestCase):
+    def test_selected_start_payload_is_exact_parameters_empty_envelope(self):
+        self.assertEqual(
+            selected_start_payload("display-enrollment", "generation-1", "native-display-start-v1"),
+            b'{"enrollment_id":"display-enrollment","generation":"generation-1",'
+            b'"operation_id":"native-display-start-v1","parameters":{},"schema":1}',
+        )
+        with self.assertRaises(NativeDisplayStartupDenied):
+            selected_start_payload("display-enrollment", "generation-1", "other-operation")
+
+    def test_startup_grant_cannot_change_role_operation(self):
+        with self.assertRaises(NativeDisplayStartupDenied):
+            RootSelectedStartupGrant(
+                schema=1, startup_authorization_handle="a" * 43, role="display",
+                service_enrollment_id="display-enrollment", generation="generation-1",
+                operation_id="native-desktop-app-start-v1", selection_payload_sha256="b" * 64,
+                controller_proof_handle="c" * 43, context=object(), effect_authorization=object(),
+                issued_monotonic=1.0, expires_monotonic=2.0,
+            )
+
     def test_xauthority_is_a_single_familywild_cookie_entry(self):
         cookie = b"c" * 32
         encoded = encode_xauthority(":98.1", cookie)
@@ -62,7 +85,8 @@ class XauthorityPreparationTests(unittest.TestCase):
             remote_enrollment_id="remote-enrollment", native_profile_id="hermes-desktop",
             native_generation="native-gen-1", display_profile_id="hermes-display",
             display_generation="display-gen-1", display_name=":98",
-            receipt_handle="r" * 43, display_uid=self.uid, display_gid=self.gid)
+            receipt_handle="r" * 43, display_uid=self.uid, display_gid=self.gid,
+            xauthority_reader_gid=self.gid)
         self.registry = XauthorityStartupRegistry(
             root=self.root, signer=HMACReceiptSigner(b"s" * 32),
             custody=_Custody(), writer_uid=self.uid)
@@ -74,15 +98,26 @@ class XauthorityPreparationTests(unittest.TestCase):
         prepared = self.registry.prepare(self.selection)
         self.assertEqual(prepared.owner_uid, self.uid)
         self.assertEqual(prepared.owner_gid, self.gid)
-        self.assertEqual(prepared.mode, 0o440)
+        self.assertEqual(prepared.mode, 0o640)
         info = prepared.path.stat()
         self.assertEqual((info.st_dev, info.st_ino), (prepared.device, prepared.inode))
-        self.assertEqual(stat.S_IMODE(info.st_mode), 0o440)
+        self.assertEqual(stat.S_IMODE(info.st_mode), 0o640)
         data = prepared.path.read_bytes()
         self.assertEqual(hashlib.sha256(data).hexdigest(), prepared.content_sha256)
         self.assertEqual(data[-32:].__len__(), 32)
         self.assertNotIn(data[-32:].hex(), repr(prepared))
         self.assertNotIn(data[-32:].hex(), repr(self.registry))
+        mount = self.registry.mount_binding(prepared)
+        self.assertEqual(mount.target_path, XAUTHORITY_MOUNT_TARGET)
+        self.assertEqual(mount.environment, {
+            "DISPLAY": self.selection.display_name,
+            "XAUTHORITY": "/run/hermes-installer/display/Xauthority",
+        })
+        self.assertTrue(mount.read_only and mount.nofollow and mount.nosuid and mount.nodev)
+        self.assertEqual(mount.source_inode, prepared.inode)
+        self.assertTrue(self.registry.verify_mount_binding(mount))
+        self.assertFalse(self.registry.verify_mount_binding(
+            replace(mount, target_path=Path("/run/hermes-installer/other"))))
         self.registry.discard_prepared(prepared)
         self.assertFalse(prepared.path.exists())
 

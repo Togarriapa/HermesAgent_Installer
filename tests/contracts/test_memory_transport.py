@@ -56,6 +56,26 @@ class MemoryTransportTests(unittest.TestCase):
         self.assertEqual(body, request.body)
         self.assertNotIn(b"root-vault-secret", body)
 
+    def test_unauthed_doctor_probes_do_not_resolve_or_emit_memory_credentials(self):
+        for provider, route_id, path, port in (
+            ("openviking", "openviking-ready", "/ready", 1933),
+            ("agentmemory", "agentmemory-ready", "/agentmemory/livez", 3111),
+        ):
+            with self.subTest(provider=provider):
+                enrollment = SimpleNamespace(
+                    provider=provider, fixed_route_map={route_id: object()},
+                    literal_loopback_port=port)
+                request = MemoryServiceRequest("GET", path, (("accept", "application/json"),),
+                                               b"", "unused-auth-reference")
+                frame = _frame(enrollment=enrollment, route_id=route_id,
+                               request=request, secret=None, maximum_bytes=4096)
+                header, body = frame.split(b"\r\n\r\n", 1)
+                self.assertIn(f"GET {path} HTTP/1.1".encode(), header)
+                self.assertNotIn(b"Authorization:", header)
+                self.assertNotIn(b"X-API-Key:", header)
+                self.assertNotIn(b"Content-Length:", header)
+                self.assertEqual(body, b"")
+
     def test_bounded_response_parser_accepts_one_exact_json_frame(self):
         reader, writer = socket.socketpair()
         response = b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\n\r\n{"ok":true}'

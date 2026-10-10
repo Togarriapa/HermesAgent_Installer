@@ -117,6 +117,27 @@ def test_package_runtime_requires_signed_completed_build_receipt():
         )
 
 
+def test_selected_application_row_is_exposed_unchanged_with_enclosing_digest_separate():
+    row = {"application_id": "app-a", "profile_id": "profile-a",
+           "profile_generation": "process-g1", "capability_ids": ["application:run"],
+           "provider_route_ids": [], "credential_reference_ids": []}
+    catalog = ProtectedEnrollmentCatalog(
+        {("service-a", "process-g1"): SimpleNamespace()}, digest="a" * 64,
+        selected_application_runtimes=[row],
+    )
+    selected = catalog.selected_application_runtime_record("app-a")
+    assert selected["capability_ids"] == ("application:run",)
+    assert "service_generation_digest" not in selected
+    assert catalog.digest == "a" * 64
+    with pytest.raises(EnrollmentDenied, match="not enrolled"):
+        catalog.selected_application_runtime_record("app-missing")
+    with pytest.raises(EnrollmentDenied, match="ambiguous"):
+        ProtectedEnrollmentCatalog(
+            {("service-a", "process-g1"): SimpleNamespace()}, digest="a" * 64,
+            selected_application_runtimes=[row, {**row, "profile_id": "profile-b"}],
+        )
+
+
 def test_fixed_build_record_rejects_unlisted_target_and_caller_recipe_fields():
     item = build_record("arbitrary-shell:start")
     with pytest.raises(EnrollmentDenied):

@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from hermes_installer.memory.broker import (
     BrokerDenied, BrokerUnavailable, DurableMemoryQueue, MemoryTarget, build_memory_handlers,
@@ -145,6 +146,45 @@ class MemoryBrokerTests(unittest.TestCase):
                                     "text": "a harmless synthetic fact"}})
         self.assertEqual(response["status"], 503)
         self.assertEqual(ipc.calls, [])
+
+    def test_compound_search_records_receive_scope_only_from_root_broker(self):
+        class SearchTarget:
+            provider = "agentmemory"
+            profile_id = "p1"
+            namespace_id = "n1"
+            service_generation = "service-generation-one"
+            source_revision = "df3d4a83b966d8d415cb9180d5a4724b07f729dc"
+            approved_route_ids = frozenset({"agentmemory-search"})
+            enrollment = SimpleNamespace(
+                fixed_route_map={"agentmemory-search": object()},
+                fixed_project_account_user_scope={"project_id": "project-one",
+                    "account_id": "account-one", "user_id": "p1"})
+
+            @staticmethod
+            def route_for(action):
+                return "agentmemory-search" if action == "search" else None
+
+        class Compound:
+            def execute(self, **kwargs):
+                return {"status": "ok", "receipt_id": "root-receipt",
+                        "result": {"records": [{"id": "memory-one",
+                            "source": "agentmemory", "text": "synthetic private fact"}]}}
+
+        selected = SearchTarget()
+        handlers = build_memory_handlers(
+            targets={("p1", "n1", "agentmemory"): selected},
+            owner_state=lambda _: (None, 0), queue=None, ipc=None,
+            compound_executor=Compound())
+        response = call(handlers[("memory.search", "memory:agentmemory:search")],
+                        Context(), "search", {"schema": 1, "query": "synthetic", "limit": 3})
+        self.assertEqual(response["status"], 200)
+        body = json.loads(response["body"])
+        self.assertEqual(body["records"], [{
+            "id": "memory-one", "source": "agentmemory", "text": "synthetic private fact",
+            "profile": "p1", "namespace": "n1",
+        }])
+        self.assertEqual(body["profile_id"], "p1")
+        self.assertEqual(body["namespace_id"], "n1")
 
     def test_durable_queue_persists_signed_lineage_and_is_profile_scoped(self):
         t = target("p1", "n1", "service-one")
