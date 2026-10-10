@@ -353,6 +353,18 @@ class RootPreparedNativeWorkerRuntimeMaterializationRegistry:
                               committed: VerifiedCommittedEnrollment,
                               runtime_record_id: str) -> None:
         """Retain bytes only after the store verifies the exact committed CAS row."""
+        self.verify_active_committed(receipt, committed, runtime_record_id)
+        self._active_bindings[receipt.receipt_handle] = committed.receipt.generation_id
+
+    def verify_active_committed(self, receipt: RootPreparedNativeWorkerRuntimeMaterialization,
+                                committed: VerifiedCommittedEnrollment,
+                                runtime_record_id: str) -> Mapping[str, Any]:
+        """Reobserve the committed CAS and held bytes without prepared guards.
+
+        Activation replaces the prepared generation.  This path therefore
+        deliberately uses the store-issued committed proof and actual PM/output
+        descriptors, while ``verify_current`` remains strict for preactive use.
+        """
         session = self.binding._session
         if (type(committed) is not VerifiedCommittedEnrollment
                 or committed._store_seal != self.prepared_enrollment_store._instance_seal
@@ -409,11 +421,12 @@ class RootPreparedNativeWorkerRuntimeMaterializationRegistry:
                 or active_row.get("generation_id") != active_receipt.generation_id):
             raise NativeWorkerRuntimeMaterializationUnavailable(
                 "committed runtime and active rows do not join the retained actual member custody")
-        # The setup prepared generation is replaced during activation, so this
-        # transition rechecks the actual held tree and PM members without
-        # attempting to resolve the now superseded preactive transaction.
-        self._verify_held_root_and_members(receipt)
-        self._active_bindings[receipt.receipt_handle] = active_receipt.generation_id
+        if (runtime_row.get("execution_mode") != "native-hermes-cli-module-v1"
+                or active_receipt.generation_id != committed.receipt.generation_id):
+            raise NativeWorkerRuntimeMaterializationUnavailable(
+                "committed worker runtime mode or active generation is not the selected native service")
+        self._verify_active_held_root_and_members(receipt, runtime_row)
+        return MappingProxyType(dict(runtime_row))
 
     def close(self) -> None:
         for receipt in tuple(self._issued.values()):
@@ -438,6 +451,180 @@ class RootPreparedNativeWorkerRuntimeMaterializationRegistry:
                 pass
         self._issued.clear()
         self._by_selection.clear()
+
+    def _verify_active_held_root_and_members(
+            self, receipt: RootPreparedNativeWorkerRuntimeMaterialization,
+            runtime_row: Mapping[str, Any]) -> None:
+        """Check durable PM/output custody after the prepared transaction is replaced."""
+        root = os.fstat(receipt._root_fd)
+        parent = os.fstat(receipt._parent_fd)
+        path_info = os.stat(receipt.receipt_handle, dir_fd=receipt._parent_fd,
+                            follow_symlinks=False)
+        if ((root.st_dev, root.st_ino) != (receipt.runtime_root_device, receipt.runtime_root_inode)
+                or root.st_uid != 0 or root.st_gid != 0 or stat.S_IMODE(root.st_mode) != 0o700
+                or parent.st_uid != 0 or parent.st_gid != 0 or stat.S_IMODE(parent.st_mode) != 0o700
+                or not stat.S_ISDIR(path_info.st_mode)
+                or (path_info.st_dev, path_info.st_ino) != (root.st_dev, root.st_ino)
+                or time.monotonic() >= receipt.expires_monotonic):
+            raise NativeWorkerRuntimeMaterializationUnavailable(
+                "active worker materialization root changed or its original setup deadline expired")
+        fresh_parent = self._open_or_create_runtime_parent(create=False)
+        try:
+            current_parent = os.fstat(fresh_parent)
+            if (current_parent.st_dev, current_parent.st_ino) != (parent.st_dev, parent.st_ino):
+                raise NativeWorkerRuntimeMaterializationUnavailable(
+                    "active worker runtime parent path no longer names the held parent")
+        finally:
+            os.close(fresh_parent)
+        self._verify_materialization_manifest(receipt)
+        pm_fds = receipt._member_fds[:len(receipt.pm_runtime_member_records)]
+        output_fds = receipt._member_fds[len(receipt.pm_runtime_member_records):]
+        if (len(pm_fds) != len(receipt.pm_runtime_member_records)
+                or len(output_fds) != len(receipt.native_output_member_records)):
+            raise NativeWorkerRuntimeMaterializationUnavailable("held active worker member set is incomplete")
+        for fd, row in zip(pm_fds, receipt.pm_runtime_member_records, strict=True):
+            self._verify_held_member_fd(fd, row, allow_symlink=True)
+        for fd, row in zip(output_fds, receipt.native_output_member_records, strict=True):
+            self._verify_held_member_fd(fd, row, allow_symlink=False)
+        self._verify_output_member_paths(receipt)
+        self._verify_committed_pm_venv(receipt, runtime_row)
+
+    @staticmethod
+    def _verify_held_member_fd(fd: int, row: Mapping[str, Any], *, allow_symlink: bool) -> None:
+        info = os.fstat(fd)
+        expected = (row["device"], row["inode"], row["owner_uid"], row["owner_gid"],
+                    row["mode"], row["size_bytes"])
+        actual = (info.st_dev, info.st_ino, info.st_uid, info.st_gid,
+                  stat.S_IMODE(info.st_mode), info.st_size)
+        kind_ok = (stat.S_ISREG(info.st_mode) if row["kind"] == "regular-file"
+                   else allow_symlink and stat.S_ISLNK(info.st_mode))
+        if not kind_ok or actual != expected:
+            raise NativeWorkerRuntimeMaterializationUnavailable(
+                "held active worker member no longer matches its root-owned receipt")
+        if row["kind"] == "regular-file":
+            if info.st_nlink != 1 or _hash_fd(fd) != row["sha256"]:
+                raise NativeWorkerRuntimeMaterializationUnavailable(
+                    "held active worker member bytes or link count changed")
+        elif row.get("output_role") is not None:
+            raise NativeWorkerRuntimeMaterializationUnavailable(
+                "generated native output unexpectedly contains a symbolic link")
+
+    def _verify_materialization_manifest(
+            self, receipt: RootPreparedNativeWorkerRuntimeMaterialization) -> None:
+        fd = -1
+        try:
+            fd = os.open("receipt.json", os.O_RDONLY | os.O_NOFOLLOW
+                         | getattr(os, "O_CLOEXEC", 0), dir_fd=receipt._root_fd)
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1
+                    or info.st_size <= 0 or info.st_size > 4 * 1024 * 1024):
+                raise ValueError
+            data = os.pread(fd, 4 * 1024 * 1024 + 1, 0)
+            parsed = json.loads(data.decode("utf-8"), object_pairs_hook=_unique_json_pairs,
+                                parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()))
+            if (len(data) != info.st_size or not isinstance(parsed, dict)
+                    or set(parsed) != {"body", "body_sha256"}
+                    or parsed["body_sha256"] != receipt.receipt_sha256
+                    or _sha(parsed["body"]) != receipt.receipt_sha256
+                    or not isinstance(parsed["body"], dict)
+                    or parsed["body"].get("committed_venv_identity")
+                       != dict(receipt.committed_venv_identity)):
+                raise ValueError
+        except Exception:
+            raise NativeWorkerRuntimeMaterializationUnavailable(
+                "active worker materialization receipt bytes are not current") from None
+        finally:
+            if fd >= 0:
+                os.close(fd)
+
+    def _verify_committed_pm_venv(self,
+                                  receipt: RootPreparedNativeWorkerRuntimeMaterialization,
+                                  runtime_row: Mapping[str, Any]) -> None:
+        """Reopen the protected PM receipt and observe the entire committed venv."""
+        from .pm_runtime import (_match_receipt, _observe_runtime,
+                                 observe_committed_pm_venv_tree)
+        handle = receipt.pm_runtime_receipt_handle
+        descriptor = dict(receipt.committed_venv_identity)
+        if (runtime_row.get("committed_venv_identity") != descriptor
+                or runtime_row.get("pm_runtime_receipt_handle") != handle):
+            raise NativeWorkerRuntimeMaterializationUnavailable(
+                "active PM identity descriptor does not match the selected runtime row")
+        root_fd = receipts_fd = receipt_fd = -1
+        tree = None
+        try:
+            root_fd = os.open(self.runtime_receipts.runtime_root,
+                              os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+                              | getattr(os, "O_CLOEXEC", 0))
+            root_info = os.fstat(root_fd)
+            if (not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != 0
+                    or root_info.st_gid != 0 or stat.S_IMODE(root_info.st_mode) != 0o700):
+                raise ValueError
+            receipts_fd = os.open("receipts", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+                                  | getattr(os, "O_CLOEXEC", 0), dir_fd=root_fd)
+            directory = os.fstat(receipts_fd)
+            if (not stat.S_ISDIR(directory.st_mode) or directory.st_uid != 0
+                    or directory.st_gid != 0 or stat.S_IMODE(directory.st_mode) != 0o700):
+                raise ValueError
+            receipt_fd = os.open(handle + ".json", os.O_RDONLY | os.O_NOFOLLOW
+                                 | getattr(os, "O_CLOEXEC", 0), dir_fd=receipts_fd)
+            info = os.fstat(receipt_fd)
+            receipt_path = os.stat(handle + ".json", dir_fd=receipts_fd,
+                                   follow_symlinks=False)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1
+                    or (info.st_dev, info.st_ino) != (receipt_path.st_dev, receipt_path.st_ino)
+                    or info.st_size <= 0 or info.st_size > 64 * 1024):
+                raise ValueError
+            raw = os.pread(receipt_fd, 64 * 1024 + 1, 0)
+            record = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_json_pairs,
+                                parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()))
+            known = self.runtime_receipts._record(handle)
+            if (len(raw) != info.st_size or not isinstance(record, dict) or record != known
+                    or _canonical(record) != raw
+                    or hashlib.sha256(raw).hexdigest() != descriptor.get("pm_receipt_sha256")
+                    or record.get("handle") != handle
+                    or record.get("generation") != descriptor.get("pm_generation")
+                    or record.get("source_commit") != descriptor.get("source_commit")
+                    or record.get("runtime_relative") != descriptor.get("runtime_relative")
+                    or record.get("runtime_venv_relative") != descriptor.get("runtime_venv_relative")
+                    or record.get("runtime_closure_sha256") != descriptor.get("runtime_closure_sha256")
+                    or record.get("runtime_executable_artifact_id")
+                       != "observed:pm-committed-venv-python"):
+                raise ValueError
+            generation_root = self.runtime_receipts.runtime_root / record["generation"]
+            executable = generation_root / record["runtime_relative"]
+            venv_root = generation_root / record["runtime_venv_relative"]
+            identity = _observe_runtime(executable, expected_uid=0, expected_root=generation_root)
+            _match_receipt(record, executable, identity,
+                           generation_root / record["runtime_venv_relative"])
+            tree = observe_committed_pm_venv_tree(
+                venv_root, expected_closure_sha256=record["runtime_closure_sha256"])
+            resolved = executable.resolve(strict=True)
+            executable_rel = resolved.relative_to(venv_root.resolve(strict=True)).as_posix()
+            member = next((row for row in tree.members
+                           if row.relative_path == executable_rel and row.kind == "file"), None)
+            observed = (identity["sha256"], identity["device"], identity["inode"],
+                        identity["uid"], identity["gid"], identity["mode"])
+            expected = (descriptor.get("executable_sha256"), descriptor.get("executable_device"),
+                        descriptor.get("executable_inode"), descriptor.get("executable_uid"),
+                        descriptor.get("executable_gid"), descriptor.get("executable_mode"))
+            if (member is None or observed != expected
+                    or (member.sha256, member.device, member.inode, member.uid,
+                        member.gid, member.mode) != expected):
+                raise ValueError
+        except Exception:
+            raise NativeWorkerRuntimeMaterializationUnavailable(
+                "protected PM receipt, executable, or full committed venv closure changed") from None
+        finally:
+            if tree is not None:
+                tree.close()
+            for descriptor_fd in (receipt_fd, receipts_fd, root_fd):
+                if descriptor_fd >= 0:
+                    try:
+                        os.close(descriptor_fd)
+                    except OSError:
+                        pass
 
     def _validate_role_closure(self, closure: Any,
                                recipe: RootPreparedNativeWorkerRecipe) -> None:

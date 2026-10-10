@@ -226,8 +226,15 @@ class RootPreparedNativeServiceGenerationProducer:
         if tuple(sorted(row["receipt_handle"] for row in source_definition_records)) != source_handles:
             raise NativeServiceGenerationUnavailable(
                 "held source-definition member rows do not exactly cover the signed choice handles")
+        from .native_worker_start_recipe import ARGV_SUFFIX, RootNativeHermesWorkerStartRecipe
+        if (type(recipe._start_recipe) is not RootNativeHermesWorkerStartRecipe
+                or recipe.recipe_id != "native-owner-overlay-worker-v1"
+                or recipe._start_recipe.argv_suffix != ARGV_SUFFIX):
+            raise NativeServiceGenerationUnavailable(
+                "selected native worker does not use the reviewed fixed Hermes CLI module recipe")
         runtime_row = {
             "schema": 1,
+            "execution_mode": "native-hermes-cli-module-v1",
             "id": runtime_id,
             "generation_id": base_policy.generation_id,
             "recipe_id": recipe.recipe_id,
@@ -535,21 +542,90 @@ class RootPreparedNativeServiceGenerationProducer:
             raise NativeServiceGenerationUnavailable("prepared generation projection digest changed")
         return generation
 
+    def verify_active_current(self, generation: RootPreparedNativeServiceGeneration,
+                              committed: Any, runtime_record_id: str
+                              ) -> RootPreparedNativeServiceGeneration:
+        """Rejoin the exact issued generation to current committed CAS custody.
+
+        This is a separate post-activation path; it never weakens the strict
+        prepared-generation checks in ``verify_current``.
+        """
+        from .bootstrap_enrollment import VerifiedCommittedEnrollment
+        if (type(generation) is not RootPreparedNativeServiceGeneration
+                or generation._issuer is not self._issuer
+                or self._issued.get(generation.receipt_handle) is not generation
+                or generation.expires_monotonic <= time.monotonic()
+                or type(committed) is not VerifiedCommittedEnrollment
+                or not isinstance(runtime_record_id, str) or not runtime_record_id):
+            raise NativeServiceGenerationUnavailable(
+                "active native generation requires the exact unexpired issued DTO and committed store proof")
+        materializer = self.binding._session.resolve_current_native_worker_runtime_materialization_registry()
+        runtime_row = materializer.verify_active_committed(
+            generation._runtime_materialization, committed, runtime_record_id)
+        if (runtime_row.get("id") != runtime_record_id
+                or runtime_row.get("generation_id") != generation.generation_id
+                or runtime_row.get("execution_mode") != "native-hermes-cli-module-v1"
+                or runtime_row.get("source_choice_selection_handle")
+                   != generation.source_choice_selection_handle
+                or runtime_row.get("recipe_sha256") != generation.worker_recipe_sha256
+                or _digest(_plain(generation.native_worker_runtime_records[0]))
+                   != _digest(_plain(runtime_row))):
+            raise NativeServiceGenerationUnavailable(
+                "current committed worker runtime does not match the producer-issued selected generation")
+        body = {
+            "service_generation_id": generation.service_generation_id,
+            "generation_id": generation.generation_id,
+            "service_records": _plain(generation.service_records),
+            "process_profile_records": _plain(generation.process_profile_records),
+            "native_worker_network_records": _plain(generation.native_worker_network_records),
+            "active_network_generation_records": _plain(generation.active_network_generation_records),
+            "native_worker_runtime_records": _plain(generation.native_worker_runtime_records),
+            "source_choice_selection_handle": generation.source_choice_selection_handle,
+            "source_choice_signed_record_sha256": generation.source_choice_signed_record_sha256,
+            "worker_recipe_receipt_handle": generation.worker_recipe_receipt_handle,
+            "worker_recipe_sha256": generation.worker_recipe_sha256,
+            "source_member_receipt_handles": list(generation.source_member_receipt_handles),
+        }
+        if _digest(body) != generation.output_sha256:
+            raise NativeServiceGenerationUnavailable("producer-issued active generation digest changed")
+        if materializer._active_bindings.get(
+                generation._runtime_materialization.receipt_handle) != generation.generation_id:
+            raise NativeServiceGenerationUnavailable(
+                "active generation has not completed the exact materialization custody transition")
+        return generation
+
     def resolve_current_selected_generation(
             self, selection_handle: str) -> RootPreparedNativeServiceGeneration:
         """Return the one issuer-held DTO joined to the still-current choice."""
         if not isinstance(selection_handle, str) or not selection_handle:
             raise NativeServiceGenerationUnavailable("selected generation lookup requires a signed choice handle")
-        selection = self.binding.resolve_current_native_policy_selection(selection_handle)
         matches = [row for row in self._issued.values()
                    if row.source_choice_selection_handle == selection_handle]
         if len(matches) != 1:
             raise NativeServiceGenerationUnavailable(
                 "the current native choice does not have exactly one issued service-generation receipt")
-        result = self.verify_current(matches[0])
-        if result._selection is not selection:
-            raise NativeServiceGenerationUnavailable("selected generation no longer joins its current choice")
-        return result
+        result = matches[0]
+        session = self.binding._session
+        try:
+            active = session._resolve_current_active_enrollment()
+        except BootstrapEnrollmentPending:
+            selection = self.binding.resolve_current_native_policy_selection(selection_handle)
+            prepared = session._resolve_current_prepared_enrollment()
+            if (selection is not result._selection
+                    or prepared.generation_id != result.prepared_generation_id
+                    or prepared.generation_digest != result.prepared_generation_digest):
+                raise NativeServiceGenerationUnavailable(
+                    "selected generation no longer joins its current prepared choice")
+            return self.verify_current(result)
+        committed = self.prepared_enrollment_store.verify_committed_receipt(
+            active, session._authorization)
+        authority = self.prepared_enrollment_store.authority_loader_for_session()
+        generation = authority.get("service_generations") if isinstance(authority, Mapping) else None
+        runtime_rows = generation.get("native_worker_runtime_records") if isinstance(generation, Mapping) else None
+        if type(runtime_rows) is not list or len(runtime_rows) != 1:
+            raise NativeServiceGenerationUnavailable(
+                "active service generation does not contain one selected worker runtime row")
+        return self.verify_active_current(result, committed, runtime_rows[0].get("id"))
 
 
 __all__ = ["NativeServiceGenerationUnavailable", "RootPreparedNativeServiceGeneration",
