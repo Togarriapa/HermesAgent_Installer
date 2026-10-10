@@ -643,3 +643,10 @@ The installer SHALL sign only the exact fixture envelope with the genuine held f
 #### Scenario: Caller requests another signature domain
 - **WHEN** a fixture signer is used for unrelated data or production authority
 - **THEN** the restricted facade denies
+
+### Requirement: Qualification session storage v167
+The installer SHALL retain live fixture session authority only in its current sealed registry and SHALL treat any session file as historical metadata.
+
+#### Scenario: Historical session file is reopened
+- **WHEN** no current genuine fixture lease and session registry membership exist
+- **THEN** the historical file cannot authorize an effect
