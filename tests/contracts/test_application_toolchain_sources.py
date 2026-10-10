@@ -77,6 +77,47 @@ class SelectedToolchainSourcePinTests(unittest.TestCase):
         self.assertEqual((_TwoHopAllowlistedRedirect.max_redirections,
                           _TwoHopAllowlistedRedirect.max_repeats), (2, 2))
 
+    def test_observer_release_closes_only_its_exact_held_record_and_prunes_expired(self):
+        import os
+        import tempfile
+        from hermes_installer.authority.application_toolchain_sources import (
+            ApplicationToolchainSourceDenied,
+            RootSelectedApplicationToolchainSourceObserver,
+            VerifiedApplicationToolchainSourceObservation,
+            _RECORD_SEAL,
+        )
+
+        def record(handle, observer_id, fd, expiry):
+            return VerifiedApplicationToolchainSourceObservation(
+                1, handle, "application-bun-1.4.3-license", "application-bun-1.4.3-license",
+                SOURCE_POLICY_ARTIFACT_ID, SOURCE_POLICY_SHA256, "1" * 64,
+                "license", "", "2" * 64, 5_807, 1, 2, 0, 0, 0o444,
+                "session", "transaction", "3" * 64, "4" * 32, "5" * 32,
+                "6" * 32, 1, 10.0, expiry, fd, observer_id, _RECORD_SEAL)
+
+        with tempfile.TemporaryFile() as file:
+            first_fd = os.dup(file.fileno())
+            expired_fd = os.dup(file.fileno())
+            observer = object.__new__(RootSelectedApplicationToolchainSourceObserver)
+            observer._observer_id = "observer-one"
+            observer._held = {}
+            observer.monotonic = lambda: 20.0
+            live = record("live-handle-" + "a" * 32, observer._observer_id, first_fd, 30.0)
+            expired = record("expired-handle-" + "b" * 32, observer._observer_id, expired_fd, 19.0)
+            observer._held[live.observation_handle] = live
+            observer._held[expired.observation_handle] = expired
+
+            observer._prune_expired_observations()
+            self.assertEqual(tuple(observer._held), (live.observation_handle,))
+            with self.assertRaises(OSError):
+                os.fstat(expired_fd)
+            observer.release(live)
+            self.assertEqual(observer._held, {})
+            with self.assertRaises(OSError):
+                os.fstat(first_fd)
+            with self.assertRaises(ApplicationToolchainSourceDenied):
+                observer.release(live)
+
     def test_redirect_handler_accepts_only_the_pinned_bun_asset_host(self):
         from hermes_installer.authority.application_toolchain_sources import _TwoHopAllowlistedRedirect
         handler = _TwoHopAllowlistedRedirect(frozenset({"release-assets.githubusercontent.com"}))
