@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import builtins
 import hashlib
+import json
 import os
 import time
 from dataclasses import fields, replace
@@ -120,6 +121,12 @@ def graph(tmp_path, monkeypatch):
     captured = capture_actual_hermes_registrations()
     receipts = tuple(retain('src/'+path, factory.RootReleaseModuleReceipt)
                      for path in sorted({row.registration_source_path for row in captured}))
+    handler = retain(
+        'src/hermes_installer/authority/local_resource_effects.py',
+        factory.RootReleaseModuleReceipt,
+        'installer-module:hermes_installer.authority.local_resource_effects')
+    handler = replace(handler, relative_path='lib/python/hermes_installer/authority/local_resource_effects.py')
+    receipt_map[handler.source_receipt_handle] = handler
     session._resolve_prepared_release_module_receipts = lambda: receipts
     workers = tuple(retain(row.release_member_path, factory.RootPreparedReleaseMemberReceipt)
                     for row in source_defs._ROLE_DECLARATIONS)
@@ -131,8 +138,25 @@ def graph(tmp_path, monkeypatch):
     definition = retain(path, factory.RootReleaseModuleReceipt)
     definition = replace(definition, relative_path='lib/python/hermes_installer/authority/native_source_definitions.py')
     receipt_map[definition.source_receipt_handle] = definition
+    capture_schema = retain(
+        'src/hermes_installer/authority/owner_overlay_capture_schemas.py',
+        factory.RootReleaseModuleReceipt,
+        'installer-module:hermes_installer.authority.owner_overlay_capture_schemas')
+    capture_schema = replace(
+        capture_schema,
+        relative_path='lib/python/hermes_installer/authority/owner_overlay_capture_schemas.py')
+    receipt_map[capture_schema.source_receipt_handle] = capture_schema
+    monkeypatch.setattr(
+        factory.RootSelectedInstallationBinding,
+        "resolve_prepared_owner_overlay_capture_schema_module_receipt",
+        lambda self: capture_schema, raising=False)
+    monkeypatch.setattr(
+        factory.RootSelectedInstallationBinding,
+        "resolve_prepared_owner_overlay_result_handler_module_receipt",
+        lambda self: handler, raising=False)
     roles = source_defs.RootNativeSourceDefinitionRegistry(
         binding, lambda: workers, lambda: definition, capture_profile_receipt_provider=lambda: profiles,
+        owner_overlay_capture_schema_receipt_provider=lambda: capture_schema,
         _seal=source_defs._REGISTRY_SEAL)
     source_bundle = roles.prepare_for_policy(selection)
     source = RootNativeRegistrationProjectionRegistry.from_root_setup(binding, tmp_path)
@@ -246,6 +270,22 @@ def test_actual_source_owner_composition_projects_four_and_compiles_five_outputs
     members = {row.artifact_receipt_handle: graph.binding.resolve_native_assembly_member(
         graph.assembly.selection_handle,row.artifact_receipt_handle) for row in definitions.closure_members}
     package = assemble_native_package(graph.assembly,definitions,members)
+    resolver = json.loads(package.action_resolver)
+    operation_rows = resolver["owner_overlay_operation_records"]
+    assert [row["registration_id"] for row in operation_rows] == sorted(
+        row["registration_id"] for row in operation_rows)
+    assert {row["method"] for row in operation_rows} == {"read", "history", "write", "delete"}
+    assert {row["registration_id"] for row in operation_rows} == {
+        row.registration_id for row in projection.registrations}
+    assert not any(row.get("action_id", row.get("id")) in {
+        item["registration_id"] for item in operation_rows
+    } for row in resolver.get("actions", []))
+    altered_rows = list(definitions.owner_overlay_operation_records)
+    altered_rows[0] = {**dict(altered_rows[0]), "profile_view_selection_handle": "forged-view"}
+    with pytest.raises(NativeAssemblyDenied, match="source operation"):
+        assemble_native_package(graph.assembly,
+                                replace(definitions, owner_overlay_operation_records=tuple(altered_rows)),
+                                members)
     assert all((package.entrypoint_manifest,package.action_resolver,package.boundary_overlay,
                 package.compiled_closure,package.candidate_index))
     from hermes_installer.authority.native_output_receipts import _verify_payload, NativeOutputMember

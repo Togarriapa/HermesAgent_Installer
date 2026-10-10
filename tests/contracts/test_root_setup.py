@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import builtins
 import contextlib
+import errno
 import io
 import importlib
 import os
@@ -27,6 +28,83 @@ from hermes_installer.root_setup import (
 
 
 class RootSetupBoundaryTests(unittest.TestCase):
+    def test_source_bootstrap_os_diagnostic_is_finite_and_redacts_exception_details(self) -> None:
+        from hermes_installer.authority.bootstrap_enrollment import BootstrapSystemCallFailure
+        from hermes_installer.authority.installer_release_build import _bootstrap_os_error_step
+
+        private_path = "/etc/hermes-installer/credentials/provider-token"
+        original = OSError(errno.EACCES, "private diagnostic sentinel", private_path)
+        with self.assertRaises(BootstrapSystemCallFailure) as caught:
+            with _bootstrap_os_error_step("source_cas.materialize"):
+                raise original
+
+        failure = caught.exception
+        self.assertIsInstance(failure, OSError)
+        self.assertEqual(failure.step, "source_cas.materialize")
+        self.assertEqual(failure.errno_name, "EACCES")
+        safe = root_setup._safe_reason(failure)
+        self.assertEqual(safe, "Root setup failed at source_cas.materialize [EACCES].")
+        self.assertNotIn(private_path, safe)
+        self.assertNotIn("private diagnostic sentinel", safe)
+        self.assertNotIn(private_path, str(failure))
+        self.assertNotIn("private diagnostic sentinel", str(failure))
+
+        unknown = BootstrapSystemCallFailure("source_cas.materialize", 987654)
+        self.assertEqual(unknown.errno_name, "UNKNOWN")
+        self.assertNotIn("987654", root_setup._safe_reason(unknown))
+
+        unknown.errno_name = private_path
+        self.assertEqual(
+            root_setup._safe_reason(unknown),
+            "Root setup failed at source_cas.materialize.",
+        )
+        unknown.step = private_path
+        self.assertEqual(
+            root_setup._safe_reason(unknown),
+            "Root setup could not verify its required authority (OSError).",
+        )
+
+        class MalformedDiagnostic(BootstrapSystemCallFailure):
+            def __getattribute__(self, name: str) -> object:
+                if name in {"step", "errno_name"}:
+                    return private_path
+                return super().__getattribute__(name)
+
+        subclass_failure = MalformedDiagnostic("source_cas.materialize", errno.EACCES)
+        self.assertEqual(
+            root_setup._safe_reason(subclass_failure),
+            "Root setup could not verify its required authority (OSError).",
+        )
+        self.assertNotIn(private_path, root_setup._safe_reason(subclass_failure))
+
+        trust_failure = RuntimeError("untrusted detail must remain suppressed")
+        self.assertEqual(
+            root_setup._safe_reason(trust_failure),
+            "Root setup could not verify its required authority (RuntimeError).",
+        )
+
+    def test_fixed_authority_daemon_action_is_finite_and_not_tty_dispatched(self) -> None:
+        activation_id = "a" * 32
+        with patch.object(root_setup, "_require_root_linux") as require_root, \
+             patch.object(root_setup, "_import_v187_listener_activation_closure") as load_closure, \
+             patch("hermes_installer.authority.daemon.main_adopt", return_value=23) as adopt, \
+             patch("hermes_installer.root_setup.sys.stdin.isatty", return_value=False), \
+             patch("hermes_installer.root_setup.sys.stderr.isatty", return_value=False):
+            result = main(["authority-daemon-adopt", "--activation-id", activation_id])
+        self.assertEqual(result, 23)
+        require_root.assert_called_once_with()
+        load_closure.assert_called_once_with()
+        adopt.assert_called_once_with(activation_id)
+
+    def test_authority_daemon_action_rejects_extra_arguments(self) -> None:
+        stderr = io.StringIO()
+        with patch.object(root_setup, "_require_root_linux") as require_root, \
+             patch("sys.stderr", stderr):
+            result = main(["authority-daemon-adopt", "--activation-id", "a" * 32, "--unsafe"])
+        self.assertEqual(result, 1)
+        require_root.assert_not_called()
+        self.assertIn("Use exactly:", stderr.getvalue())
+
     def test_reviewed_runtime_factory_is_imported_before_actor_observation(self) -> None:
         from hermes_installer.authority.bootstrap_enrollment import BootstrapEnrollmentPending
 

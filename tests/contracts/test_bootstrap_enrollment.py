@@ -41,6 +41,7 @@ from hermes_installer.authority.bootstrap_enrollment import (
     _write_journal,
 )
 from hermes_installer.authority.enrollment import _validate_service_generations
+from hermes_installer.authority.types import AuthorityDenied
 
 
 class BootstrapEnrollmentContracts(unittest.TestCase):
@@ -77,6 +78,11 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
         self.assertEqual(snapshot["private_memory_endpoint_selections"], [])
         self.assertEqual(snapshot["private_memory_model_selections"], [])
         self.assertEqual(snapshot["public_web_scopes"], [])
+        self.assertEqual(snapshot["schema"], 2)
+        self.assertEqual(snapshot["native_worker_network_records"], [])
+        self.assertEqual(snapshot["active_network_generation_records"], [])
+        self.assertEqual(snapshot["native_worker_runtime_records"], [])
+        self.assertEqual(snapshot["owner_overlay_observer_records"], [])
         self.assertEqual(set(snapshot), {
             "schema", "generation_id", "service_records", "protected_devices",
             "protected_build_records", "native_packages", "memory_enrollments",
@@ -91,6 +97,9 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
             "resource_controller_roles", "native_mcp_tool_bindings",
             "remote_observation_enrollments",
             "private_memory_endpoint_selections", "private_memory_model_selections",
+            "native_worker_network_records", "active_network_generation_records",
+            "native_worker_runtime_records",
+            "owner_overlay_observer_records",
             "native_schema_artifacts", "composio_channel_enrollments",
             "channel_delivery_bindings",
             "generation_digest",
@@ -104,6 +113,39 @@ class BootstrapEnrollmentContracts(unittest.TestCase):
         changed["service_records"] = [{"label": "cafe"}]
         with self.assertRaises(Exception):
             _validate_service_generations(changed)
+
+    def test_network_generation_rows_stay_unavailable_until_source_join_parser_exists(self):
+        snapshot = _generation(EnrollmentPolicy(
+            service_profile_id="hermes-profile", principal_id="hermes-service",
+            generation_id="root-generation-1", source_artifact_id="hermes-source",
+            records=(), resource_controller_roles=(), native_mcp_tool_bindings=(),
+            remote_observation_enrollments=(),
+        ))
+        changed = dict(snapshot)
+        changed["native_worker_network_records"] = [{"id": "caller-row"}]
+        changed.pop("generation_digest")
+        changed["generation_digest"] = hashlib.sha256(json.dumps(
+            changed, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        with self.assertRaisesRegex(AuthorityDenied, "schema-2 runtime or owner-overlay rows are malformed"):
+            _validate_service_generations(changed)
+
+    def test_owner_overlay_observer_catalog_rejects_open_or_overbound_rows(self):
+        snapshot = _generation(EnrollmentPolicy(
+            service_profile_id="hermes-profile", principal_id="hermes-service",
+            generation_id="root-generation-1", source_artifact_id="hermes-source",
+            records=(), resource_controller_roles=(), native_mcp_tool_bindings=(),
+            remote_observation_enrollments=(),
+        ))
+        for rows in ([{}], [{"observer_enrollment_id": f"observer-{index}"} for index in range(5)]):
+            changed = dict(snapshot)
+            changed["owner_overlay_observer_records"] = rows
+            changed.pop("generation_digest")
+            changed["generation_digest"] = hashlib.sha256(json.dumps(
+                changed, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            ).encode("utf-8")).hexdigest()
+            with self.assertRaises(AuthorityDenied):
+                _validate_service_generations(changed)
 
     def test_request_accepts_only_opaque_bounded_handles_and_intent(self):
         _validate_request(BootstrapEnrollmentRequest(("receipt:opaque-1",), "transaction:opaque-1"))

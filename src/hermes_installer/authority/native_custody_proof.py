@@ -37,6 +37,51 @@ _PROGRESS_FIELDS = frozenset({
 })
 _PHASES = ("entrypoint-imported", "actions-registered", "ready")
 _DIGEST_FIELDS = ("entrypoint_sha256", "resolver_sha256")
+_OWNER_OVERLAY_OBSERVER_SEAL = object()
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootActiveOwnerOverlayLoaderObserver:
+    """Root-minted loader selector for one published local operation.
+
+    This is deliberately distinct from SourceObserverEnrollment: a local
+    Resources operation is a native registration, not a backend action. The
+    loader proof still requires the exact selected role module and READY
+    registration observation.
+    """
+
+    observer_enrollment_id: str
+    profile_id: str
+    generation: str
+    package_id: str
+    native_package_generation: str
+    role_id: str
+    role_artifact_id: str
+    role_sha256: str
+    role_source_receipt_handle: str
+    role_module_name: str
+    role_closure_member_path: str
+    role_source_revision: str
+    role_source_tree_sha256: str
+    registration_id: str
+    lease_seconds: int
+    _seal: object
+
+    def __post_init__(self) -> None:
+        if (self._seal is not _OWNER_OVERLAY_OBSERVER_SEAL
+                or not self.registration_id.startswith("resource-overlay-store:tool:resource_overlay_")
+                or self.lease_seconds != 30):
+            raise TypeError("active owner-overlay loader observers are root-issued")
+
+    @classmethod
+    def _issue(cls, **values: Any) -> "RootActiveOwnerOverlayLoaderObserver":
+        expected = {"observer_enrollment_id", "profile_id", "generation", "package_id",
+                    "native_package_generation", "role_id", "role_artifact_id", "role_sha256",
+                    "role_source_receipt_handle", "role_module_name", "role_closure_member_path",
+                    "role_source_revision", "role_source_tree_sha256", "registration_id", "lease_seconds"}
+        if set(values) != expected:
+            raise TypeError("owner-overlay loader observer fields differ from the fixed contract")
+        return cls(**values, _seal=_OWNER_OVERLAY_OBSERVER_SEAL)
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +103,9 @@ class NativeLoaderSelection:
     registered_registration_ids: tuple[str, ...] = ()
     observer_role_action_bindings: tuple[tuple[str, str, str, str], ...] = ()
     process_roles: tuple["NativeProcessRoleSelection", ...] = ()
+    # Owner-overlay registrations are a typed local lane. They are deliberately
+    # not represented as native backend actions or action bindings.
+    owner_overlay_registration_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for name in ("process_id", "package_id", "profile_id", "generation", "package_generation",
@@ -67,16 +115,26 @@ class NativeLoaderSelection:
                      "service_generation_digest", "loader_role_sha256"):
             _digest(getattr(self, name), name)
         if (not isinstance(self.registered_action_ids, tuple)
-                or not 1 <= len(self.registered_action_ids) <= MAX_ACTIONS
+                or len(self.registered_action_ids) > MAX_ACTIONS
                 or any(not isinstance(item, str) or not item for item in self.registered_action_ids)
                 or tuple(sorted(set(self.registered_action_ids))) != self.registered_action_ids):
             raise ValueError("selected native actions must be a bounded sorted unique tuple")
+        if (not isinstance(self.owner_overlay_registration_ids, tuple)
+                or len(self.owner_overlay_registration_ids) > 4
+                or any(not _identifier_value(item) for item in self.owner_overlay_registration_ids)
+                or tuple(sorted(set(self.owner_overlay_registration_ids)))
+                    != self.owner_overlay_registration_ids):
+            raise ValueError("selected owner-overlay registrations must be a bounded sorted tuple")
+        if not self.registered_action_ids and not self.owner_overlay_registration_ids:
+            raise ValueError("selected native package has no typed action or owner-overlay registration")
         if (not isinstance(self.registered_registration_ids, tuple)
                 or not 1 <= len(self.registered_registration_ids) <= MAX_ACTIONS
                 or any(not _identifier_value(item) for item in self.registered_registration_ids)
                 or tuple(sorted(set(self.registered_registration_ids)))
                     != self.registered_registration_ids):
             raise ValueError("selected native registrations must be a bounded sorted unique tuple")
+        if not set(self.owner_overlay_registration_ids).issubset(self.registered_registration_ids):
+            raise ValueError("owner-overlay registrations must be inside the observed selected role closure")
         bindings = self.observer_role_action_bindings
         if (not isinstance(bindings, tuple) or len(bindings) > MAX_ACTIONS
                 or any(not isinstance(item, tuple) or len(item) != 4
@@ -497,7 +555,27 @@ def active_native_catalog_resolver(bindings: Any, *,
                      and item.profile_id == profile_id and item.generation == generation]
         package_ids = {(item.package_id, item.native_package_generation)
                        for item in observers if item.native_package_generation}
-        if len(package_ids) != 1 or any(not item.native_package_generation for item in observers):
+        try:
+            from .setup_policy_publication import PolicyPublicationReceiptResolver
+            from .owner_overlay_publication import validate_owner_overlay_adoption_row
+            publication = PolicyPublicationReceiptResolver.resolve_current()
+            if publication.state != "active-committed":
+                raise ValueError
+            owner_adoptions = tuple(
+                validate_owner_overlay_adoption_row(row)
+                for row in publication.owner_overlay_adoption_records
+                if row.get("owner", {}).get("profile_id") == profile_id
+                and row.get("native_package", {}).get("generation")
+            )
+        except Exception:
+            owner_adoptions = ()
+        owner_package_ids = {
+            (row["native_package"]["package_id"], row["native_package"]["generation"])
+            for row in owner_adoptions
+        }
+        package_ids |= owner_package_ids
+        if (len(package_ids) != 1
+                or any(not item.native_package_generation for item in observers)):
             raise AuthorityDenied("native.package", "process generation has no unique native package generation")
         package_id, package_generation = next(iter(package_ids))
         package = catalog_resolver(package_id, package_generation)
@@ -575,7 +653,40 @@ def active_native_catalog_resolver(bindings: Any, *,
             registration_ids.update(role.registration_ids)
             action_ids.add(action.action_id)
             role_actions.add((role.role_id, role.role_artifact_id, role.role_sha256, action.action_id))
-        if not action_ids or not role_actions or not selected_roles:
+        owner_registration_ids: set[str] = set()
+        for adoption in owner_adoptions:
+            if ((adoption["native_package"]["package_id"],
+                 adoption["native_package"]["generation"])
+                    != (package_id, package_generation)):
+                continue
+            for operation in adoption["operation_records"]:
+                role = role_records.get(operation["process_role_id"])
+                registration_id = operation["registration_id"]
+                observer_ids = tuple(operation["source_observer_enrollment_ids"])
+                if (role is None or len(observer_ids) != 1
+                        or observer_ids[0] not in role.observer_enrollment_ids
+                        or registration_id not in role.registration_ids
+                        or registration_id not in registration_records
+                        or operation["package_id"] != package_id
+                        or operation["package_generation"] != package_generation
+                        or operation["profile_id"] != profile_id
+                        or operation["profile_generation"] != generation):
+                    raise AuthorityDenied("native.package", "published local registration differs from its current role")
+                selected_roles[role.role_id] = NativeProcessRoleSelection(
+                    role_id=role.role_id, role_artifact_id=role.role_artifact_id,
+                    role_sha256=role.role_sha256, profile_generation=role.profile_generation,
+                    native_package_generation=role.native_package_generation,
+                    role_source_receipt_handle=role.role_source_receipt_handle,
+                    module_name=role.module_name, closure_member_path=role.closure_member_path,
+                    role_source_revision=role.role_source_revision,
+                    role_source_tree_sha256=role.role_source_tree_sha256,
+                    registration_ids=tuple(sorted(role.registration_ids)),
+                    action_binding_ids=tuple(sorted(role.action_binding_ids)),
+                )
+                registration_ids.update(role.registration_ids)
+                owner_registration_ids.add(registration_id)
+        if (not selected_roles or (not action_ids and not owner_registration_ids)
+                or (action_ids and not role_actions)):
             raise AuthorityDenied("native.package", "selected package has no exact process-role/source-action join")
         return NativeLoaderSelection(
             process_id=process_id,
@@ -593,6 +704,7 @@ def active_native_catalog_resolver(bindings: Any, *,
             registered_registration_ids=tuple(sorted(registration_ids)),
             observer_role_action_bindings=tuple(sorted(role_actions)),
             process_roles=tuple(sorted(selected_roles.values(), key=lambda item: item.role_id)),
+            owner_overlay_registration_ids=tuple(sorted(owner_registration_ids)),
         )
 
     return resolve
@@ -1075,6 +1187,10 @@ class RootNativeLoaderObservationStore:
             getattr(observer, "role_sha256", None),
             getattr(observer, "source_action_id", None),
         )
+        owner_overlay_observer = (
+            type(observer) is RootActiveOwnerOverlayLoaderObserver
+            and observer._seal is _OWNER_OVERLAY_OBSERVER_SEAL
+        )
         role = next((item for item in selection.process_roles
                      if item.role_id == getattr(observer, "role_id", None)), None)
         observed_role = (None if not entry.progress else next(
@@ -1090,8 +1206,14 @@ class RootNativeLoaderObservationStore:
                 or getattr(observer, "role_closure_member_path", None) != role.closure_member_path
                 or getattr(observer, "role_source_revision", None) != role.role_source_revision
                 or getattr(observer, "role_source_tree_sha256", None) != role.role_source_tree_sha256
-                or observer_role_binding not in selection.observer_role_action_bindings
-                or getattr(observer, "source_action_id", None) not in selection.registered_action_ids
+                or (owner_overlay_observer and (
+                    observer.registration_id not in role.registration_ids
+                    or observer.registration_id not in selection.registered_registration_ids
+                ))
+                or (not owner_overlay_observer and (
+                    observer_role_binding not in selection.observer_role_action_bindings
+                    or getattr(observer, "source_action_id", None) not in selection.registered_action_ids
+                ))
                 or observed_role is None
                 or not set(role.registration_ids).issubset(entry.progress[-1].registered_registration_ids)):
             raise AuthorityDenied("native.observer", "protected observer role or action is outside loaded package closure")

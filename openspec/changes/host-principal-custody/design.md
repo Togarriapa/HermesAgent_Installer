@@ -363,6 +363,7 @@ Home Assistant MC-R0101 root enrollment: `plans/amendments/2026-10-10-home-assis
 
 Finite actual setup/fixture source producers v199: `plans/amendments/2026-10-10-setup-startup-and-fixture-source-producers-v199.md`. Existing HI197/173/178 tasks require genuine setup protected selection/role producer and distinct child-owned qualification acquisition; no copied stores, caller rows or publication cycle. All acceptance OPEN.
 
+HA Assist actual resource scope: `plans/amendments/2026-10-10-home-assistant-assist-scope-mc-r0101.md`; exact typed home-assistant-assist-read choice and conditional current exposure/resource filter proofs.
 
 Actual publication core/acquisition compatibility v201: `plans/amendments/2026-10-10-publication-core-and-fixture-acquisition-v201.md`. Existing HI160/197 compiler emits authenticated core member; workload consumes exact published proof. New fixed acquisition original bound is separate from unchanged short effect leases. All acceptance OPEN.
 

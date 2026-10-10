@@ -167,6 +167,7 @@ def package_fixture(tmp: Path, *, expiry: float = 50.0, with_mcp: bool = False,
         "profile_id": "profile-fixture",
         "generation": "generation-fixture",
         "process_role_records_sha256": process_role_digest,
+        "owner_overlay_operation_records": [],
         "adapters": [{
             "adapter_id": "fixture-plugin",
             "manifest_sha256": "a" * 64,

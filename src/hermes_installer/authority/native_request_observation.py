@@ -42,6 +42,27 @@ class RootNativeRequestObservation:
     expires_monotonic: float
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class RootSelectedHealthNativeRequest:
+    """A current native-request observation selected by its real input parent.
+
+    The projection is an issuer-owned lookup result, not a caller-created
+    health event.  It retains the exact signed context, complete source
+    receipt closure, and canonical request bytes from the native request
+    observation registry.
+    """
+
+    observation: RootNativeRequestObservation
+    parent_context: HostContext
+    parent_source_receipts: tuple[SourceReceipt, ...]
+    canonical_request_bytes: bytes
+    _registry: Any
+    _issuer: object
+
+    def __repr__(self) -> str:
+        return "RootSelectedHealthNativeRequest(<root-private>)"
+
+
 @dataclass(slots=True)
 class _RequestRecord:
     observation: RootNativeRequestObservation
@@ -80,10 +101,33 @@ class NativeRequestObservationRegistry:
         self.process_resolver = process_resolver
         self.monotonic = monotonic
         self._records: dict[str, _RequestRecord] = {}
+        self._health_input_delivery_registry: Any | None = None
+        self._health_selection_issuer = object()
         self._native_handle_index: dict[str, str] = {}
         self._retry_claims: dict[tuple[str, str, int], float] = {}
         self._total_bytes = 0
         self._lock = threading.RLock()
+
+    def attach_health_input_delivery_registry(self, registry: Any) -> None:
+        """Attach the separate daemon health input issuer to native request checks."""
+        from .native_health_daemon import RootHealthInputDeliveryRegistry
+        if (type(registry) is not RootHealthInputDeliveryRegistry
+                or registry.runtime.service is not self.service
+                or registry.source_observers is not self.source_observers):
+            raise AuthorityDenied("native.request_input", "selected health input issuer is not current")
+        with self._lock:
+            if (self._health_input_delivery_registry is not None
+                    and self._health_input_delivery_registry is not registry):
+                raise AuthorityDenied("native.request_input", "a different health input issuer is already attached")
+            self._health_input_delivery_registry = registry
+
+    def _current_native_input_events(self) -> tuple[Any, ...]:
+        with self._lock:
+            health_registry = self._health_input_delivery_registry
+        events = tuple(self.native_input_observer._events.values())
+        if health_registry is not None:
+            events += health_registry.current_events_for_native_request()
+        return events
 
     def record_request(self, *, bridge: Any, native_request_handle: str,
                        producer_pid: int, producer_pidfd: int,
@@ -153,7 +197,7 @@ class NativeRequestObservationRegistry:
                     capsule_handles[handle] = capsule
         if set(capsules) != parent_ids:
             raise AuthorityDenied("native.request_lineage", "parent source bytes are no longer retained by the root observer")
-        input_events = tuple(event for event in self.native_input_observer._events.values()
+        input_events = tuple(event for event in self._current_native_input_events()
                              if event.source_receipt_handle in parent_receipt_handles
                              and event.expires_monotonic > now)
         selected_inputs = []
@@ -271,7 +315,7 @@ class NativeRequestObservationRegistry:
             capsule_ids = set(capsule_rows)
             if {item.receipt_id for item in record.parent_receipts} - capsule_ids:
                 raise AuthorityDenied("native.request_stale", "request parent payload capsule expired")
-            input_events = {event.source_receipt_handle for event in self.native_input_observer._events.values()
+            input_events = {event.source_receipt_handle for event in self._current_native_input_events()
                             if event.expires_monotonic > now}
             if not (set(observation.parent_source_receipt_handles) & input_events):
                 raise AuthorityDenied("native.request_stale", "retained root native input is no longer current")
@@ -305,6 +349,170 @@ class NativeRequestObservationRegistry:
         if receipt_handle is None:
             raise AuthorityDenied("native.request_observation", "native request handle has no retained observation")
         return self.resolve_native_request(receipt_handle, live_producer_identity)
+
+    def resolve_current_health_request_for_input(
+            self, input_event: Any, *, live_producer_identity: Any,
+            producer_pid: int, producer_profile_id: str, producer_generation: str,
+            native_package_generation: str) -> RootSelectedHealthNativeRequest:
+        """Select exactly one current request whose authenticated ancestry contains input."""
+        from .native_input_observer import RootNativeInputEvent
+        if (type(input_event) is not RootNativeInputEvent or live_producer_identity is None
+                or type(producer_pid) is not int or producer_pid <= 0
+                or not isinstance(producer_profile_id, str) or not producer_profile_id
+                or not isinstance(producer_generation, str) or not producer_generation
+                or not isinstance(native_package_generation, str) or not native_package_generation):
+            raise AuthorityDenied("native.request_health", "selected health request lookup is malformed")
+        with self._lock:
+            candidate_handles = tuple(
+                handle for handle, record in self._records.items()
+                if record.producer_pid == producer_pid
+                and record.producer_identity == live_producer_identity
+                and record.bridge.producer_profile_id == producer_profile_id
+                and record.bridge.producer_generation == producer_generation
+                and record.observation.native_package_generation == native_package_generation
+                and input_event.source_receipt_handle in record.observation.parent_source_receipt_handles
+            )
+        current: list[tuple[_RequestRecord, RootNativeRequestObservation]] = []
+        for receipt_handle in candidate_handles:
+            observation = self.resolve_native_request(receipt_handle, live_producer_identity)
+            with self._lock:
+                record = self._records.get(receipt_handle)
+            if (record is not None and record.observation is observation
+                    and record.producer_pid == producer_pid
+                    and input_event.source_receipt_handle in observation.parent_source_receipt_handles):
+                current.append((record, observation))
+        if len(current) != 1:
+            code = "native.request_health_ambiguous" if len(current) > 1 else "native.request_health_pending"
+            raise AuthorityDenied(code, "health input does not select exactly one current native request")
+        record, observation = current[0]
+        # The base resolver verified all retained receipts/capsules, signed
+        # context, current PIDFD identity and actual input-event membership.
+        # Return the full verified source closure, never only a convenient
+        # subset named by the health runner.
+        source_receipts = tuple(sorted(record.parent_receipts, key=lambda row: row.receipt_id))
+        expected_ids = tuple(sorted(row.receipt_id for row in record.parent_context.source_receipts))
+        if (tuple(row.receipt_id for row in source_receipts) != expected_ids
+                or len({row.receipt_id for row in source_receipts}) != len(source_receipts)
+                or observation.parent_closure_digest != canonical_digest(list(expected_ids))
+                or input_event.source_receipt_handle not in observation.parent_source_receipt_handles):
+            raise AuthorityDenied("native.request_health_lineage", "native request source closure is incomplete")
+        return RootSelectedHealthNativeRequest(
+            observation, record.parent_context, source_receipts,
+            bytes(record.canonical_request_bytes), self, self._health_selection_issuer,
+        )
+
+    def verify_current_health_request_for_input(
+            self, selected: RootSelectedHealthNativeRequest, input_event: Any, *,
+            live_producer_identity: Any, producer_pid: int, producer_profile_id: str,
+            producer_generation: str, native_package_generation: str
+            ) -> RootSelectedHealthNativeRequest:
+        if (type(selected) is not RootSelectedHealthNativeRequest
+                or selected._registry is not self or selected._issuer is not self._health_selection_issuer):
+            raise AuthorityDenied("native.request_health", "issuer-owned health request projection is required")
+        current = self.resolve_current_health_request_for_input(
+            input_event, live_producer_identity=live_producer_identity,
+            producer_pid=producer_pid, producer_profile_id=producer_profile_id,
+            producer_generation=producer_generation,
+            native_package_generation=native_package_generation,
+        )
+        if (current.observation is not selected.observation
+                or current.parent_context != selected.parent_context
+                or current.parent_source_receipts != selected.parent_source_receipts
+                or current.canonical_request_bytes != selected.canonical_request_bytes):
+            raise AuthorityDenied("native.request_health", "selected native request changed")
+        return selected
+
+    def resolve_completed_health_request_for_input(
+            self, selected: RootSelectedHealthNativeRequest, input_event: Any,
+            completed_terminal_proof: Any) -> RootSelectedHealthNativeRequest:
+        """Revalidate the same request after exact manager-proved process exit.
+
+        This path validates the retained request record, signed context, full
+        source receipt/capsule closure and selected input event against the
+        manager's pre-stop process identity. It deliberately does not ask the
+        process resolver to reopen a dead PIDFD.
+        """
+        from .managed_process_custodian import RootCompletedSelectedHealthTerminalProof
+        from .native_input_observer import RootNativeInputEvent
+        if (type(selected) is not RootSelectedHealthNativeRequest
+                or selected._registry is not self or selected._issuer is not self._health_selection_issuer
+                or type(input_event) is not RootNativeInputEvent
+                or type(completed_terminal_proof) is not RootCompletedSelectedHealthTerminalProof
+                or completed_terminal_proof.is_current() is not True):
+            raise AuthorityDenied("native.request_health", "completed selected request proof is malformed")
+        proof = completed_terminal_proof
+        observation = selected.observation
+        with self._lock:
+            receipt_handle = self._native_handle_index.get(observation.native_request_handle)
+            record = self._records.get(receipt_handle) if receipt_handle is not None else None
+        now = self.monotonic()
+        if (record is None or record.observation is not observation
+                or record.producer_identity != proof.process_identity
+                or record.producer_pid != proof.process_pid
+                or (record.bridge.producer_profile_id, record.bridge.producer_generation,
+                    record.bridge.producer_uid, observation.native_package_generation)
+                   != (proof.profile_id, proof.process_generation, proof.process_uid,
+                       proof.admission.native_package_generation)
+                or observation.expires_monotonic <= now
+                or record.parent_context.service_generation_digest
+                   != proof.service_generation_digest
+                or observation.producer_process_identity != canonical_digest({
+                    "profile_id": proof.process_identity.profile_id,
+                    "generation": proof.process_identity.generation,
+                    "kernel_uid": proof.process_identity.kernel_uid,
+                    "start_ticks": proof.process_identity.start_ticks,
+                    "executable_sha256": proof.process_identity.executable_sha256,
+                    "cgroup_identity": proof.process_identity.cgroup_identity,
+                    "namespace_identity": proof.process_identity.namespace_identity,
+                })
+                or record.canonical_request_bytes is None
+                or len(record.canonical_request_bytes) != observation.request_size_bytes
+                or hashlib.sha256(record.canonical_request_bytes).hexdigest() != observation.request_sha256
+                or bytes(record.canonical_request_bytes) != selected.canonical_request_bytes
+                or record.parent_context is not selected.parent_context
+                or record.parent_receipts != selected.parent_source_receipts
+                or self.bridges.get(observation.bridge_id) != record.bridge
+                or self.service.service_generation_digest != proof.service_generation_digest
+                or self.service.profile_generations.get(proof.profile_id) != proof.process_generation):
+            raise AuthorityDenied("native.request_health", "retained request no longer joins completed worker")
+        try:
+            self.service._verify_context_signature(record.parent_context)
+            self.service._assert_current_context(
+                record.parent_context, self.service._binding(record.bridge.producer_uid),
+                record.bridge.producer_uid, peer_pid=record.producer_pid,
+            )
+            with self.service._lock:
+                retained = {handle: self.service._source_receipt_handles.get(handle)
+                            for handle in observation.parent_source_receipt_handles}
+            if (any(value is None for value in retained.values())
+                    or tuple(sorted(row.receipt_id for row in record.parent_receipts))
+                       != tuple(sorted(row.receipt_id for row in record.parent_context.source_receipts))
+                    or {value.receipt_id for value in retained.values() if value is not None}
+                       != {row.receipt_id for row in record.parent_receipts}
+                    or input_event.source_receipt_handle not in observation.parent_source_receipt_handles):
+                raise ValueError
+            with self.source_observers._lock:
+                capsules = tuple(
+                    row for row in self.source_observers._payload_capsules.values()
+                    if row[3] == self.service.authority_epoch and row[1].expires_monotonic > now
+                )
+            capsule_ids = {row[0].receipt_id for row in capsules}
+            if {row.receipt_id for row in record.parent_receipts} - capsule_ids:
+                raise ValueError
+            for receipt in record.parent_receipts:
+                self.service._verify_source_receipt(
+                    receipt, self.service._binding(record.bridge.producer_uid),
+                )
+            input_registry = self._health_input_delivery_registry
+            if (input_registry is None
+                    or input_registry.verify_completed_event_for_native_request(
+                        input_event, proof) is not input_event):
+                raise ValueError
+            if completed_terminal_proof.is_current() is not True:
+                raise ValueError
+        except Exception:
+            raise AuthorityDenied("native.request_health", "completed request source ancestry changed") from None
+        return selected
 
     def request_bytes(self, receipt_handle: str, live_producer_identity: Any) -> bytes:
         self.resolve_native_request(receipt_handle, live_producer_identity)

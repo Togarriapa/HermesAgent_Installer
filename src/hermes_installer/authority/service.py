@@ -422,6 +422,15 @@ def _validate_setup_choice_record_bytes(
     return payload
 
 
+def _native_json_plain(value: Any) -> Any:
+    """Copy protected immutable native rows into their canonical JSON shape."""
+    if isinstance(value, Mapping):
+        return {key: _native_json_plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_native_json_plain(item) for item in value]
+    return value
+
+
 class AuthorityService:
     """One authenticated client request per connection on the fixed socket."""
 
@@ -485,6 +494,7 @@ class AuthorityService:
         self.source_observer_registry = source_observer_registry
         self.native_runtime_observer = native_runtime_observer
         self.native_invocation_registry = native_invocation_registry
+        self.active_owner_overlay_registry = None
         self.native_input_delivery_registry = None
         self.channel_peer_delivery_registry = None
         self.native_turn_observation_registry = None
@@ -524,6 +534,11 @@ class AuthorityService:
             raise ValueError("active service generation digest is invalid")
         self.service_generation_digest = service_generation_digest
         self.root_runtime_bindings = None
+        self.root_authority_runtime = None
+        # Set once by daemon composition after the durable choice registry and
+        # all runtime fields are final. The owner retains that exact runtime.
+        self.active_network_generation_owner = None
+        self.active_network_generation_unavailable_reason = None
         if any(key != rule.delegation_id for key, rule in self.delegations.items()):
             raise ValueError("delegation map keys must match fixed enrollment IDs")
         self._delegated_parents: set[str] = set()
@@ -537,6 +552,10 @@ class AuthorityService:
         self._source_receipt_handles: dict[str, SourceReceipt] = {}
         self._observed_event_ids: set[str] = set()
         self._lock = threading.RLock()
+        # Short-lived native resolver bindings are keyed by an unguessable
+        # root handle and tied to the authenticated RPC peer. They are
+        # metadata only; effect authorization remains a separate boundary.
+        self._native_package_binding_leases: dict[str, tuple[Any, ...]] = {}
         self._client_nonces: dict[str, float] = {}
 
     def attach_source_observer_registry(self, registry: Any) -> None:
@@ -1630,6 +1649,15 @@ class AuthorityService:
             raise AuthorityDenied("native.invocation", "root invocation registry binding is invalid")
         self.native_invocation_registry = registry
 
+    def attach_active_owner_overlay_registry(self, registry: Any) -> None:
+        """Attach the one root-constructed local overlay authority lane."""
+        from .local_resource_effects import RootActiveOwnerOverlayRegistry
+        if (self.active_owner_overlay_registry is not None
+                or type(registry) is not RootActiveOwnerOverlayRegistry
+                or registry._runtime.service is not self):
+            raise AuthorityDenied("native.owner_overlay", "active owner-overlay registry attachment is invalid")
+        self.active_owner_overlay_registry = registry
+
     def attach_native_bridge_broker(self, broker: Any) -> None:
         """Attach the one root-built native provider broker after registries exist."""
         from .native_bridge import NativeBridgeBroker
@@ -2228,11 +2256,13 @@ class AuthorityService:
                 sensitivity = sensitivity if isinstance(sensitivity, Sensitivity) else Sensitivity(sensitivity)
             except ValueError:
                 raise AuthorityDenied("root-selected.issue", "selected source sensitivity is invalid") from None
+            from .native_health_observer import RootNativeHealthStartAdmission
             fields = {
                 "schema": 1, "context_id": secrets.token_urlsafe(24),
                 "admission_handle": self._selected_binding_text(current_admission, "admission_handle"),
-                "admission_kind": "memory" if current_admission is getattr(authority, "memory_admission", None) else
-                    ("memory" if type(current_admission).__module__.startswith("hermes_installer.memory.") else "startup"),
+                "admission_kind": "health" if type(current_admission) is RootNativeHealthStartAdmission else (
+                    "memory" if current_admission is getattr(authority, "memory_admission", None) else
+                    ("memory" if type(current_admission).__module__.startswith("hermes_installer.memory.") else "startup")),
                 "controller_proof_sha256": self._selected_controller_digest(current_admission, binding, controller),
                 "selected_principal_id": self._selected_binding_text(binding, "principal_id"),
                 "selected_profile_id": self._selected_binding_text(binding, "profile_id"),
@@ -2366,7 +2396,19 @@ class AuthorityService:
                                        action: str) -> tuple[Any, Any, Any]:
         startup = self.root_selected_startup_authority
         memory = self.root_selected_memory_authority
-        if startup is not None and type(admission).__module__ == "hermes_installer.authority.selected_startup_authority":
+        manager = self.process_effect_handler
+        health = getattr(manager, "native_health_start_authority", None)
+        from .native_health_observer import RootNativeHealthStartAdmission, RootNativeHealthStartAuthority
+        if (type(admission) is RootNativeHealthStartAdmission
+                and type(health) is RootNativeHealthStartAuthority):
+            authority = health
+            current = authority.resolve_current_health_admission(admission.admission_handle)
+            if (current is not admission or not authority.is_current(current)
+                    or action != "start" or getattr(binding, "role", None) != "health"):
+                raise AuthorityDenied("root-selected.binding", "health admission is not current for its fixed start action")
+            selected = authority.resolve_selected_recipe_binding(current, "health", "start")
+            expected = RootNativeHealthStartAdmission
+        elif startup is not None and type(admission).__module__ == "hermes_installer.authority.selected_startup_authority":
             authority = startup
             current = authority.resolve_current_admission(admission.admission_handle)
             stop_reason = getattr(binding, "stop_reason", "shutdown")
@@ -3501,10 +3543,54 @@ class AuthorityService:
                 or observation.enrollment_id != context.enrollment_id
                 or observation.generation != context.generation):
             raise AuthorityDenied("source.observation", "root observation is stale or mismatched")
-        rule = self.rules.get((observation.capability, observation.operation, observation.target_id))
-        if (rule is None or rule.operation != observation.operation
-                or rule.recipient != observation.recipient):
-            raise AuthorityDenied("source.observation", "source action is not an enrolled fixed authority route")
+        owner_effect = getattr(observation, "owner_overlay_effect", None)
+        if owner_effect is not None:
+            # A local Resources result is provenance from an already completed
+            # typed CAS grant. It does not pass through generic HostContext or
+            # EffectAuthorization policy routing.
+            from .local_resource_effects import RootVerifiedOwnerOverlayEffect, _OWNER_OVERLAY_EFFECT_SEAL
+            try:
+                active = getattr(self, "active_owner_overlay_registry", None)
+                if (type(owner_effect) is not RootVerifiedOwnerOverlayEffect
+                        or owner_effect._seal is not _OWNER_OVERLAY_EFFECT_SEAL
+                        or active is None or owner_effect.selection._issuer is not active
+                        or not callable(getattr(active._effect_authority, "verify_completed_effect", None))):
+                    raise ValueError
+                owner_effect.selection._issuer.verify_current(owner_effect.selection)
+                payload_row = json.loads(observation.payload_bytes.decode("utf-8", errors="strict"))
+                if (not isinstance(payload_row, dict)
+                        or set(payload_row) != {"schema", "invocation_handle", "registration_id",
+                                                "result_schema_id", "result_sha256", "canonical_result_b64",
+                                                "parent_source_receipt_handles"}
+                        or payload_row["schema"] != 1
+                        or payload_row["invocation_handle"] != owner_effect.invocation.invocation_handle
+                        or payload_row["registration_id"] != owner_effect.selection.registration_id
+                        or payload_row["parent_source_receipt_handles"] != list(observation.parent_receipt_handles)
+                        or payload_row["result_schema_id"] != "native-owner-overlay-result-v1"):
+                    raise ValueError
+                result_bytes = base64.b64decode(payload_row["canonical_result_b64"], validate=True)
+                if hashlib.sha256(result_bytes).hexdigest() != payload_row["result_sha256"]:
+                    raise ValueError
+                active._effect_authority.verify_completed_effect(owner_effect, payload_row["result_sha256"])
+                row = owner_effect.selection.operation_record
+                if (observation.capability != row["capability"]
+                        or observation.operation != row["operation"]
+                        or observation.target_id != row["target_id"]
+                        or observation.recipient != row["recipient"]
+                        or observation.action_id != row["registration_id"]
+                        or observation.argument_schema_id != row["argument_schema_id"]
+                        or observation.result_schema_id != row["result_schema_id"]
+                        or observation.effect_enrollment_id != row["effect_enrollment_id"]):
+                    raise ValueError
+            except Exception:
+                raise AuthorityDenied(
+                    "source.owner_overlay", "local result is not bound to a completed current owner effect",
+                ) from None
+        else:
+            rule = self.rules.get((observation.capability, observation.operation, observation.target_id))
+            if (rule is None or rule.operation != observation.operation
+                    or rule.recipient != observation.recipient):
+                raise AuthorityDenied("source.observation", "source action is not an enrolled fixed authority route")
         manager = self.process_effect_handler
         resolve_live_peer = getattr(manager, "resolve_live_peer", None)
         if not callable(resolve_live_peer):
@@ -3736,6 +3822,57 @@ class AuthorityService:
             except OSError:
                 pass
 
+    def serve_unix_from_owned_listener(self, listener: socket.socket, *,
+                                       stop_event: threading.Event,
+                                       max_clients: int = 32) -> None:
+        """Serve on the exact inherited listener FD without rebinding or unlinking.
+
+        Only the listener activation receiver calls this after validating the
+        SCM_RIGHTS descriptor, the selected pathname inode, and current active
+        publication.  This method never changes the path or listener options.
+        """
+        if (not isinstance(listener, socket.socket) or listener.fileno() < 0
+                or listener.family != socket.AF_UNIX
+                or listener.getsockopt(socket.SOL_SOCKET, socket.SO_TYPE) != socket.SOCK_STREAM
+                or listener.getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN) != 1
+                or type(max_clients) is not int or not 1 <= max_clients <= 128
+                or not callable(getattr(stop_event, "is_set", None))
+                or not callable(getattr(stop_event, "wait", None))):
+            raise AuthorityDenied("authority.socket", "transferred authority listener is not a live Unix stream listener")
+        address = listener.getsockname()
+        if (not isinstance(address, str)
+                or not address.startswith("/run/hermes-installer/authority/")):
+            raise AuthorityDenied("authority.socket", "transferred listener path is outside the fixed authority namespace")
+        pool = ThreadPoolExecutor(max_workers=max_clients, thread_name_prefix="authority-rpc")
+        slots = threading.BoundedSemaphore(max_clients)
+        try:
+            listener.settimeout(0.25)
+            while not stop_event.is_set():
+                try:
+                    connection, _ = listener.accept()
+                except (TimeoutError, socket.timeout):
+                    continue
+                if not slots.acquire(blocking=False):
+                    connection.close()
+                    continue
+                def serve_one(conn: socket.socket = connection) -> None:
+                    try:
+                        self.handle_connection(conn)
+                    finally:
+                        conn.close()
+                        slots.release()
+                try:
+                    pool.submit(serve_one)
+                except RuntimeError:
+                    connection.close()
+                    slots.release()
+                    raise
+        finally:
+            # The fd and bound inode belong to the activation custodian.  A
+            # stopped daemon closes its descriptor; only the issuer reconciles
+            # the same inode after observing this process exit.
+            pool.shutdown(wait=True, cancel_futures=True)
+
     @classmethod
     def from_key_file(cls, path: Path, *, key_id: str,
                       expected_uid: int = 0, **kwargs: Any) -> "AuthorityService":
@@ -3831,6 +3968,22 @@ class AuthorityService:
         if operation == "perform_effect":
             return self._perform_effect(uid, peer_pid, payload, cancelled=cancelled,
                                         peer_pidfd=peer_pidfd)
+        if operation == "native.package.bind":
+            if (not isinstance(payload, dict) or set(payload) != {"schema"}
+                    or type(payload.get("schema")) is not int or payload["schema"] != 1
+                    or peer_pidfd is None):
+                raise AuthorityDenied("native.package", "native package binding request is malformed")
+            return self._bind_selected_native_package(uid, peer_pid, peer_pidfd)
+        if operation == "native.package.resolver.read":
+            if (not isinstance(payload, dict) or set(payload) != {"schema", "binding_handle"}
+                    or type(payload.get("schema")) is not int or payload["schema"] != 1
+                    or not isinstance(payload.get("binding_handle"), str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["binding_handle"])
+                    or peer_pidfd is None):
+                raise AuthorityDenied("native.package", "native resolver request is malformed")
+            return self._read_selected_native_resolver(
+                uid, peer_pid, peer_pidfd, payload["binding_handle"],
+            )
         if operation == "process.control":
             return self._dispatch_process_control(
                 uid, peer_pid, peer_pidfd, payload, cancelled=cancelled,
@@ -3932,6 +4085,10 @@ class AuthorityService:
             return self._dispatch_native_invocation(
                 operation, uid, peer_pid, peer_pidfd, payload,
             )
+        if operation == "native.owner-overlay.execute":
+            return self._dispatch_native_owner_overlay(
+                uid, peer_pid, peer_pidfd, payload, cancelled=cancelled,
+            )
         if operation == "native.input.take":
             return self._dispatch_native_input_take(
                 uid, peer_pid, peer_pidfd, payload, cancelled=cancelled,
@@ -4030,6 +4187,169 @@ class AuthorityService:
             )
         raise AuthorityDenied("protocol.operation", "authority operation is unavailable")
 
+    def _bind_selected_native_package(self, peer_uid: int, peer_pid: int,
+                                      peer_pidfd: int) -> Mapping[str, Any]:
+        """Bind the package already mounted in this authenticated live peer.
+
+        The worker supplies no package/profile/path selector. The manager's
+        PIDFD/cgroup proof and active protected catalog jointly choose it.
+        """
+        bindings = self.root_runtime_bindings
+        manager = getattr(bindings, "process_manager", None)
+        catalog = getattr(bindings, "enrollment_catalog", None)
+        resolve_peer = getattr(manager, "resolve_native_package_for_peer", None)
+        if (bindings is None or manager is None or catalog is None
+                or not callable(resolve_peer) or peer_pidfd is None):
+            raise AuthorityDenied("native.package", "active native package custody is unavailable")
+        proof = resolve_peer(peer_pid, peer_pidfd)
+        if proof is None or getattr(proof, "kernel_uid", None) != peer_uid:
+            raise AuthorityDenied("native.package", "peer has no current loaded native package")
+        try:
+            package = catalog.resolve_profile_native_package(proof.profile_id, proof.generation)
+            resolver = self._current_native_package_resolver(proof, package)
+        except Exception:
+            raise AuthorityDenied("native.package", "loaded native package resolver is unavailable") from None
+        now = self.monotonic()
+        handle = secrets.token_urlsafe(36)
+        expires = min(now + 30.0, now + 600.0)
+        binding = {
+            "schema": 1, "opaque_binding_handle": handle,
+            "package_id": package.package_id, "profile_id": package.profile_id,
+            "generation": package.generation,
+            "resolver_digest": resolver["resolver_sha256"],
+            "compiled_closure_sha256": package.compiled_closure_sha256,
+            "entrypoint_sha256": package.entrypoint_sha256,
+            "expires_monotonic": expires,
+        }
+        with self._lock:
+            current = self.monotonic()
+            self._native_package_binding_leases = {
+                key: item for key, item in self._native_package_binding_leases.items()
+                if item[5] > current
+            }
+            if len(self._native_package_binding_leases) >= 4096:
+                raise AuthorityDenied("native.package", "native package lease table is at capacity")
+            self._native_package_binding_leases[handle] = (
+                peer_uid, peer_pid, proof.process_id, package.package_id,
+                package.generation, expires, proof.profile_id,
+                proof.mount.resolver_sha256, resolver,
+            )
+        return binding
+
+    def _read_selected_native_resolver(self, peer_uid: int, peer_pid: int,
+                                       peer_pidfd: int, handle: str) -> Mapping[str, Any]:
+        with self._lock:
+            lease = self._native_package_binding_leases.get(handle)
+        if (lease is None or lease[0] != peer_uid or lease[1] != peer_pid
+                or lease[5] <= self.monotonic()):
+            raise AuthorityDenied("native.package", "native package binding is absent or stale")
+        bindings = self.root_runtime_bindings
+        manager = getattr(bindings, "process_manager", None)
+        catalog = getattr(bindings, "enrollment_catalog", None)
+        resolve_peer = getattr(manager, "resolve_native_package_for_peer", None)
+        if not callable(resolve_peer) or peer_pidfd is None:
+            raise AuthorityDenied("native.package", "active native package custody is unavailable")
+        try:
+            proof = resolve_peer(peer_pid, peer_pidfd)
+            if (proof is None or getattr(proof, "kernel_uid", None) != peer_uid
+                    or proof.process_id != lease[2]
+                    or proof.profile_id != lease[6] or proof.generation != lease[4]
+                    or proof.mount.package_id != lease[3]
+                    or proof.mount.resolver_sha256 != lease[7]):
+                raise ValueError
+            package = catalog.resolve_native_package(lease[3], lease[4])
+            resolver = self._current_native_package_resolver(proof, package)
+            if resolver != lease[8]:
+                raise ValueError
+        except Exception:
+            with self._lock:
+                self._native_package_binding_leases.pop(handle, None)
+            raise AuthorityDenied("native.package", "loaded package or resolver changed") from None
+        return resolver
+
+    @staticmethod
+    def _current_native_package_resolver(proof: Any, package: Any) -> Mapping[str, Any]:
+        """Verify mounted resolver bytes then project the distinct loader lane."""
+        mount = getattr(proof, "mount", None)
+        if (mount is None or mount.package_id != package.package_id
+                or mount.profile_id != package.profile_id
+                or mount.generation != package.generation
+                or mount.compiled_closure_sha256 != package.compiled_closure_sha256
+                or mount.entrypoint_sha256 != package.entrypoint_sha256
+                or mount.resolver_sha256 != package.resolver_sha256
+                or not isinstance(mount.mount_path, str) or not mount.mount_path.startswith("/")):
+            raise ValueError("native mount does not match the protected package")
+        root_fd = resolver_fd = file_fd = None
+        try:
+            flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+            directory_flags = flags | getattr(os, "O_DIRECTORY", 0)
+            root_fd = os.open(mount.mount_path, directory_flags)
+            resolver_fd = os.open("resolver", directory_flags, dir_fd=root_fd)
+            file_fd = os.open("resolver", flags, dir_fd=resolver_fd)
+            info = os.fstat(file_fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022
+                    or not 1 <= info.st_size <= 2 * 1024 * 1024):
+                raise ValueError("mounted resolver file has unsafe custody")
+            chunks = []
+            remaining = 2 * 1024 * 1024 + 1
+            while remaining:
+                chunk = os.read(file_fd, min(65536, remaining))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            raw_bytes = b"".join(chunks)
+        finally:
+            for fd in (file_fd, resolver_fd, root_fd):
+                if fd is not None:
+                    os.close(fd)
+        if (not raw_bytes or len(raw_bytes) > 2 * 1024 * 1024
+                or hashlib.sha256(raw_bytes).hexdigest() != package.resolver_sha256):
+            raise ValueError("mounted resolver bytes differ from the active pin")
+        raw = strict_json_loads(raw_bytes)
+        expected_raw = {
+            "schema", "package_id", "profile_id", "generation", "adapters", "actions",
+            "source_issuers", "native_schemas", "process_role_records_sha256",
+            "effect_selection_receipt_handles", "owner_overlay_operation_records",
+        }
+        if (not isinstance(raw, dict) or set(raw) != expected_raw
+                or type(raw.get("schema")) is not int or raw["schema"] != 1
+                or raw.get("package_id") != package.package_id
+                or raw.get("profile_id") != package.profile_id
+                or raw.get("generation") != package.generation
+                or not isinstance(raw.get("process_role_records_sha256"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", raw["process_role_records_sha256"])
+                or not isinstance(raw.get("owner_overlay_operation_records"), list)):
+            raise ValueError("mounted resolver schema or package identity is invalid")
+        owner_rows = [_native_json_plain(row) for _, row in sorted(package.owner_overlay_operation_records.items())]
+        if raw["owner_overlay_operation_records"] != owner_rows:
+            raise ValueError("mounted owner-overlay lane differs from protected enrollment")
+        adapters = []
+        for action in package.action_records.values():
+            adapters.append({
+                "adapter_id": action.adapter_id,
+                "manifest_sha256": action.manifest_sha256,
+                "adapter_sha256": action.adapter_sha256,
+                "action_id": action.action_id,
+                "argument_schema_id": action.argument_schema_id,
+                "result_schema_id": action.result_schema_id,
+                "effect_enrollment_id": action.effect_enrollment_id,
+                "operation": action.operation, "capability": action.capability,
+                "target_id": action.target_id, "recipient": action.recipient,
+                "generation": action.generation,
+            })
+        adapters.sort(key=lambda row: (row["adapter_id"], row["action_id"]))
+        if len({(row["adapter_id"], row["action_id"]) for row in adapters}) != len(adapters):
+            raise ValueError("protected native action projection is ambiguous")
+        projection = {
+            "schema": 1, "package_id": package.package_id,
+            "profile_id": package.profile_id, "generation": package.generation,
+            "process_role_records_sha256": raw["process_role_records_sha256"],
+            "adapters": adapters, "owner_overlay_operation_records": owner_rows,
+        }
+        digest = hashlib.sha256(canonical_bytes(projection)).hexdigest()
+        return {**projection, "resolver_sha256": digest}
+
     def _dispatch_native_invocation(self, operation: str, peer_uid: int,
                                     peer_pid: int, peer_pidfd: int | None,
                                     payload: Any) -> Mapping[str, Any]:
@@ -4087,6 +4407,47 @@ class AuthorityService:
                 or len(result["source_receipt_handles"]) > 128):
             raise AuthorityDenied("native.invocation", "root invocation registry returned invalid ancestry")
         return {**dict(result), "source_receipt_handles": list(result["source_receipt_handles"])}
+
+    def _dispatch_native_owner_overlay(self, peer_uid: int, peer_pid: int,
+                                       peer_pidfd: int | None, payload: Any, *,
+                                       cancelled: Callable[[], bool]) -> Mapping[str, Any]:
+        """Execute the fixed, root-rejoined local owner-overlay RPC."""
+        registry = self.active_owner_overlay_registry
+        expected = {"schema", "invocation_handle", "canonical_arguments_b64"}
+        if (registry is None or peer_pidfd is None or not isinstance(payload, dict)
+                or set(payload) != expected or type(payload.get("schema")) is not int
+                or payload["schema"] != 1
+                or not isinstance(payload.get("invocation_handle"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", payload["invocation_handle"])
+                or not isinstance(payload.get("canonical_arguments_b64"), str)
+                or not 4 <= len(payload["canonical_arguments_b64"]) <= 2_800_000):
+            raise AuthorityDenied("native.owner_overlay", "owner-overlay execute request is malformed")
+        try:
+            arguments = base64.b64decode(payload["canonical_arguments_b64"], validate=True)
+        except (ValueError, TypeError):
+            raise AuthorityDenied("native.owner_overlay", "owner-overlay arguments are malformed") from None
+        if (not 1 <= len(arguments) <= 2 * 1024 * 1024
+                or base64.b64encode(arguments).decode("ascii") != payload["canonical_arguments_b64"]):
+            raise AuthorityDenied("native.owner_overlay", "owner-overlay arguments exceed their canonical bound")
+        if cancelled():
+            raise AuthorityDenied("native.owner_overlay", "owner-overlay request was cancelled")
+        execute = getattr(registry, "execute_rpc", None)
+        if not callable(execute):
+            raise AuthorityDenied("native.owner_overlay", "root owner-overlay invocation authority is unavailable")
+        result = execute(
+            invocation_handle=payload["invocation_handle"],
+            canonical_argument_bytes=arguments, peer_uid=peer_uid,
+            peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+        )
+        if cancelled():
+            raise AuthorityDenied("native.owner_overlay", "owner-overlay request was cancelled before response")
+        fields = {"schema", "invocation_handle", "registration_id", "result_schema_id",
+                  "result_sha256", "canonical_result_b64"}
+        if (not isinstance(result, Mapping) or set(result) != fields
+                or type(result.get("schema")) is not int or result["schema"] != 1
+                or result.get("invocation_handle") != payload["invocation_handle"]):
+            raise AuthorityDenied("native.owner_overlay", "root owner-overlay execution returned an invalid result")
+        return dict(result)
 
     def _dispatch_native_mcp(self, peer_uid: int, peer_pid: int,
                              peer_pidfd: int | None, payload: Any,

@@ -118,6 +118,7 @@ Home Assistant existing-instance root enrollment: `plans/amendments/2026-10-10-h
 
 Existing HI197/173/178 actual source producer ownership and finite APIs: `plans/amendments/2026-10-10-setup-startup-and-fixture-source-producers-v199.md`; all OPEN.
 
+Actual HA Assist resource scope/typed TTY selector: `plans/amendments/2026-10-10-home-assistant-assist-scope-mc-r0101.md`; MC-R0101.3/.4 OPEN. Source-derived filtered or explicitly observed exposed-set reads, no synthetic entity-ID API or admin/action shortcut.
 
 Exact routine publisher candidate metadata review `plans/amendments/2026-10-10-fixed-release-store-source-review-v200.md` under existing HI-T149.1; no new leaf pin row, actual target acceptance OPEN.
 

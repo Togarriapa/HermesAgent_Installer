@@ -7,15 +7,17 @@ import json
 import os
 import tempfile
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from hermes_installer.authority import installer_release as release
 from hermes_installer.authority.installer_release import (
     DEPLOYMENT_RECEIPT_PATH, InstalledRootReleaseVerifier, InstallerReleaseError,
     RootActorObservation, VerifiedInstallerReleaseReceipt, VerifiedReleaseFile,
-    REVIEWED_SOURCE_MODULES, REVIEWED_SOURCE_ARTIFACTS, FIXED_TEMPLATES, LAUNCHER_PATH, INTERPRETER_PATH,
+    REVIEWED_SOURCE_MODULES, REVIEWED_SOURCE_ARTIFACTS, FIXED_TEMPLATES, APPLICATION_BUILD_DRIVER,
+    LAUNCHER_PATH, INTERPRETER_PATH,
     PLAN_PATH, ARTIFACT_CATALOG_PATH, REQUIRED_LAUNCHER_MODULES, _fixed_roles, _open_verified_fd,
     _read_fixed_file, _safe_relative, _verify_complete_tree, _SEAL,
     _artifact_id_for, _module_name, _validate_fixed_layout_role,
@@ -72,11 +74,13 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
         pid = os.getpid()
         executable = Path(sys.executable).resolve()
         tracked = []
+        observed_modules = {}
         for name, module in tuple(sys.modules.items()):
             if name == "hermes_installer" or name.startswith("hermes_installer."):
                 origin = getattr(getattr(module, "__spec__", None), "origin", None)
                 if origin is not None:
                     tracked.append((name, origin, 0, 0, "0" * 64))
+                    observed_modules[name] = module
         pidfd, pidfd_writer = os.pipe()
         actor = RootActorObservation(
             _SEAL, pid=pid, uid=0, gid=0, start_time=123,
@@ -104,21 +108,34 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
                  patch("hermes_installer.authority.installer_release._namespace_inodes", return_value=()), \
                  patch("hermes_installer.authority.installer_release._isolated_import_facts", return_value=()), \
                  patch("hermes_installer.authority.installer_release._verify_actor_path"), \
+                 patch("hermes_installer.authority.installer_release.sys",
+                       SimpleNamespace(modules=observed_modules)), \
                  patch.object(Path, "resolve", resolve_process_executable):
                 actor.verify_current(LiveRelease())
+
+                originless_name = "hermes_installer.originless_for_test"
+                originless = ModuleType(originless_name)
+                originless.__spec__ = importlib.util.spec_from_loader(
+                    originless_name, loader=None, origin=None)
+                observed_modules[originless_name] = originless
+                try:
+                    with self.assertRaisesRegex(InstallerReleaseError, "unreviewed Hermes installer module"):
+                        actor.verify_current(LiveRelease())
+                finally:
+                    del observed_modules[originless_name]
 
                 injected_name = "hermes_installer.unreviewed_injected_for_test"
                 injected = ModuleType(injected_name)
                 injected.__spec__ = importlib.util.spec_from_loader(injected_name, loader=None,
                                                                      origin="/tmp/unreviewed.py")
-                sys.modules[injected_name] = injected
+                observed_modules[injected_name] = injected
                 try:
                     with self.assertRaisesRegex(InstallerReleaseError, "unreviewed Hermes installer module"):
                         actor.verify_current(LiveRelease())
                 finally:
-                    del sys.modules[injected_name]
+                    del observed_modules[injected_name]
 
-                module = sys.modules["hermes_installer.authority.installer_release"]
+                module = observed_modules["hermes_installer.authority.installer_release"]
                 prior_origin = module.__spec__.origin
                 module.__spec__.origin = "/tmp/substituted-installer-release.py"
                 try:
@@ -176,12 +193,15 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
             "templates/existing-model-store-root-template-v1.json":
                 ("installer-existing-model-store-root-template-v1",
                  "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f", 712),
+            "templates/private-loopback-policy-v1.json":
+                ("installer-private-loopback-nft-v1",
+                 "77a48f3a31f115693b04245146158e3c2467f297ff14746a52375850d76237cc", 1482),
         }
         actual = {path: (artifact_id, digest, size)
                   for artifact_id, path, digest, size in FIXED_TEMPLATES}
         for path, value in expected.items():
             self.assertEqual(actual[path], value)
-        self.assertEqual(len(actual), 8)
+        self.assertEqual(len(actual), 9)
         self.assertEqual(
             _artifact_id_for("templates/existing-model-store-root-template-v1.json", ["template"]),
             "installer-existing-model-store-root-template-v1",
@@ -198,23 +218,19 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
             )
 
     def test_reviewed_native_source_modules_are_finite_pinned_release_rows(self):
+        reviewed = json.loads((Path(__file__).parents[2]
+                               / "planning/final-coherent-source-pin-review-v195.json").read_text())
         expected = {
-            "installer-module:hermes_installer.components.native_plugins": (
-                "lib/python/hermes_installer/components/native_plugins.py",
-                "a027311518a746a6b1bcd126fc677190f4fe0ec2ac91b941872b3cdc542a79e7", 28_259, "module"),
-            "installer-module:hermes_installer.components.public_registries": (
-                "lib/python/hermes_installer/components/public_registries.py",
-                "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f", 29_374, "module"),
-            "installer-native-invocations-module-v137": (
-                "src/hermes_installer/native_invocations.py",
-                "78a3452289df5b7343e5c650ad4260d51b3aa1056e2eedea02cc3a0bff7b8226", 40_107, "source-module"),
-            "installer-native-boundary-module-v137": (
-                "src/hermes_installer/native_boundary.py",
-                "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb", 14_356, "source-module"),
-            "installer-native-source-definitions-module-v137": (
-                "lib/python/hermes_installer/authority/native_source_definitions.py",
-                "ca57637fd1eea4df70549391ba91b14b3842806ef6b789a4baa9d8954c7fdc22", 16_819, "module"),
+            row["installed_artifact_id"]: (
+                row["installed_member"], row["sha256"], row["size_bytes"], row["roles"][0])
+            for row in reviewed["members"]
+            if "module" in row["roles"]
         }
+        expected.update({
+            row["installed_artifact_id"]: (
+                row["installed_member"], row["sha256"], row["size_bytes"], row["roles"][0])
+            for row in reviewed["worker_source_members"]
+        })
         self.assertEqual({artifact_id: (path, digest, size, role)
                           for artifact_id, path, digest, size, role in REVIEWED_SOURCE_MODULES}, expected)
         rows = [
@@ -231,9 +247,14 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
                     for i, (artifact_id, path, digest, size) in enumerate(FIXED_TEMPLATES))
         rows.extend(VerifiedReleaseFile(artifact_id, (role,), path, digest, size, 1, 100 + i, 0o444)
                     for i, (artifact_id, path, digest, size, role) in enumerate(REVIEWED_SOURCE_MODULES))
+        rows.append(VerifiedReleaseFile(APPLICATION_BUILD_DRIVER[0], (APPLICATION_BUILD_DRIVER[4],),
+                                        APPLICATION_BUILD_DRIVER[1], APPLICATION_BUILD_DRIVER[2],
+                                        APPLICATION_BUILD_DRIVER[3], 1, 250, 0o444))
+        reviewed_module_ids = {item[0] for item in REVIEWED_SOURCE_MODULES if item[4] == "module"}
         rows.extend(VerifiedReleaseFile(artifact_id, ("module",), path, f"{i + 8:064x}", 100 + i,
                                         1, 300 + i, 0o444)
-                    for i, (artifact_id, path) in enumerate(REQUIRED_LAUNCHER_MODULES))
+                    for i, (artifact_id, path) in enumerate(REQUIRED_LAUNCHER_MODULES)
+                    if artifact_id not in reviewed_module_ids)
         rows.append(VerifiedReleaseFile("runtime-member:python3", ("runtime-member",),
                                         "runtime/bin/python3", "7" * 64, 1, 1, 7, 0o555))
         rows.extend(VerifiedReleaseFile(artifact_id, (role,), path, digest, size, 1, 150 + i, 0o444)
@@ -252,6 +273,10 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
         rows.extend(VerifiedReleaseFile(artifact_id, (role,), path, digest, size, 1, 220 + i, 0o444)
                     for i, (artifact_id, path, role, digest, size)
                     in enumerate(APPLICATION_EFFECT_SOURCE_MEMBERS))
+        helper_id, _helper_source, helper_path, helper_digest, helper_size, helper_role = \
+            release.NETWORK_STARTUP_HELPER
+        rows.append(VerifiedReleaseFile(helper_id, (helper_role,), helper_path, helper_digest,
+                                        helper_size, 1, 240, 0o444))
         self.assertEqual(_fixed_roles(rows, "closure.json"), ("installer-root-setup-plan-v1", "3" * 64))
         bad = list(rows)
         index = next(i for i, row in enumerate(bad) if row.artifact_id == REVIEWED_SOURCE_MODULES[0][0])
@@ -268,6 +293,65 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
                                                row.sha256, row.size_bytes, row.device, row.inode, row.mode)
         with self.assertRaises(InstallerReleaseError):
             _fixed_roles(bad_role, "closure.json")
+
+    def test_application_build_driver_is_one_exact_execution_only_member(self):
+        artifact_id, path, digest, size, role = APPLICATION_BUILD_DRIVER
+        self.assertEqual(_artifact_id_for(path, [role]), artifact_id)
+        _validate_fixed_layout_role(path, digest, size, [role], mode=0o444)
+        for changed_path, changed_digest, roles, mode in (
+            (path, "0" * 64, [role], 0o444),
+            (path, digest, ["module"], 0o444),
+            (path, digest, [role, "module"], 0o444),
+            ("lib/python/hermes_installer/authority/not_the_driver.py", digest, [role], 0o444),
+            (path, digest, [role], 0o555),
+        ):
+            with self.subTest(path=changed_path, roles=roles, mode=mode), \
+                    self.assertRaises(InstallerReleaseError):
+                _validate_fixed_layout_role(changed_path, changed_digest, size, roles, mode=mode)
+
+    def test_network_startup_helper_has_one_fixed_release_identity(self):
+        helper_id, source_path, installed_path, digest, size, role = release.NETWORK_STARTUP_HELPER
+        self.assertEqual(helper_id, "installer-private-loopback-worker-gate-v180")
+        self.assertEqual(source_path, "helpers/private-loopback-worker-gate.py")
+        self.assertEqual(installed_path, source_path)
+        self.assertEqual(role, "network-startup-helper")
+        self.assertEqual(_artifact_id_for(installed_path, [role]), helper_id)
+
+        # Until the pin is finalized, verification must reject helper bytes.
+        # Once pinned, only that exact digest and size may enter the release.
+        if digest is None:
+            with self.assertRaises(InstallerReleaseError):
+                _validate_fixed_layout_role(installed_path, "1" * 64, 1, [role], mode=0o444)
+        else:
+            self.assertIsInstance(digest, str)
+            self.assertIsInstance(size, int)
+            _validate_fixed_layout_role(installed_path, digest, size, [role], mode=0o444)
+        for path, roles, mode in (
+            ("helpers/unreviewed.py", [role], 0o444),
+            (installed_path, ["module"], 0o444),
+            (installed_path, [role, "module"], 0o444),
+            (installed_path, [role], 0o555),
+        ):
+            with self.subTest(path=path, roles=roles, mode=mode), \
+                    self.assertRaises(InstallerReleaseError):
+                _validate_fixed_layout_role(path, "1" * 64, 1, roles, mode=mode)
+
+        body = b"reviewed helper fixture"
+        fixture_sha = hashlib.sha256(body).hexdigest()
+        with patch.object(release, "NETWORK_STARTUP_HELPER", (
+                helper_id, source_path, installed_path, fixture_sha, len(body), role)):
+            _validate_fixed_layout_role(installed_path, fixture_sha, len(body), [role], mode=0o444)
+            for path, changed_sha, changed_roles, changed_mode in (
+                (installed_path, "0" * 64, [role], 0o444),
+                ("helpers/unreviewed.py", fixture_sha, [role], 0o444),
+                (installed_path, fixture_sha, ["module"], 0o444),
+                (installed_path, fixture_sha, [role, "module"], 0o444),
+                (installed_path, fixture_sha, [role], 0o555),
+            ):
+                with self.subTest(path=path, roles=changed_roles, mode=changed_mode), \
+                        self.assertRaises(InstallerReleaseError):
+                    _validate_fixed_layout_role(
+                        path, changed_sha, len(body), changed_roles, mode=changed_mode)
 
     def test_glm_source_artifact_ids_bind_exact_baseline_and_amendment_members(self):
         repo = Path(__file__).parents[2]

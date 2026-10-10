@@ -121,6 +121,160 @@ class VerifiedPMRuntimeProjection:
 
 
 @dataclass(frozen=True, slots=True)
+class VerifiedCommittedPMVenvTree:
+    """Descriptor-held complete committed Hermes venv observation.
+
+    Unlike the immutable PM base tree, a venv has no catalogued per-file
+    inventory. Its root-owned receipt supplies the closure digest; this
+    observer discovers members through no-follow directory descriptors,
+    hashes their opened bytes, and retains every file/link descriptor.
+    """
+
+    root_fd: int
+    root_device: int
+    root_inode: int
+    closure_sha256: str
+    members: tuple[VerifiedPMRuntimeProjectionMember, ...]
+
+    def close(self) -> None:
+        for descriptor in {self.root_fd, *(item.fd for item in self.members
+                                           if item.fd is not None)}:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+def observe_committed_pm_venv_tree(root: Path, *, expected_closure_sha256: str
+                                   ) -> VerifiedCommittedPMVenvTree:
+    """Open the exact full PM venv described by a current root receipt.
+
+    This is intentionally stricter than ``_tree_sha256``: path walking alone
+    cannot support later launch-time currentness after another process changes
+    an executable or dependency. The returned descriptors bind every member
+    that contributed to the measured digest.
+    """
+    if (not root.is_absolute() or not isinstance(expected_closure_sha256, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", expected_closure_sha256)):
+        raise ValueError("committed PM venv binding is malformed")
+    flags = (os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+             | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+    root_fd = os.open(root, flags)
+    held: list[int] = []
+    members: list[VerifiedPMRuntimeProjectionMember] = []
+    entries: dict[str, tuple[str, int, str, str | None, bool]] = {}
+    total_bytes = 0
+    try:
+        root_info = os.fstat(root_fd)
+        if (not stat.S_ISDIR(root_info.st_mode) or not _root_owned(root_info)
+                or stat.S_IMODE(root_info.st_mode) & 0o022):
+            raise ValueError("committed PM venv root custody is invalid")
+
+        def visit(directory_fd: int, prefix: str) -> None:
+            nonlocal total_bytes
+            names = sorted(os.listdir(directory_fd))
+            if len(entries) + len(names) > 50_000:
+                raise ValueError("committed PM venv exceeds the member bound")
+            for name in names:
+                if (not name or name in {".", ".."} or "/" in name
+                        or "\\" in name or "\x00" in name):
+                    raise ValueError("committed PM venv contains a nonportable path")
+                relative = f"{prefix}/{name}" if prefix else name
+                info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                if not _root_owned(info) or stat.S_IMODE(info.st_mode) & 0o022:
+                    raise ValueError("committed PM venv member ownership or mode is unsafe")
+                if stat.S_ISDIR(info.st_mode):
+                    entries[relative] = ("", 0, "dir", None, False)
+                    child = os.open(name, flags, dir_fd=directory_fd)
+                    try:
+                        opened = os.fstat(child)
+                        if (not stat.S_ISDIR(opened.st_mode)
+                                or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino)
+                                or not _root_owned(opened)
+                                or stat.S_IMODE(opened.st_mode) & 0o022):
+                            raise ValueError("committed PM venv directory changed while opening")
+                        visit(child, relative)
+                    finally:
+                        os.close(child)
+                    continue
+                if stat.S_ISREG(info.st_mode):
+                    if info.st_nlink != 1 or info.st_size > 512 * 1024 * 1024:
+                        raise ValueError("committed PM venv regular member exceeds custody bounds")
+                    total_bytes += info.st_size
+                    if total_bytes > 2 * 1024 * 1024 * 1024:
+                        raise ValueError("committed PM venv closure exceeds byte bound")
+                    member_fd = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                                        | getattr(os, "O_CLOEXEC", 0), dir_fd=directory_fd)
+                    held.append(member_fd)
+                    opened = os.fstat(member_fd)
+                    if (not stat.S_ISREG(opened.st_mode)
+                            or (opened.st_dev, opened.st_ino, opened.st_size)
+                               != (info.st_dev, info.st_ino, info.st_size)
+                            or not _root_owned(opened) or opened.st_nlink != 1
+                            or stat.S_IMODE(opened.st_mode) != stat.S_IMODE(info.st_mode)):
+                        raise ValueError("committed PM venv file changed while opening")
+                    sha = _hash_fd(member_fd)
+                    after = os.fstat(member_fd)
+                    if ((after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns,
+                         after.st_ctime_ns) != (opened.st_dev, opened.st_ino, opened.st_size,
+                                                opened.st_mtime_ns, opened.st_ctime_ns)):
+                        raise ValueError("committed PM venv file changed while hashing")
+                    executable = bool(stat.S_IMODE(opened.st_mode) & 0o111)
+                    entries[relative] = (sha, opened.st_size, "file", None, executable)
+                    members.append(VerifiedPMRuntimeProjectionMember(
+                        relative, sha, opened.st_size, executable, stat.S_IMODE(opened.st_mode),
+                        opened.st_dev, opened.st_ino, opened.st_uid, opened.st_gid,
+                        "file", None, member_fd))
+                    continue
+                if stat.S_ISLNK(info.st_mode):
+                    target = os.readlink(name, dir_fd=directory_fd)
+                    if not _safe_link_target(relative, target):
+                        raise ValueError("committed PM venv link escapes its root")
+                    link_fd = os.open(name, getattr(os, "O_PATH", os.O_RDONLY)
+                                      | getattr(os, "O_NOFOLLOW", 0)
+                                      | getattr(os, "O_CLOEXEC", 0), dir_fd=directory_fd)
+                    held.append(link_fd)
+                    opened = os.fstat(link_fd)
+                    if (not stat.S_ISLNK(opened.st_mode)
+                            or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino)
+                            or os.readlink(name, dir_fd=directory_fd) != target):
+                        raise ValueError("committed PM venv link changed while opening")
+                    raw = target.encode("utf-8")
+                    sha = hashlib.sha256(raw).hexdigest()
+                    entries[relative] = (sha, len(raw), "symlink", target, False)
+                    members.append(VerifiedPMRuntimeProjectionMember(
+                        relative, sha, len(raw), False, stat.S_IMODE(info.st_mode),
+                        info.st_dev, info.st_ino, info.st_uid, info.st_gid,
+                        "symlink", target, link_fd))
+                    continue
+                raise ValueError("committed PM venv contains a special file")
+
+        visit(root_fd, "")
+        digest = hashlib.sha256()
+        for relative, (sha, _size, kind, target, _executable) in sorted(entries.items()):
+            digest.update(relative.encode("utf-8") + b"\0")
+            if kind == "dir":
+                digest.update(b"dir\0")
+            elif kind == "symlink":
+                digest.update(b"link\0" + str(target).encode("utf-8"))
+            else:
+                digest.update(b"file\0" + bytes.fromhex(sha))
+        observed = digest.hexdigest()
+        if observed != expected_closure_sha256:
+            raise ValueError("committed PM venv closure differs from its protected receipt")
+        members.sort(key=lambda item: item.relative_path)
+        return VerifiedCommittedPMVenvTree(root_fd, root_info.st_dev, root_info.st_ino,
+                                           observed, tuple(members))
+    except BaseException:
+        for descriptor in set(held + [root_fd]):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        raise
+
+
+@dataclass(frozen=True, slots=True)
 class VerifiedPMUVToolProjection:
     """Current root-receipt-backed uv executable held read-only by descriptor."""
     receipt_handle: str

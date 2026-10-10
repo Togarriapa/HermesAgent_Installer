@@ -85,6 +85,137 @@ class NativePluginLoadUnavailable(PermissionError):
     """Selected package mount, manifest, or adapter source is unavailable."""
 
 
+class RootSelectedOwnerOverlayRPCProxy:
+    """Worker-only four-method facade; all view I/O stays in root RPC handlers."""
+
+    _METHODS = {
+        "read": "resource-overlay-store:tool:resource_overlay_read",
+        "history": "resource-overlay-store:tool:resource_overlay_history",
+        "write": "resource-overlay-store:tool:resource_overlay_write",
+        "delete": "resource-overlay-store:tool:resource_overlay_delete",
+    }
+
+    def __init__(self, *, authority: Any, package: Any,
+                 current_binding: Any) -> None:
+        selection = getattr(package, "_selection", None)
+        operations = getattr(selection, "owner_overlay_operations", None)
+        if (not callable(getattr(authority, "execute_owner_overlay", None))
+                or not callable(current_binding) or not isinstance(operations, tuple)
+                or not operations):
+            raise NativePluginLoadUnavailable("selected owner-overlay RPC bindings are unavailable")
+        by_method = {getattr(row, "method", None): row for row in operations}
+        if (set(by_method) - set(self._METHODS)
+                or any(self._METHODS.get(method) != row.registration_id
+                       for method, row in by_method.items())):
+            raise NativePluginLoadUnavailable("selected owner-overlay method map is invalid")
+        self._authority = authority
+        self._package = package
+        self._current_binding = current_binding
+        self._by_method = by_method
+
+    def _call(self, method: str, args: Mapping[str, Any]) -> dict[str, Any]:
+        import base64
+        import hashlib
+        from hermes_installer.components.native_plugins import _record_id, _tool_object
+
+        operation = self._by_method.get(method)
+        if operation is None:
+            raise NativePluginLoadUnavailable("owner-overlay method is not selected")
+        binding = self._current_binding()
+        if (binding is None
+                or getattr(binding, "package_id", None) != self._package.package_id
+                or getattr(binding, "profile_id", None) != self._package.profile_id
+                or getattr(binding, "generation", None) != self._package.generation
+                or getattr(binding, "adapter_id", None) != "resource-overlay-store"
+                or getattr(binding, "action_id", None) != operation.registration_id
+                or not isinstance(getattr(binding, "invocation_handle", None), str)):
+            raise NativePluginLoadUnavailable("owner-overlay call has no current observed invocation")
+        if method in {"read", "history"}:
+            fields = _tool_object(args, fields=frozenset({"record_id"}))
+            payload = {"record_id": _record_id(fields.get("record_id"))}
+        elif method == "write":
+            fields = _tool_object(args, fields=frozenset({"record_id", "value", "expected_revision"}))
+            record_id, value = _record_id(fields.get("record_id")), fields.get("value")
+            expected = fields.get("expected_revision")
+            if (not isinstance(value, bytes) or len(value) > 1_048_576
+                    or (expected is not None and (not isinstance(expected, str)
+                        or not re.fullmatch(r"[0-9a-f]{64}", expected)))):
+                raise NativePluginLoadUnavailable("owner-overlay write arguments are invalid")
+            payload = {"record_id": record_id,
+                       "value_base64": base64.b64encode(value).decode("ascii"),
+                       "expected_revision": expected}
+        else:
+            fields = _tool_object(args, fields=frozenset({"record_id", "expected_revision"}))
+            record_id, expected = _record_id(fields.get("record_id")), fields.get("expected_revision")
+            if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+                raise NativePluginLoadUnavailable("owner-overlay delete requires an exact revision")
+            payload = {"record_id": record_id, "expected_revision": expected}
+        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                               separators=(",", ":"), allow_nan=False).encode("utf-8")
+        response = self._authority.execute_owner_overlay(binding.invocation_handle, canonical)
+        if (response.get("invocation_handle") != binding.invocation_handle
+                or response.get("registration_id") != operation.registration_id
+                or response.get("result_schema_id") != operation.result_schema_id):
+            raise NativePluginLoadUnavailable("root owner-overlay response differs from its selected invocation")
+        try:
+            result_bytes = base64.b64decode(response["canonical_result_b64"], validate=True)
+            result = json.loads(result_bytes.decode("utf-8", errors="strict"))
+            if (base64.b64encode(result_bytes).decode("ascii") != response["canonical_result_b64"]
+                    or json.dumps(result, ensure_ascii=False, sort_keys=True,
+                                  separators=(",", ":"), allow_nan=False).encode("utf-8") != result_bytes
+                    or hashlib.sha256(result_bytes).hexdigest() != response["result_sha256"]
+                    or not isinstance(result, dict)):
+                raise ValueError
+        except Exception:
+            raise NativePluginLoadUnavailable("root owner-overlay result is not canonical") from None
+        return result
+
+    def read(self, record_id: str):
+        from hermes_installer.registry.resources_runtime import OverlayValue
+        result = self._call("read", {"record_id": record_id})
+        if result == {"found": False, "record_id": record_id}:
+            return None
+        if (set(result) != {"found", "record_id", "value_base64", "revision"}
+                or result.get("found") is not True or result.get("record_id") != record_id
+                or not isinstance(result.get("revision"), str)):
+            raise NativePluginLoadUnavailable("root owner-overlay read result is malformed")
+        try:
+            value = __import__("base64").b64decode(result["value_base64"], validate=True)
+        except Exception:
+            raise NativePluginLoadUnavailable("root owner-overlay read bytes are malformed") from None
+        if len(value) > 1_048_576:
+            raise NativePluginLoadUnavailable("root owner-overlay read exceeds its bound")
+        return OverlayValue(self._package.profile_id, record_id, result["revision"], value)
+
+    def history(self, record_id: str) -> tuple[str, ...]:
+        result = self._call("history", {"record_id": record_id})
+        revisions = result.get("revisions")
+        if (set(result) != {"record_id", "revisions"} or result.get("record_id") != record_id
+                or not isinstance(revisions, list) or len(revisions) > 256
+                or any(not isinstance(item, str) or not re.fullmatch(r"[0-9a-f]{64}", item)
+                       for item in revisions)):
+            raise NativePluginLoadUnavailable("root owner-overlay history result is malformed")
+        return tuple(revisions)
+
+    def write(self, record_id: str, value: bytes, expected_revision: str | None) -> str:
+        result = self._call("write", {"record_id": record_id, "value": value,
+                                      "expected_revision": expected_revision})
+        revision = result.get("revision")
+        if (set(result) != {"record_id", "revision"} or result.get("record_id") != record_id
+                or not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{64}", revision)):
+            raise NativePluginLoadUnavailable("root owner-overlay write result is malformed")
+        return revision
+
+    def delete(self, record_id: str, expected_revision: str) -> str:
+        result = self._call("delete", {"record_id": record_id,
+                                       "expected_revision": expected_revision})
+        revision = result.get("deleted_revision")
+        if (set(result) != {"record_id", "deleted_revision"} or result.get("record_id") != record_id
+                or not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{64}", revision)):
+            raise NativePluginLoadUnavailable("root owner-overlay delete result is malformed")
+        return revision
+
+
 @dataclass(frozen=True, slots=True)
 class _LoadedProcessRoleOrigin:
     """Observed origin of one imported, root-selected process-role module."""
@@ -1538,6 +1669,13 @@ class SelectedNativePackage:
         """Presentation-only row for the selected adapter/action."""
         return self._selection.resolve(adapter_id, action_id)
 
+    @property
+    def owner_overlay_operations(self) -> tuple[Any, ...]:
+        """Mounted local CAS operation rows; still presentation metadata only."""
+        self._selection._require_live()
+        rows = getattr(self._selection, "owner_overlay_operations", ())
+        return rows if isinstance(rows, tuple) else ()
+
     def manifest_digest_for_adapter(self, adapter_id: str) -> str | None:
         """Return the selected source resource-manifest digest for one adapter."""
         self._selection._require_live()
@@ -1893,6 +2031,10 @@ def _selected_runtime_context_factory(authority: object, package: SelectedNative
                 identity=identity, declared_capabilities=capabilities, authority=authority,
                 invocation_contexts=None,
                 selected_adapters=ReviewedPluginAdapterRegistry(), plugin_effects=None,
+                local_overlay_store=(RootSelectedOwnerOverlayRPCProxy(
+                    authority=authority, package=package,
+                    current_binding=_current_native_invocation_binding,
+                ) if adapter_id == "resource-overlay-store" and package.owner_overlay_operations else None),
             )
             return bind_plugin_effects_to_runtime_context(
                 authority=authority, selected_package=package,

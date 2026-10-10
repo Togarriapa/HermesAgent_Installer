@@ -7,6 +7,7 @@ adapters; callers submit only opaque artifact receipt handles and an intent.
 from __future__ import annotations
 
 import hashlib
+import errno
 import json
 import os
 import pwd
@@ -35,6 +36,39 @@ class BootstrapEnrollmentError(RuntimeError):
 
 class BootstrapEnrollmentPending(BootstrapEnrollmentError):
     """A required root-enrolled artifact or account prerequisite is absent."""
+
+
+class BootstrapSystemCallFailure(OSError):
+    """A root bootstrap OS failure with a finite step and sanitized errno."""
+
+    STEPS = frozenset({
+        "bootstrap.tty_selection",
+        "source_cas.construct",
+        "source_cas.prepare",
+        "source_cas.lock",
+        "source_cas.lock_release",
+        "source_cas.inspect",
+        "source_cas.materialize",
+        "source_cas.resolve",
+        "installer_runtime.provision",
+        "bootstrap.handoff",
+        "bootstrap.reexec",
+    })
+    ERRNO_NAMES = frozenset({
+        "EACCES", "EAGAIN", "EBUSY", "EEXIST", "EINTR", "EINVAL", "EIO",
+        "EISDIR", "EMFILE", "ENFILE", "ENOSPC", "ENOTDIR", "ENOTTY",
+        "ENXIO", "ELOOP", "ENOENT", "ENOMEM", "EPERM", "EROFS", "ETIMEDOUT",
+        "EXDEV",
+    })
+
+    def __init__(self, step: str, error_number: int | None):
+        if step not in self.STEPS:
+            step = "source_cas.inspect"
+        errno_name = errno.errorcode.get(error_number) if isinstance(error_number, int) else None
+        safe_errno = error_number if errno_name in self.ERRNO_NAMES else None
+        self.step = step
+        self.errno_name = errno_name if safe_errno is not None else "UNKNOWN"
+        super().__init__(safe_errno, "installer bootstrap system call failed")
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +129,13 @@ class EnrollmentPolicy:
     # not selected in this generation.
     remote_startup_enrollments: tuple[Mapping[str, Any], ...] = ()
     private_loopback_networks: tuple[Mapping[str, Any], ...] = ()
+    # v184 finite native AF_UNIX startup projection. These catalogs are empty
+    # until their root-held source, endpoint and active-generation producer is
+    # composed; callers do not get to submit them through an enrollment request.
+    native_worker_network_records: tuple[Mapping[str, Any], ...] = ()
+    active_network_generation_records: tuple[Mapping[str, Any], ...] = ()
+    native_worker_runtime_records: tuple[Mapping[str, Any], ...] = ()
+    owner_overlay_observer_records: tuple[Mapping[str, Any], ...] = ()
     selected_resource_executions: tuple[Mapping[str, Any], ...] = ()
     selected_application_runtimes: tuple[Mapping[str, Any], ...] = ()
     # Public network scopes become active only after their source-specific
@@ -662,6 +703,9 @@ class RootSetupSessionStore:
         initial = handoff._initial_session
         if (initial.phase != "initial-compilation"
                 or handoff.expires_monotonic <= time.monotonic()
+                or handoff.principal_identity_kind
+                   != initial._choices.selected_principal_identity_kind
+                or handoff.principal_identity_kind not in {"authentik-subject-v1", "linux-local-owner-v1"}
                 or not re.fullmatch(r"[0-9a-f]{64}", handoff.plan_sha256)):
             raise BootstrapEnrollmentPending("initial publication handoff is stale or malformed")
         verify_initial = getattr(registry, "verify_initial_session", None)
@@ -689,6 +733,7 @@ class RootSetupSessionStore:
             "compilation_transaction_handle": handoff.compilation_transaction_handle,
             "choices_sha256": handoff.choices_sha256,
             "principal_selection_receipt_handle": handoff.principal_selection_receipt_handle,
+            "principal_identity_kind": handoff.principal_identity_kind,
             "artifact_receipt_handles": list(handoff.artifact_receipt_handles),
             "adoption_state": "pending",
         }
@@ -1676,7 +1721,7 @@ class RootBootstrapEnrollment:
 
 
 def _generation(policy: EnrollmentPolicy) -> dict[str, Any]:
-    value = {"schema": 1, "generation_id": policy.generation_id,
+    value = {"schema": 2, "generation_id": policy.generation_id,
              "service_records": [dict(row) for row in policy.records],
              "protected_devices": [dict(row) for row in policy.protected_devices],
              "protected_build_records": [dict(row) for row in policy.protected_build_records],
@@ -1695,6 +1740,10 @@ def _generation(policy: EnrollmentPolicy) -> dict[str, Any]:
              "root_journal_roots": [dict(row) for row in policy.root_journal_roots],
              "remote_startup_enrollments": [dict(row) for row in policy.remote_startup_enrollments],
              "private_loopback_networks": [dict(row) for row in policy.private_loopback_networks],
+             "native_worker_network_records": [dict(row) for row in policy.native_worker_network_records],
+             "active_network_generation_records": [dict(row) for row in policy.active_network_generation_records],
+             "native_worker_runtime_records": [dict(row) for row in policy.native_worker_runtime_records],
+             "owner_overlay_observer_records": [dict(row) for row in policy.owner_overlay_observer_records],
              "selected_resource_executions": [dict(row) for row in policy.selected_resource_executions],
              "selected_application_runtimes": [dict(row) for row in policy.selected_application_runtimes],
              "public_web_scopes": [dict(row) for row in policy.public_web_scopes],

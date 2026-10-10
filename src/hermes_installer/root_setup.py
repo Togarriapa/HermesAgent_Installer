@@ -17,7 +17,7 @@ import stat
 import sys
 import time
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 
 class RootSetupAction(StrEnum):
@@ -338,6 +338,9 @@ def verify_installed_launcher() -> bool:
     """
     from .authority.installer_release import InstalledRootReleaseVerifier
 
+    pointer = InstalledRootReleaseVerifier.verify_installed_release()
+    pointer.close()
+    _import_v180_native_support_closure()
     release, actor = InstalledRootReleaseVerifier.from_current_root_process()
     try:
         actor.verify_current(release)
@@ -345,6 +348,50 @@ def verify_installed_launcher() -> bool:
     finally:
         actor.close()
         release.close()
+
+
+def _import_v180_native_support_closure() -> None:
+    """Load the finite native support and worker source closure before actor observation."""
+    from .components import native_plugins, public_registries
+    from . import native_boundary_patch, native_plugin_bindings, native_plugin_loader
+    from .authority import (
+        local_resource_effects,
+        native_assembler,
+        native_definition_composition,
+        native_policy_preparation,
+        native_registration_projection,
+        native_health_source,
+        native_source_definitions,
+        native_worker_recipes,
+        native_worker_start_recipe,
+        owner_overlay_capture_schemas,
+        pm_runtime,
+        runtime_root_custody,
+    )
+    from .registry import resource_backends
+
+    # Keep explicit references so this remains a finite, intentional import set.
+    _ = (native_assembler, native_registration_projection, native_plugins, public_registries,
+         native_definition_composition, native_policy_preparation,
+         native_health_source, native_source_definitions, local_resource_effects,
+         native_worker_recipes, native_worker_start_recipe,
+         owner_overlay_capture_schemas,
+         runtime_root_custody,
+         native_plugin_loader, native_boundary_patch, native_plugin_bindings,
+         resource_backends, pm_runtime)
+
+
+def _import_v187_listener_activation_closure() -> None:
+    """Load the finite installed daemon/adoption modules before actor capture."""
+    from .authority import (
+        daemon, functional_health_receipt_consumer, listener_activation,
+        native_health_daemon, native_worker_endpoint_custody,
+    )
+
+    # The worker and supervisor use the same pinned endpoint implementation;
+    # keep these imports explicit so the installed actor sees the full closure.
+    _ = (daemon, listener_activation, native_worker_endpoint_custody,
+         functional_health_receipt_consumer, native_health_daemon)
 
 
 def run_root_setup_action(
@@ -423,6 +470,10 @@ def run_root_setup_action(
     # module load, including legitimate fixed modules; importing arbitrary
     # modules here would weaken that boundary, so keep this finite import at
     # the installed-release handoff only.
+    from .authority.installer_release import InstalledRootReleaseVerifier
+    # The predecessor probe above already verified the installed pointer.
+    _import_v180_native_support_closure()
+    _import_v187_listener_activation_closure()
     from .authority.bootstrap_runtime_factory import (
         RootBootstrapRuntimeFactory,
         RootInitialSetupAggregate,
@@ -459,13 +510,36 @@ def run_root_setup_action(
             account = _read_target_account_name()
             initial = initial_aggregate.begin_install(account)
             if not (sys.stdin.isatty() and sys.stderr.isatty()):
-                raise RuntimeError("Authentik setup choices require the root controlling terminal")
-            origin = input("Authentik HTTPS origin: ").strip()
-            system_group_id = input("Authentik system group ID: ").strip()
-            recipient_group_id = input("Authentik recipient group ID: ").strip()
-            initial_aggregate.select_initial_identity(
-                initial.compilation_session_handle, https_origin=origin,
-                system_group_id=system_group_id, recipient_group_id=recipient_group_id)
+                raise RuntimeError("Initial capability and identity-domain choices require the root controlling terminal")
+            print("Choose the initial principal domain before entering any credentials.")
+            print("  local: owner-scoped Resources overlay operations; no host or Authentik authority")
+            print("  authentik: selected homelab administration through the protected System-membership path")
+            identity_lane = input("Initial principal [local/authentik]: ").strip().casefold()
+            if identity_lane == "local":
+                print("Select local overlay operations: read, history, write, delete (blank selects none).")
+                operation_text = input("Local operations: ").strip().casefold()
+                operations = tuple(item.strip() for item in operation_text.split(",") if item.strip())
+                operation_ids = {
+                    "read": "resource-overlay-store:tool:resource_overlay_read",
+                    "history": "resource-overlay-store:tool:resource_overlay_history",
+                    "write": "resource-overlay-store:tool:resource_overlay_write",
+                    "delete": "resource-overlay-store:tool:resource_overlay_delete",
+                }
+                if (len(set(operations)) != len(operations)
+                        or any(item not in operation_ids for item in operations)):
+                    raise RuntimeError("Local capability choice must use read, history, write, and/or delete")
+                initial_aggregate.select_initial_local_owner(
+                    initial.compilation_session_handle,
+                    selected_registration_ids=tuple(operation_ids[item] for item in operations))
+            elif identity_lane == "authentik":
+                origin = input("Authentik HTTPS origin: ").strip()
+                system_group_id = input("Authentik system group ID: ").strip()
+                recipient_group_id = input("Authentik recipient group ID: ").strip()
+                initial_aggregate.select_initial_identity(
+                    initial.compilation_session_handle, https_origin=origin,
+                    system_group_id=system_group_id, recipient_group_id=recipient_group_id)
+            else:
+                raise RuntimeError("Initial principal domain must be local or authentik")
             handoff = initial_aggregate.publish_prepared_selection(
                 initial.compilation_session_handle)
             factory, session = initial_aggregate.adopt_prepared_selection(handoff.handoff_handle)
@@ -501,14 +575,40 @@ def run_root_setup_action(
             return _result(selected_action, RootSetupState.FAILED, "prepared",
                            "Initial setup did not produce the required empty prepared generation.")
 
+        # v186 requires observing the real preactive endpoint after prepared
+        # service identity custody exists and before any native policy choice
+        # can be signed. On unsupported hosts or incomplete custody, keep the
+        # setup resumable and stop before source selection; never synthesize a
+        # future socket path or continue with an empty endpoint binding.
+        try:
+            # Root custody owns the fixed /run parent before the endpoint
+            # custodian binds beneath it. The endpoint method revalidates this
+            # same retained receipt; this call makes the required ordering
+            # explicit at the installer dispatch boundary.
+            session.ensure_current_prepared_authority_runtime_root()
+            session.ensure_current_prepared_native_worker_endpoint()
+        except BootstrapEnrollmentPending as exc:
+            return _result(
+                selected_action, RootSetupState.PENDING, "endpoint", _safe_reason(exc),
+                resume_allowed=True, session_id=session._handle.session_id,
+                transaction_ref=_report_ref(receipt.transaction_handle),
+                generation_ref=_report_ref(receipt.generation_id),
+                receipt_refs=(_report_ref(receipt.provision_receipt_handle),),
+            )
+
         # Keep this sequence inside the installed root actor: every path,
         # resource revision, profile choice, and receipt is resolved by the
         # live factory/session. In particular, no caller-provided path or JSON
         # can substitute for the pinned source, PM runtime, or TTY selection.
         bundle = None
+        worker_recipe_candidates: tuple[Any, ...] = ()
+        precompile = None
+        role_closure = None
         try:
             bundle = session.prepare_selected_native_bundle()
-            native_policy_selection = session.observe_native_policy_configuration()
+            worker_recipe_candidates = session.resolve_prepared_native_worker_recipe_candidates(bundle)
+            native_policy_selection = session.observe_native_policy_configuration(
+                worker_recipe_candidates=worker_recipe_candidates)
             from .authority.native_policy_preparation import RootNativePolicyPreparationSelection
             if (type(native_policy_selection) is not RootNativePolicyPreparationSelection
                     or getattr(native_policy_selection, "setup_session_id", None)
@@ -520,18 +620,120 @@ def run_root_setup_action(
                     or getattr(native_policy_selection, "resource_profile_selection_handle", None)
                     != bundle.resource_profile_selection_receipt_handle):
                 raise RuntimeError("native policy choice is not bound to the current prepared transaction")
-            assembly = session.resolve_native_bootstrap_assembly(
-                receipt.provision_receipt_handle, bundle.materialization_receipt_handle)
-            materializer = getattr(session, "_native_materializer", None)
-            if materializer is None:
-                raise RuntimeError("root native materialization actor is not retained")
-            output_receipts = materializer.compile_selected(assembly)
-            _verify_native_output_receipts(output_receipts, session=session,
-                                           prepared_generation_id=receipt.generation_id)
+            # The active compiler reserves the exact five generated outputs
+            # and binds their current PM/output role closure before any active
+            # generation is compiled. This is the same reservation consumed
+            # later by the selected worker producer; it avoids a second,
+            # unbound package compilation path.
+            compiler = session.selected_installation.resolve_current_active_policy_compilation_registry()
+            precompile = compiler.begin_active_policy_precompile(session._handle, bundle)
+            role_closure = session.selected_installation.resolve_selected_runnable_roles(
+                bundle.pm_runtime_receipt_handle, precompile.reservation_handle)
+            if compiler.verify_current_precompile_capability(precompile) is not precompile:
+                raise BootstrapEnrollmentPending("native active precompile reservation is no longer current")
+            if native_policy_selection.selected_worker_recipe_handles:
+                recipe_registry = session.resolve_current_native_worker_recipe_registry()
+                recipe_registry.retain_runnable_closure(native_policy_selection, role_closure)
+                session.resolve_current_native_worker_service_generation_producer()
+
+                # Compile and durably publish the exact selected active policy,
+                # then let the session build its native generation from the
+                # sealed six-role projection. The empty generic receipt map is
+                # intentional here: PM plus the five outputs are supplied by
+                # the root-owned typed projection, never fabricated as CAS
+                # receipts.
+                active_claim_handle = compiler.compile_active_policy(
+                    session._handle, bundle, precompile,
+                )
+                predecessor = session.selected_installation.resolve_current_active_policy_predecessor(
+                    active_claim_handle,
+                )
+                publication = session.selected_installation.resolve_current_active_policy_publisher().publish(
+                    active_claim_handle, predecessor,
+                )
+                active_receipt = session.activate_runnable({})
+                if active_receipt.state != "committed" or not active_receipt.enrollment_ids:
+                    raise BootstrapEnrollmentPending(
+                        "selected typed native role projection did not commit an active enrollment")
+                current_publication = session.selected_installation.resolve_current_active_policy_publication()
+                if current_publication.publication_handle != publication.publication_handle:
+                    raise BootstrapEnrollmentPending(
+                        "active publication changed before supervised listener activation")
+
+                endpoint = session._native_worker_endpoint_receipt
+                endpoint_custodian = session._native_worker_endpoint_custodian
+                authority_root_receipt = session._prepared_authority_runtime_root_receipt
+                if endpoint is None or endpoint_custodian is None or authority_root_receipt is None:
+                    raise BootstrapEnrollmentPending(
+                        "committed native enrollment lacks its held endpoint and authority-root receipts")
+                from .authority.listener_activation import (
+                    ListenerActivationUnavailable,
+                    RootAuthorityListenerActivationSupervisor,
+                )
+                supervisor = None
+                active_listener_receipt = None
+                functional_health_witness = None
+                try:
+                    supervisor = RootAuthorityListenerActivationSupervisor.from_root_setup(
+                        session.selected_installation, endpoint_custodian,
+                        session._factory._release, session._factory._actor,
+                        authority_root_receipt,
+                    )
+                    active_listener_receipt = supervisor.begin_active_listener_activation(
+                        endpoint.receipt_handle, current_publication,
+                    )
+                    session._health_activation_supervisor = supervisor
+                    from .authority.listener_activation import RootSetupHealthIntentIssuer
+                    health_issuer = RootSetupHealthIntentIssuer.from_current_root_setup(
+                        session.selected_installation, session._factory._release,
+                        session._factory._actor, supervisor,
+                    )
+                    health_intent = health_issuer.issue_after_activation(
+                        endpoint.receipt_handle, current_publication, active_listener_receipt,
+                    )
+                    completion_handle, _completion_sha256 = supervisor.request_functional_health(
+                        health_intent,
+                    )
+                    functional_health_witness = session.record_functional_health(
+                        active_receipt, (health_intent.intent_handle, completion_handle),
+                    )
+                except ListenerActivationUnavailable as exc:
+                    raise BootstrapEnrollmentPending(
+                        f"committed active enrollment awaits daemon-owned functional health ({type(exc).__name__})"
+                    ) from None
+                except (OSError, RuntimeError, ValueError) as exc:
+                    raise BootstrapEnrollmentPending(
+                        f"committed active enrollment awaits daemon-owned functional health ({type(exc).__name__})"
+                    ) from None
+                finally:
+                    if supervisor is not None:
+                        supervisor.close()
+                    if hasattr(session, "_health_activation_supervisor"):
+                        del session._health_activation_supervisor
+
+                # Functional health is a distinct protected receipt phase; an
+                # authenticated ACK is still insufficient without the actual
+                # completion row re-read by the original setup actor.
+                if functional_health_witness is None:
+                    raise BootstrapEnrollmentPending(
+                        "daemon returned no current committed functional-health witness")
+                return _result(
+                    selected_action, RootSetupState.ACTIVE, "health",
+                    "Active enrollment, supervised listener, and daemon-owned functional-health witness are current.",
+                    session_id=session._handle.session_id,
+                    transaction_ref=_report_ref(active_receipt.transaction_handle),
+                    generation_ref=_report_ref(active_receipt.generation_id),
+                    receipt_refs=(_report_ref(active_receipt.provision_receipt_handle),
+                                  _report_ref(publication.receipt_handle),
+                                  _report_ref(active_listener_receipt.activation_id),
+                                  _report_ref(functional_health_witness.body["health_receipt_handle"])),
+                )
         except BootstrapEnrollmentPending as exc:
             failure_refs = [_report_ref(receipt.provision_receipt_handle)]
             if bundle is not None:
                 failure_refs.append(_report_ref(bundle.materialization_receipt_handle))
+            if precompile is not None:
+                failure_refs.append(_report_ref(precompile.reservation_handle))
             return _result(
                 selected_action, RootSetupState.PENDING, "materialization", _safe_reason(exc),
                 resume_allowed=True, session_id=session._handle.session_id,
@@ -548,17 +750,25 @@ def run_root_setup_action(
                 receipt_refs=(_report_ref(receipt.provision_receipt_handle),),
             )
 
-        # These five package outputs are not the separate allowlisted runtime
-        # role receipts required by RootBootstrapSession.activate_runnable.
-        # Keep the prepared generation selected until the factory has a
-        # reviewed closure-to-runtime receipt producer; do not equate receipt
-        # IDs or hashes across the two registries.
+        # The reserved five outputs and runnable closure are now retained by
+        # the active compiler. Installer launcher/runtime receipts and the
+        # supervised listener ACK remain separate typed requirements; do not
+        # equate package outputs with those receipts.
         references = [_report_ref(receipt.provision_receipt_handle),
                       _report_ref(bundle.materialization_receipt_handle)]
-        references.extend(_report_ref(item.receipt_id) for item in output_receipts)
+        if precompile is not None:
+            references.extend(_report_ref(item) for item in precompile.receipt_ids)
+            references.append(_report_ref(precompile.reservation_handle))
+        if role_closure is not None:
+            references.append(_report_ref(role_closure.role_closure_handle))
+        worker_status = (
+            "the selected signed worker recipe, "
+            if native_policy_selection.selected_worker_recipe_handles else "the no-worker choice, "
+        )
         return _result(
             selected_action, RootSetupState.PENDING, "publication",
-            "Pinned source, PM runtime, selected Resources, native materialization, and package outputs are retained; strict active enrollment is pending its separate allowlisted runtime-role receipts.",
+            "Pinned source, PM runtime, " + worker_status +
+            "reserved native outputs, and exact runnable role closure are retained; active publication still requires the separately allowlisted runtime receipts and supervised listener acknowledgement.",
             resume_allowed=True,
             session_id=session._handle.session_id,
             transaction_ref=_report_ref(receipt.transaction_handle),
@@ -594,9 +804,29 @@ def run_root_setup_action(
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hermes-installer-root-setup")
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments and arguments[0] == "authority-daemon-adopt":
+        if (len(arguments) != 3 or arguments[1] != "--activation-id"
+                or not re.fullmatch(r"[0-9a-f]{32}", arguments[2])):
+            print("Use exactly: authority-daemon-adopt --activation-id <32 lowercase hexadecimal characters>.",
+                  file=sys.stderr)
+            return 1
+        try:
+            _require_root_linux()
+        except RuntimeError:
+            print("Authority daemon adoption requires the installed Linux root actor.", file=sys.stderr)
+            return 4
+        try:
+            _import_v187_listener_activation_closure()
+            from .authority.daemon import main_adopt
+
+            return main_adopt(arguments[2])
+        except Exception as exc:
+            # Never forward daemon/runtime exception details into a unit log.
+            print(f"Authority daemon adoption failed ({type(exc).__name__}).", file=sys.stderr)
+            return 1
     parser.add_argument("action", choices=tuple(item.value for item in RootSetupAction))
     parser.add_argument("--suite", choices=tuple(item.value for item in RootInstalledQualificationSuite))
-    arguments = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(arguments)
     if args.action == RootSetupAction.QUALIFY.value:
         if (args.suite is None or len(arguments) != 3
@@ -798,10 +1028,23 @@ def _read_target_account_name() -> str:
 
 
 def _safe_reason(error: BaseException) -> str:
-    from .authority.bootstrap_enrollment import BootstrapEnrollmentPending
+    from .authority.bootstrap_enrollment import (
+        BootstrapEnrollmentPending, BootstrapSystemCallFailure,
+    )
 
     if isinstance(error, BootstrapEnrollmentPending):
         return "A required root-selected setup prerequisite is pending; rerun the root setup action after resolving it."
+    if isinstance(error, BootstrapSystemCallFailure):
+        if type(error) is not BootstrapSystemCallFailure:
+            return "Root setup could not verify its required authority (OSError)."
+        step = error.step
+        if type(step) is not str or step not in BootstrapSystemCallFailure.STEPS:
+            return "Root setup could not verify its required authority (OSError)."
+        errno_name = error.errno_name
+        if type(errno_name) is not str or errno_name not in BootstrapSystemCallFailure.ERRNO_NAMES:
+            errno_name = "UNKNOWN"
+        errno_part = f" [{errno_name}]" if errno_name != "UNKNOWN" else ""
+        return f"Root setup failed at {step}{errno_part}."
     return f"Root setup could not verify its required authority ({type(error).__name__})."
 
 

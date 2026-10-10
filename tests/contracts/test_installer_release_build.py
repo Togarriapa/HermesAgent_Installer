@@ -60,6 +60,72 @@ def test_distribution_receipt_rechecks_nofollow_bytes_and_inode(tmp_path):
         receipt.close()
 
 
+def test_distribution_receipt_materializes_and_verifies_many_files_under_low_nofile(tmp_path):
+    script = r'''
+import hashlib
+import os
+import resource
+import sys
+from pathlib import Path
+
+resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
+from hermes_installer.authority import installer_release_build as rb
+
+root = Path(sys.argv[1]) / "source"
+root.mkdir(mode=0o700)
+exported = []
+for index in range(140):
+    name = f"modules/member-{index:03d}.py"
+    path = root / name
+    path.parent.mkdir(exist_ok=True)
+    body = (f"member {index}" + chr(10)).encode()
+    path.write_bytes(body)
+    os.chmod(path, 0o444)
+    exported.append((name, hashlib.sha256(body).hexdigest(), len(body)))
+os.chmod(root / "modules", 0o555)
+os.chmod(root, 0o555)
+root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+rows = rb._inspect_source_tree(root_fd, tuple(exported))
+receipt = rb.VerifiedInstallerDistributionReceipt(
+    rb._SEAL, candidate_git_sha="a" * 40, git_tree_sha1="b" * 40,
+    source_tree_sha256="c" * 64, baseline_tree_sha256="d" * 64,
+    amendment_manifest_sha256="e" * 64, source_catalog_sha256="f" * 64,
+    files=tuple(rows), root_fd=root_fd, expected_uid=os.geteuid(), handle="h" * 43)
+try:
+    receipt.verify_current()
+    for row in rows:
+        fd = receipt.open_file(row.relative_path)
+        try:
+            member_index = int(row.relative_path.split("-")[-1].split(".")[0])
+            assert os.read(fd, row.size_bytes) == (f"member {member_index}" + chr(10)).encode()
+        finally:
+            os.close(fd)
+    replaced = root / rows[0].relative_path
+    os.chmod(replaced.parent, 0o755)
+    backup = replaced.parent / "replacement.tmp"
+    backup.write_bytes(replaced.read_bytes())
+    os.chmod(backup, 0o444)
+    os.replace(backup, replaced)
+    os.chmod(replaced.parent, 0o555)
+    try:
+        receipt.verify_current()
+    except rb.InstallerReleaseBuildError:
+        print("LOW_NOFILE_OK_TRUST_REJECTION_PRESERVED")
+    else:
+        raise AssertionError("identical-byte replacement was accepted")
+finally:
+    receipt.close()
+'''
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(Path(__file__).parents[2] / "src")
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path)],
+        check=False, capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "LOW_NOFILE_OK_TRUST_REJECTION_PRESERVED"
+
+
 def test_initial_setup_prefixes_create_only_fixed_owned_directories_and_fsync(tmp_path, monkeypatch):
     parent = tmp_path / "etc"
     parent.mkdir(mode=0o755)
@@ -192,17 +258,147 @@ def test_release_builder_pins_literal_model_store_template_and_native_source_mod
         assert (hashlib.sha256(body).hexdigest(), len(body)) == (digest, size)
 
 
+def test_private_loopback_policy_is_an_exact_installed_template_member():
+    source_path = Path(__file__).parents[2] / release_build.PRIVATE_LOOPBACK_POLICY_TEMPLATE_PATH
+    body = source_path.read_bytes()
+    assert release_build.PRIVATE_LOOPBACK_POLICY_TEMPLATE_ID == "installer-private-loopback-nft-v1"
+    assert release_build.STAGED_PRIVATE_LOOPBACK_POLICY_TEMPLATE_PATH == (
+        "templates/private-loopback-policy-v1.json")
+    assert (hashlib.sha256(body).hexdigest(), len(body)) == (
+        release_build.PRIVATE_LOOPBACK_POLICY_TEMPLATE_SHA256,
+        release_build.PRIVATE_LOOPBACK_POLICY_TEMPLATE_BYTES,
+    )
+    assert release_build.PRIVATE_LOOPBACK_POLICY_TEMPLATE_ID in release_build.ROOT_PLAN_TEMPLATE_ARTIFACT_IDS
+
+
 def test_first_source_actor_preloads_exact_installed_launcher_module_closure():
     release_build._load_installed_setup_module_closure()
     for name in (
         "hermes_installer.root_setup",
         "hermes_installer.authority.installer_release",
         "hermes_installer.authority.bootstrap_runtime_factory",
+        "hermes_installer.registry.resources_runtime",
     ):
         module = sys.modules[name]
         origin = Path(module.__spec__.origin)
         assert origin.is_file()
         assert origin == origin.resolve(strict=True)
+
+
+def test_transitive_setup_module_actor_row_is_staged_as_installed_support(tmp_path):
+    release_build._load_installed_setup_module_closure()
+    module = sys.modules["hermes_installer.registry.resources_runtime"]
+    origin = Path(module.__spec__.origin).resolve(strict=True)
+    body = origin.read_bytes()
+    digest = hashlib.sha256(body).hexdigest()
+    source_root = tmp_path / "source"
+    source_path = source_root / "src/hermes_installer/registry/resources_runtime.py"
+    source_path.parent.mkdir(parents=True, mode=0o700)
+    source_path.write_bytes(body)
+    source_path.chmod(0o600)
+    source_fd = os.open(source_root, os.O_RDONLY | os.O_DIRECTORY)
+    file_fd = os.open(source_path, os.O_RDONLY)
+    try:
+        info = os.fstat(file_fd)
+    finally:
+        os.close(file_fd)
+    source = release_build.VerifiedInstallerDistributionReceipt(
+        release_build._SEAL,
+        candidate_git_sha="a" * 40,
+        git_tree_sha1="b" * 40,
+        source_tree_sha256="c" * 64,
+        baseline_tree_sha256="d" * 64,
+        amendment_manifest_sha256="e" * 64,
+        source_catalog_sha256="f" * 64,
+        files=(release_build.DistributionFile(
+            "src/hermes_installer/registry/resources_runtime.py", digest, len(body),
+            0o600, info.st_dev, info.st_ino, info.st_ctime_ns),),
+        root_fd=source_fd,
+        expected_uid=os.geteuid(),
+        handle="h" * 43,
+    )
+    output = tmp_path / "published"
+    output.mkdir(mode=0o700)
+    output_fd = os.open(output, os.O_RDONLY | os.O_DIRECTORY)
+    builder = object.__new__(release_build.RootInstalledReleaseBuilder)
+    try:
+        staged = builder._stage_actor_module_rows(
+            source, output_fd,
+            (("hermes_installer.registry.resources_runtime", str(origin), digest,
+              info.st_dev, info.st_ino),),
+        )
+        installed = output / "lib/python/hermes_installer/registry/resources_runtime.py"
+        assert len(staged) == 1
+        assert staged[0] == (
+            "lib/python/hermes_installer/registry/resources_runtime.py", digest,
+            len(body), 0o444, ("module",),
+        )
+        assert installed.read_bytes() == body
+        from hermes_installer.authority.installer_release import _artifact_id_for
+        assert _artifact_id_for(staged[0][0], ["module"]) == (
+            "installer-module:hermes_installer.registry.resources_runtime")
+    finally:
+        os.close(output_fd)
+        source.close()
+
+
+def test_published_setup_support_closure_imports_without_checkout_fallback(tmp_path):
+    repo = Path(__file__).parents[2]
+    source_root = repo / "src"
+    installed_python = tmp_path / "release/lib/python"
+    installed_python.mkdir(parents=True)
+    preload_and_stage = r"""
+import importlib, pathlib, shutil, sys
+source_root = pathlib.Path(sys.argv[1]).resolve(strict=True)
+installed_root = pathlib.Path(sys.argv[2])
+sys.path.insert(0, str(source_root))
+from hermes_installer.authority.installer_release_build import _load_installed_setup_module_closure
+_load_installed_setup_module_closure()
+captured = set()
+for name, module in tuple(sys.modules.items()):
+    if name != 'hermes_installer' and not name.startswith('hermes_installer.'):
+        continue
+    origin = getattr(getattr(module, '__spec__', None), 'origin', None)
+    if not isinstance(origin, str):
+        continue
+    path = pathlib.Path(origin).resolve(strict=True)
+    try:
+        relative = path.relative_to(source_root)
+    except ValueError:
+        continue
+    target = installed_root / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(path, target)
+    captured.add(name)
+assert 'hermes_installer.registry.resources_runtime' in captured
+"""
+    subprocess.run(
+        [sys.executable, "-I", "-c", preload_and_stage, str(source_root), str(installed_python)],
+        cwd=tmp_path, check=True, capture_output=True, text=True,
+    )
+    verify_installed = r"""
+import pathlib, sys
+installed_root = pathlib.Path(sys.argv[1]).resolve(strict=True)
+sys.path.insert(0, str(installed_root))
+from hermes_installer.root_setup import (
+    _import_v180_native_support_closure, _import_v187_listener_activation_closure,
+)
+_import_v180_native_support_closure()
+_import_v187_listener_activation_closure()
+from hermes_installer.registry import resources_runtime
+origin = pathlib.Path(resources_runtime.__spec__.origin).resolve(strict=True)
+assert origin.is_relative_to(installed_root)
+for name, module in tuple(sys.modules.items()):
+    if name != 'hermes_installer' and not name.startswith('hermes_installer.'):
+        continue
+    module_origin = getattr(getattr(module, '__spec__', None), 'origin', None)
+    if isinstance(module_origin, str):
+        assert pathlib.Path(module_origin).resolve(strict=True).is_relative_to(installed_root), name
+"""
+    subprocess.run(
+        [sys.executable, "-I", "-c", verify_installed, str(installed_python)],
+        cwd=tmp_path, check=True, capture_output=True, text=True,
+    )
 
 
 def test_release_builder_stages_only_the_exact_native_health_fixture_members():
@@ -223,6 +419,88 @@ def test_release_builder_stages_only_the_exact_native_health_fixture_members():
     for source, (_target, digest, size) in expected.items():
         body = (Path(__file__).parents[2] / source).read_bytes()
         assert (hashlib.sha256(body).hexdigest(), len(body)) == (digest, size)
+
+
+def test_network_startup_helper_stager_is_exact_and_read_only(tmp_path, monkeypatch):
+    repo = Path(__file__).parents[2]
+    source_path = "helpers/private-loopback-worker-gate.py"
+    body = (repo / source_path).read_bytes()
+    source_root = tmp_path / "source"
+    target = source_root / source_path
+    target.parent.mkdir(parents=True)
+    os.chmod(source_root, 0o700)
+    target.write_bytes(body)
+    os.chmod(target, 0o755)
+    digest = hashlib.sha256(body).hexdigest()
+    size = len(body)
+    info = target.stat()
+    source_fd = os.open(source_root, os.O_RDONLY | os.O_DIRECTORY)
+    source = release_build.VerifiedInstallerDistributionReceipt(
+        release_build._SEAL,
+        candidate_git_sha="a" * 40,
+        git_tree_sha1="b" * 40,
+        source_tree_sha256="c" * 64,
+        baseline_tree_sha256="d" * 64,
+        amendment_manifest_sha256="e" * 64,
+        source_catalog_sha256="f" * 64,
+        files=(release_build.DistributionFile(
+            source_path, digest, size, 0o755,
+            info.st_dev, info.st_ino, info.st_ctime_ns),),
+        root_fd=source_fd,
+        expected_uid=os.geteuid(),
+        handle="h" * 43,
+    )
+
+    output = tmp_path / "worker-helper-output"
+    output.mkdir()
+    output_fd = os.open(output, os.O_RDONLY | os.O_DIRECTORY)
+    builder = object.__new__(release_build.RootInstalledReleaseBuilder)
+    try:
+        # Without the finalized source pin, the builder omits the helper; once
+        # reviewed, the exact source row is staged under that approved tuple.
+        production_pin = release_build.NETWORK_STARTUP_HELPER
+        if production_pin[3] is None:
+            assert production_pin[4] is None
+            assert builder._stage_network_startup_helper(source, output_fd) is None
+            assert not (output / source_path).exists()
+        else:
+            assert production_pin[3:5] == (digest, size)
+            assert builder._stage_network_startup_helper(source, output_fd) == (
+                source_path, digest, size, 0o444, ("network-startup-helper",))
+            assert (output / source_path).read_bytes() == body
+            (output / source_path).unlink()
+        monkeypatch.setattr(release_build, "NETWORK_STARTUP_HELPER", (
+            "installer-private-loopback-worker-gate-v180", source_path, source_path,
+            digest, None, "network-startup-helper"))
+        with pytest.raises(release_build.InstallerReleaseBuildError,
+                           match="source policy is malformed"):
+            builder._stage_network_startup_helper(source, output_fd)
+
+        # A test-only fixed descriptor exercises the actual held-byte copy and
+        # mode policy without changing or approving the production source pin.
+        monkeypatch.setattr(release_build, "NETWORK_STARTUP_HELPER", (
+            "installer-private-loopback-worker-gate-v180", source_path, source_path,
+            digest, size, "network-startup-helper"))
+        row = builder._stage_network_startup_helper(source, output_fd)
+        assert row == (source_path, digest, size, 0o444, ("network-startup-helper",))
+        assert (output / source_path).read_bytes() == body
+        assert (output / source_path).stat().st_mode & 0o777 == 0o444
+
+        monkeypatch.setattr(release_build, "NETWORK_STARTUP_HELPER", (
+            "installer-private-loopback-worker-gate-v180", source_path, source_path,
+            "0" * 64, size, "network-startup-helper"))
+        with pytest.raises(release_build.InstallerReleaseBuildError,
+                           match="source differs from its reviewed pin"):
+            builder._stage_network_startup_helper(source, output_fd)
+
+        monkeypatch.setattr(release_build, "NETWORK_STARTUP_HELPER", (
+            "installer-private-loopback-worker-gate-v180", "helpers/unreviewed.py",
+            "helpers/unreviewed.py", digest, size, "network-startup-helper"))
+        with pytest.raises(release_build.InstallerReleaseBuildError, match="policy is malformed"):
+            builder._stage_network_startup_helper(source, output_fd)
+    finally:
+        source.close()
+        os.close(output_fd)
 
 
 @pytest.mark.skipif(not Path("/usr/bin/git").exists(), reason="root source exporter requires system Git")

@@ -11,6 +11,7 @@ to the worker.
 from __future__ import annotations
 
 import threading
+import base64
 import hashlib
 import json
 import math
@@ -19,7 +20,7 @@ import secrets
 import time
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
@@ -357,6 +358,77 @@ class _NativeInvocation:
     effect_request_digest: str | None = None
 
 
+_OWNER_OVERLAY_INVOCATION_SEAL = object()
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootNativeOwnerOverlayInvocation:
+    """Root-retained local Resources invocation; never a backend action DTO."""
+
+    invocation_handle: str
+    producer_context_handle: str
+    observed_call_handle: str
+    response_observation_handle: str
+    response_receipt_handle: str
+    turn_handle: str | None
+    native_request_handle: str
+    registration_id: str
+    method: str
+    canonical_arguments: bytes = field(repr=False)
+    arguments_sha256: str
+    parent_source_receipt_handles: tuple[str, ...]
+    invocation_source_receipt_handle: str
+    producer_identity: Any = field(repr=False, compare=False)
+    producer_pid: int
+    producer_pidfd: int = field(repr=False, compare=False)
+    gateway_identity: Any = field(repr=False, compare=False)
+    gateway_pid: int
+    gateway_pidfd: int = field(repr=False, compare=False)
+    bridge: Any = field(repr=False, compare=False)
+    response: Any = field(repr=False, compare=False)
+    source_observer: Any = field(repr=False, compare=False)
+    expires_monotonic: float
+    consumed: bool
+    _seal: object = field(repr=False, compare=False)
+    _issuer: Any = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if (self._seal is not _OWNER_OVERLAY_INVOCATION_SEAL
+                or self.registration_id not in {
+                    "resource-overlay-store:tool:resource_overlay_read",
+                    "resource-overlay-store:tool:resource_overlay_history",
+                    "resource-overlay-store:tool:resource_overlay_write",
+                    "resource-overlay-store:tool:resource_overlay_delete",
+                }
+                or self.method not in {"read", "history", "write", "delete"}
+                or not isinstance(self.canonical_arguments, bytes)
+                or hashlib.sha256(self.canonical_arguments).hexdigest() != self.arguments_sha256
+                or not self.parent_source_receipt_handles
+                or self.expires_monotonic <= 0):
+            raise TypeError("owner-overlay invocations are root-issued typed records")
+
+    def __repr__(self) -> str:
+        return "RootNativeOwnerOverlayInvocation(<root-private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootSelectedHealthOwnerInvocation:
+    """Current exact provider response and parsed health tool call."""
+
+    request_projection: Any = field(repr=False, compare=False)
+    provider_response: Any = field(repr=False, compare=False)
+    owner_invocation: RootNativeOwnerOverlayInvocation = field(repr=False, compare=False)
+    source_receipt_handles: tuple[str, ...]
+    source_receipt_ids: tuple[str, ...]
+    provider_source_receipt_handles: tuple[str, ...]
+    provider_source_receipt_ids: tuple[str, ...]
+    _registry: Any = field(repr=False, compare=False)
+    _issuer: object = field(repr=False, compare=False)
+
+    def __repr__(self) -> str:
+        return "RootSelectedHealthOwnerInvocation(<root-private>)"
+
+
 class NativeRuntimeObserverUnavailable(PermissionError):
     """Selected native runtime wiring or root observation is unavailable."""
 
@@ -483,6 +555,9 @@ class NativeInvocationRegistry:
         self._deliveries: dict[str, _ObservedProviderResponse] = {}
         self._calls: dict[str, tuple[str, str, str, str, str, bytes]] = {}
         self._invocations: dict[str, _NativeInvocation] = {}
+        self._owner_overlay_invocations: dict[str, RootNativeOwnerOverlayInvocation] = {}
+        self._owner_overlay_consumed: set[str] = set()
+        self._health_selection_issuer = object()
         self._selected_application_invocations: dict[str, RootSelectedApplicationInvocation] = {}
         self._mcp_dispatches: dict[str, tuple[_NativeInvocation, RootNativeMCPInvocation]] = {}
         self._issued_handles: set[str] = set()
@@ -644,6 +719,41 @@ class NativeInvocationRegistry:
                 raise AuthorityDenied("native.invocation.call", "tool arguments are not canonical JSON") from None
             if not isinstance(value, dict) or canonical != arguments:
                 raise AuthorityDenied("native.invocation.call", "tool arguments are not a canonical object")
+            owner_names = {
+                "resource_overlay_read": "resource-overlay-store:tool:resource_overlay_read",
+                "resource_overlay_history": "resource-overlay-store:tool:resource_overlay_history",
+                "resource_overlay_write": "resource-overlay-store:tool:resource_overlay_write",
+                "resource_overlay_delete": "resource-overlay-store:tool:resource_overlay_delete",
+            }
+            owner_registration = owner_names.get(tool_name)
+            if owner_registration is not None:
+                owner_registry = getattr(self.service, "active_owner_overlay_registry", None)
+                resolve_owner = getattr(owner_registry, "resolve_provider_tool_call", None)
+                if not callable(resolve_owner):
+                    raise AuthorityDenied("native.invocation.owner_overlay",
+                                          "current local owner operation is unavailable")
+                try:
+                    owner_source = resolve_owner(
+                        tool_name, producer_pid, producer_pidfd, observer.package_id,
+                        bridge.producer_profile_id, bridge.producer_generation,
+                        package_generation, arguments,
+                    )
+                    selected = owner_source.selection
+                    if (selected.registration_id != owner_registration
+                            or owner_source.observer_row.get("method")
+                               != tool_name.removeprefix("resource_overlay_")
+                            or owner_registration not in observed_registration_ids):
+                        raise ValueError
+                except Exception:
+                    raise AuthorityDenied("native.invocation.owner_overlay",
+                                          "selected owner operation schema or READY registration changed") from None
+                retire = getattr(owner_registry, "_retire", None)
+                if callable(retire):
+                    retire(owner_source.selection.selection_handle)
+                action_rows.append((call_id, tool_name, "resource-overlay-store",
+                                    owner_registration, arguments))
+                seen_call_ids.add(call_id)
+                continue
             try:
                 selection = self.action_resolver(bridge, producer_identity, tool_name)
             except Exception:
@@ -983,6 +1093,100 @@ class NativeInvocationRegistry:
             digest = hashlib.sha256(canonical_arguments).hexdigest()
             if canonical_arguments != expected_args or digest != hashlib.sha256(expected_args).hexdigest():
                 raise AuthorityDenied("native.invocation.arguments", "tool arguments differ from root response parser")
+            if adapter_id == "resource-overlay-store":
+                owner_registry = getattr(self.service, "active_owner_overlay_registry", None)
+                resolve_owner = getattr(owner_registry, "resolve_provider_tool_call", None)
+                if not callable(resolve_owner) or action_id not in {
+                        "resource-overlay-store:tool:resource_overlay_read",
+                        "resource-overlay-store:tool:resource_overlay_history",
+                        "resource-overlay-store:tool:resource_overlay_write",
+                        "resource-overlay-store:tool:resource_overlay_delete"}:
+                    raise AuthorityDenied("native.invocation.owner_overlay", "selected owner operation is unavailable")
+                try:
+                    owner_source = resolve_owner(
+                        tool_name, peer_pid, peer_pidfd, response.package_id, response.profile_id,
+                        response.generation, response.native_package_generation, canonical_arguments,
+                    )
+                    operation = owner_source.selection.operation_record
+                    if (action_id != owner_source.selection.registration_id
+                            or operation["method"] != tool_name.removeprefix("resource_overlay_")):
+                        raise ValueError
+                    handle = self._opaque_handle()
+                    parent_handles = tuple(dict.fromkeys(response.receipt_handles))
+                    if not parent_handles or len(parent_handles) > 64:
+                        raise ValueError
+                    invocation_payload = {
+                        "schema": 1, "invocation_handle": handle,
+                        "observed_call_handle": observed_call_handle,
+                        "response_observation_handle": response.handle,
+                        "response_receipt_handle": response.response_receipt_handle,
+                        "turn_handle": response.turn_handle,
+                        "native_request_handle": response.native_request_handle,
+                        "registration_id": action_id, "method": operation["method"],
+                        "arguments_sha256": digest,
+                        "canonical_arguments_b64": base64.b64encode(canonical_arguments).decode("ascii"),
+                        "parent_source_receipt_handles": list(parent_handles),
+                    }
+                    payload = json.dumps(invocation_payload, ensure_ascii=False, sort_keys=True,
+                                         separators=(",", ":"), allow_nan=False).encode("utf-8")
+                    owner_observer_id = owner_source.observer_row["observer_enrollment_id"]
+                    event_id = self.source_observers.record_observed_event(
+                        owner_observer_id, payload_bytes=payload,
+                        parent_context=response.request_context, peer_pid=peer_pid,
+                        peer_pidfd=peer_pidfd, parent_receipt_handles=parent_handles,
+                    )
+                    receipt_handle = self.source_observers.capture_observed_source(
+                        owner_observer_id, event_id, payload, parent_receipt_handles=parent_handles,
+                    )
+                    delivered = self.source_observers.take_source_receipt(
+                        str(receipt_handle), peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+                    )
+                    if str(delivered) != str(receipt_handle):
+                        raise ValueError
+                    closure_ids = tuple(sorted({self.service._source_receipt_handles[item].receipt_id
+                                                for item in (*parent_handles, str(receipt_handle))
+                                                if item in self.service._source_receipt_handles}))
+                    if len(closure_ids) != len(parent_handles) + 1:
+                        raise ValueError
+                    expiry = min(response.expires_monotonic, owner_source.selection.expires_monotonic)
+                    row = RootNativeOwnerOverlayInvocation(
+                        handle, producer_context_handle, observed_call_handle, response.handle,
+                        response.response_receipt_handle, response.turn_handle,
+                        response.native_request_handle, action_id, operation["method"],
+                        bytes(canonical_arguments), digest, tuple((*parent_handles, str(receipt_handle))),
+                        str(receipt_handle), response.producer_identity, peer_pid, os.dup(peer_pidfd),
+                        response.gateway_identity, response.gateway_pid, os.dup(response.gateway_pidfd),
+                        response.bridge, response, owner_source, expiry, False,
+                        _OWNER_OVERLAY_INVOCATION_SEAL, self,
+                    )
+                    self._calls.pop(observed_call_handle, None)
+                    response.calls.pop(observed_call_handle, None)
+                    self._owner_overlay_invocations[handle] = row
+                    self._issued_handles.add(handle)
+                    binding_unsigned = {
+                        "schema": 1, "invocation_handle": handle,
+                        "package_id": response.package_id, "profile_id": response.profile_id,
+                        "generation": response.generation, "adapter_id": "resource-overlay-store",
+                        "action_id": action_id, "arguments_sha256": digest,
+                        "parent_closure_digest": canonical_digest(list(closure_ids)),
+                        "expires_monotonic": expiry,
+                    }
+                    return NativeInvocationBinding(
+                        invocation_handle=handle, package_id=response.package_id,
+                        profile_id=response.profile_id, generation=response.generation,
+                        adapter_id="resource-overlay-store", action_id=action_id,
+                        arguments_sha256=digest,
+                        parent_closure_digest=canonical_digest(list(closure_ids)),
+                        expires_monotonic=expiry,
+                        binding_sha256=canonical_digest(json.dumps(
+                            binding_unsigned, sort_keys=True, separators=(",", ":"),
+                            ensure_ascii=False, allow_nan=False).encode("utf-8")),
+                    )
+                except AuthorityDenied:
+                    raise
+                except Exception:
+                    raise AuthorityDenied("native.invocation.owner_overlay",
+                                          "current owner operation invocation capture failed") from None
             try:
                 selection = self.action_resolver(bridge, identity, tool_name)
             except Exception:
@@ -1112,6 +1316,391 @@ class NativeInvocationRegistry:
             invocation.mcp_dispatch_consumed = True
             self._mcp_dispatches[invocation_handle] = (invocation, dto)
             return dto
+
+    def resolve_current_owner_overlay_invocation(
+            self, invocation_handle: str, canonical_arguments: bytes, *,
+            peer_uid: int, peer_pid: int, peer_pidfd: int) -> RootNativeOwnerOverlayInvocation:
+        """Consume the tagged local invocation after rejoining live root facts."""
+        if (not self._valid_handle(invocation_handle) or not isinstance(canonical_arguments, bytes)
+                or not 1 <= len(canonical_arguments) <= 2 * 1024 * 1024
+                or type(peer_uid) is not int or peer_uid <= 0
+                or type(peer_pid) is not int or peer_pid <= 0
+                or type(peer_pidfd) is not int or peer_pidfd < 0):
+            raise AuthorityDenied("native.owner_overlay.invocation", "owner invocation request is malformed")
+        with self._lock:
+            self._ensure_open()
+            self._prune_locked(self.monotonic())
+            row = self._owner_overlay_invocations.get(invocation_handle)
+            if (type(row) is not RootNativeOwnerOverlayInvocation
+                    or row._seal is not _OWNER_OVERLAY_INVOCATION_SEAL
+                    or row._issuer is not self or invocation_handle in self._owner_overlay_consumed
+                    or row.expires_monotonic <= self.monotonic()
+                    or row.canonical_arguments != canonical_arguments
+                    or row.arguments_sha256 != hashlib.sha256(canonical_arguments).hexdigest()
+                    or row.producer_pid != peer_pid or row.bridge.producer_uid != peer_uid):
+                raise AuthorityDenied("native.owner_overlay.invocation", "owner invocation is stale or already consumed")
+            active = None
+            current = None
+            try:
+                identity = self.process_resolver(
+                    peer_pid, peer_pidfd, profile_id=row.response.profile_id,
+                    generation=row.response.generation)
+                gateway = self.process_resolver(
+                    row.gateway_pid, row.gateway_pidfd,
+                    profile_id=row.bridge.gateway_profile_id,
+                    generation=row.bridge.gateway_generation)
+                proof = self._loaded_proof(row.response.observer_id, identity, peer_pid, peer_pidfd)
+                active = getattr(self.service, "active_owner_overlay_registry", None)
+                resolve_owner = getattr(active, "resolve_provider_tool_call", None)
+                current = resolve_owner(
+                    {
+                        "read": "resource_overlay_read", "history": "resource_overlay_history",
+                        "write": "resource_overlay_write", "delete": "resource_overlay_delete",
+                    }[row.method], peer_pid, peer_pidfd, row.response.package_id,
+                    row.response.profile_id, row.response.generation,
+                    row.response.native_package_generation, canonical_arguments,
+                )
+                receipt_handles = (*row.parent_source_receipt_handles,)
+                with self.service._lock:
+                    retained = tuple(self.service._source_receipt_handles.get(item)
+                                     for item in receipt_handles)
+                if (identity != row.producer_identity or gateway != row.gateway_identity
+                        or proof != row.response.loaded_package_proof
+                        or current.selection.registration_id != row.registration_id
+                        or current.selection.adoption_sha256 != row.source_observer.selection.adoption_sha256
+                        or current.selection.operation_record != row.source_observer.selection.operation_record
+                        or len(retained) != len(receipt_handles) or any(item is None for item in retained)):
+                    raise ValueError
+            except Exception:
+                raise AuthorityDenied("native.owner_overlay.invocation", "owner source, peer, READY role or receipts changed") from None
+            finally:
+                retire = getattr(active, "_retire", None)
+                if callable(retire) and current is not None:
+                    retire(current.selection.selection_handle)
+            self._owner_overlay_consumed.add(invocation_handle)
+            return row
+
+    def resolve_current_health_owner_invocation(
+            self, request_projection: Any, input_event: Any, *,
+            peer_uid: int, peer_pid: int, peer_pidfd: int,
+            live_producer_identity: Any, expected_profile_id: str,
+            expected_generation: str, expected_package_id: str,
+            expected_package_generation: str, expected_service_generation_digest: str,
+            expected_action_id: str) -> RootSelectedHealthOwnerInvocation:
+        """Resolve the unique consumed provider call causally descended from health input."""
+        from .native_request_observation import (
+            RootSelectedHealthNativeRequest, NativeRequestObservationRegistry,
+        )
+        from .native_input_observer import RootNativeInputEvent
+        if (type(request_projection) is not RootSelectedHealthNativeRequest
+                or type(request_projection._registry) is not NativeRequestObservationRegistry
+                or type(input_event) is not RootNativeInputEvent
+                or type(peer_uid) is not int or peer_uid <= 0
+                or type(peer_pid) is not int or peer_pid <= 0
+                or type(peer_pidfd) is not int or peer_pidfd < 0
+                or live_producer_identity is None):
+            raise AuthorityDenied("native.health.invocation", "health tool-call selection is malformed")
+        observation = request_projection.observation
+        request_projection._registry.verify_current_health_request_for_input(
+            request_projection, input_event,
+            live_producer_identity=live_producer_identity,
+            producer_pid=peer_pid, producer_profile_id=expected_profile_id,
+            producer_generation=expected_generation,
+            native_package_generation=expected_package_generation,
+        )
+        if (input_event.source_receipt_handle not in observation.parent_source_receipt_handles
+                or observation.producer_profile_id != expected_profile_id
+                or observation.producer_process_generation != expected_generation
+                or observation.native_package_generation != expected_package_generation):
+            raise AuthorityDenied("native.health.invocation_lineage", "request does not descend from the selected input")
+        current_identity = self.process_resolver(
+            peer_pid, peer_pidfd, profile_id=expected_profile_id, generation=expected_generation,
+        )
+        if current_identity != live_producer_identity:
+            raise AuthorityDenied("native.health.invocation_peer", "selected producer PIDFD changed")
+        with self._lock:
+            self._ensure_open()
+            self._prune_locked(self.monotonic())
+            candidates = tuple(
+                row for handle, row in self._owner_overlay_invocations.items()
+                if row.invocation_handle == handle
+                and row.native_request_handle == observation.native_request_handle
+                and row.producer_pid == peer_pid
+                and row.producer_identity == live_producer_identity
+                and row.invocation_handle in self._owner_overlay_consumed
+                and row.registration_id == "resource-overlay-store:tool:resource_overlay_read"
+                and row.method == "read"
+                and row.action_id == expected_action_id
+                and row.expires_monotonic > self.monotonic()
+            )
+        if len(candidates) != 1:
+            code = ("native.health.invocation_pending" if not candidates
+                    else "native.health.invocation_ambiguous")
+            raise AuthorityDenied(code, "request has no unique consumed health tool call")
+        row = candidates[0]
+        response = row.response
+        try:
+            with self._lock:
+                if (self._responses.get(row.response_observation_handle) is not response
+                        or response.handle != row.response_observation_handle
+                        or response.metadata_taken is not True
+                        or response.native_request_handle != observation.native_request_handle
+                        or response.producer_identity != live_producer_identity
+                        or response.producer_pid != peer_pid
+                        or response.profile_id != expected_profile_id
+                        or response.generation != expected_generation
+                        or response.package_id != expected_package_id
+                        or response.native_package_generation != expected_package_generation
+                        or response.request_context.service_generation_digest
+                           != expected_service_generation_digest
+                        or response.expires_monotonic <= self.monotonic()
+                        or hashlib.sha256(response.response_bytes).hexdigest() != response.response_digest
+                        or response.response_status < 200 or response.response_status >= 300
+                        or input_event.source_receipt_handle not in response.receipt_handles):
+                    raise ValueError
+            args = _strict_native_json(row.canonical_arguments)
+            canonical_args = json.dumps(args, sort_keys=True, separators=(",", ":"),
+                                        ensure_ascii=False, allow_nan=False).encode("utf-8")
+            if (type(args) is not dict or args != {"record_id": "hermes-health-probe-v1"}
+                    or canonical_args != row.canonical_arguments
+                    or hashlib.sha256(canonical_args).hexdigest() != row.arguments_sha256
+                    or row.parent_source_receipt_handles != response.receipt_handles + (row.invocation_source_receipt_handle,)
+                    or row.invocation_source_receipt_handle not in row.parent_source_receipt_handles):
+                raise ValueError
+            identity = self.process_resolver(
+                peer_pid, peer_pidfd, profile_id=expected_profile_id,
+                generation=expected_generation,
+            )
+            gateway = self.process_resolver(
+                row.gateway_pid, row.gateway_pidfd,
+                profile_id=row.bridge.gateway_profile_id,
+                generation=row.bridge.gateway_generation,
+            )
+            proof = self._loaded_proof(response.observer_id, identity, peer_pid, peer_pidfd)
+            active = getattr(self.service, "active_owner_overlay_registry", None)
+            resolve_owner = getattr(active, "resolve_provider_tool_call", None)
+            if not callable(resolve_owner):
+                raise ValueError
+            current = resolve_owner(
+                "resource_overlay_read", peer_pid, peer_pidfd, expected_package_id,
+                expected_profile_id, expected_generation, expected_package_generation,
+                canonical_args,
+            )
+            with self.service._lock:
+                receipt_rows = tuple(
+                    self.service._source_receipt_handles.get(handle)
+                    for handle in (*response.receipt_handles, *row.parent_source_receipt_handles)
+                )
+            handles = tuple((*response.receipt_handles, *row.parent_source_receipt_handles))
+            if (identity != live_producer_identity or gateway != row.gateway_identity
+                    or proof != response.loaded_package_proof or current is None
+                    or current.selection.registration_id != row.registration_id
+                    or current.selection.adoption_sha256 != row.source_observer.selection.adoption_sha256
+                    or current.selection.operation_record != row.source_observer.selection.operation_record
+                    or len(receipt_rows) != len(handles) or any(receipt is None for receipt in receipt_rows)):
+                raise ValueError
+            by_handle = dict(zip(handles, receipt_rows, strict=True))
+            unique_handles = tuple(sorted(set(handles), key=lambda handle: by_handle[handle].receipt_id))
+            unique_rows = tuple(by_handle[handle] for handle in unique_handles)
+            for receipt in unique_rows:
+                self.service._verify_source_receipt(receipt, self.service._binding(receipt.uid))
+            receipt_ids = tuple(sorted(receipt.receipt_id for receipt in unique_rows))
+            if len(receipt_ids) != len(set(receipt_ids)):
+                raise ValueError
+            with self.service._lock:
+                provider_by_handle = {
+                    handle: self.service._source_receipt_handles.get(handle)
+                    for handle in response.receipt_handles
+                }
+            if any(receipt is None for receipt in provider_by_handle.values()):
+                raise ValueError
+            provider_handles = tuple(sorted(
+                response.receipt_handles,
+                key=lambda handle: provider_by_handle[handle].receipt_id,
+            ))
+            provider_ids = tuple(provider_by_handle[handle].receipt_id
+                                  for handle in provider_handles)
+            if (len(provider_by_handle) != len(response.receipt_handles)
+                    or len(provider_ids) != len(set(provider_ids))):
+                raise ValueError
+            return RootSelectedHealthOwnerInvocation(
+                request_projection=request_projection,
+                provider_response=response,
+                owner_invocation=row,
+                source_receipt_handles=unique_handles,
+                source_receipt_ids=receipt_ids,
+                provider_source_receipt_handles=provider_handles,
+                provider_source_receipt_ids=provider_ids,
+                _registry=self, _issuer=self._health_selection_issuer,
+            )
+        except Exception:
+            raise AuthorityDenied("native.health.invocation", "current request/provider/tool source join is unavailable") from None
+        finally:
+            retire = getattr(locals().get("active"), "_retire", None)
+            if callable(retire) and locals().get("current") is not None:
+                retire(current.selection.selection_handle)
+
+    def resolve_completed_health_owner_invocation(
+            self, selected: RootSelectedHealthOwnerInvocation,
+            request_projection: Any, input_event: Any,
+            completed_terminal_proof: Any) -> RootSelectedHealthOwnerInvocation:
+        """Revalidate a retained health call after its selected worker exited.
+
+        This deliberately avoids process-resolver/PIDFD lookups. The manager's
+        current postmortem proof supplies the exact pre-stop identity, while
+        this registry reopens the retained provider response, consumed call,
+        receipt ancestry, and signed owner source selector.
+        """
+        from .managed_process_custodian import RootCompletedSelectedHealthTerminalProof
+        from .native_request_observation import (
+            RootSelectedHealthNativeRequest, NativeRequestObservationRegistry,
+        )
+        from .native_input_observer import RootNativeInputEvent
+        if (type(selected) is not RootSelectedHealthOwnerInvocation
+                or selected._registry is not self
+                or selected._issuer is not self._health_selection_issuer
+                or type(request_projection) is not RootSelectedHealthNativeRequest
+                or type(request_projection._registry) is not NativeRequestObservationRegistry
+                or type(input_event) is not RootNativeInputEvent
+                or type(completed_terminal_proof) is not RootCompletedSelectedHealthTerminalProof
+                or completed_terminal_proof.is_current() is not True):
+            raise AuthorityDenied("native.health.invocation", "completed exact invocation proof is required")
+        proof = completed_terminal_proof
+        row = selected.owner_invocation
+        response = selected.provider_response
+        observation = request_projection.observation
+        identity = proof.process_identity
+        if (type(row) is not RootNativeOwnerOverlayInvocation
+                or row._seal is not _OWNER_OVERLAY_INVOCATION_SEAL
+                or row._issuer is not self
+                or row.producer_identity != identity
+                or row.producer_pid != proof.process_pid
+                or row.native_request_handle != observation.native_request_handle
+                or row.registration_id != "resource-overlay-store:tool:resource_overlay_read"
+                or row.method != "read"
+                or row.expires_monotonic <= self.monotonic()
+                or input_event.source_receipt_handle not in observation.parent_source_receipt_handles
+                or (identity.profile_id, identity.generation, identity.kernel_uid)
+                   != (proof.profile_id, proof.process_generation, proof.process_uid)
+                or proof.service_generation_digest != proof.control.service_generation_digest
+                or observation.producer_profile_id != proof.profile_id
+                or observation.producer_process_generation != proof.process_generation
+                or observation.native_package_generation != proof.admission.native_package_generation
+                or proof.is_current() is not True):
+            raise AuthorityDenied("native.health.invocation", "retained invocation no longer joins completed process")
+        try:
+            request_projection._registry.resolve_completed_health_request_for_input(
+                request_projection, input_event, proof,
+            )
+            with self._lock:
+                self._ensure_open()
+                self._prune_locked(self.monotonic())
+                retained = self._owner_overlay_invocations.get(row.invocation_handle)
+                consumed = row.invocation_handle in self._owner_overlay_consumed
+                current_response = self._responses.get(row.response_observation_handle)
+            with self.service._lock:
+                receipt_rows = tuple(
+                    self.service._source_receipt_handles.get(handle)
+                    for handle in row.parent_source_receipt_handles
+                )
+            if (retained is not row or not consumed or current_response is not response
+                    or response is not row.response
+                    or response.handle != row.response_observation_handle
+                    or response.native_request_handle != observation.native_request_handle
+                    or response.producer_identity != identity
+                    or response.producer_pid != proof.process_pid
+                    or response.profile_id != proof.profile_id
+                    or response.generation != proof.process_generation
+                    or response.package_id != proof.source_material.native_package_id
+                    or response.native_package_generation != proof.admission.native_package_generation
+                    or response.request_context.service_generation_digest != proof.service_generation_digest
+                    or response.metadata_taken is not True
+                    or response.expires_monotonic <= self.monotonic()
+                    or hashlib.sha256(response.response_bytes).hexdigest() != response.response_digest
+                    or response.response_status < 200 or response.response_status >= 300
+                    or input_event.source_receipt_handle not in response.receipt_handles
+                    or len(receipt_rows) != len(row.parent_source_receipt_handles)
+                    or any(receipt is None for receipt in receipt_rows)):
+                raise ValueError
+            args = _strict_native_json(row.canonical_arguments)
+            canonical_args = json.dumps(args, sort_keys=True, separators=(",", ":"),
+                                        ensure_ascii=False, allow_nan=False).encode("utf-8")
+            if (type(args) is not dict or args != {"record_id": "hermes-health-probe-v1"}
+                    or canonical_args != row.canonical_arguments
+                    or hashlib.sha256(canonical_args).hexdigest() != row.arguments_sha256
+                    or row.parent_source_receipt_handles
+                       != response.receipt_handles + (row.invocation_source_receipt_handle,)
+                    or row.invocation_source_receipt_handle not in row.parent_source_receipt_handles):
+                raise ValueError
+            by_handle = dict(zip(row.parent_source_receipt_handles, receipt_rows, strict=True))
+            for receipt in by_handle.values():
+                self.service._verify_source_receipt(receipt, self.service._binding(receipt.uid))
+            unique_handles = tuple(sorted(by_handle, key=lambda handle: by_handle[handle].receipt_id))
+            unique_ids = tuple(by_handle[handle].receipt_id for handle in unique_handles)
+            if (len(unique_ids) != len(set(unique_ids))
+                    or unique_handles != selected.source_receipt_handles
+                    or unique_ids != selected.source_receipt_ids):
+                raise ValueError
+            active = getattr(self.service, "active_owner_overlay_registry", None)
+            verify_source = getattr(active, "verify_completed_health_source_observer", None)
+            if not callable(verify_source):
+                raise ValueError
+            verify_source(row.source_observer, proof)
+            with self.service._lock:
+                provider_by_handle = {
+                    handle: self.service._source_receipt_handles.get(handle)
+                    for handle in response.receipt_handles
+                }
+            if any(receipt is None for receipt in provider_by_handle.values()):
+                raise ValueError
+            provider_handles = tuple(sorted(
+                response.receipt_handles,
+                key=lambda handle: provider_by_handle[handle].receipt_id,
+            ))
+            provider_ids = tuple(provider_by_handle[h].receipt_id for h in provider_handles)
+            if (provider_handles != selected.provider_source_receipt_handles
+                    or provider_ids != selected.provider_source_receipt_ids
+                    or proof.is_current() is not True):
+                raise ValueError
+            return selected
+        except Exception:
+            raise AuthorityDenied(
+                "native.health.invocation", "retained provider/call/source ancestry changed after cleanup",
+            ) from None
+
+    def verify_current_health_owner_invocation(
+            self, selected: RootSelectedHealthOwnerInvocation, input_event: Any, *,
+            peer_uid: int, peer_pid: int, peer_pidfd: int,
+            live_producer_identity: Any, expected_profile_id: str,
+            expected_generation: str, expected_package_id: str,
+            expected_package_generation: str, expected_service_generation_digest: str,
+            expected_action_id: str) -> RootSelectedHealthOwnerInvocation:
+        """Re-resolve the unique current consumed call and require same objects."""
+        if (type(selected) is not RootSelectedHealthOwnerInvocation
+                or selected._registry is not self
+                or selected._issuer is not self._health_selection_issuer):
+            raise AuthorityDenied("native.health.invocation", "issuer-owned tool-call projection is required")
+        current = self.resolve_current_health_owner_invocation(
+            selected.request_projection, input_event,
+            peer_uid=peer_uid, peer_pid=peer_pid, peer_pidfd=peer_pidfd,
+            live_producer_identity=live_producer_identity,
+            expected_profile_id=expected_profile_id,
+            expected_generation=expected_generation,
+            expected_package_id=expected_package_id,
+            expected_package_generation=expected_package_generation,
+            expected_service_generation_digest=expected_service_generation_digest,
+            expected_action_id=expected_action_id,
+        )
+        if (current.owner_invocation is not selected.owner_invocation
+                or current.provider_response is not selected.provider_response
+                or current.request_projection.observation
+                   is not selected.request_projection.observation
+                or current.source_receipt_handles != selected.source_receipt_handles
+                or current.source_receipt_ids != selected.source_receipt_ids
+                or current.provider_source_receipt_handles != selected.provider_source_receipt_handles
+                or current.provider_source_receipt_ids != selected.provider_source_receipt_ids):
+            raise AuthorityDenied("native.health.invocation", "current owner call or source ancestry changed")
+        return selected
 
     def is_current_native_mcp_invocation(self, record: RootNativeMCPInvocation,
                                          peer_uid: int, peer_pid: int,
@@ -1839,6 +2428,19 @@ class NativeInvocationRegistry:
                 os.close(invocation.producer_pidfd)
                 os.close(invocation.gateway_pidfd)
                 invocation.canonical_arguments = b"\x00" * len(invocation.canonical_arguments)
+            for invocation in getattr(self, "_owner_overlay_invocations", {}).values():
+                for descriptor in (invocation.producer_pidfd, invocation.gateway_pidfd):
+                    try:
+                        os.close(descriptor)
+                    except OSError:
+                        pass
+                invocation.canonical_arguments = b"\x00" * len(invocation.canonical_arguments)
+                active = getattr(self.service, "active_owner_overlay_registry", None)
+                retire = getattr(active, "_retire", None)
+                if callable(retire):
+                    retire(invocation.source_observer.selection.selection_handle)
+            getattr(self, "_owner_overlay_invocations", {}).clear()
+            getattr(self, "_owner_overlay_consumed", set()).clear()
             self._responses.clear()
             self._retained_response_bytes = 0
             self._deliveries.clear()
@@ -1890,6 +2492,20 @@ class NativeInvocationRegistry:
                 except OSError:
                     pass
                 invocation.canonical_arguments = b"\x00" * len(invocation.canonical_arguments)
+        for handle, invocation in tuple(getattr(self, "_owner_overlay_invocations", {}).items()):
+            if invocation.expires_monotonic <= now:
+                getattr(self, "_owner_overlay_invocations", {}).pop(handle, None)
+                getattr(self, "_owner_overlay_consumed", set()).discard(handle)
+                for descriptor in (invocation.producer_pidfd, invocation.gateway_pidfd):
+                    try:
+                        os.close(descriptor)
+                    except OSError:
+                        pass
+                invocation.canonical_arguments = b"\x00" * len(invocation.canonical_arguments)
+                active = getattr(self.service, "active_owner_overlay_registry", None)
+                retire = getattr(active, "_retire", None)
+                if callable(retire):
+                    retire(invocation.source_observer.selection.selection_handle)
 
     def _ensure_open(self) -> None:
         if self._closed:

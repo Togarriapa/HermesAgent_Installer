@@ -390,6 +390,28 @@ class AuthorityClient:
             raise AuthorityDenied("native.turn.finish", "root returned a stale or mismatched turn receipt")
         return presentation
 
+    def bind_selected_native_package(self) -> Mapping[str, Any]:
+        """Resolve only the package actually mounted in this live peer."""
+        result = self._rpc("native.package.bind", {"schema": 1})
+        if (not isinstance(result, Mapping) or set(result) != {
+                "schema", "opaque_binding_handle", "package_id", "profile_id", "generation",
+                "resolver_digest", "compiled_closure_sha256", "entrypoint_sha256", "expires_monotonic"}
+                or type(result.get("schema")) is not int or result["schema"] != 1):
+            raise AuthorityDenied("native.package", "root returned an invalid selected package binding")
+        return result
+
+    def read_native_resolver(self, binding_handle: str) -> Mapping[str, Any]:
+        """Read the current digest-covered resolver for this peer's binding."""
+        if (not isinstance(binding_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", binding_handle)):
+            raise AuthorityDenied("native.package", "native package binding handle is malformed")
+        result = self._rpc("native.package.resolver.read", {
+            "schema": 1, "binding_handle": binding_handle,
+        })
+        if not isinstance(result, Mapping):
+            raise AuthorityDenied("native.package", "root returned an invalid native resolver")
+        return result
+
     def begin_native_invocation(self, producer_context_handle: str,
                                 observed_call_handle: str,
                                 canonical_arguments: bytes) -> NativeInvocationBinding:
@@ -423,6 +445,46 @@ class AuthorityClient:
         if contexts.invocation_handle != invocation_handle:
             raise AuthorityDenied("native.invocation", "root invocation context belongs to another call")
         return contexts
+
+    def execute_owner_overlay(self, invocation_handle: str,
+                              canonical_arguments: bytes) -> Mapping[str, Any]:
+        """Ask root to execute one captured owner-overlay invocation.
+
+        The request carries no registration, method, target, identity, or grant
+        selector. Those are rejoined from the root-retained invocation.
+        """
+        import base64
+        if (not isinstance(invocation_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", invocation_handle)
+                or not isinstance(canonical_arguments, bytes)
+                or not 1 <= len(canonical_arguments) <= 2 * 1024 * 1024):
+            raise AuthorityDenied("native.owner_overlay", "owner-overlay invocation request is malformed")
+        result = self._rpc("native.owner-overlay.execute", {
+            "schema": 1, "invocation_handle": invocation_handle,
+            "canonical_arguments_b64": base64.b64encode(canonical_arguments).decode("ascii"),
+        })
+        if not isinstance(result, Mapping) or set(result) != {
+                "schema", "invocation_handle", "registration_id", "result_schema_id",
+                "result_sha256", "canonical_result_b64"}:
+            raise AuthorityDenied("native.owner_overlay", "root returned an invalid owner-overlay result")
+        if (type(result.get("schema")) is not int or result["schema"] != 1
+                or result.get("invocation_handle") != invocation_handle
+                or not isinstance(result.get("registration_id"), str)
+                or not isinstance(result.get("result_schema_id"), str)
+                or not isinstance(result.get("result_sha256"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", result["result_sha256"])
+                or not isinstance(result.get("canonical_result_b64"), str)):
+            raise AuthorityDenied("native.owner_overlay", "root owner-overlay result binding is malformed")
+        try:
+            payload = base64.b64decode(result["canonical_result_b64"], validate=True)
+        except (ValueError, TypeError):
+            raise AuthorityDenied("native.owner_overlay", "root owner-overlay result bytes are malformed") from None
+        import hashlib
+        if (not 1 <= len(payload) <= 1_048_576
+                or base64.b64encode(payload).decode("ascii") != result["canonical_result_b64"]
+                or hashlib.sha256(payload).hexdigest() != result["result_sha256"]):
+            raise AuthorityDenied("native.owner_overlay", "root owner-overlay result digest is invalid")
+        return dict(result)
 
     def take_native_response_metadata(self, response_delivery_handle: str,
                                       response_body_sha256: str,

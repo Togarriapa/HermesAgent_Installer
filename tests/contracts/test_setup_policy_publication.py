@@ -269,6 +269,7 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
     def test_active_receipt_binds_claim_generation_and_native_receipts(self):
         receipt = _receipt_from_record(self._active_record())
         descriptor = {
+            "schema": 2,
             "policy_sha256": receipt.policy_sha256,
             "artifact_catalog_sha256": receipt.artifact_catalog_sha256,
             "selection_sha256": receipt.selection_sha256,
@@ -280,9 +281,16 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
                 "transaction_handle": receipt.transaction_handle,
                 "runtime_receipt_handles": list(receipt.runtime_receipt_handles),
                 "materialization_receipt_handles": list(receipt.materialization_receipt_handles),
+                "owner_overlay_adoption_sha256": _sha(_canonical([])),
             },
+            "owner_overlay_adoption_records": [],
+            "owner_overlay_observer_records": [],
         }
         _verify_active_receipt_descriptor(receipt, descriptor)
+        no_observer_table = dict(descriptor)
+        no_observer_table.pop("owner_overlay_observer_records")
+        with self.assertRaises(BootstrapEnrollmentError):
+            _verify_active_receipt_descriptor(receipt, no_observer_table)
         descriptor["inputs"]["claim_digest"] = "9" * 64
         with self.assertRaises(BootstrapEnrollmentError):
             _verify_active_receipt_descriptor(receipt, descriptor)
@@ -351,7 +359,7 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
         receipt = _receipt_from_record(record)
         projection = {key: value for key, value in adoption.items()
                       if key not in {"publication_receipt_handle", "publication_sha256", "generation_id"}}
-        descriptor = {"policy_sha256": receipt.policy_sha256,
+        descriptor = {"schema": 2, "policy_sha256": receipt.policy_sha256,
                       "artifact_catalog_sha256": receipt.artifact_catalog_sha256,
                       "selection_sha256": receipt.selection_sha256,
                       "inputs": {
@@ -362,8 +370,10 @@ class PolicyPublicationFilesystemTests(unittest.TestCase):
                           "transaction_handle": receipt.transaction_handle,
                           "runtime_receipt_handles": list(receipt.runtime_receipt_handles),
                           "materialization_receipt_handles": list(receipt.materialization_receipt_handles),
+                          "owner_overlay_adoption_sha256": _sha(_canonical([])),
                           "choice_projections": [projection],
-                      }}
+                      }, "owner_overlay_adoption_records": [],
+                      "owner_overlay_observer_records": []}
         _verify_active_receipt_descriptor(receipt, descriptor)
         descriptor["inputs"]["choice_projections"][0]["signed_record_sha256"] = "8" * 64
         with self.assertRaises(BootstrapEnrollmentError):

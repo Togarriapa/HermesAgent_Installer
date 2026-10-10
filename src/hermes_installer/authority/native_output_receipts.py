@@ -1498,9 +1498,10 @@ def _validate_role_selection_payload(selection: NativeOutputSelection, role: str
                 or value.get("profile_id") != selection.profile_id
                 or value.get("generation") != selection.generation):
             raise NativeOutputReceiptDenied("candidate index does not match the selected package generation")
-        if role == "native-compiled-closure":
-            embedded_manifest = _read_archive_member(payload, "manifest.json")
-            _validate_role_selection_payload(selection, "native-entrypoint-manifest", embedded_manifest)
+            if role == "native-compiled-closure":
+                embedded_manifest = _read_archive_member(payload, "manifest.json")
+                embedded_index = _read_archive_member(payload, "catalog/native-candidates.json")
+                _validate_role_selection_payload(selection, "native-entrypoint-manifest", embedded_manifest)
             _verify_closure_tree_manifest(embedded_manifest, payload)
             tree_rows = _parse_canonical_json(embedded_manifest)["closure_files"]
             if hashlib.sha256(_canonical(tree_rows)).hexdigest() != selection.compiled_closure_sha256:
@@ -1513,6 +1514,9 @@ def _validate_role_selection_payload(selection: NativeOutputSelection, role: str
                     or resolver.get("process_role_records_sha256")
                     != manifest.get("process_role_records_sha256")):
                 raise NativeOutputReceiptDenied("compiled closure resolver document is malformed")
+            _validate_owner_overlay_resolver_lane(
+                resolver, manifest, _parse_canonical_json(embedded_index), selection,
+            )
     if role == "native-entrypoint-manifest":
         value = _parse_canonical_json(payload)
         expected_top = {"schema", "package_id", "profile_id", "generation",
@@ -1565,6 +1569,82 @@ def _validate_role_selection_payload(selection: NativeOutputSelection, role: str
         if (value["compiler_artifact_id"] != selection.compiler_artifact_id
                 or value["compiler_sha256"] != selection.compiler_sha256):
             raise NativeOutputReceiptDenied("boundary overlay compiler identity differs from the selected compiler")
+
+
+_OWNER_OVERLAY_RESOLVER_FIELDS = frozenset({
+    "registration_id", "method", "operation", "capability", "target_id", "recipient",
+    "effect_enrollment_id", "profile_id", "profile_generation", "principal_id", "namespace_id",
+    "package_id", "package_generation", "argument_schema_id", "argument_schema_sha256",
+    "argument_schema_receipt_handle", "result_schema_id", "result_schema_sha256",
+    "result_schema_receipt_handle", "handler_artifact_id", "handler_sha256",
+    "handler_source_receipt_handle", "profile_view_selection_handle", "profile_view_receipt_handle",
+    "data_root_selection_handle", "data_root_receipt_handle", "target_selection_handle",
+    "target_receipt_handle", "prepared_source_observer_selection_handle",
+    "source_observer_enrollment_ids", "process_role_id", "source_issuer_id",
+})
+_OWNER_OVERLAY_RESOLVER_METHODS = {
+    "resource-overlay-store:tool:resource_overlay_read": ("read", "plugin.resource-overlay-store.read"),
+    "resource-overlay-store:tool:resource_overlay_history": ("history", "plugin.resource-overlay-store.read"),
+    "resource-overlay-store:tool:resource_overlay_write": ("write", "plugin.resource-overlay-store.write"),
+    "resource-overlay-store:tool:resource_overlay_delete": ("delete", "plugin.resource-overlay-store.write"),
+}
+
+
+def _validate_owner_overlay_resolver_lane(resolver: Mapping[str, Any], manifest: Mapping[str, Any],
+                                          index: Mapping[str, Any], selection: NativeOutputSelection) -> None:
+    """Cross-check the digest-covered local CAS lane against exact source rows."""
+    rows = resolver.get("owner_overlay_operation_records")
+    if not isinstance(rows, list) or len(rows) > 4:
+        raise NativeOutputReceiptDenied("resolver lacks the bounded owner-overlay operation lane")
+    ids = [row.get("registration_id") if isinstance(row, dict) else None for row in rows]
+    if ids != sorted(ids) or len(ids) != len(set(ids)):
+        raise NativeOutputReceiptDenied("owner-overlay operation rows are not uniquely ordered")
+    registrations = {row.get("registration_id"): row for row in index.get("registrations", [])
+                     if isinstance(row, dict)}
+    schema_digests = {row.get("id"): row.get("sha256") for row in resolver.get("native_schemas", [])
+                      if isinstance(row, dict)}
+    closure_digests = {row.get("sha256") for row in manifest.get("closure_files", [])
+                       if isinstance(row, dict)}
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != _OWNER_OVERLAY_RESOLVER_FIELDS:
+            raise NativeOutputReceiptDenied("owner-overlay operation row schema differs from v172")
+        fixed = _OWNER_OVERLAY_RESOLVER_METHODS.get(row["registration_id"])
+        registration = registrations.get(row["registration_id"])
+        references = (
+            "target_id", "effect_enrollment_id", "profile_id", "profile_generation", "principal_id",
+            "namespace_id", "argument_schema_receipt_handle", "result_schema_receipt_handle",
+            "handler_artifact_id", "handler_source_receipt_handle", "profile_view_selection_handle",
+            "profile_view_receipt_handle", "data_root_selection_handle", "data_root_receipt_handle",
+            "target_selection_handle", "target_receipt_handle",
+            "prepared_source_observer_selection_handle", "process_role_id", "source_issuer_id",
+        )
+        optional_references = {"data_root_selection_handle", "data_root_receipt_handle",
+                               "target_receipt_handle"}
+        digests = ("argument_schema_sha256", "result_schema_sha256", "handler_sha256")
+        if (fixed is None or row["method"] != fixed[0] or row["operation"] != fixed[1]
+                or row["capability"] != "plugin:resource-overlay-store" or row["recipient"] is not None
+                or row["package_id"] != selection.package_id
+                or row["package_generation"] != selection.generation
+                or not isinstance(row["profile_generation"], str) or not row["profile_generation"]
+                or row["handler_sha256"] not in closure_digests
+                or not isinstance(row["source_observer_enrollment_ids"], list)
+                or not row["source_observer_enrollment_ids"]
+                or registration is None or registration.get("handler_kind") != "owner-overlay"
+                or registration.get("argument_schema_id") != row["argument_schema_id"]
+                or registration.get("result_schema_id") != row["result_schema_id"]
+                or registration.get("registration_source_sha256") != row["handler_sha256"]
+                or registration.get("registration_source_receipt_handle") != row["handler_source_receipt_handle"]
+                or schema_digests.get(row["argument_schema_id"]) != row["argument_schema_sha256"]
+                or schema_digests.get(row["result_schema_id"]) != row["result_schema_sha256"]
+                or any((row.get(key) in (None, "") and key not in optional_references)
+                       or (row.get(key) not in (None, "")
+                           and (not isinstance(row[key], str) or len(row[key]) > 256))
+                       for key in references)
+                or any(not isinstance(row.get(key), str) or not _HEX.fullmatch(row[key])
+                       for key in digests)
+                or row["source_observer_enrollment_ids"]
+                   != sorted(set(row["source_observer_enrollment_ids"]))):
+            raise NativeOutputReceiptDenied("owner-overlay operation does not join current selected package source")
 
 
 def _validate_member_rows(rows: Sequence[Mapping[str, Any]]) -> None:

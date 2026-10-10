@@ -1060,6 +1060,12 @@ The installer SHALL produce the v199 current setup startup projection from actua
 - **WHEN** caller rows, copied session handles, stale receipts, production activation under fixture authority or publication as source-session prerequisite is attempted
 - **THEN** the operation is denied without a capability proof or acceptance promotion
 
+### Requirement: Home Assistant actual Assist resource scope
+The installer SHALL bind Assist reads to actual observed selected exposure or unique source-supported human resource filters through a typed root choice.
+
+#### Scenario: GetLiveContext exposes an unfiltered overview
+- **WHEN** current explicit exposure-set selection or unique reviewed filter proof is absent
+- **THEN** the read remains pending and no entity-ID read or whole-house permission is inferred
 
 ### Requirement: Current publication-owned protected core
 

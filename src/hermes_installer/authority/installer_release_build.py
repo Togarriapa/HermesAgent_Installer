@@ -30,16 +30,19 @@ import urllib.parse
 import urllib.request
 import zipfile
 from dataclasses import dataclass, is_dataclass
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping
 
-from .bootstrap_enrollment import BootstrapEnrollmentError, BootstrapEnrollmentPending
+from .bootstrap_enrollment import (
+    BootstrapEnrollmentError, BootstrapEnrollmentPending, BootstrapSystemCallFailure,
+)
 from .application_effect_source_catalog import APPLICATION_EFFECT_SOURCE_MEMBERS
 from .application_effect_source_catalog import (
     APPLICATION_EFFECT_SOURCE_CATALOG_PATH, APPLICATION_EFFECT_SOURCE_CATALOG_SHA256,
     APPLICATION_EFFECT_SOURCE_CATALOG_SIZE,
 )
-from .installer_release_roles import RELEASE_MEMBER_ROLES
+from .installer_release_roles import NETWORK_STARTUP_HELPER, RELEASE_MEMBER_ROLES
 
 
 SOURCE_ORIGIN = "https://github.com/Togarriapa/HermesAgent_Installer.git"
@@ -80,57 +83,141 @@ EXISTING_MODEL_STORE_TEMPLATE_PATH = (
 EXISTING_MODEL_STORE_TEMPLATE_ID = "installer-existing-model-store-root-template-v1"
 EXISTING_MODEL_STORE_TEMPLATE_SHA256 = "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f"
 EXISTING_MODEL_STORE_TEMPLATE_BYTES = 712
+PRIVATE_LOOPBACK_POLICY_TEMPLATE_PATH = (
+    "plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97/"
+    "private-loopback-policy-v1.json")
+PRIVATE_LOOPBACK_POLICY_TEMPLATE_ID = "installer-private-loopback-nft-v1"
+PRIVATE_LOOPBACK_POLICY_TEMPLATE_SHA256 = "77a48f3a31f115693b04245146158e3c2467f297ff14746a52375850d76237cc"
+PRIVATE_LOOPBACK_POLICY_TEMPLATE_BYTES = 1_482
 REVIEWED_SOURCE_MODULES = (
-    ("hermes_installer.components.native_plugins",
-     "src/hermes_installer/components/native_plugins.py",
-     "lib/python/hermes_installer/components/native_plugins.py",
+    ("hermes_installer.authority.active_native_worker_runtime", "src/hermes_installer/authority/active_native_worker_runtime.py", "lib/python/hermes_installer/authority/active_native_worker_runtime.py",
+     "5196a3206cb5a09daef5eb51cb4ef70d812f4d02a85073e2fc67bf8d1ba783e4", 38_660, "module"),
+    ("hermes_installer.authority.active_network_generation", "src/hermes_installer/authority/active_network_generation.py", "lib/python/hermes_installer/authority/active_network_generation.py",
+     "143ba59f13316f6a66315aed7193a66e4c2e4d6a7b8d03963a3244735fd44f70", 23_570, "module"),
+    ("hermes_installer.authority.active_policy_compiler", "src/hermes_installer/authority/active_policy_compiler.py", "lib/python/hermes_installer/authority/active_policy_compiler.py",
+     "61ae3576ac53e5ad5c6f1b0c74967110021fd961677353aae889b9f8bf04940b", 136_868, "module"),
+    ("hermes_installer.authority.application_runtime_archive", "src/hermes_installer/authority/application_runtime_archive.py", "lib/python/hermes_installer/authority/application_runtime_archive.py",
+     "3117c4c706bfcffe6626c57c79934b143c36d8cd75758dd1198c2020286c2197", 31_457, "module"),
+    ("hermes_installer.authority.application_runtime_relocation", "src/hermes_installer/authority/application_runtime_relocation.py", "lib/python/hermes_installer/authority/application_runtime_relocation.py",
+     "9b426e61480613c9e10aeaa4227aaff6d06a5558000b45cb94fb0d0160e47afc", 12_120, "module"),
+    ("hermes_installer.authority.bootstrap_enrollment", "src/hermes_installer/authority/bootstrap_enrollment.py", "lib/python/hermes_installer/authority/bootstrap_enrollment.py",
+     "6a5985a80064b661c93e1be0c62ae27a454eea1d90658be2c09fe0141e7ecedd", 142_594, "module"),
+    ("hermes_installer.authority.bootstrap_runtime_factory", "src/hermes_installer/authority/bootstrap_runtime_factory.py", "lib/python/hermes_installer/authority/bootstrap_runtime_factory.py",
+     "89fae27c0b8b4eeabc0c43ba0d56baa2780bc62e390a63cc6db8b1f88b028ead", 655_738, "module"),
+    ("hermes_installer.authority.client", "src/hermes_installer/authority/client.py", "lib/python/hermes_installer/authority/client.py",
+     "f8be053e3a00b49087c6104ed77a314a071c8b0a47cf9701c4050b7aae13b46f", 73_488, "module"),
+    ("hermes_installer.authority.committed_pm_executable", "src/hermes_installer/authority/committed_pm_executable.py", "lib/python/hermes_installer/authority/committed_pm_executable.py",
+     "9e8a3a28aa10e8f3e68431b5dcc8a0d51f2afa54c3d57c5e4dd7fda2826cfcf0", 43_170, "module"),
+    ("hermes_installer.authority.daemon", "src/hermes_installer/authority/daemon.py", "lib/python/hermes_installer/authority/daemon.py",
+     "6e506c868e164b429d50b2567a119a9dced2de69cc9bc042c7062813839e37c9", 37_930, "module"),
+    ("hermes_installer.authority.enrollment", "src/hermes_installer/authority/enrollment.py", "lib/python/hermes_installer/authority/enrollment.py",
+     "7ba9abef79744328ed3d5deefdf8b1815e532df295963fd72d8f9f476aa7f16e", 204_399, "module"),
+    ("hermes_installer.authority.functional_health_receipt_consumer", "src/hermes_installer/authority/functional_health_receipt_consumer.py", "lib/python/hermes_installer/authority/functional_health_receipt_consumer.py",
+     "c889505f5b1408c77f234975cc81eb84299177b0153f180d768667bac33a6c4d", 43_402, "module"),
+    ("hermes_installer.authority.initial_policy_compiler", "src/hermes_installer/authority/initial_policy_compiler.py", "lib/python/hermes_installer/authority/initial_policy_compiler.py",
+     "34aa92870f6e5fabd327f9518f3fcd4e1a6afa90b43c0be4bcc02ae88996a708", 41_486, "module"),
+    ("hermes_installer.authority.listener_activation", "src/hermes_installer/authority/listener_activation.py", "lib/python/hermes_installer/authority/listener_activation.py",
+     "64274d1dc9027b9c0c80fc31f95f292cf97b34d60f87769c1d0b472306a42869", 182_234, "module"),
+    ("hermes_installer.authority.local_resource_effects", "src/hermes_installer/authority/local_resource_effects.py", "lib/python/hermes_installer/authority/local_resource_effects.py",
+     "1d1f72655ed335ae486c76df80f97ffd997b07440a2b9417563c2918d874be9d", 142_474, "module"),
+    ("hermes_installer.authority.native_assembler", "src/hermes_installer/authority/native_assembler.py", "lib/python/hermes_installer/authority/native_assembler.py",
+     "564093a9bd255b10f83de08811b9280c30104750c949432ab87644eae03bcfb1", 28_815, "module"),
+    ("hermes_installer.authority.native_custody_proof", "src/hermes_installer/authority/native_custody_proof.py", "lib/python/hermes_installer/authority/native_custody_proof.py",
+     "4b48a790a768b92204d84229e38910cd6d2da37ce5844ca72579ba36c5eb986e", 99_355, "module"),
+    ("hermes_installer.authority.native_definition_composition", "src/hermes_installer/authority/native_definition_composition.py", "lib/python/hermes_installer/authority/native_definition_composition.py",
+     "f99e072dfb60cfbcce4a760d38355301f9e653d231586d2f538dffd88acfff3a", 9_534, "module"),
+    ("hermes_installer.authority.native_health_daemon", "src/hermes_installer/authority/native_health_daemon.py", "lib/python/hermes_installer/authority/native_health_daemon.py",
+     "d21d018e6fb6676b61b1f0b6968feb54d4c2d1a0f2fa5ddca6878807ae8d928c", 112_468, "module"),
+    ("hermes_installer.authority.native_health_observer", "src/hermes_installer/authority/native_health_observer.py", "lib/python/hermes_installer/authority/native_health_observer.py",
+     "af2b48783347b0a684259233b36312c849ee6896f25bb03b49b6b23c5a51480c", 145_475, "module"),
+    ("hermes_installer.authority.native_health_source", "src/hermes_installer/authority/native_health_source.py", "lib/python/hermes_installer/authority/native_health_source.py",
+     "e98f0a7d5ee5807a06fb1b9e51b27120e0b9c5051aa0af9663ceb67c46ea449e", 16_121, "module"),
+    ("hermes_installer.authority.native_input_observer", "src/hermes_installer/authority/native_input_observer.py", "lib/python/hermes_installer/authority/native_input_observer.py",
+     "1777ff56664ee298db2eb4b32af0ed3929f0e509c7a8c5b82bf219d6554c349d", 41_560, "module"),
+    ("hermes_installer.authority.native_output_receipts", "src/hermes_installer/authority/native_output_receipts.py", "lib/python/hermes_installer/authority/native_output_receipts.py",
+     "25f8903c4e9cfd9b6d05bccc98f00d6b0c8becf09c1e624235fa8f10164563ba", 115_704, "module"),
+    ("hermes_installer.authority.native_policy_preparation", "src/hermes_installer/authority/native_policy_preparation.py", "lib/python/hermes_installer/authority/native_policy_preparation.py",
+     "23557ae9d39b017716936408a4e64d8c197749b42f7b507ef9212cfe41934387", 65_082, "module"),
+    ("hermes_installer.authority.native_registration_projection", "src/hermes_installer/authority/native_registration_projection.py", "lib/python/hermes_installer/authority/native_registration_projection.py",
+     "7afa35250c9cd82f34030d37a74b6c310f25fde88d2169cf30913eafcbcf266b", 82_047, "module"),
+    ("hermes_installer.authority.native_request_observation", "src/hermes_installer/authority/native_request_observation.py", "lib/python/hermes_installer/authority/native_request_observation.py",
+     "a30da168eb0a94ef490e88aed23a4f60b50b9a89f65bf71fd0c642a92ec8117d", 33_600, "module"),
+    ("hermes_installer.authority.native_runtime_observer", "src/hermes_installer/authority/native_runtime_observer.py", "lib/python/hermes_installer/authority/native_runtime_observer.py",
+     "9cab5a39a2ba647514ae11bb7442d418a293941841f9eee382233f0669371bdb", 198_388, "module"),
+    ("hermes_installer.authority.native_source_definitions", "src/hermes_installer/authority/native_source_definitions.py", "lib/python/hermes_installer/authority/native_source_definitions.py",
+     "4d66c49e798eb957fa77601c4dad021182b734b1eb8fe322d52ecca060223341", 32_858, "module"),
+    ("hermes_installer.authority.native_worker_endpoint_custody", "src/hermes_installer/authority/native_worker_endpoint_custody.py", "lib/python/hermes_installer/authority/native_worker_endpoint_custody.py",
+     "66e3ddf7ebc82185bb3cf9df5f60185be5d78f3d2098df0dd513731012589ee5", 40_194, "module"),
+    ("hermes_installer.authority.native_worker_generation_schema", "src/hermes_installer/authority/native_worker_generation_schema.py", "lib/python/hermes_installer/authority/native_worker_generation_schema.py",
+     "f03c0fc953bb54ace37d86d8e8315999eacb96055c1f61bebc6769eb2061fc83", 13_871, "module"),
+    ("hermes_installer.authority.native_worker_launch", "src/hermes_installer/authority/native_worker_launch.py", "lib/python/hermes_installer/authority/native_worker_launch.py",
+     "abe1eb856ac6a31c9c4bb828969432ae3afab1a128b23b4ad6ea2ccac0f32054", 38_435, "module"),
+    ("hermes_installer.authority.native_worker_recipes", "src/hermes_installer/authority/native_worker_recipes.py", "lib/python/hermes_installer/authority/native_worker_recipes.py",
+     "add2189878535c7b35d3cc04a426241a5ba24f7d2bed0ab5461fe152e404c0bc", 46_109, "module"),
+    ("hermes_installer.authority.native_worker_runtime_materialization", "src/hermes_installer/authority/native_worker_runtime_materialization.py", "lib/python/hermes_installer/authority/native_worker_runtime_materialization.py",
+     "529b0d707bd530df206d6a512dc061a12d894a2b92546235e9480ccea4cff923", 71_935, "module"),
+    ("hermes_installer.authority.native_worker_service_generation", "src/hermes_installer/authority/native_worker_service_generation.py", "lib/python/hermes_installer/authority/native_worker_service_generation.py",
+     "0487ea123cad9300bdbab464b012a5b4314f48bf400289aec199cdafad585ace", 42_104, "module"),
+    ("hermes_installer.authority.native_worker_start_recipe", "src/hermes_installer/authority/native_worker_start_recipe.py", "lib/python/hermes_installer/authority/native_worker_start_recipe.py",
+     "e58acef2d612c10863654c05c0ade47a6e00f18d57f9e477c49ce35a957b560d", 20_416, "module"),
+    ("hermes_installer.authority.owner_overlay_capture_schemas", "src/hermes_installer/authority/owner_overlay_capture_schemas.py", "lib/python/hermes_installer/authority/owner_overlay_capture_schemas.py",
+     "37b28db4c9709147dee50f14ea99ba5bd6e74a796ace897c3e9a51ba660d063d", 5_409, "module"),
+    ("hermes_installer.authority.owner_overlay_publication", "src/hermes_installer/authority/owner_overlay_publication.py", "lib/python/hermes_installer/authority/owner_overlay_publication.py",
+     "c35ac8726ba6b75fa48aed1ef94d6e52e445633c1f8b63a8e49c82aefd64b446", 57_259, "module"),
+    ("hermes_installer.authority.pm_runtime", "src/hermes_installer/authority/pm_runtime.py", "lib/python/hermes_installer/authority/pm_runtime.py",
+     "1bf7e149095651c6dfcc33d88d9e2ca375879c5d7dea990c0ec2e6a37c2e4a0e", 70_358, "module"),
+    ("hermes_installer.authority.private_loopback_network", "src/hermes_installer/authority/private_loopback_network.py", "lib/python/hermes_installer/authority/private_loopback_network.py",
+     "a56123f11f9069fc06b41921e4b2af704781ca321ddd6e314239236f3a6d2384", 70_665, "module"),
+    ("hermes_installer.authority.private_loopback_worker_gate", "src/hermes_installer/authority/private_loopback_worker_gate.py", "lib/python/hermes_installer/authority/private_loopback_worker_gate.py",
+     "4732b84abc05087f2248ecd374c7a55c765676ab9a489c4cdfe0509a324ee508", 22_240, "module"),
+    ("hermes_installer.authority.remote_observations", "src/hermes_installer/authority/remote_observations.py", "lib/python/hermes_installer/authority/remote_observations.py",
+     "b6e602fc03996fcd00da4ba43d394e377feea1706d2b7d08691c587754a9ec31", 93_746, "module"),
+    ("hermes_installer.authority.runtime_bindings", "src/hermes_installer/authority/runtime_bindings.py", "lib/python/hermes_installer/authority/runtime_bindings.py",
+     "d0a0e8d2dd3465e6b5964286193d101173b394c498cbc11eb6ebc723df8660b5", 133_410, "module"),
+    ("hermes_installer.authority.runtime_composition", "src/hermes_installer/authority/runtime_composition.py", "lib/python/hermes_installer/authority/runtime_composition.py",
+     "f710ede7fe6a728a0e128f7f852ba15d604e423c19f860ee3adccdb2895f8f60", 116_776, "module"),
+    ("hermes_installer.authority.runtime_root_custody", "src/hermes_installer/authority/runtime_root_custody.py", "lib/python/hermes_installer/authority/runtime_root_custody.py",
+     "85fa514c128b962848dbe267fdcbaeb03f90f16ba2a2a6cf3fb288d3d2be09dd", 38_316, "module"),
+    ("hermes_installer.authority.service", "src/hermes_installer/authority/service.py", "lib/python/hermes_installer/authority/service.py",
+     "64693b0be4ac7a8c80547db51517723a09054d56015d520dfc717386d35be3e3", 367_542, "module"),
+    ("hermes_installer.authority.setup_policy_publication", "src/hermes_installer/authority/setup_policy_publication.py", "lib/python/hermes_installer/authority/setup_policy_publication.py",
+     "bf6556d1402e03c924f913c39976d82403d1733673983f947edfabc7b3d7f34f", 110_973, "module"),
+    ("hermes_installer.authority.setup_principal", "src/hermes_installer/authority/setup_principal.py", "lib/python/hermes_installer/authority/setup_principal.py",
+     "8c10a9be6fcb0da4e41d56c8f29d14d09d603946ff060b13966a5fefa8d1aa96", 167_860, "module"),
+    ("hermes_installer.authority.source_observers", "src/hermes_installer/authority/source_observers.py", "lib/python/hermes_installer/authority/source_observers.py",
+     "8cf9ca2e4171c1a5a2402fa2874b2115592143aaff2ab127bc4238d2912e9ba9", 261_264, "module"),
+    ("hermes_installer.components.native_plugins", "src/hermes_installer/components/native_plugins.py", "lib/python/hermes_installer/components/native_plugins.py",
      "a027311518a746a6b1bcd126fc677190f4fe0ec2ac91b941872b3cdc542a79e7", 28_259, "module"),
-    ("hermes_installer.components.public_registries",
-     "src/hermes_installer/components/public_registries.py",
-     "lib/python/hermes_installer/components/public_registries.py",
+    ("hermes_installer.components.public_registries", "src/hermes_installer/components/public_registries.py", "lib/python/hermes_installer/components/public_registries.py",
      "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f", 29_374, "module"),
-    ("hermes_installer.native_invocations", "src/hermes_installer/native_invocations.py",
-     "src/hermes_installer/native_invocations.py",
+    ("hermes_installer.managed_process_custodian", "src/hermes_installer/managed_process_custodian.py", "lib/python/hermes_installer/managed_process_custodian.py",
+     "1bb1267e5e95307da0bf78775a3450ce48a5762f8cff6e5600db2ba8af907657", 631_187, "module"),
+    ("hermes_installer.native_boundary_patch", "src/hermes_installer/native_boundary_patch.py", "lib/python/hermes_installer/native_boundary_patch.py",
+     "fe1bfca7de02408c27891f0d6830da938ee7f18c84ee6b34bdd766f8e1645159", 22_888, "module"),
+    ("hermes_installer.native_plugin_bindings", "src/hermes_installer/native_plugin_bindings.py", "lib/python/hermes_installer/native_plugin_bindings.py",
+     "f5e9fcb74b555dcd5d98bc37eec29c42cbe85f3793cf43f2dc97536b030d1b26", 22_679, "module"),
+    ("hermes_installer.native_plugin_loader", "src/hermes_installer/native_plugin_loader.py", "lib/python/hermes_installer/native_plugin_loader.py",
+     "eebe58ea486ecebeceacc8d8f46f8b26e061b46b4f25a11e41a5059f0233bdbd", 124_775, "module"),
+    ("hermes_installer.protected_enrollment", "src/hermes_installer/protected_enrollment.py", "lib/python/hermes_installer/protected_enrollment.py",
+     "5b6848226891a08b0a3f4e25f311cb230ad8b4005fe3c485f0e86c56fddcb0a1", 212_817, "module"),
+    ("hermes_installer.registry.resource_backends", "src/hermes_installer/registry/resource_backends.py", "lib/python/hermes_installer/registry/resource_backends.py",
+     "e59813aa36754a0e08fece9c9c2a83ec9c21a6807935a6c83f7b09cca6792414", 27_026, "module"),
+    ("hermes_installer.root_setup", "src/hermes_installer/root_setup.py", "lib/python/hermes_installer/root_setup.py",
+     "a938ca78933cde596f627986a60b7c270c0093dc6d9edacf2acb467abbd27f9c", 57_764, "module"),
+    ("hermes_installer.native_invocations", "src/hermes_installer/native_invocations.py", "src/hermes_installer/native_invocations.py",
      "78a3452289df5b7343e5c650ad4260d51b3aa1056e2eedea02cc3a0bff7b8226", 40_107, "source-module"),
-    ("hermes_installer.native_boundary", "src/hermes_installer/native_boundary.py",
-     "src/hermes_installer/native_boundary.py",
+    ("hermes_installer.native_boundary", "src/hermes_installer/native_boundary.py", "src/hermes_installer/native_boundary.py",
      "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb", 14_356, "source-module"),
-    ("installer-application-effect-graphify-entrypoint-v1",
-     "src/hermes_installer/components/probes/graphify_fixture/entrypoint.py",
-     "src/hermes_installer/components/probes/graphify_fixture/entrypoint.py",
-     "db0e49e0878f0406d9dba29c9f9860bee2bc7260e59c9ac7e20ecf88b5a03378", 153, "source-module"),
-    ("installer-application-effect-graphify-helper-v1",
-     "src/hermes_installer/components/probes/graphify_fixture/helper.py",
-     "src/hermes_installer/components/probes/graphify_fixture/helper.py",
-     "acc16fab89297ad11006519103d1033d611b1315529b5614098a3d60c80c2f74", 155, "source-module"),
-    ("installer-application-effect-graphify-result-validator-v1",
-     "src/hermes_installer/components/probes/graphify_result.py",
-     "src/hermes_installer/components/probes/graphify_result.py",
-     "f3f0b44d9d9d707daceee4d563be1d028080ec661c11a29e85e1f38cda0901e9", 6481, "source-module"),
-    ("installer-application-effect-browser-use-probe-v1",
-     "src/hermes_installer/components/browser_use_qualification_probe.py",
-     "src/hermes_installer/components/browser_use_qualification_probe.py",
-     "2f939a6cd82f73f4e7474ed7f0c412e9a22fb65df01e7765c1a87cf675a52e58", 4404, "source-module"),
-    ("installer-application-effect-browser-use-result-validator-v1",
-     "src/hermes_installer/components/browser_use.py",
-     "src/hermes_installer/components/browser_use.py",
-     "2e27c93d701de22792fae24ddb097d3d0dd7424dd5a25ce510ee75fecc90740f", 6531, "source-module"),
-    ("installer-application-effect-scrapegraph-probe-v1",
-     "src/hermes_installer/components/probes/scrapegraph_ai_probe.py",
-     "src/hermes_installer/components/probes/scrapegraph_ai_probe.py",
-     "30974c44d2bd9e60847bcad6ba3849cf8b2a262f8c08f79b832a9bba723ed6ab", 5446, "source-module"),
-    ("installer-application-effect-scrapegraph-result-validator-v1",
-     "src/hermes_installer/components/scrapegraph_ai.py",
-     "src/hermes_installer/components/scrapegraph_ai.py",
-     "e2ac08afa32b9940705403eb9e2af35b08e21cc6f61ed6731438a6c1c1c98dcb", 11891, "source-module"),
-    ("installer-application-effect-hyperframes-probe-v1",
-     "src/hermes_installer/components/probes/hyperframes_probe.py",
-     "src/hermes_installer/components/probes/hyperframes_probe.py",
-     "f4a63a90b4467ae2db4fcdf7d874bc8f6b75e6b1f02910e326e75fcb49d498aa", 12692, "source-module"),
-    ("hermes_installer.authority.native_source_definitions",
-     "src/hermes_installer/authority/native_source_definitions.py",
-     "lib/python/hermes_installer/authority/native_source_definitions.py",
-     "ca57637fd1eea4df70549391ba91b14b3842806ef6b789a4baa9d8954c7fdc22", 16_819, "module"),
+)
+
+
+APPLICATION_BUILD_DRIVER = (
+    "installer-application-environment-builder-v1",
+    "src/hermes_installer/authority/application_environment_builder.py",
+    "lib/python/hermes_installer/authority/application_environment_builder.py",
+    "8c5aebe61ba3d7e5c9bcf27dfadba8771ed3a4987240ea52fe2189251f1b6e8c",
+    45_807,
+    "application-build-driver",
 )
 REVIEWED_HEALTH_FIXTURES = (
     ("src/hermes_installer/native_health_fixture/request.txt", "fixtures/native-health/request.txt",
@@ -189,11 +276,13 @@ STAGED_PREPARED_BASE_TEMPLATE_PATH = "templates/prepared-authority-base-template
 STAGED_RECEIPT_BINDINGS_TEMPLATE_PATH = "templates/bootstrap-receipt-bindings-template-v1.json"
 STAGED_COMPOSIO_POLICY_TEMPLATE_PATH = "templates/composio-whatsapp-catalog-read-policy-v1.json"
 STAGED_EXISTING_MODEL_STORE_TEMPLATE_PATH = "templates/existing-model-store-root-template-v1.json"
+STAGED_PRIVATE_LOOPBACK_POLICY_TEMPLATE_PATH = "templates/private-loopback-policy-v1.json"
 STAGED_REVIEWED_CAPABILITY_MAP_PATH = "templates/reviewed-native-capability-map-v1.json"
 STAGED_CATALOG_PATH = "catalog/artifacts.json"
 ROOT_PLAN_TEMPLATE_ARTIFACT_IDS = (
     COMPILER_TEMPLATE_ID, IDENTITY_TEMPLATE_ID, PREPARED_BASE_TEMPLATE_ID,
     RECEIPT_BINDINGS_TEMPLATE_ID, COMPOSIO_POLICY_TEMPLATE_ID,
+    PRIVATE_LOOPBACK_POLICY_TEMPLATE_ID,
 )
 RECEIPT_TTL_SECONDS = 300.0
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -231,12 +320,12 @@ class DistributionFile:
 
 
 class VerifiedInstallerDistributionReceipt:
-    """Sealed, held view of one exact root-owned candidate source tree."""
+    """Sealed view of one root-owned tree, held by root FD and immutable manifest."""
 
     __slots__ = ("candidate_git_sha", "git_tree_sha1", "source_tree_sha256",
                  "baseline_tree_sha256", "amendment_manifest_sha256",
                  "source_catalog_sha256", "files", "root_device", "root_inode",
-                 "_root_fd", "_seal", "_expected_uid", "_closed", "_handle", "_file_fds")
+                 "_root_fd", "_seal", "_expected_uid", "_closed", "_handle")
 
     def __init__(self, seal: object, *, candidate_git_sha: str, git_tree_sha1: str,
                  source_tree_sha256: str, baseline_tree_sha256: str,
@@ -256,21 +345,15 @@ class VerifiedInstallerDistributionReceipt:
         self.root_device, self.root_inode = info.st_dev, info.st_ino
         self._root_fd, self._seal, self._expected_uid = root_fd, seal, expected_uid
         self._closed, self._handle = False, handle
-        held: dict[str, int] = {}
-        try:
-            for row in files:
-                fd = _open_relative(root_fd, row.relative_path, os.O_RDONLY)
+        for row in files:
+            fd = _open_relative(root_fd, row.relative_path, os.O_RDONLY)
+            try:
                 current = os.fstat(fd)
                 if (current.st_dev != row.device or current.st_ino != row.inode
                         or current.st_ctime_ns != row.ctime_ns):
-                    os.close(fd)
                     raise InstallerReleaseBuildError("candidate source changed while sealing its file custody")
-                held[row.relative_path] = fd
-        except BaseException:
-            for fd in held.values():
+            finally:
                 os.close(fd)
-            raise
-        self._file_fds = held
 
     @property
     def receipt_handle(self) -> str:
@@ -293,51 +376,42 @@ class VerifiedInstallerDistributionReceipt:
             raise InstallerReleaseBuildError("candidate source CAS directory custody changed")
 
     def _verify_row(self, row: DistributionFile) -> None:
-        held_fd = self._file_fds.get(row.relative_path)
-        if held_fd is None:
-            raise InstallerReleaseBuildError("candidate source file custody is not retained")
-        held = os.fstat(held_fd)
-        if (held.st_dev != row.device or held.st_ino != row.inode
-                or held.st_ctime_ns != row.ctime_ns):
-            raise InstallerReleaseBuildError("retained candidate source file identity changed")
+        fd = self._open_verified_file(row)
+        os.close(fd)
+
+    def _open_verified_file(self, row: DistributionFile) -> int:
+        """Open one immutable-manifest member and verify it while holding that FD."""
         fd = _open_relative(self._root_fd, row.relative_path, os.O_RDONLY)
         try:
             info = os.fstat(fd)
-            digest, size = _hash_fd(fd, MAX_SOURCE_FILE_BYTES)
             if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
                     or info.st_uid != self._expected_uid or info.st_dev != row.device
                     or info.st_ino != row.inode or stat.S_IMODE(info.st_mode) != row.mode
-                    or info.st_ctime_ns != row.ctime_ns
+                    or info.st_ctime_ns != row.ctime_ns or info.st_size != row.size_bytes):
+                raise InstallerReleaseBuildError("candidate source CAS file identity changed")
+            digest, size = _hash_fd(fd, MAX_SOURCE_FILE_BYTES)
+            after = os.fstat(fd)
+            if (not stat.S_ISREG(after.st_mode) or after.st_nlink != 1
+                    or after.st_uid != self._expected_uid or after.st_dev != row.device
+                    or after.st_ino != row.inode or stat.S_IMODE(after.st_mode) != row.mode
+                    or after.st_ctime_ns != row.ctime_ns or after.st_size != row.size_bytes
                     or digest != row.sha256 or size != row.size_bytes):
                 raise InstallerReleaseBuildError("candidate source CAS file bytes or ownership changed")
-        finally:
-            os.close(fd)
-
-    def open_file(self, relative_path: str) -> int:
-        self._verify_root_current()
-        row = next((entry for entry in self.files if entry.relative_path == relative_path), None)
-        if row is None:
-            raise InstallerReleaseBuildError("requested source path is outside the verified candidate closure")
-        self._verify_row(row)
-        fd = _open_relative(self._root_fd, row.relative_path, os.O_RDONLY)
-        try:
-            info = os.fstat(fd)
-            digest, size = _hash_fd(fd, MAX_SOURCE_FILE_BYTES)
-            if (digest != row.sha256 or size != row.size_bytes or info.st_dev != row.device
-                    or info.st_ino != row.inode or info.st_ctime_ns != row.ctime_ns
-                    or info.st_uid != self._expected_uid):
-                raise InstallerReleaseBuildError("candidate source changed while opening a verified file")
             os.lseek(fd, 0, os.SEEK_SET)
             return fd
         except BaseException:
             os.close(fd)
             raise
 
+    def open_file(self, relative_path: str) -> int:
+        self._verify_root_current()
+        row = next((entry for entry in self.files if entry.relative_path == relative_path), None)
+        if row is None:
+            raise InstallerReleaseBuildError("requested source path is outside the verified candidate closure")
+        return self._open_verified_file(row)
+
     def close(self) -> None:
         if not self._closed:
-            for fd in self._file_fds.values():
-                os.close(fd)
-            self._file_fds.clear()
             os.close(self._root_fd)
             self._root_fd, self._closed = -1, True
 
@@ -347,6 +421,17 @@ class VerifiedInstallerDistributionReceipt:
 
     def __exit__(self, *_: object) -> None:
         self.close()
+
+
+@contextmanager
+def _bootstrap_os_error_step(step: str) -> Iterator[None]:
+    """Replace an OS exception with a finite stage and allowlisted errno only."""
+    try:
+        yield
+    except BootstrapSystemCallFailure:
+        raise
+    except OSError as exc:
+        raise BootstrapSystemCallFailure(step, exc.errno) from None
 
 
 class RootInstallerDistributionRegistry:
@@ -370,25 +455,31 @@ class RootInstallerDistributionRegistry:
         """Internal CAS operation used by RootInstallerDistributionSourceCAS."""
         _require_linux_root()
         _validate_git_sha(candidate_git_sha)
-        self._prepare_root()
-        lock_fd = os.open(self._root / ".acquire.lock",
-                          os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        with _bootstrap_os_error_step("source_cas.prepare"):
+            self._prepare_root()
+        with _bootstrap_os_error_step("source_cas.lock"):
+            lock_fd = os.open(self._root / ".acquire.lock",
+                              os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
         try:
-            info = os.fstat(lock_fd)
-            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1
-                    or stat.S_IMODE(info.st_mode) != 0o600):
-                raise InstallerReleaseBuildError("source CAS acquisition lock custody is invalid")
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            self._clean_incomplete_staging()
-            existing = self._root / candidate_git_sha
-            if existing.exists() or existing.is_symlink():
-                handle, _ = self.resolve_selected(candidate_git_sha)
-                return handle
-            if _tree_byte_usage(self._root) + MAX_SOURCE_TREE_BYTES + 16 * 1024 * 1024 > MAX_SOURCE_CAS_BYTES:
-                raise BootstrapEnrollmentPending("root source CAS has no bounded space for another candidate")
-            return self._acquire_selected_locked(candidate_git_sha)
+            with _bootstrap_os_error_step("source_cas.lock"):
+                info = os.fstat(lock_fd)
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1
+                        or stat.S_IMODE(info.st_mode) != 0o600):
+                    raise InstallerReleaseBuildError("source CAS acquisition lock custody is invalid")
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            with _bootstrap_os_error_step("source_cas.inspect"):
+                self._clean_incomplete_staging()
+                existing = self._root / candidate_git_sha
+                if existing.exists() or existing.is_symlink():
+                    handle, _ = self.resolve_selected(candidate_git_sha)
+                    return handle
+                if _tree_byte_usage(self._root) + MAX_SOURCE_TREE_BYTES + 16 * 1024 * 1024 > MAX_SOURCE_CAS_BYTES:
+                    raise BootstrapEnrollmentPending("root source CAS has no bounded space for another candidate")
+            with _bootstrap_os_error_step("source_cas.materialize"):
+                return self._acquire_selected_locked(candidate_git_sha)
         finally:
-            os.close(lock_fd)
+            with _bootstrap_os_error_step("source_cas.lock_release"):
+                os.close(lock_fd)
 
     def _acquire_selected_locked(self, candidate_git_sha: str) -> str:
         _require_linux_root()
@@ -2652,6 +2743,8 @@ class RootInstalledReleaseBuilder:
              COMPOSIO_POLICY_TEMPLATE_SHA256, COMPOSIO_POLICY_TEMPLATE_BYTES),
             (EXISTING_MODEL_STORE_TEMPLATE_PATH, STAGED_EXISTING_MODEL_STORE_TEMPLATE_PATH, "template",
              EXISTING_MODEL_STORE_TEMPLATE_SHA256, EXISTING_MODEL_STORE_TEMPLATE_BYTES),
+            (PRIVATE_LOOPBACK_POLICY_TEMPLATE_PATH, STAGED_PRIVATE_LOOPBACK_POLICY_TEMPLATE_PATH, "template",
+             PRIVATE_LOOPBACK_POLICY_TEMPLATE_SHA256, PRIVATE_LOOPBACK_POLICY_TEMPLATE_BYTES),
             (REVIEWED_CAPABILITY_MAP_PATH, STAGED_REVIEWED_CAPABILITY_MAP_PATH, "template",
              REVIEWED_CAPABILITY_MAP_SHA256, REVIEWED_CAPABILITY_MAP_BYTES),
             (CATALOG_SOURCE_PATH, STAGED_CATALOG_PATH, "artifact-catalog", None, None),
@@ -2664,6 +2757,9 @@ class RootInstalledReleaseBuilder:
                 raise InstallerReleaseBuildError("fixed installed template differs from its reviewed bytes")
             self._copy_source(source, output_fd, source_path, target, (role,))
             staged.append(self._last_output_row)
+        helper_row = self._stage_network_startup_helper(source, output_fd)
+        if helper_row is not None:
+            staged.append(helper_row)
         # The v175 descriptor selects the exact setup-only effect source rows.
         effect_catalog = source_files.get(APPLICATION_EFFECT_SOURCE_CATALOG_PATH)
         if (effect_catalog is None or effect_catalog.sha256 != APPLICATION_EFFECT_SOURCE_CATALOG_SHA256
@@ -2679,8 +2775,47 @@ class RootInstalledReleaseBuilder:
                 target = "plans/" + row.relative_path.removeprefix("plans/")
                 self._copy_source(source, output_fd, row.relative_path, target, ("amendment",))
                 staged.append(self._last_output_row)
-        # Map only the actual loaded installer-module closure to canonical installed module paths.
-        for name, _, digest, _, _ in actor.module_rows:
+        staged.extend(self._stage_actor_module_rows(source, output_fd, actor.module_rows))
+        staged_paths = {row[0] for row in staged}
+        for _name, source_rel, target, expected_digest, expected_size, role in REVIEWED_SOURCE_MODULES:
+            source_row = source_files.get(source_rel)
+            if (source_row is None or source_row.sha256 != expected_digest
+                    or source_row.size_bytes != expected_size):
+                raise InstallerReleaseBuildError("finite native target source module differs from its reviewed pin")
+            if target not in staged_paths:
+                self._copy_source(source, output_fd, source_rel, target, (role,))
+                staged.append(self._last_output_row)
+                staged_paths.add(target)
+
+        for source_rel, target, expected_digest, expected_size in REVIEWED_HEALTH_FIXTURES:
+            source_row = source_files.get(source_rel)
+            if (source_row is None or source_row.sha256 != expected_digest
+                    or source_row.size_bytes != expected_size):
+                raise InstallerReleaseBuildError("native health fixture source differs from its exact reviewed pin")
+            if target not in staged_paths:
+                self._copy_source(source, output_fd, source_rel, target, ("native-health-fixture",))
+                staged.append(self._last_output_row)
+                staged_paths.add(target)
+        driver_id, driver_source, driver_target, driver_digest, driver_size, driver_role = APPLICATION_BUILD_DRIVER
+        driver_source_row = source_files.get(driver_source)
+        if (driver_source_row is None or driver_source_row.sha256 != driver_digest
+                or driver_source_row.size_bytes != driver_size or driver_source_row.mode & 0o111):
+            raise InstallerReleaseBuildError("application build driver source differs from its execution-only pin")
+        if driver_target in staged_paths:
+            raise InstallerReleaseBuildError("application build driver path was already staged under another role")
+        self._copy_source(source, output_fd, driver_source, driver_target, (driver_role,))
+        staged.append(self._last_output_row)
+        staged_paths.add(driver_target)
+        self._stage_application_effect_sources(source, output_fd, staged, staged_paths)
+        return staged
+
+    def _stage_actor_module_rows(self, source: VerifiedInstallerDistributionReceipt, output_fd: int,
+                                 module_rows: tuple[tuple[str, str, str, int, int], ...]) \
+        -> list[tuple[str, str, int, int, tuple[str, ...]]]:
+        """Stage only modules captured in the verified root source actor."""
+        source_files = {row.relative_path: row for row in source.files}
+        staged: list[tuple[str, str, int, int, tuple[str, ...]]] = []
+        for name, _, digest, _, _ in module_rows:
             if not (name == "hermes_installer" or name.startswith("hermes_installer.")):
                 continue
             parts = name.split(".")
@@ -2697,26 +2832,6 @@ class RootInstalledReleaseBuilder:
                 raise InstallerReleaseBuildError("loaded module digest differs from the exact source module")
             self._copy_source(source, output_fd, source_rel, target, ("module",))
             staged.append(self._last_output_row)
-        staged_paths = {row[0] for row in staged}
-        for _name, source_rel, target, expected_digest, expected_size, role in REVIEWED_SOURCE_MODULES:
-            source_row = source_files.get(source_rel)
-            if (source_row is None or source_row.sha256 != expected_digest
-                    or source_row.size_bytes != expected_size):
-                raise InstallerReleaseBuildError("finite native target source module differs from its reviewed pin")
-            if target not in staged_paths:
-                self._copy_source(source, output_fd, source_rel, target, (role,))
-                staged.append(self._last_output_row)
-                staged_paths.add(target)
-        for source_rel, target, expected_digest, expected_size in REVIEWED_HEALTH_FIXTURES:
-            source_row = source_files.get(source_rel)
-            if (source_row is None or source_row.sha256 != expected_digest
-                    or source_row.size_bytes != expected_size):
-                raise InstallerReleaseBuildError("native health fixture source differs from its exact reviewed pin")
-            if target not in staged_paths:
-                self._copy_source(source, output_fd, source_rel, target, ("native-health-fixture",))
-                staged.append(self._last_output_row)
-                staged_paths.add(target)
-        self._stage_application_effect_sources(source, output_fd, staged, staged_paths)
         return staged
 
     def _stage_application_effect_sources(
@@ -2733,6 +2848,36 @@ class RootInstalledReleaseBuilder:
                 self._copy_source(source, output_fd, source_rel, source_rel, (role,))
                 staged.append(self._last_output_row)
                 staged_paths.add(source_rel)
+
+    def _stage_network_startup_helper(
+        self, source: VerifiedInstallerDistributionReceipt,
+        output_fd: int,
+    ) -> tuple[str, str, int, int, tuple[str, ...]] | None:
+        artifact_id, source_path, target_path, expected_digest, expected_size, role = NETWORK_STARTUP_HELPER
+        if (role != "network-startup-helper"
+                or artifact_id != "installer-private-loopback-worker-gate-v180"
+                or source_path != "helpers/private-loopback-worker-gate.py"
+                or target_path != source_path):
+            raise InstallerReleaseBuildError("fixed native worker helper source policy is malformed")
+        if expected_digest is None and expected_size is None:
+            # The native launch owner has no approved installed helper in a
+            # release until review seals the final coherent source tuple.
+            return None
+        if (not isinstance(expected_digest, str) or not _SHA256.fullmatch(expected_digest)
+                or type(expected_size) is not int or expected_size <= 0):
+            raise InstallerReleaseBuildError("fixed native worker helper source policy is malformed")
+        row = next((item for item in source.files if item.relative_path == source_path), None)
+        if row is None or (row.sha256, row.size_bytes) != (expected_digest, expected_size):
+            raise InstallerReleaseBuildError("fixed native worker helper source differs from its reviewed pin")
+        fd = source.open_file(source_path)
+        try:
+            body = _read_exact_fd(fd, expected_size)
+        finally:
+            os.close(fd)
+        if hashlib.sha256(body).hexdigest() != expected_digest:
+            raise InstallerReleaseBuildError("fixed native worker helper bytes differ from its reviewed pin")
+        _write_relative(output_fd, target_path, body, mode=0o444)
+        return (target_path, expected_digest, expected_size, 0o444, (role,))
 
     def _copy_source(self, source: VerifiedInstallerDistributionReceipt, output_fd: int,
                      source_path: str, target_path: str, roles: tuple[str, ...],
@@ -2822,23 +2967,29 @@ def bootstrap_selected_release(choices: object, candidate_selection_registry: ob
     if (not isinstance(choices, RootSetupExplicitChoices)
             or not isinstance(candidate_selection_registry, RootBootstrapCandidateSelectionRegistry)):
         raise TypeError("first-source bootstrap requires the sealed root TTY choice and its registry")
-    selection = candidate_selection_registry.resolve(choices)
+    with _bootstrap_os_error_step("bootstrap.tty_selection"):
+        selection = candidate_selection_registry.resolve(choices)
     journal = candidate_selection_registry
-    source_cas = RootInstallerDistributionSourceCAS.from_root_bootstrap(
-        journal, fixed_source_origin_policy_for_root_bootstrap())
+    with _bootstrap_os_error_step("source_cas.construct"):
+        source_cas = RootInstallerDistributionSourceCAS.from_root_bootstrap(
+            journal, fixed_source_origin_policy_for_root_bootstrap())
     distribution_registry = RootInstallerDistributionRegistry.from_owned_source_CAS(source_cas, journal)
     distribution_handle = source_cas.acquire_selected(selection.candidate_git_sha)
-    source = distribution_registry.resolve(distribution_handle)
+    with _bootstrap_os_error_step("source_cas.resolve"):
+        source = distribution_registry.resolve(distribution_handle)
     if source.candidate_git_sha != selection.candidate_git_sha:
         raise InstallerReleaseBuildError("fixed-origin source CAS does not match the root TTY choice")
     runtime_artifact_registry = RootInstallerRuntimeArtifactRegistry()
     interpreter_registry = RootInstallerInterpreterRegistry.from_owned_source_CAS(
         distribution_registry, journal, runtime_artifact_registry)
-    interpreter_handle = interpreter_registry.provision_selected_bootstrap_interpreter(distribution_handle)
-    handoff_registry = RootBootstrapRuntimeHandoffRegistry.from_source_bootstrap(
-        distribution_registry, interpreter_registry, candidate_selection_registry, BOOTSTRAP_HANDOFF_ROOT)
-    handoff = handoff_registry.create_for_current_process(distribution_handle, interpreter_handle, selection)
-    handoff_registry.reexec_selected_bootstrap(handoff)
+    with _bootstrap_os_error_step("installer_runtime.provision"):
+        interpreter_handle = interpreter_registry.provision_selected_bootstrap_interpreter(distribution_handle)
+    with _bootstrap_os_error_step("bootstrap.handoff"):
+        handoff_registry = RootBootstrapRuntimeHandoffRegistry.from_source_bootstrap(
+            distribution_registry, interpreter_registry, candidate_selection_registry, BOOTSTRAP_HANDOFF_ROOT)
+        handoff = handoff_registry.create_for_current_process(distribution_handle, interpreter_handle, selection)
+    with _bootstrap_os_error_step("bootstrap.reexec"):
+        handoff_registry.reexec_selected_bootstrap(handoff)
     raise BootstrapEnrollmentPending("isolated source bootstrap exec returned without replacing the current process")
 
 
@@ -2915,16 +3066,20 @@ def _load_installed_setup_module_closure() -> None:
     """
     import importlib
 
-    for name in (
-        "hermes_installer.root_setup",
-        "hermes_installer.authority.installer_release",
-        "hermes_installer.authority.bootstrap_runtime_factory",
-    ):
-        try:
-            importlib.import_module(name)
-        except ImportError:
-            raise BootstrapEnrollmentPending(
-                "installed root setup module closure is unavailable from selected source") from None
+    try:
+        root_setup = importlib.import_module("hermes_installer.root_setup")
+        importlib.import_module("hermes_installer.authority.installer_release")
+        importlib.import_module("hermes_installer.authority.bootstrap_runtime_factory")
+        # These two fixed import-only entry points are the authoritative setup
+        # and listener closures used by the published root launcher. Loading
+        # them before actor verification makes every actually selected
+        # transitive module (including registry.resources_runtime) part of the
+        # observed SourceCAS module rows that the release builder stages.
+        root_setup._import_v180_native_support_closure()
+        root_setup._import_v187_listener_activation_closure()
+    except ImportError:
+        raise BootstrapEnrollmentPending(
+            "installed root setup module closure is unavailable from selected source") from None
 
 
 def _verify_frozen_baseline(root_fd: int, rows: tuple[DistributionFile, ...]) -> str:

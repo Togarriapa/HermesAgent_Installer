@@ -17,6 +17,8 @@ import sys
 import time
 import fcntl
 import getpass
+import grp
+import pwd
 import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -149,6 +151,10 @@ class VerifiedRootSetupPrincipalSelection:
     expires_monotonic: float
 
     @property
+    def identity_kind(self) -> str:
+        return "authentik-subject-v1"
+
+    @property
     def principal_binding(self) -> "PrincipalBindingFactory":
         """Return a deferred join; the dedicated NSS UID is issued at activation."""
         return PrincipalBindingFactory(
@@ -236,6 +242,725 @@ class RootCurrentSetupIdentitySnapshot:
     identity_receipt_handle: str
     issued_monotonic: float
     expires_monotonic: float
+
+
+_LOCAL_OWNER_REGISTRATIONS = frozenset({
+    "resource-overlay-store:tool:resource_overlay_read",
+    "resource-overlay-store:tool:resource_overlay_history",
+    "resource-overlay-store:tool:resource_overlay_write",
+    "resource-overlay-store:tool:resource_overlay_delete",
+})
+_LOCAL_OWNER_PROFILE_ID = "hermes-agent-native-v1"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootSetupCapabilitySelection:
+    """Finite root TTY choice for the four owner-overlay operations."""
+    schema: int
+    selection_handle: str
+    setup_session_id: str
+    transaction_handle: str
+    plan_sha256: str
+    selected_registration_ids: tuple[str, ...]
+    selection_sha256: str
+    issued_monotonic: float
+    expires_monotonic: float
+    _issuer_seal: str = field(repr=False, compare=False)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootLocalOwnerIdentityReceipt:
+    schema: int
+    receipt_handle: str
+    identity_kind: str
+    setup_session_id: str
+    transaction_handle: str
+    plan_sha256: str
+    installed_release_receipt_handle: str
+    actor_receipt_handle: str
+    machine_target_binding_digest: str
+    target_account_name: str
+    observed_uid: int
+    observed_primary_gid: int
+    observed_primary_group_name: str
+    account_binding_sha256: str
+    observation_monotonic: float
+    expires_monotonic: float
+    revocation_epoch: int
+    _issuer_seal: str = field(repr=False, compare=False)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootLocalOwnerPrincipalSelection:
+    schema: int
+    receipt_handle: str
+    identity_kind: str
+    setup_session_id: str
+    transaction_handle: str
+    plan_sha256: str
+    owner_identity_receipt_handle: str
+    principal_id: str
+    service_profile_id: str
+    namespace_id: str
+    capability_selection_handle: str
+    capability_selection_sha256: str
+    selected_capability_ceiling: tuple[str, ...]
+    principal_binding_sha256: str
+    controller_binding_handle: str
+    issued_monotonic: float
+    expires_monotonic: float
+    revocation_epoch: int
+    _issuer_seal: str = field(repr=False, compare=False)
+
+    @property
+    def capabilities(self) -> tuple[str, ...]:
+        return self.selected_capability_ceiling
+
+    @property
+    def receipt_id(self) -> str:
+        return self.receipt_handle
+
+    @property
+    def selection_handle(self) -> str:
+        return self.receipt_handle
+
+    @property
+    def binding_sha256(self) -> str:
+        return self.principal_binding_sha256
+
+    @property
+    def identity_receipt_handle(self) -> str:
+        return self.owner_identity_receipt_handle
+
+    @property
+    def principal_binding(self) -> "PrincipalBindingFactory":
+        return PrincipalBindingFactory(self.principal_id, self.service_profile_id,
+                                      self.namespace_id,
+                                      frozenset(self.selected_capability_ceiling))
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootCurrentLocalOwnerIdentitySnapshot:
+    snapshot_handle: str
+    principal_selection_handle: str
+    owner_identity_receipt_handle: str
+    capability_selection_handle: str
+    principal: RootLocalOwnerPrincipalSelection
+    owner_identity: RootLocalOwnerIdentityReceipt
+    capability_selection: RootSetupCapabilitySelection
+    issued_monotonic: float
+    expires_monotonic: float
+    _registry_seal: str = field(repr=False, compare=False)
+    namespace_selection_handle: str | None = None
+    namespace_binding_sha256: str | None = None
+    namespace: Any | None = field(default=None, repr=False, compare=False)
+
+    @property
+    def identity_kind(self) -> str:
+        return self.principal.identity_kind
+
+    @property
+    def principal_id(self) -> str:
+        return self.principal.principal_id
+
+    @property
+    def service_profile_id(self) -> str:
+        return self.principal.service_profile_id
+
+    @property
+    def namespace_id(self) -> str:
+        return self.principal.namespace_id
+
+    @property
+    def principal_binding_sha256(self) -> str:
+        return self.principal.principal_binding_sha256
+
+    @property
+    def identity_receipt_handle(self) -> str:
+        return self.owner_identity_receipt_handle
+
+    @property
+    def principal_receipt_handle(self) -> str:
+        return self.principal.receipt_handle
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootLocalOwnerNamespaceSelector:
+    selection_handle: str
+    setup_session_id: str
+    transaction_handle: str
+    plan_sha256: str
+    prepared_generation_id: str
+    prepared_generation_digest: str
+    principal_selection_handle: str
+    principal_binding_sha256: str
+    target_profile_id: str
+    namespace_id: str
+    namespace_policy: str
+    binding_sha256: str
+    controller_binding_handle: str
+    issued_monotonic: float
+    expires_monotonic: float
+    revocation_epoch: int
+    _issuer_seal: str = field(repr=False, compare=False)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootLocalOwnerPrincipalSelector:
+    """Stable local-owner setup intent with no Authentik-shaped identity fields."""
+    selection_handle: str
+    setup_session_id: str
+    transaction_handle: str
+    plan_sha256: str
+    identity_kind: str
+    principal_id: str
+    service_profile_id: str
+    selected_capability_ceiling: tuple[str, ...]
+    binding_sha256: str
+    controller_binding_handle: str
+    issued_monotonic: float
+    expires_monotonic: float
+    revocation_epoch: int
+    _issuer_seal: str = field(repr=False, compare=False)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootCurrentLocalOwnerNamespaceSelection:
+    receipt_handle: str
+    setup_session_id: str
+    transaction_handle: str
+    plan_sha256: str
+    prepared_generation_id: str
+    prepared_generation_digest: str
+    principal_selection_receipt_id: str
+    target_profile_id: str
+    namespace_id: str
+    binding_sha256: str
+    issued_monotonic: float
+    expires_monotonic: float
+    _issuer_seal: str = field(repr=False, compare=False)
+
+
+class RootSetupLocalOwnerIdentityRegistry:
+    """Root-observed local ownership identity, isolated from Authentik types.
+
+    The selected account comes only from the root-issued stage-zero session.
+    Every resolve repeats NSS and current release/actor/session observations;
+    persisted JSON is an audit record and never restores an in-memory handle.
+    """
+
+    def __init__(self, initial_compilation_registry: Any, root_journal: Path,
+                 *, monotonic=time.monotonic) -> None:
+        from .bootstrap_runtime_factory import RootInitialCompilationRegistry
+        if (type(initial_compilation_registry) is not RootInitialCompilationRegistry
+                or Path(initial_compilation_registry.root_journal) != root_journal
+                or not root_journal.is_absolute() or not callable(monotonic)):
+            raise ValueError("local-owner identity requires the selected root compilation registry and journal")
+        self._registry = initial_compilation_registry
+        self._journal = root_journal
+        self._clock = monotonic
+        self._seal = secrets.token_hex(32)
+        self._capabilities: dict[str, RootSetupCapabilitySelection] = {}
+        self._receipts: dict[str, RootLocalOwnerIdentityReceipt] = {}
+        self._principals: dict[str, RootLocalOwnerPrincipalSelection] = {}
+        self._snapshots: dict[str, RootCurrentLocalOwnerIdentitySnapshot] = {}
+        self._normal_adoptions: dict[str, dict[str, Any]] = {}
+
+    @property
+    def setup_session_store(self) -> "RootSetupSessionStore":
+        """Return the exact normal store only after a live local-owner adoption.
+
+        Stage-zero selections never expose a normal setup store.  This property
+        exists for consumers that need to join their factory to the adopted
+        normal-session authority; every recorded adoption is revalidated before
+        the store is returned.
+        """
+        stores: list[RootSetupSessionStore] = []
+        for adoption in tuple(self._normal_adoptions.values()):
+            store = adoption.get("store")
+            handle = adoption.get("handle")
+            if (not isinstance(store, RootSetupSessionStore)
+                    or not isinstance(handle, RootSetupSessionHandle)):
+                raise BootstrapEnrollmentPending("local-owner adoption has no concrete normal setup store")
+            self.resolve_adopted_initial_principal(store, handle)
+            # Adoption also requires a current namespace joined to the prepared
+            # generation.  This prevents a stale principal alone from binding
+            # the active compiler to a normal session.
+            self.resolve_adopted_namespace_selection(store, handle)
+            if all(existing is not store for existing in stores):
+                stores.append(store)
+        if len(stores) != 1:
+            raise BootstrapEnrollmentPending("local-owner registry has no unique adopted normal setup store")
+        return stores[0]
+
+    @classmethod
+    def from_initial_compilation(cls, initial_compilation_registry: Any,
+                                 root_journal: Path, *, monotonic=time.monotonic
+                                 ) -> "RootSetupLocalOwnerIdentityRegistry":
+        return cls(initial_compilation_registry, root_journal, monotonic=monotonic)
+
+    def select_capabilities(self, session_handle: str,
+                            selected_registration_ids: tuple[str, ...]
+                            ) -> RootSetupCapabilitySelection:
+        session = self._current_initial_session(session_handle)
+        if (not isinstance(selected_registration_ids, tuple)
+                or len(set(selected_registration_ids)) != len(selected_registration_ids)
+                or any(not isinstance(item, str) or item not in _LOCAL_OWNER_REGISTRATIONS
+                       for item in selected_registration_ids)):
+            raise BootstrapEnrollmentError("local capability selection must use exact reviewed overlay registrations")
+        now = self._clock()
+        expiry = min(now + SETUP_POLICY_SELECTION_TTL_SECONDS, session.expires_monotonic)
+        if expiry <= now:
+            raise BootstrapEnrollmentPending("local capability selection expired")
+        body = {"session": session.compilation_session_handle,
+                "transaction": session.compilation_transaction_handle,
+                "plan": session.plan_sha256,
+                "registrations": list(selected_registration_ids)}
+        digest = hashlib.sha256(_canonical(body)).hexdigest()
+        result = RootSetupCapabilitySelection(
+            SCHEMA, secrets.token_hex(32), session.compilation_session_handle,
+            session.compilation_transaction_handle, session.plan_sha256,
+            selected_registration_ids, digest, now, expiry, self._seal)
+        self._capabilities[result.selection_handle] = result
+        self._write_record("local-capability-", result.selection_handle,
+                           {**body, "selection_sha256": digest, "state": "selected"})
+        return result
+
+    def select_principal(self, session_handle: str,
+                         capability_selection_handle: str) -> str:
+        session = self._current_initial_session(session_handle)
+        capability = self._resolve_capability(session, capability_selection_handle)
+        owner = self._observe_owner(session)
+        now = self._clock()
+        expiry = min(now + IDENTITY_RECEIPT_TTL_SECONDS, owner.expires_monotonic,
+                     capability.expires_monotonic, session.expires_monotonic)
+        if expiry <= now:
+            raise BootstrapEnrollmentPending("local-owner principal selection expired")
+        # The ID includes the Linux-owner domain and the machine-bound NSS
+        # binding; it cannot collide with the existing Authentik subject recipe.
+        principal_id = "linux-local-owner:" + hashlib.sha256(
+            (owner.machine_target_binding_digest + "\0" + owner.account_binding_sha256).encode()
+        ).hexdigest()
+        namespace_id = "hermes-native-" + hashlib.sha256(
+            (principal_id + "\0" + _LOCAL_OWNER_PROFILE_ID).encode()).hexdigest()[:32]
+        controller = hashlib.sha256((session.compilation_session_handle + "\0" +
+                                     session.compilation_transaction_handle).encode()).hexdigest()
+        body = {"identity_kind": owner.identity_kind, "session": owner.setup_session_id,
+                "transaction": owner.transaction_handle, "plan": owner.plan_sha256,
+                "owner_receipt": owner.receipt_handle,
+                "owner_binding": owner.account_binding_sha256,
+                "machine_target": owner.machine_target_binding_digest,
+                "target_account_name": owner.target_account_name,
+                "observed_uid": owner.observed_uid,
+                "observed_primary_gid": owner.observed_primary_gid,
+                "observed_primary_group_name": owner.observed_primary_group_name,
+                "principal": principal_id, "profile": _LOCAL_OWNER_PROFILE_ID,
+                "namespace": namespace_id, "capability_selection": capability.selection_sha256,
+                "selected_capabilities": list(capability.selected_registration_ids),
+                "controller": controller}
+        binding = hashlib.sha256(_canonical(body)).hexdigest()
+        selected = RootLocalOwnerPrincipalSelection(
+            SCHEMA, secrets.token_hex(32), "linux-local-owner-v1",
+            session.compilation_session_handle, session.compilation_transaction_handle,
+            session.plan_sha256, owner.receipt_handle, principal_id,
+            _LOCAL_OWNER_PROFILE_ID, namespace_id, capability.selection_handle,
+            capability.selection_sha256, capability.selected_registration_ids,
+            binding, controller, now, expiry, 0, self._seal)
+        self._receipts[owner.receipt_handle] = owner
+        self._principals[selected.receipt_handle] = selected
+        self._write_record("local-owner-", selected.receipt_handle, body | {
+            "principal_binding_sha256": binding, "state": "selected"})
+        return selected.receipt_handle
+
+    def resolve_selected_principal(self, principal_selection_handle: str,
+                                   setup_session_id: str, transaction_handle: str,
+                                   plan_sha256: str) -> RootLocalOwnerPrincipalSelection:
+        snapshot = self.resolve_current_selection(setup_session_id,
+                                                  principal_selection_handle)
+        selected = snapshot.principal
+        expected_session_id = (setup_session_id.session_id
+                               if isinstance(setup_session_id, RootSetupSessionHandle)
+                               else setup_session_id)
+        if (selected.setup_session_id != expected_session_id
+                or selected.transaction_handle != transaction_handle
+                or selected.plan_sha256 != plan_sha256):
+            raise BootstrapEnrollmentPending("local-owner principal belongs to another session, transaction, or plan")
+        return selected
+
+    def resolve_current_selection(self, session_handle: str,
+                                  principal_selection_handle: str
+                                  ) -> RootCurrentLocalOwnerIdentitySnapshot:
+        normal = isinstance(session_handle, RootSetupSessionHandle)
+        if normal:
+            adoption = self._normal_adoptions.get(session_handle.session_id)
+            if (adoption is None or adoption.get("handle") != session_handle
+                    or adoption.get("store") is None):
+                raise BootstrapEnrollmentPending("normal local-owner selection is not adopted by this live session")
+            store = adoption["store"]
+            proof = _current_setup_proof(store, session_handle)
+            session_key = proof.setup_session_id
+            transaction, plan = proof.transaction_handle, proof.plan_digest
+        else:
+            session = self._current_initial_session(session_handle)
+            session_key = session.compilation_session_handle
+            transaction, plan = session.compilation_transaction_handle, session.plan_sha256
+        selected = self._principals.get(principal_selection_handle)
+        if (selected is None or selected._issuer_seal != self._seal
+                or selected.identity_kind != "linux-local-owner-v1"
+                or selected.setup_session_id != session_key
+                or selected.transaction_handle != transaction
+                or selected.plan_sha256 != plan
+                or selected.expires_monotonic <= self._clock()):
+            raise BootstrapEnrollmentPending("local-owner principal selection is stale or foreign")
+        if normal:
+            _account, owner = self._observe_normal_owner(
+                adoption["store"]._live(session_handle).record.get("target_account_name"),
+                proof, adoption["store"], session_handle)
+            capability = self._capabilities.get(selected.capability_selection_handle)
+            if (capability is None or capability._issuer_seal != self._seal
+                    or capability.setup_session_id != session_key
+                    or capability.transaction_handle != transaction
+                    or capability.plan_sha256 != plan
+                    or capability.expires_monotonic <= self._clock()):
+                raise BootstrapEnrollmentPending("normal local capability choice is stale or foreign")
+        else:
+            owner = self._observe_owner(session)
+            capability = self._resolve_capability(session, selected.capability_selection_handle)
+        original_owner = self._receipts.get(selected.owner_identity_receipt_handle)
+        if (original_owner is None
+                or owner.account_binding_sha256 != original_owner.account_binding_sha256
+                or owner.machine_target_binding_digest != original_owner.machine_target_binding_digest
+                or capability.selection_sha256 != selected.capability_selection_sha256
+                or capability.selected_registration_ids != selected.selected_capability_ceiling):
+            raise BootstrapEnrollmentPending("local-owner account or finite selection changed")
+        self._receipts[owner.receipt_handle] = owner
+        now = self._clock()
+        expiry = min(now + IDENTITY_RECEIPT_TTL_SECONDS, selected.expires_monotonic,
+                     owner.expires_monotonic, capability.expires_monotonic)
+        if expiry <= now:
+            raise BootstrapEnrollmentPending("current local-owner snapshot expired")
+        snapshot = RootCurrentLocalOwnerIdentitySnapshot(
+            secrets.token_hex(32), selected.receipt_handle, owner.receipt_handle,
+            capability.selection_handle, selected, owner, capability, now, expiry,
+            self._seal)
+        self._snapshots[snapshot.snapshot_handle] = snapshot
+        if len(self._snapshots) > 4096:
+            self._snapshots = {snapshot.snapshot_handle: snapshot}
+        return snapshot
+
+    def resolve_adopted_initial_principal(self, normal_session_store: RootSetupSessionStore,
+                                          normal_session_handle: RootSetupSessionHandle
+                                          ) -> RootLocalOwnerPrincipalSelection:
+        if (self._normal_adoptions.get(normal_session_handle.session_id, {}).get("store")
+                is not normal_session_store):
+            raise BootstrapEnrollmentPending("normal setup has no adopted local-owner principal")
+        handle = self._normal_adoptions[normal_session_handle.session_id]["principal_handle"]
+        proof = _current_setup_proof(normal_session_store, normal_session_handle)
+        return self.resolve_selected_principal(
+            handle, normal_session_handle, proof.transaction_handle, proof.plan_digest)
+
+    def resolve_adopted_principal_selector(self, normal_session_store: RootSetupSessionStore,
+                                           normal_session_handle: RootSetupSessionHandle
+                                           ) -> RootLocalOwnerPrincipalSelector:
+        principal = self.resolve_adopted_initial_principal(normal_session_store, normal_session_handle)
+        now = self._clock()
+        return RootLocalOwnerPrincipalSelector(
+            principal.receipt_handle, principal.setup_session_id,
+            principal.transaction_handle, principal.plan_sha256,
+            "linux-local-owner-v1", principal.principal_id,
+            principal.service_profile_id, principal.selected_capability_ceiling,
+            principal.principal_binding_sha256, principal.controller_binding_handle,
+            now, principal.expires_monotonic, 0, self._seal)
+
+    def resolve_adopted_namespace_selector(self, normal_session_store: RootSetupSessionStore,
+                                            normal_session_handle: RootSetupSessionHandle
+                                            ) -> RootLocalOwnerNamespaceSelector:
+        principal_selector = self.resolve_adopted_principal_selector(
+            normal_session_store, normal_session_handle)
+        proof = _current_setup_proof(normal_session_store, normal_session_handle)
+        authority = normal_session_store.authority_loader_for_session()
+        generations = authority.get("service_generations") if isinstance(authority, Mapping) else None
+        from .enrollment import _validate_service_generations
+        try:
+            generation = _validate_service_generations(dict(generations))
+        except Exception:
+            raise BootstrapEnrollmentPending("current prepared namespace generation is unavailable") from None
+        gid, gdigest = generation.get("generation_id"), generation.get("generation_digest")
+        if (not isinstance(gid, str) or not isinstance(gdigest, str)
+                or proof.expected_previous_generation_digest != gdigest):
+            raise BootstrapEnrollmentPending("prepared namespace generation changed")
+        body = {"session": proof.setup_session_id, "transaction": proof.transaction_handle,
+                "plan": proof.plan_digest, "generation": gid, "generation_digest": gdigest,
+                "principal": principal_selector.binding_sha256,
+                "namespace": self.resolve_adopted_initial_principal(
+                    normal_session_store, normal_session_handle).namespace_id,
+                "policy": "per-selected-principal-native-profile-v1"}
+        binding = hashlib.sha256(_canonical(body)).hexdigest()
+        return RootLocalOwnerNamespaceSelector(
+            hashlib.sha256((principal_selector.selection_handle + "\0" + binding).encode()).hexdigest(),
+            proof.setup_session_id, proof.transaction_handle, proof.plan_digest,
+            gid, gdigest, principal_selector.selection_handle, principal_selector.binding_sha256,
+            _LOCAL_OWNER_PROFILE_ID, body["namespace"], "per-selected-principal-native-profile-v1",
+            binding, principal_selector.controller_binding_handle, self._clock(),
+            _session_expiry(normal_session_store, normal_session_handle), 0, self._seal)
+
+    def resolve_adopted_namespace_selection(self, normal_session_store: RootSetupSessionStore,
+                                            normal_session_handle: RootSetupSessionHandle
+                                            ) -> RootCurrentLocalOwnerNamespaceSelection:
+        selector = self.resolve_adopted_namespace_selector(normal_session_store, normal_session_handle)
+        principal = self.resolve_adopted_initial_principal(normal_session_store, normal_session_handle)
+        now = self._clock()
+        return RootCurrentLocalOwnerNamespaceSelection(
+            secrets.token_hex(32), selector.setup_session_id, selector.transaction_handle,
+            selector.plan_sha256, selector.prepared_generation_id,
+            selector.prepared_generation_digest, principal.receipt_handle,
+            selector.target_profile_id, selector.namespace_id, selector.binding_sha256, now,
+            min(now + IDENTITY_RECEIPT_TTL_SECONDS, selector.expires_monotonic), self._seal)
+
+    def resolve_current_setup_identity(self, principal_selection_handle: str,
+                                       namespace_selection_handle: str,
+                                       normal_session_handle: RootSetupSessionHandle
+                                       ) -> RootCurrentLocalOwnerIdentitySnapshot:
+        snapshot = self.resolve_current_selection(normal_session_handle, principal_selection_handle)
+        selector = self.resolve_adopted_namespace_selector(
+            self._normal_adoptions[normal_session_handle.session_id]["store"], normal_session_handle)
+        if namespace_selection_handle != selector.selection_handle:
+            raise BootstrapEnrollmentPending("local-owner namespace selector changed")
+        namespace = self.resolve_adopted_namespace_selection(
+            self._normal_adoptions[normal_session_handle.session_id]["store"], normal_session_handle)
+        current = RootCurrentLocalOwnerIdentitySnapshot(
+            snapshot.snapshot_handle, snapshot.principal_selection_handle,
+            snapshot.owner_identity_receipt_handle, snapshot.capability_selection_handle,
+            snapshot.principal, snapshot.owner_identity, snapshot.capability_selection,
+            snapshot.issued_monotonic, min(snapshot.expires_monotonic, namespace.expires_monotonic),
+            self._seal, namespace_selection_handle, selector.binding_sha256, namespace)
+        self._snapshots[current.snapshot_handle] = current
+        return current
+
+    def resolve_current_snapshot(self, session_handle: str, snapshot_handle: str
+                                 ) -> RootCurrentLocalOwnerIdentitySnapshot:
+        snapshot = self._snapshots.get(snapshot_handle)
+        if (snapshot is None or snapshot._registry_seal != self._seal
+                or snapshot.expires_monotonic <= self._clock()):
+            raise BootstrapEnrollmentPending("local-owner current snapshot handle is absent or expired")
+        current = self.resolve_current_selection(
+            session_handle, snapshot.principal_selection_handle)
+        if (current.principal.principal_binding_sha256 != snapshot.principal.principal_binding_sha256
+                or current.owner_identity.account_binding_sha256
+                   != snapshot.owner_identity.account_binding_sha256
+                or current.owner_identity.machine_target_binding_digest
+                   != snapshot.owner_identity.machine_target_binding_digest
+                or current.capability_selection.selection_sha256
+                   != snapshot.capability_selection.selection_sha256):
+            self._snapshots.pop(snapshot_handle, None)
+            raise BootstrapEnrollmentPending("local-owner current snapshot no longer matches its issuer binding")
+        if isinstance(session_handle, RootSetupSessionHandle):
+            store = self._normal_adoptions[session_handle.session_id]["store"]
+            selector = self.resolve_adopted_namespace_selector(store, session_handle)
+            if (snapshot.namespace_selection_handle != selector.selection_handle
+                    or snapshot.namespace_binding_sha256 != selector.binding_sha256
+                    or snapshot.namespace is None
+                    or snapshot.namespace.prepared_generation_id != selector.prepared_generation_id
+                    or snapshot.namespace.prepared_generation_digest != selector.prepared_generation_digest
+                    or snapshot.namespace.namespace_id != selector.namespace_id):
+                self._snapshots.pop(snapshot_handle, None)
+                raise BootstrapEnrollmentPending("local-owner namespace snapshot no longer matches current prepared generation")
+        return snapshot
+
+    def adopt_initial_publication(self, *, normal_session_store: RootSetupSessionStore,
+                                  normal_session_handle: RootSetupSessionHandle
+                                  ) -> tuple["RootSetupLocalOwnerIdentityRegistry", str]:
+        """Rebind a published local-owner choice to a fresh normal root session."""
+        if (not isinstance(normal_session_store, RootSetupSessionStore)
+                or normal_session_store.initial_compilation_registry is not self._registry):
+            raise BootstrapEnrollmentPending("local-owner adoption requires the matching normal root store")
+        from .bootstrap_runtime_factory import RootInitialPublicationHandoff
+        handoff = self._registry.resolve_adopted_handoff(normal_session_handle)
+        if (not isinstance(handoff, RootInitialPublicationHandoff)
+                or handoff.principal_identity_kind != "linux-local-owner-v1"
+                or not isinstance(handoff.principal_selection_receipt_handle, str)):
+            raise BootstrapEnrollmentPending("published handoff is not in the local-owner identity domain")
+        old = self._principals.get(handoff.principal_selection_receipt_handle)
+        if (old is None or old.identity_kind != "linux-local-owner-v1"
+                or old.setup_session_id != handoff.compilation_session_handle
+                or old.transaction_handle != handoff.compilation_transaction_handle
+                or old.plan_sha256 != handoff.plan_sha256
+                or old.expires_monotonic <= self._clock()):
+            raise BootstrapEnrollmentPending("published local-owner selection is stale or mismatched")
+        proof = _current_setup_proof(normal_session_store, normal_session_handle)
+        live = normal_session_store._live(normal_session_handle)
+        account, owner = self._observe_normal_owner(
+            live.record.get("target_account_name"), proof, normal_session_store, normal_session_handle)
+        original_owner = self._receipts.get(old.owner_identity_receipt_handle)
+        if (original_owner is None or owner.account_binding_sha256 != original_owner.account_binding_sha256
+                or owner.machine_target_binding_digest != original_owner.machine_target_binding_digest):
+            raise BootstrapEnrollmentPending("normal-session NSS owner differs from the published local principal")
+        old_capability = self._capabilities.get(old.capability_selection_handle)
+        if (old_capability is None or old_capability.selection_sha256 != old.capability_selection_sha256
+                or old_capability.selected_registration_ids != old.selected_capability_ceiling
+                or old_capability.expires_monotonic <= self._clock()):
+            raise BootstrapEnrollmentPending("published finite owner capability selection is stale")
+        normal = RootSetupLocalOwnerIdentityRegistry.from_initial_compilation(
+            self._registry, self._journal, monotonic=self._clock)
+        cap_body = {"session": proof.setup_session_id, "transaction": proof.transaction_handle,
+                    "plan": proof.plan_digest,
+                    "registrations": list(old.selected_capability_ceiling)}
+        cap = RootSetupCapabilitySelection(
+            SCHEMA, secrets.token_hex(32), proof.setup_session_id, proof.transaction_handle,
+            proof.plan_digest, old.selected_capability_ceiling,
+            hashlib.sha256(_canonical(cap_body)).hexdigest(), self._clock(),
+            min(self._clock() + SETUP_POLICY_SELECTION_TTL_SECONDS,
+                _session_expiry(normal_session_store, normal_session_handle)), normal._seal)
+        principal_handle = normal._bind_normal_principal(
+            owner, cap, proof, normal_session_store, normal_session_handle)
+        normal._normal_adoptions[proof.setup_session_id] = {
+            "store": normal_session_store, "handle": normal_session_handle,
+            "principal_handle": principal_handle,
+        }
+        return normal, principal_handle
+
+    def _bind_normal_principal(self, owner: RootLocalOwnerIdentityReceipt,
+                               capability: RootSetupCapabilitySelection, proof: Any,
+                               store: RootSetupSessionStore,
+                               handle: RootSetupSessionHandle) -> str:
+        controller = hashlib.sha256((proof.setup_session_id + "\0" + proof.transaction_handle).encode()).hexdigest()
+        principal_id = "linux-local-owner:" + hashlib.sha256(
+            (owner.machine_target_binding_digest + "\0" + owner.account_binding_sha256).encode()).hexdigest()
+        namespace_id = "hermes-native-" + hashlib.sha256(
+            (principal_id + "\0" + _LOCAL_OWNER_PROFILE_ID).encode()).hexdigest()[:32]
+        body = {"identity_kind": "linux-local-owner-v1", "session": proof.setup_session_id,
+                "transaction": proof.transaction_handle, "plan": proof.plan_digest,
+                "owner_binding": owner.account_binding_sha256,
+                "machine_target": owner.machine_target_binding_digest,
+                "principal": principal_id, "profile": _LOCAL_OWNER_PROFILE_ID,
+                "namespace": namespace_id, "capability_selection": capability.selection_sha256,
+                "selected_capabilities": list(capability.selected_registration_ids),
+                "controller": controller}
+        binding = hashlib.sha256(_canonical(body)).hexdigest()
+        now = self._clock()
+        # Stable selected intent lasts for the bounded root setup session;
+        # each authority-bearing observation below remains a separate <=30s
+        # receipt and re-reads NSS, release, actor, and the prepared CAS.
+        expiry = min(now + SETUP_POLICY_SELECTION_TTL_SECONDS,
+                     capability.expires_monotonic, _session_expiry(store, handle))
+        if expiry <= now:
+            raise BootstrapEnrollmentPending("normal local-owner identity lease expired")
+        selected = RootLocalOwnerPrincipalSelection(
+            SCHEMA, secrets.token_hex(32), "linux-local-owner-v1", proof.setup_session_id,
+            proof.transaction_handle, proof.plan_digest, owner.receipt_handle,
+            principal_id, _LOCAL_OWNER_PROFILE_ID, namespace_id,
+            capability.selection_handle, capability.selection_sha256,
+            capability.selected_registration_ids, binding, controller, now, expiry, 0, self._seal)
+        self._capabilities[capability.selection_handle] = capability
+        self._receipts[owner.receipt_handle] = owner
+        self._principals[selected.receipt_handle] = selected
+        self._write_record("local-owner-", selected.receipt_handle, body | {
+            "owner_receipt": owner.receipt_handle,
+            "principal_binding_sha256": binding, "state": "normal-adopted"})
+        return selected.receipt_handle
+
+    def _observe_normal_owner(self, name: Any, proof: Any, store: RootSetupSessionStore,
+                              handle: RootSetupSessionHandle
+                              ) -> tuple[Any, RootLocalOwnerIdentityReceipt]:
+        if not isinstance(name, str):
+            raise BootstrapEnrollmentPending("normal setup has no selected local owner account")
+        try:
+            account = pwd.getpwnam(name)
+            group = grp.getgrgid(account.pw_gid)
+            reverse = grp.getgrnam(group.gr_name)
+            live = store._live(handle)
+            if (account.pw_name != name or account.pw_uid <= 0 or account.pw_gid <= 0
+                    or group.gr_gid != account.pw_gid or reverse.gr_gid != account.pw_gid
+                    or live.record.get("target_uid") != account.pw_uid
+                    or live.record.get("target_gid") != account.pw_gid):
+                raise BootstrapEnrollmentPending("normal root setup UID/GID no longer joins selected NSS owner")
+            initial_registry = store.initial_compilation_registry
+            handoff = initial_registry.resolve_adopted_handoff(handle)
+            initial = handoff._initial_session
+            if initial is None:
+                raise BootstrapEnrollmentPending("local-owner publication lost its held root release and actor")
+            initial._release.verify_current()
+            initial._actor.verify_current(initial._release)
+            from .bootstrap_enrollment import _read_machine_id
+            machine_id = _read_machine_id()
+        except (KeyError, OSError):
+            raise BootstrapEnrollmentPending("current normal-session NSS owner is unavailable") from None
+        account_digest = hashlib.sha256(_canonical({
+            "name": account.pw_name, "uid": account.pw_uid,
+            "primary_gid": account.pw_gid, "primary_group": group.gr_name})).hexdigest()
+        target_digest = hashlib.sha256(_canonical({
+            "machine_id": machine_id, "account_binding": account_digest})).hexdigest()
+        now = self._clock()
+        receipt = RootLocalOwnerIdentityReceipt(
+            SCHEMA, secrets.token_hex(32), "linux-local-owner-v1", proof.setup_session_id,
+            proof.transaction_handle, proof.plan_digest,
+            initial.verified_release_receipt_handle,
+            initial.actor_observation_receipt_handle,
+            target_digest, account.pw_name, account.pw_uid, account.pw_gid,
+            group.gr_name, account_digest, now,
+            min(now + IDENTITY_RECEIPT_TTL_SECONDS, _session_expiry(store, handle)), 0, self._seal)
+        return account, receipt
+
+    def _current_initial_session(self, session_handle: str) -> Any:
+        if os.getuid() != 0 or os.geteuid() != 0 or not sys.platform.startswith("linux"):
+            raise BootstrapEnrollmentPending("local-owner setup requires the installed Linux root CLI")
+        try:
+            session = self._registry.resolve_initial_session(session_handle)
+            self._registry.verify_initial_session(session)
+            session._release.verify_current()
+            session._actor.verify_current(session._release)
+        except Exception:
+            raise BootstrapEnrollmentPending("current root setup session, release, or actor is unavailable") from None
+        return session
+
+    def _resolve_capability(self, session: Any, handle: str) -> RootSetupCapabilitySelection:
+        value = self._capabilities.get(handle)
+        if (value is None or value._issuer_seal != self._seal
+                or value.setup_session_id != session.compilation_session_handle
+                or value.transaction_handle != session.compilation_transaction_handle
+                or value.plan_sha256 != session.plan_sha256
+                or value.expires_monotonic <= self._clock()):
+            raise BootstrapEnrollmentPending("local capability choice is absent, stale, or belongs to another transaction")
+        return value
+
+    def _observe_owner(self, session: Any) -> RootLocalOwnerIdentityReceipt:
+        name = session._choices.target_account_name
+        try:
+            account = pwd.getpwnam(name)
+            group = grp.getgrgid(account.pw_gid)
+            reverse = grp.getgrnam(group.gr_name)
+        except (KeyError, OSError):
+            raise BootstrapEnrollmentPending("selected local owner account or primary group is unavailable") from None
+        if (account.pw_name != name or account.pw_uid <= 0 or account.pw_gid <= 0
+                or group.gr_gid != account.pw_gid or reverse.gr_gid != account.pw_gid):
+            raise BootstrapEnrollmentError("selected local owner NSS binding is invalid or privileged")
+        try:
+            from .bootstrap_enrollment import _read_machine_id
+            machine_id = _read_machine_id()
+        except Exception:
+            raise BootstrapEnrollmentPending("machine target binding is unavailable") from None
+        account_body = {"name": account.pw_name, "uid": account.pw_uid,
+                        "primary_gid": account.pw_gid, "primary_group": group.gr_name}
+        account_digest = hashlib.sha256(_canonical(account_body)).hexdigest()
+        target_digest = hashlib.sha256(_canonical({"machine_id": machine_id,
+                                                    "account_binding": account_digest})).hexdigest()
+        now = self._clock()
+        return RootLocalOwnerIdentityReceipt(
+            SCHEMA, secrets.token_hex(32), "linux-local-owner-v1",
+            session.compilation_session_handle, session.compilation_transaction_handle,
+            session.plan_sha256, session.verified_release_receipt_handle,
+            session.actor_observation_receipt_handle, target_digest,
+            account.pw_name, account.pw_uid, account.pw_gid, group.gr_name,
+            account_digest, now, min(now + IDENTITY_RECEIPT_TTL_SECONDS,
+                                     session.expires_monotonic), 0, self._seal)
+
+    def _write_record(self, prefix: str, handle: str, value: Mapping[str, Any]) -> None:
+        try:
+            _ensure_receipt_root(self._journal, self._journal / "setup-principal-receipts")
+            _atomic_json(self._journal / "setup-principal-receipts" / f"{prefix}{handle}.json",
+                         dict(value))
+        except Exception:
+            raise BootstrapEnrollmentPending("protected local-owner setup journal is unavailable") from None
 
 
 @dataclass(frozen=True, slots=True)

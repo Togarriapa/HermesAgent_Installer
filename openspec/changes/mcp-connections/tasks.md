@@ -60,3 +60,6 @@ Native registration projection v99: `plans/amendments/2026-10-10-native-registra
 
 - [ ] MC-R0101.1 HA/factory/vault/compiler/composer: actual root instance credential/source selection, bounded grant discovery/read and strict publication/adoption.
 - [ ] MC-R0101.2 HA: protected transport/vault/publication fixtures, reconnect/revoke/write-denial/TLS/schema/CAS/redaction and separate actual-target evidence.
+
+- [ ] MC-R0101.3 HA/factory/consent/parser/broker: actual typed choice/exposure/current scope/schema/result/grant joins.
+- [ ] MC-R0101.4 HA: real-schema Assist read fixtures, ambiguity/new exposure/unfiltered/action/revoke/TLS denial and distinct actual-target acceptance.

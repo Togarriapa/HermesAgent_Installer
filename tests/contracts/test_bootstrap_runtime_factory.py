@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 import os
 import json
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from pathlib import Path
 
 from hermes_installer.authority.bootstrap_enrollment import (
@@ -20,12 +20,89 @@ from hermes_installer.authority.bootstrap_runtime_factory import (
     RootPreparedReleaseMemberReceipt,
     RootInitialCompilationRegistry,
     RootBootstrapSession,
+    RootRunnableRoleReceiptProjection,
+    RootRunnableRoleRow,
+    _runnable_role_matches_compiled_rule,
+    _service_requires_package_runtime,
     VerifiedReviewedNativeCapabilityMap,
     VerifiedRootBootstrapPolicy,
 )
 
 
 class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
+    def test_runnable_role_projection_exposes_only_literal_v72_fields_as_detached_values(self):
+        child_refs = {"native-compiled-closure:test": "a" * 64,
+                      "native-entrypoint-manifest:test": "b" * 64}
+        projection = RootRunnableRoleReceiptProjection(
+            schema=1, closure_handle="closure-fixture", closure_sha256="c" * 64,
+            role_rows=(RootRunnableRoleRow(
+                "native-compiled-closure", "native-output-cas", "receipt-fixture",
+                "native-compiled-closure:test", "a" * 64, 16, "compiled-closure", ()),),
+            _field_values=(("native-compiled-closure", "child_artifact_refs",
+                            MappingProxyType(dict(child_refs))),),
+            _issuer=object(), _registry_seal=object(),
+        )
+        resolved = projection.resolve_field("native-compiled-closure", "child_artifact_refs")
+        self.assertEqual(resolved, child_refs)
+        resolved["native-compiled-closure:test"] = "d" * 64
+        self.assertEqual(
+            projection.resolve_field("native-compiled-closure", "child_artifact_refs"), child_refs)
+        with self.assertRaises(BootstrapEnrollmentPending):
+            projection.resolve_field("native-compiled-closure", "catalog_executable_path")
+
+    def test_package_runtime_guard_reads_operation_key_and_package_set_target_shapes(self):
+        self.assertTrue(_service_requires_package_runtime({
+            "package.install": "coral-cp39-runtime-v1",
+        }))
+        self.assertTrue(_service_requires_package_runtime({
+            "process.start": "package-set:coral-cp39-runtime-v1:" + "a" * 64,
+        }))
+        self.assertFalse(_service_requires_package_runtime({
+            "process.start": "hermes-agent-health:start",
+        }))
+        self.assertTrue(_service_requires_package_runtime(None))
+
+    def test_observed_pm_executable_requires_exact_compiled_v189_artifact_id(self):
+        observed = RootRunnableRoleRow(
+            "official-pm-runtime", "pm-runtime", "h" * 40,
+            "observed:pm-committed-venv-python", "a" * 64, 100, "pm-runtime", (),
+        )
+        rule = {
+            "required_phase": "runnable",
+            "allowed_artifact_ids": ["observed:pm-committed-venv-python"],
+            "allowed_output_kinds": ["pm-runtime"],
+        }
+        self.assertTrue(_runnable_role_matches_compiled_rule(observed, rule))
+        rule["allowed_artifact_ids"] = ["observed:arbitrary-python"]
+        self.assertFalse(_runnable_role_matches_compiled_rule(observed, rule))
+
+    def test_policy_identity_tags_reject_cross_domain_principal_substitution(self):
+        from hermes_installer.authority.bootstrap_runtime_factory import (
+            HERMES_SOURCE_ARTIFACT_ID, _POLICY_ID,
+        )
+        resolver = object.__new__(InstalledBootstrapPolicyResolver)
+        plan = {"bootstrap_policy_artifact_id": _POLICY_ID,
+                "allowed_artifact_ids": [HERMES_SOURCE_ARTIFACT_ID]}
+        selection = SimpleNamespace()
+        common = {"service_profile_id": "hermes-agent-native-v1",
+                  "service_account_name": "hermes-agent",
+                  "exclusive_group_name": "hermes-agent",
+                  "uid_allocation": "root-dedicated-account"}
+        cases = (
+            {**common, "identity_kind": "authentik-subject-v1",
+             "principal_id": "linux-local-owner:" + "a" * 64},
+            {**common, "identity_kind": "linux-local-owner-v1",
+             "principal_id": "authentik:" + "a" * 64,
+             "owner_binding_sha256": "b" * 64},
+        )
+        for identity in cases:
+            with self.subTest(identity_kind=identity["identity_kind"]), self.assertRaises(
+                    BootstrapEnrollmentPending):
+                resolver._parse_policy(
+                    {"schema": 1, "id": _POLICY_ID,
+                     "source_artifact_id": HERMES_SOURCE_ARTIFACT_ID,
+                     "identity_policy": identity}, "c" * 64, plan, selection)
+
     def test_active_enrollment_accessor_rejects_prepared_and_returns_only_current_commit(self):
         session = object.__new__(RootBootstrapSession)
         session._check_live = lambda: None
@@ -172,7 +249,7 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
             file.flush()
             digest = hashlib.sha256(raw).hexdigest()
             release = SimpleNamespace(
-                files=[SimpleNamespace(artifact_id="capture-profile", roles=("module",),
+                files=[SimpleNamespace(artifact_id="capture-profile", roles=("amendment",),
                                        relative_path="plans/capture.json", sha256=digest,
                                        size_bytes=len(raw))],
                 release_commit="commit", deployment_receipt_sha256="d" * 64,
@@ -196,7 +273,7 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
             session._prepared_release_file_receipts[receipt.source_receipt_handle] = receipt
             self.assertEqual(receipt.read_current(), raw)
 
-            release.files[0].roles = ("amendment",)
+            release.files[0].roles = ("module",)
             with self.assertRaisesRegex(BootstrapEnrollmentPending, "differs from its fixed receipt"):
                 receipt.read_current()
 
@@ -254,6 +331,46 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         actor.module_origins = origins[:-1]
         with self.assertRaisesRegex(BootstrapEnrollmentPending, "outside the current root actor"):
             session._resolve_prepared_native_action_schema_module_receipts()
+
+    def test_owner_overlay_result_handler_receipt_is_finite_and_root_imported(self):
+        artifact_id = "installer-module:hermes_installer.authority.local_resource_effects"
+        relative_path = "lib/python/hermes_installer/authority/local_resource_effects.py"
+        digest = "1d1f72655ed335ae486c76df80f97ffd997b07440a2b9417563c2918d874be9d"
+        source_artifact_id = "installer-reviewed-source-local-resource-effects-v180"
+        row = SimpleNamespace(
+            artifact_id=artifact_id, relative_path=relative_path, sha256=digest,
+            size_bytes=142_474, roles=("module",), mode=0o444)
+        release = SimpleNamespace(
+            files=(row,), release_root=Path("/release"), release_commit="commit",
+            deployment_receipt_sha256="d" * 64)
+        origin = ("module", f"/release/{relative_path}", "origin", "loader", digest)
+        actor = SimpleNamespace(module_origins=(origin,), verify_current=lambda _release: None)
+        session = object.__new__(RootBootstrapSession)
+        session._check_live = lambda: None
+        session._refresh_authorization = lambda: None
+        session._authorization = SimpleNamespace(plan_artifact_id="plan")
+        session._last_receipt = SimpleNamespace(
+            state="prepared", enrollment_ids=(), provision_receipt_handle="prepared",
+            generation_id="generation")
+        session._handle = SimpleNamespace(session_id="session")
+        session._seal = "session-seal"
+        session._prepared_release_member_receipts = {}
+        session._read_release_member_receipt = lambda _receipt: b"held verified module bytes"
+        session._factory = SimpleNamespace(
+            _release=release, _actor=actor,
+            resolver=SimpleNamespace(resolve=lambda _plan: SimpleNamespace(
+                allowed_artifact_ids=(artifact_id, source_artifact_id))))
+
+        receipt = session._resolve_prepared_owner_overlay_result_handler_module_receipt()
+        self.assertIs(type(receipt), RootReleaseModuleReceipt)
+        self.assertEqual((receipt.artifact_id, receipt.relative_path, receipt.sha256, receipt.size_bytes),
+                         (artifact_id, relative_path, digest, 142_474))
+        self.assertEqual(receipt.read_current(), b"held verified module bytes")
+        self.assertIs(receipt, session._resolve_prepared_owner_overlay_result_handler_module_receipt())
+
+        actor.module_origins = ()
+        with self.assertRaisesRegex(BootstrapEnrollmentPending, "outside the current root actor"):
+            session._resolve_prepared_owner_overlay_result_handler_module_receipt()
 
     def test_native_assembly_requires_retained_root_tty_policy_selection(self):
         session = object.__new__(RootBootstrapSession)
@@ -535,6 +652,18 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
             authorization.transaction_handle, "d" * 64, 10, "test-seal")
         with self.assertRaises(BootstrapEnrollmentPending):
             factory.activate_runnable(authorization, identity, {}, seal="test-seal")
+        # A selected worker can enter the sealed-role path without generic CAS
+        # handles; it still fails unless every exact producer/selection proof is
+        # present. The source provider appends its independent held source handle.
+        with self.assertRaisesRegex(BootstrapEnrollmentPending,
+                                    "selected native worker requires the exact signed selection"):
+            factory.activate_runnable(
+                authorization, identity, {}, seal="test-seal",
+                native_worker_recipe_handles=("selected-recipe",),
+                native_policy_selection=object(),
+                native_worker_generation_producer=object(),
+                runnable_role_receipts=object(),
+            )
         unsealed = RootRuntimeArtifactReceipt(
             "official-pm-runtime", "pm-runtime-fixture", "c" * 64,
             authorization.transaction_handle, "d" * 64, 10, "other-session-seal")

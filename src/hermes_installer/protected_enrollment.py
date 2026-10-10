@@ -34,6 +34,28 @@ def _public_web_exact(value: Any, fields: set[str], label: str) -> Mapping[str, 
     return value
 
 
+def _freeze_json_record(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze_json_record(child) for key, child in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_json_record(child) for child in value)
+    return value
+
+
+def _index_generation_rows(rows: Any, label: str) -> Mapping[str, Mapping[str, Any]]:
+    result: dict[str, Mapping[str, Any]] = {}
+    if not isinstance(rows, (list, tuple)) or len(rows) > 1:
+        raise EnrollmentDenied(f"{label} catalog is invalid or exceeds its one-worker bound")
+    for raw in rows:
+        if not isinstance(raw, Mapping):
+            raise EnrollmentDenied(f"{label} row is malformed")
+        key = _id(raw.get("id"), f"{label} ID")
+        if key in result:
+            raise EnrollmentDenied(f"{label} ID is duplicated")
+        result[key] = _freeze_json_record(raw)
+    return MappingProxyType(result)
+
+
 @dataclass(frozen=True, slots=True)
 class RootSelectedPublicWebScope:
     """Digest-bound public target plus the retained root selection provenance."""
@@ -546,13 +568,32 @@ class ProtectedEnrollmentCatalog:
                  native_mcp_tool_bindings: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
                  private_memory_endpoint_selections: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
                  private_memory_model_selections: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
-                 public_web_scopes: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None):
+                 public_web_scopes: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
+                 native_worker_network_records: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
+                 active_network_generation_records: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
+                 native_worker_runtime_records: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
+                 owner_overlay_observer_records: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None):
         if not records:
             raise EnrollmentDenied("protected service enrollment is empty")
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise EnrollmentDenied("protected service enrollment digest is invalid")
         self._records = MappingProxyType(dict(records))
         self.digest = digest
+        self._native_worker_network_records = _index_generation_rows(
+            native_worker_network_records or (), "native worker network")
+        self._active_network_generation_records = _index_generation_rows(
+            active_network_generation_records or (), "active network generation")
+        self._native_worker_runtime_records = _index_generation_rows(
+            native_worker_runtime_records or (), "native worker runtime")
+        observer_rows: dict[str, Mapping[str, Any]] = {}
+        for raw in owner_overlay_observer_records or ():
+            if not isinstance(raw, Mapping):
+                raise EnrollmentDenied("owner-overlay observer row is malformed")
+            observer_id = _id(raw.get("observer_enrollment_id"), "owner-overlay observer enrollment ID")
+            if observer_id in observer_rows:
+                raise EnrollmentDenied("owner-overlay observer enrollment ID is duplicated")
+            observer_rows[observer_id] = _freeze_json_record(raw)
+        self._owner_overlay_observer_records = MappingProxyType(observer_rows)
         parsed_native = {}
         for raw in native_packages or []:
             package = NativePackageBinding.from_protected_record(raw)
@@ -566,6 +607,7 @@ class ProtectedEnrollmentCatalog:
                 raise EnrollmentDenied("native package does not join one exact process profile generation")
             parsed_native[key] = package
         self._native_packages = MappingProxyType(parsed_native)
+
         schema_rows: dict[tuple[str, str, str, str, str], Mapping[str, Any]] = {}
         for raw in native_schema_artifacts or ():
             if not isinstance(raw, Mapping):
@@ -834,6 +876,41 @@ class ProtectedEnrollmentCatalog:
                 raise EnrollmentDenied("operation parameter schema ID is duplicated")
             parsed_schemas[schema.schema_id] = schema
         self._parameter_schemas = MappingProxyType(parsed_schemas)
+        self._validate_observed_pm_worker_profile_references()
+
+    def _validate_observed_pm_worker_profile_references(self) -> None:
+        """Keep the one dynamic PM executable token inside its signed worker row."""
+        executable_id = "observed:pm-committed-venv-python"
+        for profile in self._records.values():
+            runtime_ids = getattr(profile, "runtime_artifact_ids", ())
+            operation_recipes = getattr(profile, "operation_recipes", {})
+            operation_refs = tuple(recipe for recipe in operation_recipes.values()
+                                   if recipe.executable_artifact_id == executable_id)
+            if executable_id not in runtime_ids and not operation_refs:
+                continue
+            if runtime_ids.count(executable_id) != 1:
+                raise EnrollmentDenied("observed PM executable must be one exact native runtime reference")
+            active_rows = tuple(row for row in self._active_network_generation_records.values()
+                                if row.get("service_enrollment_id") == profile.enrollment_id
+                                and row.get("service_generation") == profile.generation
+                                and row.get("process_profile_id") == profile.profile_id
+                                and row.get("process_profile_generation") == profile.generation)
+            if len(active_rows) != 1:
+                raise EnrollmentDenied("observed PM executable is outside one exact active worker generation")
+            runtime = self._native_worker_runtime_records.get(active_rows[0].get("worker_runtime_record_id"))
+            if runtime is None:
+                raise EnrollmentDenied("observed PM executable has no protected native worker runtime row")
+            identity = runtime.get("committed_venv_identity")
+            if (runtime.get("execution_mode") != "native-hermes-cli-module-v1"
+                    or not isinstance(identity, Mapping)
+                    or identity.get("executable_identity_id") != executable_id
+                    or identity.get("executable_sha256") != profile.executable_sha256
+                    or runtime.get("profile_id") != profile.profile_id
+                    or runtime.get("profile_generation") != profile.generation
+                    or runtime.get("service_enrollment_id") != profile.enrollment_id
+                    or any(recipe.executable_sha256 != identity["executable_sha256"]
+                           for recipe in operation_refs)):
+                raise EnrollmentDenied("observed PM executable differs from its signed worker identity")
 
     def resolve_native_package(self, package_id: str, generation: str) -> "NativePackageBinding":
         """Resolve a selected package row joined to this exact service generation.
@@ -1014,7 +1091,8 @@ class ProtectedEnrollmentCatalog:
                               native_mcp_tool_bindings: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
                               private_memory_endpoint_selections: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
                               private_memory_model_selections: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
-                              public_web_scopes: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None) -> "ProtectedEnrollmentCatalog":
+                              public_web_scopes: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
+                              owner_overlay_observer_records: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None) -> "ProtectedEnrollmentCatalog":
         """Build from records already authenticated by the root enrollment loader."""
         if (not isinstance(protected_digest, str)
                 or not re.fullmatch(r"[0-9a-f]{64}", protected_digest)
@@ -1038,7 +1116,8 @@ class ProtectedEnrollmentCatalog:
                    native_mcp_tool_bindings=native_mcp_tool_bindings,
                    private_memory_endpoint_selections=private_memory_endpoint_selections,
                    private_memory_model_selections=private_memory_model_selections,
-                   public_web_scopes=public_web_scopes)
+                   public_web_scopes=public_web_scopes,
+                   owner_overlay_observer_records=owner_overlay_observer_records)
 
     def _validate_public_web_scope_join(self, scope: RootSelectedPublicWebScope) -> None:
         if scope.service_generation_digest != self.digest:
@@ -1293,6 +1372,104 @@ class ProtectedEnrollmentCatalog:
                 or profile.namespace_identity != record.namespace_identity):
             raise EnrollmentDenied("memory enrollment no longer joins its selected service profile")
         return record
+    def resolve_native_worker_generation(
+            self, network_id: str, profile_id: str, *, service_generation_digest: str,
+    ) -> tuple[Mapping[str, Any], Mapping[str, Any], Mapping[str, Any]]:
+        """Resolve the one immutable AF_UNIX worker row set in this generation."""
+        if service_generation_digest != self.digest:
+            raise EnrollmentDenied("native worker network rows belong to a stale service generation")
+        selected_network = _id(network_id, "native worker network ID")
+        selected_profile = _id(profile_id, "native worker profile ID")
+        network = self._native_worker_network_records.get(selected_network)
+        matches = [row for row in self._active_network_generation_records.values()
+                   if row.get("network_id") == selected_network
+                   and row.get("process_profile_id") == selected_profile]
+        if network is None or len(matches) != 1:
+            raise EnrollmentDenied("native worker network selection is absent or ambiguous")
+        active = matches[0]
+        runtime = self._native_worker_runtime_records.get(active.get("worker_runtime_record_id"))
+        service = self.resolve(active.get("service_enrollment_id"), active.get("service_generation"))
+        if (runtime is None or active.get("network_catalog") != "native_worker_network_records"
+                or network.get("role") != "af-unix"
+                or network.get("worker_profile_id") != selected_profile
+                or network.get("worker_enrollment_id") != service.enrollment_id
+                or runtime.get("service_enrollment_id") != service.enrollment_id
+                or runtime.get("profile_id") != selected_profile
+                or runtime.get("profile_generation") != service.generation
+                or active.get("process_profile_generation") != service.generation):
+            raise EnrollmentDenied("native worker network, service and runtime rows do not join")
+        return network, active, runtime
+
+    def resolve_selected_native_worker_generation_candidates(
+            self, service_generation_digest: str,
+    ) -> tuple[tuple[Mapping[str, Any], Mapping[str, Any], Mapping[str, Any],
+                     HostServiceProfile, HostServiceProfile], ...]:
+        """Return the finite protected worker source candidates without caller IDs.
+
+        This is input to the separately held-source/active-publication resolver;
+        it is not itself executable authority.  Only the signed singleton row
+        set in this exact catalog generation can be returned.
+        """
+        if service_generation_digest != self.digest:
+            raise EnrollmentDenied("native worker candidates belong to a stale service generation")
+        if not self._native_worker_network_records:
+            return ()
+        active_rows = tuple(self._active_network_generation_records.values())
+        if len(active_rows) > 1:
+            raise EnrollmentDenied("native worker source candidate set is not a singleton")
+        candidates = []
+        for active in active_rows:
+            network_id = active.get("network_id")
+            profile_id = active.get("process_profile_id")
+            network, current_active, runtime = self.resolve_native_worker_generation(
+                network_id, profile_id, service_generation_digest=service_generation_digest)
+            service = self.resolve(current_active["service_enrollment_id"],
+                                   current_active["service_generation"])
+            profile = self.resolve_profile_generation(profile_id,
+                                                       current_active["process_profile_generation"])
+            executable_id = "observed:pm-committed-venv-python"
+            has_observed_reference = (
+                executable_id in profile.runtime_artifact_ids
+                or any(recipe.executable_artifact_id == executable_id
+                       for recipe in profile.operation_recipes.values()))
+            if has_observed_reference:
+                identity = runtime["committed_venv_identity"]
+                if (runtime.get("execution_mode") != "native-hermes-cli-module-v1"
+                        or identity.get("executable_identity_id") != executable_id
+                        or executable_id not in profile.runtime_artifact_ids
+                        or profile.executable_sha256 != identity.get("executable_sha256")
+                        or any(recipe.executable_artifact_id == executable_id
+                               and recipe.executable_sha256 != identity.get("executable_sha256")
+                               for recipe in profile.operation_recipes.values())):
+                    raise EnrollmentDenied(
+                        "observed PM executable reference does not join its exact selected native worker record")
+            candidates.append((network, current_active, runtime, profile, service))
+        return tuple(candidates)
+
+    def resolve_owner_overlay_observer_records(
+            self, *, profile_id: str, profile_generation: str,
+            service_generation_digest: str) -> tuple[Mapping[str, Any], ...]:
+        """Resolve immutable owner-overlay observer rows for one current service generation."""
+        if service_generation_digest != self.digest:
+            raise EnrollmentDenied("owner-overlay observer rows belong to a stale service generation")
+        selected_profile = _id(profile_id, "owner-overlay profile ID")
+        selected_generation = _id(profile_generation, "owner-overlay profile generation")
+        if not self._owner_overlay_observer_records:
+            return ()
+        profile = self.resolve_profile_generation(selected_profile, selected_generation)
+        rows = tuple(row for row in self._owner_overlay_observer_records.values()
+                     if row.get("profile_id") == selected_profile
+                     and row.get("profile_generation") == selected_generation)
+        for row in rows:
+            service = self.resolve(row.get("service_enrollment_id"), selected_generation)
+            if (service.profile_id != selected_profile
+                    or service.principal_id != row.get("principal_id")
+                    or service.namespace_identity != row.get("namespace_id")
+                    or profile.principal_id != row.get("principal_id")
+                    or profile.namespace_identity != row.get("namespace_id")):
+                raise EnrollmentDenied("owner-overlay observer no longer joins its selected service identity")
+        return rows
+
     def resolve_enrollment(self, enrollment_id: str) -> HostServiceProfile:
         """Resolve a unique current service enrollment by its opaque ID."""
         selected = _id(enrollment_id, "enrollment ID")
@@ -2213,6 +2390,7 @@ class NativePackageBinding:
     registration_records: Mapping[str, NativeRegistrationRecord]
     workflow_records: Mapping[str, NativeWorkflowRecord]
     process_role_records: Mapping[str, NativeProcessRoleRecord]
+    owner_overlay_operation_records: Mapping[str, Mapping[str, Any]]
 
     @classmethod
     def from_protected_record(cls, item: Mapping[str, Any]) -> "NativePackageBinding":
@@ -2222,7 +2400,8 @@ class NativePackageBinding:
                     "resolver_artifact_id", "resolver_sha256", "service_package_root_id",
                     "service_mount_id", "adapter_records", "action_records",
                     "registration_records", "workflow_records", "process_role_records"}
-        if not isinstance(item, Mapping) or set(item) != expected:
+        if (not isinstance(item, Mapping)
+                or set(item) not in (expected, expected | {"owner_overlay_operation_records"})):
             raise EnrollmentDenied("protected native package record fields are invalid")
         digests = ("source_tree_sha256", "compiled_closure_sha256", "entrypoint_sha256", "resolver_sha256")
         if any(not isinstance(item[name], str) or not re.fullmatch(r"[0-9a-f]{64}", item[name])
@@ -2313,6 +2492,11 @@ class NativePackageBinding:
             profile_id=profile_id, profile_generation=profile_generation,
             actions=action_records, registrations=registration_records, workflows=workflow_records,
         )
+        owner_overlay_operation_records = _parse_native_owner_overlay_operation_records(
+            item.get("owner_overlay_operation_records", []), package_id=package_id,
+            generation=generation, profile_id=profile_id, profile_generation=profile_generation,
+            registrations=registration_records, process_roles=process_role_records,
+        )
         return cls(
             package_id, profile_id, generation, revision, item["source_tree_sha256"],
             _native_catalog_id(item["compiled_closure_artifact_id"], "compiled closure artifact ID"),
@@ -2322,7 +2506,83 @@ class NativePackageBinding:
             _native_catalog_id(item["service_mount_id"], "service mount ID"), MappingProxyType(adapters),
             profile_generation, MappingProxyType(action_records), MappingProxyType(registration_records),
             MappingProxyType(workflow_records), MappingProxyType(process_role_records),
+            MappingProxyType(owner_overlay_operation_records),
         )
+
+
+def _parse_native_owner_overlay_operation_records(
+        raw_rows: Any, *, package_id: str, generation: str, profile_id: str,
+        profile_generation: str, registrations: Mapping[str, NativeRegistrationRecord],
+        process_roles: Mapping[str, NativeProcessRoleRecord],
+) -> dict[str, Mapping[str, Any]]:
+    """Parse v172's separate local CAS lane without promoting backend actions."""
+    fields = {
+        "registration_id", "method", "operation", "capability", "target_id", "recipient",
+        "effect_enrollment_id", "profile_id", "profile_generation", "principal_id", "namespace_id",
+        "package_id", "package_generation", "argument_schema_id", "argument_schema_sha256",
+        "argument_schema_receipt_handle", "result_schema_id", "result_schema_sha256",
+        "result_schema_receipt_handle", "handler_artifact_id", "handler_sha256",
+        "handler_source_receipt_handle", "profile_view_selection_handle", "profile_view_receipt_handle",
+        "data_root_selection_handle", "data_root_receipt_handle", "target_selection_handle",
+        "target_receipt_handle", "prepared_source_observer_selection_handle",
+        "source_observer_enrollment_ids", "process_role_id", "source_issuer_id",
+    }
+    fixed = {
+        "resource-overlay-store:tool:resource_overlay_read": ("read", "plugin.resource-overlay-store.read"),
+        "resource-overlay-store:tool:resource_overlay_history": ("history", "plugin.resource-overlay-store.read"),
+        "resource-overlay-store:tool:resource_overlay_write": ("write", "plugin.resource-overlay-store.write"),
+        "resource-overlay-store:tool:resource_overlay_delete": ("delete", "plugin.resource-overlay-store.write"),
+    }
+    if not isinstance(raw_rows, list) or len(raw_rows) > 4:
+        raise EnrollmentDenied("protected owner-overlay operation lane is malformed")
+    if any(not isinstance(row, Mapping) or not isinstance(row.get("registration_id"), str)
+           for row in raw_rows):
+        raise EnrollmentDenied("protected owner-overlay operation identity is malformed")
+    ids = [row["registration_id"] for row in raw_rows]
+    if ids != sorted(ids) or len(set(ids)) != len(ids):
+        raise EnrollmentDenied("protected owner-overlay operation IDs are not uniquely ordered")
+    parsed: dict[str, Mapping[str, Any]] = {}
+    references = fields - {"recipient", "source_observer_enrollment_ids", "argument_schema_sha256",
+                           "result_schema_sha256", "handler_sha256"}
+    for raw in raw_rows:
+        if not isinstance(raw, Mapping) or set(raw) != fields:
+            raise EnrollmentDenied("protected owner-overlay operation fields differ from v172")
+        registration_id = raw["registration_id"]
+        registration = registrations.get(registration_id)
+        method_operation = fixed.get(registration_id)
+        role = process_roles.get(raw.get("process_role_id"))
+        observers = raw.get("source_observer_enrollment_ids")
+        if (not isinstance(observers, list) or not observers or len(observers) > 128
+                or any(not isinstance(value, str) or not value for value in observers)
+                or observers != sorted(set(observers))):
+            raise EnrollmentDenied("protected owner-overlay observer references are invalid")
+        if (method_operation is None or registration is None
+                or registration.handler_kind != "owner-overlay"
+                or registration.argument_schema_id != raw["argument_schema_id"]
+                or registration.result_schema_id != raw["result_schema_id"]
+                or registration.registration_source_artifact_id != raw["handler_artifact_id"]
+                or registration.registration_source_sha256 != raw["handler_sha256"]
+                or registration.registration_source_receipt_handle != raw["handler_source_receipt_handle"]
+                or role is None or registration_id not in role.registration_ids
+                or not set(observers).issubset(role.observer_enrollment_ids)
+                or (raw["method"], raw["operation"]) != method_operation
+                or raw["capability"] != "plugin:resource-overlay-store" or raw["recipient"] is not None
+                or raw["profile_id"] != profile_id or raw["profile_generation"] != profile_generation
+                or raw["package_id"] != package_id or raw["package_generation"] != generation):
+            raise EnrollmentDenied("protected owner-overlay operation does not join its selected registration")
+        if any(not isinstance(raw[key], str) or not raw[key] or len(raw[key]) > 256
+               for key in references):
+            raise EnrollmentDenied("protected owner-overlay operation lacks a current source reference")
+        for key in ("argument_schema_sha256", "result_schema_sha256", "handler_sha256"):
+            if not isinstance(raw[key], str) or not re.fullmatch(r"[0-9a-f]{64}", raw[key]):
+                raise EnrollmentDenied("protected owner-overlay operation digest is invalid")
+        if (not _native_catalog_id(raw["principal_id"], "owner-overlay principal ID")
+                or not _native_catalog_id(raw["namespace_id"], "owner-overlay namespace ID")):
+            raise EnrollmentDenied("protected owner-overlay owner identity is invalid")
+        parsed[registration_id] = MappingProxyType({
+            **dict(raw), "source_observer_enrollment_ids": tuple(observers),
+        })
+    return parsed
 
 
 @dataclass(frozen=True, slots=True)

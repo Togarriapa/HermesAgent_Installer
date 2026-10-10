@@ -21,6 +21,7 @@ from hermes_installer.artifacts import (
     load_protected_catalog,
     load_protected_package_sets,
     sign_package_set_manifest,
+    _validate_id,
 )
 from hermes_installer.authority.types import AuthorityDenied, canonical_digest
 
@@ -49,6 +50,28 @@ class ArtifactBrokerContracts(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_only_reviewed_installed_module_ids_extend_catalog_identity_syntax(self):
+        reviewed_ids = (
+            "installer-module:hermes_installer.authority.local_resource_effects",
+            "installer-module:hermes_installer.authority.native_worker_start_recipe",
+            "installer-module:hermes_installer.authority.owner_overlay_capture_schemas",
+            "installer-module:hermes_installer.native_boundary_patch",
+            "installer-module:hermes_installer.native_plugin_bindings",
+            "installer-module:hermes_installer.native_plugin_loader",
+            "installer-module:hermes_installer.registry.resource_backends",
+        )
+        for artifact_id in reviewed_ids:
+            with self.subTest(artifact_id=artifact_id):
+                _validate_id(artifact_id)
+        for artifact_id in (
+            "installer-module:hermes_installer.authority.unreviewed",
+            "installer-module:other_package.module",
+            "installer-module:hermes_installer..loader",
+            "other-prefix:hermes_installer.native_plugin_loader",
+        ):
+            with self.subTest(artifact_id=artifact_id), self.assertRaises(ValueError):
+                _validate_id(artifact_id)
 
     def spec(self, data: bytes, **kwargs) -> ArtifactSpec:
         return ArtifactSpec(
@@ -428,7 +451,7 @@ class ArtifactBrokerContracts(unittest.TestCase):
             "installer-native-boundary-module-v137": (
                 "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb", 14_356),
             "installer-native-source-definitions-module-v137": (
-                "ca57637fd1eea4df70549391ba91b14b3842806ef6b789a4baa9d8954c7fdc22", 16_819),
+                "4d66c49e798eb957fa77601c4dad021182b734b1eb8fe322d52ecca060223341", 32_858),
             "installer-native-input-capture-profile-v1": (
                 "bfdf7175ee1df681b60ab4b707ffe9d314d8cc7fdc5a30a56e19d2cb1372c1d0", 837),
             "installer-native-tool-result-capture-profile-v1": (

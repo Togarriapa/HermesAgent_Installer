@@ -141,6 +141,61 @@ def test_selected_application_row_is_exposed_unchanged_with_enclosing_digest_sep
         )
 
 
+def test_owner_overlay_observer_catalog_is_generation_scoped_when_unselected():
+    service = SimpleNamespace(enrollment_id="service-a", profile_id="profile-a", generation="service-g1",
+                              principal_id="principal-a", namespace_identity="namespace-a")
+    catalog = ProtectedEnrollmentCatalog(
+        {("service-a", "service-g1"): service}, digest="b" * 64,
+        owner_overlay_observer_records=(),
+    )
+    assert catalog.resolve_owner_overlay_observer_records(
+        profile_id="profile-a", profile_generation="service-g1",
+        service_generation_digest="b" * 64,
+    ) == ()
+    with pytest.raises(EnrollmentDenied, match="stale service generation"):
+        catalog.resolve_owner_overlay_observer_records(
+            profile_id="profile-a", profile_generation="service-g1",
+            service_generation_digest="c" * 64,
+        )
+
+
+def test_native_worker_candidate_projection_uses_only_the_exact_catalog_generation():
+    network = {"id": "network-a"}
+    active = {"network_id": "network-a", "process_profile_id": "profile-a",
+              "service_enrollment_id": "service-a", "service_generation": "generation-a",
+              "process_profile_generation": "generation-a"}
+    runtime = {"id": "runtime-a"}
+    profile = SimpleNamespace(profile_id="profile-a", generation="generation-a",
+                              runtime_artifact_ids=(), operation_recipes={})
+    service = SimpleNamespace(enrollment_id="service-a", generation="generation-a")
+
+    class CandidateCatalog:
+        digest = "a" * 64
+        _native_worker_network_records = {"network-a": network}
+        _active_network_generation_records = {"active-a": active}
+
+        @staticmethod
+        def resolve_native_worker_generation(network_id, profile_id, *, service_generation_digest):
+            assert (network_id, profile_id, service_generation_digest) == (
+                "network-a", "profile-a", "a" * 64)
+            return network, active, runtime
+
+        @staticmethod
+        def resolve(_enrollment_id, _generation):
+            return service
+
+        @staticmethod
+        def resolve_profile_generation(_profile_id, _generation):
+            return profile
+
+    candidates = ProtectedEnrollmentCatalog.resolve_selected_native_worker_generation_candidates(
+        CandidateCatalog(), "a" * 64)
+    assert candidates == ((network, active, runtime, profile, service),)
+    with pytest.raises(EnrollmentDenied, match="stale service generation"):
+        ProtectedEnrollmentCatalog.resolve_selected_native_worker_generation_candidates(
+            CandidateCatalog(), "b" * 64)
+
+
 def _private_endpoint_row(**overrides):
     row = {
         "binding_id": "endpoint-selection-a", "profile_id": "profile-a",
@@ -529,6 +584,55 @@ def test_native_package_record_is_typed_and_resolved_only_for_current_service_ge
     assert resolved.profile_generation == profile.generation
     with pytest.raises(EnrollmentDenied):
         catalog.resolve_native_package("desktop-native", "stale-generation")
+
+
+def test_native_owner_overlay_lane_requires_complete_registration_and_loaded_role_join():
+    from types import SimpleNamespace
+    from hermes_installer.protected_enrollment import _parse_native_owner_overlay_operation_records
+
+    registration_id = "resource-overlay-store:tool:resource_overlay_read"
+    registration = SimpleNamespace(
+        handler_kind="owner-overlay", argument_schema_id="args-v1", result_schema_id="result-v1",
+        registration_source_artifact_id="handler-artifact", registration_source_sha256="a" * 64,
+        registration_source_receipt_handle="handler-receipt",
+    )
+    role = SimpleNamespace(registration_ids=(registration_id,),
+                           observer_enrollment_ids=("observer-1",))
+    row = {
+        "registration_id": registration_id, "method": "read",
+        "operation": "plugin.resource-overlay-store.read", "capability": "plugin:resource-overlay-store",
+        "target_id": "target-1", "recipient": None, "effect_enrollment_id": "effect-1",
+        "profile_id": "profile-1", "profile_generation": "profile-generation-1",
+        "principal_id": "local-principal-1", "namespace_id": "local-namespace-1",
+        "package_id": "package-1", "package_generation": "package-generation-1",
+        "argument_schema_id": "args-v1", "argument_schema_sha256": "b" * 64,
+        "argument_schema_receipt_handle": "args-receipt", "result_schema_id": "result-v1",
+        "result_schema_sha256": "c" * 64, "result_schema_receipt_handle": "result-receipt",
+        "handler_artifact_id": "handler-artifact", "handler_sha256": "a" * 64,
+        "handler_source_receipt_handle": "handler-receipt",
+        "profile_view_selection_handle": "view-selection", "profile_view_receipt_handle": "view-receipt",
+        "data_root_selection_handle": "data-root-selection", "data_root_receipt_handle": "data-root-receipt",
+        "target_selection_handle": "target-selection", "target_receipt_handle": "target-receipt",
+        "prepared_source_observer_selection_handle": "observer-selection",
+        "source_observer_enrollment_ids": ["observer-1"], "process_role_id": "role-1",
+        "source_issuer_id": "issuer-1",
+    }
+    parsed = _parse_native_owner_overlay_operation_records(
+        [row], package_id="package-1", generation="package-generation-1",
+        profile_id="profile-1", profile_generation="profile-generation-1",
+        registrations={registration_id: registration}, process_roles={"role-1": role})
+    assert parsed[registration_id]["source_observer_enrollment_ids"] == ("observer-1",)
+    with pytest.raises(EnrollmentDenied):
+        _parse_native_owner_overlay_operation_records(
+            [{**row, "data_root_receipt_handle": ""}], package_id="package-1",
+            generation="package-generation-1", profile_id="profile-1",
+            profile_generation="profile-generation-1", registrations={registration_id: registration},
+            process_roles={"role-1": role})
+    with pytest.raises(EnrollmentDenied):
+        _parse_native_owner_overlay_operation_records(
+            [row], package_id="package-1", generation="package-generation-1",
+            profile_id="profile-1", profile_generation="profile-generation-1",
+            registrations={registration_id: registration}, process_roles={})
 
 
 def test_native_observer_reference_joins_exact_active_issuer_role():

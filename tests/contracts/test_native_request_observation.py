@@ -163,6 +163,52 @@ class NativeRequestObservationContracts(unittest.TestCase):
         self.assertEqual(self.registry.resolve_native_request_for_handle(
             f"n0".ljust(43, "x"), self.identity), observation)
 
+    def test_health_request_selector_requires_exact_live_input_parent_and_uniqueness(self):
+        observation = self._record()
+        input_event = self.input_observer._events["event:input"]
+        selected = self.registry.resolve_current_health_request_for_input(
+            input_event, live_producer_identity=self.identity, producer_pid=41001,
+            producer_profile_id=self.producer.profile_id,
+            producer_generation="producer-v1",
+            native_package_generation="package-generation-1",
+        )
+        self.assertIs(selected.observation, observation)
+        self.assertEqual(selected.parent_source_receipts[0].receipt_id,
+                         self.service._source_receipt_handles[str(self.handle)].receipt_id)
+        self.assertTrue(selected.canonical_request_bytes)
+        self.assertIs(self.registry.verify_current_health_request_for_input(
+            selected, input_event, live_producer_identity=self.identity, producer_pid=41001,
+            producer_profile_id=self.producer.profile_id,
+            producer_generation="producer-v1",
+            native_package_generation="package-generation-1",
+        ), selected)
+
+        self._record(retry=1)
+        with self.assertRaises(AuthorityDenied) as ambiguous:
+            self.registry.resolve_current_health_request_for_input(
+                input_event, live_producer_identity=self.identity, producer_pid=41001,
+                producer_profile_id=self.producer.profile_id,
+                producer_generation="producer-v1",
+                native_package_generation="package-generation-1",
+            )
+        self.assertEqual(ambiguous.exception.code, "native.request_health_ambiguous")
+
+    def test_health_request_selector_reports_pending_without_matching_source_parent(self):
+        self._record()
+        from dataclasses import replace
+        input_event = replace(
+            self.input_observer._events["event:input"],
+            source_receipt_handle="x" * 43,
+        )
+        with self.assertRaises(AuthorityDenied) as pending:
+            self.registry.resolve_current_health_request_for_input(
+                input_event, live_producer_identity=self.identity, producer_pid=41001,
+                producer_profile_id=self.producer.profile_id,
+                producer_generation="producer-v1",
+                native_package_generation="package-generation-1",
+            )
+        self.assertEqual(pending.exception.code, "native.request_health_pending")
+
     def test_changed_identity_or_payload_cannot_resolve_request_record(self):
         observation = self._record()
         altered = SimpleNamespace(**{**self.identity.__dict__, "start_ticks": 778})
