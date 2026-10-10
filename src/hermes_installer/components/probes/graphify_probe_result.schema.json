@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:hermes-installer:graphify-probe-result:v1",
+  "title": "Hermes Graphify pinned-source probe result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "application_id", "source_revision", "graph_schema_version", "graph_sha256", "fixture_sources", "verified_relation", "network"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "application_id": {"const": "graphify"},
+    "source_revision": {"const": "5b74d7d74911cf435c8f1636b6f96ea202cc6246"},
+    "graph_schema_version": {"const": 1},
+    "graph_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "fixture_sources": {"const": ["entrypoint.py", "helper.py"]},
+    "verified_relation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "target", "relation", "confidence"],
+      "properties": {
+        "source": {"const": "entrypoint.py"},
+        "target": {"const": "helper.py"},
+        "relation": {"const": "imports_from"},
+        "confidence": {"const": "EXTRACTED"}
+      }
+    },
+    "network": {"const": "deny"}
+  }
+}
