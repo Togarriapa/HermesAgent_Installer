@@ -9,6 +9,7 @@ daemon-unit/PIDFD and loaded-role proof from root custody.
 from __future__ import annotations
 
 import math
+import hashlib
 import json
 import re
 import secrets
