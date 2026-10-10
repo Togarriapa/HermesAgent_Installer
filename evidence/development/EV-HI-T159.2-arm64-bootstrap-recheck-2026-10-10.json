@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "evidence_id": "EV-HI-T159.2-ARM64-BOOTSTRAP-2026-10-10",
+  "date": "2026-10-10",
+  "change_id": "installer-bootstrap-desktop",
+  "related_tasks": ["BD-F03", "HI-T149.1", "HI-T159.2"],
+  "state": "runtime-observation-failed-closed",
+  "acceptance_record_emitted": false,
+  "acceptance_ids": {
+    "AC01-AC18": "open"
+  },
+  "target": {
+    "kind": "new-isolated-arm64-linux-container",
+    "platform": "linux/arm64",
+    "architecture": "aarch64",
+    "image": "ucp-hermes-agent:latest",
+    "image_id": "sha256:7f3e7c1a64166f729c3b350d40446b03e65ada0abdeae1ee89b4ba00f978c16f",
+    "source_mount": "/workspace:ro",
+    "checkout_path": "/private/tmp/hermes-installer-arm64-bootstrap-recheck",
+    "state_volumes": [
+      "hermes-installer-recheck-ffc0c9c4-state",
+      "hermes-installer-recheck-9f052a39-state"
+    ],
+    "release_volumes": [
+      "hermes-installer-recheck-ffc0c9c4-releases",
+      "hermes-installer-recheck-9f052a39-releases"
+    ],
+    "other_containers_and_volumes_modified": false
+  },
+  "runs": [
+    {
+      "candidate_sha": "ffc0c9c4a38034556ab9d1356ae6417a30c7c0d6",
+      "source_tree": "3ce8b488bc58ed7769ca296ab5c5ede2b8fc4015",
+      "command_argv": [
+        "docker", "exec", "-it", "hermes-installer-recheck-ffc0c9c4",
+        "/workspace/scripts/hermes-installer-root-setup", "install"
+      ],
+      "started_at": "2026-10-10T11:16:54Z",
+      "ended_at": "2026-10-10T11:17:40Z",
+      "exit_code": 1,
+      "result": "Same-PID sealed FD3 reexec and release build ran under pinned ARM64 CPython 3.14.7 with PyYAML. Installed-stage publication rejected build closure row fixtures/native-health/expected-tool-result.json because role native-health-fixture was absent from its role allowlist.",
+      "build_manifest_sha256": "1e9d2ef4eaf6585ebc4d1928b25aef6889d580439a40791612d7cea11424d6ee",
+      "release_volume_empty": true,
+      "deployment_pointer_created": false,
+      "transcript": {
+        "path": "/private/tmp/hermes-installer-arm64-bootstrap-recheck-evidence/bootstrap-transcript-attempt2.txt",
+        "sha256": "9c7540b653d507358cce122151af2731ca77d1652f51caa752180e7b99369367"
+      },
+      "metadata": {
+        "path": "/private/tmp/hermes-installer-arm64-bootstrap-recheck-evidence/run-metadata-attempt2.txt",
+        "sha256": "6c8b89b073c920fba76dfcf87cbbbf8d043b39b1a614190c508a017f56a6d0a9"
+      }
+    },
+    {
+      "candidate_sha": "9f052a3994056339a35a39fea93fd1cc5dcd9b80",
+      "source_tree": "3a60adaf2bc82f618ad22dbb3fe28f6b3e55865c",
+      "command_argv": [
+        "docker", "exec", "-it", "hermes-installer-recheck-9f052a39",
+        "/workspace/scripts/hermes-installer-root-setup", "install"
+      ],
+      "started_at": "2026-10-10T11:25:40Z",
+      "ended_at": "2026-10-10T11:26:37Z",
+      "exit_code": 1,
+      "result": "Source selection, pinned ARM64 CPython 3.14.7 and PyYAML provisioning, same-PID sealed FD3 reexec, complete release publication, and deployment pointer publication succeeded. The installed setup invocation then exited with the bounded message Root setup could not verify its required authority (InstallerReleaseError). It did not create /etc/hermes-installer and did not reach the target account or Authentik prompts.",
+      "release_manifest_sha256": "c9547783b9f26ac1f452113b664dcab78443ccb20fc3dc9170916dc9b325b54c",
+      "deployment_receipt_sha256": "00adf84225a2b8753e8eea3e87093d19943daf825fd830002fec46cf756ebff7",
+      "source_receipt_sha256": "f3d52e7f851aeff7d6506bb0ff7dc654c9d2033ef60e4e6bce01dfb4c59fbb5d",
+      "installed_release_file_count": 5186,
+      "initial_actor_observation": "not verified by the actual bootstrap invocation; no actor receipt emitted",
+      "transcript": {
+        "path": "/private/tmp/hermes-installer-arm64-bootstrap-recheck-evidence/bootstrap-transcript-9f052a39.txt",
+        "sha256": "909f75a26440c2be03d52512a9d61b0bf00397af7b70973359e14b94afaff8f3"
+      },
+      "metadata": {
+        "path": "/private/tmp/hermes-installer-arm64-bootstrap-recheck-evidence/run-metadata-9f052a39.txt",
+        "sha256": "43b155f491546828d47cf27f62a6b738fa7063e42c0c75b833a54484e3170976"
+      }
+    }
+  ],
+  "followup_diagnostics": {
+    "scope": "read-only checks in separate processes; not evidence of the original exec actor",
+    "deployment_predecessor_and_release": "verified",
+    "self_actor_verifier": "passed in a separate process launched from the installed runtime",
+    "import_order_reproduction": "passed: after actor observation, importing hermes_installer.authority.bootstrap_runtime_factory causes InstallerReleaseError: unreviewed Hermes installer module is loaded at installer_release.py:349",
+    "implication": "Root setup observes the actor before importing the factory module, then revalidates after that module is loaded. The original invocation reported only the bounded generic authority error. Fix and repeat actor verification before handing off account setup.",
+    "diagnostic_transcript": {
+      "path": "/private/tmp/hermes-installer-arm64-bootstrap-recheck-evidence/diagnostic-9f052a39.txt",
+      "sha256": "9b9aa425f36af0a82178a357a9b3f258d274c30f3f2db2f8da05e73d3d388767"
+    }
+  },
+  "credential_and_account_boundary": {
+    "target_account_entered": false,
+    "authentik_origin_or_group_values_entered": false,
+    "credentials_created_or_read": false,
+    "secrets_or_environment_values_recorded": false
+  },
+  "claim_limit": "These are isolated container observations only. They do not establish Raspberry Pi, account, Authentik, or AC01-AC18 acceptance."
+}
