@@ -30,7 +30,7 @@ jobs:
         if: ${{ always() && steps.install-ci-deps.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}
         run: |
           site_packages="$(python -c 'import site; print(site.getsitepackages()[0])')"
-          sudo env PYTHONPATH="${GITHUB_WORKSPACE}/src:${site_packages}" PYTHONDONTWRITEBYTECODE=1 /run/hermes-custody-python/python -m unittest tests.contracts.test_managed_task_custody_linux -v
+          sudo /usr/bin/systemd-run --system --quiet --wait --pipe --collect --property=Type=exec --unit="hermes-root-task-custody-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --working-directory="${GITHUB_WORKSPACE}" --setenv="PYTHONPATH=${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}/src:${GITHUB_WORKSPACE}/tests/contracts:${site_packages}" --setenv="PYTHONDONTWRITEBYTECODE=1" --setenv="HERMES_ROOT_CONTROLLER_TEST_UNIT=hermes-root-task-custody-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.service" /run/hermes-custody-python/python -m unittest tests.contracts.test_managed_task_custody_linux -v
 
       - name: Exercise root managed build custody
         if: ${{ always() && steps.install-ci-deps.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}
@@ -66,4 +66,4 @@ jobs:
         if: ${{ always() && steps.install-ci-deps.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}
         run: |
           site_packages="$(python -c 'import site; print(site.getsitepackages()[0])')"
-          sudo /usr/bin/systemd-run --system --quiet --wait --pipe --collect --property=Type=exec --unit="hermes-root-controller-custody-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --setenv="PYTHONPATH=${GITHUB_WORKSPACE}/src" --setenv="HERMES_ROOT_CONTROLLER_TEST_UNIT=hermes-root-controller-custody-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.service" /run/hermes-custody-python/python -m unittest discover -s "${GITHUB_WORKSPACE}/tests/contracts" -p 'test_root_controller_custody_linux.py' -v
+          sudo /usr/bin/systemd-run --system --quiet --wait --pipe --collect --property=Type=exec --unit="hermes-root-controller-custody-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --working-directory="${GITHUB_WORKSPACE}" --setenv="PYTHONPATH=${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}/src" --setenv="HERMES_ROOT_CONTROLLER_TEST_UNIT=hermes-root-controller-custody-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.service" /run/hermes-custody-python/python -m unittest discover -s "${GITHUB_WORKSPACE}/tests/contracts" -p 'test_root_controller_custody_linux.py' -v
