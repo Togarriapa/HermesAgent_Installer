@@ -74,6 +74,9 @@ class SourceObserverEnrollment:
     # These are only candidate routes; current consent and route policy are
     # rechecked by the root issuer before any ceiling is minted.
     private_provider_route_ids: tuple[str, ...] = ()
+    # Finite public-web scope enrollment IDs; candidates only.  Current
+    # per-input permission and active scope rows are independently resolved.
+    public_web_scope_ids: tuple[str, ...] = ()
     # v123 keeps the package process role distinct from the action binding.
     # These fields are populated from the protected role/action foreign keys;
     # legacy/manual rows may omit them but cannot resolve against a v123 package.
@@ -99,7 +102,7 @@ class SourceObserverEnrollment:
             "allowed_parent_source_kinds",
         }
         optional = {"max_event_bytes", "lease_seconds", "native_package_generation",
-                    "private_provider_route_ids", "source_action_binding_id",
+                    "private_provider_route_ids", "public_web_scope_ids", "source_action_binding_id",
                     "role_source_receipt_handle", "role_module_name",
                     "role_closure_member_path", "role_source_revision",
                     "role_source_tree_sha256", "source_registration_ids"}
@@ -115,6 +118,10 @@ class SourceObserverEnrollment:
             if not isinstance(values["private_provider_route_ids"], (list, tuple)):
                 raise AuthorityDenied("source.enrollment", "protected private provider route IDs are invalid")
             values["private_provider_route_ids"] = tuple(values["private_provider_route_ids"])
+        if "public_web_scope_ids" in values:
+            if not isinstance(values["public_web_scope_ids"], (list, tuple)):
+                raise AuthorityDenied("source.enrollment", "protected public web scope IDs are invalid")
+            values["public_web_scope_ids"] = tuple(values["public_web_scope_ids"])
         if "source_registration_ids" in values:
             if not isinstance(values["source_registration_ids"], (list, tuple)):
                 raise AuthorityDenied("source.enrollment", "protected source registration IDs are invalid")
@@ -145,6 +152,14 @@ class SourceObserverEnrollment:
                        for item in self.private_provider_route_ids)
                 or (self.private_provider_route_ids and self.source_kind != "native-input")):
             raise ValueError("private provider route IDs must be a finite unique protected tuple")
+        if (not isinstance(self.public_web_scope_ids, tuple)
+                or len(self.public_web_scope_ids) > 32
+                or tuple(sorted(set(self.public_web_scope_ids))) != self.public_web_scope_ids
+                or any(not isinstance(item, str)
+                       or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", item)
+                       for item in self.public_web_scope_ids)
+                or (self.public_web_scope_ids and self.source_kind != "native-input")):
+            raise ValueError("public web scope IDs must be a finite sorted protected tuple")
         for name in (
             "observer_enrollment_id", "origin_id", "profile_id", "principal_id",
             "namespace_id", "enrollment_id", "generation", "package_id", "role_id",
@@ -2224,6 +2239,10 @@ class RootSelectedNativeExecution:
     service_generation_digest: str
     expires_monotonic: float
     private_consent_selection_handle: str | None = field(default=None, repr=False)
+    # Public web authorization is a separate per-profile choice. It is never
+    # copied from private consent and is revalidated by the public permission
+    # registry for each exact input observation/dispatch.
+    public_input_permission_selection_handle: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if (type(self.schema) is not int or self.schema != 1
@@ -2239,6 +2258,12 @@ class RootSelectedNativeExecution:
                 or (self.private_consent_selection_handle is not None
                     and (not isinstance(self.private_consent_selection_handle, str)
                          or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.private_consent_selection_handle)))
+                or (self.public_input_permission_selection_handle is not None
+                    and (not isinstance(self.public_input_permission_selection_handle, str)
+                         or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}",
+                                             self.public_input_permission_selection_handle)))
+                or (self.private_consent_selection_handle is not None
+                    and self.public_input_permission_selection_handle is not None)
                 or not math.isfinite(self.expires_monotonic)):
             raise ValueError("selected native execution binding is malformed")
 
@@ -2322,6 +2347,48 @@ class RootNativeExecutionSelectionRegistry:
                 or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle)):
             raise AuthorityDenied("resource.native_consent", "root consent selection handle is malformed")
         return handle
+
+    def _public_input_permission_selection_handle(self, observer: SourceObserverEnrollment,
+                                                  running_binding: Any) -> str | None:
+        """Read the independent public-web choice from the exact root principal."""
+        permission_registry = getattr(self.service, "public_input_permission_registry", None)
+        if permission_registry is None:
+            return None
+        resolver = getattr(permission_registry, "selection_handle_for_current_profile", None)
+        if (not callable(resolver)
+                or getattr(permission_registry, "service", None) is not self.service):
+            raise AuthorityDenied("resource.native_permission",
+                                  "root public input permission registry is invalid")
+        source = getattr(running_binding, "source", None)
+        matches = [binding for binding in self.service.bindings_by_uid.values()
+                   if binding.profile_id == observer.profile_id
+                   and binding.principal_id == observer.principal_id
+                   and binding.namespace_id == observer.namespace_id
+                   and binding.uid == observer.producer_uid
+                   and binding.principal_id == getattr(source, "principal_id", None)
+                   and binding.profile_id == getattr(source, "profile_id", None)
+                   and binding.namespace_id == getattr(source, "namespace_id", None)]
+        if len(matches) != 1:
+            raise AuthorityDenied("resource.native_permission",
+                                  "selected profile principal binding is ambiguous")
+        handle = resolver(matches[0])
+        if handle is None:
+            return None
+        if (not isinstance(handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", handle)):
+            raise AuthorityDenied("resource.native_permission",
+                                  "root public permission selection handle is malformed")
+        return handle
+
+    def _validate_input_permission_choice(self, observer: SourceObserverEnrollment,
+                                          running_binding: Any) -> tuple[str | None, str | None]:
+        """Select at most one independent private or public purpose for this input."""
+        private_handle = self._private_consent_selection_handle(observer, running_binding)
+        public_handle = self._public_input_permission_selection_handle(observer, running_binding)
+        if private_handle is not None and public_handle is not None:
+            raise AuthorityDenied("resource.native_permission",
+                                  "private and public input permissions cannot be combined")
+        return private_handle, public_handle
 
     def select_resource_task(self, admission_handle: Any, node_id: str,
                              managed_task_handle: Any) -> RootSelectedNativeExecution:
@@ -2420,7 +2487,8 @@ class RootNativeExecutionSelectionRegistry:
         if (not math.isfinite(expiry) or expiry <= now
                 or self.service.service_generation_digest != binding.service_generation_digest):
             raise AuthorityDenied("resource.native_selection", "selected task or package lease expired")
-        consent_selection_handle = self._private_consent_selection_handle(observer, binding)
+        consent_selection_handle, public_permission_selection_handle = (
+            self._validate_input_permission_choice(observer, binding))
         selected = RootSelectedNativeExecution(
             schema=1, selection_handle=secrets.token_urlsafe(32), kind="resource-task",
             execution_handle=admission_handle, process_handle=managed_task_handle,
@@ -2432,6 +2500,7 @@ class RootNativeExecutionSelectionRegistry:
             service_generation_digest=self.service.service_generation_digest,
             expires_monotonic=expiry,
             private_consent_selection_handle=consent_selection_handle,
+            public_input_permission_selection_handle=public_permission_selection_handle,
         )
         record = _SelectedNativeExecutionRecord(
             selected, binding, observer, package, adapter, self.service.authority_epoch)

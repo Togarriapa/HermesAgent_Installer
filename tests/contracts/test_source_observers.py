@@ -313,15 +313,23 @@ class SourceObserverContracts(unittest.TestCase):
             capture_schema_id="schema.capture.request", source_action_id="authenticated-input",
             target_id="provider.fixed", recipient="public-provider",
             allowed_parent_source_kinds=[], private_provider_route_ids=["route.private.codex"],
+            public_web_scope_ids=["scope.public.alpha", "scope.public.beta"],
         )
         selected = SourceObserverEnrollment.from_protected_record(fields)
         self.assertEqual(selected.private_provider_route_ids, ("route.private.codex",))
+        self.assertEqual(selected.public_web_scope_ids,
+                         ("scope.public.alpha", "scope.public.beta"))
         legacy = dict(fields)
         legacy.pop("private_provider_route_ids")
+        legacy.pop("public_web_scope_ids")
         self.assertEqual(SourceObserverEnrollment.from_protected_record(legacy).private_provider_route_ids, ())
+        self.assertEqual(SourceObserverEnrollment.from_protected_record(legacy).public_web_scope_ids, ())
         with self.assertRaises(AuthorityDenied):
             SourceObserverEnrollment.from_protected_record(
                 {**fields, "private_provider_route_ids": ["route.private.codex", "route.private.codex"]})
+        with self.assertRaises(AuthorityDenied):
+            SourceObserverEnrollment.from_protected_record(
+                {**fields, "public_web_scope_ids": ["scope.public.beta", "scope.public.alpha"]})
 
     def setUp(self):
         self.service = _Service()
@@ -384,6 +392,46 @@ class SourceObserverContracts(unittest.TestCase):
         with self.assertRaises(AuthorityDenied):
             selections._private_consent_selection_handle(self.enrollment, running)
         self.addCleanup(self.registry.close)
+
+    def test_public_permission_selection_is_independent_and_never_coexists_with_private_choice(self):
+        handle = "p" * 43
+        principal = SimpleNamespace(
+            uid=self.enrollment.producer_uid,
+            profile_id=self.enrollment.profile_id,
+            principal_id=self.enrollment.principal_id,
+            namespace_id=self.enrollment.namespace_id,
+        )
+
+        class _PermissionRegistry:
+            service = self.service
+
+            def selection_handle_for_current_profile(self, selected):
+                if selected is not principal:
+                    raise AuthorityDenied("permission.selection", "wrong principal")
+                return handle
+
+        self.service.public_input_permission_registry = _PermissionRegistry()
+        self.service.bindings_by_uid = {principal.uid: principal}
+        selections = object.__new__(RootNativeExecutionSelectionRegistry)
+        selections.service = self.service
+        running = SimpleNamespace(source=SimpleNamespace(
+            profile_id=principal.profile_id,
+            principal_id=principal.principal_id,
+            namespace_id=principal.namespace_id,
+        ))
+        self.assertEqual(
+            selections._public_input_permission_selection_handle(self.enrollment, running), handle)
+        class _PrivateRegistry:
+            service = self.service
+
+            def selection_handle_for_current_profile(self, selected):
+                if selected is not principal:
+                    raise AuthorityDenied("consent.selection", "wrong principal")
+                return "q" * 43
+
+        self.service.private_input_consent_registry = _PrivateRegistry()
+        with self.assertRaises(AuthorityDenied):
+            selections._validate_input_permission_choice(self.enrollment, running)
 
     def test_native_input_delivery_wire_is_bounded_and_contains_no_payload(self):
         delivery = NativeInitialInputDelivery(
