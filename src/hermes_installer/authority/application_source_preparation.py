@@ -15,7 +15,7 @@ import stat
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 from hermes_installer.components.adapters import resolve_component_adapter
 from hermes_installer.components.application_handlers import (
@@ -638,6 +638,61 @@ class RootApplicationSourcePreparationRegistry:
         self._reopen_source(entry)
         return entry.receipt
 
+    def resolve_current_prepared_source_for_selection(
+        self, selection_handle: str,
+    ) -> RootPreparedApplicationSourceReceipt:
+        """Resolve only an already-retained source; this method never fetches or stages."""
+        selection = self.resolve_selection(selection_handle)
+        entry = self._sources.get(selection.selection_handle)
+        if entry is None or entry.selection is not selection:
+            raise ApplicationSourcePreparationDenied("selected source has not been prepared")
+        return self.resolve_prepared_source(entry.receipt.receipt_handle)
+
+    def resolve_current_lock_for_selection(
+        self, selection_handle: str, source_receipt_handle: str,
+    ) -> RootApplicationLockReceipt:
+        """Resolve only the unique already-retained lock for a current prepared source."""
+        source = self.resolve_current_prepared_source_for_selection(selection_handle)
+        if source.receipt_handle != source_receipt_handle:
+            raise ApplicationSourcePreparationDenied("lock source receipt does not match the current setup source")
+        entry = self._sources[selection_handle]
+        candidates = [row for row in self._locks.values() if row.source_entry is entry]
+        if len(candidates) != 1:
+            raise ApplicationSourcePreparationDenied("selected source has no unique prepared lock receipt")
+        return self.resolve_application_lock_receipt(
+            candidates[0].receipt.receipt_handle,
+            preparation_selection_handle=selection_handle,
+            prepared_source_receipt_handle=source_receipt_handle,
+        )
+
+    def read_current_source_members(
+        self, selection_handle: str, receipt_handle: str,
+        member_paths: Sequence[str],
+    ) -> Mapping[str, bytes]:
+        """Return copies of requested verified source members after full source revalidation."""
+        if (isinstance(member_paths, (str, bytes)) or not isinstance(member_paths, Sequence)
+                or not member_paths or len(member_paths) > 256
+                or any(not isinstance(path, str) or not path or path.startswith("/")
+                       or "\\" in path or "\x00" in path
+                       or any(part in {"", ".", ".."} for part in path.split("/"))
+                       for path in member_paths)
+                or len(set(member_paths)) != len(member_paths)):
+            raise ApplicationSourcePreparationDenied("requested source member paths are malformed")
+        selection = self.resolve_selection(selection_handle)
+        receipt = self.resolve_prepared_source(receipt_handle)
+        if receipt.selection_handle != selection.selection_handle:
+            raise ApplicationSourcePreparationDenied("source member request is not joined to the selected setup source")
+        entry = self._sources.get(selection.selection_handle)
+        if entry is None or entry.receipt is not receipt:
+            raise ApplicationSourcePreparationDenied("prepared source is no longer retained")
+        members: dict[str, bytes] = {}
+        for path in member_paths:
+            body = entry.source.files.get(path)
+            if not isinstance(body, bytes):
+                raise ApplicationSourcePreparationDenied("requested member is absent from the verified source")
+            members[path] = bytes(body)
+        return members
+
     def resolve_application_lock_receipt(self, handle: str, *,
                                          preparation_selection_handle: str,
                                          prepared_source_receipt_handle: str) -> RootApplicationLockReceipt:
@@ -685,6 +740,21 @@ class RootApplicationSourcePreparationRegistry:
             preparation_selection_handle=preparation_selection_handle,
             prepared_source_receipt_handle=prepared_source_receipt_handle,
         )
+
+    def read_current_lock_bytes(
+        self, receipt_handle: str, source_selection_handle: str,
+        source_receipt_handle: str,
+    ) -> bytes:
+        """Return a copy of the exact lock bytes after revalidating their full lineage."""
+        self.resolve_application_lock_receipt(
+            receipt_handle,
+            preparation_selection_handle=source_selection_handle,
+            prepared_source_receipt_handle=source_receipt_handle,
+        )
+        entry = self._locks.get(receipt_handle)
+        if entry is None:
+            raise ApplicationSourcePreparationDenied("application lock receipt is no longer retained")
+        return bytes(entry.lock_bytes)
 
     def record_prepared_verified_generation(self, prepared_source_receipt_handle: str,
                                             source_preparation_selection_handle: str) -> RootPreparedApplicationSourceReceipt:

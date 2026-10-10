@@ -187,12 +187,34 @@ def test_pre_active_source_and_lock_receipts_are_current_and_source_verified(tmp
     with process_lock(registry.store.owned.path("installer.lock")):
         current_selection = registry.resolve_application_source_preparation(
             selection.qualification_choice_handle, "graphify")
+        with pytest.raises(ApplicationSourcePreparationDenied):
+            registry.resolve_current_prepared_source_for_selection(current_selection.selection_handle)
+        assert not registry._sources
         source_receipt = registry.prepare_selected_source(current_selection.selection_handle)
+        source_members = registry.read_current_source_members(
+            current_selection.selection_handle, source_receipt.receipt_handle,
+            ("pyproject.toml",),
+        )
+        assert hashlib.sha256(source_members["pyproject.toml"]).hexdigest() == source_receipt.manifest_member_records[0]["sha256"]
+        with pytest.raises(ApplicationSourcePreparationDenied):
+            registry.read_current_source_members(
+                current_selection.selection_handle, source_receipt.receipt_handle, ("missing.toml",))
         lock_receipt = registry.resolve_application_lock_for_prepared_source(
             current_selection.selection_handle, source_receipt.receipt_handle)
+        assert registry.resolve_current_lock_for_selection(
+            current_selection.selection_handle, source_receipt.receipt_handle) is lock_receipt
         assert source_receipt.source_identity == "Graphify-Labs/graphify"
         assert source_receipt.source_revision == "5b74d7d74911cf435c8f1636b6f96ea202cc6246"
         assert source_receipt.lock_member_records[0]["sha256"] == lock_receipt.lock_sha256
+        lock_bytes = registry.read_current_lock_bytes(
+            lock_receipt.receipt_handle, current_selection.selection_handle,
+            source_receipt.receipt_handle,
+        )
+        assert isinstance(lock_bytes, bytes) and hashlib.sha256(lock_bytes).hexdigest() == lock_receipt.lock_sha256
+        assert hashlib.sha256(registry.read_current_lock_bytes(
+            lock_receipt.receipt_handle, current_selection.selection_handle,
+            source_receipt.receipt_handle,
+        )).hexdigest() == lock_receipt.lock_sha256
         assert journal.owned("application-source")
         assert registry.record_prepared_verified_generation(
             source_receipt.receipt_handle, current_selection.selection_handle) is source_receipt
@@ -226,3 +248,50 @@ def test_pre_active_receipts_reject_source_tamper_stale_choice_and_expiry(tmp_pa
         now[0] = 1000.0
         with pytest.raises(ApplicationSourcePreparationDenied):
             registry.resolve_selection(selection.selection_handle)
+
+
+def test_pre_active_lock_receipt_and_namespace_currentness_are_sealed(tmp_path: Path) -> None:
+    now = [100.0]
+    registry, binding, selection, _root, _journal = _registry(tmp_path, now)
+    with process_lock(registry.store.owned.path("installer.lock")):
+        registry.resolve_application_source_preparation(selection.qualification_choice_handle, "graphify")
+        source = registry.prepare_selected_source(selection.selection_handle)
+        lock = registry.resolve_application_lock_for_prepared_source(
+            selection.selection_handle, source.receipt_handle)
+        lock_entry = registry._locks[lock.receipt_handle]
+        lock_path = registry.store.root / lock_entry.generation_id / lock.lock_member_path
+        lock_path.chmod(0o600)
+        lock_path.write_bytes(b"tampered lock\n")
+        with pytest.raises(ApplicationSourcePreparationDenied):
+            registry.resolve_application_lock_receipt(
+                lock.receipt_handle,
+                preparation_selection_handle=selection.selection_handle,
+                prepared_source_receipt_handle=source.receipt_handle,
+            )
+        with pytest.raises(ApplicationSourcePreparationDenied):
+            registry.read_current_lock_bytes(
+                lock.receipt_handle, selection.selection_handle, source.receipt_handle)
+
+    now = [100.0]
+    registry, binding, selection, _root, _journal = _registry(tmp_path / "namespace", now)
+    with process_lock(registry.store.owned.path("installer.lock")):
+        registry.resolve_application_source_preparation(selection.qualification_choice_handle, "graphify")
+        binding.namespace.receipt_handle = "replaced-namespace-handle-00000000000000000"
+        with pytest.raises(ApplicationSourcePreparationDenied):
+            registry.resolve_selection(selection.selection_handle)
+
+
+def test_source_selection_dto_rejects_caller_construction() -> None:
+    with pytest.raises(TypeError, match="minted by the root setup binding"):
+        RootApplicationSourcePreparationSelection(
+            schema=1, selection_handle="x", setup_session_id="x",
+            transaction_handle="x", plan_sha256="x", prepared_generation_id="x",
+            prepared_generation_digest="x", qualification_choice_handle="x",
+            qualification_consent_receipt_handle="x", application_id="graphify",
+            workflow_id="qualify-graphify-v1", source_identity="Graphify-Labs/graphify",
+            source_revision="0" * 40, source_catalog_artifact_id="x",
+            source_catalog_sha256="0" * 64, manifest_paths=("pyproject.toml",),
+            lock_paths=("uv.lock",), target_profile_id="hermes-agent-native-v1",
+            namespace_selection_receipt_handle="x", principal_selection_receipt_handle=None,
+            controller_binding_handle="x", expires_monotonic=100.0,
+        )

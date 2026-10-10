@@ -11,6 +11,7 @@ from unittest.mock import patch
 from hermes_installer.authority.source_observers import (
     LiveSourceProducer,
     NativeInitialInputDelivery,
+    RootPublicNativeInputObservation,
     RootNativeExecutionSelectionRegistry,
     RootSelectedNativeExecution,
     SourceObserverEnrollment,
@@ -301,6 +302,28 @@ def _consumer_context(service, receipt, *, profile="gateway-profile", uid=2002):
 
 
 class SourceObserverContracts(unittest.TestCase):
+    def test_public_input_observation_is_digest_only_and_public_classification_is_typed(self):
+        fields = dict(
+            observation_handle="o" * 40,
+            retained_input_selection_handle="s" * 40,
+            input_sha256=_digest("a"), input_size_bytes=1,
+            source_observation_handle="n" * 40,
+            public_permission_selection_handle="p" * 40,
+            principal_id="principal", profile_id="profile", namespace_id="namespace",
+            profile_generation="generation", service_generation_digest=_digest("b"),
+            source_classification=Sensitivity.PUBLIC,
+            parent_source_receipt_handles=("parent-handle",),
+            controller_binding_handle="controller-binding",
+            issued_monotonic=10.0, expires_monotonic=20.0,
+            _issuer_token=object(),
+        )
+        proof = RootPublicNativeInputObservation(**fields)
+        self.assertFalse(hasattr(proof, "payload_bytes"))
+        self.assertFalse(hasattr(proof, "parent_receipts"))
+        with self.assertRaises(ValueError):
+            RootPublicNativeInputObservation(
+                **{**fields, "source_classification": Sensitivity.PRIVATE})
+
     def test_private_provider_route_candidates_are_finite_and_protected(self):
         fields = dict(
             observer_enrollment_id="observer.native.primary", source_kind="native-input",
