@@ -4710,8 +4710,8 @@ class RootBootstrapSession:
         from hermes_installer.authority.native_registration_projection import (
             RootNativeRegistrationProjectionRegistry,
         )
-        from hermes_installer.registry.resources_runtime import ResourceOverlayStore
-        from hermes_installer.state import Journal, OwnedRoot
+        from hermes_installer.registry.resources_runtime import RootAnchoredProfileOverlayView
+        from hermes_installer.state import Journal
 
         self._check_live()
         self._refresh_authorization()
@@ -4766,37 +4766,28 @@ class RootBootstrapSession:
                 or root_identity.namespace_selection_handle != policy_selection.namespace_selection_handle):
             raise BootstrapEnrollmentPending("current principal or namespace changed during overlay view preparation")
 
-        view_path = _ensure_root_owned_profile_overlay_directory(
+        _ensure_root_owned_profile_overlay_directory(
             roots.data_root, native_selection.service_uid, native_selection.service_gid,
             native_selection.service_profile_id, profile.profile_id,
         )
         journal_selection = self._current_root_journal_selection()
         overlay_journal = Journal(journal_selection.path.parent / "native-profile-overlays.sqlite3")
-        store = ResourceOverlayStore(OwnedRoot(view_path), overlay_journal)
-        view = store.for_profile(native_selection.service_profile_id)
-        view_stat = view_path.lstat()
-        marker = view_path / ".hermes-installer-owned"
-        marker_stat = marker.lstat()
-        marker_bytes = marker.read_bytes()
-        if (not stat.S_ISDIR(view_stat.st_mode) or view_stat.st_uid != 0 or view_stat.st_gid != 0
-                or stat.S_IMODE(view_stat.st_mode) != 0o700
-                or not stat.S_ISREG(marker_stat.st_mode) or marker_stat.st_uid != 0
-                or stat.S_IMODE(marker_stat.st_mode) != 0o600 or marker_bytes != b"schema=1\n"):
-            raise BootstrapEnrollmentPending("root-owned overlay view custody could not be verified")
-        directory_flags = (os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-                           | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
-        data_root_fd = os.open(roots.data_root, directory_flags)
-        view_root_fd = -1
+        data_root_fd, view_root_fd, held_root_info, view_stat, marker_stat, marker_bytes = (
+            _open_root_owned_profile_overlay_directory(
+                roots.data_root, native_selection.service_uid, native_selection.service_gid,
+                native_selection.service_profile_id, profile.profile_id))
         try:
-            view_root_fd = os.open(view_path, directory_flags)
-            held_data_info, held_view_info = os.fstat(data_root_fd), os.fstat(view_root_fd)
-            if ((held_data_info.st_dev, held_data_info.st_ino) != (root_info.st_dev, root_info.st_ino)
-                    or (held_view_info.st_dev, held_view_info.st_ino) != (view_stat.st_dev, view_stat.st_ino)):
+            if ((held_root_info.st_dev, held_root_info.st_ino) != (root_info.st_dev, root_info.st_ino)
+                    or not stat.S_ISDIR(view_stat.st_mode) or view_stat.st_uid != 0
+                    or view_stat.st_gid != 0 or stat.S_IMODE(view_stat.st_mode) != 0o700
+                    or not stat.S_ISREG(marker_stat.st_mode) or marker_stat.st_uid != 0
+                    or stat.S_IMODE(marker_stat.st_mode) != 0o600 or marker_bytes != b"schema=1\n"):
                 raise BootstrapEnrollmentPending("overlay data/view directory changed before its FDs were retained")
+            view = RootAnchoredProfileOverlayView(
+                view_root_fd, native_selection.service_profile_id, overlay_journal)
         except Exception:
             os.close(data_root_fd)
-            if view_root_fd >= 0:
-                os.close(view_root_fd)
+            os.close(view_root_fd)
             raise
         now = time.monotonic()
         view_handle = secrets.token_urlsafe(32)
@@ -4912,7 +4903,6 @@ class RootBootstrapSession:
             service_generation=receipt.service_generation,
             resource_profile_id=profile.profile_id)
         roots = self._resolve_private_installation_roots(native_selection)
-        view_path = roots.data_root / "native-profile-overlays" / receipt.service_profile_id / profile.profile_id
         fresh_data_fd, fresh_view_fd, root_info, view_info, marker_info, marker_bytes = (
             _open_root_owned_profile_overlay_directory(
                 roots.data_root, native_selection.service_uid, native_selection.service_gid,
@@ -4949,16 +4939,12 @@ class RootBootstrapSession:
                        != (receipt.view_device, receipt.view_inode)
                     or not stat.S_ISDIR(held_data_info.st_mode) or not stat.S_ISDIR(held_view_info.st_mode)):
                 raise BootstrapEnrollmentPending("held profile overlay directory descriptors are stale")
-            # Reopen the actual current CAS implementation; never return a stored
-            # path-only observation as evidence of currentness.
-            from hermes_installer.registry.resources_runtime import ResourceOverlayStore
-            from hermes_installer.state import Journal, OwnedRoot
-            current_view = ResourceOverlayStore(
-                OwnedRoot(view_path), Journal(self._current_root_journal_selection().path.parent
-                                              / "native-profile-overlays.sqlite3"),
-            ).for_profile(receipt.service_profile_id)
-            if receipt._view.__class__ is not current_view.__class__:
-                raise BootstrapEnrollmentPending("current profile overlay CAS view implementation changed")
+            # The actual effect view must retain these exact anchored FDs. The
+            # fresh path walk above remains mandatory currentness evidence.
+            from hermes_installer.registry.resources_runtime import RootAnchoredProfileOverlayView
+            if (type(receipt._view) is not RootAnchoredProfileOverlayView
+                    or receipt._view._view_root_fd != receipt._view_root_fd):
+                raise BootstrapEnrollmentPending("current profile overlay CAS view lost its anchored descriptor")
             return receipt
         finally:
             os.close(fresh_data_fd)
