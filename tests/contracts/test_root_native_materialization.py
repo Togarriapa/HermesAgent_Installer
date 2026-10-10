@@ -84,6 +84,21 @@ def test_primary_resources_profile_projects_to_the_only_desktop_identity_jarvis(
     assert b"name: hermes" in compiled[source_profile.source_path]
 
 
+def test_specialist_profile_projects_to_default_only_in_an_isolated_home() -> None:
+    registry = _registry()
+    specialist = next(raw.identity for raw in registry.resolver.raw.values()
+                      if raw.kind == "profiles" and raw.identity != "hermes")
+    discovery = registry.discover([f"profiles/{specialist}@*"])
+    compiled = registry.materialize(discovery)
+    selected = _selected_files(compiled, specialist, native_profile_key="default")
+
+    assert {"SOUL.md", "profile.yaml", "config.yaml"} <= set(selected)
+    assert not any(path.startswith("profiles/") for path in selected)
+    assert all(path.startswith("skills/") or path in {"SOUL.md", "profile.yaml", "config.yaml"}
+               for path in selected)
+    assert b"display_name: Jarvis" not in selected["profile.yaml"]
+
+
 def test_all_bundled_profiles_compile_to_their_exact_profile_local_skill_closures() -> None:
     registry = _registry()
     profile_ids = sorted(key.split("/", 1)[1].split("@", 1)[0]
@@ -199,7 +214,8 @@ def test_discovery_receipt_is_durably_inserted_and_keeps_exact_selection(tmp_pat
         """)
     selection = NativeMaterializationSelection(
         "enrollment", "generation", "service", "b" * 64, 123, 456,
-        "home-id", "data-id", "source-artifact", "c" * 32, "d" * 32)
+        "home-id", "data-id", "source-artifact", "c" * 32, "d" * 32,
+        "profile", "profiles/profile.yaml", "e" * 64, "resources-revision")
     discovery = NativeInstallReceipt(
         PINNED_HERMES_REVISION, "3.14.7", "profile", True, True,
         ("skill-one",), ("skill-one",), {"profile": "d" * 64})
@@ -233,7 +249,8 @@ def test_pm_python_resolver_is_bound_to_the_selected_receipt(tmp_path: Path) -> 
     operation._pm_runtime_resolver = Resolver()
     selection = NativeMaterializationSelection(
         "enrollment", "generation", "service", "b" * 64, 123, 456,
-        "home-id", "data-id", "source-artifact", "c" * 32, "d" * 32)
+        "home-id", "data-id", "source-artifact", "c" * 32, "d" * 32,
+        "profile", "profiles/profile.yaml", "e" * 64, "resources-revision")
     assert operation._resolve_hermes_python(selection) == executable
     assert seen == {
         "pm_runtime_handle": "d" * 32,

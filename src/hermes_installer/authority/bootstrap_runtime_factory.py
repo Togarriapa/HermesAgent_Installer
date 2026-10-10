@@ -509,12 +509,28 @@ class RootSelectedInstallationBinding:
             home_root_id=selected.home_root_id, data_root_id=selected.data_root_id,
             source_artifact_id=selected.source_artifact_id,
             source_receipt_handle=selected.source_receipt_handle,
-            pm_runtime_handle=selected.pm_runtime_handle)
+            pm_runtime_handle=selected.pm_runtime_handle,
+            resource_profile_id=selected.resource_profile_id,
+            resource_manifest_path=selected.resource_manifest_path,
+            resource_manifest_sha256=selected.resource_manifest_sha256,
+            resources_revision=selected.resources_revision)
 
     def resolve_private_roots(self, selection: Any) -> "_RootPrivateInstallationRoots":
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentError("installation binding does not belong to its root setup session")
         return self._session._resolve_private_installation_roots(selection)
+
+    def resolve_current_hermes_profile_target(self, source_profile_id: str) -> Any:
+        """Expose a current source-ID target only after root revalidation."""
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("Hermes profile target binding is not owned by this root session")
+        return self._session.resolve_profile(source_profile_id)
+
+    def resolve_profile(self, profile_id: str) -> Any | None:
+        """Implement SelectedHermesProfileResolver for protected composition."""
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("Hermes profile resolver binding is not owned by this root session")
+        return self._session.resolve_profile(profile_id)
 
     def prepare_selected_profile_overlay_view(
             self, native_policy_selection_handle: str,
@@ -1254,6 +1270,10 @@ class _BoundNativeSelection:
     pm_runtime_handle: str
     resource_profile_selection_receipt_handle: str
     resources_source_receipt_handle: str
+    resource_profile_id: str
+    resource_manifest_path: str
+    resource_manifest_sha256: str
+    resources_revision: str
     _session_id: str = field(repr=False)
     _seal: str = field(repr=False)
 
@@ -1280,6 +1300,29 @@ class RootSelectedResourceProfile:
     issued_monotonic: float
     expires_monotonic: float
     signature: str
+    _session_seal: str = field(repr=False, compare=False)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootSelectedNativeProfileHomeSource:
+    """Path-free source-to-owned-home crosswalk held by the current setup root.
+
+    Namespace and runtime dispatch receipts are deliberately not inferred here:
+    a materialized home is content custody, not a current principal/task grant.
+    """
+    source_profile_id: str
+    source_revision: str
+    source_manifest_sha256: str
+    role: str
+    native_profile_key: str
+    display_name: str
+    home_selection_handle: str
+    materialization_receipt_handle: str | None
+    profile_generation: str
+    namespace_id: str | None
+    runtime_receipt_handle: str | None
+    mapping_sha256: str
+    setup_session_id: str
     _session_seal: str = field(repr=False, compare=False)
 
 
@@ -4840,6 +4883,7 @@ class RootBootstrapSession:
         # protected task/runtime path must still establish its current
         # principal, namespace and operation grants before dispatch.
         self._resource_profile_source_index: dict[str, tuple[str, str, str]] = {}
+        self._resource_profile_home_selection_handles: dict[str, str] = {}
         self._resource_profile_tty_proofs: dict[str, Any] = {}
         self._application_setup_choices: dict[str, RootSelectedApplicationQualificationChoice] = {}
         self._application_source_preparations: dict[str, Any] = {}
@@ -4864,6 +4908,8 @@ class RootBootstrapSession:
         self._verified_resources: dict[str, tuple[Any, Any]] = {}
         self._native_materializer: Any | None = None
         self._native_materialization_receipts: dict[str, Any] = {}
+        self._native_delegate_materializers: dict[str, Any] = {}
+        self._native_delegate_materialization_receipts: dict[str, Any] = {}
         self._prepared_native_bundle: RootPreparedNativeBundle | None = None
         self._native_assembly_selections: dict[str, RootNativeBootstrapAssemblySelection] = {}
         self._native_assembly_definitions: dict[str, RootNativeAssemblyDefinitions] = {}
@@ -7129,6 +7175,10 @@ class RootBootstrapSession:
                 source_id: (source_path, source_digest, verified_source.revision)
                 for source_id, source_path, source_digest in profiles
             }
+            self._resource_profile_home_selection_handles = {
+                source_id: secrets.token_urlsafe(32)
+                for source_id, _source_path, _source_digest in profiles
+            }
             tty_proof = None
             return receipt_handle
         finally:
@@ -7308,7 +7358,235 @@ class RootBootstrapSession:
             resource_profile_id=profile.profile_id,
         )
         self._native_materialization_receipts[receipt.receipt_handle] = receipt
+        # Every specialist source identity is staged into its own root-derived
+        # HERMES_HOME. The primary home remains the only Desktop-served home.
+        # Each invocation repeats pinned native discovery/load in that home;
+        # the source index itself never grants runtime dispatch.
+        for delegate_id in sorted(self._resource_profile_source_index):
+            if delegate_id != profile.profile_id:
+                self.stage_selected_native_profile_delegate(delegate_id)
         return receipt
+
+    def stage_selected_native_profile_delegate(self, resource_profile_id: str) -> Any:
+        """Materialize one verified specialist source into its isolated native home.
+
+        The source ID is accepted only as an identity present in the retained
+        signed Resources bundle. It is validated before deriving the fixed
+        service-data subhome and never interpreted as a caller-supplied path.
+        """
+        self._check_live()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or not isinstance(resource_profile_id, str)
+                or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", resource_profile_id)
+                or resource_profile_id == "hermes"):
+            raise BootstrapEnrollmentPending("delegate materialization requires a current specialist source ID")
+        if resource_profile_id in self._native_delegate_materialization_receipts:
+            receipt = self._native_delegate_materialization_receipts[resource_profile_id]
+            if (receipt.service_generation == prepared.generation_id
+                    and receipt.protected_enrollment_digest == prepared.generation_digest):
+                return receipt
+            raise BootstrapEnrollmentPending("retained delegate materialization belongs to a stale generation")
+        if not self._pm_runtime_handle or self._pm_runtime_registry is None:
+            raise BootstrapEnrollmentPending("delegate materialization requires the current official PM runtime")
+        source_row = self._resource_profile_source_index.get(resource_profile_id)
+        bundles = [(handle, bundle) for handle, bundle in self._verified_resources.items()
+                   if bundle[0].revision == (source_row[2] if isinstance(source_row, tuple) and len(source_row) == 3 else None)]
+        matching_raw = ([] if len(bundles) != 1 else [raw for raw in bundles[0][1][1].resolver.raw.values()
+                                                      if raw.kind == "profiles"
+                                                      and raw.identity == resource_profile_id])
+        if (not isinstance(source_row, tuple) or len(source_row) != 3 or len(bundles) != 1
+                or len(matching_raw) != 1):
+            raise BootstrapEnrollmentPending("delegate identity is not in the current verified Resources registry")
+        source_handle, (verified_source, registry) = bundles[0]
+        member_path, member_sha, source_revision = source_row
+        if (source_revision != verified_source.revision
+                or verified_source.files.get(member_path) is None
+                or hashlib.sha256(verified_source.files[member_path]).hexdigest() != member_sha):
+            raise BootstrapEnrollmentPending("delegate manifest differs from the retained verified source bytes")
+        parent = Path(self._policy.root_policy["service_parent_root"])
+        identity = self._identity.ensure()
+        data_root = parent / "data"
+        subhomes_root = data_root / "native-profiles"
+        delegate_home = subhomes_root / resource_profile_id
+        _create_service_root(subhomes_root, identity)
+        _verify_service_root(subhomes_root, identity)
+        _create_service_root(delegate_home, identity)
+        _verify_service_root(delegate_home, identity)
+        journal_root = self._factory.resolver.journal_root / "native-materialization" / resource_profile_id
+        _ensure_root_directory(self._factory.resolver.journal_root / "native-materialization")
+        _ensure_root_directory(journal_root)
+        if self._source_handoff is None:
+            raise BootstrapEnrollmentPending("verified official Hermes source tree is unavailable")
+        from .native_materialization import RootNativeMaterialization
+        materializer = RootNativeMaterialization(
+            self._selected_installation, registry=registry,
+            home_root=delegate_home, data_root=data_root,
+            journal_root=journal_root,
+            hermes_source=self._source_handoff.source.tree_path,
+            pm_runtime_resolver=self._pm_runtime_registry,
+            output_registry=self._root_native_output_receipts(),
+            delegate_profile_id=resource_profile_id,
+            authority_uid=0,
+        )
+        matches = [item["record"] for item in self._policy.service_record_templates
+                   if isinstance(item.get("record"), Mapping)]
+        if len(matches) != 1 or not isinstance(matches[0].get("enrollment_id"), str):
+            raise BootstrapEnrollmentPending("prepared setup does not select one native service template")
+        receipt = materializer.stage_selected(
+            enrollment_id=matches[0]["enrollment_id"],
+            service_generation=prepared.generation_id,
+            resource_profile_id=resource_profile_id,
+        )
+        if (receipt.resources_revision != source_revision
+                or receipt.resource_profile_id != resource_profile_id):
+            raise BootstrapEnrollmentPending("delegate native receipt differs from its verified source mapping")
+        self._native_delegate_materializers[resource_profile_id] = materializer
+        self._native_delegate_materialization_receipts[resource_profile_id] = receipt
+        return receipt
+
+    def resolve_selected_native_profile_home_source(
+            self, source_profile_id: str) -> RootSelectedNativeProfileHomeSource:
+        """Re-resolve one verified source/home crosswalk without exposing paths.
+
+        Callers still need a separate live process/task admission for execution;
+        this receipt proves only that the source manifest and its isolated
+        native home belong to this setup generation.
+        """
+        self._check_live()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared"
+                or not isinstance(source_profile_id, str)
+                or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", source_profile_id)):
+            raise BootstrapEnrollmentPending("native home source selection is malformed or stale")
+        row = self._resource_profile_source_index.get(source_profile_id)
+        handle = self._resource_profile_home_selection_handles.get(source_profile_id)
+        if not isinstance(row, tuple) or len(row) != 3 or not isinstance(handle, str):
+            raise BootstrapEnrollmentPending("source profile has no current root-held home selection")
+        source_path, source_digest, source_revision = row
+        candidates = [bundle for bundle in self._verified_resources.values()
+                      if bundle[0].revision == source_revision]
+        if len(candidates) != 1:
+            raise BootstrapEnrollmentPending("home source mapping is not joined to one verified current bundle")
+        verified_source, registry = candidates[0]
+        if (source_path not in verified_source.files
+                or hashlib.sha256(verified_source.files[source_path]).hexdigest() != source_digest):
+            raise BootstrapEnrollmentPending("home source manifest changed after verification")
+        raw_rows = [raw for raw in registry.resolver.raw.values()
+                    if raw.kind == "profiles" and raw.identity == source_profile_id]
+        if len(raw_rows) != 1:
+            raise BootstrapEnrollmentPending("home source identity is absent or ambiguous in the verified registry")
+        primary_receipts = [value for value in self._native_materialization_receipts.values()
+                            if value.resource_profile_id == source_profile_id]
+        materialized = (primary_receipts[0] if len(primary_receipts) == 1 else None)
+        if source_profile_id != "hermes":
+            materialized = self._native_delegate_materialization_receipts.get(source_profile_id)
+        if (materialized is None or materialized.service_generation != prepared.generation_id
+                or materialized.protected_enrollment_digest != prepared.generation_digest
+                or materialized.resource_profile_id != source_profile_id
+                or materialized.resources_revision != source_revision):
+            raise BootstrapEnrollmentPending("source profile does not yet have a current discovered native home")
+        runtime_handle = self._pm_runtime_handle
+        if not isinstance(runtime_handle, str):
+            raise BootstrapEnrollmentPending("native home has no current official PM runtime receipt")
+        role = "jarvis-primary-home" if source_profile_id == "hermes" else "resource-delegate-home"
+        native_key = "default"
+        display_name = ("Jarvis" if source_profile_id == "hermes"
+                        else source_profile_id.replace("-", " ").replace("_", " ").title())
+        namespace_id: str | None = None
+        try:
+            current_identity = self.resolve_current_setup_identity()
+            namespace_id = current_identity.namespace.namespace_id
+        except (BootstrapEnrollmentPending, BootstrapEnrollmentError, AttributeError):
+            # Materialization precedes some installations' principal adoption.
+            # Preserve the source/home crosswalk while keeping execution
+            # unavailable until the current namespace can be re-resolved.
+            namespace_id = None
+        digest_fields = {
+            "source_profile_id": source_profile_id,
+            "source_revision": source_revision,
+            "source_manifest_sha256": source_digest,
+            "role": role,
+            "native_profile_key": native_key,
+            "display_name": display_name,
+            "home_selection_handle": handle,
+            "materialization_receipt_handle": materialized.receipt_handle,
+            "profile_generation": prepared.generation_id,
+            "runtime_receipt_handle": runtime_handle,
+            "namespace_id": namespace_id,
+        }
+        mapping_sha = hashlib.sha256(_canonical(digest_fields)).hexdigest()
+        receipt = RootSelectedNativeProfileHomeSource(
+            source_profile_id, source_revision, source_digest, role, native_key,
+            display_name, handle, materialized.receipt_handle,
+            prepared.generation_id, namespace_id, runtime_handle, mapping_sha,
+            self._handle.session_id, self._seal,
+        )
+        if receipt._session_seal != self._seal:
+            raise BootstrapEnrollmentPending("native home source receipt lost its root session binding")
+        return receipt
+
+    def resolve_profile(self, source_profile_id: str) -> Any | None:
+        """Implement the existing resolver protocol from root-held receipts.
+
+        This returns launch inputs for the protected internal job runner only.
+        It does not grant an operation, principal, profile, or namespace access;
+        those are rechecked by resource-task admission independently.
+        """
+        try:
+            crosswalk = self.resolve_selected_native_profile_home_source(source_profile_id)
+            prepared = self._last_receipt
+            if (prepared is None or crosswalk.namespace_id is None
+                    or crosswalk.runtime_receipt_handle is None
+                    or crosswalk.materialization_receipt_handle is None):
+                return None
+            identity = self.resolve_current_setup_identity()
+            if identity.namespace.namespace_id != crosswalk.namespace_id:
+                return None
+            runtime = self._pm_runtime_registry.resolve_runtime(
+                crosswalk.runtime_receipt_handle,
+                self._authorization.transaction_handle,
+                prepared.generation_id,
+            )
+            root = Path(self._policy.root_policy["service_parent_root"])
+            home = (root / "home" if source_profile_id == "hermes"
+                    else root / "data" / "native-profiles" / source_profile_id)
+            service_identity = self._identity.ensure()
+            _verify_service_root(home, service_identity)
+            if self._source_handoff is None:
+                return None
+            from ..registry.native_install import NativeInstallError, discover_profile_names
+            try:
+                listing = discover_profile_names(
+                    hermes_source=self._source_handoff.source.tree_path,
+                    python=runtime.python_path, hermes_root=home, timeout=20.0,
+                )
+            except NativeInstallError:
+                return None
+            if listing != ("default",):
+                return None
+            from ..registry.resources_runtime import HermesProfileExecutionTarget
+            source = next((row for row in self._resource_profiles.values()
+                           if row.resources_revision == crosswalk.source_revision), None)
+            if source is None or source.resources_source_sha256 is None:
+                return None
+            if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", source.resources_source_artifact_id):
+                return None
+            child_ref = (f"artifact:{source.resources_source_artifact_id}:"
+                         f"{source.resources_source_sha256}")
+            child_refs = {child_ref: source.resources_source_sha256}
+            return HermesProfileExecutionTarget(
+                profile_id=source_profile_id,
+                executable=runtime.python_path,
+                artifact_sha256=runtime.runtime_sha256,
+                artifact_root=self._source_handoff.source.tree_path,
+                cwd=home,
+                data_root=home,
+                env_allowlist={"HERMES_HOME": str(home)},
+                child_artifact_refs=child_refs,
+            )
+        except (BootstrapEnrollmentPending, BootstrapEnrollmentError, OSError, ValueError):
+            return None
 
     def prepare_selected_native_bundle(self) -> RootPreparedNativeBundle:
         """Run the reviewed source, PM, TTY-profile and native-materialization steps.
@@ -8345,10 +8623,17 @@ class RootBootstrapSession:
             raise BootstrapEnrollmentError("native materialization enrollment is not uniquely selected by policy")
         selected_profiles = [self.resolve_selected_resource_profile(handle)
                              for handle in tuple(self._resource_profiles)]
-        selected_profiles = [row for row in selected_profiles if row.profile_id == resource_profile_id]
-        if len(selected_profiles) != 1:
+        if (len(selected_profiles) != 1
+                or selected_profiles[0].profile_id != "hermes"):
             raise BootstrapEnrollmentPending(
-                "native materialization requires the unique live root-TTY Resources profile selection")
+                "native materialization requires the unique live Jarvis root-TTY source selection")
+        source_member = self._resource_profile_source_index.get(resource_profile_id)
+        if (not isinstance(source_member, tuple) or len(source_member) != 3
+                or not isinstance(source_member[0], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", source_member[1])
+                or source_member[2] != selected_profiles[0].resources_revision):
+            raise BootstrapEnrollmentPending(
+                "native source profile is not in the current verified Resources bundle")
         if not self._pm_runtime_handle or self._pm_runtime_registry is None:
             raise BootstrapEnrollmentPending(
                 "native materialization requires the current official PM-managed Python 3.14 receipt")
@@ -8375,6 +8660,10 @@ class RootBootstrapSession:
             pm_runtime_handle=self._pm_runtime_handle,
             resource_profile_selection_receipt_handle=selected_resource.receipt_handle,
             resources_source_receipt_handle=resource_source_receipt,
+            resource_profile_id=resource_profile_id,
+            resource_manifest_path=source_member[0],
+            resource_manifest_sha256=source_member[1],
+            resources_revision=source_member[2],
             _session_id=self._handle.session_id, _seal=self._seal,
         )
 
@@ -8401,7 +8690,12 @@ class RootBootstrapSession:
         except Exception:
             raise BootstrapEnrollmentError("native materialization source/profile/runtime receipts are stale") from None
         identity = self._identity.ensure()
-        if (profile.resources_source_receipt_handle != selection.resources_source_receipt_handle
+        current_source_member = self._resource_profile_source_index.get(selection.resource_profile_id)
+        if (profile.profile_id != "hermes"
+                or current_source_member != (selection.resource_manifest_path,
+                                             selection.resource_manifest_sha256,
+                                             selection.resources_revision)
+                or profile.resources_source_receipt_handle != selection.resources_source_receipt_handle
                 or self._resource_profiles.get(profile.receipt_handle) is not profile
                 or pm_runtime.source_artifact_id != selection.source_artifact_id
                 or pm_runtime.uid != 0

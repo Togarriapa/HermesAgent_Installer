@@ -61,6 +61,10 @@ class NativeMaterializationSelection:
     source_artifact_id: str
     source_receipt_handle: str
     pm_runtime_handle: str
+    resource_profile_id: str
+    resource_manifest_path: str
+    resource_manifest_sha256: str
+    resources_revision: str
 
 
 class RootSelectedInstallationBinding(Protocol):
@@ -139,6 +143,7 @@ class RootNativeMaterialization:
                  journal_root: Path, hermes_source: Path,
                  pm_runtime_resolver: NativePMRuntimeResolver,
                  output_registry: RootMaterializationReceiptRegistry | None = None,
+                 delegate_profile_id: str | None = None,
                  authority_uid: int = 0,
                  monotonic=time.monotonic):
         if (not isinstance(registry, NativeRegistry)
@@ -157,6 +162,12 @@ class RootNativeMaterialization:
         self._hermes_source = _absolute_root(hermes_source)
         self._pm_runtime_resolver = pm_runtime_resolver
         self._output_registry = output_registry
+        if (delegate_profile_id is not None
+                and (not isinstance(delegate_profile_id, str)
+                     or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", delegate_profile_id)
+                     or delegate_profile_id == PRIMARY_USER_SOURCE_PROFILE_ID)):
+            raise NativeMaterializationDenied("delegate source profile identity is malformed")
+        self._delegate_profile_id = delegate_profile_id
         if len({self._home_root, self._data_root, self._journal_root}) != 3:
             raise NativeMaterializationDenied("selected home, data, and journal roots must be distinct")
         self._authority_uid = authority_uid
@@ -187,13 +198,15 @@ class RootNativeMaterialization:
                        resource_profile_id: str) -> NativeMaterializationReceipt:
         """Compile and atomically write one current profile and its skill closure."""
         self._require_authority()
-        # The installer backend is always the one user-facing profile. Resource
-        # specialists are never placed in its profile rail; their materializer
-        # must be selected through a separately owned internal HERMES_HOME.
-        if resource_profile_id != PRIMARY_USER_SOURCE_PROFILE_ID:
+        # The installer backend is always the one user-facing profile. A
+        # specialist materializer is separately constructed with its fixed
+        # source ID and its own HERMES_HOME; it cannot redirect this primary
+        # materializer by passing another profile ID.
+        is_primary = resource_profile_id == PRIMARY_USER_SOURCE_PROFILE_ID
+        if (is_primary and self._delegate_profile_id is not None
+                or not is_primary and resource_profile_id != self._delegate_profile_id):
             raise NativeMaterializationDenied(
-                "the Desktop backend accepts only the primary Resources profile; "
-                "specialists require protected isolated-home routing"
+                "selected Resources profile does not match this fixed native home"
             )
         selection = self._selection(enrollment_id, service_generation, resource_profile_id)
         _verify_root(self._home_root, owner_uid=selection.service_uid, owner_gid=selection.service_gid)
@@ -455,7 +468,13 @@ class RootNativeMaterialization:
                 or type(selection.service_gid) is not int or selection.service_gid <= 0
                 or not selection.home_root_id or not selection.data_root_id
                 or not selection.source_artifact_id or not _opaque_handle(selection.source_receipt_handle)
-                or not _opaque_handle(selection.pm_runtime_handle)):
+                or not _opaque_handle(selection.pm_runtime_handle)
+                or selection.resource_profile_id != resource_profile_id
+                or not isinstance(selection.resource_manifest_path, str)
+                or not selection.resource_manifest_path.startswith("profiles/")
+                or not selection.resource_manifest_path.endswith(".yaml")
+                or not re.fullmatch(r"[0-9a-f]{64}", selection.resource_manifest_sha256)
+                or not selection.resources_revision):
             raise NativeMaterializationDenied("root setup binding did not authorize this selected generation")
         return selection
 
