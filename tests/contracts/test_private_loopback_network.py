@@ -13,6 +13,7 @@ from hermes_installer.authority.private_loopback_network import (
     validate_private_loopback_networks, _topology_valid, verify_unit_network_readback,
     RootPrivateLoopbackNetworkLease, RootNetworkMemberProof, RootResolvedHostTool,
     create_root_namespace, renew_root_network_lease, verify_root_network_lease,
+    _canonical_link_attributes, _state_digest,
 )
 from hermes_installer.authority.types import AuthorityDenied
 
@@ -152,6 +153,22 @@ class PrivateLoopbackNetworkContracts(unittest.TestCase):
         for mutation in mutations:
             with self.subTest(mutation=mutation["links"][1]):
                 self.assertFalse(_topology_valid(mutation))
+
+    def test_link_fingerprint_ignores_only_live_counters(self):
+        before = _canonical_link_attributes([
+            (1, b"\x02\x00"), (7, b"rx-bytes=100"),
+            (23, b"rx-packets=4"), (4, b"stable-link-fact"),
+        ])
+        after_traffic = _canonical_link_attributes([
+            (23, b"rx-packets=44"), (7, b"rx-bytes=900"),
+            (4, b"stable-link-fact"), (1, b"\x02\x00"),
+        ])
+        changed_link = _canonical_link_attributes([
+            (1, b"\x02\x00"), (7, b"rx-bytes=900"),
+            (23, b"rx-packets=44"), (4, b"changed-link-fact"),
+        ])
+        self.assertEqual(_state_digest(before), _state_digest(after_traffic))
+        self.assertNotEqual(_state_digest(before), _state_digest(changed_link))
 
     def test_stale_lease_stops_only_retained_owned_units(self):
         network, = validate_private_loopback_networks([self.row], self.services, self.digest)
