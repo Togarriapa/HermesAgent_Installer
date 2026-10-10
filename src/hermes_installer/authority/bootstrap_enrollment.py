@@ -61,7 +61,7 @@ class BootstrapPendingStepFailure(BootstrapEnrollmentPending):
 
 
 @contextmanager
-def bootstrap_enrollment_pending_step(step: str) -> Iterator[None]:
+def bootstrap_pending_step(step: str) -> Iterator[None]:
     """Tag only an exact pending prerequisite with a reviewed fixed stage."""
     if type(step) is not str or step not in BootstrapPendingStepFailure.STEPS:
         raise ValueError("bootstrap pending diagnostic step is outside the fixed catalog")

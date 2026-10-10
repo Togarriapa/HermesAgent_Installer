@@ -31,7 +31,7 @@ from ..hermes_source import HERMES_SOURCE_ARTIFACT_ID
 from .bootstrap_enrollment import (
     BootstrapEnrollmentError,
     BootstrapEnrollmentPending,
-    bootstrap_enrollment_pending_step,
+    bootstrap_pending_step,
     BootstrapEnrollmentRequest,
     EnrollmentPolicy,
     EnrollmentReceipt,
@@ -2889,7 +2889,7 @@ class RootInitialCompilationRegistry:
             raise BootstrapEnrollmentPending("stage-zero compiler requires sealed release, actor and fixed journal")
         if os.geteuid() != 0 or not InstalledBootstrapPolicyResolver._linux():
             raise BootstrapEnrollmentPending("stage-zero compilation requires installed Linux root authority")
-        with bootstrap_enrollment_pending_step("initial_compilation.actor_current"):
+        with bootstrap_pending_step("initial_compilation.actor_current"):
             actor.verify_current(release)
         self.release, self.actor, self.root_journal = release, actor, root_journal
         _ensure_root_directory(root_journal)
@@ -2912,21 +2912,21 @@ class RootInitialCompilationRegistry:
         return cls(verified_release_receipt, installed_actor_verifier, root_journal)
 
     def begin_initial_compilation(self, explicit_choices: RootSetupChoices) -> RootInitialCompilationSession:
-        with bootstrap_enrollment_pending_step("initial_compilation.validation"):
+        with bootstrap_pending_step("initial_compilation.validation"):
             choices = self._validate_choices(explicit_choices)
         if choices.mode != "install":
-            with bootstrap_enrollment_pending_step("initial_compilation.install_mode"):
+            with bootstrap_pending_step("initial_compilation.install_mode"):
                 raise BootstrapEnrollmentPending("repair and resume require the currently installed root selection")
-        with bootstrap_enrollment_pending_step("initial_compilation.release_closure"):
+        with bootstrap_pending_step("initial_compilation.release_closure"):
             self._validate_release_closure()
         now = time.monotonic()
         session_handle = secrets.token_hex(32)
         transaction_handle = secrets.token_hex(32)
         release_handle = secrets.token_hex(32)
         actor_handle = secrets.token_hex(32)
-        with bootstrap_enrollment_pending_step("initial_compilation.template"):
+        with bootstrap_pending_step("initial_compilation.template"):
             template, _template_bytes = self._release_file(_TEMPLATE_ID)
-        with bootstrap_enrollment_pending_step("initial_compilation.catalog"):
+        with bootstrap_pending_step("initial_compilation.catalog"):
             source_catalog, _catalog_bytes = self._release_file(_CATALOG_ID)
         choice_body = {
             "mode": choices.mode, "target_account_name": choices.target_account_name,
@@ -2935,7 +2935,7 @@ class RootInitialCompilationRegistry:
             "selected_component_ids": list(choices.selected_component_ids),
             "owned_adoption_receipt_handles": list(choices.owned_adoption_receipt_handles),
         }
-        with bootstrap_enrollment_pending_step("initial_compilation.journal"):
+        with bootstrap_pending_step("initial_compilation.journal"):
             root_journal_row = MappingProxyType(self._root_journal_row())
         session = RootInitialCompilationSession(
             1, "initial-compilation", session_handle, transaction_handle, release_handle, actor_handle,
@@ -2946,7 +2946,7 @@ class RootInitialCompilationRegistry:
             self.release, self.actor, root_journal_row, self._seal,
         )
         self._sessions[session_handle] = session
-        with bootstrap_enrollment_pending_step("initial_compilation.actor_write"):
+        with bootstrap_pending_step("initial_compilation.actor_write"):
             self._write_actor_receipt(session)
         return session
 
@@ -3620,7 +3620,7 @@ class RootInitialCompilationRegistry:
                 or not isinstance(value.target_account_name, str)
                 or not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", value.target_account_name)):
             raise BootstrapEnrollmentError("stage-zero mode or target account choice is malformed")
-        with bootstrap_enrollment_pending_step("initial_compilation.account"):
+        with bootstrap_pending_step("initial_compilation.account"):
             try:
                 account = pwd.getpwnam(value.target_account_name)
             except KeyError:
@@ -4526,7 +4526,7 @@ class RootInitialSetupAggregate:
             raise
 
     def begin_install(self, target_account_name: str) -> RootInitialCompilationSession:
-        with bootstrap_enrollment_pending_step("initial_compilation.actor_current"):
+        with bootstrap_pending_step("initial_compilation.actor_current"):
             self._require_open()
         return self.initial_registry.begin_initial_compilation(RootSetupChoices(
             "install", target_account_name, None, (), ()))

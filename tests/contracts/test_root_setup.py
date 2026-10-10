@@ -175,14 +175,14 @@ class RootSetupBoundaryTests(unittest.TestCase):
     def test_bootstrap_pending_step_diagnostic_is_fixed_and_redacts_details(self) -> None:
         from hermes_installer.authority.bootstrap_enrollment import (
             BootstrapEnrollmentPending, BootstrapPendingStepFailure,
-            bootstrap_enrollment_pending_step,
+            bootstrap_pending_step,
         )
 
         private_detail = "/etc/hermes-installer/credentials/provider-token API_KEY=sentinel"
         for step in BootstrapPendingStepFailure.STEPS:
             with self.subTest(step=step):
                 with self.assertRaises(BootstrapPendingStepFailure) as caught:
-                    with bootstrap_enrollment_pending_step(step):
+                    with bootstrap_pending_step(step):
                         raise BootstrapEnrollmentPending(private_detail)
                 failure = caught.exception
                 self.assertEqual(failure.step, step)
@@ -207,7 +207,7 @@ class RootSetupBoundaryTests(unittest.TestCase):
 
         original = PendingSubclass(private_detail)
         with self.assertRaises(PendingSubclass) as unwrapped:
-            with bootstrap_enrollment_pending_step("initial_compilation.catalog"):
+            with bootstrap_pending_step("initial_compilation.catalog"):
                 raise original
         self.assertIs(unwrapped.exception, original)
         self.assertEqual(
@@ -233,7 +233,7 @@ class RootSetupBoundaryTests(unittest.TestCase):
             "A required root-selected setup prerequisite is pending; rerun the root setup action after resolving it.",
         )
         with self.assertRaises(ValueError):
-            with bootstrap_enrollment_pending_step(private_detail):
+            with bootstrap_pending_step(private_detail):
                 pass
 
     def test_source_choice_runtime_failure_reports_only_fixed_boundary(self) -> None:
