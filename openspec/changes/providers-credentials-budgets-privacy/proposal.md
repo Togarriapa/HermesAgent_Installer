@@ -57,3 +57,5 @@ Runtime choice revocation source v156: `plans/amendments/2026-10-10-runtime-choi
 Native capture profiles v158: `plans/amendments/2026-10-10-native-capture-profiles-v158.md`; genuine raw root input/result source and exact selected validator/action/role joins, separate presentation evidence.
 
 MCP discovery capture v171: `plans/amendments/2026-10-10-mcp-discovery-capture-v171.md`; genuine retained tools/list witness distinct selected tools/call result schema.
+
+Initial public TTY source v174: `plans/amendments/2026-10-10-initial-public-tty-source-v174.md`; actual fresh root foreground input/disclosure/source precedes admission, never promotes PRIVATE task input.
