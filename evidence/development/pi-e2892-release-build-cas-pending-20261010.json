@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "record_kind": "operator_reported_pi_release_build_cas_pending",
+  "state": "handoff_proof_observed_release_build_pending",
+  "authenticated": false,
+  "acceptance_record_emitted": false,
+  "accepted_target_result": false,
+  "change_ids": ["installer-bootstrap-desktop", "lifecycle-recovery", "verification-documentation"],
+  "task_ids": ["BD-T208.1", "VD-T208.2", "BD-F03", "LC-F03"],
+  "target": {
+    "target_name": "PI-HERMES",
+    "architecture": "aarch64",
+    "executor_uid": 0,
+    "executor_gid": 0
+  },
+  "candidate": {
+    "commit": "e2892d685d021530d6210943658b825f62ea28fa",
+    "tree": "bb503e4f2efd43a5d1f4ac4b7d0212b5926183d3",
+    "source_archive_sha256": "bbf15a2874511a4243ee18e041c10c05b4fdfa84fcc1fc8ffe08a38d8032ac6f",
+    "frozen_annotated_tag_verified": true
+  },
+  "root_installer_attempt": {
+    "timestamp": null,
+    "timestamp_status": "not supplied",
+    "initial_full_sha_prompt_entry": "entered promptly, as reported",
+    "source_and_runtime_provisioning": "reported to have progressed to the second handoff prompt",
+    "second_full_sha_prompt_entry": true,
+    "fd3_exec_handoff": "passed, as reported",
+    "trace_location": "_bootstrap_after_reexec at bootstrap.py:3031; builder.build_selected",
+    "failure_location": "bootstrap.py:2615",
+    "exception": "BootstrapEnrollmentPending",
+    "exact_message": "release build CAS has no bounded space for another sealed output",
+    "outcome": "release build remained pending; no installation or acceptance result"
+  },
+  "read_only_host_observations": {
+    "timestamp": null,
+    "timestamp_status": "not supplied",
+    "installed_release_root": {"path": "/usr/lib/hermes-installer", "state": "absent after attempt"},
+    "root_filesystem": {
+      "total_bytes": 1007730692096,
+      "used_bytes": 61942558720,
+      "free_bytes": 904770011136
+    },
+    "limitation": "Host filesystem free-byte count is not the release-build CAS bounded-output allowance or proof of CAS capacity."
+  },
+  "read_only_release_build_cas_observation": {
+    "path": "/var/lib/hermes-installer/authority-journal/release-build-cas",
+    "entry_count": 1,
+    "entry_id": "d3fe050df8af4d5a5f28eedb178e9f09b89bf9f23dff3536",
+    "owner_uid": 0,
+    "mode_octal": "0700",
+    "file_count": 5279,
+    "total_bytes": 606706296,
+    "symlink_count": 0,
+    "operator_reported_limit": "Current check usage plus the next 16 GiB sealed output exceeds the configured 16 GiB bound, so another retained byte is blocked.",
+    "interpretation_limit": "This metadata is a read-only follow-up, not a new Pi acceptance result. The exact release build remains pending; filesystem free space does not override the CAS bound. No CAS entry was deleted."
+  },
+  "followup": {
+    "status": "CAS metadata was observed; bootstrap owner is implementing bounded accounting for the selected sealed build.",
+    "cause": "not established",
+    "resource_delete_safe": false
+  },
+  "not_observed": [
+    "completed release build or installed-stage publication",
+    "installed release root or current deployment receipt",
+    "account prompts, credential entry, or enrollment",
+    "active installation, native runtime, or hardware qualification",
+    "source/resource deletion safety"
+  ],
+  "acceptance_assertions": {
+    "AC01": null,
+    "AC02": null,
+    "AC03": null,
+    "AC04": null,
+    "AC05": null,
+    "AC06": null,
+    "AC07": null,
+    "AC08": null,
+    "AC09": null,
+    "AC10": null,
+    "AC11": null,
+    "AC12": null,
+    "AC13": null,
+    "AC14": null,
+    "AC15": null,
+    "AC16": null,
+    "AC17": null,
+    "AC18": null
+  },
+  "claim_limit": "This records the reported successful descriptor-3 exec handoff followed by a pending release-build CAS result. It does not establish install completion or acceptance; all AC01-AC18 remain open."
+}
