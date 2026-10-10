@@ -90,6 +90,9 @@ REVIEWED_SOURCE_MODULES = (
      "ca57637fd1eea4df70549391ba91b14b3842806ef6b789a4baa9d8954c7fdc22", 16_819, "module"),
 )
 REVIEWED_SOURCE_ARTIFACTS = (
+    ("installer-native-mcp-discovery-capture-profile-v171",
+     "plans/amendments/2026-10-10-mcp-discovery-capture-v171/mcp-discovery-capture-v1.json",
+     "bf9b3b649bf995d5743a38597415ef003928e1d67dc337ab5c7f3e7ec9643e8a", 4_601, "amendment"),
     ("installer-native-input-capture-profile-v1",
      "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-input-capture-profile-v1.json",
      "bfdf7175ee1df681b60ab4b707ffe9d314d8cc7fdc5a30a56e19d2cb1372c1d0", 837, "amendment"),

@@ -252353,6 +252353,20 @@
       "max_tree_bytes": 1,
       "tree_files": [],
       "redirect_hosts": []
+    },
+    {
+      "artifact_id": "installer-native-mcp-discovery-capture-profile-v171",
+      "filename": "mcp-discovery-capture-v1.json",
+      "source_url": "https://raw.githubusercontent.com/Togarriapa/HermesAgent_Installer/01f1a1e8da51b2fd1e2168f4c9a6816f2ea6931b/plans/amendments/2026-10-10-mcp-discovery-capture-v171/mcp-discovery-capture-v1.json",
+      "version": "01f1a1e8da51b2fd1e2168f4c9a6816f2ea6931b",
+      "sha256": "bf9b3b649bf995d5743a38597415ef003928e1d67dc337ab5c7f3e7ec9643e8a",
+      "size_bytes": 4601,
+      "max_bytes": 4601,
+      "archive_format": null,
+      "archive_root": null,
+      "max_tree_bytes": 1,
+      "tree_files": [],
+      "redirect_hosts": []
     }
   ],
   "packages": [],

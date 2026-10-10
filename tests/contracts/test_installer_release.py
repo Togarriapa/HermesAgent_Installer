@@ -229,6 +229,9 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
             "hermes-agent-health-fixture-v1": (
                 "fixtures/native-health/recipe.json",
                 "ba7486d3070f725d125ed0e8c42aa986969bc8a597c2473024705d6fd8ac05a7", 845, "native-health-fixture"),
+            "installer-native-mcp-discovery-capture-profile-v171": (
+                "plans/amendments/2026-10-10-mcp-discovery-capture-v171/mcp-discovery-capture-v1.json",
+                "bf9b3b649bf995d5743a38597415ef003928e1d67dc337ab5c7f3e7ec9643e8a", 4_601, "amendment"),
         }
         self.assertEqual({artifact_id: (path, digest, size, role)
                           for artifact_id, path, digest, size, role in REVIEWED_SOURCE_ARTIFACTS}, expected)

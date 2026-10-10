@@ -392,6 +392,25 @@ class ArtifactBrokerContracts(unittest.TestCase):
         self.assertFalse(any("glm52" in row.artifact_id and "weight" in row.artifact_id
                              for row in catalog.artifacts.values()))
 
+    def test_mcp_discovery_profile_catalog_row_is_exact_and_source_only(self):
+        repo = Path(__file__).parents[2]
+        catalog_source = repo / "src/hermes_installer/authority/artifact-catalog.json"
+        catalog_path = self.base / "mcp-profile-catalog.json"
+        catalog_path.write_bytes(catalog_source.read_bytes())
+        catalog_path.chmod(0o600)
+        catalog = load_protected_catalog(catalog_path, expected_uid=self.uid)
+        spec = catalog.artifacts["installer-native-mcp-discovery-capture-profile-v171"]
+        path = "plans/amendments/2026-10-10-mcp-discovery-capture-v171/mcp-discovery-capture-v1.json"
+        body = (repo / path).read_bytes()
+        self.assertEqual(
+            (spec.sha256, spec.size_bytes, spec.max_bytes),
+            ("bf9b3b649bf995d5743a38597415ef003928e1d67dc337ab5c7f3e7ec9643e8a", 4_601, 4_601),
+        )
+        self.assertEqual((len(body), hashlib.sha256(body).hexdigest()), (4_601, spec.sha256))
+        self.assertIsNone(spec.archive_format)
+        self.assertEqual(spec.tree_files, ())
+        self.assertEqual(spec.redirect_hosts, ("raw.githubusercontent.com",))
+
     def test_native_module_and_hyperframes_toolchain_catalog_rows_are_finite_and_exact(self):
         repo = Path(__file__).parents[2]
         catalog_source = repo / "src/hermes_installer/authority/artifact-catalog.json"
