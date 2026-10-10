@@ -17,7 +17,7 @@ import stat
 import sys
 import time
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 
 class RootSetupAction(StrEnum):
@@ -564,6 +564,11 @@ def run_root_setup_action(
         # setup resumable and stop before source selection; never synthesize a
         # future socket path or continue with an empty endpoint binding.
         try:
+            # Root custody owns the fixed /run parent before the endpoint
+            # custodian binds beneath it. The endpoint method revalidates this
+            # same retained receipt; this call makes the required ordering
+            # explicit at the installer dispatch boundary.
+            session.ensure_current_prepared_authority_runtime_root()
             session.ensure_current_prepared_native_worker_endpoint()
         except BootstrapEnrollmentPending as exc:
             return _result(
@@ -579,9 +584,14 @@ def run_root_setup_action(
         # live factory/session. In particular, no caller-provided path or JSON
         # can substitute for the pinned source, PM runtime, or TTY selection.
         bundle = None
+        worker_recipe_candidates: tuple[Any, ...] = ()
+        precompile = None
+        role_closure = None
         try:
             bundle = session.prepare_selected_native_bundle()
-            native_policy_selection = session.observe_native_policy_configuration()
+            worker_recipe_candidates = session.resolve_prepared_native_worker_recipe_candidates(bundle)
+            native_policy_selection = session.observe_native_policy_configuration(
+                worker_recipe_candidates=worker_recipe_candidates)
             from .authority.native_policy_preparation import RootNativePolicyPreparationSelection
             if (type(native_policy_selection) is not RootNativePolicyPreparationSelection
                     or getattr(native_policy_selection, "setup_session_id", None)
@@ -593,18 +603,27 @@ def run_root_setup_action(
                     or getattr(native_policy_selection, "resource_profile_selection_handle", None)
                     != bundle.resource_profile_selection_receipt_handle):
                 raise RuntimeError("native policy choice is not bound to the current prepared transaction")
-            assembly = session.resolve_native_bootstrap_assembly(
-                receipt.provision_receipt_handle, bundle.materialization_receipt_handle)
-            materializer = getattr(session, "_native_materializer", None)
-            if materializer is None:
-                raise RuntimeError("root native materialization actor is not retained")
-            output_receipts = materializer.compile_selected(assembly)
-            _verify_native_output_receipts(output_receipts, session=session,
-                                           prepared_generation_id=receipt.generation_id)
+            # The active compiler reserves the exact five generated outputs
+            # and binds their current PM/output role closure before any active
+            # generation is compiled. This is the same reservation consumed
+            # later by the selected worker producer; it avoids a second,
+            # unbound package compilation path.
+            compiler = session.selected_installation.resolve_current_active_policy_compilation_registry()
+            precompile = compiler.begin_active_policy_precompile(session._handle, bundle)
+            role_closure = session.selected_installation.resolve_selected_runnable_roles(
+                bundle.pm_runtime_receipt_handle, precompile.reservation_handle)
+            if compiler.verify_current_precompile_capability(precompile) is not precompile:
+                raise BootstrapEnrollmentPending("native active precompile reservation is no longer current")
+            if native_policy_selection.selected_worker_recipe_handles:
+                recipe_registry = session.resolve_current_native_worker_recipe_registry()
+                recipe_registry.retain_runnable_closure(native_policy_selection, role_closure)
+                session.resolve_current_native_worker_service_generation_producer()
         except BootstrapEnrollmentPending as exc:
             failure_refs = [_report_ref(receipt.provision_receipt_handle)]
             if bundle is not None:
                 failure_refs.append(_report_ref(bundle.materialization_receipt_handle))
+            if precompile is not None:
+                failure_refs.append(_report_ref(precompile.reservation_handle))
             return _result(
                 selected_action, RootSetupState.PENDING, "materialization", _safe_reason(exc),
                 resume_allowed=True, session_id=session._handle.session_id,
@@ -621,17 +640,25 @@ def run_root_setup_action(
                 receipt_refs=(_report_ref(receipt.provision_receipt_handle),),
             )
 
-        # These five package outputs are not the separate allowlisted runtime
-        # role receipts required by RootBootstrapSession.activate_runnable.
-        # Keep the prepared generation selected until the factory has a
-        # reviewed closure-to-runtime receipt producer; do not equate receipt
-        # IDs or hashes across the two registries.
+        # The reserved five outputs and runnable closure are now retained by
+        # the active compiler. Installer launcher/runtime receipts and the
+        # supervised listener ACK remain separate typed requirements; do not
+        # equate package outputs with those receipts.
         references = [_report_ref(receipt.provision_receipt_handle),
                       _report_ref(bundle.materialization_receipt_handle)]
-        references.extend(_report_ref(item.receipt_id) for item in output_receipts)
+        if precompile is not None:
+            references.extend(_report_ref(item) for item in precompile.receipt_ids)
+            references.append(_report_ref(precompile.reservation_handle))
+        if role_closure is not None:
+            references.append(_report_ref(role_closure.role_closure_handle))
+        worker_status = (
+            "the selected signed worker recipe, "
+            if native_policy_selection.selected_worker_recipe_handles else "the no-worker choice, "
+        )
         return _result(
             selected_action, RootSetupState.PENDING, "publication",
-            "Pinned source, PM runtime, selected Resources, native materialization, and package outputs are retained; strict active enrollment is pending its separate allowlisted runtime-role receipts.",
+            "Pinned source, PM runtime, " + worker_status +
+            "reserved native outputs, and exact runnable role closure are retained; active publication still requires the separately allowlisted runtime receipts and supervised listener acknowledgement.",
             resume_allowed=True,
             session_id=session._handle.session_id,
             transaction_ref=_report_ref(receipt.transaction_handle),
