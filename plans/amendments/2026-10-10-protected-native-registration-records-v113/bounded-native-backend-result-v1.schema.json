@@ -1,0 +1,1 @@
+{"additionalProperties":false,"properties":{"result":{"oneOf":[{"type":"object"},{"type":"array"}]},"result_trust":{"const":"untrusted-backend-data"},"schema":{"const":1}},"required":["schema","result_trust","result"],"type":"object"}
