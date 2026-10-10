@@ -1209,5 +1209,52 @@
     "owner_gid": 0,
     "mode": 448,
     "resolve": "RootBootstrapSession resolves actual selected held root_journal_roots installer-authority-journal-v1 row (root0/0700/no-follow/dev/inode), securely creates/holds fixed child pm-runtimes, passes its private Path to RootPMRuntimeProvisioner and SAME RootPMRuntimeReceiptRegistry only. No user runtime_root/argv/env/path. Existing provisioner root generation child pm-<root random32hex> and receipts storage remain bounded current transaction; stage source/officialPM tool/env actual receipts re-opened/currentness checked. Artifact input store remains separate bootstrap-artifacts selection; service HERMES_HOME remains selected service_parent_root/home, not this provisioning scratch. Official committed PM venv executable resolved from actual receipt, never system Python or guessed source venv."
+  },
+  "pinned_runtime_redirect_v116": {
+    "schema": 1,
+    "artifact_ids": [
+      "installer-bootstrap-cpython314-linux-arm64",
+      "hermes-pm-python314-linux-arm64"
+    ],
+    "initial_url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260901/cpython-3.14.7+20260901-aarch64-unknown-linux-gnu-install_only.tar.gz",
+    "sha256": "30f1cc489be654477d895b441e196bb080738bf0456da82080ad4ab66a22d80f",
+    "size_bytes": 95628137,
+    "maximum_download_bytes": 100663296,
+    "redirect_policy": {
+      "maximum_hops": 1,
+      "allowed_status_codes": [
+        302
+      ],
+      "initial_authority": "github.com",
+      "destination_authority": "release-assets.githubusercontent.com",
+      "scheme": "https",
+      "port": 443,
+      "reject": [
+        "userinfo",
+        "fragment",
+        "non-ASCII or ambiguous hostname",
+        "trailing-dot hostname",
+        "HTTP downgrade",
+        "other hostname/subdomain",
+        "non443port",
+        "second redirect",
+        "missing malformed oversizedLocation",
+        "callerprovided URL/headers"
+      ],
+      "max_location_bytes": 8192,
+      "tls": "Verify certificate and hostname separately at both connections; no insecure/ambient proxy bypass. Resolve fixed exact initial URL only; parse Location with standard URLparser and enforce exact normalized hostname, HTTPS and port before any destination request. No host suffix/wildcard match. Final asset path/query originate only that authenticated first response, never stored as future fixed URL.",
+      "headers": "Public GET only, no Authorization/Cookie/Proxy-Authorization/clientcredential/referrer headers; no credential jar/netrc. Reconstruct destination request with only fixed public downloader headers. Never forward incoming/caller headers or tokens.",
+      "logging": "Signed asset query and raw Location are redacted from logs/argv/evidence/exceptions. Retain origin/destination host, status and SHA256 of raw Location privately if needed; final signedURL is ephemeral retrieval transport, not artifact identity.",
+      "integrity": "Count actual final body bounded; exact final size95628137 and SHA30f1... required before root CAS publication/receipt/extraction. Validate Content-Length if provided but actual bytecount+digest authoritative. Interrupted/short/overlong/hashmismatch deleted privatepartial, no artifactreceipt. Existing expansion/time/storage bounds and stage-only trust/reexec rules unchanged."
+    },
+    "default": "All other artifact downloads keep NoRedirect unless another exact source artifact has separately reviewed policy. No blanket curl -L or unrestricted library auto-follow. This scoped policy applies only exact ID+URL+SHA+size match, not every GitHub asset or catalog entry.",
+    "implementation_owner": "luna_release_build_input: fixed _download_pinned finite policy; normal publicartifact downloader may reuse exact policy only for the same pinned original source row, no grant/authority expansion. Tests exercise actual observed302 and controlled failure redirects/hashes without installing runtime on developmentMac.",
+    "evidence": "Parent actual published c2304767 ARM64 bootstrap source/PyYAML proof passed, runtime exact officialGitHubURL returned302 to release-assets.githubusercontent.com. Isolated bounded follow retrieved exact95628137byteasset; no installedruntime claimed. Officialrelease tag20260901 read successfully, assetpage itself loadingfailure; receipt pin remains prior verified catalog SHA/size, not webpage inference.",
+    "requirements": [
+      "HI-T01",
+      "HI-T08",
+      "installer-bootstrap-desktop"
+    ],
+    "acceptance": "Download/code correction only, actual isolated interpreter/reexec/setup/runtime/nativeall18/physicaltargetacceptance pending. Frozenbaseline unchanged."
   }
 }
