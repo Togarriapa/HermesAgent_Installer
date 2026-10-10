@@ -13,6 +13,7 @@ from hermes_installer.registry.resource_producers import (
     ResourceObservationError,
     SelectedWebhookIngress,
     WebhookRequestObservation,
+    build_selected_webhook_protocol_schema_resolver,
 )
 from hermes_installer.registry.resources_runtime import (
     ResourceIdentity, SelectedResourceExecution, SelectedResourceRegistry,
@@ -82,15 +83,22 @@ class SelectedWebhookIngressTests(unittest.TestCase):
         backend = SimpleNamespace(
             backend_id="backend-github-push", resource_id="github-push", profile_id="hermes",
             generation=resource_generation, observer_enrollment_id="observer-github-push",
+            scope_binding_id="scope-github-push",
             credential_reference_ids=frozenset({"credential-github-push"}),
         )
         enrollment = SimpleNamespace(
             resource_id="github-push", kind="webhooks", selected_enabled=True,
             generation=resource_generation, profile_id="hermes", profile_generation="e" * 64,
             principal_id="principal-hermes", observer_enrollment_id="observer-github-push",
+            source_issuer_channel_id="issuer-github-push",
             max_payload_bytes=1_048_576,
             backends={backend.backend_id: backend},
             nodes=(SimpleNamespace(backend_enrollment_id=backend.backend_id),),
+            scope_bindings={backend.scope_binding_id: SimpleNamespace(
+                backend_enrollment_id=backend.backend_id,
+                fixed_fields={"github_repository_id": 1234,
+                              "github_repository_full_name": "example/project"},
+            )},
         )
         binding = SimpleNamespace(credential_reference_id="credential-github-push")
         bindings, vault = _Bindings(binding), _Vault(secret)
@@ -106,7 +114,9 @@ class SelectedWebhookIngressTests(unittest.TestCase):
 
     def test_selected_hmac_route_resolves_exact_secret_and_claims_replay(self):
         ingress, bindings, vault, secret = self._ingress()
-        body = b'{"ref":"refs/heads/main"}'
+        body = (b'{"ref":"refs/heads/main","before":"' + b"a" * 40
+                + b'","after":"' + b"b" * 40
+                + b'","repository":{"id":1234,"full_name":"example/project"}}')
         signature = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
         headers = (
             ("Content-Type", "application/json"),
@@ -116,7 +126,12 @@ class SelectedWebhookIngressTests(unittest.TestCase):
         )
         receipt = ingress.accept_request("POST", "/hooks/github/push", headers, body)
         self.assertEqual(receipt.resource_id, "github-push")
-        self.assertEqual(receipt.body, body)
+        self.assertEqual(receipt.raw_payload, body)
+        self.assertEqual(receipt.event_data["repository"]["id"], 1234)
+        self.assertEqual(len(receipt.replay_key_sha256), 64)
+        self.assertEqual(ingress._replay_store.seen, {("github-push", receipt.replay_key_sha256)})
+        with self.assertRaises(TypeError):
+            receipt.event_data["ref"] = "refs/heads/attacker"
         self.assertEqual(ingress.routes, ("/hooks/github/push",))
         self.assertEqual(bindings.calls[0][0], (
             "backend-github-push", "${GITHUB_WEBHOOK_SECRET}", "webhook-hmac-verify",
@@ -131,7 +146,9 @@ class SelectedWebhookIngressTests(unittest.TestCase):
 
     def test_bad_signature_wrong_route_duplicate_headers_and_nonpost_fail_closed(self):
         ingress, _bindings, _vault, _secret = self._ingress()
-        body = b'{"ref":"refs/heads/main"}'
+        body = (b'{"ref":"refs/heads/main","before":"' + b"a" * 40
+                + b'","after":"' + b"b" * 40
+                + b'","repository":{"id":1234,"full_name":"example/project"}}')
         headers = (
             ("Content-Type", "application/json"),
             ("X-Hub-Signature-256", "sha256=" + "0" * 64),
@@ -146,6 +163,40 @@ class SelectedWebhookIngressTests(unittest.TestCase):
             ingress.accept_request("GET", "/hooks/github/push", headers, body)
         with self.assertRaisesRegex(ResourceObservationError, "duplicate"):
             ingress.accept_request("POST", "/hooks/github/push", headers + (("content-type", "application/json"),), body)
+
+    def test_unselected_repository_fails_before_durable_replay_claim(self):
+        ingress, _bindings, _vault, secret = self._ingress()
+        body = (b'{"ref":"refs/heads/main","before":"' + b"a" * 40
+                + b'","after":"' + b"b" * 40
+                + b'","repository":{"id":99,"full_name":"attacker/project"}}')
+        headers = (
+            ("Content-Type", "application/json"),
+            ("X-Hub-Signature-256", "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()),
+            ("X-GitHub-Event", "push"),
+            ("X-GitHub-Delivery", "delivery-outside-scope"),
+        )
+        with self.assertRaisesRegex(ResourceObservationError, "outside the selected repository"):
+            ingress.accept_request("POST", "/hooks/github/push", headers, body)
+        self.assertEqual(ingress._replay_store.seen, set())
+
+    def test_selected_protocol_schema_resolver_is_identity_and_generation_bound(self):
+        ingress, _bindings, _vault, _secret = self._ingress()
+        selected = ingress._selected_resources.rows[0]
+        enrollment = ingress._job_enrollments[("github-push", selected.generation_digest)]
+        resolve = build_selected_webhook_protocol_schema_resolver(
+            ingress._selected_resources, ingress._job_enrollments,
+        )
+        self.assertEqual(resolve(
+            "github-push", selected.generation_digest,
+            enrollment.source_issuer_channel_id, "webhook-event",
+        ), ("resource-github-push-v1",
+            "3b27135572adf4392f85b0f37a8dcce0e18dbac2aba811462416807c5e4733c8"))
+        with self.assertRaisesRegex(ResourceObservationError, "source issuer"):
+            resolve("github-push", selected.generation_digest,
+                    "attacker-issuer", "webhook-event")
+        with self.assertRaises(ResourceObservationError):
+            resolve("github-push", "f" * 64,
+                    enrollment.source_issuer_channel_id, "webhook-event")
 
 
 def test_cron_observation_requires_explicit_due_order_and_positive_sequence():

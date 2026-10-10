@@ -1809,7 +1809,8 @@ class WebhookVerifier:
         self.replay_window_seconds, self.now = replay_window_seconds, now
 
     def verify(self, resource_id: str, spec: Mapping[str, Any], headers: Mapping[str, str],
-               body: bytes, secret: bytes) -> WebhookReceipt:
+               body: bytes, secret: bytes, *, replay_identity: str | None = None,
+               claim_replay: bool = True) -> WebhookReceipt:
         _validate_webhook_declaration(spec)
         if not isinstance(body, bytes) or len(body) > self.max_body_bytes:
             raise ResourceRuntimeError("webhook body is malformed or exceeds its size limit")
@@ -1893,7 +1894,12 @@ class WebhookVerifier:
         if not event_id or len(event_id) > 256 or any(ord(c) < 0x20 for c in event_id):
             raise ResourceRuntimeError("webhook delivery identity is missing or invalid")
         received_at = self.now()
-        if not self.replay_store.claim(resource_id, event_id, received_at + self.replay_window_seconds):
+        claimed_id = replay_identity if replay_identity is not None else event_id
+        if (not isinstance(claimed_id, str) or not 1 <= len(claimed_id) <= 256
+                or any(ord(char) < 0x21 or ord(char) > 0x7e for char in claimed_id)):
+            raise ResourceRuntimeError("webhook replay identity is malformed")
+        if claim_replay and not self.replay_store.claim(
+                resource_id, claimed_id, received_at + self.replay_window_seconds):
             raise ResourceRuntimeError("duplicate webhook delivery was rejected")
         return WebhookReceipt(resource_id, event_id, event_type, body,
                               hashlib.sha256(body).hexdigest(), received_at)
