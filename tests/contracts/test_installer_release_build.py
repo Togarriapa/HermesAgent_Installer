@@ -81,6 +81,26 @@ def test_release_builder_pins_literal_model_store_template_and_native_source_mod
         assert (hashlib.sha256(body).hexdigest(), len(body)) == (digest, size)
 
 
+def test_release_builder_stages_only_the_exact_native_health_fixture_members():
+    expected = {
+        "src/hermes_installer/native_health_fixture/request.txt": (
+            "fixtures/native-health/request.txt", "a8ff376fd03484db8c7dc0af141e8e894671467cdc5833ee50a08571d0ee3e7c", 182),
+        "src/hermes_installer/native_health_fixture/seed-value.txt": (
+            "fixtures/native-health/seed-value.txt", "b7cf82519f80550d09ae0ef0f183ad6be9543cc4c15873982cea91819e9a962a", 67),
+        "src/hermes_installer/native_health_fixture/expected-tool-result.json": (
+            "fixtures/native-health/expected-tool-result.json", "23a5b879d3b43b985c468917f34bdd7b592ab35cfd72e767287f16764436523a", 240),
+        "src/hermes_installer/native_health_fixture/tool-result.schema.json": (
+            "fixtures/native-health/tool-result.schema.json", "6b89864f728e6e3e65b34d935c486bad0bc3c0a57bcee92dde5eec33fb1286f5", 526),
+        "src/hermes_installer/native_health_fixture/recipe.json": (
+            "fixtures/native-health/recipe.json", "ba7486d3070f725d125ed0e8c42aa986969bc8a597c2473024705d6fd8ac05a7", 845),
+    }
+    assert {source: (target, digest, size)
+            for source, target, digest, size in release_build.REVIEWED_HEALTH_FIXTURES} == expected
+    for source, (_target, digest, size) in expected.items():
+        body = (Path(__file__).parents[2] / source).read_bytes()
+        assert (hashlib.sha256(body).hexdigest(), len(body)) == (digest, size)
+
+
 @pytest.mark.skipif(not Path("/usr/bin/git").exists(), reason="root source exporter requires system Git")
 def test_git_batch_streams_large_request_and_response_pipes(tmp_path):
     repository = tmp_path / "repository"

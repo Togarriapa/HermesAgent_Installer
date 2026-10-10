@@ -93,6 +93,20 @@ REVIEWED_SOURCE_MODULES = (
      "lib/python/hermes_installer/authority/native_source_definitions.py",
      "ca57637fd1eea4df70549391ba91b14b3842806ef6b789a4baa9d8954c7fdc22", 16_819, "module"),
 )
+REVIEWED_HEALTH_FIXTURES = (
+    ("src/hermes_installer/native_health_fixture/request.txt", "fixtures/native-health/request.txt",
+     "a8ff376fd03484db8c7dc0af141e8e894671467cdc5833ee50a08571d0ee3e7c", 182),
+    ("src/hermes_installer/native_health_fixture/seed-value.txt", "fixtures/native-health/seed-value.txt",
+     "b7cf82519f80550d09ae0ef0f183ad6be9543cc4c15873982cea91819e9a962a", 67),
+    ("src/hermes_installer/native_health_fixture/expected-tool-result.json",
+     "fixtures/native-health/expected-tool-result.json",
+     "23a5b879d3b43b985c468917f34bdd7b592ab35cfd72e767287f16764436523a", 240),
+    ("src/hermes_installer/native_health_fixture/tool-result.schema.json",
+     "fixtures/native-health/tool-result.schema.json",
+     "6b89864f728e6e3e65b34d935c486bad0bc3c0a57bcee92dde5eec33fb1286f5", 526),
+    ("src/hermes_installer/native_health_fixture/recipe.json", "fixtures/native-health/recipe.json",
+     "ba7486d3070f725d125ed0e8c42aa986969bc8a597c2473024705d6fd8ac05a7", 845),
+)
 REVIEWED_CAPABILITY_MAP_PATH = "plans/amendments/2026-10-10-reviewed-native-capability-selection-v91/reviewed-native-capability-map-v1.json"
 REVIEWED_CAPABILITY_MAP_ID = "installer-reviewed-native-capability-map-v1"
 REVIEWED_CAPABILITY_MAP_SHA256 = "41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565"
@@ -124,7 +138,8 @@ BOOTSTRAP_DEPENDENCY_ARTIFACT_ID = "installer-bootstrap-pyyaml603-cp314-linux-ar
 BOOTSTRAP_RUNTIME_TTL_SECONDS = 600.0
 RELEASE_MANIFEST_PATH = "release-manifest.json"
 RELEASE_ROLES = frozenset({"launcher", "interpreter", "module", "source-module", "template", "plan",
-                           "artifact-catalog", "bootstrap-policy", "baseline", "amendment"})
+                           "artifact-catalog", "bootstrap-policy", "baseline", "amendment",
+                           "native-health-fixture"})
 SOURCE_CAS_V65_ROOT = Path("/var/lib/hermes-installer/source-cas/installer")
 STAGED_LAUNCHER_SOURCE = "scripts/hermes-installer-root-setup"
 STAGED_LAUNCHER_PATH = "bin/hermes-installer-root-setup"
@@ -2595,6 +2610,15 @@ class RootInstalledReleaseBuilder:
                 raise InstallerReleaseBuildError("finite native target source module differs from its reviewed pin")
             if target not in staged_paths:
                 self._copy_source(source, output_fd, source_rel, target, (role,))
+                staged.append(self._last_output_row)
+                staged_paths.add(target)
+        for source_rel, target, expected_digest, expected_size in REVIEWED_HEALTH_FIXTURES:
+            source_row = source_files.get(source_rel)
+            if (source_row is None or source_row.sha256 != expected_digest
+                    or source_row.size_bytes != expected_size):
+                raise InstallerReleaseBuildError("native health fixture source differs from its exact reviewed pin")
+            if target not in staged_paths:
+                self._copy_source(source, output_fd, source_rel, target, ("native-health-fixture",))
                 staged.append(self._last_output_row)
                 staged_paths.add(target)
         return staged

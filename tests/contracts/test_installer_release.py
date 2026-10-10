@@ -161,6 +161,9 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
                     for i, (artifact_id, path, digest, size) in enumerate(FIXED_TEMPLATES))
         rows.extend(VerifiedReleaseFile(artifact_id, (role,), path, digest, size, 1, 100 + i, 0o444)
                     for i, (artifact_id, path, digest, size, role) in enumerate(REVIEWED_SOURCE_MODULES))
+        rows.extend(VerifiedReleaseFile(artifact_id, (role,), path, digest, size, 1, 150 + i, 0o444)
+                    for i, (artifact_id, path, digest, size, role) in enumerate(REVIEWED_SOURCE_ARTIFACTS)
+                    if role == "native-health-fixture")
         rows.extend((
             VerifiedReleaseFile("baseline-file", ("baseline",), "plans/2026-10-09-v1/file.json",
                                 "5" * 64, 1, 1, 200, 0o444),
@@ -211,12 +214,45 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
             "installer-native-provider-result-capture-profile-v1": (
                 "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-provider-result-capture-profile-v1.json",
                 "a2c6ae9243a7854f114ed492afd395d867f02ed58d50a3f1692fe0ea7efbd8eb", 993, "amendment"),
+            "hermes-agent-health-request-v1": (
+                "fixtures/native-health/request.txt",
+                "a8ff376fd03484db8c7dc0af141e8e894671467cdc5833ee50a08571d0ee3e7c", 182, "native-health-fixture"),
+            "hermes-agent-health-seed-v1": (
+                "fixtures/native-health/seed-value.txt",
+                "b7cf82519f80550d09ae0ef0f183ad6be9543cc4c15873982cea91819e9a962a", 67, "native-health-fixture"),
+            "hermes-agent-health-expected-result-v1": (
+                "fixtures/native-health/expected-tool-result.json",
+                "23a5b879d3b43b985c468917f34bdd7b592ab35cfd72e767287f16764436523a", 240, "native-health-fixture"),
+            "hermes-agent-health-overlay-read-result-v1": (
+                "fixtures/native-health/tool-result.schema.json",
+                "6b89864f728e6e3e65b34d935c486bad0bc3c0a57bcee92dde5eec33fb1286f5", 526, "native-health-fixture"),
+            "hermes-agent-health-fixture-v1": (
+                "fixtures/native-health/recipe.json",
+                "ba7486d3070f725d125ed0e8c42aa986969bc8a597c2473024705d6fd8ac05a7", 845, "native-health-fixture"),
         }
         self.assertEqual({artifact_id: (path, digest, size, role)
                           for artifact_id, path, digest, size, role in REVIEWED_SOURCE_ARTIFACTS}, expected)
+        source_paths = {
+            "fixtures/native-health/request.txt": "src/hermes_installer/native_health_fixture/request.txt",
+            "fixtures/native-health/seed-value.txt": "src/hermes_installer/native_health_fixture/seed-value.txt",
+            "fixtures/native-health/expected-tool-result.json": "src/hermes_installer/native_health_fixture/expected-tool-result.json",
+            "fixtures/native-health/tool-result.schema.json": "src/hermes_installer/native_health_fixture/tool-result.schema.json",
+            "fixtures/native-health/recipe.json": "src/hermes_installer/native_health_fixture/recipe.json",
+        }
         for path, digest, size, _role in expected.values():
-            body = (repo / path).read_bytes()
+            body = (repo / source_paths.get(path, path)).read_bytes()
             self.assertEqual((len(body), hashlib.sha256(body).hexdigest()), (size, digest))
+
+    def test_native_health_fixture_role_is_closed_to_five_exact_data_members(self):
+        from hermes_installer.authority.installer_release import _validate_fixed_layout_role
+        for artifact_id, path, digest, size, role in REVIEWED_SOURCE_ARTIFACTS:
+            if role != "native-health-fixture":
+                continue
+            _validate_fixed_layout_role(path, digest, size, [role])
+            with self.assertRaises(InstallerReleaseError):
+                _validate_fixed_layout_role(path, "0" * 64, size, [role])
+            with self.assertRaises(InstallerReleaseError):
+                _validate_fixed_layout_role(path, digest, size, ["module"])
 
     def test_open_verified_file_checks_digest_and_rejects_symlink(self):
         with tempfile.TemporaryDirectory() as td:
