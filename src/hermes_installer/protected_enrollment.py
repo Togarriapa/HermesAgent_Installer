@@ -8,20 +8,149 @@ from __future__ import annotations
 
 import hashlib
 import grp
+import ipaddress
 import json
 import os
 import pwd
 import re
 import stat
 import unicodedata
+from urllib.parse import unquote
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
+from hermes_installer.components.plugin_public_https import EnrolledPublicWebScope, PublicReadTarget
+
 
 class EnrollmentDenied(PermissionError):
     """Protected enrollment is absent, stale, malformed, or no longer attested."""
+
+
+def _public_web_exact(value: Any, fields: set[str], label: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != fields:
+        raise EnrollmentDenied(f"protected {label} fields are invalid")
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class RootSelectedPublicWebScope:
+    """Digest-bound public target plus the retained root selection provenance."""
+
+    enrolled_scope: EnrolledPublicWebScope
+    target_selection_handle: str
+    configuration_observation_handle: str
+    configuration_sha256: str
+    target_contract_artifact_id: str
+    target_contract_sha256: str
+    target_contract_source_receipt_handle: str
+    scope_payload_sha256: str
+    service_generation_digest: str
+
+    @property
+    def enrollment_id(self) -> str:
+        return self.enrolled_scope.enrollment_id
+
+    @property
+    def target_id(self) -> str:
+        return self.enrolled_scope.target_id
+
+    @property
+    def generation(self) -> str:
+        return self.enrolled_scope.generation
+
+    @classmethod
+    def from_protected_record(
+        cls, raw: Mapping[str, Any], *, service_generation_digest: str,
+    ) -> "RootSelectedPublicWebScope":
+        fields = {
+            "enrollment_id", "target_id", "generation", "principal_id", "profile_id",
+            "recipient", "targets", "request_bytes_limit", "response_bytes_limit",
+            "deadline_seconds", "target_selection_handle", "configuration_observation_handle",
+            "configuration_sha256", "target_contract_artifact_id", "target_contract_sha256",
+            "target_contract_source_receipt_handle",
+        }
+        item = _public_web_exact(raw, fields, "public web scope")
+        ids = {key: _id(item[key], f"public web scope {key}") for key in (
+            "enrollment_id", "target_id", "generation", "principal_id", "profile_id", "recipient",
+            "target_selection_handle", "configuration_observation_handle",
+            "target_contract_artifact_id", "target_contract_source_receipt_handle",
+        )}
+        for key in ("configuration_sha256", "target_contract_sha256"):
+            if not isinstance(item[key], str) or not re.fullmatch(r"[0-9a-f]{64}", item[key]):
+                raise EnrollmentDenied(f"protected public web scope {key} is invalid")
+        if not isinstance(service_generation_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", service_generation_digest):
+            raise EnrollmentDenied("public web scope service generation digest is invalid")
+        target_rows = item["targets"]
+        if not isinstance(target_rows, list) or not 1 <= len(target_rows) <= 32:
+            raise EnrollmentDenied("protected public web targets are malformed")
+        targets: list[PublicReadTarget] = []
+        hostnames: list[str] = []
+        for raw_target in target_rows:
+            target = _public_web_exact(raw_target, {"hostname", "path_prefixes", "query_keys"}, "public web target")
+            hostname = target["hostname"]
+            if (not isinstance(hostname, str) or hostname != hostname.lower()
+                    or hostname.endswith(".") or len(hostname) > 253
+                    or not re.fullmatch(r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))+", hostname)
+                    or hostname.endswith((".local", ".internal", ".localhost", ".test", ".example", ".invalid"))):
+                raise EnrollmentDenied("protected public web hostname is not canonical public DNS")
+            try:
+                ipaddress.ip_address(hostname)
+            except ValueError:
+                pass
+            else:
+                raise EnrollmentDenied("protected public web hostname cannot be an IP selector")
+            prefixes, query_keys = target["path_prefixes"], target["query_keys"]
+            if (not isinstance(prefixes, list) or not prefixes
+                    or any(not isinstance(value, str) or not value.startswith("/") or len(value) > 512
+                           or "*" in value
+                           or any("\\" in decoded or any(part in {".", ".."}
+                                                          for part in decoded.split("/"))
+                                  for decoded in (value, unquote(value), unquote(unquote(value))))
+                           or any(ord(char) < 0x20 or ord(char) == 0x7f for char in value)
+                           for value in prefixes)
+                    or prefixes != sorted(set(prefixes))
+                    or not isinstance(query_keys, list)
+                    or any(not isinstance(value, str) or not value or len(value) > 64
+                           or any(ord(char) < 0x21 or ord(char) == 0x7f for char in value)
+                           for value in query_keys)
+                    or query_keys != sorted(set(query_keys))):
+                raise EnrollmentDenied("protected public web path or query selection is malformed")
+            sensitive = ("apikey", "authorization", "credential", "password", "secret", "session", "signature", "token")
+            if any(any(token in re.sub(r"[^a-z0-9]", "", key.casefold()) for token in sensitive)
+                   for key in query_keys):
+                raise EnrollmentDenied("protected public web query selection contains a sensitive key")
+            hostnames.append(hostname)
+            try:
+                targets.append(PublicReadTarget(hostname, tuple(prefixes), frozenset(query_keys)))
+            except (TypeError, ValueError):
+                raise EnrollmentDenied("protected public web target is invalid") from None
+        if hostnames != sorted(set(hostnames)):
+            raise EnrollmentDenied("protected public web targets must be sorted and unique")
+        request_limit, response_limit = item["request_bytes_limit"], item["response_bytes_limit"]
+        deadline = item["deadline_seconds"]
+        if (type(request_limit) is not int or not 1 <= request_limit <= 262144
+                or type(response_limit) is not int or not 1 <= response_limit <= 2097152
+                or type(deadline) not in (int, float) or not 0 < deadline <= 30):
+            raise EnrollmentDenied("protected public web scope limits exceed reviewed bounds")
+        payload_fields = (
+            "enrollment_id", "target_id", "generation", "principal_id", "profile_id", "recipient",
+            "targets", "request_bytes_limit", "response_bytes_limit", "deadline_seconds",
+        )
+        payload = {key: item[key] for key in payload_fields}
+        payload_digest = hashlib.sha256(json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        scope = EnrolledPublicWebScope(
+            ids["enrollment_id"], ids["target_id"], ids["generation"], ids["principal_id"],
+            ids["profile_id"], ids["recipient"], tuple(targets), request_limit,
+            response_limit, float(deadline),
+        )
+        return cls(scope, ids["target_selection_handle"], ids["configuration_observation_handle"],
+                   item["configuration_sha256"], ids["target_contract_artifact_id"],
+                   item["target_contract_sha256"], ids["target_contract_source_receipt_handle"],
+                   payload_digest, service_generation_digest)
 
 
 _BUILD_ENV = frozenset({"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ", "SOURCE_DATE_EPOCH",
@@ -358,7 +487,8 @@ class ProtectedEnrollmentCatalog:
                  native_schema_artifacts: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
                  native_mcp_tool_bindings: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
                  private_memory_endpoint_selections: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
-                 private_memory_model_selections: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None):
+                 private_memory_model_selections: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
+                 public_web_scopes: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None):
         if not records:
             raise EnrollmentDenied("protected service enrollment is empty")
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
@@ -400,6 +530,7 @@ class ProtectedEnrollmentCatalog:
             if not isinstance(observer_id, str) or observer_id in issuer_by_id:
                 raise EnrollmentDenied("active source issuer observer ID is invalid or duplicated")
             issuer_by_id[observer_id] = issuer
+        self._source_issuers = MappingProxyType(issuer_by_id)
         observer_joins: dict[str, NativeSourceObserverJoin] = {}
         for package in parsed_native.values():
             package_roles = {observer_id: role for role in package.process_role_records.values()
@@ -523,6 +654,28 @@ class ProtectedEnrollmentCatalog:
                             or mcp.get("native_server_name") != registration.native_server_name):
                         raise EnrollmentDenied("native MCP registration does not join its exact active MCP binding")
         self._source_observer_joins = MappingProxyType(observer_joins)
+        public_scope_rows: dict[tuple[str, str], RootSelectedPublicWebScope] = {}
+        raw_public_scopes = tuple(public_web_scopes or ())
+        scope_ids_in_issuers = {scope_id for issuer in issuer_by_id.values()
+                                for scope_id in getattr(issuer, "public_web_scope_ids", ())}
+        for raw in raw_public_scopes:
+            scope = RootSelectedPublicWebScope.from_protected_record(
+                raw, service_generation_digest=digest,
+            )
+            key = (scope.enrollment_id, scope.generation)
+            if key in public_scope_rows:
+                raise EnrollmentDenied("public web scope enrollment is duplicated")
+            public_scope_rows[key] = scope
+        if tuple(scope.enrollment_id for scope in public_scope_rows.values()) != tuple(
+                sorted(scope.enrollment_id for scope in public_scope_rows.values())):
+            raise EnrollmentDenied("public web scope rows must be sorted by enrollment ID")
+        if scope_ids_in_issuers != {scope.enrollment_id for scope in public_scope_rows.values()}:
+            raise EnrollmentDenied("public web scope source issuer references do not resolve exactly")
+        self._public_web_scopes = MappingProxyType(public_scope_rows)
+        # Bind every scope to the selected web effect and source issuer now;
+        # resolve_public_web_scope repeats these joins on every lookup.
+        for scope in public_scope_rows.values():
+            self._validate_public_web_scope_join(scope)
         self._memory_enrollments = MappingProxyType(dict(memory_enrollments or {}))
         endpoint_rows: dict[str, RootSelectedPrivateMemoryEndpointBinding] = {}
         for raw in private_memory_endpoint_selections or ():
@@ -789,7 +942,8 @@ class ProtectedEnrollmentCatalog:
                               native_schema_artifacts: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
                               native_mcp_tool_bindings: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
                               private_memory_endpoint_selections: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
-                              private_memory_model_selections: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None) -> "ProtectedEnrollmentCatalog":
+                              private_memory_model_selections: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None,
+                              public_web_scopes: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]] | None = None) -> "ProtectedEnrollmentCatalog":
         """Build from records already authenticated by the root enrollment loader."""
         if (not isinstance(protected_digest, str)
                 or not re.fullmatch(r"[0-9a-f]{64}", protected_digest)
@@ -811,7 +965,75 @@ class ProtectedEnrollmentCatalog:
                    native_schema_artifacts=native_schema_artifacts,
                    native_mcp_tool_bindings=native_mcp_tool_bindings,
                    private_memory_endpoint_selections=private_memory_endpoint_selections,
-                   private_memory_model_selections=private_memory_model_selections)
+                   private_memory_model_selections=private_memory_model_selections,
+                   public_web_scopes=public_web_scopes)
+
+    def _validate_public_web_scope_join(self, scope: RootSelectedPublicWebScope) -> None:
+        if scope.service_generation_digest != self.digest:
+            raise EnrollmentDenied("public web scope belongs to a stale service generation")
+        service = self.resolve_profile_generation(scope.enrolled_scope.profile_id, scope.generation)
+        if service.principal_id != scope.enrolled_scope.principal_id:
+            raise EnrollmentDenied("public web scope principal is not the selected profile principal")
+        expected_target = scope.enrolled_scope.target
+        action_matches = [
+            (package, action) for package in self._native_packages.values()
+            for action in package.action_records.values()
+            if action.effect_enrollment_id == scope.enrollment_id
+        ]
+        if len(action_matches) != 1:
+            raise EnrollmentDenied("public web scope does not join one exact active effect enrollment")
+        package, action = action_matches[0]
+        if (package.profile_id != scope.enrolled_scope.profile_id
+                or package.profile_generation != scope.generation
+                or action.operation != "plugin.web.read" or action.capability != "plugin:web"
+                or action.target_id != expected_target or action.recipient != scope.enrolled_scope.recipient):
+            raise EnrollmentDenied("public web scope does not match its exact web effect target")
+        issuer_references = [issuer for issuer in self._source_issuers.values()
+                             if scope.enrollment_id in getattr(issuer, "public_web_scope_ids", ())]
+        issuer_matches = [issuer for issuer in issuer_references
+                          if getattr(issuer, "producer_profile_id", None) == scope.enrolled_scope.profile_id
+                          and getattr(issuer, "generation", None) == scope.generation]
+        if len(issuer_matches) != 1 or len(issuer_references) != 1:
+            raise EnrollmentDenied("public web scope lacks one unique current source issuer join")
+
+    def resolve_public_web_scope(
+        self, enrollment_id: str, generation: str,
+    ) -> RootSelectedPublicWebScope:
+        selected_id = _id(enrollment_id, "public web scope enrollment ID")
+        selected_generation = _id(generation, "public web scope generation")
+        scope = self._public_web_scopes.get((selected_id, selected_generation))
+        if scope is None:
+            raise EnrollmentDenied("public web scope is absent or not current")
+        self._validate_public_web_scope_join(scope)
+        return scope
+
+    def resolve_current_public_web_scopes(
+        self, web_scope_ids: tuple[str, ...] | list[str], *, principal_id: str,
+        profile_id: str, profile_generation: str, service_generation_digest: str,
+    ) -> tuple[RootSelectedPublicWebScope, ...]:
+        if (not isinstance(web_scope_ids, (tuple, list))
+                or any(not isinstance(item, str) for item in web_scope_ids)
+                or len(web_scope_ids) > 32 or len(set(web_scope_ids)) != len(web_scope_ids)
+                or tuple(web_scope_ids) != tuple(sorted(web_scope_ids))):
+            raise EnrollmentDenied("public web scope selection is malformed")
+        if service_generation_digest != self.digest:
+            raise EnrollmentDenied("public web scope selection belongs to a stale generation")
+        if not web_scope_ids:
+            return ()
+        selected: list[RootSelectedPublicWebScope] = []
+        for scope_id in web_scope_ids:
+            matches = [row for (enrollment_id, _generation), row in self._public_web_scopes.items()
+                       if enrollment_id == _id(scope_id, "public web scope enrollment ID")]
+            if len(matches) != 1:
+                raise EnrollmentDenied("selected public web scope is absent or ambiguous")
+            row = self.resolve_public_web_scope(matches[0].enrollment_id, matches[0].generation)
+            self.resolve_profile_generation(profile_id, profile_generation)
+            if (row.enrolled_scope.principal_id != principal_id
+                    or row.enrolled_scope.profile_id != profile_id
+                    or row.generation != profile_generation):
+                raise EnrollmentDenied("public web scope does not match the selected principal/profile generation")
+            selected.append(row)
+        return tuple(selected)
 
     def resolve_private_memory_endpoint_binding(
         self, binding_id: str,
