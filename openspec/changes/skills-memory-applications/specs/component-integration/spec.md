@@ -651,3 +651,37 @@ Selected application workload binding v89: `plans/amendments/2026-10-10-selected
 Nonrecursive selections and private source ceilings v90: `plans/amendments/2026-10-10-nonrecursive-selection-private-source-ceilings-v90.md`; existing original implementation and acceptance tasks remain open.
 
 Root turn transcript encoding v96: `plans/amendments/2026-10-10-root-turn-transcript-encoding-v96.md`; SK-T01/HI-T08/HI-T11 remain open.
+
+Memory capture enablement consent v98: `plans/amendments/2026-10-10-memory-capture-enablement-consent-v98.md`; existing SK-T01/SK-F02/SK01 obligations remain open.
+
+Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected-runtime-profile-currentness-v102.md`; actual independent Resources choice/PM journal root/current consent and recipe-bound application limits; existing implementation/acceptance tasks open.
+
+Application owned execution receipts v104: `plans/amendments/2026-10-10-application-owned-execution-receipts-v104.md`; actual distinct selected grant/controller/probe/manager terminal/artifact result producer required, no ResourceTask/RuntimeReview substitutes; existing implementation/acceptance tasks open.
+
+### Requirement: Source reviewed application request mapping
+The system SHALL preserve original request bytes and use only a reviewed explicit native action projection or the separate v107 finite root installer qualification request to admit an application workload. It SHALL NOT infer a native mapping from application IDs or fixture recipe names.
+
+#### Scenario: Fixture recipe has no native registration
+- **WHEN** a fixture workload has no actual reviewed native registration
+- **THEN** native dispatch denies and the separate qualification flow does not constitute production application acceptance.
+
+### Requirement: Actual distinct private memory capability selection
+The system SHALL use v108 selected owned endpoint/model deployment and private text-generation/embedding capability receipts for the exact memory profile/namespace/provider/owner. It SHALL preserve GLM5.2 extraction, separately enroll an actual embedding model/dimension and enforce bounded source-owned serializers/parsers and fresh private authorization at every retry.
+
+#### Scenario: Only public chat dispatcher exists
+- **WHEN** private endpoint/model or embedding capability proof is absent
+- **THEN** extraction/embedding remains unavailable without public fallback, invented vectors or lazy model installation.
+
+### Requirement: Preactive application source preparation
+The system SHALL use v117 typed root setup source selections and independently observed full source/lock receipts before active runtime publication without manufacturing a selected active row. Operational application authorization SHALL remain independent.
+
+#### Scenario: Runtime not yet active
+- **WHEN** an actual prepared setup choice selects one fixed source profile
+- **THEN** the source producer verifies/stages its exact pinned source and locks before runtime probing and activation.
+
+### Requirement: Purpose bound qualification consent
+The system SHALL record v117 finite local qualification consent in the same explicit rootTTY workflow choice and resolve current phase snapshots without another routineprompt. It SHALL NOT reuse capture/private-input consent or authorize provider/account effects.
+
+#### Scenario: Qualification attempts provider egress
+- **WHEN** a selected fixture attempts an unrelated endpoint or metered operation
+- **THEN** qualification consent denies that effect.
