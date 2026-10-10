@@ -1,8 +1,8 @@
 """Root-local first-install launcher for the reviewed Hermes installer.
 
 This module is intentionally a small command boundary. It accepts only the
-three lifecycle intents understood by the installed root setup actor; policy,
-paths, credentials, and artifact bytes are resolved by the root-owned
+three lifecycle intents plus the finite installed qualification selector;
+policy, paths, credentials, and artifact bytes are resolved by root-owned
 registries.
 """
 from __future__ import annotations
@@ -16,6 +16,7 @@ import re
 import stat
 import sys
 import time
+from pathlib import Path
 from typing import Sequence
 
 
