@@ -127,3 +127,6 @@ Application Python entrypoint relocation v168: `plans/amendments/2026-10-10-appl
 Application effect sources v175: `plans/amendments/2026-10-10-application-effect-sources-v175.md`; measured finite source members and exact stage counts remain distinct from ABI and provider acceptance.
 
 Python config relocation v176: `plans/amendments/2026-10-10-python-runtime-config-relocation-v176.md`; actual uv-generated config and held PM base closure constrain normalization.
+
+
+Reviewed source members and boundary joins v180: `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`; finite exact merged module pins, corrected standalone builder role,21-field separate local-operation publication and per-worker kernel start barrier. Producer ownership/order/evidence tasks remain OPEN; baseline and all AC01..18 unchanged.

@@ -80,3 +80,5 @@ Channel retained peer delivery v129: `plans/amendments/2026-10-10-channel-retain
 - [ ] `HI-T178.3` Implement and verify the exact producer ownership/order/positive and failure acceptance in `plans/amendments/2026-10-10-source-join-producers-v178.md`; fixture results never close AC01..18.
 
 - [ ] `HI-T178.4` Implement and verify the exact producer ownership/order/positive and failure acceptance in `plans/amendments/2026-10-10-source-join-producers-v178.md`; fixture results never close AC01..18.
+
+- [ ] `HI-T180.3` Implement the exact owner/order/source-member/role and positive/failure evidence contract in `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`; source review does not close runtime or AC acceptance.

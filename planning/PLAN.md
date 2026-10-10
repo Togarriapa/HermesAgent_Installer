@@ -54,3 +54,6 @@ Source-join producers v178: `plans/amendments/2026-10-10-source-join-producers-v
 Selected native executable closure v179: `plans/amendments/2026-10-10-selected-native-executable-closure-v179.md`; HI-T179.1 implementation OPEN, HI-T179.2 live acceptance OPEN, all AC01..18 OPEN.
 
 HI-T179.1 selected local source composition implemented/fixture verified: `docs/native-selected-source-composition-v179.md` (81 passed,3 skipped); full HI-T178.1 and HI-T179.2 live/runtime acceptance remain OPEN. All AC01..18 OPEN.
+
+
+Reviewed source members and boundary joins v180: `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md` and `planning/reviewed-source-pin-batch-v180.json`. Native3a349c72 and corrected builderc757aec source bytes reviewed only; descriptor application,21-field local-operation lane, actual held build driver and own-worker kernel gate remain OPEN. HI-T178.2/HI-T179.2 fixture custody cycle unchanged; all AC01..18 OPEN. Root owns final publication.

@@ -1832,5 +1832,20 @@
       }
     ],
     "acceptance": "No runnable app/Pi acceptance inferred; all AC open and baseline unchanged."
+  },
+  "reviewed_builder_source_v180": {
+    "amendment": "plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md",
+    "pin_ledger": "planning/reviewed-source-pin-batch-v180.json",
+    "source_commit": "c757aec16e2dd14a218adf26989b5f982cb1329f",
+    "sha256": "8c5aebe61ba3d7e5c9bcf27dfadba8771ed3a4987240ea52fe2189251f1b6e8c",
+    "size_bytes": 45807,
+    "installed_artifact_id": "installer-application-environment-builder-v1",
+    "installed_member": "lib/python/hermes_installer/authority/application_environment_builder.py",
+    "roles": [
+      "application-build-driver"
+    ],
+    "source_review_complete": true,
+    "installed_receipt_complete": false,
+    "runtime_acceptance_complete": false
   }
 }

@@ -234,3 +234,5 @@ Preactive qualification runtime proof v130: `plans/amendments/2026-10-10-preacti
 - [ ] SK-T175.1 Broker/factory/execution/wiring/custody: enroll exact effect sources, derive finite stage admissions, observe actual terminal/semantic/cleanup receipts.
 
 - [ ] SK-T176.1 PM/builder/materializer/selector: held base runtime closure and exact measured config/wrapper relocation with current source and original/final digests.
+
+- [ ] `SK-T180.2` Implement the exact owner/order/source-member/role and positive/failure evidence contract in `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`; source review does not close runtime or AC acceptance.
