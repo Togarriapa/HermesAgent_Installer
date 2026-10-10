@@ -991,3 +991,17 @@ Health SHALL retain each actual native event ancestry meaning and verify the exa
 #### Scenario: Causal proof absent
 - **WHEN** event ancestry is relabeled, foreign, incomplete or replaced by fixture/package hashes
 - **THEN** health completion and functional enablement SHALL deny
+
+
+## ADDED Requirements
+
+### Requirement: Final coherent source tuple application
+The installer SHALL apply only the exact committed source/member/catalog/role/import closure tuple list in `plans/amendments/2026-10-10-final-coherent-source-pin-review-v195.md` and `planning/final-coherent-source-pin-review-v195.json`, preserving independent source, installed import, loaded native and current effect/health evidence.
+
+#### Scenario: Exact finite pin application
+- **WHEN** Luna applies the reviewed source0add8c33 batch after specification publication
+- **THEN** exact byte hashes/sizes, canonical member roles/modes, required PlanResolver aliases and actual import closure SHALL agree, with no source metadata self-hash cycle or caller-derived pin
+
+#### Scenario: Source evidence does not activate runtime
+- **WHEN** source review or fixture tests pass but actual loaded/current source, helper, invocation, health or target evidence is absent
+- **THEN** affected execution SHALL remain denied or unavailable and all original AC01..AC18 acceptance SHALL remain OPEN

@@ -413,3 +413,6 @@ Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-rec
 - [ ] HI-T193.1 Implement exact source/target native member view compatibility and private observed APIs. See `plans/amendments/2026-10-10-native-worker-view-member-bind-custody-v193.md`; acceptance OPEN.
 
 - [ ] HI-T194.1/2 Implement exact causal native event resolver/proof and matching receipt/completion consumer. See `plans/amendments/2026-10-10-health-event-causal-ancestry-v194.md`; acceptance OPEN.
+
+
+Existing `VD-T180.6`/`VD-T183.5` handoff: apply and verify only the exact v195 source/catalog/role/import closure batch in `plans/amendments/2026-10-10-final-coherent-source-pin-review-v195.md`. This source review leaves all existing checkboxes OPEN; no duplicate task or runtime acceptance is created.

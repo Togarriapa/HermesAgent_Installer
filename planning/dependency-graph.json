@@ -2845,5 +2845,18 @@
     "implementation_complete": false,
     "target_acceptance_complete": false,
     "acceptance": "AC01..AC18 OPEN"
+  },
+  "final_coherent_source_review_v195": {
+    "amendment": "plans/amendments/2026-10-10-final-coherent-source-pin-review-v195.md",
+    "reference_commit": "0add8c3373642b3a96781a739db710471a34db68",
+    "tasks": [
+      "VD-T180.6",
+      "VD-T183.5"
+    ],
+    "source_review_complete": true,
+    "pin_application_complete": false,
+    "implementation_acceptance_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
   }
 }

@@ -94,3 +94,8 @@ Selected member custody v193: `plans/amendments/2026-10-10-native-worker-view-me
 
 
 Health causal ancestry v194: `plans/amendments/2026-10-10-health-event-causal-ancestry-v194.md` retains each native event digest meaning and real causal source relations, replaces impossible uniform run equality with observed authenticated DAG proof, and binds schema2 receipt/completion to final result closure plus health_run_proof_sha256. No fixture ancestry substitution; all acceptance/pins OPEN.
+
+
+## Final coherent source review v195
+
+Exact closed source/member/catalog/preload application under existing VD-T180.6/VD-T183.5: `plans/amendments/2026-10-10-final-coherent-source-pin-review-v195.md` and `planning/final-coherent-source-pin-review-v195.json`. Source0add8c33 follows reviewed nested leaf corrections; metadata self-pinning is excluded. All original implementation/acceptance tasks and AC01..AC18 remain OPEN.

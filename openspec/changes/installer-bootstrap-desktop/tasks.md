@@ -277,3 +277,6 @@ Pinned runtime release asset redirect v116: `plans/amendments/2026-10-10-pinned-
 - [ ] `HI-T187.2` Implement actual both-process authenticated activation channel and one-use exact listener FD adoption. Exact contract `plans/amendments/2026-10-10-supervised-listener-activation-channel-v187.md`; implementation/acceptance OPEN.
 
 - [ ] HI-T191.3 Wire fixed authenticated setup intent and current completed witness at genuine two-process callpoints. See `plans/amendments/2026-10-10-two-actor-health-commit-custody-v191.md`; all acceptance OPEN.
+
+
+Existing `VD-T180.6`/`VD-T183.5` handoff: apply and verify only the exact v195 source/catalog/role/import closure batch in `plans/amendments/2026-10-10-final-coherent-source-pin-review-v195.md`. This source review leaves all existing checkboxes OPEN; no duplicate task or runtime acceptance is created.

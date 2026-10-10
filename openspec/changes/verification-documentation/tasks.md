@@ -134,3 +134,6 @@ Application owned execution receipts v104: `plans/amendments/2026-10-10-applicat
 - [ ] VD-T193.2 Verify five readonly member binds/source0700/target custody and failure cleanup. See `plans/amendments/2026-10-10-native-worker-view-member-bind-custody-v193.md`; acceptance OPEN.
 
 - [ ] VD-T194.3 Verify real distinct input/tool ancestry joins and false samehash/foreignchain failures. See `plans/amendments/2026-10-10-health-event-causal-ancestry-v194.md`; acceptance OPEN.
+
+
+Existing `VD-T180.6`/`VD-T183.5` handoff: apply and verify only the exact v195 source/catalog/role/import closure batch in `plans/amendments/2026-10-10-final-coherent-source-pin-review-v195.md`. This source review leaves all existing checkboxes OPEN; no duplicate task or runtime acceptance is created.
