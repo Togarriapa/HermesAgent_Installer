@@ -1,0 +1,9 @@
+# Jarvis selected task home custody v213
+
+Refines direct Jarvis requirement/v205 and original Resources native execution. Actual materializer has208 source crosswalk rows but no retained homeFD/current active task mount; root-only discovery does not prove serviceUID traversal under private ancestors. Preserve all207 delegates and soleJarvis entry, not a prepared-only endpoint.
+
+Exact active native_profile_task_homes rows, RootNativeProfileTaskHomeRegistry and RootSelectedResourceTaskHomeBinding are in planning/jarvis-selected-task-home-custody-v213.json. Materializer/compiler promote only completed genuine home/materialization/runtime/principal/namespace/source joins. Selected resource task authority commits exact home binding digest into existing consumed start proof; custody revalidates and mounts held selected home at fixed/hermes with HOME/HERMES_HOME/cwd fixed. Root ancestors unchanged; no caller paths, primary rights relabel or receiptflags as authority. Tool/provider/public-private/zero-budget scopes unchanged.
+
+RB-T213.1, HI-T213.2 and VD-T213.3 OPEN: actual producers, task kernel effects/denials/cleanup and reviewed future sourcepins required. All208 source IDs and state/secrets/migration safety preserved. All AC01..18 OPEN; baseline unchanged.
+
+Activation is mandatory: compiler/publisher emit exact immutable native-profile-home-crosswalk-v213.json under RootPublishedAuthorityCore current claim/readback; its typed resolve_current_native_profile_home_crosswalk getter is the source for RootNativeProfileTaskHomeRegistry.from_published_authority_core. Task-home owner implements actual activation/restart resolver using current source/PM/NSS/principal/namespace/homeFD observations, never expired setup session or reconstructed seal. All207 delegates must remain usable after setup expires. Source updates/rollback invalidate bound tasks.

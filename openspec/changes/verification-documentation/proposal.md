@@ -130,3 +130,17 @@ Typed finite bootstrap diagnostics v203: `plans/amendments/2026-10-10-typed-boot
 Typed diagnostic source review v204: exact fd09b11d leaf replacements are in planning/typed-bootstrap-diagnostic-source-review-v204.json under BD-T203.1 / VD-T203.2. Pin application/unexcluded suite/target evidence remain open; all acceptance open.
 
 Jarvis sole user-facing profile v205: direct user requirement and audited supported default/display_name mapping; all208 source profiles preserved,207 protected isolated delegate homes, actual native/UI/default routing and ownership-safe migration required. Contract planning/jarvis-sole-user-profile-contract-v205.json; all acceptance open.
+
+
+Finite fixture-owned NSS subject v206: `plans/amendments/2026-10-10-fixture-subject-nss-custody-v206.md`. Existing HI173/178/197 source session issues genuine actual NSS receipt under its own fixture transaction/controller; no normal session scan/production marker authority. All acceptance OPEN.
+
+
+Raspberry Pi vendor dependency refinement v207: plans/amendments/2026-10-10-raspberry-pi-nft-dependency-observation-v207.md defines only exact libc6/u3/arm64 signed evidence for reviewed Debian nft, per-archive retained trust anchors, bounded live/cache metadata and unchanged installed ELF/kernel proof. No package/key mutation; all acceptance OPEN.
+
+Bootstrap handoff TTY reconfirmation v208: new explicit same-SHA observation after slow acquisition, same original controller/action/source/runtime joins, unchanged60s proof TTL and one-use transition. planning/bootstrap-handoff-tty-reconfirmation-v208.json; BD-T208.1/VD-T208.2 OPEN.
+
+Handoff reconfirmation source review v211: exact26cf root_setup sole leaf replacement in planning/bootstrap-handoff-reconfirmation-source-review-v211.json; all other source rows unchanged, no wider runtime cohort. BD-T208.1/VD-T208.2 pin application/unexcluded checks/target evidence OPEN.
+
+Jarvis selected task home custody v213: planning/jarvis-selected-task-home-custody-v213.json; current active held home→existing consumed task grant→fixed/hermes unprivileged mount. Root discovery not usability; all208/source/toolpolicy/namespace/private-public boundaries preserved. RB-T213.1/HI-T213.2/VD-T213.3 OPEN.
+
+RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member readback and post-setup restart/current active home registry; setup-only maps cannot complete Jarvis delegate scope.
