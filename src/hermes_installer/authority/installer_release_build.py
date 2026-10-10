@@ -1296,6 +1296,11 @@ def _runtime_archive_rows(root: Path) -> list[tuple[str, str, int, int, str | No
             if path.is_symlink():
                 dirs.remove(name)
                 _append_runtime_member(rows, root, path)
+            else:
+                info = path.lstat()
+                if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                        or stat.S_IMODE(info.st_mode) != 0o555):
+                    raise InstallerReleaseBuildError("runtime directory mode is not read-only sealed")
         for name in files:
             _append_runtime_member(rows, root, base / name)
     rows.sort(key=lambda row: row[0])

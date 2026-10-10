@@ -272,9 +272,12 @@ def test_runtime_archive_rejects_cyclic_symlink(monkeypatch, tmp_path):
         _extract_fixture_runtime(monkeypatch, archive, destination)
 
 
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() != 0,
+                    reason="runtime closure requires root-owned sealed directories")
 def test_runtime_closure_rows_allow_only_contained_parent_relative_symlinks(tmp_path):
     root = tmp_path / "python"
     (root / "bin").mkdir(parents=True)
+    (root / "bin").chmod(0o555)
     os.symlink("../lib/target", root / "bin/alias")
     rows = release_build._runtime_archive_rows(root)
     assert rows == [("bin/alias", hashlib.sha256(b"../lib/target").hexdigest(),
@@ -312,6 +315,11 @@ def test_root_runtime_tree_seals_before_closure_and_rejects_writable_mode(tmp_pa
     assert data.stat().st_mode & 0o777 == 0o444
     closure = release_build._runtime_closure_digest(root)
     release_build._verify_runtime_materialization(root, closure)
+
+    data.parent.chmod(0o777)
+    with pytest.raises(release_build.InstallerReleaseBuildError, match="directory mode is not read-only sealed"):
+        release_build._verify_runtime_materialization(root, closure)
+    data.parent.chmod(0o555)
 
     executable.chmod(0o666)
     with pytest.raises(release_build.InstallerReleaseBuildError, match="not read-only sealed"):
