@@ -8,8 +8,6 @@ separate producers.
 from __future__ import annotations
 
 import hashlib
-import hmac
-import io
 import json
 import os
 import platform
@@ -21,21 +19,21 @@ import signal
 import stat
 import subprocess
 import tarfile
-import tempfile
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping
 
+from hermes_installer.authority.application_toolchain_sources import (
+    RootSelectedApplicationToolchainSourceObserver,
+    VerifiedApplicationToolchainSourceObservation,
+    SOURCE_POLICY_ARTIFACT_ID,
+    SOURCE_POLICY_SHA256,
+)
 from hermes_installer.protected_enrollment import RootJournalSelection
 
 
-_MAX_REDIRECTS = 2
-_MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 _MAX_EXPANDED_BYTES = 512 * 1024 * 1024
 _MAX_MEMBERS = 20_000
 _MAX_PROBE_OUTPUT = 128
@@ -256,7 +254,7 @@ def _write_symlink(root: Path, rel: str, target: str, expected_uid: int) -> Mapp
             "size_bytes": len(raw), "mode": 0o777}
 
 
-def _extract_archive(pin: ApplicationToolchainPin, archive_path: Path, destination: Path,
+def _extract_archive(pin: ApplicationToolchainPin, archive_fd: int, destination: Path,
                      expected_uid: int) -> Mapping[str, Mapping[str, Any]]:
     _ensure_private_directory(destination, expected_uid)
     rows: dict[str, Mapping[str, Any]] = {}
@@ -286,8 +284,9 @@ def _extract_archive(pin: ApplicationToolchainPin, archive_path: Path, destinati
         rows[rel] = _write_symlink(destination, rel, target, expected_uid)
 
     try:
+        source_stream = os.fdopen(os.dup(archive_fd), "rb")
         if pin.archive_kind == "tar.xz":
-            with tarfile.open(archive_path, mode="r:xz") as archive:
+            with source_stream, tarfile.open(fileobj=source_stream, mode="r:xz") as archive:
                 members = archive.getmembers()
                 if len(members) > _MAX_MEMBERS:
                     raise ApplicationToolchainDenied("toolchain archive has too many members")
@@ -333,7 +332,7 @@ def _extract_archive(pin: ApplicationToolchainPin, archive_path: Path, destinati
                     else:
                         raise ApplicationToolchainDenied("Node archive contains a hardlink, device, or unsupported type")
         elif pin.archive_kind == "zip":
-            with zipfile.ZipFile(archive_path) as archive:
+            with source_stream, zipfile.ZipFile(source_stream) as archive:
                 infos = archive.infolist()
                 if len(infos) > _MAX_MEMBERS:
                     raise ApplicationToolchainDenied("Bun archive has too many members")
@@ -382,105 +381,6 @@ def _extract_archive(pin: ApplicationToolchainPin, archive_path: Path, destinati
     os.chmod(destination, 0o555)
     _verify_private_tree(destination, expected_uid=expected_uid, expected_members=rows)
     return rows
-
-
-class _NoAutoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        raise urllib.error.HTTPError(req.full_url, code, "redirect requires explicit toolchain policy", headers, fp)
-
-
-def _read_pinned_https(url: str, *, size: int, sha256: str, redirect_hosts: tuple[str, ...],
-                       timeout: float = 120.0,
-                       opener: Callable[..., Any] | None = None) -> bytes:
-    """Fetch one pinned blob with a finite, source-specific redirect policy."""
-    try:
-        parsed_initial = urllib.parse.urlsplit(url)
-        initial_port = parsed_initial.port
-    except ValueError:
-        raise ApplicationToolchainDenied("pinned toolchain source URL is malformed") from None
-    if (parsed_initial.scheme != "https" or not parsed_initial.hostname or parsed_initial.username
-            or parsed_initial.password or parsed_initial.fragment or initial_port not in {None, 443}):
-        raise ApplicationToolchainDenied("pinned toolchain source URL is malformed")
-    current = url
-    allowed = {host.casefold() for host in redirect_hosts}
-    body: bytes | None = None
-    for hop in range(_MAX_REDIRECTS + 1):
-        try:
-            request_url = urllib.parse.urlsplit(current)
-            request_port = request_url.port
-        except ValueError:
-            raise ApplicationToolchainDenied("toolchain source redirect URL is malformed") from None
-        if (request_url.scheme != "https" or not request_url.hostname or request_url.username
-                or request_url.password or request_url.fragment or request_port not in {None, 443}
-                or (hop == 0 and current != url)
-                or (hop > 0 and request_url.hostname.casefold() not in allowed)):
-            raise ApplicationToolchainDenied("toolchain source redirect violates its exact HTTPS host policy")
-        request = urllib.request.Request(current, headers={
-            "Accept": "application/octet-stream", "User-Agent": "HermesInstaller/1.0",
-        }, method="GET")
-        try:
-            if opener is None:
-                client = urllib.request.build_opener(
-                    urllib.request.ProxyHandler({}), _NoAutoRedirect(),
-                    urllib.request.HTTPSHandler())
-                response = client.open(request, timeout=min(timeout, 120.0))
-            else:
-                response = opener(request, timeout=min(timeout, 120.0))
-        except urllib.error.HTTPError as exc:
-            if (exc.code not in {301, 302, 303, 307, 308} or hop >= _MAX_REDIRECTS
-                    or not redirect_hosts):
-                raise ApplicationToolchainDenied("pinned toolchain source request failed") from None
-            location = exc.headers.get("Location") if exc.headers is not None else None
-            exc.close()
-            if not isinstance(location, str) or not location:
-                raise ApplicationToolchainDenied("toolchain source redirect has no location") from None
-            next_url = urllib.parse.urljoin(current, location)
-            try:
-                next_parts = urllib.parse.urlsplit(next_url)
-                next_port = next_parts.port
-            except ValueError:
-                raise ApplicationToolchainDenied("toolchain source redirect URL is malformed") from None
-            if (next_parts.scheme != "https" or next_parts.hostname is None
-                    or next_parts.hostname.casefold() not in allowed or next_parts.username
-                    or next_parts.password or next_parts.fragment or next_port not in {None, 443}):
-                raise ApplicationToolchainDenied("toolchain source redirect target is not the reviewed asset host") from None
-            current = next_url
-            continue
-        except (OSError, ValueError, urllib.error.URLError):
-            raise ApplicationToolchainDenied("pinned toolchain source request failed") from None
-        try:
-            try:
-                final_url = urllib.parse.urlsplit(response.geturl())
-                final_port = final_url.port
-            except ValueError:
-                raise ApplicationToolchainDenied("toolchain source transport returned a malformed URL") from None
-            if (final_url.scheme != "https" or final_url.hostname is None
-                    or final_url.username or final_url.password or final_url.fragment
-                    or final_port not in {None, 443}
-                    or (hop == 0 and response.geturl() != url)
-                    or (hop > 0 and final_url.hostname.casefold() not in allowed)):
-                raise ApplicationToolchainDenied("toolchain source transport changed the final origin")
-            declared = response.headers.get("Content-Length")
-            if declared is None or not declared.isdecimal() or int(declared) != size:
-                raise ApplicationToolchainDenied("pinned toolchain source response has the wrong declared size")
-            chunks = bytearray()
-            try:
-                while len(chunks) <= size:
-                    chunk = response.read(min(128 * 1024, size + 1 - len(chunks)))
-                    if not chunk:
-                        break
-                    chunks.extend(chunk)
-            except (OSError, ValueError, urllib.error.URLError):
-                raise ApplicationToolchainDenied("pinned toolchain source body could not be read") from None
-            if len(chunks) != size or hashlib.sha256(chunks).hexdigest() != sha256:
-                raise ApplicationToolchainDenied("pinned toolchain source bytes differ from exact size or SHA-256")
-            body = bytes(chunks)
-            break
-        finally:
-            response.close()
-    if body is None:
-        raise ApplicationToolchainDenied("pinned toolchain source redirect chain was exhausted")
-    return body
 
 
 def _fixed_probe(pin: ApplicationToolchainPin, executable_fd: int, root: Path,
@@ -594,7 +494,8 @@ class RootApplicationToolchainObservation:
 class _ToolchainEntry:
     observation: RootApplicationToolchainObservation
     cas_target: Path
-    archive_path: Path
+    source_observation: VerifiedApplicationToolchainSourceObservation
+    license_source_observation: VerifiedApplicationToolchainSourceObservation | None
     tree_path: Path
     manifest_path: Path
     choice: Any
@@ -602,25 +503,27 @@ class _ToolchainEntry:
 
 
 class RootApplicationToolchainRegistry:
-    """Acquire exact v144 public artifacts into setup CAS and hold real binaries.
+    """Materialize v144 toolchains only from root-held, selected source bytes.
 
-    The choice resolver is expected to be the selected installation binding. Its
-    live, signed, root-TTY choice and fresh `acquire-locked-runtime-packages`
-    phase consent are re-resolved before each public fetch and every observation.
+    The source observer owns URL access and CAS. This registry accepts no path or
+    URL input; it extracts only its current held descriptors, then keeps the
+    isolated executable and a durable receipt in the protected setup journal.
     """
 
     def __init__(self, *, verified_release: Any, current_actor_verifier: Any,
                  root_setup_session_store: Any, artifact_source_observer: Any,
                  root_journal: RootJournalSelection, setup_choice_registry: Any,
-                 expected_uid: int = 0, monotonic: Callable[[], float] = time.monotonic,
-                 opener: Callable[..., Any] | None = None):
+                 expected_uid: int = 0, monotonic: Callable[[], float] = time.monotonic):
         if (not isinstance(root_journal, RootJournalSelection)
                 or not callable(getattr(verified_release, "verify_current", None))
                 or not callable(getattr(current_actor_verifier, "verify_current", None))
                 or not callable(getattr(root_setup_session_store, "resolve_live_session_id", None))
                 or not callable(getattr(setup_choice_registry, "resolve_application_setup_choice", None))
                 or not callable(getattr(setup_choice_registry, "resolve_application_qualification_consent", None))
-                or not callable(getattr(artifact_source_observer, "observe", None))
+                or type(artifact_source_observer) is not RootSelectedApplicationToolchainSourceObserver
+                or not callable(getattr(artifact_source_observer, "observe_selected_toolchain_source", None))
+                or not callable(getattr(artifact_source_observer, "verify_current", None))
+                or not callable(getattr(artifact_source_observer, "open_blob", None))
                 or type(expected_uid) is not int or expected_uid < 0):
             raise ValueError("root application toolchain registry dependencies are incomplete")
         if (root_journal.root_id != "installer-authority-journal-v1"
@@ -634,7 +537,6 @@ class RootApplicationToolchainRegistry:
         self.choices = setup_choice_registry
         self.expected_uid = expected_uid
         self.monotonic = monotonic
-        self.opener = opener
         self.registry_id = secrets.token_urlsafe(32)
         self._entries: dict[tuple[str, str], _ToolchainEntry] = {}
 
@@ -655,26 +557,18 @@ class RootApplicationToolchainRegistry:
             raise ApplicationToolchainDenied("runtime preparation selection handle is malformed")
         resolver = getattr(self.choices, "resolve_application_runtime_preparation_input_selection", None)
         if not callable(resolver):
-            resolver = getattr(self.choices, "resolve_application_runtime_preparation_input_by_handle", None)
-        if not callable(resolver):
-            # Transitional name used by earlier root selection registries.
-            resolver = getattr(self.choices, "resolve_application_runtime_preparation_selection", None)
-        if not callable(resolver):
             raise ApplicationToolchainDenied("current root runtime preparation selector is unavailable")
         try:
+            from .application_runtime_selection import RootApplicationRuntimePreparationInputSelection
             selection = resolver(prep_handle)
-            current_handle = getattr(selection, "selection_handle", None)
-            if current_handle is None:
-                current_handle = getattr(selection, "handle", None)
-            if current_handle != prep_handle:
+            if (type(selection) is not RootApplicationRuntimePreparationInputSelection
+                    or selection.selection_handle != prep_handle):
                 raise ValueError
-            if getattr(selection, "application_id", None) != "hyperframes":
+            if selection.application_id != "hyperframes":
                 raise ValueError
-            if getattr(selection, "runtime_kind", None) != "node":
+            if selection.runtime_kind != "node":
                 raise ValueError
-            choice_handle = getattr(selection, "qualification_choice_handle", None)
-            if choice_handle is None:
-                choice_handle = getattr(selection, "choice_selection_handle", None)
+            choice_handle = selection.qualification_choice_handle
             if not isinstance(choice_handle, str) or not _HANDLE.fullmatch(choice_handle):
                 raise ValueError
             choice = self.choices.resolve_application_setup_choice(choice_handle)
@@ -699,12 +593,10 @@ class RootApplicationToolchainRegistry:
                     or getattr(consent, "additional_metered_budget_usd", None) != 0.0
                     or getattr(consent, "expires_monotonic", 0) <= self.monotonic()):
                 raise ValueError
-            source_handle = getattr(selection, "prepared_source_receipt_handle", None)
-            if source_handle is None:
-                source_handle = getattr(selection, "source_receipt_handle", None)
-            lock_handle = getattr(selection, "selected_lock_receipt_handle", None)
-            lock_sha = getattr(selection, "lock_sha256", None)
-            source_prep_handle = getattr(selection, "source_preparation_selection_handle", None)
+            source_handle = selection.prepared_source_receipt_handle
+            lock_handle = selection.selected_lock_receipt_handle
+            lock_sha = selection.lock_sha256
+            source_prep_handle = selection.source_preparation_selection_handle
             if (not isinstance(source_prep_handle, str) or not _HANDLE.fullmatch(source_prep_handle)
                     or not isinstance(source_handle, str) or not _HANDLE.fullmatch(source_handle)
                     or not isinstance(lock_handle, str) or not _HANDLE.fullmatch(lock_handle)
@@ -724,6 +616,62 @@ class RootApplicationToolchainRegistry:
                     and info.st_dev == self.journal.device and info.st_ino == self.journal.inode)
         except OSError:
             return False
+
+    def _observe_source(self, prep_handle: str, selection: Any, choice: Any,
+                        tool_id: str, *, license_source: bool = False
+                        ) -> VerifiedApplicationToolchainSourceObservation:
+        """Get only a live, selected-plan source observation from the v150 broker."""
+        try:
+            source = self.artifact_source_observer.observe_selected_toolchain_source(
+                prep_handle, tool_id)
+            expected_pin = TOOLCHAINS[tool_id] if not license_source else TOOLCHAINS[
+                "application-bun-1.4.3-linux-arm64"]
+            expected_id = tool_id
+            expected_digest = expected_pin.sha256 if not license_source else expected_pin.license_sha256
+            expected_size = expected_pin.size_bytes if not license_source else expected_pin.license_size_bytes
+            expected_kind = expected_pin.archive_kind if not license_source else ""
+            expected_url = expected_pin.url if not license_source else expected_pin.license_url
+            if (type(source) is not VerifiedApplicationToolchainSourceObservation
+                    or source.artifact_id != expected_id or source.tool_id != expected_id
+                    or source.sha256 != expected_digest or source.size_bytes != expected_size
+                    or source.archive_kind != expected_kind
+                    or source.source_kind != ("license" if license_source else "archive")
+                    or source.source_url_sha256 != hashlib.sha256(expected_url.encode("utf-8")).hexdigest()
+                    or source.source_policy_artifact_id != SOURCE_POLICY_ARTIFACT_ID
+                    or source.source_policy_sha256 != SOURCE_POLICY_SHA256
+                    or source.preparation_input_selection_handle != prep_handle
+                    or source.source_preparation_selection_handle
+                       != selection.source_preparation_selection_handle
+                    or source.qualification_choice_handle != choice.selection_handle
+                    or source.setup_session_id != choice.setup_session_id
+                    or source.transaction_handle != choice.transaction_handle
+                    or source.plan_sha256 != getattr(selection, "plan_sha256", None)
+                    or not self.artifact_source_observer.verify_current(source, prep_handle)):
+                raise ValueError
+            return source
+        except Exception:
+            raise ApplicationToolchainDenied(
+                "selected-plan toolchain source observer did not return the exact current pinned bytes"
+            ) from None
+
+    def _source_fd(self, source: VerifiedApplicationToolchainSourceObservation,
+                   prep_handle: str) -> int:
+        try:
+            fd = self.artifact_source_observer.open_blob(source, prep_handle)
+            info = os.fstat(fd)
+            expected_size = source.size_bytes
+            digest, size = _sha_fd(fd, expected_size)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != self.expected_uid
+                    or info.st_nlink != 1 or info.st_mode & 0o222
+                    or info.st_size != expected_size or size != expected_size
+                    or digest != source.sha256):
+                os.close(fd)
+                raise ValueError
+            return fd
+        except Exception:
+            raise ApplicationToolchainDenied(
+                "selected-plan source observer could not open its exact held bytes"
+            ) from None
 
     def acquire_selected_toolchain(self, runtime_preparation_selection_handle: str,
                                    tool_id: str) -> RootApplicationToolchainObservation:
@@ -790,13 +738,10 @@ class RootApplicationToolchainRegistry:
         if prior is not None:
             self._verify_entry(prior, selection, choice, consent)
             return prior.observation
-        source_receipt_handle = getattr(selection, "prepared_source_receipt_handle", None)
-        if source_receipt_handle is None:
-            source_receipt_handle = getattr(selection, "source_receipt_handle", None)
-        if (not isinstance(source_receipt_handle, str) or not _HANDLE.fullmatch(source_receipt_handle)
-                or not isinstance(getattr(selection, "selected_lock_receipt_handle", None), str)
-                or not isinstance(getattr(selection, "lock_sha256", None), str)
-                or getattr(selection, "controller_binding_handle", None) != choice.controller_binding_handle):
+        if (not _HANDLE.fullmatch(selection.prepared_source_receipt_handle)
+                or not _HANDLE.fullmatch(selection.selected_lock_receipt_handle)
+                or not _SHA.fullmatch(selection.lock_sha256)
+                or selection.controller_binding_handle != choice.controller_binding_handle):
             raise ApplicationToolchainDenied("toolchain acquisition is not bound to prepared source, lock, and controller")
         transaction = getattr(choice, "transaction_handle", None)
         if not isinstance(transaction, str) or not _HANDLE.fullmatch(transaction):
@@ -814,64 +759,50 @@ class RootApplicationToolchainRegistry:
                 or stat.S_IMODE(target_info.st_mode) != 0o700):
             raise ApplicationToolchainDenied("toolchain CAS target is not private and root-owned")
         target_identity = (target_info.st_dev, target_info.st_ino)
-        archive_path = target / ("source.tar.xz" if pin.archive_kind == "tar.xz" else "source.zip")
         tree_path = target / "tree"
-        staging_archive = target / (".source.part")
+        source_observation: VerifiedApplicationToolchainSourceObservation | None = None
+        license_source_observation: VerifiedApplicationToolchainSourceObservation | None = None
         executable_fd: int | None = None
         try:
             # Re-resolve signed phase intent immediately before the first byte.
             current_selection, current_choice, current_consent = self._selection(prep_handle)
-            current_selection_handle = getattr(current_selection, "selection_handle", None)
-            if current_selection_handle is None:
-                current_selection_handle = getattr(current_selection, "handle", None)
-            current_source_handle = getattr(current_selection, "prepared_source_receipt_handle", None)
-            if current_source_handle is None:
-                current_source_handle = getattr(current_selection, "source_receipt_handle", None)
-            if (current_selection_handle != prep_handle
-                    or getattr(current_selection, "source_preparation_selection_handle", None)
-                       != getattr(selection, "source_preparation_selection_handle", None)
-                    or current_source_handle not in {
-                        getattr(selection, "prepared_source_receipt_handle", None),
-                        getattr(selection, "source_receipt_handle", None),
-                    }
-                    or getattr(current_selection, "selected_lock_receipt_handle", None)
-                       != getattr(selection, "selected_lock_receipt_handle", None)
-                    or getattr(current_selection, "lock_sha256", None) != getattr(selection, "lock_sha256", None)
+            if (current_selection is not selection
+                    or current_selection.selection_handle != prep_handle
+                    or current_selection.source_preparation_selection_handle
+                       != selection.source_preparation_selection_handle
+                    or current_selection.prepared_source_receipt_handle
+                       != selection.prepared_source_receipt_handle
+                    or current_selection.selected_lock_receipt_handle
+                       != selection.selected_lock_receipt_handle
+                    or current_selection.lock_sha256 != selection.lock_sha256
                     or current_choice.selection_handle != choice.selection_handle
                     or current_choice.signature != choice.signature
                     or current_consent.qualification_choice_handle != choice.selection_handle
                     or current_consent.purpose != consent.purpose
                     or "acquire-locked-runtime-packages" not in current_consent.allowed_phase_ids):
                 raise ApplicationToolchainDenied("toolchain consent changed before source acquisition")
-            body = _read_pinned_https(
-                pin.url, size=pin.size_bytes, sha256=pin.sha256,
-                redirect_hosts=pin.redirect_hosts, timeout=120.0, opener=self.opener)
-            self._write_immutable_blob(staging_archive, body)
-            staging_archive.rename(archive_path)
-            if pin.license_url is not None:
-                license_body = _read_pinned_https(
-                    pin.license_url, size=pin.license_size_bytes or 0,
-                    sha256=pin.license_sha256 or "", redirect_hosts=(),
-                    timeout=30.0, opener=self.opener)
-                license_path = target / "bun-license.md"
-                self._write_immutable_blob(license_path, license_body)
-            members = _extract_archive(pin, archive_path, tree_path, self.expected_uid)
+            source_observation = self._observe_source(prep_handle, selection, choice, pin.tool_id)
+            source_fd = self._source_fd(source_observation, prep_handle)
+            try:
+                members = _extract_archive(pin, source_fd, tree_path, self.expected_uid)
+            finally:
+                os.close(source_fd)
             if pin.tool_id.startswith("application-bun-"):
                 assert pin.license_sha256 and pin.license_size_bytes and pin.license_url
-                license_fd = os.open(license_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                license_source_observation = self._observe_source(
+                    prep_handle, selection, choice, "application-bun-1.4.3-license",
+                    license_source=True)
+                license_fd = self._source_fd(license_source_observation, prep_handle)
                 try:
-                    license_hash, license_size = _sha_fd(license_fd, pin.license_size_bytes)
+                    license_body = os.pread(license_fd, pin.license_size_bytes + 1, 0)
+                    if len(license_body) != pin.license_size_bytes:
+                        raise ApplicationToolchainDenied("Bun source license size differs from its v144 pin")
                 finally:
                     os.close(license_fd)
-                if license_size != pin.license_size_bytes or license_hash != pin.license_sha256:
-                    raise ApplicationToolchainDenied("Bun source license bytes differ from their exact v144 pin")
                 members = dict(members)
                 members[".source-license/LICENSE.md"] = _write_tree_file(
-                    tree_path, ".source-license/LICENSE.md", license_path.read_bytes(),
+                    tree_path, ".source-license/LICENSE.md", license_body,
                     False, self.expected_uid)
-                license_path.unlink()
-                os.chmod(tree_path / ".source-license", 0o555)
-                os.chmod(tree_path, 0o555)
                 license_member = ".source-license/LICENSE.md"
             else:
                 license_matches = [name for name in members
@@ -935,21 +866,29 @@ class RootApplicationToolchainRegistry:
                 "member_path": license_member,
                 "sha256": members[license_member]["sha256"],
                 "size_bytes": members[license_member]["size_bytes"],
-                "source": ("archive-member" if pin.license_url is None else pin.license_url),
+                "source": ("archive-member" if pin.license_url is None else "selected-toolchain-license-source"),
                 "publisher_digest": (None if pin.license_sha256 is None else pin.license_sha256),
+                "source_artifact_id": (None if license_source_observation is None
+                                       else license_source_observation.artifact_id),
+                "source_url_sha256": (None if license_source_observation is None
+                                      else license_source_observation.source_url_sha256),
                 "choice_signature": choice.signature,
             }
             self._write_receipt(target / "license-observation.json", license_record)
             observation = RootApplicationToolchainObservation(
                 **claims, _executable_fd=executable_fd, _root=tree_path,
                 _members=dict(members), _registry_id=self.registry_id, _seal=_RECORD_SEAL)
-            entry = _ToolchainEntry(observation, target, archive_path, tree_path,
+            entry = _ToolchainEntry(observation, target, source_observation,
+                                    license_source_observation, tree_path,
                                     target / "manifest.json", choice, prep_handle)
             self._write_receipt(target / "manifest.json", {
                 "schema": 1, "tool_id": pin.tool_id,
                 "source_sha256": pin.sha256, "source_size_bytes": pin.size_bytes,
                 "members": dict(sorted(members.items())),
                 "tree_sha256": tree_digest,
+                "source_policy_artifact_id": SOURCE_POLICY_ARTIFACT_ID,
+                "source_policy_sha256": SOURCE_POLICY_SHA256,
+                "source_url_sha256": entry.source_observation.source_url_sha256,
                 "license": ({"url": pin.license_url, "sha256": pin.license_sha256,
                              "size_bytes": pin.license_size_bytes}
                             if pin.license_sha256 else {"source_member": "LICENSE"}),
@@ -962,8 +901,11 @@ class RootApplicationToolchainRegistry:
             try:
                 if executable_fd is not None and key not in self._entries:
                     os.close(executable_fd)
-                if staging_archive.exists():
-                    staging_archive.unlink()
+                if key not in self._entries:
+                    if source_observation is not None:
+                        source_observation.close()
+                    if license_source_observation is not None:
+                        license_source_observation.close()
                 # This target was created exclusively by this invocation. Remove
                 # an incomplete attempt only while its inode still matches; a
                 # completed live entry is retained and revalidated instead.
@@ -997,6 +939,20 @@ class RootApplicationToolchainRegistry:
         if not self._journal_current():
             raise ApplicationToolchainDenied("selected protected toolchain journal changed")
         try:
+            if not self.artifact_source_observer.verify_current(
+                    entry.source_observation, entry.prep_handle):
+                entry.source_observation.close()
+                entry.source_observation = self._observe_source(
+                    entry.prep_handle, selection, choice, pin.tool_id)
+            if pin.license_sha256:
+                if (entry.license_source_observation is None
+                        or not self.artifact_source_observer.verify_current(
+                            entry.license_source_observation, entry.prep_handle)):
+                    if entry.license_source_observation is not None:
+                        entry.license_source_observation.close()
+                    entry.license_source_observation = self._observe_source(
+                        entry.prep_handle, selection, choice,
+                        "application-bun-1.4.3-license", license_source=True)
             transaction_dir = entry.cas_target.parent
             artifacts_dir = transaction_dir.parent
             for directory in (artifacts_dir, transaction_dir, entry.cas_target):
@@ -1005,17 +961,18 @@ class RootApplicationToolchainRegistry:
                         or directory_info.st_uid != self.expected_uid
                         or stat.S_IMODE(directory_info.st_mode) != 0o700):
                     raise ValueError
-            archive_info = entry.archive_path.lstat()
-            if (not stat.S_ISREG(archive_info.st_mode) or archive_info.st_uid != self.expected_uid
-                    or stat.S_IMODE(archive_info.st_mode) != 0o400 or archive_info.st_nlink != 1
-                    or archive_info.st_size != pin.size_bytes):
+            if not self.artifact_source_observer.verify_current(
+                    entry.source_observation, entry.prep_handle):
                 raise ValueError
-            afd = os.open(entry.archive_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-            try:
-                ahash, asize = _sha_fd(afd, _MAX_ARCHIVE_BYTES)
-            finally:
-                os.close(afd)
-            if ahash != pin.sha256 or asize != pin.size_bytes:
+            if (entry.source_observation.sha256 != pin.sha256
+                    or entry.source_observation.size_bytes != pin.size_bytes
+                    or entry.source_observation.source_policy_sha256 != SOURCE_POLICY_SHA256):
+                raise ValueError
+            if pin.license_sha256 and (entry.license_source_observation is None
+                    or not self.artifact_source_observer.verify_current(
+                        entry.license_source_observation, entry.prep_handle)
+                    or entry.license_source_observation.sha256 != pin.license_sha256
+                    or entry.license_source_observation.size_bytes != pin.license_size_bytes):
                 raise ValueError
             tree_digest = _verify_private_tree(entry.tree_path, expected_uid=self.expected_uid,
                                                expected_members=entry.observation._members)
@@ -1058,14 +1015,23 @@ class RootApplicationToolchainRegistry:
                     or manifest.get("source_size_bytes") != pin.size_bytes
                     or manifest.get("members") != dict(sorted(entry.observation._members.items()))
                     or manifest.get("tree_sha256") != observation.runtime_manifest_sha256
+                    or manifest.get("source_policy_artifact_id") != SOURCE_POLICY_ARTIFACT_ID
+                    or manifest.get("source_policy_sha256") != SOURCE_POLICY_SHA256
+                    or manifest.get("source_url_sha256") != entry.source_observation.source_url_sha256
                     or manifest.get("license") != expected_license_manifest
                     or manifest.get("notices_sha256") != observation.package_notice_observation_sha256
                     or _canonical(durable_observation) != _canonical(observation_claims)
                     or durable_license.get("receipt_handle") not in license_handle
                     or durable_license.get("tool_id") != pin.tool_id
                     or durable_license.get("source_sha256") != pin.sha256
-                    or durable_license.get("source") != (pin.license_url or "archive-member")
+                    or durable_license.get("source") != (
+                        "selected-toolchain-license-source" if pin.license_url else "archive-member")
                     or durable_license.get("publisher_digest") != pin.license_sha256
+                    or durable_license.get("source_artifact_id") != (
+                        None if pin.license_url is None else "application-bun-1.4.3-license")
+                    or durable_license.get("source_url_sha256") != (
+                        None if entry.license_source_observation is None
+                        else entry.license_source_observation.source_url_sha256)
                     or durable_license.get("size_bytes") != entry.observation._members.get(
                         durable_license.get("member_path"), {}).get("size_bytes")
                     or durable_license.get("choice_signature") != choice.signature
@@ -1083,23 +1049,6 @@ class RootApplicationToolchainRegistry:
             raise
         except Exception:
             raise ApplicationToolchainDenied("retained toolchain artifact or currentness evidence changed") from None
-
-    def _write_immutable_blob(self, path: Path, body: bytes) -> None:
-        if path.exists() or path.is_symlink():
-            raise ApplicationToolchainDenied("toolchain CAS blob path is already occupied")
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
-                     getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o400)
-        try:
-            os.fchmod(fd, 0o400)
-            view = memoryview(body)
-            while view:
-                written = os.write(fd, view[:128 * 1024])
-                if written < 1:
-                    raise OSError("short source blob write")
-                view = view[written:]
-            os.fsync(fd)
-        finally:
-            os.close(fd)
 
     def _write_receipt(self, path: Path, claims: Mapping[str, Any]) -> None:
         raw = _canonical(claims) + b"\n"
