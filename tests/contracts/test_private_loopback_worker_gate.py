@@ -32,7 +32,7 @@ def _free_port() -> int:
 
 def _contract(allowed: int, denied: int) -> dict[str, object]:
     return {
-        "schema": 1,
+        "schema": 2,
         "purpose": "private-loopback-worker-start",
         "nonce": "a" * 32,
         "network_id": "network-fixture",
@@ -42,7 +42,6 @@ def _contract(allowed: int, denied: int) -> dict[str, object]:
         "generation": "generation-fixture",
         "uid": 1000,
         "gid": 1000,
-        "namespace_inode": 1,
         "role": "listener",
         "allowed_bind_port": allowed,
         "allowed_connect_port": None,
@@ -120,43 +119,40 @@ def test_actual_gate_runner_never_executes_after_observed_unsupported_bind_polic
 
     manager, worker = __import__("socket").socketpair(__import__("socket").AF_UNIX,
                                                        __import__("socket").SOCK_STREAM)
-    await_root_release = _HELPER._await_root_release
     emitted = []
     exec_calls = []
-
-    def issue_real_one_use_grant(channel, *, nonce, contract_sha256):
-        grant = {
-            "schema": 1, "purpose": "private-loopback-worker-release",
-            "nonce": nonce, "contract_sha256": contract_sha256, "decision": "release",
-        }
-        encoded = json.dumps(grant, sort_keys=True, separators=(",", ":"),
-                             ensure_ascii=True).encode("ascii")
-        manager.sendall(struct.pack("!I", len(encoded)) + encoded)
-        return await_root_release(channel, nonce=nonce,
-                                  contract_sha256=contract_sha256)
+    identity = {"pid": os.getpid(), "uid": 1000, "gid": 1000, "start_ticks": 1,
+                "cgroup": "/system.slice/hermes-installer-fixture.service",
+                "namespace_device": 1, "namespace_inode": 2, "capabilities": {}}
+    gate_frame = {"schema": 2, "operation": "observe-selected-namespace",
+                  "projection_handle": "projection-fixture", "unit_invocation_id": "invocation-fixture",
+                  "namespace_device": 1, "namespace_inode": 2}
 
     try:
         with mock.patch.object(_HELPER.sys, "argv", ["private-loopback-worker-gate"]), \
              mock.patch.object(_HELPER, "_read_contract", return_value=(contract, digest)), \
-             mock.patch.object(_HELPER, "_self_identity", return_value={"pid": os.getpid()}), \
+             mock.patch.object(_HELPER, "_self_identity", return_value=identity), \
              mock.patch.object(_HELPER, "_gate_channel_from_activation", return_value=worker), \
              mock.patch.object(_HELPER, "_send_frame", side_effect=lambda _fd, value, _bound: emitted.append(value)), \
-             mock.patch.object(_HELPER, "_await_root_release", side_effect=issue_real_one_use_grant), \
-             mock.patch.object(_HELPER.os, "kill") as kill, \
+             mock.patch.object(_HELPER, "_await_namespace_gate", return_value=(gate_frame, "c" * 64)), \
+             mock.patch.object(_HELPER, "_await_root_release") as release, \
              mock.patch.object(_HELPER.os, "execve", side_effect=lambda *args: exec_calls.append(args)
                                or (_ for _ in ()).throw(OSError("controlled exec return"))), \
              mock.patch.object(_HELPER, "_emit", side_effect=lambda value: emitted.append(value)):
             result = _HELPER.main()
-        assert emitted[0]["checks"] == real_checks
-        assert emitted[0]["state"] == real_state
+        assert emitted[0]["state"] == "awaiting-namespace"
         if real_state == "unsupported":
+            assert emitted[1]["checks"] == real_checks
+            assert emitted[1]["state"] == real_state
             assert result == 77
             assert not exec_calls
-            kill.assert_not_called()
+            release.assert_not_called()
         else:
+            assert emitted[1]["checks"] == real_checks
+            assert emitted[1]["state"] == real_state
             assert result == 75  # controlled execve return is unavailable, never success
             assert len(exec_calls) == 1
-            kill.assert_called_once_with(os.getpid(), signal.SIGSTOP)
+            release.assert_called_once()
     finally:
         manager.close()
         worker.close()
@@ -199,7 +195,7 @@ def test_non_enforcement_errno_does_not_count_as_denial():
 
 
 def test_sigcont_alone_cannot_release_the_before_app_gate():
-    """A same-UID signal can resume scheduling, never satisfy the manager grant."""
+    """A signal never substitutes for the manager's one-use release frame."""
     parent_channel, child_channel = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
     read_fd, write_fd = os.pipe()
     pid = os.fork()
@@ -207,33 +203,22 @@ def test_sigcont_alone_cannot_release_the_before_app_gate():
         parent_channel.close()
         os.close(read_fd)
         try:
-            os.kill(os.getpid(), signal.SIGSTOP)
-            _HELPER._await_root_release(
-                child_channel, nonce="a" * 32, contract_sha256="b" * 64)
+            _HELPER._await_root_release(child_channel, contract=_contract(14500, 14501),
+                contract_sha256="b" * 64, namespace_gate_sha256="c" * 64,
+                identity={"pid": os.getpid()}, gate_frame={})
             os.write(write_fd, b"released")
             os._exit(0)
         except BaseException:
             os._exit(2)
     child_channel.close()
     os.close(write_fd)
-    waited, status = os.waitpid(pid, os.WUNTRACED)
-    assert waited == pid and os.WIFSTOPPED(status)
     os.kill(pid, signal.SIGCONT)
     ready, _, _ = select.select([read_fd], [], [], 0.1)
     assert not ready
-    assert os.waitpid(pid, os.WNOHANG) == (0, 0)
-
-    grant = {
-        "schema": 1, "purpose": "private-loopback-worker-release",
-        "nonce": "a" * 32, "contract_sha256": "b" * 64, "decision": "release",
-    }
-    raw = json.dumps(grant, sort_keys=True, separators=(",", ":"),
-                     ensure_ascii=True).encode("ascii")
-    parent_channel.sendall(struct.pack("!I", len(raw)) + raw)
-    ready, _, _ = select.select([read_fd], [], [], 1)
-    assert ready and os.read(read_fd, 16) == b"released"
+    parent_channel.close()
+    child_channel.close()
     _, status = os.waitpid(pid, 0)
-    assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
+    assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 2
     parent_channel.close()
     os.close(read_fd)
 
@@ -241,16 +226,24 @@ def test_sigcont_alone_cannot_release_the_before_app_gate():
 def test_manager_release_frame_is_bound_to_exact_contract_and_one_use_schema():
     left, right = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
     wrong = {
-        "schema": 1, "purpose": "private-loopback-worker-release",
-        "nonce": "c" * 32, "contract_sha256": "b" * 64, "decision": "release",
+        "schema": 2, "operation": "release-selected-application",
+        "nonce": "c" * 32, "launch_contract_sha256": "b" * 64,
+        "namespace_gate_sha256": "d" * 64,
+        "service_generation_digest": "b" * 64,
+        "projection_handle": "projection-fixture", "pid": 5,
+        "start_ticks": 1, "unit_invocation_id": "invocation-fixture",
     }
     raw = json.dumps(wrong, sort_keys=True, separators=(",", ":"),
                      ensure_ascii=True).encode("ascii")
     left.sendall(struct.pack("!I", len(raw)) + raw)
     try:
-        _HELPER._await_root_release(right, nonce="a" * 32, contract_sha256="b" * 64)
+        contract = _contract(14500, 14501)
+        _HELPER._await_root_release(right, contract=contract, contract_sha256="b" * 64,
+            namespace_gate_sha256="e" * 64, identity={"pid": 4, "start_ticks": 1},
+            gate_frame={"projection_handle": "projection-fixture",
+                        "unit_invocation_id": "invocation-fixture"})
     except _HELPER.GateError as exc:
-        assert "does not match" in str(exc)
+        assert "differs" in str(exc) or "does not match" in str(exc)
     else:
         raise AssertionError("a grant for another nonce released the application gate")
     left.close()

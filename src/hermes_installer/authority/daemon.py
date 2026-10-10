@@ -495,6 +495,11 @@ def main() -> int:
 
 def main_adopt(activation_id: str) -> int:
     """Fixed installed-unit action which serves only the acknowledged transferred listener."""
+    # The installed root actor snapshots its finite module closure.  Load the
+    # complete native launch verifier before that observation, never on the
+    # first post-capture worker request.
+    from .native_worker_launch import preload_native_worker_launch_closure
+    preload_native_worker_launch_closure()
     service, enrollment = build_enrolled_authority_service()
     runtime = getattr(service, "root_authority_runtime", None)
     process_manager = getattr(runtime, "process_manager", None)
@@ -518,6 +523,16 @@ def main_adopt(activation_id: str) -> int:
     signal.signal(signal.SIGINT, lambda _signum, _frame: stop_event.set())
     try:
         listener, active_listener = receiver.receive_listener()
+        if process_manager is not None:
+            # This owner binds fresh active PM/source projections and the
+            # receiver's retained adopted FD. Failure leaves the native worker
+            # unavailable; the generic process path denies that profile.
+            from .native_worker_launch import NativeHermesWorkerLaunchUnavailable
+            try:
+                process_manager.bind_native_worker_launch_owner(
+                    runtime, receiver, active_listener)
+            except NativeHermesWorkerLaunchUnavailable:
+                pass
         socket_path = listener.getsockname()
         if (not isinstance(socket_path, str)
                 or socket_path != str(DEFAULT_SOCKET_DIR / f"{next(iter(socket_gid_by_uid))}.sock")):

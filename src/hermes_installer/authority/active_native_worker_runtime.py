@@ -29,6 +29,27 @@ class ActiveNativeWorkerRuntimeUnavailable(AuthorityDenied):
         super().__init__("native_worker.runtime", message)
 
 
+class _ProjectionFDCustody:
+    """Idempotent owner for the duplicated member descriptors of one proof."""
+
+    __slots__ = ("fds", "closed")
+
+    def __init__(self, fds: tuple[int, ...]):
+        self.fds = tuple(set(fds))
+        self.closed = False
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        fds, self.fds = self.fds, ()
+        for fd in fds:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class RootActiveNativeWorkerRuntimeProjection:
     """Short-lived root-held PM member descriptors for one active network row."""
@@ -45,17 +66,15 @@ class RootActiveNativeWorkerRuntimeProjection:
     native_output_root_inode: int
     expires_monotonic: float
     member_fds: tuple[int, ...] = field(repr=False)
+    _custody: _ProjectionFDCustody = field(repr=False, compare=False)
+    _owner: Any = field(repr=False, compare=False)
     _issuer: object = field(repr=False, compare=False)
 
     def __repr__(self) -> str:
         return "RootActiveNativeWorkerRuntimeProjection(<root-held PM closure>)"
 
     def close(self) -> None:
-        for fd in set(self.member_fds):
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+        self._owner._retire_projection(self)
 
 
 class RootActiveNativeWorkerRuntimeRegistry:
@@ -118,8 +137,13 @@ class RootActiveNativeWorkerRuntimeRegistry:
                     native_output_root_inode=output_root_identity[1],
                     expires_monotonic=min(time.monotonic() + 30.0,
                                           network_projection.expires_monotonic),
-                    member_fds=tuple(fds), _issuer=self._issuer,
+                    member_fds=tuple(fds), _custody=_ProjectionFDCustody(tuple(fds)),
+                    _owner=self, _issuer=self._issuer,
                 )
+                self._prune_expired()
+                if len(self._issued) >= 64:
+                    oldest = next(iter(self._issued))
+                    self._retire(oldest)
                 self._issued[projection.projection_handle] = projection
                 self._network_inputs[projection.projection_handle] = network_projection
                 return projection
@@ -142,6 +166,7 @@ class RootActiveNativeWorkerRuntimeRegistry:
         if (type(projection) is not RootActiveNativeWorkerRuntimeProjection
                 or projection._issuer is not self._issuer
                 or self._issued.get(projection.projection_handle) is not projection
+                or projection._custody.closed
                 or projection.expires_monotonic <= time.monotonic()):
             raise ActiveNativeWorkerRuntimeUnavailable("active PM projection is foreign or stale")
         network = self._network_inputs.get(projection.projection_handle)
@@ -157,20 +182,36 @@ class RootActiveNativeWorkerRuntimeRegistry:
                     != (projection.pm_runtime_root_device, projection.pm_runtime_root_inode)
                     or (current.native_output_root_device, current.native_output_root_inode)
                     != (projection.native_output_root_device, projection.native_output_root_inode)):
-                self._issued.pop(projection.projection_handle, None)
+                self._retire(projection.projection_handle)
                 raise ActiveNativeWorkerRuntimeUnavailable("active PM runtime projection changed")
         finally:
-            current.close()
-            self._issued.pop(current.projection_handle, None)
-            self._network_inputs.pop(current.projection_handle, None)
+            self._retire(current.projection_handle)
         return projection
 
     def close(self) -> None:
         self._closed = True
-        for projection in self._issued.values():
-            projection.close()
-        self._issued.clear()
-        self._network_inputs.clear()
+        for handle in tuple(self._issued):
+            self._retire(handle)
+
+    def _retire(self, handle: str) -> None:
+        projection = self._issued.pop(handle, None)
+        self._network_inputs.pop(handle, None)
+        if projection is not None:
+            projection._custody.close()
+
+    def _retire_projection(self, projection: RootActiveNativeWorkerRuntimeProjection) -> None:
+        if (type(projection) is RootActiveNativeWorkerRuntimeProjection
+                and projection._owner is self
+                and self._issued.get(projection.projection_handle) is projection):
+            self._retire(projection.projection_handle)
+        else:
+            projection._custody.close()
+
+    def _prune_expired(self) -> None:
+        now = time.monotonic()
+        for handle, projection in tuple(self._issued.items()):
+            if projection.expires_monotonic <= now:
+                self._retire(handle)
 
     def _require_live(self) -> None:
         if self._closed:
