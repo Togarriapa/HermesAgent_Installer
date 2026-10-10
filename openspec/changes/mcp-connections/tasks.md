@@ -5,6 +5,7 @@ Dependencies: installer-bootstrap-desktop, resource-registry-import, providers-c
 ## 1. Foundation with tests and documentation
 
 - [ ] 1.1 `MC-F01` Implement supported Hermes MCP config adapter and bounded protocol/auth/tool allowlist lifecycle; verify initialization/tool discovery/functional call/reconnect/timeout/revocation fixtures; document setup contract. Evidence: `tests/contracts/test_mcp_lifecycle.py`.
+  - Partial lifecycle evidence (MC-F01; native discovery subtask HI-T171.1): `tests/contracts/test_native_runtime_observer.py::test_mcp_discovery_receipts_prune_only_expired_lineage_and_bound_admission` covers expiry pruning, no eviction of live ancestry at capacity, capacity recovery after expiry, and close cleanup. MC-F01 remains unchecked pending its complete protocol/auth/tool allowlist evidence.
 - [ ] 1.2 `MC-F02` Implement selectable official external MCP account/service adapters and labeled Google community alternative; verify read-only selected-resource scope and eligibility fixtures; document official setup links. Evidence: `tests/contracts/test_mcp_accounts.py`.
 - [ ] 1.3 `MC-F03` Implement pinned Playwright ARM64 browser setup and sandboxed local navigation/accessibility/screenshot workflow; verify browser fixtures and target screenshot artifacts; document platform resolution. Evidence: `tests/contracts/test_playwright.py`.
 

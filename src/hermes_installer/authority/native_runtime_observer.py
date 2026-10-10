@@ -32,6 +32,9 @@ _MAX_TOOL_CALLS = 128
 _MAX_TOOL_ARGUMENT_BYTES = 65_536
 _INVOCATION_LEASE_SECONDS = 30.0
 _MAX_RETAINED_RESPONSE_BYTES = 8 * 1024 * 1024
+_MAX_RETAINED_MCP_DISCOVERY_REQUESTS = 256
+_MAX_RETAINED_MCP_DISCOVERY_INVOCATIONS = 128
+_MAX_RETAINED_MCP_DISCOVERY_RECEIPTS = 4096
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -1258,6 +1261,15 @@ class NativeInvocationRegistry:
         discovery_receipts = getattr(runtime_observer, "_mcp_discovery_receipts", {})
         if not isinstance(discovery_receipts, Mapping):
             raise AuthorityDenied("native.effect.lineage", "root MCP discovery ancestry index is unavailable")
+        prune_discovery = getattr(runtime_observer, "_prune_mcp_discovery_state_locked", None)
+        discovery_lock = getattr(runtime_observer, "_lock", None)
+        if callable(prune_discovery) and discovery_lock is not None:
+            with discovery_lock:
+                prune_discovery(self.monotonic())
+                discovery_receipts = {
+                    key: frozenset(handles)
+                    for key, handles in runtime_observer._mcp_discovery_receipts.items()
+                }
         matches: list[_NativeInvocation] = []
         with self._lock:
             self._ensure_open()
@@ -2073,7 +2085,10 @@ class NativeRuntimeObserver:
         self._mcp_discovery_requests: dict[tuple[str, int, str], _RetainedMCPDiscoveryRequest] = {}
         # Only receipts minted by the actual tools/list observer may extend a
         # selected invocation's original provider-response ancestry.
-        self._mcp_discovery_receipts: dict[str, set[str]] = {}
+        # Values are the genuine root source handles and their effective
+        # monotonic deadlines. Keeping the deadline here lets pruning follow
+        # both the selected invocation and the captured source receipt.
+        self._mcp_discovery_receipts: dict[str, dict[str, float]] = {}
         self._closed = False
 
     def register_mcp_discovery_request(
@@ -2191,8 +2206,11 @@ class NativeRuntimeObserver:
                 now + observer.lease_seconds, invocation.expires_monotonic),
         )
         with self._lock:
+            self._prune_mcp_discovery_state_locked(now)
             if self._closed or key in self._mcp_discovery_requests:
                 raise AuthorityDenied("mcp.discovery.replay", "tools/list request is already retained or observer is closed")
+            if len(self._mcp_discovery_requests) >= _MAX_RETAINED_MCP_DISCOVERY_REQUESTS:
+                raise AuthorityDenied("mcp.discovery.capacity", "retained tools/list request capacity is full")
             self._mcp_discovery_requests[key] = record
 
     def attach_turn_observation(self, *, invocation_registry: Any,
@@ -2416,6 +2434,7 @@ class NativeRuntimeObserver:
             raise AuthorityDenied("mcp.discovery.request", "discovery source is not an actual tools/list request")
         key = (authorization.grant_id, peer_pid, request_sha256)
         with self._lock:
+            self._prune_mcp_discovery_state_locked(self.source_observers.service.monotonic())
             record = self._mcp_discovery_requests.pop(key, None)
             closed = self._closed
         if (closed or record is None
@@ -2488,15 +2507,56 @@ class NativeRuntimeObserver:
         if cancelled():
             self.source_observers.revoke_source_handle(handle)
             raise AuthorityDenied("mcp.discovery.cancelled", "MCP discovery was cancelled before delivery")
-        with self._lock:
-            receipts = self._mcp_discovery_receipts.setdefault(
-                record.invocation.invocation_handle, set(),
-            )
-            if len(receipts) >= 32 or handle in receipts:
-                self.source_observers.revoke_source_handle(handle)
-                raise AuthorityDenied("mcp.discovery.replay", "discovery result receipt exceeded its bound")
-            receipts.add(handle)
+        service = self.source_observers.service
+        now = service.monotonic()
+        with service._lock:
+            captured_receipt = service._source_receipt_handles.get(handle)
+            receipt_deadline = getattr(captured_receipt, "monotonic_expires_at", None)
+        if (type(receipt_deadline) not in (int, float)
+                or not math.isfinite(receipt_deadline) or receipt_deadline <= now):
+            self.source_observers.revoke_source_handle(handle)
+            raise AuthorityDenied("mcp.discovery.receipt", "captured discovery receipt is unavailable or expired")
+        retention_deadline = min(record.invocation.expires_monotonic, receipt_deadline)
+        self._retain_mcp_discovery_receipt(
+            record.invocation.invocation_handle, handle, retention_deadline, now,
+        )
         return handle
+
+    def _retain_mcp_discovery_receipt(self, invocation_handle: str, handle: str,
+                                      retention_deadline: float, now: float) -> None:
+        """Admit a captured handle without evicting any still-live ancestry."""
+        with self._lock:
+            self._prune_mcp_discovery_state_locked(now)
+            receipts = self._mcp_discovery_receipts.get(invocation_handle)
+            total_receipts = sum(len(items) for items in self._mcp_discovery_receipts.values())
+            if (self._closed or retention_deadline <= now or handle in (receipts or {})
+                    or len(receipts or {}) >= 32
+                    or (receipts is None and len(self._mcp_discovery_receipts)
+                        >= _MAX_RETAINED_MCP_DISCOVERY_INVOCATIONS)
+                    or total_receipts >= _MAX_RETAINED_MCP_DISCOVERY_RECEIPTS):
+                admitted = False
+            else:
+                if receipts is None:
+                    receipts = {}
+                    self._mcp_discovery_receipts[invocation_handle] = receipts
+                receipts[handle] = retention_deadline
+                admitted = True
+        if not admitted:
+            self.source_observers.revoke_source_handle(handle)
+            raise AuthorityDenied("mcp.discovery.capacity", "discovery receipt retention is expired or at capacity")
+
+    def _prune_mcp_discovery_state_locked(self, now: float) -> None:
+        """Drop only expired request/capture lineage; live entries are never evicted."""
+        for key, record in tuple(self._mcp_discovery_requests.items()):
+            if (record.expires_monotonic <= now
+                    or record.invocation.expires_monotonic <= now):
+                del self._mcp_discovery_requests[key]
+        for invocation_handle, receipts in tuple(self._mcp_discovery_receipts.items()):
+            for handle, deadline in tuple(receipts.items()):
+                if deadline <= now:
+                    del receipts[handle]
+            if not receipts:
+                del self._mcp_discovery_receipts[invocation_handle]
 
     def _mcp_discovery_context_matches(self, record: _RetainedMCPDiscoveryRequest,
                                        context: HostContext, authorization: Any) -> bool:

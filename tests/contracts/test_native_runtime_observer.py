@@ -101,6 +101,52 @@ class NativeRuntimeObserverContracts(unittest.TestCase):
         )
         return observer, source_observers
 
+    def test_mcp_discovery_receipts_prune_only_expired_lineage_and_bound_admission(self):
+        from unittest.mock import patch
+        import hermes_installer.authority.native_runtime_observer as runtime_observer_module
+
+        observer, source_observers = self._observer()
+        source_observers.revoked = []
+        source_observers.revoke_source_handle = source_observers.revoked.append
+        observer._mcp_discovery_receipts = {
+            "live-invocation": {"live-handle": 20.0},
+            "expired-invocation": {"expired-handle": 9.0},
+        }
+        observer._mcp_discovery_requests = {
+            ("live-grant", 41, "live-digest"): SimpleNamespace(
+                expires_monotonic=20.0,
+                invocation=SimpleNamespace(expires_monotonic=30.0),
+            ),
+            ("expired-grant", 42, "expired-digest"): SimpleNamespace(
+                expires_monotonic=9.0,
+                invocation=SimpleNamespace(expires_monotonic=30.0),
+            ),
+        }
+        observer._prune_mcp_discovery_state_locked(10.0)
+        self.assertEqual(observer._mcp_discovery_receipts,
+                         {"live-invocation": {"live-handle": 20.0}})
+        self.assertEqual(set(observer._mcp_discovery_requests),
+                         {("live-grant", 41, "live-digest")})
+
+        with patch.object(runtime_observer_module,
+                          "_MAX_RETAINED_MCP_DISCOVERY_INVOCATIONS", 1):
+            with self.assertRaises(AuthorityDenied):
+                observer._retain_mcp_discovery_receipt(
+                    "second-live-invocation", "new-captured-handle", 30.0, 10.0,
+                )
+        self.assertEqual(observer._mcp_discovery_receipts,
+                         {"live-invocation": {"live-handle": 20.0}})
+        self.assertEqual(source_observers.revoked, ["new-captured-handle"])
+
+        observer._prune_mcp_discovery_state_locked(20.0)
+        observer._retain_mcp_discovery_receipt(
+            "second-live-invocation", "new-captured-handle", 30.0, 20.0,
+        )
+        self.assertEqual(observer._mcp_discovery_receipts,
+                         {"second-live-invocation": {"new-captured-handle": 30.0}})
+        observer.close()
+        self.assertEqual(observer._mcp_discovery_receipts, {})
+
     def test_unenrolled_or_untyped_effect_observer_fails_closed(self):
         with self.assertRaises(NativeRuntimeObserverUnavailable):
             NativeRuntimeObserver(
