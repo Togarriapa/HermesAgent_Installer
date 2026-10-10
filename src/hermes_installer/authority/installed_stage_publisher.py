@@ -120,8 +120,12 @@ def _publish_retained_build(*, receipt: Any, release_root: Path, receipt_path: P
         # Distinct domains are expected in normal releases; equality is possible
         # cryptographically, but treating it as a policy error would be incorrect.
         pass
+    fixed_root_publication = (
+        release_root == RELEASE_STORE_ROOT / candidate
+        and receipt_path == DEPLOYMENT_RECEIPT_PATH and expected_uid == 0)
     _verify_directory(receipt_path.parent, expected_uid, mode=None)
-    _verify_directory(release_root.parent, expected_uid, mode=None)
+    if not fixed_root_publication:
+        _verify_directory(release_root.parent, expected_uid, mode=None)
     lock_path = receipt_path.parent / ".publication.lock"
     lock_fd = _open_lock(lock_path, expected_uid)
     try:
@@ -134,6 +138,9 @@ def _publish_retained_build(*, receipt: Any, release_root: Path, receipt_path: P
                                   expected_uid):
                 return
             raise
+        if fixed_root_publication:
+            _ensure_fixed_release_store_root()
+            _verify_directory(release_root.parent, expected_uid, mode=None)
         _recover_staging_journals(release_root.parent, receipt, manifest_bytes, expected_uid)
         _ensure_release(receipt, release_root, manifest_path, manifest_bytes, rows, expected_uid)
         receipt.verify_current()
@@ -151,8 +158,7 @@ def _publish_retained_build(*, receipt: Any, release_root: Path, receipt_path: P
             "published_monotonic": time.monotonic(),
         }
         raw = _canonical(record)
-        if (release_root == RELEASE_STORE_ROOT / candidate
-                and receipt_path == DEPLOYMENT_RECEIPT_PATH and expected_uid == 0):
+        if fixed_root_publication:
             verified = InstalledRootReleaseVerifier._mint_release(
                 {**record, "_receipt_sha256": _sha(raw)}, expected_uid=0)
             verified.close()
@@ -662,6 +668,100 @@ def _verify_directory(path: Path, uid: int, mode: int | None) -> os.stat_result:
         return info
     finally:
         os.close(fd)
+
+
+def _ensure_fixed_release_store_root() -> None:
+    """Create only the fixed release-store children below verified /usr/lib."""
+    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        parent_fd = _open_owned_directory_chain(fd, ("usr", "lib"),
+                                                expected_uid=0, expected_gid=0)
+    finally:
+        os.close(fd)
+    try:
+        _ensure_release_store_children(parent_fd, expected_uid=0, expected_gid=0)
+    finally:
+        os.close(parent_fd)
+
+
+def _open_owned_directory_chain(parent_fd: int, components: tuple[str, ...], *,
+                                expected_uid: int, expected_gid: int) -> int:
+    """Open a finite directory chain without following links or trusting path strings."""
+    current_fd = os.dup(parent_fd)
+    try:
+        for name in components:
+            child_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                               dir_fd=current_fd)
+            os.close(current_fd)
+            current_fd = child_fd
+            info = os.fstat(current_fd)
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != expected_uid
+                    or info.st_gid != expected_gid or stat.S_IMODE(info.st_mode) & 0o022):
+                raise BootstrapEnrollmentError("fixed release-store parent custody is unsafe")
+        return current_fd
+    except OSError:
+        os.close(current_fd)
+        raise BootstrapEnrollmentError("fixed release-store parent custody could not be established") from None
+    except BaseException:
+        os.close(current_fd)
+        raise
+
+
+def _ensure_release_store_children(parent_fd: int, *, expected_uid: int,
+                                   expected_gid: int) -> None:
+    """Idempotently establish the two fixed children, never normalizing existing paths."""
+    created: list[tuple[int, str]] = []
+    current_fd = os.dup(parent_fd)
+
+    def rollback_created() -> None:
+        for owned_parent_fd, child_name in reversed(created):
+            try:
+                os.rmdir(child_name, dir_fd=owned_parent_fd)
+                os.fsync(owned_parent_fd)
+            except OSError:
+                # A concurrently populated directory is preserved for safe review.
+                pass
+
+    try:
+        for name in ("hermes-installer", "releases"):
+            created_here = False
+            try:
+                child_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                                   dir_fd=current_fd)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(name, 0o755, dir_fd=current_fd)
+                    created_here = True
+                    created.append((os.dup(current_fd), name))
+                except FileExistsError:
+                    pass
+                child_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                                   dir_fd=current_fd)
+            if created_here:
+                try:
+                    os.fchown(child_fd, expected_uid, expected_gid)
+                    os.fchmod(child_fd, 0o755)
+                    os.fsync(child_fd)
+                    os.fsync(current_fd)
+                except BaseException:
+                    os.close(child_fd)
+                    raise
+            os.close(current_fd)
+            current_fd = child_fd
+            info = os.fstat(current_fd)
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != expected_uid
+                    or info.st_gid != expected_gid or stat.S_IMODE(info.st_mode) & 0o022):
+                raise BootstrapEnrollmentError("fixed release-store directory custody is unsafe")
+    except OSError:
+        rollback_created()
+        raise BootstrapEnrollmentError("fixed release-store directory custody could not be established") from None
+    except BaseException:
+        rollback_created()
+        raise
+    finally:
+        os.close(current_fd)
+        for owned_parent_fd, _ in created:
+            os.close(owned_parent_fd)
 
 
 def _open_lock(path: Path, uid: int) -> int:

@@ -13,7 +13,8 @@ from unittest.mock import patch
 
 from hermes_installer.authority.bootstrap_enrollment import BootstrapEnrollmentError, BootstrapEnrollmentPending
 from hermes_installer.authority.installed_stage_publisher import (
-    _build_rows, _canonical, _publish_retained_build, _recover_staging_journals, _sha,
+    _build_rows, _canonical, _ensure_release_store_children, _open_owned_directory_chain,
+    _publish_retained_build, _recover_staging_journals, _sha,
 )
 from hermes_installer.authority import installer_release_build as release_build
 from hermes_installer.authority.installer_release import REVIEWED_SOURCE_ARTIFACTS, REVIEWED_SOURCE_MODULES
@@ -90,6 +91,150 @@ class InstalledStagePublicationTests(unittest.TestCase):
         releases.mkdir(mode=0o700)
         predecessor = Predecessor(os.stat(deploy).st_dev, os.stat(deploy).st_ino)
         return root, receipt, deploy / "current.json", releases / receipt.candidate_git_sha, predecessor
+
+    def test_fixed_release_store_children_are_created_once_without_touching_siblings(self):
+        with tempfile.TemporaryDirectory() as temp:
+            parent = Path(temp) / "usr-lib"
+            parent.mkdir(mode=0o700)
+            sentinel = parent / "foreign-service"
+            sentinel.write_bytes(b"preserve")
+            parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                _ensure_release_store_children(parent_fd, expected_uid=os.getuid(), expected_gid=os.getgid())
+                first = parent / "hermes-installer" / "releases"
+                identity = (first.stat().st_dev, first.stat().st_ino)
+                _ensure_release_store_children(parent_fd, expected_uid=os.getuid(), expected_gid=os.getgid())
+                self.assertEqual((first.stat().st_dev, first.stat().st_ino), identity)
+                self.assertEqual(first.stat().st_mode & 0o777, 0o755)
+                self.assertEqual(sentinel.read_bytes(), b"preserve")
+                self.assertEqual({item.name for item in parent.iterdir()},
+                                 {"foreign-service", "hermes-installer"})
+            finally:
+                os.close(parent_fd)
+
+        with tempfile.TemporaryDirectory() as temp:
+            parent = Path(temp) / "usr-lib"
+            parent.mkdir(mode=0o700)
+            hermes = parent / "hermes-installer"
+            hermes.mkdir(mode=0o755)
+            parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                with self.assertRaises(BootstrapEnrollmentError):
+                    _ensure_release_store_children(parent_fd, expected_uid=os.getuid() + 1,
+                                                   expected_gid=os.getgid())
+                self.assertEqual(hermes.stat().st_uid, os.getuid())
+                self.assertFalse((hermes / "releases").exists())
+            finally:
+                os.close(parent_fd)
+
+    def test_missing_release_store_is_created_before_local_publication_and_readback(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, receipt, record_path, _unused_release, _ = self._fixture(temp)
+            deploy = record_path.parent
+            predecessor = Predecessor(os.stat(deploy).st_dev, os.stat(deploy).st_ino)
+            base = root / "usr-lib"
+            base.mkdir(mode=0o700)
+            base_fd = os.open(base, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                _ensure_release_store_children(base_fd, expected_uid=os.getuid(), expected_gid=os.getgid())
+            finally:
+                os.close(base_fd)
+            release = base / "hermes-installer" / "releases" / receipt.candidate_git_sha
+            self.assertTrue(release.parent.is_dir())
+            _publish_retained_build(receipt=receipt, release_root=release, receipt_path=record_path,
+                                    expected_uid=os.getuid(), predecessor=predecessor)
+            record = json.loads(record_path.read_bytes())
+            self.assertEqual(record["release_root"], str(release))
+            self.assertEqual((release / "plans/2026-10-09-v1/README.md").read_bytes(),
+                             b"verified source bytes")
+            self.assertEqual(release.stat().st_mode & 0o777, 0o555)
+
+    def test_fixed_release_store_directory_conflicts_are_preserved_and_denied(self):
+        with tempfile.TemporaryDirectory() as temp:
+            parent = Path(temp) / "usr-lib"
+            parent.mkdir(mode=0o700)
+            target = Path(temp) / "foreign-target"
+            target.mkdir()
+            marker = target / "keep"
+            marker.write_bytes(b"preserve")
+            (parent / "hermes-installer").symlink_to(target, target_is_directory=True)
+            parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                with self.assertRaises(BootstrapEnrollmentError):
+                    _ensure_release_store_children(parent_fd, expected_uid=os.getuid(), expected_gid=os.getgid())
+                self.assertTrue((parent / "hermes-installer").is_symlink())
+                self.assertEqual(marker.read_bytes(), b"preserve")
+                self.assertEqual({item.name for item in parent.iterdir()}, {"hermes-installer"})
+            finally:
+                os.close(parent_fd)
+
+        with tempfile.TemporaryDirectory() as temp:
+            parent = Path(temp) / "usr-lib"
+            parent.mkdir(mode=0o700)
+            hermes = parent / "hermes-installer"
+            hermes.mkdir(mode=0o777)
+            os.chmod(hermes, 0o777)
+            parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                with self.assertRaises(BootstrapEnrollmentError):
+                    _ensure_release_store_children(parent_fd, expected_uid=os.getuid(), expected_gid=os.getgid())
+                self.assertEqual(hermes.stat().st_mode & 0o777, 0o777)
+                self.assertFalse((hermes / "releases").exists())
+            finally:
+                os.close(parent_fd)
+
+    def test_fixed_release_store_ancestor_chain_rejects_symlink_and_bad_mode(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            target = root / "target"
+            target.mkdir(mode=0o700)
+            target_marker = target / "keep"
+            target_marker.write_bytes(b"preserve")
+            (root / "usr").symlink_to(target, target_is_directory=True)
+            root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                with self.assertRaises(BootstrapEnrollmentError):
+                    _open_owned_directory_chain(root_fd, ("usr", "lib"),
+                                                 expected_uid=os.getuid(), expected_gid=os.getgid())
+                self.assertTrue((root / "usr").is_symlink())
+                self.assertEqual(target_marker.read_bytes(), b"preserve")
+                self.assertEqual({item.name for item in root.iterdir()}, {"target", "usr"})
+            finally:
+                os.close(root_fd)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            usr = root / "usr"
+            usr.mkdir(mode=0o700)
+            lib = usr / "lib"
+            lib.mkdir(mode=0o777)
+            os.chmod(lib, 0o777)
+            root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                with self.assertRaises(BootstrapEnrollmentError):
+                    _open_owned_directory_chain(root_fd, ("usr", "lib"),
+                                                 expected_uid=os.getuid(), expected_gid=os.getgid())
+                self.assertEqual(lib.stat().st_mode & 0o777, 0o777)
+                self.assertEqual(tuple(item.name for item in usr.iterdir()), ("lib",))
+            finally:
+                os.close(root_fd)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            usr = root / "usr"
+            usr.mkdir(mode=0o755)
+            lib = usr / "lib"
+            lib.mkdir(mode=0o755)
+            root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                with self.assertRaises(BootstrapEnrollmentError):
+                    _open_owned_directory_chain(root_fd, ("usr", "lib"),
+                                                 expected_uid=os.getuid() + 1,
+                                                 expected_gid=os.getgid())
+                self.assertTrue(lib.is_dir())
+                self.assertEqual({item.name for item in root.iterdir()}, {"usr"})
+            finally:
+                os.close(root_fd)
 
     def test_stages_verified_closure_and_publishes_pointer_last(self):
         with tempfile.TemporaryDirectory() as temp:
