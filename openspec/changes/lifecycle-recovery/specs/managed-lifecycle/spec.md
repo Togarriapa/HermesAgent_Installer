@@ -485,3 +485,15 @@ The installer SHALL refresh only still-live same-owned network observations afte
 #### Scenario: Expired or revoked proof
 - **WHEN** original proof expires or generation/source/adoption/member currentness fails
 - **THEN** deny renewal and effects, stop only verified owned unit and retain ownership-safe cleanup status
+
+
+### Requirement: Durable source facts with fresh wholeclosure authority v256
+The installer SHALL keep private immutable content custody separate from live acquisition/build authority. Only independent current source-policy/controller/PM/NSS and complete signed/license observation may issue the new Xpra wholeclosure/member receipts. Old expired getters remain denied.
+
+#### Scenario: Sequential package observations age
+- **WHEN** earliest package acquisition proof expires before all399 source/license inputs complete
+- **THEN** deny that old proof and use only the explicit independent current wholeclosure observation over verified own durable content; do not raise TTL or admit partial licensing
+
+#### Scenario: Original selection authority expires
+- **WHEN** original current choice/controller/context or signed metadata is no longer valid
+- **THEN** intact stored bytes cannot authorize source admission/build; preserve content and report exact current reauthorization/acquisition prerequisite

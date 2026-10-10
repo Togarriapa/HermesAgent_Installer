@@ -126,3 +126,8 @@ First source bootstrap actor v62: `plans/amendments/2026-10-10-first-source-boot
 - [ ] HI-T254.1: Integrate same-owned still-live fresh observation renewal with current protected generation/source/adoption/NSS joins and atomic FD custody.
 - [ ] LC-T254.2: Separate actual network observation from unchanged finite process/start/access deadlines, continuously supervise and stop exact managed unit on currentness failure; preserve cleanup domain.
 - [ ] VD-T254.3: Verify actual refresh/currentness/expiry/concurrency/watchdog/terminal/access failures and original recipe cap, leaving sustained Desktop/native acceptance separate OPEN.
+
+
+- [ ] RT-T256.1: Implement issuer-only source authority snapshot and durable private root CAS/journal content custody without weakening old expiry/build guards.
+- [ ] RT-T256.2: Implement independent signed metadata/control/full399 license reobservation and new atomic current closure/member receipts; wire actual Xpra input provider/central full verifier.
+- [ ] VD-T256.3: Verify aggregate-age/old-expiry denial/new-current positive/cancel/tamper/restart/metadata/license/authority failures and genuine source-to-build fixture effects, target acceptance OPEN.

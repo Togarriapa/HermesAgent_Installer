@@ -1,0 +1,148 @@
+{
+  "schema": 1,
+  "id": "durable-source-custody-fresh-xpra-observation-v256",
+  "status": "specified; implementation/all source/build/native acceptance OPEN",
+  "refines": [
+    "planning/xpra-native-source-policy-v238.json",
+    "planning/xpra-sysroot-html5-v245.json",
+    "planning/preactive-remote-build-output-receipts-v239.json"
+  ],
+  "source_audit": {
+    "owner": "luna_xpra_runtime_builder",
+    "head": "0b6166204cee8219086fc07976cd013392ed076b",
+    "gap": "RootSetupComponentSourceCAS quarantine expires min(selection,request,now+600); per artifact receipt expires min(selection,proof); RootVerifiedXpraDebianLicenseClosure expires earliest of399 <=30s package proofs. No current reobserver exists. Full build-selection verifier also reads expiry-bound _members, so cannot lawfully refresh sources by reusing expired member origins.",
+    "classes": [
+      "RootXpraNativeSourceVerifier",
+      "RootXpraNativeSourceRequest",
+      "RootVerifiedXpraAcquiredArtifact",
+      "RootQuarantinedSetupSourceObject",
+      "RootAcquiredSourceObjectReceipt",
+      "RootVerifiedXpraDebianLicenseClosure",
+      "RootSelectedRemoteRuntimeRegistry"
+    ]
+  },
+  "requirements": [
+    "original fixed source acquisition/lock/license/current runtime obligations",
+    "zero additional budget and host/controller custody",
+    "complete399 signed Debian/license graph and Python source closure",
+    "truthful readiness/recovery and original deadlines"
+  ],
+  "authority_snapshot": {
+    "issuer": "RootSelectedRemoteRuntimeRegistry.observe_current_xpra_source_authority(selection_handle) -> RootCurrentXpraSourceAuthority",
+    "constructor": "Root-owned registry attached to exact sealed RootSelectedInstallationBinding/current session. New method resolves issuer-retained selection, never accepts choice/PM/controller/NSS/policy maps or raw source receipts.",
+    "lookup": "Recheck original RootSelectedRemoteRuntimeBuildSelection exact membership/role display/session/transaction/plan/prepared generation/selection expiry, current root-signed enable choice and revocation/configuration, same finite role definition, root NSS identity and owned roots, current held installer actor/release/source policy/keyring/module source closure, current official PM runtime projection. Read-only RootXpraSourceAuthorityObserver retained by registry observes exact original root controller PID/start/boot/session/TTY/PIDFD currentness and any existing selected custody; no process launch/unit/output creation or new build custody.",
+    "fields": [
+      "authority_handle",
+      "selection_handle",
+      "choice_handle",
+      "setup_session_id",
+      "transaction_handle",
+      "plan_sha256",
+      "prepared_generation_id",
+      "prepared_generation_digest",
+      "role_definition_sha256",
+      "source_policy_sha256",
+      "installer_release_receipt_sha256",
+      "pm_runtime_receipt_handle",
+      "pm_runtime_identity_sha256",
+      "nss_identity_receipt_handle",
+      "controller_observation_handle",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "deadline": "Fresh observational snapshot min(now+30, original selection/choice/session/controller/PM/NSS/current dependency deadlines); do not extend original choice/context or revive expired setup authorization. If original authority expired, report exact existing root selection/reauthorization resume. Durable bytes remain unavailable until genuine new current choice via existing root TTY workflow.",
+    "decoupling": "Only this source-only getter separates original authorization/source policy from expired acquired _members. Existing verify_current_remote_runtime_build_selection, inputs/grants/build/package verifiers stay strict and must not accept the snapshot as a build grant. No generic skip-currentness flag or selector change.",
+    "reissue": "Per-operation source-only snapshots reissued solely by current issuer while SAME original selection/choice/controller/PM/NSS deadline remains live. No reauthorization or TTY prompt in this stage. Expired original authority stops reobservation and reports existing separate root choice/resume prerequisite."
+  },
+  "custody": {
+    "class": "RootStoredSetupSourceObjectCustody",
+    "owner": "RootSetupComponentSourceCAS private root-only content custody registry; no worker/public read or executable/build artifact authority",
+    "store": "store_completed_acquisition(selection, request, quarantine) -> RootStoredSetupSourceObjectCustody, invoked internally before original bounded transfer/request/grant expiry, after exact owned byte write/fsync/hash/size/mode/root FD readback; charge existing request/object/byte budget before transfer, no new spending or cap. Stores physical bytes only, not verified licensing or current source authority.",
+    "fields": [
+      "custody_handle",
+      "fixed_object_id",
+      "object_kind",
+      "artifact_role",
+      "sha256",
+      "size_bytes",
+      "device",
+      "inode",
+      "mode",
+      "source_policy_sha256",
+      "original_selection_handle",
+      "original_choice_handle",
+      "transaction_handle",
+      "original_request_handle",
+      "original_grant_id",
+      "completed_acquisition_record_sha256",
+      "custody_manifest_sha256"
+    ],
+    "private_refs": "held root CAS directory FD/file FD, exact journal identity/atomic record, original bounded acquisition completed-event and fixed source selector; repr excludes paths/FDs. No expires_monotonic authority field; acquisition issued/expiry/completion timestamps are historical facts only.",
+    "persistence": "Existing binding-held root setup component source CAS root/journal, private nofollow object child addressed only by verified SHA, root-owned0444 regular/nlink1 and bounded exact manifest. Atomic root0600 journal record/fsync under original transaction owner; no caller path or imported DTO. Immutable metadata digest commits exact content identity, original transfer/completion and policy source; permissions are integrity/custody observations, never runtime grant.",
+    "quarantine": "Unverified content remains private untrusted storage and cannot enter build inputs/license admission. Existing quarantine/proof/acquired getter expiry checks unchanged. Only issuer-owned completed objects with required durable in-time completion record may receive new custody/readback; old in-memory maps alone and unknown/foreign storage denied.",
+    "restart": "May re-open content custody only from current exact root journal/owned CAS and rehash complete bytes under current source-only authorization; no restore of old process/FD/proof/selection seals. Missing/changed metadata/owner/tree or incomplete acquisition record remains pending; no downloaded object becomes executable from JSON.",
+    "completion_record": "MUST journal exact request/grant issuance, durable spent-before-first-byte budget/grant event and successful bounded response/write/fsync/full readback completion STRICTLY before original request AND grant expiry. Root-owned retained completion record is source of truth; never reconstruct completion/timestamps from expired in-memory _requests/_quarantines or caller JSON. Missing durable completion remains unavailable; existing historical data cannot be retroactively marked authorized."
+  },
+  "fresh_observer": {
+    "entry": "RootSetupComponentSourceCAS.reobserve_current_xpra_source_closure(selection_handle) -> RootReobservedXpraSourceClosure",
+    "verifier": "RootXpraNativeSourceVerifier.observe_stored_source_closure(source_authority, custody_registry) -> RootReobservedXpraSourceClosure; only exact attached CAS/authority issuers, no body/path/proof map caller input. CAS registry itself selects complete fixed policy closure IDs.",
+    "flow": [
+      "Obtain exact fresh source-only authority; resolve held release source policy/keyring and fixed signed metadata selectors.",
+      "Reopen own stored InRelease and Packages objects and independently verify signature/keyring/date/Valid-Until/vendor freshness policy plus exact signed Packages hash/size and actual fixed policy rows. Historical verified metadata receipt never substitutes. If signed metadata is no longer valid, existing bounded exact acquisition under new current grant may refetch permitted object; no deadline/freshness bypass.",
+      "For each of exact399 Debian objects plus fixed Python source inputs, obtain current source-only snapshot for bounded local operation, independently reopen root immutable file, hash all bytes, validate name/version/ARM64/dependency/source-lock/control/archive path/member graph under same exact policy. Each read/parse has <=30s operation deadline and current original controller/context checks before/after; cancellation closes FDs.",
+      "Record immutable content/control/license inspection facts keyed by actual content/policy/tool/source inspector digests. These facts are not current proofs and need not share earliest acquisition expiry. Complete copyright/symlink owner/reference graph inspection must use all actual399 packages; retain existing source closure/name/alias restrictions and deny missing or cross-package mismatch.",
+      "Immediately before issuing closure obtain a NEW current source-only authority, revalidate unchanged exact policy/signed metadata fresh-time validity, current PM/NSS/controller/root journal, complete private object/member custody and observed content/control/license graph digests. Atomic issuer snapshot commits all fixed members together. Any changed/revoked context, source file, metadata or graph aborts.",
+      "Mint one fresh closure and all its current member receipts from this final observation; no original package proof handles/expiry in authority. Subsequent source reads verify fresh closure currentness and exact held immutable object identity/hash; full build-member verification resumes only after these new receipts are bound."
+    ],
+    "local_operation_rules": "No arbitrary1200s source TTL; no new HTTP budget or repeated spent grant. Long sequence comprises independently bounded operations under original still-live context, not one extended proof. Retain full source integrity: same-process unchanged immutable held FD may use already rehashed fact with fstat/readback and complete graph digest; cold/reopened/changed FD requires full byte rehash. Never trust root path/mode alone.",
+    "closure_fields": [
+      "receipt_handle",
+      "selection_handle",
+      "choice_handle",
+      "transaction_handle",
+      "prepared_generation_id",
+      "prepared_generation_digest",
+      "source_policy_sha256",
+      "source_authority_handle",
+      "signed_metadata_custody_handles",
+      "signed_metadata_sha256",
+      "package_closure_sha256",
+      "python_source_closure_sha256",
+      "license_closure_sha256",
+      "observed_reference_manifest_sha256",
+      "custody_manifest_sha256",
+      "member_receipt_handles",
+      "source_receipt_handles",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "canonical_closure": "SHA256 canonical JSON UTF8(sort_keys true,separators comma/colon,ensure_ascii true,allow_nan false) of domain xpra-stored-source-closure-v256 and sorted complete fixed object rows {fixed_object_id,object_kind,artifact_role,sha256,size_bytes,control_sha256,member_graph_sha256,license_facts_sha256}, plus exact policy/keyring/signed metadata/lock digests. Null only for inapplicable control/license fields. No future active service generation, random observation handles or expired proof digest mistaken for content hash.",
+    "current_expiry": "Closure and all member current receipts share min(final observed+30s, fresh final source authority/current signed metadata effective validity/original dependencies); verify_current never silently refreshes. Caller must explicitly request a new complete observation; old fresh closure/member continues to reject after expiry.",
+    "member_type": "RootCurrentSetupSourceObjectReceipt exact new CAS issuer/seal type, fields {receipt_handle,closure_receipt_handle,custody_handle,selection_handle,choice_handle,transaction_handle,source_policy_sha256,artifact_role,fixed_object_id,sha256,size_bytes,device,inode,mode,issued_monotonic,expires_monotonic}; verify_current(), read_current(selection), open_current(selection) re-resolve exact live new closure/authority/custody and duplicate read-only FD. No public raw map constructor.",
+    "license_type": "RootReobservedXpraSourceClosure carries whole license proof from actual immutable inspection + current source observation; never alias to old RootVerifiedXpraDebianLicenseClosure or bypass old min(package_proof expiry) check. New finite sysroot/provider path consumes exact new closure/members only. Legacy admission remains strict.",
+    "refetch": "Required permitted metadata/object refetch spends existing cumulative request/object/byte budget through genuine current original bounded grant. Exceeded budget/deadline/source freshness remains pending; no reuse of spent grants or assumed approval."
+  },
+  "integration": {
+    "current_getters": [
+      "RootSetupComponentSourceCAS.resolve_current_reobserved_xpra_closure(selection_handle, closure_handle) -> exact closure",
+      "RootSetupComponentSourceCAS.resolve_current_reobserved_source_member(selection_handle, closure_handle, fixed_object_id) -> exact RootCurrentSetupSourceObjectReceipt"
+    ],
+    "callpoint": "Xpra component input provider calls explicit reobserver after finite acquisition/content storage, before sysroot/license/source projection/build input minting; prepared source projection binds new member handles/policy/closure digest. Central registry binds only issuer-resolved new current members and re-runs ordinary full selection/input verification. Build terminal/CAS/materialization/publication require their own genuine original claims; source proof is not runtime readiness.",
+    "renewal": "Read/getters deny expiry. Only explicit reobserver performs current whole policy/source checks and issues new IDs. No mutation of old issued/expiry fields, copied DTO adoption or background TTL renewal.",
+    "other_components": "This correction is finite Xpra source399/Python policy lane. It is not generic Desktop/Gateway observer authorization or license approval. Other policies need their own exact source closures."
+  },
+  "tests": [
+    "Acquire multiple actual fixture archives with individual proofs expiring at30; original getters deny them, own immutable content remains; explicit fresh current wholeclosure admission succeeds without refetch or TTL extension.",
+    "Complete fixture copyright cross-package reference graph, tamper missing owner/member/control/hash/signature/metadata freshness denial; no partial license admission.",
+    "Expired choice/session/selection/controller/PM/NSS refuses fresh proof despite intact CAS; new legitimate choice independent observation cannot replay old seals.",
+    "Restart byte rehash/journal/owner/mode/inode/custody failure, unknown quarantine/no acquisition completion facts.",
+    "Final closure all member expiries equal final current proof; old closure still rejects, forged caller custody/proof map denied.",
+    "Per-operation cancel/deadline and refetch request/budget replay limits preserved; zero additional metered cost.",
+    "Real fixed Xpra pipeline acquisition->freshsource->license/sysroot->managed build effect separately verifies current inputs; native runtime/Pi acceptance OPEN."
+  ],
+  "tasks": {
+    "RT-T256.1": "Implement issuer-only source authority snapshot and durable private root CAS/journal content custody without weakening old expiry/build guards.",
+    "RT-T256.2": "Implement independent signed metadata/control/full399 license reobservation and new atomic current closure/member receipts; wire actual Xpra input provider/central full verifier.",
+    "VD-T256.3": "Verify aggregate-age/old-expiry denial/new-current positive/cancel/tamper/restart/metadata/license/authority failures and genuine source-to-build fixture effects, target acceptance OPEN."
+  }
+}

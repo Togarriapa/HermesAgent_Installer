@@ -114,3 +114,8 @@ Preserve BD-F03/LC-F03/AC01..02 and v235/v242. Use exact source-reviewed histori
 ## Current owned network observation v254
 
 `planning/current-owned-remote-network-observation-v254.json` separates fresh same-owned <=30s kernel/tool observations from original one-use start, actual <=600s finite recipe and independent Access/socket/tunnel deadlines. Complete current generation/adoption/NSS/kernel watchdog must stop exact owned unit on failure; no expiry resurrection or cleanup renewal. Sustained Desktop acceptance remains OPEN, no global Jarvis timeout inferred.
+
+
+## Durable source custody/fresh Xpra observation v256
+
+`planning/durable-source-custody-fresh-xpra-observation-v256.json` specifies private immutable content custody independently of expired acquisition proofs, current source-only snapshot and new whole399 signed/control/license observation. Existing expiry/full build guards remain strict; no caller policy/path/provider, expired seal revival or TTL widening. All source/native acceptance OPEN.
