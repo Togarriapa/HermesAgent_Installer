@@ -45,6 +45,7 @@ from .bootstrap_enrollment import (
     VerifiedRootSetupPlan,
     _canonical,
     _ensure_root_directory,
+    _read_json_if_owned,
     _secure_directory_identity,
     _open_immutable_release_root,
     _read_secure_root_bytes,
@@ -90,6 +91,12 @@ _XPRA_TRANSFORM_MODULE = (
     "3342afa5311fef5008a35317a526c75b3d1531d21e92d1f8aae87dba38b0a7d1",
     59_621,
     "xpra-root-xauthority-transform-module",
+)
+_PREPARED_BUILD_TEMPLATE = (
+    "installer-prepared-build-service-template-v1",
+    "plans/amendments/2026-10-10-prepared-build-service-selection-v115/prepared-build-service-template-v1.json",
+    "0d98bdabf27185d769f55de12e9242d5286e07d11e5d62369c2eeedf1fa4b967",
+    1235,
 )
 _CAPABILITY_MAP_TEMPLATE_SHA256 = "41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565"
 _CAPABILITY_MAP_TEMPLATE_PATH = "templates/reviewed-native-capability-map-v1.json"
@@ -243,6 +250,54 @@ class RootNativeRegistrationSchemaReceipt:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class RootPreparedBuildServiceSelection:
+    """Transaction-private setup build subject backed by actual NSS and roots."""
+
+    service_selection_handle: str
+    id: str
+    profile_id: str
+    generation: str
+    setup_session_id: str
+    transaction_handle: str
+    prepared_generation_id: str
+    prepared_generation_digest: str
+    template_artifact_id: str
+    template_sha256: str
+    service_uid: int
+    service_gid: int
+    nss_identity_receipt_handle: str
+    root_selection_receipt_handle: str
+    allowed_operation_ids: tuple[str, ...]
+    allowed_targets: tuple[str, ...]
+    expires_monotonic: float
+    _signature: str = field(repr=False, compare=False)
+    _session_seal: str = field(repr=False, compare=False)
+    _session: Any = field(repr=False, compare=False)
+
+    def verify_current(self) -> "RootPreparedBuildServiceSelection":
+        return self._session._resolve_current_prepared_build_service(self.service_selection_handle)
+
+    def create_output_root(self) -> "RootPreparedBuildOutputRoot":
+        return self._session._create_prepared_build_output_root(self.service_selection_handle)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootPreparedBuildOutputRoot:
+    """A fresh directory capability; no filesystem path crosses the factory API."""
+
+    output_root_id: str
+    service_selection_handle: str
+    service_uid: int
+    service_gid: int
+    _directory_fd: int = field(repr=False, compare=False)
+    _session: Any = field(repr=False, compare=False)
+    _session_seal: str = field(repr=False, compare=False)
+
+    def open_current(self) -> int:
+        return self._session._open_prepared_build_output_root(self)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class RootSelectedInstallationBinding:
     """Opaque session binding; never exposes service or journal paths."""
 
@@ -313,6 +368,16 @@ class RootSelectedInstallationBinding:
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("installed Xpra toolchain is not owned by this setup session")
         return self._session._resolve_installed_xpra_transform_module()
+
+    def resolve_prepared_build_service(self, build_profile_id: str) -> RootPreparedBuildServiceSelection:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("prepared build service is not owned by this setup session")
+        return self._session._resolve_prepared_build_service(build_profile_id)
+
+    def verify_current_setup_controller(self) -> VerifiedRootSetupAuthorization:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("setup controller proof is not owned by this session")
+        return self._session._verify_current_setup_controller()
 
     def resolve_native_bootstrap_assembly(
             self, prepared_setup_receipt_handle: str,
@@ -3276,6 +3341,9 @@ class RootBootstrapSession:
         self._native_schema_receipts_by_artifact: dict[str, RootNativeRegistrationSchemaReceipt] = {}
         self._native_schema_receipt_registry: Any | None = None
         self._native_schema_receipt_registry_minted_for: tuple[str, str] | None = None
+        self._prepared_build_identity: SystemIdentityAdapter | None = None
+        self._prepared_build_selections: dict[str, RootPreparedBuildServiceSelection] = {}
+        self._prepared_build_output_roots: dict[str, RootPreparedBuildOutputRoot] = {}
         self._source_provisioner = self._make_source_provisioner()
         self._selected_installation = RootSelectedInstallationBinding(self, seal)
         self._client = factory.session_store.bootstrap_client(
@@ -4214,6 +4282,232 @@ class RootBootstrapSession:
         actor.verify_current(release)
         return receipt
 
+    def _resolve_prepared_build_service(self, build_profile_id: str) -> RootPreparedBuildServiceSelection:
+        """Resolve the fixed setup-only Xpra builder against actual NSS/root custody."""
+        self._check_live()
+        self._refresh_authorization()
+        if build_profile_id != "xpra-root-xauthority-transform-v1":
+            raise BootstrapEnrollmentPending("prepared build profile is outside the fixed Xpra operation")
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or not prepared.provision_receipt_handle
+                or prepared.transaction_handle != self._authorization.transaction_handle):
+            raise BootstrapEnrollmentPending("prepared build service requires current empty prepared custody")
+        prior = self._prepared_build_selections.get(build_profile_id)
+        if prior is not None:
+            return self._resolve_current_prepared_build_service(prior.service_selection_handle)
+        release, actor = self._factory._release, self._factory._actor
+        actor.verify_current(release)
+        artifact_id, relative_path, digest, size = _PREPARED_BUILD_TEMPLATE
+        plan = self._factory.resolver.resolve(_PLAN_ID)
+        rows = [item for item in release.files if item.artifact_id == artifact_id]
+        if (artifact_id not in plan.allowed_artifact_ids or len(rows) != 1
+                or rows[0].relative_path != relative_path or rows[0].sha256 != digest
+                or rows[0].size_bytes != size or "template" not in rows[0].roles):
+            raise BootstrapEnrollmentPending("installed release lacks the exact reviewed prepared build template")
+        fd = release.open_file(artifact_id)
+        try:
+            raw = bytearray()
+            while len(raw) <= size:
+                block = os.read(fd, min(64 * 1024, size + 1 - len(raw)))
+                if not block:
+                    break
+                raw.extend(block)
+        finally:
+            os.close(fd)
+        if len(raw) != size or hashlib.sha256(raw).hexdigest() != digest:
+            raise BootstrapEnrollmentPending("prepared build template changed after release verification")
+        try:
+            template = json.loads(raw)
+        except Exception:
+            raise BootstrapEnrollmentPending("prepared build template is malformed") from None
+        if (not isinstance(template, dict) or template.get("id") != artifact_id
+                or template.get("profile_id") != "hermes-installer-build-v1"
+                or template.get("service_account_name") != "hermes-installer-build"
+                or template.get("exclusive_group_name") != "hermes-installer-build"
+                or template.get("allowed_operation_ids") != ["xpra-root-xauthority-transform-v1"]
+                or template.get("allowed_targets") != ["xpra-root-xauthority-transform:start"]):
+            raise BootstrapEnrollmentPending("prepared build template does not match its fixed Xpra scope")
+        if self._prepared_build_identity is None:
+            self._prepared_build_identity = SystemIdentityAdapter(
+                Path("/var/lib/hermes-installer/identities/hermes-installer-build.json"),
+                name="hermes-installer-build")
+        identity = self._prepared_build_identity.ensure()
+        if identity.uid == 0 or identity.gid == 0:
+            raise BootstrapEnrollmentPending("prepared build identity must be a dedicated non-root account")
+        transaction_digest = hashlib.sha256(self._authorization.transaction_handle.encode("ascii")).hexdigest()
+        root = self._factory.resolver.journal_root / "prepared-build-services" / transaction_digest
+        _ensure_root_directory(root.parent)
+        _ensure_root_directory(root)
+        work = root / "work"
+        if not work.exists():
+            _create_service_root(work, identity)
+        work_info = work.lstat()
+        if (work_info.st_uid != identity.uid or work_info.st_gid != identity.gid
+                or not stat.S_ISDIR(work_info.st_mode) or stat.S_IMODE(work_info.st_mode) != 0o700):
+            raise BootstrapEnrollmentPending("prepared build work root conflicts with the selected NSS identity")
+        now = time.monotonic()
+        expires = min(now + min(300.0, float(template.get("limits", {}).get("max_lifetime_seconds", 300))),
+                      prepared.expires_monotonic,
+                      self._factory.session_store.current_deadline(self._handle))
+        if expires <= now:
+            raise BootstrapEnrollmentPending("prepared build service selection lease expired")
+        selection_handle = secrets.token_urlsafe(36)
+        nss_handle, root_handle = secrets.token_urlsafe(36), secrets.token_urlsafe(36)
+        immutable = {
+            "schema": 1,
+            "id": f"setup-build:{self._authorization.transaction_handle}:hermes-installer-build-v1",
+            "profile_id": "hermes-installer-build-v1",
+            "setup_session_id": self._handle.session_id,
+            "transaction_handle": self._authorization.transaction_handle,
+            "prepared_generation_id": prepared.generation_id,
+            "prepared_generation_digest": prepared.generation_digest,
+            "template_artifact_id": artifact_id, "template_sha256": digest,
+            "service_uid": identity.uid, "service_gid": identity.gid,
+            "nss_identity_receipt_handle": nss_handle,
+            "root_selection_receipt_handle": root_handle,
+            "allowed_operation_ids": ["xpra-root-xauthority-transform-v1"],
+            "allowed_targets": ["xpra-root-xauthority-transform:start"],
+            "root_device": root.stat().st_dev, "root_inode": root.stat().st_ino,
+            "work_device": work_info.st_dev, "work_inode": work_info.st_ino,
+        }
+        generation = hashlib.sha256(_canonical(immutable)).hexdigest()
+        signature = hmac.new(self._seal.encode("ascii"), _canonical({**immutable,
+                    "generation": generation, "expires_monotonic": expires}), hashlib.sha256).hexdigest()
+        record = {**immutable, "generation": generation, "expires_monotonic": expires,
+                  "selection_handle": selection_handle, "signature": signature}
+        _atomic_root_file(root / f"{selection_handle}.json", _canonical(record), 0o600)
+        selected = RootPreparedBuildServiceSelection(
+            selection_handle, immutable["id"], immutable["profile_id"], generation,
+            self._handle.session_id, self._authorization.transaction_handle,
+            prepared.generation_id, prepared.generation_digest, artifact_id, digest,
+            identity.uid, identity.gid, nss_handle, root_handle,
+            tuple(immutable["allowed_operation_ids"]), tuple(immutable["allowed_targets"]),
+            expires, signature, self._seal, self)
+        self._prepared_build_selections[selection_handle] = selected
+        self._prepared_build_selections[build_profile_id] = selected
+        actor.verify_current(release)
+        return selected
+
+    def _resolve_current_prepared_build_service(self, selection_handle: str) -> RootPreparedBuildServiceSelection:
+        self._check_live()
+        self._refresh_authorization()
+        selected = self._prepared_build_selections.get(selection_handle)
+        prepared = self._last_receipt
+        if (not isinstance(selected, RootPreparedBuildServiceSelection)
+                or selected.service_selection_handle != selection_handle
+                or selected._session is not self
+                or not secrets.compare_digest(selected._session_seal, self._seal)
+                or prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or selected.setup_session_id != self._handle.session_id
+                or selected.transaction_handle != self._authorization.transaction_handle
+                or selected.prepared_generation_id != prepared.generation_id
+                or selected.prepared_generation_digest != prepared.generation_digest
+                or selected.expires_monotonic <= time.monotonic()
+                or self._prepared_build_identity is None):
+            raise BootstrapEnrollmentPending("prepared build service selection is stale or not retained")
+        identity = self._prepared_build_identity.ensure()
+        if (identity.uid != selected.service_uid or identity.gid != selected.service_gid
+                or identity.name != "hermes-installer-build"):
+            raise BootstrapEnrollmentPending("prepared build NSS identity changed after selection")
+        root = (self._factory.resolver.journal_root / "prepared-build-services"
+                / hashlib.sha256(selected.transaction_handle.encode("ascii")).hexdigest())
+        path = root / f"{selection_handle}.json"
+        record = _read_json_if_owned(path)
+        if (not isinstance(record, dict) or record.get("selection_handle") != selection_handle
+                or record.get("signature") != selected._signature
+                or record.get("prepared_generation_digest") != prepared.generation_digest
+                or record.get("service_uid") != identity.uid or record.get("service_gid") != identity.gid):
+            raise BootstrapEnrollmentPending("prepared build service journal no longer matches current setup")
+        unsigned = dict(record)
+        unsigned.pop("signature", None)
+        unsigned.pop("selection_handle", None)
+        check = hmac.new(self._seal.encode("ascii"), _canonical(unsigned), hashlib.sha256).hexdigest()
+        if not secrets.compare_digest(check, selected._signature):
+            raise BootstrapEnrollmentPending("prepared build service journal signature is invalid")
+        work_info = (root / "work").lstat()
+        if (work_info.st_uid != identity.uid or work_info.st_gid != identity.gid
+                or not stat.S_ISDIR(work_info.st_mode) or stat.S_IMODE(work_info.st_mode) != 0o700
+                or root.stat().st_ino != record.get("root_inode")
+                or work_info.st_ino != record.get("work_inode")):
+            raise BootstrapEnrollmentPending("prepared build roots changed after selection")
+        self._factory._actor.verify_current(self._factory._release)
+        return selected
+
+    def _verify_current_setup_controller(self) -> VerifiedRootSetupAuthorization:
+        self._check_live()
+        self._refresh_authorization()
+        self._factory._actor.verify_current(self._factory._release)
+        live = self._factory.session_store._live(self._handle)
+        proof = self._factory.session_store._proof(live)
+        if (proof != self._authorization or proof.setup_session_id != self._handle.session_id
+                or proof.transaction_handle != self._transaction.transaction_handle):
+            raise BootstrapEnrollmentPending("setup controller proof is no longer current")
+        return proof
+
+    def _create_prepared_build_output_root(self, selection_handle: str) -> RootPreparedBuildOutputRoot:
+        selected = self._resolve_current_prepared_build_service(selection_handle)
+        if selected._session is not self:
+            raise BootstrapEnrollmentPending("prepared build output request is not owned by this session")
+        prior = next((row for row in self._prepared_build_output_roots.values()
+                      if row.service_selection_handle == selection_handle), None)
+        if prior is not None:
+            check_fd = prior.open_current()
+            os.close(check_fd)
+            return prior
+        root = (self._factory.resolver.journal_root / "prepared-build-services"
+                / hashlib.sha256(selected.transaction_handle.encode("ascii")).hexdigest())
+        output_parent = root / "outputs"
+        if not output_parent.exists():
+            _ensure_root_directory(output_parent)
+        else:
+            info = output_parent.lstat()
+            if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
+                    or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o700):
+                raise BootstrapEnrollmentPending("prepared build output parent is unsafe")
+        output_root_id = secrets.token_hex(24)
+        output = output_parent / output_root_id
+        try:
+            os.mkdir(output, 0o700)
+            os.chown(output, selected.service_uid, selected.service_gid)
+            os.chmod(output, 0o700)
+            fd = os.open(output, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                         | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+        except Exception:
+            try:
+                output.rmdir()
+            except OSError:
+                pass
+            raise BootstrapEnrollmentPending("fresh prepared build output root could not be allocated safely") from None
+        info = os.fstat(fd)
+        if (info.st_uid != selected.service_uid or info.st_gid != selected.service_gid
+                or stat.S_IMODE(info.st_mode) != 0o700):
+            os.close(fd)
+            raise BootstrapEnrollmentPending("prepared build output root ownership is invalid")
+        receipt = RootPreparedBuildOutputRoot(
+            output_root_id, selection_handle, selected.service_uid, selected.service_gid,
+            fd, self, self._seal)
+        self._prepared_build_output_roots[output_root_id] = receipt
+        self._verify_current_setup_controller()
+        return receipt
+
+    def _open_prepared_build_output_root(self, receipt: RootPreparedBuildOutputRoot) -> int:
+        selected = self._resolve_current_prepared_build_service(receipt.service_selection_handle)
+        if (not isinstance(receipt, RootPreparedBuildOutputRoot) or receipt._session is not self
+                or not secrets.compare_digest(receipt._session_seal, self._seal)
+                or self._prepared_build_output_roots.get(receipt.output_root_id) is not receipt
+                or selected.service_uid != receipt.service_uid or selected.service_gid != receipt.service_gid):
+            raise BootstrapEnrollmentPending("prepared build output capability is stale or foreign")
+        try:
+            info = os.fstat(receipt._directory_fd)
+        except OSError:
+            raise BootstrapEnrollmentPending("prepared build output descriptor is closed") from None
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != selected.service_uid
+                or info.st_gid != selected.service_gid or stat.S_IMODE(info.st_mode) != 0o700):
+            raise BootstrapEnrollmentPending("prepared build output descriptor identity changed")
+        self._verify_current_setup_controller()
+        return os.dup(receipt._directory_fd)
+
     def _read_installed_release_member_receipt(
             self, receipt: RootInstalledReleaseMemberReceipt) -> bytes:
         self._check_live()
@@ -4345,6 +4639,12 @@ class RootBootstrapSession:
     def close(self) -> None:
         if self._closed:
             return
+        for output_root in self._prepared_build_output_roots.values():
+            try:
+                os.close(output_root._directory_fd)
+            except OSError:
+                pass
+        self._prepared_build_output_roots.clear()
         for proof in self._resource_profile_tty_proofs.values():
             try:
                 proof.close()
