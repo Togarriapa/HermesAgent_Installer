@@ -5728,7 +5728,10 @@ class ManagedBuildJobRunner:
                 or profile.output_root_id != selection.output_root_receipt_handle
                 or profile.output_owner_uid != inputs.output_owner_uid
                 or selection.recipe_sha256 != grant.recipe_sha256
-                or selection.controller_binding_handle != grant.controller_binding_handle):
+                or selection.controller_binding_handle != grant.controller_binding_handle
+                or selection.builder_module.relative_path
+                    != "lib/python/hermes_installer/authority/application_environment_builder.py"
+                or selection.pm_uv.relative_path != "uv"):
             raise AuthorityDenied("build.application_binding", "application selection differs from its finite protected recipe")
         expected_argv = (
             {"build_path": {"mount_id": "builder", "relative_path": ""}},
