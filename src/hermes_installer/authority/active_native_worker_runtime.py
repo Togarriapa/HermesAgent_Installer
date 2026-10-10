@@ -101,6 +101,7 @@ class RootActiveNativeWorkerRuntimeRegistry:
                 raise ValueError("runtime row does not join selected active profile")
             fds, root_identity = self._open_pm_members(row, network_projection.active_record)
             try:
+                fds.extend(self._open_source_definition_members(row))
                 output_fds, output_root_identity = self._open_native_output_members(row)
                 fds.extend(output_fds)
                 self.generation_owner.verify_current(network_projection)
@@ -407,11 +408,63 @@ class RootActiveNativeWorkerRuntimeRegistry:
             raise
         finally:
             for fd in (receipt_fd, generation_fd, parent_fd, root_fd):
-                if fd >= 0:
-                    try:
-                        os.close(fd)
-                    except OSError:
-                        pass
+                    if fd >= 0:
+                        try:
+                            os.close(fd)
+                        except OSError:
+                            pass
+
+    def _open_source_definition_members(self, row: Any) -> list[int]:
+        """Reopen recipe and installer source members from this daemon's held release."""
+        from .installer_release import VerifiedInstallerReleaseReceipt
+
+        release = getattr(self.runtime, "controller_release_receipt", None)
+        records = row.get("source_definition_member_records")
+        handles = row.get("source_member_receipt_handles")
+        if type(release) is not VerifiedInstallerReleaseReceipt:
+            raise ValueError("active worker source closure has no exact held release projection")
+        _validate_source_member_catalog(records, handles)
+        release.verify_current()
+        indexed = {item.artifact_id: item for item in release.files}
+        if len(indexed) != len(release.files):
+            raise ValueError("held installer release has ambiguous artifact IDs")
+        fds: list[int] = []
+        try:
+            seen: set[tuple[str, str]] = set()
+            observed_handles: list[str] = []
+            for item in records:
+                key = (item["artifact_id"], item["relative_path"])
+                if key in seen:
+                    raise ValueError("active worker source member row is duplicated")
+                seen.add(key)
+                observed_handles.append(item["receipt_handle"])
+                member = indexed.get(item["artifact_id"])
+                if (member is None or member.relative_path != item["relative_path"]
+                        or member.sha256 != item["sha256"] or member.size_bytes != item["size_bytes"]
+                        or member.roles not in {("module",), ("source-module",)}):
+                    raise ValueError("active worker source row differs from this installed release")
+                fd = release.open_file(member.artifact_id)
+                fds.append(fd)
+                info = os.fstat(fd)
+                if (not stat.S_ISREG(info.st_mode)
+                        or (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode), info.st_size,
+                            info.st_dev, info.st_ino)
+                        != (item["owner_uid"], item["owner_gid"], item["mode"], item["size_bytes"],
+                            item["device"], item["inode"])
+                        or _hash_fd(fd) != item["sha256"]):
+                    raise ValueError("active worker source file changed after release observation")
+            _validate_source_member_catalog(records, handles)
+            if tuple(sorted(observed_handles)) != tuple(handles):
+                raise ValueError("active worker source receipt handles do not join the signed catalog")
+            release.verify_current()
+            return fds
+        except BaseException:
+            for fd in fds:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            raise
 
 
 def _open_root_directory(path: Path) -> int:
@@ -459,6 +512,38 @@ def _native_output_relative_parts(value: Any) -> tuple[str, ...]:
     return parts
 
 
+def _validate_source_member_catalog(records: Any, handles: Any) -> None:
+    required = {"artifact_id", "receipt_handle", "relative_path", "kind", "sha256",
+                "size_bytes", "mode", "owner_uid", "owner_gid", "device", "inode",
+                "link_target", "output_role"}
+    if (not isinstance(records, (tuple, list)) or not records or len(records) > 128
+            or not isinstance(handles, (tuple, list)) or not handles
+            or len(handles) != len(records)
+            or any(not isinstance(handle, str) or not handle for handle in handles)
+            or tuple(handles) != tuple(sorted(handles)) or len(set(handles)) != len(handles)):
+        raise ValueError("active worker source receipt handles are incomplete or unsorted")
+    observed_handles: set[str] = set()
+    seen_members: set[tuple[str, str]] = set()
+    for item in records:
+        if (not isinstance(item, dict) or set(item) != required
+                or item["kind"] != "regular-file" or item["link_target"] is not None
+                or item["output_role"] is not None
+                or not isinstance(item["artifact_id"], str) or not item["artifact_id"]
+                or not isinstance(item["relative_path"], str) or not item["relative_path"]
+                or not isinstance(item["receipt_handle"], str) or not item["receipt_handle"]
+                or not re.fullmatch(r"[0-9a-f]{64}", item["sha256"])
+                or any(type(item[name]) is not int or item[name] < 0 for name in
+                       ("size_bytes", "mode", "owner_uid", "owner_gid", "device", "inode"))):
+            raise ValueError("active worker source member row is malformed")
+        key = (item["artifact_id"], item["relative_path"])
+        if key in seen_members or item["receipt_handle"] in observed_handles:
+            raise ValueError("active worker source member row or handle is duplicated")
+        seen_members.add(key)
+        observed_handles.add(item["receipt_handle"])
+    if tuple(sorted(observed_handles)) != tuple(handles):
+        raise ValueError("active worker source receipt handles do not join the signed catalog")
+
+
 def _digest(value: Any) -> str:
     raw = json.dumps(_plain(value), sort_keys=True, separators=(",", ":"),
                      ensure_ascii=False, allow_nan=False).encode("utf-8")
@@ -468,4 +553,4 @@ def _digest(value: Any) -> str:
 _RUNTIME_SEAL = object()
 
 __all__ = ["ActiveNativeWorkerRuntimeUnavailable", "RootActiveNativeWorkerRuntimeProjection",
-           "RootActiveNativeWorkerRuntimeRegistry"]
+           "RootActiveNativeWorkerRuntimeRegistry", "_validate_source_member_catalog"]
