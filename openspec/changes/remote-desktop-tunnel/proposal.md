@@ -148,3 +148,4 @@ Exact contract: `planning/official-desktop-measured-headers-managed-plan-v240.js
 ## Gateway source and wheel issuer refinement v244
 
 Preserve AC13..15 and v202/v209/v239. Consume the exact finite source-only held release and selected Gateway locked-wheel CAS issuer in `planning/gateway-source-wheel-issuers-v244.json`. Public rows/raw bodies do not authorize; actual retained source/PM/choice/FD/license/currentness proofs precede offline build. No source pins or acceptance declared.
+Remote source digest v246: planning/remote-source-active-digest-acyclic-v246.json removes impossible source self-dependency through exact source schema2, preserves prepared lineage and full active generation algorithm, and requires post-publication receipt/core/claim/adoption joins via actual active_service_generation fields. All AC OPEN.

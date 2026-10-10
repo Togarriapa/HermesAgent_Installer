@@ -238,3 +238,4 @@ v240: `plans/amendments/2026-10-10-official-desktop-measured-headers-managed-pla
 ## Gateway source and wheel issuers v244
 
 Append-only `plans/amendments/2026-10-10-gateway-source-wheel-issuers-v244.md` / `planning/gateway-source-wheel-issuers-v244.json`; RT-T244.1/.2, VD-T244.3 open. Exact source-only held release projection plus selected Gateway locked-wheel CAS/license/FD issuer closes the source production seam; no source pins or acceptance inferred.
+Remote source active digest v246: plans/amendments/2026-10-10-remote-source-active-digest-acyclic-v246.md; RT-T246.1/.2/VD-T246.3 OPEN, exact source schema2 omits self-dependent field; actual full active receipt/core/adoption joins retain independent prepared lineage. All AC OPEN.

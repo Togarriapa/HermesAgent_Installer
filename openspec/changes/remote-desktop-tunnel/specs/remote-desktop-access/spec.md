@@ -544,3 +544,16 @@ The system SHALL use the v244 exact held release source-only receipt and current
 #### Scenario: Exact finite source and locked wheel closure is retained
 - **WHEN** the current reviewed release source cohort and complete lock/PM/license wheel closure are independently verified and retained in immutable CAS
 - **THEN** only their current issuer-backed FDs enter selected build inputs, without claiming runtime or Pi acceptance
+
+## ADDED Requirements
+
+### Requirement: Acyclic remote source and complete active generation binding
+The installer SHALL apply planning/remote-source-active-digest-acyclic-v246.json: immutable remote source schema2 omits service_generation_digest, while post-publication adoption and current runtime proof bind actual active_service_generation_id/digest to the complete authority core generation. Prepared lineage SHALL remain separately checked.
+
+#### Scenario: Source publication precedes full active hash
+- **WHEN** complete retained role/network/source receipts produce immutable remote source bytes
+- **THEN** the compiler includes their SHA selector before computing the full unchanged generation hash, and adoption verifies current actual active receipt/core/claim/member joins before activation
+
+#### Scenario: Component or prepared digest cannot authorize active runtime
+- **WHEN** a subset hash, prepared digest, unexpected source digest field or altered selector is supplied under the active domain
+- **THEN** publication or adoption rejects it without omitting selector rows, rewriting hashed source bytes or weakening current source validation

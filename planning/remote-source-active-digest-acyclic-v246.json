@@ -1,0 +1,82 @@
+{
+  "schema": 1,
+  "id": "remote-source-active-digest-acyclic-v246",
+  "refines": [
+    "v225",
+    "v231",
+    "v239"
+  ],
+  "requirements": [
+    "R0037",
+    "R0203",
+    "R0204",
+    "R0211"
+  ],
+  "status": "specified; implementation and AC01..18 OPEN",
+  "audit": {
+    "source_checkout": "/private/tmp/hermes-hi197-display-runtime",
+    "source_head": "0b9a2508735a248c78c6105b255e17bd21d69a3e",
+    "observed_wip": "Read only; shared clone has unrelated in-progress integration conflicts. _publication_source_document currently hashes only remote_enrollment_id/roles/network_rows_sha256 into service_generation_digest; this is a component projection, not canonical complete active generation. No source implementation acceptance claimed.",
+    "cycle": "Active service_generations includes remote_service_identity_source_records selector.source_sha256. If source bytes also include H(active generation), then sourceSHA -> activeSHA -> sourceSHA is recursive. No fixed point, placeholder, omitted selector, prepublication active adoption or post-hash source rewrite is permitted."
+  },
+  "source_member": {
+    "schema": 2,
+    "purpose": "production-remote-role-identities-v1",
+    "relative_path": "plans/remote-service-identities-v1.json",
+    "exact_fields": [
+      "schema",
+      "purpose",
+      "adoption_handle",
+      "remote_enrollment_id",
+      "setup_session_id",
+      "transaction_handle",
+      "choice_handle",
+      "choice_payload_sha256",
+      "prepared_generation_id",
+      "prepared_generation_digest",
+      "journal_root_id",
+      "journal_relative_path",
+      "definition_closure_sha256",
+      "remote_source_inputs_handle",
+      "remote_source_inputs_sha256",
+      "roles"
+    ],
+    "change": "Exact v225 source schema1 field set minus service_generation_digest, with schema literal2. Remove subset projection and misleading field entirely. No replacement digest needed: immutable member SHA commits roles and remote_source_inputs_sha256 commits exact retained network/source inputs; existing network_rows_sha256 remains its named finite component digest. All exact role schemas, bounds, NSS/source/terminal/CAS/materialization, reserved remote identity, protected journal/member custody and v239 attestations remain mandatory.",
+    "prepared": "prepared_generation_id/prepared_generation_digest remain exact original prepared receipt lineage. Compiler.expected_service_generation_digest remains expected prepared digest. Neither becomes active digest; none is removed or relabelled.",
+    "compatibility": "Fresh v246 producer/publisher/adoption emits and consumes schema2 exact fields; reject service_generation_digest or renamed component field as unexpected in2. Existing historical schema1 stays a distinct closed legacy schema, never reinterpret its service_generation_digest as a finite component or exempt full active joins. No schema1/component hash qualifies as v246 fresh adoption; legacy unsupported/inconsistent authority remains unavailable with exact diagnostic, not silently migrated. Service_generations schema3(v225) and schema4(v236) remain unchanged, full canonical digest and selectors retained."
+  },
+  "pipeline": [
+    "current complete three-role source/NSS/terminal/CAS/materialization/reservation/network proofs",
+    "canonical immutable source schema2 bytes and SHA/size with one-use adoption handle",
+    "insert exact source selector into complete active generation",
+    "compute full active generation_digest from canonical entire service_generations excluding ONLY top-level generation_digest",
+    "compiler sealed claim binds actual authority core/member and active_service_generation_id/digest independently of expected prepared digest",
+    "publish atomic current selection; resolve current held core/source/receipt and verify exact full joins",
+    "sign/journal immutable remote adoption with actual active ID/digest then re-resolve before any remote activation"
+  ],
+  "active_joins": {
+    "writer": "RootSelectedRemoteServiceIdentityRegistry.adopt_into_active_publication uses publication_receipt.active_service_generation_id and publication_receipt.active_service_generation_digest for adoption.active_generation_id/digest and RootAdoptedRemoteServiceIdentityReceipt. Current compiler claim and current core complete service_generations generation_id/digest MUST equal both. Legacy publication_receipt.generation_id/service_generation_digest may denote prepared publication identity; never use them as active values without exact explicit typed domain assertion. Missing active fields denies.",
+    "getter": "PolicyPublicationReceiptResolver.resolve_current_remote_identity_source validates schema2 without source activehash. Its current-proof metadata active_generation_id/digest derives from same current receipt active_service_generation fields and joins current held authority core fullgeneration and original claim, selector/sourceSHA/size/adoption/reservation/role/network source and immutable member. No extra source field is needed.",
+    "resolver": "RootRemoteServiceActiveIdentityResolver compares signed adoption.active_generation_id/digest and current typed source metadata to exact current runtime/enrollment/core active generation, publication receipt active_service_generation fields and claim/core hashes. Root journal/network resolver expected_active_generation_digest gets this actual active value. Prepared source fields remain lineage checked separately. Restart reopens signed adoption + protected member/current core, never setup seals.",
+    "digest_algorithm": "Use existing canonical full service_generations implementation: sorted keys, compact separators, UTF8, allow_nan=False and exact current canonical options; exclude ONLY generation_digest, include remote selector and all source/service/process/network/home-related generation rows. Never strip selector, alter schema, recompute older digest, hash subset or compare component hash under active name."
+  },
+  "absent_remote": "Preserve v225 absent optional behavior: empty remote selector, absent member, null sourceSHA and size0. Enabled requires complete actual schema2 member/selector/adoption. Do not synthesize disabled role receipts.",
+  "owners": {
+    "central_workload": "remote_service_identity source schema2 and active adoption joins; exact retained aggregate unchanged",
+    "compiler": "published member schema2 validation and current source metadata/claim/receipt/core active joins; expected prepared remains separate",
+    "active_runtime": "signed adoption/current identity/journal/network full active digest joins"
+  },
+  "tests": [
+    "Genuine retained complete source emits exact2 fields; source/member selector enters complete generation before hash, publisher/adoption reopens exact bytes with no mutation; active digest matches full core and differs from prepared when actual rows differ.",
+    "Changing any unrelated active generation row changes full active digest without rewriting source bytes, while source selector still validates; digest is not remote component hash.",
+    "Tampered role/network/source/member/adoption/active receipt/core selector or missing active fields denies before journal adoption/runtime activation.",
+    "Reject source2 with misleading/extra digest; component/expectedprepared cannot pass active equality; no post-hash source mutation or removed selector permitted.",
+    "Disabled absent/null/zero behavior preserved and enabled requires complete3role proof; legacy schema domain confusion rejects without weakening historical validators."
+  ],
+  "tasks": [
+    "RT-T246.1",
+    "RT-T246.2",
+    "VD-T246.3"
+  ],
+  "acceptance": "No sourcepins/code/target mutation/runtime acceptance; all tasks and AC OPEN."
+}
