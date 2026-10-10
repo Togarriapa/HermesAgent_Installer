@@ -134,6 +134,69 @@ class RootSetupBoundaryTests(unittest.TestCase):
         self.assertEqual(result.state, RootSetupState.FAILED)
         self.assertEqual(result.phase, "admission")
 
+    def test_first_source_bootstrap_requires_proven_absent_predecessor_and_keeps_action(self) -> None:
+        from hermes_installer.authority.bootstrap_enrollment import BootstrapEnrollmentPending
+
+        predecessor = type("Predecessor", (), {"state": "absent", "verify_current": lambda self: None})()
+        registry = RootBootstrapCandidateSelectionRegistry()
+        choice = object()
+        with patch.object(root_setup, "_require_root_linux"), \
+             patch("hermes_installer.authority.installer_release_build.observe_deployment_predecessor",
+                   return_value=predecessor), \
+             patch.object(root_setup, "RootBootstrapCandidateSelectionRegistry", return_value=registry), \
+             patch.object(registry, "issue_explicit_tty_choice", return_value=choice) as issue, \
+             patch("hermes_installer.authority.installer_release_build.bootstrap_selected_release",
+                   side_effect=BootstrapEnrollmentPending("exec handoff unavailable")) as bootstrap, \
+             patch("hermes_installer.authority.installer_release.InstalledRootReleaseVerifier.from_current_root_process",
+                   side_effect=AssertionError("must not inspect installed actor for absent deployment")):
+            result = run_root_setup_action(RootSetupAction.UPDATE)
+        issue.assert_called_once_with(RootSetupAction.UPDATE)
+        bootstrap.assert_called_once_with(choice, registry)
+        self.assertEqual(result.state, RootSetupState.PENDING)
+        self.assertEqual(result.phase, "distribution")
+
+    def test_present_predecessor_never_starts_first_source_bootstrap(self) -> None:
+        from hermes_installer.authority.bootstrap_enrollment import BootstrapEnrollmentPending
+
+        predecessor = type("Predecessor", (), {
+            "state": "present-verified", "verified_release_receipt_handle": "opaque-handle",
+            "verify_current": lambda self: None,
+        })()
+        held = type("Held", (), {"close": lambda self: None})()
+        with patch.object(root_setup, "_require_root_linux"), \
+             patch("hermes_installer.authority.installer_release_build.observe_deployment_predecessor",
+                   return_value=predecessor), \
+             patch("hermes_installer.authority.installer_release_build.resolve_verified_deployment_release",
+                   return_value=held) as resolve, \
+             patch("hermes_installer.authority.installer_release_build.bootstrap_selected_release") as bootstrap, \
+             patch("hermes_installer.authority.installer_release.InstalledRootReleaseVerifier.from_current_root_process",
+                   side_effect=BootstrapEnrollmentPending("current actor not installed")):
+            result = run_root_setup_action("resume")
+        resolve.assert_called_once_with("opaque-handle", consume=True)
+        bootstrap.assert_not_called()
+        self.assertEqual(result.state, RootSetupState.PENDING)
+
+    def test_unverifiable_present_predecessor_fails_without_bootstrap_or_actor_fallback(self) -> None:
+        from hermes_installer.authority.installer_release_build import InstallerReleaseBuildError
+
+        with patch.object(root_setup, "_require_root_linux"), \
+             patch("hermes_installer.authority.installer_release_build.observe_deployment_predecessor",
+                   side_effect=InstallerReleaseBuildError("present deployment is unverifiable")), \
+             patch("hermes_installer.authority.installer_release_build.bootstrap_selected_release") as bootstrap, \
+             patch("hermes_installer.authority.installer_release.InstalledRootReleaseVerifier.from_current_root_process",
+                   side_effect=AssertionError("must not fall through to actor verification")):
+            result = run_root_setup_action("install")
+        bootstrap.assert_not_called()
+        self.assertEqual(result.state, RootSetupState.FAILED)
+        self.assertEqual(result.phase, "distribution")
+
+    def test_caller_cannot_supply_target_account_name(self) -> None:
+        with patch.object(root_setup, "_require_root_linux"):
+            result = run_root_setup_action("install", target_account_name="hermes")
+        self.assertEqual(result.state, RootSetupState.FAILED)
+        self.assertEqual(result.phase, "admission")
+        self.assertIn("controlling terminal", result.message)
+
     def test_launcher_never_accepts_arbitrary_root_actions_or_json(self) -> None:
         output = io.StringIO()
         with patch("hermes_installer.root_setup.sys.stdin.isatty", return_value=False), \

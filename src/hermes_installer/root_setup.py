@@ -359,6 +359,9 @@ def run_root_setup_action(
         _require_root_linux()
     except RuntimeError as exc:
         return _result(selected_action, RootSetupState.FAILED, "admission", _safe_reason(exc))
+    if target_account_name is not None:
+        return _result(selected_action, RootSetupState.FAILED, "admission",
+                       "The target account must be entered on the verified root controlling terminal.")
     if selection_handle is not None and not _HANDLE.fullmatch(selection_handle):
         return _result(selected_action, RootSetupState.FAILED, "admission",
                        "The selected root setup reference is malformed.")
@@ -368,6 +371,36 @@ def run_root_setup_action(
     from .authority.bootstrap_enrollment import BootstrapEnrollmentPending
     from .authority.installer_release import InstalledRootReleaseVerifier
     from .authority.bootstrap_runtime_factory import RootBootstrapRuntimeFactory
+    from .authority.installer_release_build import (
+        InstallerReleaseBuildError,
+        bootstrap_selected_release,
+        observe_deployment_predecessor,
+        resolve_verified_deployment_release,
+    )
+
+    # A missing deployment pointer is the only state that permits the reviewed
+    # source/runtime bootstrap. Present-but-invalid and inaccessible pointers
+    # are errors, never invitations to replace the installed release.
+    try:
+        predecessor = observe_deployment_predecessor()
+        predecessor.verify_current()
+        if predecessor.state == "absent":
+            selection_registry = RootBootstrapCandidateSelectionRegistry()
+            choices = selection_registry.issue_explicit_tty_choice(selected_action)
+            bootstrap_selected_release(choices, selection_registry)
+            return _result(selected_action, RootSetupState.FAILED, "distribution",
+                           "Isolated source bootstrap returned without its required same-process handoff.")
+        if predecessor.state != "present-verified":
+            raise InstallerReleaseBuildError("deployment predecessor state is outside the reviewed schema")
+        if predecessor.verified_release_receipt_handle is None:
+            raise InstallerReleaseBuildError("verified deployment predecessor has no retained release receipt")
+        held_release = resolve_verified_deployment_release(
+            predecessor.verified_release_receipt_handle, consume=True)
+        held_release.close()
+    except BootstrapEnrollmentPending as exc:
+        return _result(selected_action, RootSetupState.PENDING, "distribution", _safe_reason(exc))
+    except (OSError, RuntimeError, ValueError, InstallerReleaseBuildError) as exc:
+        return _result(selected_action, RootSetupState.FAILED, "distribution", _safe_reason(exc))
 
     try:
         release, actor = InstalledRootReleaseVerifier.from_current_root_process()
@@ -382,7 +415,7 @@ def run_root_setup_action(
     try:
         actor.verify_current(release)
         actor_verified = True
-        account = target_account_name if target_account_name is not None else _read_target_account_name()
+        account = _read_target_account_name()
         if not _ACCOUNT.fullmatch(account):
             return _result(selected_action, RootSetupState.FAILED, "admission",
                            "The target account name is invalid.")
