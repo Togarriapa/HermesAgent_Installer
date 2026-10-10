@@ -302,6 +302,36 @@ class RootSetupSelectedStartupIntentJournal:
             if callable(source_resolver):
                 return MappingProxyType(dict(source_resolver(handle, outcome_handle, digest)))
         raise SelectedStartupIntentUnavailable("actual startup terminal/cleanup outcome resolver is unavailable")
+    def resolve_current_completed_reference(self, intent, outcome_handle, digest):
+        """Verify the setup-side result reference delivered by the adopted daemon.
+
+        Process, readiness, terminal and cleanup receipts are daemon-owned and
+        are resolved by the receiver before it emits startup-completed. The
+        setup process verifies the exact durable reference, its still-live
+        source/session and the authenticated channel peer; it does not claim
+        to own or reconstruct the daemon's process-local outcome object.
+        """
+        if (self.issuer is None or type(intent) is not RootSetupSelectedStartupIntent
+                or intent.issuer is not self.issuer or intent._seal is not _SEAL
+                or intent.activation_id != self.activation_id
+                or not _HANDLE.fullmatch(outcome_handle or "")
+                or not _HEX64.fullmatch(digest or "")):
+            raise SelectedStartupIntentUnavailable("completion reference is not from this live setup issuer")
+        self.issuer.verify_current(intent)
+        row, _ = self._read(intent.intent_handle)
+        body = row["intent_body"]
+        if (row["state"] != "completed" or row["intent_sha256"] != intent.intent_sha256
+                or body != dict(intent.body) or row["outcome_handle"] != outcome_handle
+                or row["outcome_sha256"] != digest):
+            raise SelectedStartupIntentUnavailable("completion reference differs from the immutable journal row")
+        receipt = next((item for item in self.issuer.supervisor._transactions.values()
+                        if item.activation_id == self.activation_id), None)
+        if receipt is None:
+            raise SelectedStartupIntentUnavailable("completion has no current adopted listener")
+        self.issuer.supervisor.verify_active_current(receipt)
+        return MappingProxyType({"intent_handle": intent.intent_handle,
+            "intent_sha256": intent.intent_sha256, "outcome_handle": outcome_handle,
+            "outcome_sha256": digest})
     def cancel_for_setup_session(self,session_handle):
         from .bootstrap_enrollment import RootSetupSessionHandle
         if (self.issuer is None or type(session_handle)is not RootSetupSessionHandle

@@ -2546,8 +2546,8 @@ class RootAuthorityListenerActivationSupervisor:
             if (fds or completed["operation"] != "startup-completed"
                     or completed["intent_handle"] != intent.intent_handle):
                 raise ListenerActivationUnavailable("daemon did not return the exact startup outcome")
-            outcome = intent.issuer.journal.resolve_current_completed_intent(
-                intent.intent_handle, completed["outcome_handle"], completed["outcome_sha256"])
+            outcome = intent.issuer.journal.resolve_current_completed_reference(
+                intent, completed["outcome_handle"], completed["outcome_sha256"])
             if (outcome["outcome_handle"] != completed["outcome_handle"]
                     or outcome["outcome_sha256"] != completed["outcome_sha256"]):
                 raise ListenerActivationUnavailable("startup outcome differs from its protected journal")
