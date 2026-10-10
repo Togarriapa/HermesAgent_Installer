@@ -158,5 +158,34 @@
       ],
       "binding": "native_bridges join exact normalization policy ID/revision/hash and installed canonicalizer identity; policy missing route support/actual full artifact SHA unavailable. Same module can serve both records only if reviewed code implements both exact schemas. No planning partial digest is actual artifact pin."
     }
+  },
+  "native_request_observation": {
+    "schema": 1,
+    "owner": "authority.native_bridge.NativeBridgeBroker",
+    "record_type": "RootNativeRequestObservation",
+    "wire_authority": "none; opaque lookup only",
+    "fields": {
+      "schema": "literal 1",
+      "receipt_handle": "root opaque random one-use-correlation handle",
+      "bridge_id": "protected selected bridge ID",
+      "producer_profile_id": "authenticated selected producer profile",
+      "producer_process_generation": "opaque process generation",
+      "native_package_generation": "opaque package generation separately resolved",
+      "producer_process_identity": "root observed immutable kernel identity digest",
+      "request_sha256": "SHA256 exact root canonical final body",
+      "request_size_bytes": "positive integer within protected route bound",
+      "retry_index": "nonnegative integer bounded by selected attempt policy",
+      "parent_source_receipt_handles": "tuple of genuine root-resolved source handles",
+      "parent_closure_digest": "exact resolved complete ancestry digest",
+      "context_digest": "actual signed request context digest",
+      "issued_monotonic": "root float",
+      "expires_monotonic": "root float bounded by context/source/process lease"
+    },
+    "API": "NativeBridgeBroker.resolve_native_request_observation(receipt_handle,*,turn_handle)->RootNativeRequestObservation root-private; revalidates retained actual request, authenticated live producer PIDFD, current bridge/process/package generations, exact root turn/source ancestry and lease. Worker cannot supply record fields. Root prepare creates record atomically with pending request handle after canonicalization and source admission; gateway authentication is not required to observe the authenticated producer request. Broker privately retains duplicate PIDFD and exact request bytes; closes/wipes at revocation/expiry/completion retention policy.",
+    "turn_join": "RootNativeTurnObservationRegistry.register_native_request resolves this record through broker, not SourceObserverRegistry. request_receipt_handle names this domain, never a SourceReceipt or new native-request source_kind. Consuming effect attempt stays one-use; stable record lookup may repeat for current turn validation without reusing grants. Request record proves bytes/request lineage only and never upgrades input origin/sensitivity. Missing ancestry remains UNKNOWN/private under existing route admission.",
+    "private_result_fields": {
+      "native_request_handle": "retained exact pending request correlation string, root-only",
+      "canonical_request_bytes": "actual retained immutable bytes, SHA/size equal record; root-only"
+    }
   }
 }

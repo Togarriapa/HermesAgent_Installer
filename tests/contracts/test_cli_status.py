@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import os
+import json
 import sqlite3
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from hermes_installer.cli import _recorded_component_findings
+from hermes_installer.cli import _recorded_component_findings, run
+from hermes_installer.root_setup import LauncherStatus
 from hermes_installer.state import Journal, OwnedRoot, process_lock
 from hermes_installer.results import OutcomeState
 
@@ -83,7 +87,7 @@ class RecordedStatusTests(unittest.TestCase):
             self.assertEqual(_recorded_component_findings(root)[0].state, OutcomeState.PENDING)
 
 
-    def test_interrupted_committed_wal_can_resume_and_recover_under_exclusive_lock(self):
+    def test_user_resume_keeps_interrupted_wal_for_root_owned_recovery(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = OwnedRoot(Path(temporary) / "state")
             root.ensure()
@@ -103,8 +107,20 @@ class RecordedStatusTests(unittest.TestCase):
             self.assertEqual(crashed.returncode, 0)
             wal = root.path("journal.sqlite3-wal")
             self.assertGreater(wal.stat().st_size, 0)
-            from hermes_installer.cli import _resume_checkpoint_exists
-            self.assertTrue(_resume_checkpoint_exists(root.root))
+            config = root.root.parent / "config.json"
+            config.write_text(json.dumps({"schema_version": 1,
+                "paths": {"data_root": str(root.root.parent / "data"),
+                          "state_root": str(root.root)}}))
+            status = LauncherStatus(1, "root-setup-required", None, False, "",
+                "ROOT_ATTESTATION_REQUIRED", "The installed launcher has not been verified by its root actor.")
+            host = SimpleNamespace(supported_arm64_linux=True, package_locks=(), package_lock_probe_errors=())
+            before = self._snapshot(root.root)
+            with patch("hermes_installer.cli.discover_host", return_value=host), \
+                 patch("hermes_installer.root_setup.launcher_status", return_value=status):
+                result = run(SimpleNamespace(command="resume", config=config))
+            self.assertEqual(result.state, OutcomeState.PENDING)
+            self.assertEqual(result.resume_command, "hermes-installer status")
+            self.assertEqual(before, self._snapshot(root.root))
             self.assertIn("uncheckpointed", _recorded_component_findings(root.root)[0].message)
             with process_lock(lock_path):
                 recovered = Journal(database).operation("installer:selection")
