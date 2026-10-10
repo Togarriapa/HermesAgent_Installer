@@ -57,6 +57,20 @@ def _compiled_closure(candidate: bytes | None = None) -> tuple[bytes, tuple[Nati
     }, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
     closure_row = {"relative_path": "module.py", "sha256": hashlib.sha256(leaf).hexdigest(),
                    "size_bytes": len(leaf), "mode": 0o644}
+    process_role = {
+        "role_id": "native-loader", "package_id": "package-1",
+        "native_package_generation": "generation-1", "profile_id": "demo",
+        "profile_generation": "process-generation-1",
+        "role_artifact_id": "role:native-loader",
+        "role_sha256": hashlib.sha256(leaf).hexdigest(),
+        "role_source_receipt_handle": "role-source-receipt-1",
+        "module_name": "hermes_installer.native_plugin_loader",
+        "closure_member_path": "module.py", "role_source_revision": "d" * 40,
+        "role_source_tree_sha256": "e" * 64,
+        "observer_enrollment_ids": ["observer-1"],
+        "registration_ids": ["registration-1"],
+        "action_binding_ids": ["action-1"], "workflow_ids": [],
+    }
     manifest = json.dumps({
         "candidate_index": {"artifact_id": "native-candidate-index:package-1:generation-1",
                             "relative_path": "catalog/native-candidates.json",
@@ -65,6 +79,7 @@ def _compiled_closure(candidate: bytes | None = None) -> tuple[bytes, tuple[Nati
         "closure_files": [closure_row],
         "adapters": [],
         "dependencies": [],
+        "process_role_records": [process_role],
         "generation": "generation-1",
         "package_id": "package-1",
         "profile_id": "demo",
