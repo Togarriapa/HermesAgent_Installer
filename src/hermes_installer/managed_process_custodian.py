@@ -928,6 +928,8 @@ class ManagedProcessEffectHandler:
                  artifact_resolver: Callable[[str, str], Any] | None = None,
                  native_package_resolver: Callable[[str, str], ManagedNativePackageMount | None] | None = None,
                  native_loader_observation_store: Any | None = None,
+                 _committed_pm_executable_resolver: Any | None = None,
+                 _committed_pm_executable_identity: Any | None = None,
                  task_input_coordinator: Any | None = None,
                  task_admission_current: Callable[[RootAdmittedTask, bytes], bool] | None = None,
                  native_health_start_authority: Any | None = None,
@@ -941,6 +943,10 @@ class ManagedProcessEffectHandler:
         self.artifact_resolver = artifact_resolver
         self.native_package_resolver = native_package_resolver
         self.native_loader_observation_store = native_loader_observation_store
+        self._committed_pm_executable_resolver: Any | None = None
+        self._committed_pm_executable_identity: Any | None = None
+        self._native_worker_profile_id: str | None = None
+        self._native_worker_executable_binding: tuple[Any, ...] | None = None
         self.task_input_coordinator = None
         self._systemd_openfile_supported: bool | None = None
         self.task_admission_current = task_admission_current
@@ -971,10 +977,82 @@ class ManagedProcessEffectHandler:
         self._diagnostic_sink: Callable[[bytes], None] | None = None
         for profile in self.profiles.values():
             self._validate_profile(profile)
+        self._bind_committed_pm_constructor_custody(
+            _committed_pm_executable_resolver, _committed_pm_executable_identity)
         if task_input_coordinator is not None:
             self.set_task_input_coordinator(task_input_coordinator)
         if native_health_start_authority is not None:
             self.bind_native_health_start_authority(native_health_start_authority)
+
+    def _bind_committed_pm_constructor_custody(self, resolver: Any | None,
+                                               identity: Any | None) -> None:
+        """Pin only the selected native profile from a verified active PM receipt.
+
+        Generic profile validation above intentionally remains byte-for-byte
+        strict.  The private pair addresses the composition cycle in which
+        the active PM executable has to be resolved before the profile and
+        this manager can be built; it does not admit process effects.
+        """
+        if resolver is None and identity is None:
+            return
+        from hermes_installer.authority.committed_pm_executable import (
+            RootActiveCommittedPMExecutableResolver,
+            RootVerifiedCommittedPMExecutableIdentity,
+        )
+        if (type(resolver) is not RootActiveCommittedPMExecutableResolver
+                or type(identity) is not RootVerifiedCommittedPMExecutableIdentity):
+            raise AuthorityDenied(
+                "native_worker.pm_executable",
+                "exact committed PM executable resolver and identity are required")
+        try:
+            if resolver.verify_current(identity) is not identity:
+                raise ValueError("PM executable identity is not current")
+            matches = [profile for profile in self.profiles.values()
+                       if profile.profile_id == identity.profile_id]
+            if len(matches) != 1:
+                raise ValueError("selected native profile is absent or ambiguous")
+            profile = matches[0]
+            executable = profile.executable
+            info = executable.stat(follow_symlinks=False)
+            binding = (
+                identity.profile_id, identity.service_generation,
+                identity.service_generation_digest, identity.publication_receipt_handle,
+                identity.publication_sha256, identity.runtime_record_id,
+                identity.runtime_record_sha256, identity.pm_runtime_receipt_handle,
+                identity.pm_receipt_sha256, identity.pm_generation,
+                identity.runtime_closure_sha256, identity.executable_sha256,
+                identity.executable_device, identity.executable_inode,
+                identity.executable_uid, identity.executable_gid,
+                identity.executable_mode,
+            )
+            if (profile.generation != identity.service_generation
+                    or profile.service_generation_digest != identity.service_generation_digest
+                    or executable != identity.executable_path
+                    or profile.artifact_sha256 != identity.executable_sha256
+                    or (info.st_dev, info.st_ino, info.st_uid, info.st_gid,
+                        stat.S_IMODE(info.st_mode))
+                       != (identity.executable_device, identity.executable_inode,
+                           identity.executable_uid, identity.executable_gid,
+                           identity.executable_mode)
+                    or hashlib.sha256(executable.read_bytes()).hexdigest()
+                       != identity.executable_sha256):
+                raise ValueError("selected profile does not match the committed PM executable")
+        except Exception:
+            raise AuthorityDenied(
+                "native_worker.pm_executable",
+                "selected native profile lacks current committed PM executable custody") from None
+        self._committed_pm_executable_resolver = resolver
+        self._committed_pm_executable_identity = identity
+        self._native_worker_profile_id = identity.profile_id
+        self._native_worker_executable_binding = binding
+
+    def close(self) -> None:
+        """Close the separately held PM resolver and its local source custody."""
+        resolver = self._committed_pm_executable_resolver
+        if resolver is not None:
+            resolver.close()
+            self._committed_pm_executable_resolver = None
+            self._committed_pm_executable_identity = None
 
     def bind_native_health_start_authority(self, authority: Any) -> None:
         """Bind the one concrete root health admission issuer to this manager."""

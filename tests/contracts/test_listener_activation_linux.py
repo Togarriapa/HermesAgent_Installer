@@ -146,5 +146,46 @@ class ListenerActivationTransportLinuxTests(unittest.TestCase):
                     pass
 
 
+def test_activation_generation_join_uses_actual_committed_row_fields() -> None:
+    from types import SimpleNamespace
+    from hermes_installer.authority.listener_activation import _activation_generation_rows, _digest
+    from hermes_installer.authority.native_worker_service_generation import RootPreparedNativeServiceGeneration
+
+    runtime = {"id": "runtime-1", "generation_id": "container-1", "profile_id": "worker-1"}
+    active = {
+        "worker_runtime_record_id": "runtime-1",
+        "worker_runtime_record_sha256": _digest(runtime),
+        "process_profile_id": "worker-1",
+    }
+    profile = {"profile_id": "worker-1"}
+    service = {"profile_id": "worker-1", "service_uid": 1000, "service_gid": 1000}
+    generation = object.__new__(RootPreparedNativeServiceGeneration)
+    for name, value in {
+        "generation_id": "container-1",
+        "native_worker_runtime_records": (runtime,),
+        "active_network_generation_records": (active,),
+        "process_profile_records": (profile,),
+        "service_records": (service,),
+    }.items():
+        object.__setattr__(generation, name, value)
+    publication = SimpleNamespace(generation_id="container-1", service_generation_digest="a" * 64)
+    endpoint = SimpleNamespace(profile_id="worker-1", service_uid=1000, service_gid=1000)
+
+    assert _activation_generation_rows(generation, publication, endpoint) == (
+        runtime, active, profile, service)
+
+    # The container ID and service-generation digest are distinct joined values.
+    publication.generation_id = "a" * 64
+    with unittest.TestCase().assertRaises(ValueError):
+        _activation_generation_rows(generation, publication, endpoint)
+    publication.generation_id = "container-1"
+
+    # Producer rows use process_profile_id, not the endpoint's profile_id alias.
+    wrong_active = {**active, "profile_id": "worker-1"}
+    wrong_active.pop("process_profile_id")
+    object.__setattr__(generation, "active_network_generation_records", (wrong_active,))
+    with unittest.TestCase().assertRaises(ValueError):
+        _activation_generation_rows(generation, publication, endpoint)
+
 if __name__ == "__main__":
     unittest.main()

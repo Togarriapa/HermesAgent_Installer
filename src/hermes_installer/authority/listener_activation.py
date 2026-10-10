@@ -76,6 +76,38 @@ def _canonical(value: Any) -> bytes:
                       ensure_ascii=False, allow_nan=False).encode("utf-8")
 
 
+def _activation_generation_rows(generation: Any, publication: Any, endpoint: Any
+                               ) -> tuple[Mapping[str, Any], Mapping[str, Any],
+                                          Mapping[str, Any], Mapping[str, Any]]:
+    """Check the producer's actual five-catalog field names and singleton joins."""
+    from .native_worker_service_generation import RootPreparedNativeServiceGeneration
+    if (type(generation) is not RootPreparedNativeServiceGeneration
+            or generation.generation_id != publication.generation_id
+            or len(generation.native_worker_runtime_records) != 1
+            or len(generation.active_network_generation_records) != 1
+            or len(generation.process_profile_records) != 1
+            or len(generation.service_records) != 1):
+        raise ValueError("selected native generation is not a current closed singleton")
+    runtime_row = generation.native_worker_runtime_records[0]
+    active_row = generation.active_network_generation_records[0]
+    profile_row = generation.process_profile_records[0]
+    service_row = generation.service_records[0]
+    if not all(isinstance(row, Mapping) for row in (
+            runtime_row, active_row, profile_row, service_row)):
+        raise ValueError("selected native generation rows are malformed")
+    if (active_row.get("worker_runtime_record_id") != runtime_row.get("id")
+            or active_row.get("worker_runtime_record_sha256") != _digest(dict(runtime_row))
+            or active_row.get("process_profile_id") != endpoint.profile_id
+            or profile_row.get("profile_id", profile_row.get("id")) != endpoint.profile_id
+            or service_row.get("profile_id") != endpoint.profile_id
+            or service_row.get("service_uid", service_row.get("owner_uid")) != endpoint.service_uid
+            or service_row.get("service_gid", service_row.get("owner_gid")) != endpoint.service_gid
+            or runtime_row.get("profile_id") != endpoint.profile_id
+            or runtime_row.get("generation_id") != generation.generation_id):
+        raise ValueError("committed worker runtime, service, profile, and endpoint rows differ")
+    return runtime_row, active_row, profile_row, service_row
+
+
 def _digest(value: Any) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
 
@@ -948,28 +980,10 @@ class RootAuthorityListenerActivationSupervisor:
             generation = producer.resolve_current_selected_generation(selection_handle)
             if (generation.setup_session_id != session._handle.session_id
                     or generation.transaction_handle != endpoint.transaction_handle
-                    or generation.generation_id != publication.service_generation_digest
-                    or generation.source_choice_selection_handle != selection_handle
-                    or len(generation.native_worker_runtime_records) != 1
-                    or len(generation.active_network_generation_records) != 1
-                    or len(generation.process_profile_records) != 1
-                    or len(generation.service_records) != 1):
-                raise ValueError("selected native generation is not a closed singleton catalog")
-            runtime_row = generation.native_worker_runtime_records[0]
-            active_row = generation.active_network_generation_records[0]
-            profile_row = generation.process_profile_records[0]
-            service_row = generation.service_records[0]
-            if (not isinstance(runtime_row, Mapping) or not isinstance(active_row, Mapping)
-                    or not isinstance(profile_row, Mapping) or not isinstance(service_row, Mapping)
-                    or active_row.get("worker_runtime_record_id") != runtime_row.get("id")
-                    or active_row.get("worker_runtime_record_sha256") != _digest(dict(runtime_row))
-                    or active_row.get("profile_id") != endpoint.profile_id
-                    or profile_row.get("profile_id", profile_row.get("id")) != endpoint.profile_id
-                    or service_row.get("profile_id") != endpoint.profile_id
-                    or service_row.get("service_uid", service_row.get("owner_uid")) != endpoint.service_uid
-                    or service_row.get("service_gid", service_row.get("owner_gid")) != endpoint.service_gid
-                    or runtime_row.get("profile_id") != endpoint.profile_id):
-                raise ValueError("committed worker runtime, service, profile, and endpoint rows differ")
+                    or generation.source_choice_selection_handle != selection_handle):
+                raise ValueError("selected native generation differs from the live setup transaction")
+            runtime_row, active_row, profile_row, service_row = _activation_generation_rows(
+                generation, publication, endpoint)
             committed = session._transaction.verify_committed_receipt(active, session._authorization)
             if producer.verify_active_current(generation, committed, runtime_row["id"]) is not generation:
                 raise ValueError("current active native source/member receipt changed")
@@ -978,7 +992,6 @@ class RootAuthorityListenerActivationSupervisor:
             if (materializer._active_bindings.get(materialization.receipt_handle) != active.generation_id
                     or materializer._issued.get(materialization.receipt_handle) is not materialization):
                 raise ValueError("actual retained PM/output members were not adopted by the committed CAS")
-            materializer._verify_held_root_and_members(materialization)
             adopted = [row for row in publication.choice_adoptions
                        if row.selection_handle == selection_handle
                        and row.service_generation_digest == publication.service_generation_digest

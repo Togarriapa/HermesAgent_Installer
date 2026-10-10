@@ -647,6 +647,7 @@ class RootAuthorityRuntime:
         # are populated only by the concrete one-time service attachment APIs;
         # the composer never installs capability flags or callback placeholders.
         components = (
+            self.process_manager,
             self.task_native_observations,
             getattr(self.service, "native_input_delivery_registry", None),
             getattr(self.process_manager, "task_input_coordinator", None),
