@@ -234,6 +234,7 @@ class RootNativeRegistrationSchemaReceipt:
     transaction_handle: str
     prepared_generation_id: str
     expires_monotonic: float
+    _schema_receipt: Any = field(repr=False, compare=False)
     _session_seal: str = field(repr=False, compare=False)
     _session: Any = field(repr=False, compare=False)
 
@@ -664,6 +665,8 @@ class RootNativeAssemblyDefinitions:
     native_schema_bytes: tuple[tuple[str, bytes], ...]
     source_issuer_records: tuple[Mapping[str, Any], ...]
     native_mcp_tool_bindings: tuple[Mapping[str, Any], ...]
+    action_records: tuple[Mapping[str, Any], ...]
+    workflow_records: tuple[Mapping[str, Any], ...]
     action_registration_records: tuple[Mapping[str, Any], ...]
     registration_records: tuple[Mapping[str, Any], ...]
     candidate_records: tuple[Mapping[str, Any], ...]
@@ -674,6 +677,7 @@ class RootNativeAssemblyDefinitions:
     effect_selection_receipt_handles: tuple[str, ...]
     _registry_seal: object = field(repr=False, compare=False)
     release_module_receipts: tuple[RootReleaseModuleReceipt, ...] = ()
+    result_schema_receipts: tuple[RootNativeRegistrationSchemaReceipt, ...] = ()
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -3269,6 +3273,9 @@ class RootBootstrapSession:
         self._release_member_receipts: dict[str, RootReleaseModuleReceipt] = {}
         self._installed_release_member_receipts: dict[str, RootInstalledReleaseMemberReceipt] = {}
         self._native_schema_receipts: dict[str, RootNativeRegistrationSchemaReceipt] = {}
+        self._native_schema_receipts_by_artifact: dict[str, RootNativeRegistrationSchemaReceipt] = {}
+        self._native_schema_receipt_registry: Any | None = None
+        self._native_schema_receipt_registry_minted_for: tuple[str, str] | None = None
         self._source_provisioner = self._make_source_provisioner()
         self._selected_installation = RootSelectedInstallationBinding(self, seal)
         self._client = factory.session_store.bootstrap_client(
@@ -4060,6 +4067,124 @@ class RootBootstrapSession:
         )
         self._release_member_receipts[receipt_handle] = receipt
         return receipt
+
+    def _mint_native_registration_schema_receipt(
+            self, artifact_id: str) -> RootNativeRegistrationSchemaReceipt:
+        """Mint one of the fixed local-result schema receipts from the held root catalog.
+
+        The receipt is bound to the current empty prepared generation. The
+        catalog observation and CAS receipt prove packaged schema bytes only;
+        they do not authorize an active schema row or native action.
+        """
+        self._check_live()
+        self._refresh_authorization()
+        prepared = self._last_receipt
+        if (prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or not prepared.provision_receipt_handle
+                or prepared.transaction_handle != self._authorization.transaction_handle):
+            raise BootstrapEnrollmentPending("native result schema receipts require current empty prepared custody")
+        if not isinstance(artifact_id, str) or not _ID.fullmatch(artifact_id):
+            raise BootstrapEnrollmentPending("native result schema artifact ID is malformed")
+        from .native_registration_projection import (
+            RootNativeRegistrationResultSchemaReceiptRegistry,
+            reviewed_local_registration_result_schemas,
+        )
+        reviewed = reviewed_local_registration_result_schemas()
+        matches = [row for row in reviewed if row.artifact_id == artifact_id]
+        if len(matches) != 1:
+            raise BootstrapEnrollmentPending("native result schema is outside the exact reviewed local set")
+        cached = self._native_schema_receipts_by_artifact.get(artifact_id)
+        if cached is not None:
+            try:
+                self._resolve_native_registration_schema_receipt(
+                    next(handle for handle, value in self._native_schema_receipts.items()
+                         if value is cached))
+                return cached
+            except Exception:
+                self._native_schema_receipts_by_artifact.pop(artifact_id, None)
+        if self._native_schema_receipt_registry is None:
+            from .source_artifact_receipts import RootSetupCatalogArtifactObserver
+            observer = RootSetupCatalogArtifactObserver.from_root_setup(
+                self._factory._catalog,
+                self._factory._receipt_registry.artifact_root,
+                self._authorization,
+                expected_uid=0,
+            )
+            self._native_schema_receipt_registry = RootNativeRegistrationResultSchemaReceiptRegistry(
+                observer, self._factory._receipt_registry, self._authorization)
+        binding = (prepared.provision_receipt_handle, prepared.generation_id)
+        if self._native_schema_receipt_registry_minted_for != binding:
+            registry_receipts = self._native_schema_receipt_registry.mint(
+                prepared_setup_receipt_handle=binding[0], prepared_generation_id=binding[1],
+            )
+            self._native_schema_receipts.clear()
+            self._native_schema_receipts_by_artifact.clear()
+            deadline = min(prepared.expires_monotonic,
+                           self._factory.session_store.current_deadline(self._handle))
+            for root_receipt in registry_receipts:
+                schema = root_receipt.schema
+                wrapper_handle = secrets.token_urlsafe(36)
+                wrapper = RootNativeRegistrationSchemaReceipt(
+                    artifact_id=schema.artifact_id, sha256=schema.sha256,
+                    size_bytes=schema.size_bytes, relative_path=schema.relative_path,
+                    artifact_receipt_handle=root_receipt.source_receipt_handle,
+                    setup_session_id=self._handle.session_id,
+                    transaction_handle=self._authorization.transaction_handle,
+                    prepared_generation_id=prepared.generation_id,
+                    expires_monotonic=deadline, _schema_receipt=root_receipt,
+                    _session_seal=self._seal, _session=self,
+                )
+                self._native_schema_receipts[wrapper_handle] = wrapper
+                self._native_schema_receipts_by_artifact[schema.artifact_id] = wrapper
+            self._native_schema_receipt_registry_minted_for = binding
+        wrapper = self._native_schema_receipts_by_artifact.get(artifact_id)
+        if wrapper is None:
+            raise BootstrapEnrollmentPending("native result schema receipt could not be retained")
+        wrapper.read_current()
+        return wrapper
+
+    def _resolve_native_registration_schema_receipt(
+            self, receipt_handle: str) -> RootNativeRegistrationSchemaReceipt:
+        self._check_live()
+        if not isinstance(receipt_handle, str) or not _ID.fullmatch(receipt_handle):
+            raise BootstrapEnrollmentPending("native result schema receipt handle is malformed")
+        receipt = self._native_schema_receipts.get(receipt_handle)
+        prepared = self._last_receipt
+        if (not isinstance(receipt, RootNativeRegistrationSchemaReceipt)
+                or receipt._session is not self
+                or not secrets.compare_digest(receipt._session_seal, self._seal)
+                or prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or receipt.setup_session_id != self._handle.session_id
+                or receipt.transaction_handle != self._authorization.transaction_handle
+                or receipt.prepared_generation_id != prepared.generation_id
+                or receipt.expires_monotonic <= time.monotonic()
+                or self._native_schema_receipt_registry is None):
+            raise BootstrapEnrollmentPending("native result schema receipt is stale or not retained")
+        try:
+            self._native_schema_receipt_registry.resolve(
+                receipt._schema_receipt,
+                prepared_setup_receipt_handle=prepared.provision_receipt_handle,
+                prepared_generation_id=prepared.generation_id,
+                setup_authorization=self._authorization,
+            )
+        except Exception:
+            raise BootstrapEnrollmentPending("native result schema receipt failed currentness verification") from None
+        return receipt
+
+    def _read_native_registration_schema_receipt(
+            self, receipt: RootNativeRegistrationSchemaReceipt) -> bytes:
+        if not isinstance(receipt, RootNativeRegistrationSchemaReceipt):
+            raise BootstrapEnrollmentPending("native result schema receipt is not root-issued")
+        current = self._resolve_native_registration_schema_receipt(
+            next((handle for handle, item in self._native_schema_receipts.items()
+                  if item is receipt), ""))
+        assert current is receipt
+        return self._native_schema_receipt_registry.resolve(
+            receipt._schema_receipt,
+            prepared_setup_receipt_handle=self._last_receipt.provision_receipt_handle,
+            prepared_generation_id=self._last_receipt.generation_id,
+            setup_authorization=self._authorization,
+        )
 
     def _resolve_installed_xpra_transform_module(self) -> RootInstalledReleaseMemberReceipt:
         """Issue the fixed Xpra toolchain member receipt independently of native assembly."""
