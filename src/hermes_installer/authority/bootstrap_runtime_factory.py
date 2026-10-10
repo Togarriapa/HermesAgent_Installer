@@ -452,6 +452,23 @@ class RootSelectedInstallationBinding:
             raise BootstrapEnrollmentError("installation binding does not belong to its root setup session")
         return self._session._resolve_private_installation_roots(selection)
 
+    def prepare_selected_profile_overlay_view(
+            self, native_policy_selection_handle: str,
+            resource_profile_selection_handle: str) -> Any:
+        """Create/observe one root-owned overlay child for the selected profile."""
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("profile overlay selection is not owned by this setup session")
+        return self._session._prepare_selected_profile_overlay_view(
+            native_policy_selection_handle, resource_profile_selection_handle)
+
+    def resolve_current_profile_overlay_view(
+            self, profile_view_selection_handle: str,
+            native_policy_selection_handle: str) -> Any:
+        if not secrets.compare_digest(self._seal, self._session._seal):
+            raise BootstrapEnrollmentPending("profile overlay view is not owned by this setup session")
+        return self._session._resolve_current_profile_overlay_view(
+            profile_view_selection_handle, native_policy_selection_handle)
+
     def resolve_selected_resource_profile(self, receipt_handle: str) -> "RootSelectedResourceProfile":
         if not secrets.compare_digest(self._seal, self._session._seal):
             raise BootstrapEnrollmentPending("resource profile selection is not owned by this setup session")
@@ -4299,6 +4316,8 @@ class RootBootstrapSession:
         self._native_schema_receipts_by_artifact: dict[str, RootNativeRegistrationSchemaReceipt] = {}
         self._native_schema_receipt_registry: Any | None = None
         self._native_schema_receipt_registry_minted_for: tuple[str, str] | None = None
+        self._profile_overlay_views_by_handle: dict[str, Any] = {}
+        self._profile_overlay_views_by_selection: dict[tuple[str, str], str] = {}
         self._native_policy_preparation_registry: Any | None = None
         self._native_component_target_registry: Any | None = None
         self._native_registration_projection_registry: Any | None = None
@@ -4679,6 +4698,272 @@ class RootBootstrapSession:
                          for handle in current_records.target_selection_handles)
         except Exception:
             raise BootstrapEnrollmentPending("current native policy targets are unavailable") from None
+
+    def _prepare_selected_profile_overlay_view(
+            self, native_policy_selection_handle: str,
+            resource_profile_selection_handle: str) -> Any:
+        """Issue a current root-owned CAS view under the selected service data root."""
+        from hermes_installer.authority.local_resource_effects import (
+            RootPreparedOwnedProfileOverlayView, RootPreparedOwnerOverlayEffectEnrollment,
+            _ENROLLMENT_SEAL, _VIEW_SEAL,
+        )
+        from hermes_installer.authority.native_registration_projection import (
+            RootNativeRegistrationProjectionRegistry,
+        )
+        from hermes_installer.registry.resources_runtime import ResourceOverlayStore
+        from hermes_installer.state import Journal, OwnedRoot
+
+        self._check_live()
+        self._refresh_authorization()
+        prepared = self._last_receipt
+        policy_selection = self.resolve_current_native_policy_selection(native_policy_selection_handle)
+        selected_overlay_ids = tuple(getattr(policy_selection, "selected_owner_overlay_registration_ids", ()))
+        if (os.geteuid() != 0 or prepared is None or prepared.state != "prepared" or prepared.enrollment_ids
+                or not selected_overlay_ids or len(set(selected_overlay_ids)) != len(selected_overlay_ids)
+                or len(selected_overlay_ids) > 4
+                or resource_profile_selection_handle != policy_selection.resource_profile_selection_handle):
+            raise BootstrapEnrollmentPending("root-owned overlay provisioning requires the current selected profile and overlay registrations")
+        profile = self.resolve_selected_resource_profile(resource_profile_selection_handle)
+        source_registry = getattr(self, "_native_registration_projection_registry", None)
+        if type(source_registry) is not RootNativeRegistrationProjectionRegistry:
+            raise BootstrapEnrollmentPending("current native registration source coverage is unavailable")
+        coverage = source_registry.resolve_source_coverage()
+        selected_owner_sources = {
+            row.registration_id for row in coverage.source_observations
+            if row.handler_kind == "owner-overlay"
+        }
+        if (coverage.prepared_generation_id != prepared.generation_id
+                or not set(selected_overlay_ids) <= selected_owner_sources):
+            raise BootstrapEnrollmentPending("selected owner-overlay registrations lack current held module receipts")
+        existing_handle = self._profile_overlay_views_by_selection.get(
+            (native_policy_selection_handle, resource_profile_selection_handle))
+        if existing_handle is not None:
+            return self._resolve_current_profile_overlay_view(existing_handle, native_policy_selection_handle)
+
+        # This uses the normal root-selected Resources materialization authority
+        # to resolve the exact protected service data root.  No caller path or
+        # enrollment ID participates in the choice.
+        native_bundle = self.prepare_selected_native_bundle()
+        self._resolve_current_prepared_native_bundle(native_bundle)
+        templates = [item.get("record") for item in self._policy.service_record_templates
+                     if isinstance(item.get("record"), Mapping)]
+        if len(templates) != 1 or not isinstance(templates[0].get("enrollment_id"), str):
+            raise BootstrapEnrollmentPending("overlay view has no unique selected prepared service enrollment")
+        native_selection = self._authorize_native_materialization(
+            enrollment_id=templates[0]["enrollment_id"],
+            service_generation=prepared.generation_id,
+            resource_profile_id=profile.profile_id,
+        )
+        roots = self._resolve_private_installation_roots(native_selection)
+        root_info = roots.data_root.lstat()
+        if (roots.data_root.is_symlink() or not stat.S_ISDIR(root_info.st_mode)
+                or root_info.st_uid != native_selection.service_uid
+                or root_info.st_gid != native_selection.service_gid
+                or stat.S_IMODE(root_info.st_mode) != 0o700):
+            raise BootstrapEnrollmentPending("selected protected service data root is not current and private")
+        root_identity = self.resolve_current_setup_identity()
+        if (root_identity.principal_selection_handle != policy_selection.principal_selection_handle
+                or root_identity.namespace_selection_handle != policy_selection.namespace_selection_handle):
+            raise BootstrapEnrollmentPending("current principal or namespace changed during overlay view preparation")
+
+        view_path = _ensure_root_owned_profile_overlay_directory(
+            roots.data_root, native_selection.service_uid, native_selection.service_gid,
+            native_selection.service_profile_id, profile.profile_id,
+        )
+        journal_selection = self._current_root_journal_selection()
+        overlay_journal = Journal(journal_selection.path.parent / "native-profile-overlays.sqlite3")
+        store = ResourceOverlayStore(OwnedRoot(view_path), overlay_journal)
+        view = store.for_profile(native_selection.service_profile_id)
+        view_stat = view_path.lstat()
+        marker = view_path / ".hermes-installer-owned"
+        marker_stat = marker.lstat()
+        marker_bytes = marker.read_bytes()
+        if (not stat.S_ISDIR(view_stat.st_mode) or view_stat.st_uid != 0 or view_stat.st_gid != 0
+                or stat.S_IMODE(view_stat.st_mode) != 0o700
+                or not stat.S_ISREG(marker_stat.st_mode) or marker_stat.st_uid != 0
+                or stat.S_IMODE(marker_stat.st_mode) != 0o600 or marker_bytes != b"schema=1\n"):
+            raise BootstrapEnrollmentPending("root-owned overlay view custody could not be verified")
+        directory_flags = (os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                           | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+        data_root_fd = os.open(roots.data_root, directory_flags)
+        view_root_fd = -1
+        try:
+            view_root_fd = os.open(view_path, directory_flags)
+            held_data_info, held_view_info = os.fstat(data_root_fd), os.fstat(view_root_fd)
+            if ((held_data_info.st_dev, held_data_info.st_ino) != (root_info.st_dev, root_info.st_ino)
+                    or (held_view_info.st_dev, held_view_info.st_ino) != (view_stat.st_dev, view_stat.st_ino)):
+                raise BootstrapEnrollmentPending("overlay data/view directory changed before its FDs were retained")
+        except Exception:
+            os.close(data_root_fd)
+            if view_root_fd >= 0:
+                os.close(view_root_fd)
+            raise
+        now = time.monotonic()
+        view_handle = secrets.token_urlsafe(32)
+        profile_view_handle = secrets.token_urlsafe(32)
+        target_id = "owner-overlay-target:" + secrets.token_urlsafe(24)
+        target_selection_handle = secrets.token_urlsafe(32)
+        # The target receipt handle is a resolver key for the typed target
+        # selection retained by RootNativeComponentTargetRegistry.
+        target_receipt_handle = target_selection_handle
+        selected_operations = sorted({
+            "plugin.resource-overlay-store.read" if registration.endswith(("resource_overlay_read", "resource_overlay_history"))
+            else "plugin.resource-overlay-store.write"
+            for registration in selected_overlay_ids
+        })
+        effect_rules = tuple(RootPreparedOwnerOverlayEffectEnrollment(
+            effect_enrollment_id=secrets.token_urlsafe(32),
+            native_policy_selection_handle=native_policy_selection_handle,
+            view_selection_handle=profile_view_handle,
+            operation=operation,
+            capability="plugin:resource-overlay-store",
+            target_id=target_id,
+            recipient=None,
+            principal_id=root_identity.principal.principal_id,
+            profile_id=native_selection.service_profile_id,
+            namespace_id=root_identity.namespace.namespace_id,
+            generation=native_selection.service_generation,
+            issued_monotonic=now,
+            expires_monotonic=min(now + 300.0, policy_selection.expires_monotonic,
+                                  profile.expires_monotonic),
+            _seal=_ENROLLMENT_SEAL,
+        ) for operation in selected_operations)
+        effect_enrollment_ids = tuple(sorted(
+            (row.operation, row.effect_enrollment_id) for row in effect_rules))
+        receipt = RootPreparedOwnedProfileOverlayView(
+            schema=1, view_selection_handle=view_handle,
+            native_policy_selection_handle=native_policy_selection_handle,
+            profile_view_selection_handle=profile_view_handle,
+            setup_session_id=policy_selection.setup_session_id,
+            transaction_handle=policy_selection.transaction_handle,
+            prepared_generation_id=prepared.generation_id,
+            prepared_generation_digest=prepared.generation_digest,
+            service_profile_id=native_selection.service_profile_id,
+            service_generation=native_selection.service_generation,
+            resource_profile_id=profile.profile_id,
+            resource_profile_receipt_handle=profile.receipt_handle,
+            resources_source_receipt_handle=profile.resources_source_receipt_handle,
+            resources_source_artifact_id=profile.resources_source_artifact_id,
+            resources_source_sha256=profile.resources_source_sha256,
+            principal_selection_handle=policy_selection.principal_selection_handle,
+            namespace_selection_handle=policy_selection.namespace_selection_handle,
+            principal_id=root_identity.principal.principal_id,
+            namespace_id=root_identity.namespace.namespace_id,
+            data_root_selection_handle=native_bundle.materialization_receipt_handle,
+            data_root_receipt_handle=secrets.token_urlsafe(32),
+            data_root_id=native_selection.data_root_id,
+            data_root_device=root_info.st_dev, data_root_inode=root_info.st_ino,
+            data_root_owner_uid=root_info.st_uid, data_root_owner_gid=root_info.st_gid,
+            target_id=target_id, target_selection_handle=target_selection_handle,
+            target_receipt_handle=target_receipt_handle,
+            effect_enrollment_ids=effect_enrollment_ids,
+            view_device=view_stat.st_dev, view_inode=view_stat.st_ino,
+            view_owner_uid=view_stat.st_uid, view_owner_gid=view_stat.st_gid,
+            view_mode=stat.S_IMODE(view_stat.st_mode),
+            ownership_marker_sha256=hashlib.sha256(marker_bytes).hexdigest(),
+            issued_monotonic=now,
+            expires_monotonic=min(now + 300.0, policy_selection.expires_monotonic,
+                                  profile.expires_monotonic),
+            _seal=_VIEW_SEAL, _view=view, _effect_rules=effect_rules,
+            _data_root_fd=data_root_fd, _view_root_fd=view_root_fd,
+        )
+        self._profile_overlay_views_by_handle[profile_view_handle] = receipt
+        self._profile_overlay_views_by_selection[
+            (native_policy_selection_handle, resource_profile_selection_handle)] = profile_view_handle
+        Journal(journal_selection.path).event(
+            "native-owner-overlay:" + profile_view_handle, "view", "root-owned-view-prepared", {
+                "service_profile_id": native_selection.service_profile_id,
+                "resource_profile_id": profile.profile_id,
+                "prepared_generation_id": prepared.generation_id,
+                "data_root_id": native_selection.data_root_id,
+                "view_inode": view_stat.st_ino,
+                "selected_registration_ids": list(selected_overlay_ids),
+            })
+        return receipt
+
+    def _resolve_current_profile_overlay_view(
+            self, profile_view_selection_handle: str,
+            native_policy_selection_handle: str) -> Any:
+        from hermes_installer.authority.local_resource_effects import RootPreparedOwnedProfileOverlayView, _VIEW_SEAL
+        self._check_live()
+        self._refresh_authorization()
+        receipt = self._profile_overlay_views_by_handle.get(profile_view_selection_handle)
+        policy_selection = self.resolve_current_native_policy_selection(native_policy_selection_handle)
+        if (type(receipt) is not RootPreparedOwnedProfileOverlayView or receipt._seal is not _VIEW_SEAL
+                or receipt.native_policy_selection_handle != native_policy_selection_handle
+                or receipt.expires_monotonic <= time.monotonic()
+                or receipt.setup_session_id != self._handle.session_id
+                or receipt.transaction_handle != self._authorization.transaction_handle
+                or receipt.prepared_generation_id != policy_selection.prepared_generation_id
+                or receipt.prepared_generation_digest != policy_selection.prepared_generation_digest
+                or receipt.service_profile_id != policy_selection.service_profile_id
+                or receipt.service_generation != policy_selection.service_generation
+                or receipt.resource_profile_receipt_handle != policy_selection.resource_profile_selection_handle):
+            raise BootstrapEnrollmentPending("root profile overlay view receipt is stale or not selected")
+        profile = self.resolve_selected_resource_profile(receipt.resource_profile_receipt_handle)
+        native_bundle = self.prepare_selected_native_bundle()
+        self._resolve_current_prepared_native_bundle(native_bundle)
+        templates = [item.get("record") for item in self._policy.service_record_templates
+                     if isinstance(item.get("record"), Mapping)]
+        if len(templates) != 1 or not isinstance(templates[0].get("enrollment_id"), str):
+            raise BootstrapEnrollmentPending("current profile overlay service enrollment is ambiguous")
+        native_selection = self._authorize_native_materialization(
+            enrollment_id=templates[0]["enrollment_id"],
+            service_generation=receipt.service_generation,
+            resource_profile_id=profile.profile_id)
+        roots = self._resolve_private_installation_roots(native_selection)
+        view_path = roots.data_root / "native-profile-overlays" / receipt.service_profile_id / profile.profile_id
+        fresh_data_fd, fresh_view_fd, root_info, view_info, marker_info, marker_bytes = (
+            _open_root_owned_profile_overlay_directory(
+                roots.data_root, native_selection.service_uid, native_selection.service_gid,
+                receipt.service_profile_id, profile.profile_id))
+        try:
+            identity = self.resolve_current_setup_identity()
+            if (profile.receipt_handle != receipt.resource_profile_receipt_handle
+                    or profile.resources_source_receipt_handle != receipt.resources_source_receipt_handle
+                    or profile.resources_source_artifact_id != receipt.resources_source_artifact_id
+                    or profile.resources_source_sha256 != receipt.resources_source_sha256
+                    or identity.principal_selection_handle != receipt.principal_selection_handle
+                    or identity.namespace_selection_handle != receipt.namespace_selection_handle
+                    or identity.principal.principal_id != receipt.principal_id
+                    or identity.namespace.namespace_id != receipt.namespace_id
+                    or root_info.st_dev != receipt.data_root_device
+                    or root_info.st_ino != receipt.data_root_inode
+                    or root_info.st_uid != receipt.data_root_owner_uid
+                    or root_info.st_gid != receipt.data_root_owner_gid
+                    or view_info.st_dev != receipt.view_device
+                    or view_info.st_ino != receipt.view_inode or view_info.st_uid != 0
+                    or view_info.st_gid != 0 or stat.S_IMODE(view_info.st_mode) != 0o700
+                    or not stat.S_ISREG(marker_info.st_mode) or marker_info.st_uid != 0
+                    or stat.S_IMODE(marker_info.st_mode) != 0o600
+                    or marker_bytes != b"schema=1\n"
+                    or hashlib.sha256(marker_bytes).hexdigest() != receipt.ownership_marker_sha256):
+                raise BootstrapEnrollmentPending("root profile overlay data-root/view custody changed")
+            held_data_info = os.fstat(receipt._data_root_fd)
+            held_view_info = os.fstat(receipt._view_root_fd)
+            if ((held_data_info.st_dev, held_data_info.st_ino) != (receipt.data_root_device, receipt.data_root_inode)
+                    or (held_view_info.st_dev, held_view_info.st_ino) != (receipt.view_device, receipt.view_inode)
+                    or (os.fstat(fresh_data_fd).st_dev, os.fstat(fresh_data_fd).st_ino)
+                       != (receipt.data_root_device, receipt.data_root_inode)
+                    or (os.fstat(fresh_view_fd).st_dev, os.fstat(fresh_view_fd).st_ino)
+                       != (receipt.view_device, receipt.view_inode)
+                    or not stat.S_ISDIR(held_data_info.st_mode) or not stat.S_ISDIR(held_view_info.st_mode)):
+                raise BootstrapEnrollmentPending("held profile overlay directory descriptors are stale")
+            # Reopen the actual current CAS implementation; never return a stored
+            # path-only observation as evidence of currentness.
+            from hermes_installer.registry.resources_runtime import ResourceOverlayStore
+            from hermes_installer.state import Journal, OwnedRoot
+            current_view = ResourceOverlayStore(
+                OwnedRoot(view_path), Journal(self._current_root_journal_selection().path.parent
+                                              / "native-profile-overlays.sqlite3"),
+            ).for_profile(receipt.service_profile_id)
+            if receipt._view.__class__ is not current_view.__class__:
+                raise BootstrapEnrollmentPending("current profile overlay CAS view implementation changed")
+            return receipt
+        finally:
+            os.close(fresh_data_fd)
+            os.close(fresh_view_fd)
+
 
     def resolve_current_prepared_native_policy_records(self, selection_handle: str) -> Any:
         """Re-resolve the exact native policy/source/target record bundle.
@@ -8126,6 +8411,16 @@ class RootBootstrapSession:
     def close(self) -> None:
         if self._closed:
             return
+        for overlay_view in self._profile_overlay_views_by_handle.values():
+            for descriptor in (getattr(overlay_view, "_view_root_fd", -1),
+                               getattr(overlay_view, "_data_root_fd", -1)):
+                if type(descriptor) is int and descriptor >= 0:
+                    try:
+                        os.close(descriptor)
+                    except OSError:
+                        pass
+        self._profile_overlay_views_by_handle.clear()
+        self._profile_overlay_views_by_selection.clear()
         for output_root in self._prepared_build_output_roots.values():
             try:
                 os.close(output_root._directory_fd)
@@ -8488,6 +8783,148 @@ from .filesystem_selection import (  # noqa: E402
     RootOwnedFilesystemSelection,
     RootOwnedFilesystemSelectionRegistry,
 )
+
+
+def _open_root_owned_profile_overlay_directory(
+        data_root: Path, service_uid: int, service_gid: int,
+        service_profile_id: str, resource_profile_id: str,
+) -> tuple[int, int, os.stat_result, os.stat_result, os.stat_result, bytes]:
+    """Reopen the exact profile view through no-follow directory descriptors."""
+    from hermes_installer.authority.local_resource_effects import _PROFILE_ID
+
+    if (os.geteuid() != 0 or not isinstance(data_root, Path)
+            or not _PROFILE_ID.fullmatch(service_profile_id)
+            or not _PROFILE_ID.fullmatch(resource_profile_id)):
+        raise BootstrapEnrollmentPending("profile overlay root re-open selection is invalid")
+    directory_flags = (os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                       | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+    data_fd = -1
+    current_fd = -1
+    marker_fd = -1
+    try:
+        data_fd = os.open(data_root, directory_flags)
+        root_info = os.fstat(data_fd)
+        if (not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != service_uid
+                or root_info.st_gid != service_gid or stat.S_IMODE(root_info.st_mode) != 0o700):
+            raise BootstrapEnrollmentPending("selected service data root custody changed")
+        current_fd = os.dup(data_fd)
+        for component in ("native-profile-overlays", service_profile_id, resource_profile_id):
+            next_fd = os.open(component, directory_flags, dir_fd=current_fd)
+            info = os.fstat(next_fd)
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                    or stat.S_IMODE(info.st_mode) != 0o700):
+                os.close(next_fd)
+                raise BootstrapEnrollmentPending("selected profile overlay directory custody changed")
+            os.close(current_fd)
+            current_fd = next_fd
+        view_info = os.fstat(current_fd)
+        marker_fd = os.open(
+            ".hermes-installer-owned",
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+            dir_fd=current_fd,
+        )
+        marker_info = os.fstat(marker_fd)
+        marker_bytes = os.read(marker_fd, 64)
+        if (not stat.S_ISREG(marker_info.st_mode) or marker_info.st_uid != 0
+                or stat.S_IMODE(marker_info.st_mode) != 0o600 or marker_bytes != b"schema=1\n"):
+            raise BootstrapEnrollmentPending("profile overlay ownership marker changed")
+        os.close(marker_fd)
+        marker_fd = -1
+        result_data_fd, result_view_fd = data_fd, current_fd
+        data_fd, current_fd = -1, -1
+        return result_data_fd, result_view_fd, root_info, view_info, marker_info, marker_bytes
+    except BootstrapEnrollmentPending:
+        raise
+    except Exception:
+        raise BootstrapEnrollmentPending("profile overlay root re-open failed") from None
+    finally:
+        for descriptor in (marker_fd, current_fd, data_fd):
+            if descriptor >= 0:
+                os.close(descriptor)
+
+
+def _ensure_root_owned_profile_overlay_directory(
+        data_root: Path, service_uid: int, service_gid: int,
+        service_profile_id: str, resource_profile_id: str) -> Path:
+    """Create or observe the one fixed root-owned overlay child, via dirfds."""
+    from hermes_installer.authority.local_resource_effects import _PROFILE_ID
+
+    if (os.geteuid() != 0 or not isinstance(data_root, Path)
+            or not _PROFILE_ID.fullmatch(service_profile_id)
+            or not _PROFILE_ID.fullmatch(resource_profile_id)
+            or type(service_uid) is not int or service_uid <= 0
+            or type(service_gid) is not int or service_gid <= 0):
+        raise BootstrapEnrollmentPending("fixed root profile overlay directory selection is invalid")
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    data_fd = -1
+    current_fd = -1
+    try:
+        data_fd = os.open(data_root, directory_flags | getattr(os, "O_CLOEXEC", 0))
+        data_info = os.fstat(data_fd)
+        if (not stat.S_ISDIR(data_info.st_mode) or data_info.st_uid != service_uid
+                or data_info.st_gid != service_gid or stat.S_IMODE(data_info.st_mode) != 0o700):
+            raise BootstrapEnrollmentPending("selected service data root has unsafe custody")
+        current_fd = os.dup(data_fd)
+        for component in ("native-profile-overlays", service_profile_id, resource_profile_id):
+            created = False
+            try:
+                os.mkdir(component, mode=0o700, dir_fd=current_fd)
+                created = True
+            except FileExistsError:
+                pass
+            next_fd = os.open(component, directory_flags | getattr(os, "O_CLOEXEC", 0), dir_fd=current_fd)
+            info = os.fstat(next_fd)
+            if not stat.S_ISDIR(info.st_mode):
+                os.close(next_fd)
+                raise BootstrapEnrollmentPending("profile overlay path contains a non-directory")
+            if created:
+                os.fchown(next_fd, 0, 0)
+                os.fchmod(next_fd, 0o700)
+                info = os.fstat(next_fd)
+            if (info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o700):
+                os.close(next_fd)
+                raise BootstrapEnrollmentPending("profile overlay directory is not root-owned and private")
+            os.close(current_fd)
+            current_fd = next_fd
+        marker_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+        try:
+            marker_fd = os.open(".hermes-installer-owned", marker_flags, dir_fd=current_fd)
+        except FileNotFoundError:
+            marker_fd = os.open(
+                ".hermes-installer-owned",
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_CLOEXEC", 0),
+                0o600, dir_fd=current_fd,
+            )
+            try:
+                os.write(marker_fd, b"schema=1\n")
+                os.fsync(marker_fd)
+            finally:
+                os.close(marker_fd)
+            marker_fd = os.open(".hermes-installer-owned", marker_flags, dir_fd=current_fd)
+        try:
+            marker_info = os.fstat(marker_fd)
+            marker_bytes = os.read(marker_fd, 64)
+        finally:
+            os.close(marker_fd)
+        if (not stat.S_ISREG(marker_info.st_mode) or marker_info.st_uid != 0
+                or stat.S_IMODE(marker_info.st_mode) != 0o600 or marker_bytes != b"schema=1\n"):
+            raise BootstrapEnrollmentPending("profile overlay ownership marker is invalid")
+        result = data_root / "native-profile-overlays" / service_profile_id / resource_profile_id
+        opened_info, path_info = os.fstat(current_fd), result.lstat()
+        if (stat.S_ISLNK(path_info.st_mode) or not stat.S_ISDIR(path_info.st_mode)
+                or (opened_info.st_dev, opened_info.st_ino) != (path_info.st_dev, path_info.st_ino)):
+            raise BootstrapEnrollmentPending("profile overlay directory changed during root observation")
+        return result
+    except BootstrapEnrollmentPending:
+        raise
+    except Exception:
+        raise BootstrapEnrollmentPending("root-owned profile overlay directory could not be created or observed") from None
+    finally:
+        if current_fd >= 0:
+            os.close(current_fd)
+        if data_fd >= 0:
+            os.close(data_fd)
 
 __all__ = [
     "CompiledRootSetupPublication", "RootActivePolicyCompilationRegistry",
