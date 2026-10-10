@@ -211,7 +211,8 @@ def _load_input() -> dict[str, Any]:
         if len(set(names)) != len(names):
             raise BuildDenied("selected wheel closure contains duplicate package names")
         top[key] = normalized
-    expected_dist, expected_backend, expected_requires = PYTHON_APPS[top["application_id"]]
+    expected_dist, expected_backend, expected_requires, _expected_scripts = PYTHON_APPS[
+        top["application_id"]]
     top["expected_distribution"] = expected_dist
     top["expected_backend"] = expected_backend
     top["expected_build_requirements"] = expected_requires

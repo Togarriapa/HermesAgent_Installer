@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import tempfile
 import zipfile
@@ -12,6 +13,76 @@ from hermes_installer.authority.application_runtime_archive import inspect_runti
 
 
 class ApplicationEnvironmentBuilderTests(TestCase):
+    def test_load_input_projects_complete_selection_for_each_python_application(self):
+        # This temporary file exercises the decoder and schema validators. The
+        # fixture relaxes only the root-owned file-custody check; it proves
+        # neither production root custody nor an actual application build.
+        actual_read_regular = builder._read_regular
+        package_bytes = b"selected application wheel metadata fixture"
+        backend_bytes = b"selected backend wheel metadata fixture"
+
+        def read_fixture(path, limit, *, root_owned_readonly=False):
+            self.assertTrue(root_owned_readonly)
+            return actual_read_regular(path, limit, root_owned_readonly=False)
+
+        def wheel_pin(name, version, filename, payload):
+            return {
+                "name": name,
+                "version": version,
+                "filename": filename,
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "size_bytes": len(payload),
+            }
+
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "application-build-input.json"
+            for application_id, (distribution, backend, requirements, _scripts) in builder.PYTHON_APPS.items():
+                selected = {
+                    "schema": 1,
+                    "application_id": application_id,
+                    "source_manifest_sha256": "1" * 64,
+                    "lock_sha256": "2" * 64,
+                    "package_closure_sha256": "3" * 64,
+                    "backend_closure_sha256": "4" * 64,
+                    "packages": [wheel_pin(
+                        distribution, "1.2.3", f"{distribution}-1.2.3-py3-none-any.whl",
+                        package_bytes)],
+                    "backend_packages": [wheel_pin(
+                        "selected-backend", "2.3.4", "selected_backend-2.3.4-py3-none-any.whl",
+                        backend_bytes)],
+                    "recipe_sha256": "5" * 64,
+                    "uv_executable_sha256": "6" * 64,
+                    "python_executable_sha256": "7" * 64,
+                    "python_runtime_closure_sha256": "8" * 64,
+                    "python_runtime_executable_relative_path": "bin/python3.14",
+                }
+                config_path.write_text(json.dumps(selected, sort_keys=True), encoding="utf-8")
+                with (mock.patch.object(builder, "CONFIG", config_path),
+                      mock.patch.object(
+                          builder, "_read_regular", side_effect=read_fixture)):
+                    decoded = builder._load_input()
+
+                self.assertEqual(decoded["application_id"], application_id)
+                self.assertEqual(decoded["expected_distribution"], distribution)
+                self.assertEqual(decoded["expected_backend"], backend)
+                self.assertEqual(decoded["expected_build_requirements"], requirements)
+                self.assertEqual(decoded["packages"], [selected["packages"][0]])
+                self.assertEqual(decoded["backend_packages"], [selected["backend_packages"][0]])
+                self.assertRegex(decoded["python_runtime_closure_sha256"], r"^[0-9a-f]{64}$")
+                self.assertEqual(decoded["python_runtime_executable_relative_path"], "bin/python3.14")
+
+            for mutate in (
+                    lambda value: value.update(application_id="unknown-app"),
+                    lambda value: value.update(backend_packages=[]),
+                    lambda value: value.pop("recipe_sha256")):
+                malformed = json.loads(json.dumps(selected))
+                mutate(malformed)
+                config_path.write_text(json.dumps(malformed, sort_keys=True), encoding="utf-8")
+                with (mock.patch.object(builder, "CONFIG", config_path),
+                      mock.patch.object(builder, "_read_regular", side_effect=read_fixture)):
+                    with self.assertRaises(builder.BuildDenied):
+                        builder._load_input()
+
     def test_export_projection_keeps_only_selected_exact_hash_pins(self):
         exported = b"""--index-url https://pypi.org/simple
 aiofiles==25.1.0 \\
