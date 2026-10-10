@@ -1111,5 +1111,22 @@ class ActivePrincipalSelectionContracts(unittest.TestCase):
             service.resolve_current_active_principal_binding(binding.profile_id)
 
 
+class PublicInputPermissionBoundaryContracts(unittest.TestCase):
+    def test_public_source_bridge_rejects_untyped_caller_proofs_before_signing(self):
+        binding = PrincipalBinding(1234, "principal:public", "profile:public", "namespace:public",
+                                   frozenset({"plugin.web.read"}))
+        service = AuthorityService(
+            signing_key=b"v" * 32, key_id="public-input-boundary-test",
+            bindings_by_uid={binding.uid: binding}, rules={}, handlers={},
+            profile_generations={binding.profile_id: "generation-1"},
+            service_generation_digest="a" * 64,
+        )
+        with self.assertRaises(AuthorityDenied):
+            service.issue_public_input_source({
+                "sensitivity": "PUBLIC", "recipient_ceiling": ["public-web"],
+                "profile_id": binding.profile_id,
+            }, object())
+        self.assertEqual(service._source_receipt_handles, {})
+
 if __name__ == "__main__":
     unittest.main()
