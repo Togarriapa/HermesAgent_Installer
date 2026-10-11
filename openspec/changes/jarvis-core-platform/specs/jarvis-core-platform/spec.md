@@ -1986,3 +1986,35 @@ Any dashboard workflow graph SHALL remain a secondary inspectable view derived f
 #### Scenario: Reference-derived skill improvement
 - **WHEN** a saved reference proposes a reusable Skill improvement
 - **THEN** actual source coverage and project fit accompany its existing native review/diff/approval/use/rollback lifecycle, and an inaccessible source or publisher snippet alone never establishes reviewed content or automatic ingestion/activation.
+
+### Requirement: Prominent real-state Jarvis presence before ecosystem telemetry
+Overview SHALL present one original prominent SVG/CSS circular Jarvis identity driven by actual pending submission, accepted owned work, consented recognition, audible synthesis and observed error states. The visual presence SHALL remain useful without worker telemetry, preserve quiet idle, readable text and reduced-motion behavior, and SHALL NOT simulate captured sound or activity.
+
+#### Scenario: Pending submission and accepted work
+- **WHEN** an actual submission is pending then accepted, completes, cancels or fails
+- **THEN** the orb follows actual queued/thinking/terminal facts, stale callbacks or navigation do not invent work, and reduced motion preserves meaningful state without continuous transforms.
+
+### Requirement: Actual internal worker identity and stable instance aliases
+The ecosystem SHALL distinguish original Expert profile/source identity, declared Team and actual owned execution instance. Repeated real instances of a profile MAY carry stable display aliases such as DevPeter and DevSarah while Jarvis remains the sole user-facing master. Aliases SHALL NOT confer native identity, prompt, account or effect authority.
+
+#### Scenario: Same-profile instances and restart
+- **WHEN** two real execution instances share one Dev source profile and the UI reloads or core restarts
+- **THEN** their distinct owned instance IDs and persisted aliases remain separately inspectable with original source lineage, and activity stays unknown until current lifecycle evidence exists.
+
+#### Scenario: Catalog without actual workers
+- **WHEN** only inventory, a Team declaration or an unjoined execution plan is available
+- **THEN** the view shows configured/discovered or pending membership and no fabricated active instance, busy worker or live communication.
+
+### Requirement: Bounded owner-scoped authentic ecosystem inspection
+The system SHALL project finite sanitized worker lifecycle, tool/request/response events and verified Team/instance relationships from actual owned native observer/execution records. Inter-expert communication edges SHALL require real sender/recipient event lineage. Read-only inspection SHALL retain existing authenticated ownership, revocation, bounded replay and payload limits without creating execution authority.
+
+#### Scenario: Unverified message or cross-owner instance
+- **WHEN** a relation lacks authentic event lineage or an instance/mission belongs to another principal
+- **THEN** the relation remains unverified/pending or the read denies before bytes, with no invented message content, credential/native-session leakage or worker launch.
+
+### Requirement: Measured workload and activity rankings
+Top-Expert/workload views SHALL use a labeled real count or measured duration basis within a stated window and source coverage, distinguishing profile totals from individual instances. Missing data SHALL remain unknown/null, and replay SHALL NOT duplicate counts. The system SHALL NOT fabricate performance percentages or quality scores.
+
+#### Scenario: Quiet or partial observation
+- **WHEN** an authorized snapshot contains no observed activity or incomplete source coverage
+- **THEN** the UI distinguishes verified quiet from missing telemetry, ranks only known observations with an explicit basis and retains partial/stale/unknown status without treating it as zero or failure.
