@@ -120,6 +120,55 @@ def test_two_active_turn_bound_and_one_turn_per_conversation(tmp_path):
     assert next_turn
 
 
+def test_model_selection_revision_is_owner_bound_one_use_and_serialized_with_turns(tmp_path):
+    store = JarvisChatStore(tmp_path / "chat.sqlite3")
+    conversation = new_conversation(store, "subject-a")
+    runtime_id = store.get_conversation("subject-a", conversation["id"])["backend_id"]
+    digest = "a" * 64
+    issued = store.issue_model_selection_revision(
+        "subject-a", conversation["id"], "core-generation-a", digest)
+    request = {
+        "core_generation": "core-generation-a", "config_sha256": digest,
+        "model_id": "gpt-6-sol", "revision": issued["revision"],
+        "approval_nonce": issued["approval_nonce"],
+        "idempotency_key": "model-selection-key-000001",
+    }
+    with pytest.raises(JarvisChatDenied):
+        store.reserve_model_selection("subject-b", conversation["id"], **request)
+    reserved = store.reserve_model_selection("subject-a", conversation["id"], **request)
+    assert reserved["state"] == "reserved"
+    assert reserved["runtime_session_id"] == runtime_id
+    assert store.model_selection_activity(
+        "subject-a", conversation["id"], "core-generation-a") == "busy"
+    with pytest.raises(RuntimeError, match="model selection"):
+        begin(store, "subject-a", conversation, "turn-during-model-change-001")
+
+    store.finish_model_selection(
+        "subject-a", reserved["operation_id"], state="selected-for-session",
+        runtime_session_id=runtime_id)
+    assert store.latest_model_selection(
+        "subject-a", conversation["id"], "core-generation-a",
+        runtime_id) == {"model": "gpt-6-sol", "state": "selected-for-session"}
+    replay = store.reserve_model_selection("subject-a", conversation["id"], **request)
+    assert replay["replayed"] is True
+    assert replay["state"] == "selected-for-session"
+    with pytest.raises(JarvisChatDenied, match="idempotency"):
+        store.reserve_model_selection("subject-a", conversation["id"], **{
+            **request, "model_id": "gpt-6-luna"})
+
+
+def test_model_selection_revision_rejects_stale_generation_and_active_turn(tmp_path):
+    store = JarvisChatStore(tmp_path / "chat.sqlite3")
+    conversation = new_conversation(store, "subject-a")
+    with pytest.raises(JarvisChatDenied):
+        store.issue_model_selection_revision(
+            "subject-a", conversation["id"], "another-core-generation", "a" * 64)
+    begin(store, "subject-a", conversation, "active-turn-model-denial-001")
+    with pytest.raises(JarvisChatDenied, match="active turn"):
+        store.issue_model_selection_revision(
+            "subject-a", conversation["id"], "core-generation-a", "a" * 64)
+
+
 def test_server_turn_mapping_runs_before_worker_and_failure_compensates_without_submit(tmp_path):
     store = JarvisChatStore(tmp_path / "chat.sqlite3")
     conversation = new_conversation(store, "subject-a")

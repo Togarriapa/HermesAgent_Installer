@@ -19,6 +19,7 @@ from urllib.parse import quote
 
 from .jarvis_chat import JarvisChatDenied, _read_private_secret
 from .jarvis_activity import NativeActivityEvent, _STATUSES, _USAGE_FIELDS
+from .jarvis_model_catalog import CODEX_KNOWN_MODEL_ID_SET, CODEX_MODEL_ID_SET, CODEX_PROVIDER_ID
 
 CORE_PORT = 8766
 CORE_PATH = "/api/ws"
@@ -142,7 +143,7 @@ class CoreRpcClient:
         # Method names are not parameters to public endpoints; this still defends internal misuse.
         if method not in {"session.create", "session.resume", "session.history", "session.interrupt",
                           "profiles.list", "cron.manage", "plugins.list", "mcp.servers.status",
-                          "file.attach", "tools.list", "skills.manage"}:
+                          "file.attach", "tools.list", "skills.manage", "config.get", "config.set"}:
             raise JarvisChatDenied("core method is outside the fixed adapter")
         client, ws, ws_types = await self._connect()
         request_id = secrets.token_hex(12)
@@ -156,6 +157,75 @@ class CoreRpcClient:
         finally:
             await ws.close()
             await client.close()
+
+    async def get_model_provider_status(self) -> dict[str, Any]:
+        """Read the pinned gateway's sanitized provider/model status.
+
+        ``config.get provider`` includes a provider inventory. Only the Codex
+        credential-presence boolean is projected; no provider rows or config
+        values leave this method. This does not prove login validity or access.
+        """
+        result = await self._rpc("config.get", {"key": "provider"})
+        model = result.get("model")
+        provider = result.get("provider")
+        providers = result.get("providers")
+        if (not isinstance(model, str) or not 1 <= len(model) <= 160
+                or any(ord(char) < 0x20 for char in model)
+                or not isinstance(provider, str) or provider not in {"unknown", CODEX_PROVIDER_ID}
+                or not isinstance(providers, list) or len(providers) > 128):
+            raise JarvisChatDenied("official core model status was invalid")
+        codex_rows = []
+        for row in providers:
+            if not isinstance(row, dict):
+                raise JarvisChatDenied("official core provider status was invalid")
+            provider_id = row.get("id")
+            if (not isinstance(provider_id, str) or not 1 <= len(provider_id) <= 64
+                    or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", provider_id)):
+                raise JarvisChatDenied("official core provider status was invalid")
+            if provider_id == CODEX_PROVIDER_ID:
+                authenticated = row.get("authenticated")
+                if type(authenticated) is not bool:
+                    raise JarvisChatDenied("official core Codex credential status was invalid")
+                codex_rows.append(authenticated)
+        if len(codex_rows) > 1:
+            raise JarvisChatDenied("official core Codex provider status was ambiguous")
+        return {
+            "model": model,
+            "provider_hint": provider,
+            "codex_credential_configured": codex_rows[0] if codex_rows else None,
+            "known_model": model in CODEX_KNOWN_MODEL_ID_SET,
+        }
+
+    async def set_session_model(self, session_id: str, model_id: str) -> dict[str, Any]:
+        """Select one pinned Codex model for a single already-owned live session.
+
+        The browser cannot supply a native command, provider, key, or config
+        key. ``--session`` is always included so the native parser cannot turn
+        this request into a profile-default write.
+        """
+        if (not _valid_session_id(session_id) or not isinstance(model_id, str)
+                or model_id not in CODEX_MODEL_ID_SET):
+            raise JarvisChatDenied("model selection is outside the fixed session adapter")
+        value = f"{model_id} --provider {CODEX_PROVIDER_ID} --session"
+        result = await self._rpc("config.set", {
+            "key": "model", "value": value, "session_id": session_id,
+        })
+        if (result.get("key") != "model" or result.get("value") != model_id
+                or result.get("scope") != "session"
+                or type(result.get("confirm_required")) is not bool
+                or not isinstance(result.get("warning"), str)
+                or not isinstance(result.get("confirm_message"), str)):
+            raise JarvisChatDenied("official core model selection response was invalid")
+        deferred = result.get("deferred", False)
+        if type(deferred) is not bool:
+            raise JarvisChatDenied("official core model selection response was invalid")
+        if result["confirm_required"] or result["warning"] or result["confirm_message"]:
+            state = "confirmation-required"
+        elif deferred:
+            state = "deferred-next-turn"
+        else:
+            state = "selected-for-session"
+        return {"model": model_id, "state": state}
 
     @staticmethod
     def _bounded_profile_text(value: Any, *, limit: int = 160) -> str | None:

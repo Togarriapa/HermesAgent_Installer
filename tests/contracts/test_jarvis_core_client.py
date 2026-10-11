@@ -108,6 +108,98 @@ def test_stop_uses_only_fixed_session_interrupt_and_requires_confirmation():
         asyncio.run(client.stop("runtime-a"))
 
 
+def test_models_status_projects_only_codex_authentication_and_known_catalog():
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
+    calls = []
+
+    async def rpc(method, params):
+        calls.append((method, params))
+        return {"model": "gpt-6-luna", "provider": "unknown", "providers": [
+            {"id": "openai-codex", "label": "ChatGPT Codex", "aliases": [],
+             "authenticated": True},
+            {"id": "openai", "label": "OpenAI API", "aliases": [],
+             "authenticated": False},
+        ]}
+
+    client._rpc = rpc
+    assert asyncio.run(client.get_model_provider_status()) == {
+        "model": "gpt-6-luna", "provider_hint": "unknown",
+        "codex_credential_configured": True, "known_model": True,
+    }
+    assert calls == [("config.get", {"key": "provider"})]
+
+
+def test_models_status_rejects_ambiguous_or_malformed_codex_authentication():
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
+
+    async def rpc(_method, _params):
+        return {"model": "gpt-6-luna", "provider": "unknown", "providers": [
+            {"id": "openai-codex", "authenticated": True},
+            {"id": "openai-codex", "authenticated": False},
+        ]}
+
+    client._rpc = rpc
+    with pytest.raises(JarvisChatDenied):
+        asyncio.run(client.get_model_provider_status())
+
+
+def test_models_selection_constructs_only_fixed_session_scoped_native_call():
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
+    calls = []
+
+    async def rpc(method, params):
+        calls.append((method, params))
+        return {"key": "model", "value": "gpt-6-sol", "scope": "session",
+                "warning": "", "confirm_required": False, "confirm_message": ""}
+
+    client._rpc = rpc
+    assert asyncio.run(client.set_session_model("runtime-a", "gpt-6-sol")) == {
+        "model": "gpt-6-sol", "state": "selected-for-session",
+    }
+    assert calls == [("config.set", {
+        "key": "model", "value": "gpt-6-sol --provider openai-codex --session",
+        "session_id": "runtime-a",
+    })]
+
+
+@pytest.mark.parametrize("session_id,model_id", [
+    ("runtime-a", "arbitrary/model"), ("runtime-a", "gpt-5.3-codex-spark"),
+    ("bad\nkey", "gpt-6-sol"), ("runtime-a", []),
+])
+def test_models_selection_rejects_unbounded_ids_before_rpc(session_id, model_id):
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
+    calls = []
+
+    async def rpc(method, params):
+        calls.append((method, params))
+        return {}
+
+    client._rpc = rpc
+    with pytest.raises(JarvisChatDenied):
+        asyncio.run(client.set_session_model(session_id, model_id))
+    assert calls == []
+
+
+def test_models_selection_reports_deferred_and_denies_unexpected_scope():
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
+
+    async def deferred(_method, _params):
+        return {"key": "model", "value": "gpt-6-sol", "scope": "session",
+                "warning": "", "confirm_required": False, "confirm_message": "",
+                "deferred": True}
+
+    client._rpc = deferred
+    assert asyncio.run(client.set_session_model("runtime-a", "gpt-6-sol"))["state"] == "deferred-next-turn"
+
+    async def global_scope(_method, _params):
+        return {"key": "model", "value": "gpt-6-sol", "scope": "global",
+                "warning": "", "confirm_required": False, "confirm_message": ""}
+
+    client._rpc = global_scope
+    with pytest.raises(JarvisChatDenied):
+        asyncio.run(client.set_session_model("runtime-a", "gpt-6-sol"))
+
+
 class _FakeClient:
     async def close(self):
         pass

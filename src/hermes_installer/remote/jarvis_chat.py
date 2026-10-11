@@ -37,6 +37,9 @@ CHAT_STORE_PATH = CHAT_STATE_DIRECTORY / "chat.sqlite3"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{24,64}$")
 IDEMPOTENCY_RE = re.compile(r"^[A-Za-z0-9_-]{22,128}$")
 NONCE_RE = re.compile(r"^[0-9a-f]{64}$")
+MODEL_REVISION_RE = re.compile(r"^[0-9a-f]{32}$")
+MODEL_IDEMPOTENCY_RE = re.compile(r"^[A-Za-z0-9_-]{22,128}$")
+_MODEL_SELECTION_EPOCH = secrets.token_hex(16)
 _ACTIVE = ("queued", "running")
 _CHAT_LOGGER = logging.getLogger(__name__)
 _MESSAGE_DIAGNOSTIC_PHASES = frozenset({
@@ -205,6 +208,22 @@ class JarvisChatStore:
               CREATE TABLE IF NOT EXISTS turn_events(
                 turn_id TEXT NOT NULL REFERENCES turns(id) ON DELETE CASCADE, sequence INTEGER NOT NULL,
                 name TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(turn_id,sequence));
+              CREATE TABLE IF NOT EXISTS model_selection_revisions(
+                conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+                owner TEXT NOT NULL, core_generation TEXT NOT NULL, runtime_session_id TEXT NOT NULL,
+                session_key_hash TEXT NOT NULL, config_sha256 TEXT NOT NULL, revision_hash TEXT NOT NULL,
+                approval_hash TEXT NOT NULL, epoch TEXT NOT NULL, expires REAL NOT NULL);
+              CREATE TABLE IF NOT EXISTS model_selection_ops(
+                id TEXT PRIMARY KEY, owner TEXT NOT NULL, conversation_id TEXT NOT NULL,
+                idempotency_hash TEXT NOT NULL, request_hash TEXT NOT NULL, model_id TEXT NOT NULL,
+                state TEXT NOT NULL, core_generation TEXT NOT NULL, runtime_session_id TEXT NOT NULL,
+                created REAL NOT NULL, updated REAL NOT NULL, UNIQUE(owner,idempotency_hash));
+              CREATE INDEX IF NOT EXISTS model_selection_ops_recent
+                ON model_selection_ops(owner,updated DESC);
+              CREATE TABLE IF NOT EXISTS model_selection_locks(
+                conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+                operation_id TEXT NOT NULL UNIQUE, owner TEXT NOT NULL,
+                core_generation TEXT NOT NULL, expires REAL NOT NULL);
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(conversations)")}
             if "core_generation" not in columns:
@@ -368,6 +387,13 @@ class JarvisChatStore:
                 active_conversation = db.execute(
                     "SELECT COUNT(*) FROM turns WHERE conversation_id=? AND status IN ('queued','running')",
                     (conversation_id,)).fetchone()[0]
+                db.execute("DELETE FROM model_selection_locks WHERE expires<=?", (_now(),))
+                selection_locked = db.execute(
+                    "SELECT 1 FROM model_selection_locks WHERE conversation_id=? AND owner=? "
+                    "AND core_generation=? AND expires>?",
+                    (conversation_id, owner, principal.core_generation, _now())).fetchone()
+                if selection_locked:
+                    raise RuntimeError("model selection in progress")
                 if (active >= self.max_active_turns
                         or active_conversation >= MAX_ACTIVE_TURNS_PER_CONVERSATION):
                     raise RuntimeError("busy")
@@ -383,6 +409,183 @@ class JarvisChatStore:
                 db.execute("ROLLBACK")
                 raise
         return turn_id, nonce, conversation
+
+    def issue_model_selection_revision(self, subject: str, conversation_id: str,
+                                       core_generation: str, config_sha256: str) -> dict[str, str]:
+        """Issue a one-use, short-lived revision for the owner's current session mapping."""
+        if (not isinstance(core_generation, str) or not 1 <= len(core_generation) <= 256
+                or not isinstance(config_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", config_sha256)):
+            raise JarvisChatDenied("model settings revision is invalid")
+        owner = self._owner(subject)
+        revision, approval_nonce = secrets.token_hex(16), secrets.token_hex(32)
+        expires = time.monotonic() + MAX_LEASE_SECONDS
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            conversation = db.execute(
+                "SELECT backend_id,session_key,core_generation FROM conversations WHERE id=? AND owner=?",
+                (conversation_id, owner)).fetchone()
+            if conversation is None or conversation["core_generation"] != core_generation:
+                db.execute("ROLLBACK")
+                raise JarvisChatDenied("conversation ownership or generation changed")
+            active = db.execute(
+                "SELECT 1 FROM turns WHERE conversation_id=? AND status IN ('queued','running') LIMIT 1",
+                (conversation_id,)).fetchone()
+            if active:
+                db.execute("ROLLBACK")
+                raise JarvisChatDenied("model selection is unavailable while a turn is active")
+            db.execute("DELETE FROM model_selection_locks WHERE expires<=?", (_now(),))
+            lock = db.execute("SELECT 1 FROM model_selection_locks WHERE conversation_id=?",
+                              (conversation_id,)).fetchone()
+            if lock:
+                db.execute("ROLLBACK")
+                raise JarvisChatDenied("model selection is already in progress")
+            db.execute("""INSERT INTO model_selection_revisions(
+                conversation_id,owner,core_generation,runtime_session_id,session_key_hash,
+                config_sha256,revision_hash,approval_hash,epoch,expires)
+                VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(conversation_id) DO UPDATE SET
+                owner=excluded.owner,core_generation=excluded.core_generation,
+                runtime_session_id=excluded.runtime_session_id,session_key_hash=excluded.session_key_hash,
+                config_sha256=excluded.config_sha256,revision_hash=excluded.revision_hash,
+                approval_hash=excluded.approval_hash,epoch=excluded.epoch,expires=excluded.expires""",
+                (conversation_id, owner, core_generation, conversation["backend_id"],
+                 _digest(conversation["session_key"]), config_sha256, _digest(revision),
+                 _digest(approval_nonce), _MODEL_SELECTION_EPOCH, expires))
+            db.execute("COMMIT")
+        return {"revision": revision, "approval_nonce": approval_nonce}
+
+    def reserve_model_selection(self, subject: str, conversation_id: str, *,
+                                core_generation: str, config_sha256: str, model_id: str,
+                                revision: str, approval_nonce: str, idempotency_key: str
+                                ) -> dict[str, Any]:
+        """Atomically consume the confirmation, enforce idle state, and block new turns."""
+        from .jarvis_model_catalog import CODEX_MODEL_ID_SET
+        if (not isinstance(model_id, str) or model_id not in CODEX_MODEL_ID_SET
+                or not isinstance(revision, str) or not MODEL_REVISION_RE.fullmatch(revision)
+                or not isinstance(approval_nonce, str) or not NONCE_RE.fullmatch(approval_nonce)
+                or not isinstance(idempotency_key, str) or not MODEL_IDEMPOTENCY_RE.fullmatch(idempotency_key)
+                or not isinstance(config_sha256, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", config_sha256)):
+            raise JarvisChatDenied("model selection request is invalid")
+        owner = self._owner(subject)
+        idem_hash = _digest(owner + ":" + idempotency_key)
+        request_hash = _digest("\0".join((conversation_id, core_generation, config_sha256,
+                                           model_id, revision, approval_nonce)))
+        now_wall, now_mono = _now(), time.monotonic()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                previous = db.execute(
+                    "SELECT id,request_hash,state,model_id,runtime_session_id FROM model_selection_ops "
+                    "WHERE owner=? AND idempotency_hash=?", (owner, idem_hash)).fetchone()
+                if previous:
+                    if previous["request_hash"] != request_hash:
+                        raise JarvisChatDenied("model selection idempotency key was already used")
+                    db.execute("COMMIT")
+                    return {"operation_id": previous["id"], "state": previous["state"],
+                            "model": previous["model_id"],
+                            "runtime_session_id": previous["runtime_session_id"], "replayed": True}
+                db.execute("DELETE FROM model_selection_ops WHERE owner=? AND updated<?",
+                           (owner, now_wall - 86400))
+                recent = db.execute(
+                    "SELECT COUNT(*) FROM model_selection_ops WHERE owner=? AND updated>=?",
+                    (owner, now_wall - 86400)).fetchone()[0]
+                if recent >= 200:
+                    raise JarvisChatDenied("model selection request limit was reached")
+                conversation = db.execute(
+                    "SELECT backend_id,session_key,core_generation FROM conversations "
+                    "WHERE id=? AND owner=?", (conversation_id, owner)).fetchone()
+                if conversation is None or conversation["core_generation"] != core_generation:
+                    raise JarvisChatDenied("conversation ownership or generation changed")
+                current_revision = db.execute(
+                    "SELECT * FROM model_selection_revisions WHERE conversation_id=? AND owner=?",
+                    (conversation_id, owner)).fetchone()
+                if (current_revision is None or current_revision["epoch"] != _MODEL_SELECTION_EPOCH
+                        or current_revision["expires"] <= now_mono
+                        or current_revision["core_generation"] != core_generation
+                        or current_revision["runtime_session_id"] != conversation["backend_id"]
+                        or current_revision["session_key_hash"] != _digest(conversation["session_key"])
+                        or current_revision["config_sha256"] != config_sha256
+                        or current_revision["revision_hash"] != _digest(revision)
+                        or current_revision["approval_hash"] != _digest(approval_nonce)):
+                    raise JarvisChatDenied("model selection revision expired or changed")
+                active = db.execute(
+                    "SELECT 1 FROM turns WHERE conversation_id=? AND status IN ('queued','running') LIMIT 1",
+                    (conversation_id,)).fetchone()
+                if active:
+                    raise JarvisChatDenied("model selection is unavailable while a turn is active")
+                db.execute("DELETE FROM model_selection_locks WHERE expires<=?", (now_wall,))
+                locked = db.execute("SELECT 1 FROM model_selection_locks WHERE conversation_id=?",
+                                    (conversation_id,)).fetchone()
+                if locked:
+                    raise JarvisChatDenied("model selection is already in progress")
+                operation_id = secrets.token_hex(16)
+                db.execute("INSERT INTO model_selection_ops VALUES(?,?,?,?,?,'unknown-pending',?,?,?, ?,?)",
+                           (operation_id, owner, conversation_id, idem_hash, request_hash, model_id,
+                            core_generation, conversation["backend_id"], now_wall, now_wall))
+                db.execute("INSERT INTO model_selection_locks VALUES(?,?,?,?,?)",
+                           (conversation_id, operation_id, owner, core_generation, now_wall + MAX_LEASE_SECONDS))
+                db.execute("DELETE FROM model_selection_revisions WHERE conversation_id=?",
+                           (conversation_id,))
+                db.execute("COMMIT")
+                return {"operation_id": operation_id, "state": "reserved",
+                        "model": model_id, "runtime_session_id": conversation["backend_id"],
+                        "replayed": False}
+            except BaseException:
+                db.execute("ROLLBACK")
+                raise
+
+    def finish_model_selection(self, subject: str, operation_id: str, *, state: str,
+                               runtime_session_id: str) -> None:
+        if (not re.fullmatch(r"[0-9a-f]{32}", operation_id or "")
+                or not _valid_core_session_id(runtime_session_id)
+                or state not in {"selected-for-session", "deferred-next-turn",
+                                 "confirmation-required", "unknown-pending"}):
+            raise JarvisChatDenied("model selection result is invalid")
+        owner, now = self._owner(subject), _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT id FROM model_selection_ops WHERE id=? AND owner=?",
+                             (operation_id, owner)).fetchone()
+            if row is None:
+                db.execute("ROLLBACK")
+                raise JarvisChatDenied("model selection ownership changed")
+            db.execute("UPDATE model_selection_ops SET state=?,runtime_session_id=?,updated=? "
+                       "WHERE id=? AND owner=?",
+                       (state, runtime_session_id, now, operation_id, owner))
+            db.execute("DELETE FROM model_selection_locks WHERE operation_id=? AND owner=?",
+                       (operation_id, owner))
+            db.execute("COMMIT")
+
+    def latest_model_selection(self, subject: str, conversation_id: str,
+                               core_generation: str, runtime_session_id: str) -> dict[str, str] | None:
+        owner = self._owner(subject)
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT model_id,state FROM model_selection_ops WHERE owner=? AND conversation_id=? "
+                "AND core_generation=? AND runtime_session_id=? ORDER BY updated DESC LIMIT 1",
+                (owner, conversation_id, core_generation, runtime_session_id)).fetchone()
+        if row is None:
+            return None
+        return {"model": row["model_id"], "state": row["state"]}
+
+    def model_selection_activity(self, subject: str, conversation_id: str,
+                                 core_generation: str) -> str:
+        """Return only the bounded busy/available state for an owned current conversation."""
+        owner = self._owner(subject)
+        with self._connect() as db:
+            conversation = db.execute(
+                "SELECT 1 FROM conversations WHERE id=? AND owner=? AND core_generation=?",
+                (conversation_id, owner, core_generation)).fetchone()
+            if conversation is None:
+                raise JarvisChatDenied("conversation ownership or generation changed")
+            active = db.execute(
+                "SELECT 1 FROM turns WHERE conversation_id=? AND status IN ('queued','running') LIMIT 1",
+                (conversation_id,)).fetchone()
+            lock = db.execute(
+                "SELECT 1 FROM model_selection_locks WHERE conversation_id=? AND owner=? "
+                "AND core_generation=? AND expires>?",
+                (conversation_id, owner, core_generation, _now())).fetchone()
+        return "busy" if active or lock else "available"
 
     def rotate_heartbeat(self, subject: str, turn_id: str, nonce: str, principal: ChatPrincipal) -> str:
         owner = self._owner(subject)
