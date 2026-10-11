@@ -1141,3 +1141,13 @@ The MVP SHALL retain v260stub, permit only reviewed v261 core/window guards in l
 #### Scenario: Configuration could enable remote logging
 - **WHEN** the exact off flag or a reviewed installed member is absent
 - **THEN** stage launch remains unavailable without enabling control or weakening other security constraints
+
+
+## ADDED Requirements
+
+### Requirement: Fixed native child with denied client commands
+The MVP SHALL permit commands=yes only with exact v262 patched member and server-owned fixed native child, retaining start-new-commands=no and all shell/control/logging/security guards. Client hello/new-command/signalling requests SHALL deny before effects.
+
+#### Scenario: Client requests a command while fixed app is enabled
+- **WHEN** a hello run or command-signal arrives with start_new_commands false
+- **THEN** registration and direct handlers deny without Popen/signalling, while configured native child startup remains unchanged

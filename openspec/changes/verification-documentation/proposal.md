@@ -225,3 +225,8 @@ Manual owned MVP source/package/configuration/runtime evidence may establish thi
 ## Complete fixed-startup control guard v261
 
 `planning/xpra-disabled-control-complete-startup-repair-v261.json` extends immutable260 with only core/window early guards, retainingstub, local xpra-server+jarvis2 and explicit remote-logging=no required in argv/inspector. Full selected startup audit/member graph/source regression/readback required; all security constraints and AC remain OPEN.
+
+
+## Fixed app child without client commands v262
+
+`planning/xpra-fixed-app-child-no-client-command-repair-v262.json` separates server-owned configured child from denied client hello/command-start/signal. Exact +jarvis3 command member, retained prior guards and inspector/readback gate commands=yes with start-new/shell/control/logging=no. No other command/config authority; all AC OPEN.

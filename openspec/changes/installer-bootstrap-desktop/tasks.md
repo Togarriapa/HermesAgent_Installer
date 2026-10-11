@@ -368,3 +368,7 @@ Actual edb349 Pi update evidence: `evidence/development/EV-BD-T249-pi-update-edb
 
 - [ ] BD-T261.1: Implement exact core/window guards with v260stub, local +jarvis2 fullgraph and explicit remote-logging=no launch/inspector readback.
 - [ ] VD-T261.2: Verify disabled/enabled methods, exact input/graph/metadata denial and actual bounded ARM64 app startup; all acceptance separate OPEN.
+
+
+- [ ] BD-T262.1: Implement reviewed client-command/signalling denies, retained guards/local+jarvis3 and exact owned native child configuration/inspector.
+- [ ] VD-T262.2: Verify zero denied client Popen/signal effects, direct-handler failures, enabled semantics/fixed child effect/package graph and actual native launch separately.

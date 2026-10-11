@@ -265,3 +265,8 @@ Confirmed jarvis.togarriapahome.uk. `planning/jarvis-visible-desktop-mvp-stage-v
 ## Complete fixed-startup Xpra repair v261
 
 `planning/xpra-disabled-control-complete-startup-repair-v261.json`; BD261.1/VD261.2 withinBD259.1. Retainedstub + core/window guards, local+jarvis2 and required explicit remote-logging=no. Exact member/method review passed; package/readback/launch pending, service stopped/full AC OPEN.
+
+
+## Fixed native child/no client commands v262
+
+`planning/xpra-fixed-app-child-no-client-command-repair-v262.json`; BD262.1/VD262.2 withinBD259.1. commands=yes is gated on exact fourth-member denies, +jarvis3, retainedguards and actual fixed child/flags/inspector readback. Exact member/13 regressions reviewed; package/readback/native launch pending, all AC OPEN.

@@ -3845,5 +3845,21 @@
       ]
     },
     "acceptance": "only fixed MVP startup guards/offflag, all AC OPEN"
+  },
+  "xpra_fixed_app_child_no_client_command_repair_v262": {
+    "contract": "planning/xpra-fixed-app-child-no-client-command-repair-v262.json",
+    "amendment": "plans/amendments/2026-10-11-xpra-fixed-app-child-no-client-command-repair-v262.md",
+    "tasks": {
+      "BD-T262.1": [
+        "BD-T261.1"
+      ],
+      "VD-T262.2": [
+        "BD-T262.1"
+      ],
+      "BD-T259.1": [
+        "VD-T262.2"
+      ]
+    },
+    "acceptance": "exact fixedapp startup separate from deniedclient effects, all AC OPEN"
   }
 }

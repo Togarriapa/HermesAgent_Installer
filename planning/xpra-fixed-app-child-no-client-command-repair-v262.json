@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "id": "xpra-fixed-app-child-no-client-command-repair-v262",
+  "status": "exact command member independently reviewed; packaging/target acceptance OPEN",
+  "extends": [
+    "planning/xpra-disabled-control-complete-startup-repair-v261.json",
+    "planning/jarvis-visible-desktop-mvp-stage-v259.json"
+  ],
+  "requirements": [
+    "BD-T259.1",
+    "AC13",
+    "AC14",
+    "AC15"
+  ],
+  "reason": "Actual fixed MVP Xpra is stable but has no native app child: features.command=opts.commands and factory omits ChildCommandServer when commands=no. Enabling commands alone is unsafe because hello run bypasses start_new_commands and command-signal is registered unconditionally.",
+  "input_package": {
+    "name": "xpra-server",
+    "version": "6.5.4-r0-1",
+    "architecture": "arm64",
+    "size_bytes": 407788,
+    "sha256": "5e46390ee30241e4c5fdcd0ac29218c5c21990ce4a8cce3dd80306c704424b31"
+  },
+  "local_version": "6.5.4-r0-1+jarvis3",
+  "command_member": {
+    "path": "usr/lib/python3/dist-packages/xpra/server/subsystem/command.py",
+    "original_size_bytes": 23581,
+    "original_sha256": "804eca53b88e23996fb41c394318531548193a750f07e6846dbdaffe8db7126e",
+    "patched_size_bytes": 24117,
+    "patched_sha256": "09e90f7dcb8a76687c59ee8c538faef21ce2881bdaed4cafb760eb8fe141f2d3"
+  },
+  "allowed_source_delta": "Retain all three exact v260/v261 disabled-control guards. Change command.py only to conditionally register hello run after actual start_new_commands choice, deny its direct handler before capability parsing/start_command when false, conditionally register command-signal only when true and deny direct signal handler before PID/signal/effects when false. Preserve normal enabled behavior and server-configured start/start-child execution. Existing _process_command_start deny remains. No generic process dispatcher or arbitrary client command authorization.",
+  "launch": "Only after exact patch/installed readback, fixed root-owned app-only MVP may use --commands=yes with exact single approved --start-child=<owned official native Desktop launcher>, --start-new-commands=no, --shell=no, --control=no and --remote-logging=no, retaining every other disabled-feature/sandbox/TLS/loopback/JWT flag. Inspector requires actual new command member hash, retained three hashes and exact flags/app-child identity. Commands=yes alone is unavailable.",
+  "configuration": "Read back exact root-owned selected unit/argv/config/owner/hash. Effective start/late/after-connect/on-connect/disconnect/last-client-exit lists contain no additional command beyond approved fixed native child; source-start/exec wrapper cannot import unowned commands/environment. Do not trust defaults against config layering. Preserve current home/credentials/state and no management token in child. Actual child executable/PID/window/cgroup ownership must match selected official Desktop.",
+  "control_audit": "add_command_control_commands invokes args_control only; retained v260 stub guard prevents registration while control disabled. Control-only do_control_command_start import does not authorize reachability; existing disabled-control router stays unchanged. Fixed child start uses server-owned config through exec_start_commands/_exec_commands/start_command, distinct from client hello/command-start/signal.",
+  "repack": "Rebuild local +jarvis3 from verified original signed DEB, not unchecked existing locally patched package. Allow only exact four source members, Version suffix and matching md5sums/integrity metadata; full unchanged normalized payload/control graph, owner/mode/link/dependencies/scripts comparison. Retain license/copyright. Independently measure final DEB hash/size and installed four member hashes before launch. No direct vendor hotpatch, arbitrary PYTHONPATH or vendor signature claim.",
+  "tasks": {
+    "BD-T262.1": "Implement exact command registration/direct-handler denies, retained three guards, fixed-input +jarvis3 repack and exact inspector/owned fixed child argv readback.",
+    "VD-T262.2": "Exercise disabled hello run/new-command/signal with Popen/signal spies showing zero effects, forged/direct handler packets, enabled semantics and genuine fixed configured child effect; verify graph/metadata failures then actual native app/window/input separately."
+  },
+  "dependencies": {
+    "BD-T262.1": [
+      "BD-T261.1"
+    ],
+    "VD-T262.2": [
+      "BD-T262.1"
+    ],
+    "BD-T259.1": [
+      "VD-T262.2"
+    ]
+  },
+  "acceptance": "Actual stable display/gateway without native child is not visible MVP. Exact source/failure tests do not prove Pi official Desktop launch/chat/domain/restart. All v259 milestones/full original/deferred AC remain OPEN.",
+  "source_review": "Original member independently extracted from actual exact-hash signed input. Only __init__/init/hello/signal/packet-registration AST methods change; fixed startup AST methods identical. Direct disabled request parsing/effects denied; enabled semantics/regressions independently run13 passed. Final local DEB/hash/readback/native process/window remain OPEN."
+}

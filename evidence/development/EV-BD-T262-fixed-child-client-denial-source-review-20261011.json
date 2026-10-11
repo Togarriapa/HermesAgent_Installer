@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "tasks": [
+    "BD-T262.1",
+    "VD-T262.2"
+  ],
+  "kind": "source and contract regression review only",
+  "package": {
+    "name": "xpra-server",
+    "version": "6.5.4-r0-1",
+    "architecture": "arm64",
+    "size_bytes": 407788,
+    "sha256": "5e46390ee30241e4c5fdcd0ac29218c5c21990ce4a8cce3dd80306c704424b31"
+  },
+  "member": {
+    "path": "usr/lib/python3/dist-packages/xpra/server/subsystem/command.py",
+    "original_size_bytes": 23581,
+    "original_sha256": "804eca53b88e23996fb41c394318531548193a750f07e6846dbdaffe8db7126e",
+    "patched_size_bytes": 24117,
+    "patched_sha256": "09e90f7dcb8a76687c59ee8c538faef21ce2881bdaed4cafb760eb8fe141f2d3"
+  },
+  "checks": [
+    "Original exact member read independently from retained official signed-input DEB payload.",
+    "Patched exact SHA/size independently recomputed.",
+    "AST differences only constructor/init/hello-run/signal/packet registration; fixed threaded setup/exec_start_commands/_exec_commands/start_command unchanged.",
+    "Direct disabled hello denies before caps access/start_command; direct disabled signal denies before packet/PID access.",
+    "Disabled packet registration empty; enabled paths retain upstream behavior.",
+    "Root control-only add_command_control_commands relies retained stub guard; no new unconditional helper import.",
+    "13 current repair tests passed independently, including previous guards, mutation/graph denial and enabled/disabled command semantics."
+  ],
+  "limitations": [
+    "No final rebuilt DEB hash or actual installed-member readback claimed.",
+    "No native visible app/chat/domain/restart acceptance.",
+    "No direct privileged host package install."
+  ]
+}
