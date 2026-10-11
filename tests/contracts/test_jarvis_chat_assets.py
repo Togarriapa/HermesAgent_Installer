@@ -42,6 +42,15 @@ class JarvisChatAssetTests(unittest.TestCase):
             )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_accepted_queued_turn_exposes_stop_until_terminal_cleanup(self):
+        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
+        source = script.decode("utf-8")
+        self.assertIn("function renderTurnControls(active, stopping = false)", source)
+        self.assertIn("ui.stop.hidden = !active", source)
+        self.assertIn("renderTurnControls(true);\n    eventSource = new EventSource", source)
+        self.assertIn("renderTurnControls(false);", source)
+        self.assertIn("if (activeTurnId === turnId) closeStream();", source)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -122,6 +122,14 @@ _JS = r'''/* Browser client is deliberately a text-only view over the finite Jar
   let latestSequence = 0;
   const API = "/chat/api";
 
+  function renderTurnControls(active, stopping = false) {
+    ui.input.disabled = active;
+    ui.send.hidden = active;
+    ui.send.disabled = active;
+    ui.stop.hidden = !active;
+    ui.stop.disabled = stopping;
+  }
+
   function showError(message) {
     ui.notice.textContent = message;
     ui.notice.hidden = false;
@@ -176,10 +184,7 @@ _JS = r'''/* Browser client is deliberately a text-only view over the finite Jar
     heartbeatTimer = null;
     activeTurnId = null;
     heartbeatNonce = null;
-    ui.input.disabled = false;
-    ui.send.hidden = false;
-    ui.send.disabled = false;
-    ui.stop.hidden = true;
+    renderTurnControls(false);
   }
   async function request(path, options = {}) {
     let response;
@@ -257,9 +262,9 @@ _JS = r'''/* Browser client is deliberately a text-only view over the finite Jar
     activeTurnId = turnId;
     heartbeatNonce = initialNonce;
     latestSequence = 0;
-    ui.input.disabled = true;
-    ui.send.hidden = true;
-    ui.stop.hidden = false;
+    // Show Stop as soon as the server accepts the queued turn. Install the
+    // controls before opening SSE, whose connection can fail immediately.
+    renderTurnControls(true);
     eventSource = new EventSource(`${API}/turns/${encodeURIComponent(turnId)}/events`, { withCredentials: true });
     startHeartbeat();
     eventSource.addEventListener("message.delta", (event) => {
@@ -331,9 +336,8 @@ _JS = r'''/* Browser client is deliberately a text-only view over the finite Jar
         headers: { "Idempotency-Key": createIdempotencyKey() }
       });
       if (!data || data.status !== "queued") throw new Error("Jarvis could not safely queue this response.");
-      ui.send.disabled = false;
       watchTurn(data.turnId, data.heartbeatNonce, assistantBody, waiting);
-      await refreshConversations();
+      refreshConversations().catch((error) => showError(error.message));
     } catch (error) {
       ui.input.disabled = false;
       ui.send.disabled = false;
@@ -356,11 +360,16 @@ _JS = r'''/* Browser client is deliberately a text-only view over the finite Jar
   async function stopTurn() {
     if (!activeTurnId) return;
     const turnId = activeTurnId;
-    ui.stop.disabled = true;
+    renderTurnControls(true, true);
     try {
       await request(`${API}/turns/${encodeURIComponent(turnId)}/stop`, { method: "POST", body: "{}" });
-    } catch (error) { showError(error.message); }
-    finally { closeStream(); ui.stop.disabled = false; }
+      // A terminal event may already have cleared this turn while stop was in
+      // flight. Never let an old stop request reset a newer conversation.
+      if (activeTurnId === turnId) closeStream();
+    } catch (error) {
+      showError(error.message);
+      if (activeTurnId === turnId) renderTurnControls(true);
+    }
   }
   ui.form.addEventListener("submit", (event) => {
     event.preventDefault();
