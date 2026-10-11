@@ -306,6 +306,8 @@ def test_sse_transport_reconnects_with_cursor_after_request_witness_expires(tmp_
     store = JarvisChatStore(tmp_path / "chat.sqlite3")
     conversation = new_conversation(store, "subject-a")
     turn_id, _nonce, _ = begin(store, "subject-a", conversation, "sse-reconnect-key-00000001")
+    with store._connect() as db:
+        db.execute("UPDATE turns SET status='running' WHERE id=? AND status='queued'", (turn_id,))
     store.append_delta(turn_id, "first")
     accepted_requests = 0
 
