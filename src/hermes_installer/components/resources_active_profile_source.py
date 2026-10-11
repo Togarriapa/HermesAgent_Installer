@@ -16,10 +16,61 @@ from typing import Any
 
 MAX_PROMPT_BYTES = 64 * 1024
 MAX_PROFILE_MANIFEST_BYTES = 64 * 1024
+PROFILE_ID = "orchestrator"
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _ID = re.compile(r"[a-z0-9][a-z0-9_-]{0,95}\Z")
 _SOURCE_SEAL = object()
 _MASTER_SOURCE_SEAL = object()
+
+
+def _native_effective_prompt_candidate(active_soul: bytes, expected_sha256: Any,
+                                       expected_chars: Any) -> bytes | None:
+    """Derive only a candidate whose exact bytes match a fresh native probe."""
+    if (not isinstance(active_soul, bytes) or not active_soul
+            or len(active_soul) > 1024 * 1024
+            or not isinstance(expected_sha256, str) or _HEX64.fullmatch(expected_sha256) is None
+            or type(expected_chars) is not int or not 0 < expected_chars <= 128 * 1024):
+        return None
+    try:
+        text = active_soul.decode("utf-8", errors="strict").strip()
+        candidate = text.encode("utf-8", errors="strict")
+    except UnicodeError:
+        return None
+    if (not candidate or len(candidate) > 128 * 1024 or len(text) != expected_chars
+            or hashlib.sha256(candidate).hexdigest() != expected_sha256):
+        return None
+    return candidate
+
+
+def _load_profile_manifest(raw: bytes) -> dict[str, Any]:
+    """Compatibility verifier for the fixed internal Orchestrator declaration."""
+    parsed = _parse_profile(raw, PROFILE_ID)
+    if parsed is None:
+        raise ValueError("profile source declaration is invalid")
+    interaction = parsed["interaction"]
+    if (interaction.get("userFacing") is not False
+            or interaction.get("directUserContact") != "deny"
+            or interaction.get("userChannelBinding") != "deny"):
+        raise ValueError("profile interaction policy is not internal-only")
+    interaction_bytes = json.dumps(interaction, ensure_ascii=False, sort_keys=True,
+                                   separators=(",", ":")).encode("utf-8")
+    return {**parsed, "profile_tool_names": (),
+            "interaction_policy_sha256": hashlib.sha256(interaction_bytes).hexdigest()}
+
+
+def _source_members(row: Any, prompt: bytes, profile_manifest: bytes) -> tuple[SourceMember, ...]:
+    if (not isinstance(row, dict) or row.get("source_id") != PROFILE_ID
+            or not isinstance(prompt, bytes) or not prompt
+            or not isinstance(profile_manifest, bytes) or not profile_manifest
+            or hashlib.sha256(prompt).hexdigest() != row.get("identity_sha256")
+            or hashlib.sha256(profile_manifest).hexdigest() != row.get("profile_yaml_sha256")):
+        return ()
+    return (
+        SourceMember("registry/profiles/orchestrator/SOUL.md",
+                     hashlib.sha256(prompt).hexdigest(), len(prompt)),
+        SourceMember("registry/profiles/orchestrator/profile.yaml",
+                     hashlib.sha256(profile_manifest).hexdigest(), len(profile_manifest)),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,13 +165,14 @@ class RootSelectedActiveProfileSource:
             from ..remote.core_gateway_inspector import CoreNativeObserverCustody
             from ..remote.jarvis_master_planning import CoreVerifiedJarvisMasterPlanDecision
 
-            current = time.monotonic() if now is None else now
+            current = time.monotonic()
             if (type(self) is not RootSelectedActiveProfileSource
                     or self._seal is not _SOURCE_SEAL
                     or type(custody) is not CoreNativeObserverCustody
                     or type(self._decision) is not CoreVerifiedJarvisMasterPlanDecision
                     or custody.core_source_generation != self.core_source_generation
-                    or current >= self.expires_monotonic
+                    or (now is not None and (not isinstance(now, (int, float))
+                                              or abs(current - now) > 1.0))
                     or self.profile_id not in self._decision.selected_source_ids
                     or self._decision.core_source_generation != self.core_source_generation
                     or self._decision.is_current_sealed(
@@ -130,8 +182,11 @@ class RootSelectedActiveProfileSource:
             if fresh_catalog is None:
                 return False
             fresh = fresh_catalog["sources"].get(self.profile_id)
+            # Every use gets a new root CAS/member-custody read. The original
+            # planner decision expiry remains authoritative; refresh never
+            # changes selected IDs or extends that decision's owner-turn bound.
             return bool(fresh is not None and _source_matches(self, fresh, fresh_catalog)
-                        and current < self.expires_monotonic
+                        and current < self._decision.expires_monotonic
                         and _catalog_still_current(fresh_catalog))
         except Exception:
             return False
@@ -172,6 +227,7 @@ class RootVerifiedJarvisMasterSource:
     profile_member_manifest_sha256: str
     source_member_manifest: tuple[SourceMember, ...]
     source_member_manifest_sha256: str
+    effective_prompt: bytes
     active_soul: bytes
     active_soul_sha256: str
     managed_block_sha256: str
@@ -191,8 +247,8 @@ class RootVerifiedJarvisMasterSource:
 
     @property
     def effective_prompt_sha256(self) -> str:
-        """Digest of the effective prompt reported by the pinned native loader."""
-        return self.native_effective_prompt_sha256
+        """Hash of the bytes independently matched to the pinned loader output."""
+        return hashlib.sha256(self.effective_prompt).hexdigest()
 
     @classmethod
     def current_master_source(cls, custody: Any, config: Any
@@ -234,6 +290,15 @@ class RootVerifiedJarvisMasterSource:
             active_soul, active_signature = primary._read_soul(core)
             receipt = primary._record_matches_current(
                 core, record, active_soul, manifest, files)
+            # Hermes load_soul_md strips surrounding whitespace before its
+            # legacy-protocol cleanup, threat scan and possible truncation. We
+            # only materialize that bounded candidate; equality with the
+            # pinned loader's independent digest AND char count is required.
+            # Any BOM/protocol rewrite/scanner replacement/truncation mismatch
+            # therefore denies source issuance instead of being approximated.
+            effective_prompt = _native_effective_prompt_candidate(
+                active_soul, receipt.get("native_effective_prompt_sha256"),
+                receipt.get("native_effective_prompt_chars"))
             if (source_generation != custody.core_source_generation
                     or record.get("core_source_generation") != source_generation
                     or record.get("artifact_sha256") != artifact_sha
@@ -250,6 +315,8 @@ class RootVerifiedJarvisMasterSource:
                     or receipt.get("effective_prompt_contains_managed_block") is not True
                     or receipt.get("effective_prompt_truncated") is not False
                     or receipt.get("managed_prompt_block_sha256") != record.get("managed_block_sha256")):
+                return None
+            if effective_prompt is None:
                 return None
             row = next((item for item in manifest.get("profile_members", ())
                         if item.get("source_id") == "hermes"), None)
@@ -318,6 +385,7 @@ class RootVerifiedJarvisMasterSource:
                 profile_member_manifest_sha256=hashlib.sha256(row_bytes).hexdigest(),
                 source_member_manifest=members,
                 source_member_manifest_sha256=hashlib.sha256(members_bytes).hexdigest(),
+                effective_prompt=bytes(effective_prompt),
                 active_soul=bytes(active_soul),
                 active_soul_sha256=hashlib.sha256(active_soul).hexdigest(),
                 managed_block_sha256=record["managed_block_sha256"],
@@ -339,18 +407,22 @@ class RootVerifiedJarvisMasterSource:
     def is_current_sealed(self, custody: Any, *, now: float | None = None) -> bool:
         try:
             from ..remote.core_gateway_inspector import CoreNativeObserverCustody, _NATIVE_CUSTODY_SEAL
-            current = time.monotonic() if now is None else now
+            current = time.monotonic()
             if (type(self) is not RootVerifiedJarvisMasterSource
                     or self._seal is not _MASTER_SOURCE_SEAL
-                    or current >= self.expires_monotonic
+                    or (now is not None and (not isinstance(now, (int, float))
+                                              or abs(current - now) > 1.0))
                     or type(custody) is not CoreNativeObserverCustody
                     or custody._seal is not _NATIVE_CUSTODY_SEAL
                     or custody.core_generation != self.core_generation
                     or custody.core_source_generation != self.core_source_generation):
                 return False
             fresh = type(self).current_master_source(custody, self._config)
+            # Each use gets a fresh <=5s native readback. This refresh does
+            # not extend owner-turn/admission expiry; the caller's sealed
+            # native authorization remains the independent deadline.
             return bool(fresh is not None and _master_source_matches(self, fresh)
-                        and current < self.expires_monotonic)
+                        and time.monotonic() < fresh.expires_monotonic)
         except Exception:
             return False
 
@@ -383,7 +455,7 @@ def _master_source_matches(left: RootVerifiedJarvisMasterSource,
         "profile_id", "native_profile_key", "display_name", "source_revision",
         "resources_tree", "artifact_sha256", "ownership_manifest_sha256", "overlay_sha256",
         "profile_prompt_sha256", "profile_manifest_sha256", "profile_member_manifest_sha256",
-        "source_member_manifest_sha256", "active_soul_sha256", "managed_block_sha256",
+        "source_member_manifest_sha256", "effective_prompt_sha256", "active_soul_sha256", "managed_block_sha256",
         "native_effective_prompt_sha256", "native_effective_prompt_chars",
         "core_source_generation", "core_generation",
     )

@@ -5,6 +5,7 @@ import pytest
 
 from hermes_installer.components.resources_active_profile_source import (
     PROFILE_ID,
+    _native_effective_prompt_candidate,
     _load_profile_manifest,
     _source_members,
 )
@@ -52,3 +53,13 @@ def test_source_manifest_rejects_changed_privacy_interaction_policy():
 
     with pytest.raises(ValueError, match="interaction policy"):
         _load_profile_manifest(payload)
+
+
+def test_native_prompt_candidate_requires_exact_probe_digest_and_length():
+    raw = b"\n  owner prefix\n\nJarvis managed block\n  \n"
+    effective = b"owner prefix\n\nJarvis managed block"
+    digest = hashlib.sha256(effective).hexdigest()
+    assert _native_effective_prompt_candidate(raw, digest, len(effective.decode())) == effective
+    assert _native_effective_prompt_candidate(raw, "0" * 64, len(effective.decode())) is None
+    assert _native_effective_prompt_candidate(raw, digest, len(effective.decode()) + 1) is None
+    assert _native_effective_prompt_candidate(raw + b"\xff", digest, len(effective.decode())) is None
