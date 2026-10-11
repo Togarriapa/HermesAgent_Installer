@@ -52,6 +52,7 @@ _MOUNT_JS = r'''function mount(root, api) {
   }
   async function refreshSettings() {
     revision = null; snapshot = null; choice.disabled = true; apply.disabled = true;
+    choice.replaceChildren(new Option("Loading model selection…", ""));
     const id = conversation.value;
     if (!safeId(id)) return;
     try {
@@ -80,6 +81,22 @@ _MOUNT_JS = r'''function mount(root, api) {
         choice.append(option);
       }
       if (choice.options.length !== 9) throw new Error("model catalog is incomplete");
+      // Rebuilding a <select> otherwise silently chooses the first catalog entry.
+      // Prefer this conversation's confirmed/queued selection; use the observed
+      // profile model only when no conversation selection has been recorded.
+      const recorded = last && (last.state === "selected-for-session"
+        || last.state === "deferred-next-turn") ? last.model : null;
+      const preferred = recorded || (last === null && data.profileModel
+        && data.profileModel.status === "configured-unverified" ? data.profileModel.id : null);
+      const preferredOption = safeModel(preferred)
+        ? Array.from(choice.options).find((option) => option.value === preferred && !option.disabled)
+        : null;
+      choice.selectedIndex = preferredOption ? preferredOption.index : -1;
+      if (!preferredOption) {
+        put("[data-models-catalog]", last
+          ? "The conversation selection is not confirmed as a selectable model; choose explicitly."
+          : "No current conversation model is known; choose explicitly.");
+      }
       revision = data.revision && typeof data.revision.revision === "string"
         && typeof data.revision.approval_nonce === "string" ? data.revision : null;
       choice.disabled = !revision || data.selectionAvailability !== "available";
