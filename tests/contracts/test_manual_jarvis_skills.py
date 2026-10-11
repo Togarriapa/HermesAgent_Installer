@@ -4,9 +4,12 @@ These tests are prepared for an authorized isolated target only; do not run them
 on a developer workstation against a real Hermes home.
 """
 import hashlib
+import io
 import json
 import tempfile
 import unittest
+import warnings
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -162,6 +165,21 @@ class ManualJarvisSkillsTests(unittest.TestCase):
                         self.bundle, hermes_home=home, expected_sha256=self.digest,
                         hermes_source="/pin/hermes", python="/pin/python")
             self.assertTrue((home / "skills/installer-resources-113f42d33be9").is_dir())
+
+    def test_artifact_reader_rejects_duplicate_archive_members(self):
+        output = io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(self.bundle), "r") as original:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as changed:
+                    for info in original.infolist():
+                        changed.writestr(info.filename, original.read(info.filename))
+                    duplicate = next(name for name in original.namelist()
+                                     if name.startswith("skills/") and name.endswith("/SKILL.md"))
+                    changed.writestr(duplicate, original.read(duplicate))
+        data = output.getvalue()
+        with self.assertRaises(ManualJarvisSkillsError):
+            _read_artifact(data, hashlib.sha256(data).hexdigest())
 
 
 if __name__ == "__main__":

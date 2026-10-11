@@ -35,9 +35,9 @@ PLUGIN_PENDING = {
     "resource_id": "voice-pipeline",
     "state": "not-imported",
     "reason": (
-        "The bundled Resources plugin has no Hermes Desktop plugin module/native path; "
-        "the installer PluginContext loader and enrolled local Wyoming/Piper effects "
-        "are still required."
+        "The vendored Resources bundle contains only a voice-pipeline declaration, not an "
+        "executable Hermes plugin adapter. No separately authorized local Wyoming/Piper "
+        "endpoints are enrolled, so voice effects remain unavailable."
     ),
 }
 _ARTIFACT_LIMIT = 16 * 1024 * 1024
@@ -221,10 +221,11 @@ def _read_artifact(archive_bytes: bytes, expected_sha256: str) -> tuple[dict[str
         raise ManualJarvisSkillsError("manual stage artifact digest or size is invalid")
     try:
         with zipfile.ZipFile(io.BytesIO(archive_bytes), "r") as archive:
-            members_by_name = {info.filename: info for info in archive.infolist()}
-            names = list(members_by_name)
+            infos = archive.infolist()
+            names = [info.filename for info in infos]
             if len(names) != len(set(names)) or "manifest.json" not in names:
                 raise ValueError
+            members_by_name = {info.filename: info for info in infos}
             if any(PurePosixPath(name).is_absolute() or "\\" in name
                    or any(part in {"", ".", ".."} for part in PurePosixPath(name).parts)
                    for name in names):
