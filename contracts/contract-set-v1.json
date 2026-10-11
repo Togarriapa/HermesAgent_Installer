@@ -23,8 +23,8 @@
     },
     {
       "path": "contracts/compatibility/cc81-reviewed-predecessor-cohort-v1.json",
-      "sha256": "a0dbe6d7711ffd71e9250674e8ed54ff556e784a6653e526e7d12851d771ffbd",
-      "size_bytes": 29263
+      "sha256": "32aab0f5eaf5d184dfad3aa6482ee7b17b666bd32d54d180d4aad334db741f5f",
+      "size_bytes": 29545
     },
     {
       "path": "contracts/compatibility/readonly-predecessor-diagnostic.json",

@@ -509,63 +509,63 @@
     "REVIEWED_SOURCE_ARTIFACTS": [
       [
         "installer-native-mcp-discovery-capture-profile-v171",
-        "contracts/capture-profiles/mcp-discovery-capture-v1.json",
+        "plans/amendments/2026-10-10-mcp-discovery-capture-v171/mcp-discovery-capture-v1.json",
         "bf9b3b649bf995d5743a38597415ef003928e1d67dc337ab5c7f3e7ec9643e8a",
         4601,
         "amendment"
       ],
       [
         "installer-native-input-capture-profile-v1",
-        "contracts/capture-profiles/installer-native-input-capture-profile-v1.json",
+        "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-input-capture-profile-v1.json",
         "bfdf7175ee1df681b60ab4b707ffe9d314d8cc7fdc5a30a56e19d2cb1372c1d0",
         837,
         "amendment"
       ],
       [
         "installer-native-tool-result-capture-profile-v1",
-        "contracts/capture-profiles/installer-native-tool-result-capture-profile-v1.json",
+        "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-tool-result-capture-profile-v1.json",
         "470fcc43b3d268a6594e0d6bdf2c635ba3bf4e6cd0cfe2dfcd57840d7bee105a",
         984,
         "amendment"
       ],
       [
         "installer-native-provider-result-capture-profile-v1",
-        "contracts/capture-profiles/installer-native-provider-result-capture-profile-v1.json",
+        "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-provider-result-capture-profile-v1.json",
         "a2c6ae9243a7854f114ed492afd395d867f02ed58d50a3f1692fe0ea7efbd8eb",
         993,
         "amendment"
       ],
       [
         "installer-application-toolchain-source-policy-v144",
-        "contracts/source-tables/hyperframes-toolchain-source-v1.json",
+        "plans/amendments/2026-10-10-hyperframes-toolchain-source-v144/hyperframes-toolchain-source-v1.json",
         "81b9e3655ddb627c46d828690687a1600fd9a7455af4c4fc5a90c32b3991a5d6",
         7060,
         "amendment"
       ],
       [
         "installer-application-pep517-backend-sources-v1",
-        "contracts/source-tables/application-pep517-backend-source-table-v1.json",
+        "plans/amendments/2026-10-10-pep517-backend-source-closure-v152/application-pep517-backend-source-table-v1.json",
         "c7d64c6ca0a186437d32b8093df0be0a3dc660fc721172e7ce1a56fd5a87c623",
         15907,
         "amendment"
       ],
       [
         "glm52-artifact-metadata-v1",
-        "contracts/model-sources/glm52-artifact-metadata.json",
+        "planning/glm52-artifact-metadata.json",
         "b42e3fa6fd5c287b95fcda4d370697bd4c0ef226767ddc08fae4e5bebcfecd1a",
         56232,
         "baseline"
       ],
       [
         "glm52-upstream-mit-license-cf457fa",
-        "contracts/model-sources/glm52-upstream-MIT-LICENSE.txt",
+        "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-upstream-MIT-LICENSE.txt",
         "f4a18c6ae40b0a8e7d2b7667f52f6e1994e54a46430d2e172b73cb8c9b5eb0d7",
         1065,
         "amendment"
       ],
       [
         "glm52-quantized-readme-6bbb01e",
-        "contracts/model-sources/glm52-quantized-README.md",
+        "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-quantized-README.md",
         "85fc4cf947276c376f09ad1226926ebc03eefbb99d184cd05f34412d32d8406b",
         17468,
         "amendment"
@@ -674,7 +674,7 @@
       20350,
       "network-startup-helper"
     ],
-    "APPLICATION_EFFECT_SOURCE_CATALOG_PATH": "contracts/source-tables/application-effect-sources-v1.json",
+    "APPLICATION_EFFECT_SOURCE_CATALOG_PATH": "plans/amendments/2026-10-10-application-effect-sources-v175/application-effect-sources-v1.json",
     "APPLICATION_EFFECT_SOURCE_CATALOG_ARTIFACT_ID": "release-file:eda54c5b908c9d5176afef9ee2bf434b",
     "APPLICATION_EFFECT_SOURCE_CATALOG_SHA256": "de6df1701fa51727127cdbdb30c6e12a6f4e07297ffce686b758fd3ead1076b4",
     "APPLICATION_EFFECT_SOURCE_CATALOG_SIZE": 11830,

@@ -16,7 +16,7 @@ class InstalledPredecessorCohortTests(unittest.TestCase):
         artifact = Path(__file__).resolve().parents[2] / (
             "contracts/compatibility/cc81-reviewed-predecessor-cohort-v1.json")
         raw = artifact.read_bytes()
-        self.assertEqual(len(raw), 29_263)
+        self.assertEqual(len(raw), 29_545)
         self.assertEqual(hashlib.sha256(raw).hexdigest(), release._CC81_COHORT_SHA256)
         self.assertEqual(raw.decode("utf-8"), release._CC81_COHORT_JSON)
         value = json.loads(raw)
