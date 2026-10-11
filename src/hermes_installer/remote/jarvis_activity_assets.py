@@ -18,6 +18,12 @@ _VIEW = """<section class=\"activity-page\" aria-labelledby=\"activity-title\">
     <ol class=\"activity-list\" data-events aria-live=\"polite\"></ol>
     <p class=\"activity-empty\" data-empty hidden>No native activity has been recorded yet.</p>
   </section>
+  <section class=\"activity-card\" aria-labelledby=\"effect-title\">
+    <div class=\"activity-card-heading\"><div><p class=\"eyebrow\">OWNER REVIEW</p><h2 id=\"effect-title\">Pending tool actions</h2></div></div>
+    <ol class=\"activity-list\" data-final-effects aria-live=\"polite\"></ol>
+    <p class=\"activity-empty\" data-final-effects-empty>No tool action is waiting for your approval.</p>
+    <p class=\"activity-note\" data-final-effects-note role=\"status\" aria-live=\"polite\">Only exact actions from your current Jarvis turn can be approved.</p>
+  </section>
 </section>"""
 
 _CSS = """
@@ -48,6 +54,9 @@ _MOUNT = r"""function mount(container, api, state) {
   const usageNode = root.querySelector('[data-usage]');
   const emptyNode = root.querySelector('[data-empty]');
   const noteNode = root.querySelector('[data-note]');
+  const effectsNode = root.querySelector('[data-final-effects]');
+  const effectsEmptyNode = root.querySelector('[data-final-effects-empty]');
+  const effectsNoteNode = root.querySelector('[data-final-effects-note]');
   const refreshButton = root.querySelector('[data-refresh]');
   let stopped = false;
   let refreshing = false;
@@ -98,6 +107,46 @@ _MOUNT = r"""function mount(container, api, state) {
     }
     emptyNode.hidden = list.length > 0;
   }
+  function renderFinalEffects(items, turnId) {
+    effectsNode.replaceChildren();
+    const list = Array.isArray(items) ? items : [];
+    for (const item of list) {
+      if (!item || item.status !== 'pending' || typeof item.pendingId !== 'string'
+          || typeof item.reviewSha256 !== 'string' || !item.preview) continue;
+      const row = document.createElement('li');
+      row.style.gridTemplateColumns = '1fr';
+      row.append(cell('strong', `Review ${String(item.preview.tool_name || 'tool action')}`));
+      const detail = cell('pre', JSON.stringify(item.preview, null, 2), 'activity-meta');
+      detail.style.whiteSpace = 'pre-wrap';
+      detail.style.overflowWrap = 'anywhere';
+      row.append(detail);
+      const controls = document.createElement('div');
+      for (const [decision, label] of [['approve','Approve once'], ['deny','Deny']]) {
+        const button = cell('button', label);
+        button.type = 'button';
+        button.addEventListener('click', async () => {
+          button.disabled = true;
+          effectsNoteNode.textContent = 'Submitting your decision…';
+          try {
+            await api.post(`/chat/api/turns/${encodeURIComponent(turnId)}/final-effects/decision`, {
+              pending_id: item.pendingId, review_sha256: item.reviewSha256,
+              decision, idempotency_key: crypto.randomUUID().replaceAll('-', '')
+            });
+            effectsNoteNode.textContent = decision === 'approve'
+              ? 'Approved once for this exact tool call.' : 'This tool call was denied.';
+            await refresh();
+          } catch (error) {
+            effectsNoteNode.textContent = 'The request expired or could not be verified. No action was authorized.';
+            button.disabled = false;
+          }
+        });
+        controls.append(button);
+      }
+      row.append(controls);
+      effectsNode.append(row);
+    }
+    effectsEmptyNode.hidden = effectsNode.children.length > 0;
+  }
   async function refresh() {
     if (stopped || refreshing) return;
     refreshing = true;
@@ -114,9 +163,17 @@ _MOUNT = r"""function mount(container, api, state) {
         if (stopped) return;
         newestTurn = latest.turnId;
         renderUsage(usage);
+        const approvals = await api.get(`/chat/api/turns/${encodeURIComponent(latest.turnId)}/final-effects`);
+        if (stopped) return;
+        renderFinalEffects(approvals.requests, latest.turnId);
       } else if (!latest) {
         newestTurn = null;
         renderUsage(null);
+        renderFinalEffects([], '');
+      } else {
+        const approvals = await api.get(`/chat/api/turns/${encodeURIComponent(latest.turnId)}/final-effects`);
+        if (stopped) return;
+        renderFinalEffects(approvals.requests, latest.turnId);
       }
       noteNode.textContent = pageData.nextPage ? 'Showing the latest recorded events. Hermes reports cumulative session counters; a per-turn usage delta is unavailable.' : 'Activity is recorded from this owner’s current Jarvis turns. Hermes reports cumulative session counters; a per-turn usage delta is unavailable.';
     } catch (error) {
@@ -148,6 +205,8 @@ FEATURE_ASSETS = JarvisFeatureAssets(
         ("GET", "/chat/api/activity"),
         ("GET", "/chat/api/turns/{id}/activity"),
         ("GET", "/chat/api/turns/{id}/usage"),
+        ("GET", "/chat/api/turns/{turn_id}/final-effects"),
+        ("POST", "/chat/api/turns/{turn_id}/final-effects/decision"),
     ),
     mount_js=_MOUNT,
     unmount_js=_UNMOUNT,

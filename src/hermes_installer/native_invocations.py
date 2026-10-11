@@ -14,11 +14,14 @@ from contextvars import ContextVar, Token
 from collections import OrderedDict
 from dataclasses import dataclass
 import hashlib
+import importlib
+import inspect
 import json
 import re
 import sys
 import threading
 import time
+from pathlib import Path
 from typing import Any, Iterator, Mapping
 
 
@@ -33,7 +36,11 @@ _MAX_NATIVE_MCP_ARGUMENT_BYTES = 1_048_576
 _MAX_NATIVE_MCP_RESULT_BYTES = 2 * 1024 * 1024
 _MAX_NATIVE_INPUT_BYTES = 1_048_576
 _MAX_TRACKED_INPUT_CONVERSATIONS = 128
+_PINNED_TOOL_EXECUTOR_SHA256 = "8b145fbc70936f028f18e59cb7f9c8723fc992a067fe068f06e7f9f876e9c679"
 _CURRENT_TOOL_CALL_ID: ContextVar[str | None] = ContextVar("hermes_native_tool_call_id", default=None)
+_CURRENT_TOOL_DISPATCH: ContextVar[tuple[object, str, str, bytes] | None] = ContextVar(
+    "hermes_native_tool_dispatch", default=None,
+)
 _CURRENT_NATIVE_TURN_HANDLE: ContextVar[str | None] = ContextVar("hermes_native_turn_handle", default=None)
 _CURRENT_FINAL_RESPONSE: ContextVar[tuple[str, str] | None] = ContextVar(
     "hermes_native_final_response", default=None,
@@ -73,6 +80,100 @@ def _thaw_native_mcp_schema(value: Any, *, depth: int = 0, budget: list[int] | N
 
 class NativeInvocationUnavailable(PermissionError):
     """No exact root-observed invocation is available for this tool call."""
+
+
+@dataclass(frozen=True, slots=True)
+class NativeToolDispatch:
+    """Exact live Agent/call tuple exposed only during pinned executor dispatch."""
+
+    agent: object
+    tool_call_id: str
+    tool_name: str
+    canonical_arguments: bytes
+
+
+def current_native_tool_dispatch() -> NativeToolDispatch | None:
+    """Return the current dispatcher tuple only inside the actual tool executor."""
+    value = _CURRENT_TOOL_DISPATCH.get()
+    if value is None:
+        return None
+    agent, call_id, tool_name, arguments = value
+    if (not isinstance(call_id, str) or not call_id or not isinstance(tool_name, str)
+            or not tool_name or not isinstance(arguments, bytes)):
+        return None
+    return NativeToolDispatch(agent, call_id, tool_name, arguments)
+
+
+def install_pinned_tool_executor_dispatch_bridge() -> str:
+    """Install an in-memory wrapper at the exact pinned Hermes dispatch seam.
+
+    The official module is never rewritten. Its whole source file, import
+    origin, function identity, and signature must match the reviewed Hermes
+    7085 dispatcher before the single function reference is wrapped.
+    """
+    try:
+        module = importlib.import_module("agent.tool_executor")
+        module_path_text = getattr(module, "__file__", None)
+        module_path = Path(module_path_text) if isinstance(module_path_text, str) else None
+        if (module_path is None or not module_path.is_absolute()
+                or module_path.is_symlink() or not module_path.is_file()):
+            raise ValueError("pinned tool executor path is unavailable")
+        module_path = module_path.resolve(strict=True)
+        source = module_path.read_bytes()
+        digest = hashlib.sha256(source).hexdigest()
+        if digest != _PINNED_TOOL_EXECUTOR_SHA256:
+            raise ValueError("pinned tool executor source changed")
+
+        original = getattr(module, "_dispatch_authorized_once", None)
+        if callable(original) and getattr(original, "_hermes_final_effect_dispatch_bridge", None) == digest:
+            return digest
+        if (not callable(original) or getattr(original, "__module__", None) != "agent.tool_executor"
+                or getattr(original, "__name__", None) != "_dispatch_authorized_once"
+                or Path(inspect.getsourcefile(original) or "").resolve(strict=True) != module_path):
+            raise ValueError("pinned tool dispatcher entry is unavailable")
+        expected_parameters = (
+            "agent", "state", "ref", "execute", "scope_block", "display_index",
+            "begin_execution", "authorization_gate",
+        )
+        if tuple(inspect.signature(original).parameters) != expected_parameters:
+            raise ValueError("pinned tool dispatcher signature changed")
+
+        def dispatch_with_observed_call(agent, state, ref, *, execute,
+                                        scope_block, display_index, begin_execution,
+                                        authorization_gate):
+            call_id = getattr(ref, "call_id", None)
+            tool_name = getattr(ref, "name", None)
+            if (type(call_id) is not str or not call_id
+                    or type(tool_name) is not str or not tool_name
+                    or not callable(execute)):
+                raise NativeInvocationUnavailable("pinned Hermes tool call identity is unavailable")
+
+            def execute_observed(arguments):
+                return dispatch_observed_tool_call(
+                    agent, tool_call_id=call_id, tool_name=tool_name,
+                    arguments=arguments,
+                    execute=lambda: execute(arguments),
+                )
+
+            return original(
+                agent, state, ref, execute=execute_observed,
+                scope_block=scope_block, display_index=display_index,
+                begin_execution=begin_execution,
+                authorization_gate=authorization_gate,
+            )
+
+        dispatch_with_observed_call.__name__ = "_dispatch_authorized_once"
+        dispatch_with_observed_call.__module__ = "agent.tool_executor"
+        dispatch_with_observed_call.__wrapped__ = original
+        dispatch_with_observed_call._hermes_final_effect_dispatch_bridge = digest
+        module._dispatch_authorized_once = dispatch_with_observed_call
+        if getattr(module, "_dispatch_authorized_once", None) is not dispatch_with_observed_call:
+            raise ValueError("pinned Hermes tool dispatcher wrapper did not install")
+        return digest
+    except NativeInvocationUnavailable:
+        raise
+    except Exception:
+        raise NativeInvocationUnavailable("pinned Hermes tool dispatch bridge is unavailable") from None
 
 
 def read_selected_native_input(stream: Any) -> str:
@@ -749,15 +850,26 @@ def begin_observed_tool_invocation(agent: object, authority: Any, *,
 def dispatch_observed_tool_call(agent: object, *, tool_call_id: str, tool_name: str,
                                 arguments: Mapping[str, Any], execute: Any) -> Any:
     """Run actual Hermes dispatch under its root-issued invocation binding."""
+    try:
+        dispatch_arguments = canonical_tool_arguments(arguments)
+    except NativeInvocationUnavailable:
+        raise
+    dispatch_token = _CURRENT_TOOL_DISPATCH.set(
+        (agent, tool_call_id, tool_name, dispatch_arguments),
+    )
     mapping = getattr(agent, "_hermes_installer_observed_tool_calls", None)
     if not isinstance(mapping, dict) or tool_call_id not in mapping:
-        if _is_selected_native_plugin_tool(tool_name):
-            raise NativeInvocationUnavailable("selected native tool has no root-observed provider call binding")
-        return execute()
+        try:
+            if _is_selected_native_plugin_tool(tool_name):
+                raise NativeInvocationUnavailable("selected native tool has no root-observed provider call binding")
+            return execute()
+        finally:
+            _CURRENT_TOOL_DISPATCH.reset(dispatch_token)
     try:
         from hermes_installer.authority.client import AuthorityClient
         authority = AuthorityClient.for_current_process()
     except Exception:
+        _CURRENT_TOOL_DISPATCH.reset(dispatch_token)
         raise NativeInvocationUnavailable("host authority client is unavailable") from None
     call_token = _CURRENT_TOOL_CALL_ID.set(tool_call_id)
     result_token = _CURRENT_MCP_RESULT.set(None)
@@ -775,3 +887,4 @@ def dispatch_observed_tool_call(agent: object, *, tool_call_id: str, tool_name: 
     finally:
         _CURRENT_MCP_RESULT.reset(result_token)
         _CURRENT_TOOL_CALL_ID.reset(call_token)
+        _CURRENT_TOOL_DISPATCH.reset(dispatch_token)
