@@ -193,6 +193,7 @@ _CSS = '''@charset "UTF-8";
 .composer:focus-within{border-color:rgba(91,222,230,.62);box-shadow:0 0 0 3px rgba(88,228,235,.08),0 12px 36px rgba(0,0,0,.18)}
 .nav-item,.icon-button,.new-chat-button,.send-button,.stop-button,.voice-button{transition:transform 140ms var(--ease-out),color 140ms ease,background-color 140ms ease,border-color 140ms ease}
 .icon-button{min-width:42px;min-height:42px}.send-button,.stop-button,.voice-button{min-height:44px}.composer textarea{line-height:1.5}
+.nav-item{min-height:44px}.nav-item[aria-current="page"]{border-color:rgba(88,228,235,.42);background:linear-gradient(135deg,rgba(24,129,140,.22),rgba(15,68,77,.2));color:#e4feff;box-shadow:inset 0 0 0 1px rgba(88,228,235,.06)}
 .nav-item:active,.icon-button:active,.new-chat-button:active,.send-button:active,.stop-button:active,.voice-button:active{transform:scale(.97)}
 :focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
 @media(hover:hover) and (pointer:fine){.data-card{transition:border-color 160ms ease}.data-card:hover{border-color:rgba(102,188,202,.3)}}
@@ -905,6 +906,13 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     for (const button of document.querySelectorAll(".nav-item")) {
       if (button.dataset.view === selected) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
+    }
+    const activeNavItem = document.querySelector(`.nav-item[data-view="${CSS.escape(selected)}"]`);
+    const primaryNav = activeNavItem && activeNavItem.closest(".primary-nav");
+    if (activeNavItem && primaryNav && primaryNav.scrollWidth > primaryNav.clientWidth) {
+      const left = activeNavItem.offsetLeft - (primaryNav.clientWidth - activeNavItem.offsetWidth) / 2;
+      const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+      primaryNav.scrollTo({ left: Math.max(0, left), behavior });
     }
     if (selected !== "chat") {
       stopRecognition("Push-to-talk stopped when leaving chat.");

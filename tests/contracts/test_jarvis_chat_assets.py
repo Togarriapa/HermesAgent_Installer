@@ -43,6 +43,12 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn("function featurePathMatches(template, path)", client)
         self.assertIn("feature.mount(root, featureApi(feature)", client)
         self.assertIn("unmountFeature();", client)
+        navigation = client.split("async function showView(view) {", 1)[1].split("if (selected !== \"chat\")", 1)[0]
+        self.assertIn('button.setAttribute("aria-current", "page")', navigation)
+        self.assertIn('primaryNav.scrollTo({ left: Math.max(0, left), behavior })', navigation)
+        self.assertIn('window.matchMedia("(prefers-reduced-motion: reduce)")', navigation)
+        _content_type, stylesheet = reviewed_chat_asset("/chat/assets/app.css")
+        self.assertIn(".nav-item{min-height:44px}", stylesheet.decode("utf-8"))
         self.assertIn("Runtime readiness pending", client)
         self.assertIn("Internal profile · catalog only; not selectable", client)
         self.assertIn('"current-core-witness": "A current process and listener were observed; functional readiness has not been verified."', client)
