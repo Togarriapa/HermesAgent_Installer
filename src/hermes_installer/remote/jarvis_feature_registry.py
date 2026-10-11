@@ -5,16 +5,19 @@ import re
 
 from . import jarvis_bots as _bots
 from . import jarvis_missions as _missions
+from . import jarvis_native_inventory as _native_inventory
 from .jarvis_activity_assets import FEATURE_ASSETS as _ACTIVITY_ASSETS
 from .jarvis_bots_ui import FEATURE_ASSETS as _BOTS_ASSETS
 from .jarvis_feature_contract import JarvisFeatureAssets
 from .jarvis_missions_assets import FEATURE_ASSETS as _MISSION_ASSETS
 from .jarvis_native_controls_assets import FEATURE_ASSETS as _NATIVE_CONTROLS_ASSETS
 from .jarvis_learning_feature import FEATURE_ASSETS as _LEARNING_ASSETS
+from .jarvis_native_inventory_assets import FEATURE_ASSETS as _NATIVE_INVENTORY_ASSETS
 
 # Runtime resources are compiled only from these explicit, reviewed modules.
 FEATURE_ASSETS: tuple[JarvisFeatureAssets, ...] = (
     _MISSION_ASSETS, _BOTS_ASSETS, _ACTIVITY_ASSETS, _NATIVE_CONTROLS_ASSETS, _LEARNING_ASSETS,
+    _NATIVE_INVENTORY_ASSETS,
 )
 
 # New endpoint installers are explicit. Activity is installed exactly once by
@@ -22,6 +25,8 @@ FEATURE_ASSETS: tuple[JarvisFeatureAssets, ...] = (
 FEATURE_ROUTE_INSTALLERS = (
     ("missions", _missions.install_jarvis_missions_routes, _missions.FEATURE_ROUTES),
     ("bots", _bots.install_jarvis_bots_routes, _bots.FEATURE_ROUTES),
+    ("native-inventory", _native_inventory.install_jarvis_native_inventory_routes,
+     _NATIVE_INVENTORY_ASSETS.api_routes),
 )
 FEATURE_ROUTE_OWNERS = (
     ("activity", "chat-service.install", _ACTIVITY_ASSETS.api_routes),
