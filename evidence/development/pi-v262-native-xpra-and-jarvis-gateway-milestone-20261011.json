@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "record_kind": "operator_reported_pi_native_desktop_and_jarvis_gateway_milestone_partial",
+  "state": "partial_implementation_and_live_observations; acceptance_pending",
+  "authenticated_acceptance_result": false,
+  "acceptance_record_emitted": false,
+  "candidate": {
+    "commit": "2b13664b0bdeb6fe45ea863e82b17396dc49fff3",
+    "xpra_package": "xpra-server 6.5.4-r0-1+jarvis3",
+    "xpra_source_commit_reported": "5e46390...4 (signed original source; abbreviated revision as supplied)",
+    "xpra_deb_sha256": "f9f84060610b343a2c5b3ef2b1ef5a3675edfb0dafbd570ac9dd7ad3e9c9b09b"
+  },
+  "target": {
+    "name": "PI-HERMES",
+    "architecture": "aarch64",
+    "executor_uid": 0,
+    "observations": "Root-reported actual Pi observations; exact observation timestamps were not supplied."
+  },
+  "implementation_checks": {
+    "vendor_command_policy": {
+      "result": "12 vendor command-list checks passed",
+      "app_path": "/opt/hermes-jarvis-mvp-20261011/Hermes-Desktop.AppDir/Hermes",
+      "source_start_or_exec_wrapper": false,
+      "normalized_builtin_start_environment_entries": 2,
+      "xpra_config_dir_overrides": 3,
+      "all_config_dir_overrides_empty": true,
+      "client_commands": false,
+      "start_new_or_control": false,
+      "shell": false,
+      "remote_logging": false
+    },
+    "native_unit": {
+      "sha256": "1654326f7c48c120d48f27f2a51ac26be0de7056479e40fb1c015da689aba260",
+      "argv_nul_digest": "3c1580b6bebc47aa6a88ba06a482399a406e5b18a1b2e5038b584e929f49a12c"
+    },
+    "gateway_source_archive": {
+      "sha256": "4286ebe3b4e00993ea8678edde02f1018a780f1e9a14a13ebd1ecaada58aa02d",
+      "bytes": 4837616,
+      "members": 381,
+      "uncompressed_bytes": 23644299,
+      "source_candidate": "2b13664b0bdeb6fe45ea863e82b17396dc49fff3"
+    },
+    "implementation_tests": {
+      "gateway": "38 passed",
+      "vendor": "14 passed"
+    }
+  },
+  "pi_observations": {
+    "package_installed": true,
+    "native_hermes_and_backend_child_present": true,
+    "private_x11_window_title": "Hermes",
+    "chromium_clipboard_hidden": true,
+    "parallel_fresh_root_ipc_checks": {
+      "passed": 6,
+      "elapsed_seconds": [0.372, 0.74, 1.13, 1.493, 1.858, 2.222],
+      "note": "Actual Pi root IPC checks; not a full desktop acceptance result."
+    },
+    "gateway": {
+      "no_jwt": 403,
+      "invalid_jwt": 403,
+      "origin": "127.0.0.1:14500",
+      "origin_uid": 996,
+      "origin_http_status": 200,
+      "root_uid_reset_observed": true
+    },
+    "cloudflare": {
+      "access_application": "existing owned Jarvis-only application; one-hour owner OTP policy, no bypass",
+      "tunnel_id": "7bd18bb8-fb2f-4439-92cd-18a8e6349a67",
+      "healthy_registered_connections": 4,
+      "ingress": "jarvis.togarriapahome.uk to http://127.0.0.1:8765 with Access required; unmatched hosts return 404",
+      "browser": "Cloudflare Access Enter Your Code page reached; OTP code is awaiting the human",
+      "note": "Connector probe/service was stopped after observation; do not infer a durable adopted connector."
+    }
+  },
+  "mvp_milestones": {
+    "BD-T259.1": "partial: native package and Hermes/backend processes/window title observed; full user-visible selected-window and harmless-input proof pending",
+    "PR-T259.2": "pending: no authenticated Codex sign-in or real chat response observed",
+    "RT-T259.3": "partial: owned Access/tunnel/DNS routing and unauthenticated/bad-JWT denial observed; OTP authentication, rendered desktop through domain, active-session revocation remain pending",
+    "LC-T259.4": "pending: temporary connector observation is not durable owned restart/reconnect proof",
+    "VD-T259.5": "open: milestones have not been correlated end to end"
+  },
+  "acceptance_assertions": {
+    "AC01": null, "AC02": null, "AC03": null, "AC04": null, "AC05": null,
+    "AC06": null, "AC07": null, "AC08": null, "AC09": null, "AC10": null,
+    "AC11": null, "AC12": null, "AC13": null, "AC14": null, "AC15": null,
+    "AC16": null, "AC17": null, "AC18": null
+  },
+  "resource_delete_safe": false,
+  "not_observed": [
+    "authenticated Codex subscription or eligible live model selection",
+    "real chat response rendered in official Desktop",
+    "human-completed OTP login and protected Desktop rendering/input",
+    "durable owned connector/Desktop restart, reconnect, or revocation behavior",
+    "full original acceptance set or Resources deletion safety"
+  ],
+  "claim_limit": "This record combines reported Pi implementation checks and bounded live observations. It is not a completed Jarvis MVP or installer acceptance result; all AC01-AC18 remain open."
+}
