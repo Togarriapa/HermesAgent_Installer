@@ -68,8 +68,8 @@ def test_spent_binding_root_preflight_denial_stops_before_owner_registration_or_
         owner_turn_register=lambda **kwargs: registrations.append(kwargs) or "d" * 32,
     )
 
-    def deny_root(binding_arg, *, owner_subject_sha256):
-        preflight_calls.append((binding_arg, owner_subject_sha256))
+    def deny_root(binding_arg, *, owner_subject_sha256, gateway_turn_id):
+        preflight_calls.append((binding_arg, owner_subject_sha256, gateway_turn_id))
         return False
 
     service._native_mission_preflight = deny_root
@@ -80,14 +80,14 @@ def test_spent_binding_root_preflight_denial_stops_before_owner_registration_or_
             await service.start_server_turn(
                 request, conversation_id=conversation["id"], text="bounded mission",
                 idempotency_key="preflight-denial-key-0001",
-                before_schedule=lambda _turn_id: jarvis_missions._preflight_spent_mission_binding(
-                    service, binding, "owner-a"),
+                before_schedule=lambda turn_id: jarvis_missions._preflight_spent_mission_binding(
+                    service, binding, "owner-a", gateway_turn_id=turn_id),
                 require_mission_binding=True,
                 on_schedule_failure=lambda turn_id: compensations.append(turn_id),
             )
 
     asyncio.run(launch())
-    assert preflight_calls == [(binding, "owner-a")]
+    assert preflight_calls == [(binding, "owner-a", compensations[0])]
     assert len(compensations) == 1
     assert registrations == []
     assert submissions == []
@@ -100,17 +100,19 @@ def test_spent_binding_root_preflight_requires_exact_true_and_returns_same_bindi
     calls = []
 
     class Service:
-        def _native_mission_preflight(self, value, *, owner_subject_sha256):
-            calls.append((value, owner_subject_sha256))
+        def _native_mission_preflight(self, value, *, owner_subject_sha256, gateway_turn_id):
+            calls.append((value, owner_subject_sha256, gateway_turn_id))
             return True
 
     service = Service()
-    assert jarvis_missions._preflight_spent_mission_binding(service, binding, "owner-a") is binding
-    assert calls == [(binding, "owner-a")]
+    assert jarvis_missions._preflight_spent_mission_binding(
+        service, binding, "owner-a", gateway_turn_id="turn-generated-by-server") is binding
+    assert calls == [(binding, "owner-a", "turn-generated-by-server")]
 
     service._native_mission_preflight = lambda *_args, **_kwargs: 1
     with pytest.raises(JarvisChatDenied, match="root mission binding validation denied"):
-        jarvis_missions._preflight_spent_mission_binding(service, binding, "owner-a")
+        jarvis_missions._preflight_spent_mission_binding(
+            service, binding, "owner-a", gateway_turn_id="turn-generated-by-server")
 
 
 class ObservedBackend:

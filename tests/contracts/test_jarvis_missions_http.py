@@ -88,12 +88,15 @@ def test_owner_draft_preview_is_persisted_but_never_fabricates_execution(tmp_pat
             assert preview["status"] == "preview_pending"
             assert preview["team"] == [{
                 "id": "reviewer", "label": "Internal reviewer", "readiness": "pending",
-                "reason": "Bundled source identity is verified; current native dispatch and per-task authority are not.",
+                "selection_source": "pending",
+                "reason": "Owner source preference only; Jarvis has not selected a team in a sealed plan.",
             }]
             assert preview["native_execution_available"] is False
             assert preview["approval_nonce"] is None and preview["expires_at"] is None
             assert preview["execution_mode"] == "pending"
             assert preview["source_selection_state"] == "pending"
+            assert preview["selected_source_ids"] is None
+            assert preview["review_state"] == "not_started"
             assert len(preview["plan_sha256"]) == 64
 
             approval_body = {

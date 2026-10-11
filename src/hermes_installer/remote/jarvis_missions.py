@@ -372,11 +372,13 @@ def _mission_binding_route_ready(service: JarvisChatService) -> bool:
 
 
 def _preflight_spent_mission_binding(service: JarvisChatService, binding: Any,
-                                     owner_subject_sha256: str) -> Any:
+                                     owner_subject_sha256: str, *,
+                                     gateway_turn_id: str) -> Any:
     """Root-validate the spent, exact-turn binding before owner registration or model submit."""
     preflight = getattr(service, "_native_mission_preflight", None)
     if (not callable(preflight)
-            or preflight(binding, owner_subject_sha256=owner_subject_sha256) is not True):
+            or preflight(binding, owner_subject_sha256=owner_subject_sha256,
+                         gateway_turn_id=gateway_turn_id) is not True):
         raise JarvisChatDenied("root mission binding validation denied")
     return binding
 
@@ -984,7 +986,8 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                             idempotency_key=body["idempotency_key"], source_binding=binding,
                             gateway_turn_id=turn_id)
                         _recheck_principal(service, request, principal)
-                        return _preflight_spent_mission_binding(service, mission_binding, owner)
+                        return _preflight_spent_mission_binding(
+                            service, mission_binding, owner, gateway_turn_id=turn_id)
                     def on_schedule_failure(turn_id: str):
                         executor.fail_schedule(run_id=run["id"], owner=owner,
                                                gateway_turn_id=turn_id)
