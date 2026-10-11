@@ -18,6 +18,7 @@ TOKEN=Path("/etc/hermes-installer/jarvis-core/session-token")
 JOURNAL=Path("/var/lib/hermes-installer/core-runtime/ownership.json")
 RESOURCES_RECORD=Path("/var/lib/hermes-installer/core-runtime/resources-discovery.json")
 RESOURCES_CAS=Path("/var/lib/hermes-installer/core-runtime/resources-cas")
+RESOURCES_MIGRATION_RECORD=Path("/var/lib/hermes-installer/core-runtime/resources-migration-backup.json")
 PRIMARY_PROMPT_JOURNAL=Path("/var/lib/hermes-installer/core-runtime/primary-prompt-ownership.json")
 PRIMARY_PROMPT_BACKUPS=Path("/var/lib/hermes-installer/core-runtime/primary-prompt-backups")
 ADAPTER_MIGRATION_BACKUP=Path("/var/lib/hermes-installer/core-runtime/adapter-migration-backup")
@@ -201,6 +202,38 @@ def _validated_executable(path,allowed_uids):
  raise CoreRuntimeError("fixed executable link chain is too deep")
 def _install_bundled_resources(account):
  """Run the vendored offline importer as admin before enabling public interaction."""
+ previous_archive=None
+ previous_sha=LEGACY_MATERIALIZED_RESOURCES_ARTIFACT_SHA256
+ previous_manifest=None; previous_files=None
+ try:
+  from .registry import manual_jarvis_skills as native
+  current_archive=native.build_manual_jarvis_skills_artifact()
+  current_sha=hashlib.sha256(current_archive).hexdigest()
+  current_manifest,current_files=native._read_artifact(current_archive,current_sha)
+  previous_cas=RESOURCES_CAS/(previous_sha+".zip")
+  generation_exists=native._GENERATION.exists() or native._GENERATION.is_symlink()
+  current_generation=False
+  if generation_exists:
+   try:
+    _hash_generation_tree(HERMES_HOME,current_manifest,current_files,current_sha)
+    current_generation=True
+   except CoreRuntimeError:
+    if not (previous_cas.exists() or previous_cas.is_symlink()):
+     raise
+  if generation_exists and not current_generation and (previous_cas.exists() or previous_cas.is_symlink()):
+   previous_archive=_projection_file(previous_cas,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
+   if hashlib.sha256(previous_archive).hexdigest()!=previous_sha:
+    raise CoreRuntimeError("retained legacy Resources artifact digest differs")
+   previous_manifest,previous_files=native._read_artifact(previous_archive,previous_sha)
+   # The importer performs its own held-owner verification and atomic exchange;
+   # root independently proves the only eligible old target against protected CAS.
+   _hash_generation_tree(HERMES_HOME,previous_manifest,previous_files,previous_sha)
+  elif generation_exists and not current_generation:
+   raise CoreRuntimeError("existing Resources generation has no eligible current or legacy ownership proof")
+ except FileNotFoundError:
+  previous_archive=None
+ except Exception as exc:
+  raise CoreRuntimeError("existing Resources generation is not eligible for the exact owned migration") from exc
  try:
   python=Path(sys.executable)
   interpreter=_validated_executable(python,{ROOT_UID,account.pw_uid})
@@ -209,21 +242,57 @@ def _install_bundled_resources(account):
   argv=[str(RUNUSER),"-u","admin","--",str(interpreter),"-m",
         "hermes_installer.registry.manual_jarvis_skills","import-bundled",
         "--home",str(HERMES_HOME),"--hermes-source",str(SOURCE),"--python",str(PYTHON)]
+  if previous_archive is not None:
+   argv.extend(["--replace-owned-from-sha256",previous_sha])
   env={"PATH":"/usr/sbin:/usr/bin:/sbin:/bin","HOME":str(HOME),
        "HERMES_HOME":str(HERMES_HOME),"LANG":"C.UTF-8",
        "PYTHONPATH":str(Path(__file__).resolve().parents[1]),
        "PYTHONNOUSERSITE":"1","PYTHONDONTWRITEBYTECODE":"1"}
-  result=subprocess.run(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,text=True,timeout=600,env=env)
+  if previous_archive is not None:
+   result=subprocess.run(argv,input=previous_archive,stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE,timeout=600,env=env)
+  else:
+   result=subprocess.run(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE,text=True,timeout=600,env=env)
  except (OSError,subprocess.TimeoutExpired,ValueError) as exc:
   raise CoreRuntimeError("offline Jarvis resource import is pending") from exc
  if result.returncode:
   raise CoreRuntimeError("offline Jarvis resource import is pending")
  try:
   if len(result.stdout)>8*1024*1024: raise ValueError
-  json.loads(result.stdout)
+  admin_receipt=json.loads(result.stdout)
+  if not isinstance(admin_receipt,dict): raise ValueError
  except (ValueError,TypeError):
   raise CoreRuntimeError("offline Jarvis resource receipt is invalid") from None
+ if previous_archive is not None:
+  try:
+   from .registry import manual_jarvis_skills as native
+   if admin_receipt.get("artifact_sha256")!=current_sha:
+    raise CoreRuntimeError("importer returned a different current Resources artifact")
+   backup=Path(admin_receipt["previous_generation_backup"])
+   if (backup.parent!=HERMES_HOME or not backup.name.startswith(".jarvis-resources-skills-")
+       or backup.is_symlink()):
+    raise CoreRuntimeError("retained Resources backup path differs from the fixed migration contract")
+   backup_info=backup.lstat()
+   if (not stat.S_ISDIR(backup_info.st_mode) or backup_info.st_uid!=account.pw_uid
+       or backup_info.st_gid!=account.pw_gid or stat.S_IMODE(backup_info.st_mode)!=0o700):
+    raise CoreRuntimeError("retained Resources backup directory custody differs")
+   if previous_manifest is None or previous_files is None:
+    raise CoreRuntimeError("retained Resources backup has no verified old artifact")
+   old_tree_sha=_hash_generation_tree(HERMES_HOME,previous_manifest,previous_files,previous_sha,
+                                      target_path=backup)
+   migration={"schema":1,"state":"retained","previous_artifact_sha256":previous_sha,
+    "previous_ownership_manifest_sha256":old_tree_sha,"backup_path":str(backup),
+    "current_artifact_sha256":current_sha}
+   _ensure_dir(RESOURCES_MIGRATION_RECORD.parent,ROOT_UID,ROOT_UID,0o700)
+   encoded=(json.dumps(migration,sort_keys=True,separators=(",",":"))+"\n").encode("ascii")
+   if RESOURCES_MIGRATION_RECORD.exists() or RESOURCES_MIGRATION_RECORD.is_symlink():
+    if _projection_file(RESOURCES_MIGRATION_RECORD,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024)!=encoded:
+     raise CoreRuntimeError("an earlier Resources migration backup record differs")
+   else:
+    _atomic(RESOURCES_MIGRATION_RECORD,encoded,0o600,ROOT_UID,ROOT_UID)
+  except Exception as exc:
+   raise CoreRuntimeError("retained Resources migration backup could not be independently verified") from exc
  # The admin response is only an import-attempt signal. Root independently
  # rereads every owned byte and runs its own pinned native-loader query below.
  return {}
@@ -345,7 +414,7 @@ def _projection_at(parent_fd,name,*,owner,group=None,mode=None,maximum):
  finally:
   os.close(fd)
 
-def _hash_generation_tree(home,manifest,files,artifact_sha,*,repair_umask_dirs=False):
+def _hash_generation_tree(home,manifest,files,artifact_sha,*,repair_umask_dirs=False,target_path=None):
  """Independently verify the exact admin-owned materialization and journal."""
  from .registry import manual_jarvis_skills as native
  target_name=native._GENERATION
@@ -381,8 +450,14 @@ def _hash_generation_tree(home,manifest,files,artifact_sha,*,repair_umask_dirs=F
    exact=0o700 if component in {"admin",".hermes"} else None
    child=directory(parentfd,component,owner,exact); fds.append(child); parentfd=child
   hermesfd=parentfd
-  skillsfd=directory(hermesfd,"skills",1000); fds.append(skillsfd)
-  genfd=directory(skillsfd,target_name,1000,0o700); fds.append(genfd)
+  if target_path is None:
+   skillsfd=directory(hermesfd,"skills",1000); fds.append(skillsfd)
+   genfd=directory(skillsfd,target_name,1000,0o700); fds.append(genfd)
+  else:
+   backup=Path(target_path)
+   if (backup.parent!=Path(home) or not backup.name.startswith(".jarvis-resources-skills-")):
+    raise CoreRuntimeError("retained Resources backup path is outside its fixed home")
+   genfd=directory(hermesfd,backup.name,1000,0o700); fds.append(genfd)
   expected=set(files)|{native._OWNER_FILE}
   expected_directories={
    "/".join(PurePosixPath(name).parts[:depth])
@@ -714,6 +789,21 @@ def _verified_resources_payload(_admin_receipt=None,*,repair_umask_dirs=False):
   raise CoreRuntimeError("pinned offline Resources inventory differs")
  counts={"native_skills":396,"internal_profiles":207,
   "source_profiles_preserved":208,"other_declarations_preserved":expected_other}
+ overlay=manifest.get("effective_overlay")
+ if not isinstance(overlay,dict):
+  raise CoreRuntimeError("compiled Jarvis master overlay provenance is missing")
+ overlay_receipt={
+  "overlay_id":overlay.get("overlay_id"),"approval_commit":overlay.get("approval_commit"),
+  "sha256":overlay.get("sha256"),"upstream_revision":overlay.get("upstream_revision"),
+  "upstream_tree":overlay.get("upstream_tree"),
+  "source_declarations":overlay.get("source_declarations"),
+  "compiled_profiles":overlay.get("compiled_profiles"),
+  "compiled_bundle":overlay.get("compiled_bundle"),
+ }
+ if (overlay_receipt["overlay_id"]!="jarvis-master-semantics-v1"
+     or not isinstance(overlay_receipt["sha256"],str)
+     or re.fullmatch(r"[0-9a-f]{64}",overlay_receipt["sha256"]) is None):
+  raise CoreRuntimeError("compiled Jarvis master overlay provenance is malformed")
  source_generation=_core_source_generation()
  try:
   manifest_sha=_hash_generation_tree(HERMES_HOME,manifest,files,artifact_sha,
@@ -749,13 +839,14 @@ def _verified_resources_payload(_admin_receipt=None,*,repair_umask_dirs=False):
  if json.loads(journal_bytes)!=journal:
   raise CoreRuntimeError("core ownership journal changed during Resources verification")
  return archive,{
-  "schema":2,"native_readback_method":"root-pinned-hermes-loader-v1",
+  "schema":3,"native_readback_method":"root-pinned-hermes-loader-v2",
   "core_source_generation":source_generation,"core_ownership_sha256":hashlib.sha256(journal_bytes).hexdigest(),
   "hermes_revision":COMMIT,"python_version":"3.14.7",
   "resources_revision":manifest["source"]["revision"],"resources_tree":manifest["source"]["git_tree"],
   "artifact_sha256":artifact_sha,"ownership_manifest_sha256":manifest_sha,
   "loaded_skill_inventory_sha256":native_receipt["loaded_skill_inventory_sha256"],"active_primary_prompt_sha256":active_sha,
   "bundled_primary_prompt_sha256":bundled_sha,"active_prompt_matches_bundled_primary":active_sha==bundled_sha,
+  "effective_overlay":overlay_receipt,
   "resource_counts":counts,
   "observed_at_utc":datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00","Z"),
   "state":"discovered","functional":False,"enabled":False,"target_verified":False,
@@ -792,10 +883,10 @@ def read_current_resources_discovery(*,core_source_generation):
   fields={"schema","native_readback_method","core_source_generation","core_ownership_sha256","hermes_revision","python_version",
    "resources_revision","resources_tree","artifact_sha256","ownership_manifest_sha256",
    "loaded_skill_inventory_sha256","active_primary_prompt_sha256","bundled_primary_prompt_sha256",
-   "active_prompt_matches_bundled_primary","resource_counts","observed_at_utc","state",
+   "active_prompt_matches_bundled_primary","effective_overlay","resource_counts","observed_at_utc","state",
    "functional","enabled","target_verified"}
-  if (set(record)!=fields or type(record.get("schema")) is not int or record["schema"]!=2
-      or record.get("native_readback_method")!="root-pinned-hermes-loader-v1"):
+  if (set(record)!=fields or type(record.get("schema")) is not int or record["schema"]!=3
+      or record.get("native_readback_method")!="root-pinned-hermes-loader-v2"):
    return {**pending,"resources_state":"stale"}
   hashes=("core_source_generation","core_ownership_sha256","hermes_revision","resources_tree",
           "artifact_sha256","ownership_manifest_sha256","loaded_skill_inventory_sha256",
@@ -832,6 +923,13 @@ def read_current_resources_discovery(*,core_source_generation):
   if hashlib.sha256(archive).hexdigest()!=artifact_sha: return {**pending,"resources_state":"stale"}
   from .registry import manual_jarvis_skills as native
   manifest,files=native._read_artifact(archive,artifact_sha)
+  overlay=manifest.get("effective_overlay")
+  if not isinstance(overlay,dict): return {**pending,"resources_state":"stale"}
+  expected_overlay={key:overlay.get(key) for key in (
+   "overlay_id","approval_commit","sha256","upstream_revision","upstream_tree",
+   "source_declarations","compiled_profiles","compiled_bundle")}
+  if record.get("effective_overlay")!=expected_overlay:
+   return {**pending,"resources_state":"stale"}
   expected_inventory=native._canonical_json([
    {"skill_id":row["skill_id"],"sha256":hashlib.sha256(files[row["archive_path"]]).hexdigest()}
    for row in sorted(manifest["skill_members"],key=lambda row:row["skill_id"])])

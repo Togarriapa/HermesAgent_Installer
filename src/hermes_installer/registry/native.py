@@ -116,14 +116,16 @@ def effective_native_profile_spec(profile_id: str, spec: Mapping[str, Any]) -> d
             if profile_id == PRIMARY_USER_SOURCE_PROFILE_ID else effective)
 
 
-def _profile_files(item: ResolvedResource, source_path: str, source_document: Mapping[str, Any]) -> dict[str, bytes]:
+def _profile_files(item: ResolvedResource, source_path: str, source_document: Mapping[str, Any],
+                   effective_spec: Mapping[str, Any] | None = None) -> dict[str, bytes]:
     """Compile a registry profile into an isolated Hermes HERMES_HOME."""
     import yaml
 
     name = item.resource.id
     if not _PROFILE_NAME.fullmatch(name):
         raise RegistryError(f"profile name cannot be represented as a Hermes profile: {name}")
-    spec = effective_native_profile_spec(name, item.effective_spec or item.resource.body)
+    spec = (dict(effective_spec) if effective_spec is not None
+            else effective_native_profile_spec(name, item.effective_spec or item.resource.body))
     content_sections = []
     for field, value in spec.items():
         if field in {"extends", "requires"}:
@@ -417,11 +419,20 @@ class NativeRegistry:
         yaml = _yaml()
         selected = discovery or self.discover_all()
         out: dict[str, bytes] = {}
+        effective_specs: dict[str, dict[str, Any]] = {}
         bindings = self.crosswalk(selected)
         for item in selected.resources:
             key = f"{item.resource.kind.value}/{item.resource.id}@{item.resource.version}"
             doc = copy.deepcopy(dict(self.resolver.raw[key].document))
             effective = copy.deepcopy(dict(item.effective_spec or item.resource.body))
+            source_identity = {"revision": self.source.revision, "source_tree": self.source.source_tree}
+            if item.resource.kind.value == "profiles":
+                from .jarvis_master_semantics import effective_profile_spec
+                effective = effective_profile_spec(item.resource.id, effective, source_identity)
+            elif item.resource.kind.value == "bundles":
+                from .jarvis_master_semantics import effective_bundle_spec
+                effective = effective_bundle_spec(item.resource.id, effective, source_identity)
+            effective_specs[key] = effective
             # These bundled scheduled jobs used to fetch Togarriapa/HermesAgent_Resources.
             # The runtime form now addresses the Installer-owned immutable snapshot and
             # cannot fall back to the original repository or a moving branch.
@@ -468,7 +479,8 @@ class NativeRegistry:
         for item, binding in zip(selected.resources, bindings, strict=True):
             key = f"{binding.kind}/{binding.resource_id}@{binding.version}"
             if binding.kind == "profiles":
-                out.update(_profile_files(item, binding.source_path, self.resolver.raw[key].document))
+                out.update(_profile_files(item, binding.source_path, self.resolver.raw[key].document,
+                                          effective_spec=effective_specs[key]))
             elif binding.kind == "skills":
                 path, content = _skill_file(item, binding.source_path, self.resolver.raw[key].document)
                 out[path] = content

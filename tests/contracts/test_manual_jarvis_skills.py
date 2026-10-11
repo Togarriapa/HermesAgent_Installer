@@ -23,8 +23,14 @@ from hermes_installer.registry.manual_jarvis_skills import (
     build_manual_jarvis_skills_artifact,
     install_and_verify_manual_jarvis_skills,
     install_manual_jarvis_skills,
+    _verify_owned_generation,
 )
 from hermes_installer.registry.native_install import NativeInstallReceipt
+from hermes_installer.registry.jarvis_master_semantics import (
+    JarvisSemanticsError,
+    effective_profile_spec,
+    overlay_identity,
+)
 
 
 class ManualJarvisSkillsTests(unittest.TestCase):
@@ -44,6 +50,60 @@ class ManualJarvisSkillsTests(unittest.TestCase):
         (home / "skills" / "user-owned").mkdir()
         (home / "skills" / "user-owned" / "SKILL.md").write_text("user bytes\n", encoding="utf-8")
         return home
+
+    def test_compiled_master_semantics_are_distinct_from_verbatim_upstream(self):
+        manifest, files = _read_artifact(self.bundle, self.digest)
+        overlay = manifest["effective_overlay"]
+        profiles = {row["source_id"]: row for row in manifest["profile_members"]}
+        self.assertEqual(overlay["overlay_id"], "jarvis-master-semantics-v1")
+        self.assertEqual(overlay["approval_commit"], "76fa3f9237d5c6a0cf608f1039f72f70f68a2523")
+        self.assertEqual(overlay["sha256"], overlay_identity()["sha256"])
+        self.assertEqual(len(manifest["skill_members"]), 396)
+        self.assertEqual(len(manifest["profile_members"]), 208)
+        self.assertEqual(set(overlay["compiled_profiles"]), {"hermes", "orchestrator"})
+        for profile_id in ("hermes", "orchestrator"):
+            row = profiles[profile_id]
+            self.assertNotEqual(row["upstream_compiled_identity_sha256"], row["identity_sha256"])
+            original = files[f"registry/package/upstream-source/profiles/{profile_id}.yaml"]
+            self.assertEqual(hashlib.sha256(original).hexdigest(), row["source_document_sha256"])
+            self.assertEqual(overlay["source_declarations"][f"profiles/{profile_id}.yaml"],
+                             hashlib.sha256(original).hexdigest())
+        for profile_id, row in profiles.items():
+            if profile_id not in {"hermes", "orchestrator"}:
+                self.assertEqual(row["upstream_compiled_identity_sha256"], row["identity_sha256"])
+        jarvis = files["registry/profiles/hermes/SOUL.md"].decode("utf-8")
+        coordinator = files["registry/profiles/orchestrator/SOUL.md"].decode("utf-8")
+        self.assertIn("sole user-facing MASTER", jarvis)
+        self.assertIn("OneShot", jarvis)
+        self.assertIn("Only Jarvis may make the final", jarvis)
+        self.assertIn("not a mandatory hop", jarvis)
+        self.assertIn("without creating a project board", coordinator)
+        self.assertIn("Never publish or perform final external", coordinator)
+        self.assertEqual(hashlib.sha256(
+            files[overlay["compiled_bundle"]["effective_archive_path"]]).hexdigest(),
+            overlay["compiled_bundle"]["effective_sha256"])
+
+    def test_master_overlay_rejects_unpinned_upstream_source(self):
+        with self.assertRaises(JarvisSemanticsError):
+            effective_profile_spec("hermes", {"instructions": []},
+                                   {"revision": "0" * 40, "source_tree": "1" * 40})
+
+    def test_generation_migration_proof_rejects_any_modified_owned_member(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self.make_home(tmp)
+            staged = install_manual_jarvis_skills(
+                self.bundle, hermes_home=home, expected_sha256=self.digest)
+            _manifest, files = _read_artifact(self.bundle, self.digest)
+            generation = Path(staged["generation_path"])
+            expected_dirs = {
+                "/".join(Path(name).parts[:depth])
+                for name in files for depth in range(1, len(Path(name).parts))
+            }
+            self.assertEqual(_verify_owned_generation(generation, files, self.digest), expected_dirs)
+            victim = generation / "registry/profiles/orchestrator/SOUL.md"
+            victim.write_bytes(victim.read_bytes() + b"user edit")
+            with self.assertRaises(ManualJarvisSkillsError):
+                _verify_owned_generation(generation, files, self.digest)
 
     def test_stage_is_namespaced_owned_idempotent_and_preserves_existing_home(self):
         with tempfile.TemporaryDirectory() as tmp:

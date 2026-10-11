@@ -18,7 +18,8 @@ import stat
 import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Mapping
+from importlib.resources import files as package_files
 
 
 PINNED_REVISION = "113f42d33be9e0c8f0f47f5ca998e687323dec83"
@@ -49,6 +50,7 @@ _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _GENERATION = f"installer-resources-{PINNED_REVISION[:12]}"
 _OWNER_FILE = ".hermes-installer-resource-ownership.json"
 PINNED_HERMES_REVISION = "7085fbf7753266fc4943c55ac04926186bc90005"
+LEGACY_MATERIALIZED_ARTIFACT_SHA256 = "f73463c641ac3744007ee8395b663802d5c916f59256fa8184ad2b4f5594b274"
 
 
 class ManualJarvisSkillsError(RuntimeError):
@@ -73,6 +75,11 @@ def build_manual_jarvis_skills_artifact() -> bytes:
     if source.revision != PINNED_REVISION or source.source_tree != PINNED_TREE:
         raise ManualJarvisSkillsError("verified Resources source differs from the manual stage pin")
     registry = NativeRegistry.from_verified_source(source)
+    from . import jarvis_master_semantics as master_semantics
+    overlay_identity = master_semantics.overlay_identity()
+    if (overlay_identity["upstream_revision"] != source.revision
+            or overlay_identity["upstream_tree"] != source.source_tree):
+        raise ManualJarvisSkillsError("Jarvis semantic overlay is not pinned to the verified Resources source")
     discovery = registry.discover_all()
     rows = [item for item in discovery.resources if item.resource.kind.value == "skills"]
     profiles = [item for item in discovery.resources if item.resource.kind.value == "profiles"]
@@ -113,8 +120,17 @@ def build_manual_jarvis_skills_artifact() -> bytes:
             "sha256": _sha256(content),
         })
 
+    effective_prompt_hashes: dict[str, dict[str, str]] = {}
+    from .native import effective_native_profile_spec, _profile_files
     for item in sorted(profiles, key=lambda value: value.resource.id):
         profile_id = item.resource.id
+        raw_key = f"profiles/{profile_id}@{item.resource.version}"
+        raw = registry.resolver.raw[raw_key]
+        source_spec = item.effective_spec or item.resource.body
+        baseline_spec = effective_native_profile_spec(profile_id, source_spec)
+        baseline = _profile_files(item, registry.paths[raw_key], raw.document, effective_spec=baseline_spec)
+        baseline_prompt = baseline[f"homes/profiles/{profile_id}/SOUL.md"]
+        effective_prompt = compiled[f"homes/profiles/{profile_id}/SOUL.md"]
         for suffix in ("SOUL.md", "profile.yaml"):
             staged_path = f"homes/profiles/{profile_id}/{suffix}"
             content = compiled.get(staged_path)
@@ -122,8 +138,6 @@ def build_manual_jarvis_skills_artifact() -> bytes:
                 raise ManualJarvisSkillsError("compiled internal profile prompt is missing or oversized")
             archive_path = f"registry/profiles/{profile_id}/{suffix}"
             files[archive_path] = content
-        raw_key = f"profiles/{profile_id}@{item.resource.version}"
-        raw = registry.resolver.raw[raw_key]
         profile_meta = yaml.safe_load(files[f"registry/profiles/{profile_id}/profile.yaml"])
         alias = profile_meta.get("display_name") if isinstance(profile_meta, dict) else None
         if not isinstance(alias, str) or not alias:
@@ -134,15 +148,43 @@ def build_manual_jarvis_skills_artifact() -> bytes:
             "source_path": registry.paths[raw_key],
             "source_document_sha256": raw.content_digest,
             "identity_sha256": _sha256(files[f"registry/profiles/{profile_id}/SOUL.md"]),
+            "upstream_compiled_identity_sha256": _sha256(baseline_prompt),
             "profile_yaml_sha256": _sha256(files[f"registry/profiles/{profile_id}/profile.yaml"]),
             "native_alias": alias,
+            "overlay_id": overlay_identity["overlay_id"] if profile_id in {"hermes", "orchestrator"} else None,
+            "overlay_sha256": overlay_identity["sha256"] if profile_id in {"hermes", "orchestrator"} else None,
         })
+        effective_prompt_hashes[profile_id] = {
+            "upstream_compiled_prompt_sha256": _sha256(baseline_prompt),
+            "effective_prompt_sha256": _sha256(effective_prompt),
+        }
 
     # Keep the complete generated resource declaration/catalog/adapter bundle
     # beside the private profile records. Hermes only scans `skills/`; this
     # registry namespace remains data until a separately reviewed dispatcher
     # activates a concrete adapter.
     package_members: list[dict[str, Any]] = []
+    # Keep the exact upstream source declarations for all overlay targets in
+    # the offline package, distinct from the derivative effective outputs.
+    overlay_source_paths = {
+        "profiles/hermes.yaml",
+        "profiles/orchestrator.yaml",
+        "bundles/hermes-runtime.yaml",
+    }
+    for relative in sorted(overlay_source_paths):
+        content = source.files.get(relative)
+        if not isinstance(content, bytes):
+            raise ManualJarvisSkillsError("upstream overlay source declaration is missing")
+        archive_path = f"registry/package/upstream-source/{relative}"
+        files[archive_path] = content
+        package_members.append({"archive_path": archive_path, "size_bytes": len(content),
+                                "sha256": _sha256(content)})
+    overlay_bytes = package_files("hermes_installer").joinpath(
+        "registry", "bundle_data", "jarvis-master-semantics.json").read_bytes()
+    overlay_archive_path = "registry/package/installer-overlays/jarvis-master-semantics.json"
+    files[overlay_archive_path] = overlay_bytes
+    package_members.append({"archive_path": overlay_archive_path, "size_bytes": len(overlay_bytes),
+                            "sha256": _sha256(overlay_bytes)})
     for relative, content in compiled.items():
         if relative.startswith("homes/"):
             continue
@@ -150,6 +192,14 @@ def build_manual_jarvis_skills_artifact() -> bytes:
         files[archive_path] = content
         package_members.append({"archive_path": archive_path, "size_bytes": len(content),
                                 "sha256": _sha256(content)})
+
+    bundle_key = next((key for key in registry.resolver.raw
+                       if key.startswith("bundles/hermes-runtime@")), None)
+    if bundle_key is None:
+        raise ManualJarvisSkillsError("pinned Hermes runtime bundle source is missing")
+    bundle_archive_path = registry.paths[bundle_key]
+    effective_bundle_path = f"registry/package/{bundle_archive_path}"
+    upstream_bundle_path = "bundles/hermes-runtime.yaml"
 
     selected = [
         {"kind": row.resource.kind.value, "id": row.resource.id, "version": row.resource.version}
@@ -169,6 +219,23 @@ def build_manual_jarvis_skills_artifact() -> bytes:
             "content_digest": source.content_digest,
             "archive_sha256": "b09459b609676cff30f151ac7db1fc405039b8871486b483af563ba7f63e7cd1",
         },
+        "effective_overlay": {
+            **overlay_identity,
+            "source_declarations": {
+                path: _sha256(source.files[path]) for path in sorted(overlay_source_paths)
+            },
+            "compiled_profiles": {
+                profile_id: effective_prompt_hashes[profile_id]
+                for profile_id in ("hermes", "orchestrator")
+            },
+            "compiled_bundle": {
+                "source_path": upstream_bundle_path,
+                "source_document_sha256": _sha256(source.files[upstream_bundle_path]),
+                "effective_archive_path": effective_bundle_path,
+                "effective_sha256": _sha256(files[effective_bundle_path]),
+            },
+            "authority_note": "Workflow prompt/configuration only; no native grants, accounts, isolation, or runtime capability.",
+        },
         "bundled_resource_inventory": sorted(selected, key=lambda row: (row["kind"], row["id"])),
         "skill_members": members,
         "profile_members": profile_members,
@@ -182,7 +249,9 @@ def build_manual_jarvis_skills_artifact() -> bytes:
                 "All 396 native skills and all 208 effective profile prompts/aliases are "
                 "compiled from the vendored offline source. Profile prompt material is "
                 "retained below a private registry namespace and is not copied into "
-                "Hermes' selectable profile roster. The pinned declarations contain no "
+                "Hermes' selectable profile roster. The pinned upstream declarations remain "
+                "verbatim beside the separately hashed installer-owned Jarvis workflow overlay. "
+                "The pinned declarations contain no "
                 "external support-file closure."
             ),
         },
@@ -282,6 +351,23 @@ def _read_artifact(archive_bytes: bytes, expected_sha256: str) -> tuple[dict[str
                     or len(members) != _BUNDLE_SKILL_COUNT or len(profiles) != _BUNDLE_PROFILE_COUNT
                     or not set(PRIMARY_SKILLS).issubset(set(skill_ids))):
                 raise ValueError
+            overlay = manifest.get("effective_overlay")
+            expected_overlay = None
+            overlay_file = "registry/package/installer-overlays/jarvis-master-semantics.json"
+            if overlay is None:
+                # One exact pre-overlay package is retained by the root CAS on
+                # the enrolled Pi. It is accepted only so root can verify and
+                # explicitly migrate that exact owned generation.
+                if expected_sha256 != LEGACY_MATERIALIZED_ARTIFACT_SHA256:
+                    raise ValueError
+            else:
+                from .jarvis_master_semantics import overlay_identity
+                expected_overlay = overlay_identity()
+                if (not isinstance(overlay, dict)
+                        or any(overlay.get(key) != value for key, value in expected_overlay.items())
+                        or overlay.get("authority_note") !=
+                        "Workflow prompt/configuration only; no native grants, accounts, isolation, or runtime capability."):
+                    raise ValueError
             files = {}
             helper = archive.read("manual_stage_jarvis_skills.py")
             if (len(helper) != manifest["installer"]["size_bytes"]
@@ -317,6 +403,59 @@ def _read_artifact(archive_bytes: bytes, expected_sha256: str) -> tuple[dict[str
                         or PurePosixPath(name).name == "SKILL.md"):
                     raise ValueError
                 files[name] = content
+            if overlay is None:
+                if any(name.startswith("registry/package/upstream-source/")
+                       or name == overlay_file for name in files):
+                    raise ValueError
+                if any("overlay_id" in row or "overlay_sha256" in row
+                       or "upstream_compiled_identity_sha256" in row for row in profiles):
+                    raise ValueError
+                if expected_sha256 != LEGACY_MATERIALIZED_ARTIFACT_SHA256:
+                    raise ValueError
+                if manifest["plugin"].get("state") != "not-imported":
+                    raise ValueError
+                return manifest, files
+            source_declarations = overlay.get("source_declarations")
+            expected_source_paths = {
+                "profiles/hermes.yaml", "profiles/orchestrator.yaml", "bundles/hermes-runtime.yaml"
+            }
+            if not isinstance(source_declarations, dict) or set(source_declarations) != expected_source_paths:
+                raise ValueError
+            for source_path, digest in source_declarations.items():
+                archived_source = f"registry/package/upstream-source/{source_path}"
+                if archived_source not in files or _sha256(files[archived_source]) != digest:
+                    raise ValueError
+            if _sha256(files.get(overlay_file, b"")) != expected_overlay["sha256"]:
+                raise ValueError
+            rows_by_id = {row["source_id"]: row for row in profiles}
+            if any(rows_by_id[profile_id].get("source_document_sha256")
+                   != source_declarations[f"profiles/{profile_id}.yaml"]
+                   for profile_id in ("hermes", "orchestrator")):
+                raise ValueError
+            compiled_profiles = overlay.get("compiled_profiles")
+            if not isinstance(compiled_profiles, dict) or set(compiled_profiles) != {"hermes", "orchestrator"}:
+                raise ValueError
+            for profile_id in ("hermes", "orchestrator"):
+                row = rows_by_id[profile_id]
+                compiled = compiled_profiles[profile_id]
+                if (row.get("overlay_id") != expected_overlay["overlay_id"]
+                        or row.get("overlay_sha256") != expected_overlay["sha256"]
+                        or not isinstance(compiled, dict)
+                        or compiled.get("upstream_compiled_prompt_sha256") != row.get("upstream_compiled_identity_sha256")
+                        or compiled.get("effective_prompt_sha256") != row.get("identity_sha256")
+                        or compiled.get("effective_prompt_sha256") != _sha256(files[f"registry/profiles/{profile_id}/SOUL.md"])):
+                    raise ValueError
+            for profile_id, row in rows_by_id.items():
+                if profile_id not in {"hermes", "orchestrator"} and (row.get("overlay_id") is not None
+                                                                       or row.get("overlay_sha256") is not None):
+                    raise ValueError
+            compiled_bundle = overlay.get("compiled_bundle")
+            if (not isinstance(compiled_bundle, dict)
+                    or compiled_bundle.get("source_path") != "bundles/hermes-runtime.yaml"
+                    or compiled_bundle.get("source_document_sha256") != source_declarations["bundles/hermes-runtime.yaml"]
+                    or compiled_bundle.get("effective_archive_path") not in files
+                    or _sha256(files[compiled_bundle["effective_archive_path"]]) != compiled_bundle.get("effective_sha256")):
+                raise ValueError
             if manifest["plugin"].get("state") != "not-imported":
                 raise ValueError
             return manifest, files
@@ -457,8 +596,85 @@ def _rename_noreplace(source: Path, destination: Path) -> None:
         raise OSError(error, os.strerror(error), str(destination))
 
 
+def _exchange_directories(left: Path, right: Path) -> None:
+    """Atomically exchange two directory names on the same filesystem."""
+    import ctypes
+    import errno
+    import sys
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform.startswith("linux") and hasattr(libc, "renameat2"):
+        function = libc.renameat2
+        function.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+        function.restype = ctypes.c_int
+        result = function(-100, os.fsencode(left), -100, os.fsencode(right), 2)
+    else:
+        raise ManualJarvisSkillsError("atomic owned-generation exchange is unavailable on this OS")
+    if result != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), str(right))
+
+
+def _owned_generation_journal(files: Mapping[str, bytes], artifact_sha256: str) -> bytes:
+    return _canonical_json({
+        "schema": 1,
+        "stage": "manual-owned-bundled-resources-import",
+        "artifact_sha256": artifact_sha256,
+        "source_revision": PINNED_REVISION,
+        "source_tree": PINNED_TREE,
+        "profile_source_id": PRIMARY_PROFILE,
+        "user_visible_profile": {"source_id": PRIMARY_PROFILE, "native_key": "default", "display_name": "Jarvis"},
+        "internal_profile_count": _BUNDLE_PROFILE_COUNT - 1,
+        "target_home_role": "jarvis-primary-home",
+        "members": [
+            {"path": f"{_GENERATION}/{name}", "sha256": _sha256(content), "size_bytes": len(content)}
+            for name, content in sorted(files.items())
+        ],
+    })
+
+
+def _verify_owned_generation(target: Path, files: Mapping[str, bytes], artifact_sha256: str) -> set[str]:
+    """Prove one complete generation against its exact artifact and ownership marker."""
+    info = _regular_owned(target, directory=True)
+    if info.st_nlink < 2 or stat.S_IMODE(info.st_mode) != 0o700:
+        raise ManualJarvisSkillsError("existing skill generation root permissions differ")
+    expected_journal = _owned_generation_journal(files, artifact_sha256)
+    marker = target / _OWNER_FILE
+    if _hash_regular_file(marker, max_bytes=2 * 1024 * 1024) != _sha256(expected_journal):
+        raise ManualJarvisSkillsError("existing skill generation is unowned or its ownership journal changed")
+    expected_files = set(files) | {_OWNER_FILE}
+    expected_dirs = {
+        "/".join(PurePosixPath(name).parts[:depth])
+        for name in files for depth in range(1, len(PurePosixPath(name).parts))
+    }
+    actual_files: set[str] = set()
+    actual_dirs: set[str] = set()
+    for base, dirs, names in os.walk(target, followlinks=False):
+        base_path = Path(base)
+        for dirname in dirs:
+            directory = base_path / dirname
+            directory_info = _regular_owned(directory, directory=True)
+            relative = directory.relative_to(target).as_posix()
+            if (directory_info.st_nlink < 2
+                    or stat.S_IMODE(directory_info.st_mode) not in {0o755, 0o775}):
+                raise ManualJarvisSkillsError("existing generation directory permissions differ")
+            actual_dirs.add(relative)
+        for filename in names:
+            candidate = base_path / filename
+            _regular_owned(candidate, directory=False)
+            actual_files.add(candidate.relative_to(target).as_posix())
+    if actual_files != expected_files or actual_dirs != expected_dirs:
+        raise ManualJarvisSkillsError("owned Resources generation contains missing or untracked files")
+    for name, content in files.items():
+        limit = _PACKAGE_MEMBER_LIMIT if name.startswith("registry/package/") else _MEMBER_LIMIT
+        if _hash_regular_file(target / name, max_bytes=limit) != _sha256(content):
+            raise ManualJarvisSkillsError("owned Resources generation member changed")
+    return actual_dirs
+
+
 def install_manual_jarvis_skills(
     archive_bytes: bytes, *, hermes_home: str | Path, expected_sha256: str,
+    replace_owned_from_archive: bytes | None = None,
+    replace_owned_from_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Atomically add one revision-namespaced skill generation to a user's Hermes home.
 
@@ -467,6 +683,14 @@ def install_manual_jarvis_skills(
     Run as the existing Hermes home owner, without sudo.
     """
     manifest, files = _read_artifact(archive_bytes, expected_sha256)
+    previous_manifest = previous_files = None
+    if replace_owned_from_archive is not None or replace_owned_from_sha256 is not None:
+        if replace_owned_from_sha256 != LEGACY_MATERIALIZED_ARTIFACT_SHA256:
+            raise ManualJarvisSkillsError("owned-generation migration source is not the single reviewed legacy artifact")
+        if not isinstance(replace_owned_from_archive, bytes):
+            raise ManualJarvisSkillsError("owned-generation migration archive is missing")
+        previous_manifest, previous_files = _read_artifact(
+            replace_owned_from_archive, replace_owned_from_sha256)
     home_input = Path(hermes_home)
     if not home_input.is_absolute():
         raise ManualJarvisSkillsError("Hermes home must be an explicit absolute path")
@@ -496,21 +720,8 @@ def install_manual_jarvis_skills(
             os.close(skills_fd)
         _regular_owned(skills_root, directory=True)
     target = skills_root / _GENERATION
-    journal_bytes = _canonical_json({
-        "schema": 1,
-        "stage": "manual-owned-bundled-resources-import",
-        "artifact_sha256": expected_sha256,
-        "source_revision": PINNED_REVISION,
-        "source_tree": PINNED_TREE,
-            "profile_source_id": PRIMARY_PROFILE,
-            "user_visible_profile": {"source_id": PRIMARY_PROFILE, "native_key": "default", "display_name": "Jarvis"},
-            "internal_profile_count": _BUNDLE_PROFILE_COUNT - 1,
-        "target_home_role": "jarvis-primary-home",
-        "members": [
-            {"path": f"{_GENERATION}/{name}", "sha256": _sha256(content), "size_bytes": len(content)}
-            for name, content in sorted(files.items())
-        ],
-    })
+    journal_bytes = _owned_generation_journal(files, expected_sha256)
+    migration_backup: Path | None = None
 
     try:
         target_info = target.lstat()
@@ -526,51 +737,57 @@ def install_manual_jarvis_skills(
         except FileNotFoundError:
             owner_digest = None
         if owner_digest != _sha256(journal_bytes):
-            raise ManualJarvisSkillsError("existing skill generation is unowned or its ownership journal changed")
-        expected_files = set(files) | {_OWNER_FILE}
-        actual_files: set[str] = set()
-        expected_directories = {
-            "/".join(PurePosixPath(name).parts[:depth])
-            for name in files for depth in range(1, len(PurePosixPath(name).parts))
-        }
-        actual_directories: set[str] = set()
-        for base, dirs, names in os.walk(target, followlinks=False):
-            base_path = Path(base)
-            for dirname in dirs:
-                directory_path = base_path / dirname
-                directory_info = _regular_owned(directory_path, directory=True)
-                relative_dir = directory_path.relative_to(target).as_posix()
-                if (directory_info.st_nlink < 2
-                        or stat.S_IMODE(directory_info.st_mode) not in {0o755, 0o775}):
-                    raise ManualJarvisSkillsError("existing generation directory permissions differ")
-                actual_directories.add(relative_dir)
-            for filename in names:
-                candidate = base_path / filename
-                _regular_owned(candidate, directory=False)
-                actual_files.add(candidate.relative_to(target).as_posix())
-        if actual_files != expected_files or actual_directories != expected_directories:
-            raise ManualJarvisSkillsError(
-                "owned Resources generation contains missing or untracked files; preserving it")
-        for name, content in files.items():
-            destination = target / name
-            member_limit = (_PACKAGE_MEMBER_LIMIT if name.startswith("registry/package/")
-                            else _MEMBER_LIMIT)
-            if _hash_regular_file(destination, max_bytes=member_limit) != _sha256(content):
-                raise ManualJarvisSkillsError("an owned skill changed after staging; preserving it as a user edit")
-        if any(stat.S_IMODE((target / relative).lstat().st_mode) == 0o775
-               for relative in actual_directories):
-            _repair_owned_generation_directory_modes(target, actual_directories)
-        return {
-            "state": "already-staged",
-            "materialized": True,
-            "discovered": False,
-            "artifact_sha256": expected_sha256,
-            "generation_path": str(target),
-            "skills": sorted(row["skill_id"] for row in manifest["skill_members"]),
-            "profiles_preserved_internal": sorted(row["source_id"] for row in manifest["profile_members"]),
-        }
+            if previous_manifest is None or previous_files is None or replace_owned_from_sha256 is None:
+                raise ManualJarvisSkillsError("existing skill generation is unowned or its ownership journal changed")
+            _verify_owned_generation(target, previous_files, replace_owned_from_sha256)
+            migration_backup = target
+        if migration_backup is None:
+            expected_files = set(files) | {_OWNER_FILE}
+            actual_files: set[str] = set()
+            expected_directories = {
+                "/".join(PurePosixPath(name).parts[:depth])
+                for name in files for depth in range(1, len(PurePosixPath(name).parts))
+            }
+            actual_directories: set[str] = set()
+            for base, dirs, names in os.walk(target, followlinks=False):
+                base_path = Path(base)
+                for dirname in dirs:
+                    directory_path = base_path / dirname
+                    directory_info = _regular_owned(directory_path, directory=True)
+                    relative_dir = directory_path.relative_to(target).as_posix()
+                    if (directory_info.st_nlink < 2
+                            or stat.S_IMODE(directory_info.st_mode) not in {0o755, 0o775}):
+                        raise ManualJarvisSkillsError("existing generation directory permissions differ")
+                    actual_directories.add(relative_dir)
+                for filename in names:
+                    candidate = base_path / filename
+                    _regular_owned(candidate, directory=False)
+                    actual_files.add(candidate.relative_to(target).as_posix())
+            if actual_files != expected_files or actual_directories != expected_directories:
+                raise ManualJarvisSkillsError(
+                    "owned Resources generation contains missing or untracked files; preserving it")
+            for name, content in files.items():
+                destination = target / name
+                member_limit = (_PACKAGE_MEMBER_LIMIT if name.startswith("registry/package/")
+                                else _MEMBER_LIMIT)
+                if _hash_regular_file(destination, max_bytes=member_limit) != _sha256(content):
+                    raise ManualJarvisSkillsError("an owned skill changed after staging; preserving it as a user edit")
+            if any(stat.S_IMODE((target / relative).lstat().st_mode) == 0o775
+                   for relative in actual_directories):
+                _repair_owned_generation_directory_modes(target, actual_directories)
+            return {
+                "state": "already-staged",
+                "materialized": True,
+                "discovered": False,
+                "artifact_sha256": expected_sha256,
+                "generation_path": str(target),
+                "skills": sorted(row["skill_id"] for row in manifest["skill_members"]),
+                "profiles_preserved_internal": sorted(row["source_id"] for row in manifest["profile_members"]),
+            }
 
     temp = Path(tempfile.mkdtemp(prefix=".jarvis-resources-skills-", dir=home_input))
+    exchanged = False
+    preserve_temp = False
     try:
         for relative, content in sorted(files.items()):
             path = PurePosixPath(relative)
@@ -621,17 +838,40 @@ def install_manual_jarvis_skills(
             os.fsync(temp_fd)
         finally:
             os.close(temp_fd)
-        _rename_noreplace(temp, target)
+        if migration_backup is not None:
+            assert previous_files is not None and replace_owned_from_sha256 is not None
+            # Re-prove the old exact tree immediately before its one atomic
+            # exchange. The previous tree moves outside skills/ in the same
+            # syscall, so Hermes never sees two copies of the 396 skill IDs.
+            _verify_owned_generation(target, previous_files, replace_owned_from_sha256)
+            _exchange_directories(target, temp)
+            exchanged = True
+            preserve_temp = True
+            try:
+                _verify_owned_generation(target, files, expected_sha256)
+                _verify_owned_generation(temp, previous_files, replace_owned_from_sha256)
+            except BaseException:
+                try:
+                    _exchange_directories(target, temp)
+                    exchanged = False
+                    preserve_temp = False
+                except BaseException:
+                    # Keep both complete generations in place for explicit
+                    # recovery rather than risk deleting either one.
+                    pass
+                raise
+        else:
+            _rename_noreplace(temp, target)
         skills_fd = os.open(skills_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
         try:
             os.fsync(skills_fd)
         finally:
             os.close(skills_fd)
     except BaseException:
-        if temp.exists() and not temp.is_symlink():
+        if temp.exists() and not temp.is_symlink() and not preserve_temp:
             shutil.rmtree(temp)
         raise
-    return {
+    result = {
         "state": "staged",
         "materialized": True,
         "discovered": False,
@@ -641,11 +881,17 @@ def install_manual_jarvis_skills(
         "profiles_preserved_internal": sorted(row["source_id"] for row in manifest["profile_members"]),
         "next_step": "Run the pinned Hermes skill list/view probe; qualify model-selected use and non-skill integrations separately.",
     }
+    if exchanged:
+        result["previous_generation_backup"] = str(temp)
+        result["previous_artifact_sha256"] = replace_owned_from_sha256
+    return result
 
 
 def install_and_verify_manual_jarvis_skills(
     archive_bytes: bytes, *, hermes_home: str | Path, expected_sha256: str,
     hermes_source: str | Path, python: str | Path,
+    replace_owned_from_archive: bytes | None = None,
+    replace_owned_from_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Stage bundled skills/internal identities, then prove Hermes reads the skills.
 
@@ -654,8 +900,28 @@ def install_and_verify_manual_jarvis_skills(
     but does not issue a discovery receipt or claim functional tool effects.
     """
     staged = install_manual_jarvis_skills(
-        archive_bytes, hermes_home=hermes_home, expected_sha256=expected_sha256)
+        archive_bytes, hermes_home=hermes_home, expected_sha256=expected_sha256,
+        replace_owned_from_archive=replace_owned_from_archive,
+        replace_owned_from_sha256=replace_owned_from_sha256)
     manifest, package_files = _read_artifact(archive_bytes, expected_sha256)
+    previous_manifest = previous_files = None
+    if staged.get("previous_generation_backup") is not None:
+        if replace_owned_from_archive is None or replace_owned_from_sha256 is None:
+            raise ManualJarvisSkillsError("replacement backup receipt has no verified source artifact")
+        previous_manifest, previous_files = _read_artifact(
+            replace_owned_from_archive, replace_owned_from_sha256)
+    def rollback_previous_generation() -> None:
+        backup_value = staged.get("previous_generation_backup")
+        if backup_value is None or previous_files is None or replace_owned_from_sha256 is None:
+            return
+        home = Path(hermes_home)
+        target = home / "skills" / _GENERATION
+        backup = Path(backup_value)
+        _verify_owned_generation(target, package_files, expected_sha256)
+        _verify_owned_generation(backup, previous_files, replace_owned_from_sha256)
+        _exchange_directories(target, backup)
+        _verify_owned_generation(target, previous_files, replace_owned_from_sha256)
+        _verify_owned_generation(backup, package_files, expected_sha256)
     skill_ids = tuple(sorted(row["skill_id"] for row in manifest["skill_members"]))
     try:
         from .native_install import NativeInstallError, discover_and_load_selected
@@ -669,19 +935,28 @@ def install_and_verify_manual_jarvis_skills(
             timeout=300.0,
         )
     except (NativeInstallError, OSError, ValueError) as exc:
-        # Avoid returning local exception text or path/environment details.
+        try:
+            rollback_previous_generation()
+        except Exception:
+            raise ManualJarvisSkillsError(
+                "native discovery failed and owned generation rollback needs explicit recovery"
+            ) from None
         raise ManualJarvisSkillsError(
             "Hermes did not discover and load the staged Jarvis Resources skills; "
-            "the owned files remain staged for verification retry"
+            "the prior owned generation was restored when this was an upgrade"
         ) from None
     if (receipt.hermes_revision != PINNED_HERMES_REVISION
             or not receipt.discovered_profile or not receipt.profile_identity_loaded
             or set(receipt.loaded_skills) != set(skill_ids)
             or any(receipt.content_digests.get(f"skill:{name}") !=
                    _sha256(package_files[f"skills/{name}/SKILL.md"]) for name in skill_ids)):
-        raise ManualJarvisSkillsError(
-            "Hermes discovery receipt did not cover the pinned primary Resources closure"
-        )
+        try:
+            rollback_previous_generation()
+        except Exception:
+            raise ManualJarvisSkillsError(
+                "Hermes discovery receipt failed and owned generation rollback needs explicit recovery"
+            ) from None
+        raise ManualJarvisSkillsError("Hermes discovery receipt did not cover the pinned primary Resources closure")
     loaded_skill_digests = [
         {"skill_id": name, "sha256": receipt.content_digests[f"skill:{name}"]}
         for name in sorted(skill_ids)
@@ -714,6 +989,8 @@ def install_and_verify_manual_jarvis_skills(
                 receipt.content_digests.get("profile:default") ==
                 _sha256(package_files["registry/profiles/hermes/SOUL.md"])),
         },
+        "effective_overlay": manifest["effective_overlay"],
+        "previous_generation_backup": staged.get("previous_generation_backup"),
         "functional": False,
         "enabled": False,
         "target_verified": False,
@@ -727,7 +1004,8 @@ def install_and_verify_manual_jarvis_skills(
 
 
 def install_bundled_resources(*, hermes_home: str | Path, hermes_source: str | Path,
-                              python: str | Path) -> dict[str, Any]:
+                              python: str | Path, replace_owned_from_archive: bytes | None = None,
+                              replace_owned_from_sha256: str | None = None) -> dict[str, Any]:
     """Build from the checked-in offline bundle and install through the owned importer."""
     artifact = build_manual_jarvis_skills_artifact()
     return install_and_verify_manual_jarvis_skills(
@@ -736,6 +1014,8 @@ def install_bundled_resources(*, hermes_home: str | Path, hermes_source: str | P
         expected_sha256=_sha256(artifact),
         hermes_source=hermes_source,
         python=python,
+        replace_owned_from_archive=replace_owned_from_archive,
+        replace_owned_from_sha256=replace_owned_from_sha256,
     )
 
 
@@ -782,6 +1062,7 @@ def main(argv: list[str] | None = None) -> int:
     bundled.add_argument("--home", required=True)
     bundled.add_argument("--hermes-source", required=True)
     bundled.add_argument("--python", required=True)
+    bundled.add_argument("--replace-owned-from-sha256")
     args = parser.parse_args(argv)
     try:
         if args.command == "build":
@@ -798,10 +1079,20 @@ def main(argv: list[str] | None = None) -> int:
                 hermes_source=args.hermes_source, python=args.python,
             )
         else:
+            previous_archive = None
+            previous_sha256 = args.replace_owned_from_sha256
+            if previous_sha256 is not None:
+                if previous_sha256 != LEGACY_MATERIALIZED_ARTIFACT_SHA256:
+                    raise ManualJarvisSkillsError("only the exact enrolled legacy generation can be migrated")
+                previous_archive = sys.stdin.buffer.read(_ARTIFACT_LIMIT + 1)
+                if len(previous_archive) > _ARTIFACT_LIMIT:
+                    raise ManualJarvisSkillsError("previous owned artifact exceeds its bounded input")
             result = install_bundled_resources(
                 hermes_home=args.home,
                 hermes_source=args.hermes_source,
                 python=args.python,
+                replace_owned_from_archive=previous_archive,
+                replace_owned_from_sha256=previous_sha256,
             )
         if args.command != "build":
             print(json.dumps(result, sort_keys=True))
