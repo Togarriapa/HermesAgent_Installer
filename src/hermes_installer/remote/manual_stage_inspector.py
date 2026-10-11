@@ -454,9 +454,11 @@ def _unit_props(unit: str, *, deadline: float) -> dict[str, str]:
         "--property=LoadState", "--property=ActiveState", "--property=SubState",
         "--property=MainPID", "--property=ControlGroup", "--property=FragmentPath",
         "--property=User", "--property=Group", "--property=DynamicUser",
-        "--property=SupplementaryGroups", "--property=InvocationID"), deadline=deadline, maximum=8192))
+        "--property=SupplementaryGroups", "--property=DropInPaths",
+        "--property=InvocationID"), deadline=deadline, maximum=8192))
     if (props.get("LoadState") != "loaded" or props.get("ActiveState") != "active"
-            or props.get("SubState") != "running" or not props.get("InvocationID")):
+            or props.get("SubState") != "running" or props.get("DropInPaths") != ""
+            or not props.get("InvocationID")):
         raise _deny()
     return props
 

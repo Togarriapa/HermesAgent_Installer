@@ -160,7 +160,7 @@ class ManualStageInspectorIngressTests(unittest.TestCase):
             "LoadState": "loaded", "ActiveState": "active", "SubState": "running",
             "MainPID": "321", "ControlGroup": "/system.slice/hermes-jarvis-mvp-tunnel.service",
             "FragmentPath": str(inspector.TUNNEL_UNIT_PATH), "DynamicUser": "yes",
-            "SupplementaryGroups": "981", "InvocationID": "invocation",
+            "SupplementaryGroups": "981", "DropInPaths": "", "InvocationID": "invocation",
         }
         good_proc = (99, 63324, 63324, "918273", inspector.TUNNEL_ARGV)
         common = (
@@ -212,6 +212,19 @@ class ManualStageInspectorIngressTests(unittest.TestCase):
         self.assertIn("RuntimeDirectoryMode=0750", gateway)
         self.assertEqual(tunnel.count("SupplementaryGroups=981"), 1)
         self.assertIn("DynamicUser=yes", tunnel)
+
+    def test_fixed_unit_readback_rejects_any_drop_in_override(self):
+        props = ("LoadState=loaded\nActiveState=active\nSubState=running\nMainPID=321\n"
+                 "ControlGroup=/system.slice/hermes-jarvis-mvp-tunnel.service\n"
+                 "FragmentPath=/etc/systemd/system/hermes-jarvis-mvp-tunnel.service\n"
+                 "DynamicUser=yes\nSupplementaryGroups=981\nDropInPaths=\nInvocationID=invocation\n")
+        with mock.patch.object(inspector, "_run_fixed", return_value=props.encode("ascii")):
+            self.assertEqual(inspector._unit_props(inspector.TUNNEL_UNIT,
+                deadline=time.monotonic() + 2)["DropInPaths"], "")
+        overridden = props.replace("DropInPaths=\n", "DropInPaths=/run/systemd/system/tunnel.service.d/override.conf\n")
+        with mock.patch.object(inspector, "_run_fixed", return_value=overridden.encode("ascii")):
+            with self.assertRaises(inspector.StageInspectionDenied):
+                inspector._unit_props(inspector.TUNNEL_UNIT, deadline=time.monotonic() + 2)
 
 
 if __name__ == "__main__":
