@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import hashlib
 import stat
+import time
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -36,7 +37,7 @@ def _proof(*, netns: int, pid: int = 4242) -> RemoteOriginKernelProof:
         pid_starttime_ticks=9876, executable_device=1, executable_inode=2,
         executable_sha256="a" * 64, cgroup_id="0::/system.slice/colibri.service",
         mount_namespace_inode=42, network_namespace_inode=netns,
-        pidfd_registry_handle="held-pidfd-1", expires_monotonic=999999.0,
+        pidfd_registry_handle="held-pidfd-1", expires_monotonic=time.monotonic() + 120,
     )
 
 
@@ -82,6 +83,7 @@ def test_tcp_parser_accepts_only_exact_loopback_listener() -> None:
 
 def test_listener_observation_requires_exact_process_fd_cgroup_uid_and_netns(tmp_path: Path,
                                                                              monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise procfs parsing only; the fabricated proof is not root-issuer evidence."""
     monkeypatch.setattr(os, "geteuid", lambda: 0)
     proof = _proof(netns=(tmp_path / "netns").stat().st_ino if (tmp_path / "netns").exists() else 0)
     table = _table("0: 0100007F:1F40 00000000:0000 0A 0:0 00:00000000 0 0 0 4567")
