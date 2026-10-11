@@ -417,8 +417,8 @@
       "artifact_id": "installer-module:hermes_installer.root_setup",
       "path": "lib/python/hermes_installer/root_setup.py",
       "role": "module",
-      "sha256": "0b7d7203b41d3496ebb14d6997fa3e3aaef58aafa98bb8c498004aaf31960616",
-      "size_bytes": 71543
+      "sha256": "39aa16246027a37f7851d9a0400da9d05ec24d3dd36a1bf2785e688cbf2be8b9",
+      "size_bytes": 73270
     },
     {
       "artifact_id": "installer-native-boundary-module-v137",
