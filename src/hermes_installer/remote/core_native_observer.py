@@ -19,6 +19,7 @@ import threading
 import weakref
 import base64
 import time
+import os
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,7 +27,8 @@ from pathlib import PurePosixPath
 from typing import Any, Callable, Mapping
 
 
-CORE_NATIVE_OBSERVER_SOCKET = Path("/run/hermes-installer/core-native-observer.sock")
+CORE_NATIVE_OBSERVER_SOCKET = Path("/run/hermes-jarvis-native-observer/native-observer.sock")
+_CORE_NATIVE_OBSERVER_GROUP = 1000
 MAX_FRAME = 256 * 1024
 _HASH = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
 _OPAQUE = re.compile(r"[A-Za-z0-9_-]{32,128}\Z", re.ASCII)
@@ -199,6 +201,8 @@ class RootSelectedInternalProfileDispatchClaim:
 
     claim_handle: str
     owner_turn_handle: str
+    gateway_turn_id: str
+    owner_subject_sha256: str
     observed_call_handle: str
     core_generation: str
     session_id: str
@@ -226,6 +230,8 @@ class RootSelectedInternalProfileDispatchClaim:
     def __post_init__(self) -> None:
         if (any(not _OPAQUE.fullmatch(value or "") for value in (
                     self.claim_handle, self.owner_turn_handle, self.observed_call_handle))
+                or not _ID.fullmatch(self.gateway_turn_id or "")
+                or not _HASH.fullmatch(self.owner_subject_sha256 or "")
                 or not _HASH.fullmatch(self.core_generation or "")
                 or not _ID.fullmatch(self.session_id or "") or not _ID.fullmatch(self.turn_id or "")
                 or not _ID.fullmatch(self.tool_call_id or "") or not _ID.fullmatch(self.tool_name or "")
@@ -275,7 +281,7 @@ class CoreNativeObservationClient:
 
     def _rpc(self, operation: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         if operation not in {
-            "register-owner-turn", "register-attempt", "register-response",
+            "register-attempt", "register-response",
             "register-tool-call", "prepare-dispatch", "consume-dispatch",
         }:
             raise CoreNativeObservationUnavailable("observer operation is not supported")
@@ -287,8 +293,15 @@ class CoreNativeObservationClient:
         if len(raw) > MAX_FRAME:
             raise CoreNativeObservationUnavailable("observer request exceeded its bound")
         try:
+            parent_info = self._socket_path.parent.lstat()
             info = self._socket_path.lstat()
-            if not stat.S_ISSOCK(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) not in {0o600, 0o660}:
+            if (not stat.S_ISDIR(parent_info.st_mode) or parent_info.st_uid != 0
+                    or parent_info.st_gid != _CORE_NATIVE_OBSERVER_GROUP
+                    or stat.S_IMODE(parent_info.st_mode) != 0o750
+                    or not stat.S_ISSOCK(info.st_mode) or info.st_uid != 0
+                    or info.st_gid != _CORE_NATIVE_OBSERVER_GROUP
+                    or stat.S_IMODE(info.st_mode) != 0o660
+                    or info.st_gid not in {*os.getgroups(), os.getegid()}):
                 raise ValueError("root observer socket custody differs")
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
                 conn.settimeout(self._timeout)
@@ -312,37 +325,6 @@ class CoreNativeObservationClient:
             raise
         except Exception:
             raise CoreNativeObservationUnavailable("protected core observer is unavailable") from None
-
-    def register_owner_turn(self, *, access_jwt: str, ingress_nonce: str,
-                            ingress_proof_sha256: str, core_generation: str,
-                            conversation_id: str, gateway_turn_id: str, session_id: str,
-                            prompt_sha256: str) -> OwnerTurnHandle:
-        """Register an accepted owner turn before prompt.submit; JWT is transient only.
-
-        ``gateway_turn_id`` is server-owned ingress identity, not a predicted Hermes
-        turn ID. The root binds it to the actual native turn when the protected core
-        observation reports that turn; no native ID is invented by this producer.
-        """
-        if not isinstance(access_jwt, str) or not 1 <= len(access_jwt) <= 16_384:
-            raise CoreNativeObservationUnavailable("current Access assertion is unavailable")
-        payload = {
-            "access_jwt": access_jwt,
-            "ingress_nonce": _require_id(ingress_nonce, "ingress nonce"),
-            "ingress_proof_sha256": _require_hash(ingress_proof_sha256, "ingress proof"),
-            "core_generation": _require_hash(core_generation, "core generation"),
-            "conversation_id": _require_id(conversation_id, "conversation ID"),
-            "gateway_turn_id": _require_id(gateway_turn_id, "gateway turn ID"),
-            "session_id": _require_id(session_id, "native session ID"),
-            "prompt_sha256": _require_hash(prompt_sha256, "prompt digest"),
-        }
-        row = self._rpc("register-owner-turn", payload)
-        try:
-            return OwnerTurnHandle(row["owner_turn_handle"], row["core_generation"],
-                                   row["session_id"], row["conversation_id"],
-                                   row["gateway_turn_id"], row["prompt_sha256"],
-                                   row["expires_monotonic"])
-        except (KeyError, TypeError, ValueError):
-            raise CoreNativeObservationUnavailable("root owner-turn receipt is malformed") from None
 
     def register_attempt(self, *, session_id: str, turn_id: str, api_request_id: str,
                          provider: str, model: str, base_url: str, api_mode: str,
@@ -430,7 +412,8 @@ class CoreNativeObservationClient:
         row = self._rpc("consume-dispatch", {"claim_handle": claim_handle})
         claim = row.get("dispatch_claim")
         required = {
-            "schema", "claim_handle", "owner_turn_handle", "observed_call_handle",
+            "schema", "claim_handle", "owner_turn_handle", "gateway_turn_id",
+            "owner_subject_sha256", "observed_call_handle",
             "core_generation", "session_id", "turn_id", "tool_call_id", "tool_name",
             "arguments_sha256", "account_fingerprint", "profile_id", "source_revision",
             "source_manifest", "source_manifest_sha256", "prompt_b64", "prompt_sha256",
@@ -463,6 +446,8 @@ class CoreNativeObservationClient:
                 raise ValueError
             return RootSelectedInternalProfileDispatchClaim(
                 claim_handle=claim["claim_handle"], owner_turn_handle=claim["owner_turn_handle"],
+                gateway_turn_id=claim["gateway_turn_id"],
+                owner_subject_sha256=claim["owner_subject_sha256"],
                 observed_call_handle=claim["observed_call_handle"],
                 core_generation=claim["core_generation"], session_id=claim["session_id"],
                 turn_id=claim["turn_id"], tool_call_id=claim["tool_call_id"],

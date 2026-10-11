@@ -63,3 +63,12 @@ def test_credential_pool_or_api_bearer_never_counts_as_selected_subscription():
             "api_key": "not-a-real-token", "source": "credential_pool",
             "auth_mode": "api_key",
         })
+
+
+def test_owner_turn_registration_is_not_available_from_core_worker_socket(tmp_path: Path):
+    client = CoreNativeObservationClient(socket_path=tmp_path / "unused.sock")
+    # Owner turns are accepted only by the inspector's authenticated gateway op,
+    # which independently validates Access and consumes the one-use ingress proof.
+    # The native worker socket cannot mint owner authority from caller metadata.
+    with pytest.raises(CoreNativeObservationUnavailable):
+        client._rpc("register-owner-turn", {"gateway_turn_id": "caller-selected"})
