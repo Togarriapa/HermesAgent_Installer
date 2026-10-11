@@ -137,7 +137,7 @@ class FakeRootClaimSource(OneShotIssuer):
     def admit_selected_expert_child(self, *, resources_claim, child, source, goal):
         assert resources_claim is self.claim
         self.events.append("admit:" + source.profile_id)
-        assert child.valid_tool_names <= {"web_search", "web_extract", "todo_list", "skills_list", "skill_view"}
+        assert child.valid_tool_names == {"web_search", "web_extract", "skills_list", "skill_view"}
         assert "delegate_task" not in child.valid_tool_names
         self.admissions.append((source.profile_id, goal, child))
         return FakeAuthorization()
@@ -160,7 +160,7 @@ def install_native_child_fakes(monkeypatch):
 
     def build_native_child(**kwargs):
         child = SimpleNamespace(
-            valid_tool_names={"web_search", "web_extract", "todo_list", "skills_list", "skill_view"},
+            valid_tool_names={"web_search", "web_extract", "skills_list", "skill_view"},
             source=kwargs["source"], parent=kwargs["parent_agent"], mode=kwargs["mode"],
         )
         children.append((kwargs, child))
@@ -371,8 +371,9 @@ def test_selected_plan_cannot_be_replayed_with_a_different_goal(native_registry,
 
 def test_missing_parent_and_caller_authority_fields_are_denied_without_dispatch(native_registry):
     parent = Parent()
+    issuer = OneShotIssuer(current_claim(parent))
     context = NativeContext(native_registry)
-    register_resources_delegate(context, OneShotIssuer(current_claim(parent)))
+    register_resources_delegate(context, issuer)
     handler = context.registration[3]
 
     no_parent = json.loads(handler({"goal": "bounded task"}))
