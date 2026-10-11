@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -131,6 +132,14 @@ def _frame(kind, payload):
     return SimpleNamespace(type=1, data=payload, kind=kind)
 
 
+def _resume_reply(frame):
+    stored_id = frame["params"]["session_id"]
+    return _frame("rpc", json.dumps({
+        "jsonrpc": "2.0", "id": frame["id"],
+        "result": {"session_id": "runtime-a", "resumed": stored_id},
+    }))
+
+
 def test_stream_filters_to_current_session_text_and_real_terminal_result():
     client = CoreRpcClient(token_file=Path("/private/fake/token"))
     ws_types = SimpleNamespace(CLOSED=2, CLOSE=3, ERROR=4, TEXT=1)
@@ -145,6 +154,9 @@ def test_stream_filters_to_current_session_text_and_real_terminal_result():
     async def collect():
         async def send_and_set_frames(frame):
             await original_send(frame)
+            if frame["method"] == "session.resume":
+                ws.frames = [_resume_reply(frame)]
+                return
             request_id = frame["id"]
             ws.frames = [
                 _frame("rpc", '{"jsonrpc":"2.0","id":"' + request_id
@@ -182,6 +194,9 @@ def test_final_only_response_is_projected_as_text_before_success():
 
     async def send_with_final_only_response(frame):
         await original_send(frame)
+        if frame["method"] == "session.resume":
+            ws.frames = [_resume_reply(frame)]
+            return
         request_id = frame["id"]
         ws.frames = [
             _frame("rpc", '{"jsonrpc":"2.0","id":"' + request_id
@@ -217,6 +232,9 @@ def test_backend_failure_or_interrupt_never_becomes_success(status, expected):
 
     async def send_terminal(frame):
         await original_send(frame)
+        if frame["method"] == "session.resume":
+            ws.frames = [_resume_reply(frame)]
+            return
         request_id = frame["id"]
         ws.frames = [
             _frame("rpc", '{"jsonrpc":"2.0","id":"' + request_id
@@ -248,6 +266,9 @@ def test_final_text_mismatch_does_not_emit_a_false_success():
 
     async def send_mismatched_final(frame):
         await original_send(frame)
+        if frame["method"] == "session.resume":
+            ws.frames = [_resume_reply(frame)]
+            return
         request_id = frame["id"]
         ws.frames = [
             _frame("rpc", '{"jsonrpc":"2.0","id":"' + request_id
@@ -282,6 +303,9 @@ def test_stream_eof_without_backend_terminal_is_never_success():
 
     async def send_and_set_frames(frame):
         await original_send(frame)
+        if frame["method"] == "session.resume":
+            ws.frames = [_resume_reply(frame)]
+            return
         request_id = frame["id"]
         ws.frames = [
             _frame("rpc", '{"jsonrpc":"2.0","id":"' + request_id
