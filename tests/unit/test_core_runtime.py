@@ -462,7 +462,7 @@ def test_root_native_readback_checks_current_loader_results_against_owned_bytes(
     payload["digests"]["profile:default"] = "b" * 64
     receipt = core._root_native_readback(manifest, files, active_prompt)
     assert receipt["loaded_skill_count"] == 396
-    assert receipt["active_primary_prompt_sha256"] == expected_digests["profile:default"]
+    assert receipt["active_primary_prompt_sha256"] == hashlib.sha256(active_prompt).hexdigest()
     assert receipt["native_loaded_primary_prompt_sha256"] == "b" * 64
 
     payload["loaded"] = skills[:-1]
