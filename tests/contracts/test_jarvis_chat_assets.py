@@ -251,7 +251,7 @@ class JarvisChatAssetTests(unittest.TestCase):
                 "\n  async function reconcileCompletedTurn(", 1)[0]
         reconcile = "async function reconcileCompletedTurn(" + client.split(
             "async function reconcileCompletedTurn(", 1)[1].split(
-                "\n  function startHeartbeat()", 1)[0]
+                "\n  function startHeartbeat(", 1)[0]
         harness = r'''const assert = require("node:assert/strict");
 const API = "/chat/api";
 let request, activeTurnId = "old-success", conversationId = "conversation";
