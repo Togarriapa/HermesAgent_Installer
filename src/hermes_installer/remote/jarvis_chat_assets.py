@@ -90,6 +90,7 @@ _HTML = '''<!doctype html>
             <label class="visually-hidden" for="message-input">Message Jarvis</label>
             <textarea id="message-input" name="message" rows="1" maxlength="8000"
               placeholder="Message Jarvis…" autocomplete="off" autocapitalize="sentences"
+              inputmode="text" autocorrect="on" spellcheck="true"
               enterkeyhint="send" aria-describedby="composer-hint"></textarea>
             <div class="composer-actions">
               <span class="composer-hint" id="composer-hint">Enter to send · Shift + Enter for a new line</span>
@@ -145,6 +146,7 @@ _HTML = '''<!doctype html>
           <h3 class="voice-group-title">Speech output</h3>
           <label class="voice-choice" id="speech-output-row" hidden><input id="speech-output" type="checkbox"><span><strong>Read completed replies aloud on this page</strong><small>Uses voices available from your browser or operating system; selected voices may use their platform speech service. No separate Jarvis TTS provider is used. Replies are spoken only after Jarvis finishes.</small></span></label>
           <label class="voice-choice voice-select-row" id="speech-voice-row" hidden><span><strong>Speech voice</strong><select id="speech-voice" aria-label="Speech voice"></select></span></label>
+          <p class="voice-unavailable" id="speech-voice-status" role="status" aria-live="polite" hidden></p>
           <p class="voice-unavailable" id="speech-output-unavailable" hidden></p>
           <p class="voice-unavailable" id="voice-settings-status" role="status" aria-live="polite" hidden></p>
         </section>
@@ -355,6 +357,17 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     byId("voice-settings-status").textContent = message;
     byId("voice-settings-status").hidden = !message;
   }
+  function updateSpeechVoiceStatus() {
+    const status = byId("speech-voice-status");
+    if (!synthesisSupported) { status.hidden = true; return; }
+    const select = byId("speech-voice");
+    const voiceCount = select.options.length;
+    const selected = select.selectedOptions[0];
+    status.textContent = voiceCount
+      ? `${voiceCount} selectable browser voice${voiceCount === 1 ? "" : "s"}. ${selected ? `Selected: ${selected.textContent}.` : "The browser default voice is selected."} Read-aloud is ${byId("speech-output").checked ? "on" : "off"}.`
+      : "Browser speech output is available, but no selectable voices are currently reported. Read-aloud will use the browser default voice.";
+    status.hidden = false;
+  }
   function stopRecognition(message = "") {
     const current = recognition;
     recognition = null;
@@ -452,6 +465,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
         }
         byId("speech-voice-row").hidden = select.options.length === 0;
         if ([...select.options].some((option) => option.value === previous)) select.value = previous;
+        updateSpeechVoiceStatus();
       };
       refreshVoices();
       window.speechSynthesis.onvoiceschanged = refreshVoices;
@@ -1088,8 +1102,12 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   });
   byId("speech-output").addEventListener("change", (event) => {
     if (!event.currentTarget.checked) stopSpeech("Read-aloud is off.");
+    updateSpeechVoiceStatus();
   });
-  byId("speech-voice").addEventListener("change", () => stopSpeech("Speech voice changed."));
+  byId("speech-voice").addEventListener("change", () => {
+    stopSpeech("Speech voice changed.");
+    updateSpeechVoiceStatus();
+  });
   ui.toggle.addEventListener("click", () => setPanel(ui.panel.dataset.open !== "true"));
   ui.close.addEventListener("click", () => setPanel(false));
   ui.scrim.addEventListener("click", () => setPanel(false));

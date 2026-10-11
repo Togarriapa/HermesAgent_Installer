@@ -94,6 +94,10 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('ui.speechStop.disabled = false', client)
 
     def test_assistant_hud_reflects_real_chat_and_voice_lifecycle(self):
+        _content_type, page = reviewed_chat_asset("/chat")
+        source = page.decode("utf-8")
+        self.assertIn('inputmode="text" autocorrect="on" spellcheck="true"', source)
+        self.assertIn('id="speech-voice-status" role="status" aria-live="polite"', source)
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
         client = script.decode("utf-8")
         for state in ("checking", "ready", "listening", "busy", "speaking", "error"):
@@ -103,6 +107,9 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('setAssistantState("listening", "Listening once · review before sending")', client)
         self.assertIn('setAssistantState("speaking", "Reading the completed reply aloud")', client)
         self.assertIn('setAssistantState("error", "Needs attention")', client)
+        self.assertIn("function updateSpeechVoiceStatus()", client)
+        self.assertIn("no selectable voices are currently reported", client)
+        self.assertIn("window.speechSynthesis.onvoiceschanged = refreshVoices", client)
 
     def test_only_exact_reviewed_asset_routes_are_available(self):
         expected = {
