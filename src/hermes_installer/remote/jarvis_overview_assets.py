@@ -92,6 +92,7 @@ _MOUNT = r"""function mount(container, api) {
     $('[data-duration-basis]').textContent = duration.basis || 'Elapsed-time basis unavailable.';
     const durationRows = $('[data-duration-rows]'); const durationBars = $('[data-duration-bars]'); durationRows.replaceChildren(); durationBars.replaceChildren();
     const valid = samples.filter(item => item && Number.isSafeInteger(item.durationMs) && item.durationMs >= 0 && typeof item.status === 'string');
+    const omitted = number(duration.omittedCount) || 0;
     const maxDuration = Math.max(1,...valid.map(item => item.durationMs));
     for (const sample of valid) {
       const elapsed = `${(sample.durationMs / 1000).toFixed(2)} s`;
@@ -100,7 +101,10 @@ _MOUNT = r"""function mount(container, api) {
       const bar = document.createElement('progress'); bar.max=maxDuration; bar.value=sample.durationMs; bar.setAttribute('aria-label',`${sample.status} turn elapsed ${elapsed}`);
       barRow.append(bar,node('span',elapsed)); durationBars.append(barRow);
     }
-    $('[data-duration-coverage]').textContent = valid.length ? `${valid.length} recent terminal turns shown${duration.partial ? '; more exist beyond this sample.' : '.'}` : 'No terminal turn durations were recorded in this window.';
+    $('[data-duration-coverage]').textContent = valid.length
+      ? `${valid.length} recent terminal turns shown${omitted ? `; ${omitted} omitted from this bounded measurement.` : '.'}`
+      : omitted ? `${omitted} terminal-turn duration records were omitted; no valid sample is available.`
+      : 'No terminal turn durations were recorded in this window.';
     const mission = data && data.missions || {};
     $('[data-missions]').textContent = mission.state === 'observed' ? format(number(mission.approvedPendingCount)) : 'Unavailable';
     const schedule = data && data.schedules || {};

@@ -80,11 +80,10 @@ def _aggregate(store: Any, subject: str, *, observed_at: datetime) -> dict[str, 
             "GROUP BY day,status", (owner, start, end)
         ).fetchall()
         duration_rows = db.execute(
-            "SELECT status,created,updated FROM turns WHERE owner=? "
+            "SELECT status,created,updated,COUNT(*) OVER () AS candidate_count FROM turns WHERE owner=? "
             "AND status IN ('completed','failed','cancelled') "
-            "AND created>=? AND created<? AND updated>=created "
-            "ORDER BY created DESC LIMIT ?",
-            (owner, start, end, _DURATION_SAMPLE_LIMIT + 1),
+            "AND created>=? AND created<? ORDER BY created DESC LIMIT ?",
+            (owner, start, end, _DURATION_SAMPLE_LIMIT),
         ).fetchall()
     for row in rows:
         amount = int(row["count"])
@@ -101,10 +100,13 @@ def _aggregate(store: Any, subject: str, *, observed_at: datetime) -> dict[str, 
             bucket["total"] += amount
             if status in {"completed", "failed", "cancelled"}:
                 bucket[status] += amount
-    more_durations = len(duration_rows) > _DURATION_SAMPLE_LIMIT
+    duration_candidate_count = int(duration_rows[0]["candidate_count"]) if duration_rows else 0
     durations = []
-    for row in duration_rows[:_DURATION_SAMPLE_LIMIT]:
-        created, updated = float(row["created"]), float(row["updated"])
+    for row in duration_rows:
+        try:
+            created, updated = float(row["created"]), float(row["updated"])
+        except (TypeError, ValueError, OverflowError):
+            continue
         elapsed = updated - created
         if (not math.isfinite(created) or not math.isfinite(updated)
                 or not math.isfinite(elapsed) or not 0 <= elapsed <= _TURN_DURATION_LIMIT_MS / 1000):
@@ -137,7 +139,8 @@ def _aggregate(store: Any, subject: str, *, observed_at: datetime) -> dict[str, 
             "duration": {
                 "basis": "turn accepted to terminal status; elapsed time includes queue time",
                 "sampleLimit": _DURATION_SAMPLE_LIMIT,
-                "partial": more_durations,
+                "partial": duration_candidate_count > len(durations),
+                "omittedCount": max(0, duration_candidate_count - len(durations)),
                 "samples": list(reversed(durations)),
             },
         },
@@ -158,7 +161,7 @@ def _mission_overview(store: Any, owner: str, *, observed_at: float) -> dict[str
                     "reason": "The owner mission approval projection is not installed.",
                 }
             count = db.execute(
-                "SELECT COUNT(*) FROM jarvis_mission_approvals AS a "
+                "SELECT COUNT(DISTINCT m.id) FROM jarvis_mission_approvals AS a "
                 "JOIN jarvis_missions AS m ON m.id=a.mission_id AND m.owner=a.owner "
                 "WHERE a.owner=? AND a.status='approved' AND a.expires>? "
                 "AND m.status='preview_pending' AND a.revision=m.revision "

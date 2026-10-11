@@ -60,6 +60,9 @@ def test_overview_reports_bounded_owner_counts_and_real_elapsed_durations(tmp_pa
     _insert_turn(store, owner=owner, conversation="owned", turn_id="failed",
                  status="failed", created=datetime(2026, 10, 10, 23, tzinfo=UTC).timestamp(),
                  updated=datetime(2026, 10, 10, 23, 0, 20, tzinfo=UTC).timestamp())
+    _insert_turn(store, owner=owner, conversation="owned", turn_id="long-duration",
+                 status="completed", created=datetime(2026, 10, 11, 9, tzinfo=UTC).timestamp(),
+                 updated=datetime(2026, 10, 11, 9, 10, 1, tzinfo=UTC).timestamp())
     _insert_turn(store, owner=owner, conversation="owned", turn_id="active",
                  status="running", created=datetime(2026, 10, 11, 11, tzinfo=UTC).timestamp(),
                  updated=datetime(2026, 10, 11, 11, tzinfo=UTC).timestamp())
@@ -83,17 +86,18 @@ def test_overview_reports_bounded_owner_counts_and_real_elapsed_durations(tmp_pa
     }
     assert statistics["observedAt"] == "2026-10-11T12:00:00Z"
     assert statistics["turnCounts"] == {
-        "total": 4, "active": 1, "completed": 1, "failed": 1,
+        "total": 5, "active": 1, "completed": 2, "failed": 1,
         "cancelled": 1, "unknown": 0,
     }
     duration = statistics["duration"]
     assert duration["sampleLimit"] == 100
-    assert duration["partial"] is False
+    assert duration["partial"] is True
+    assert duration["omittedCount"] == 1
     assert duration["basis"] == "turn accepted to terminal status; elapsed time includes queue time"
     assert [(item["status"], item["durationMs"]) for item in duration["samples"]] == [
         ("cancelled", 1250), ("failed", 20_000), ("completed", 10_000),
     ]
-    assert result["chat"]["turnCounts"]["total"] == 6
+    assert result["chat"]["turnCounts"]["total"] == 7
     assert result["resources"]["dispatch"]["count"] is None
     assert result["schedules"]["pausedCount"] is None
 
@@ -118,6 +122,7 @@ def test_overview_mission_count_requires_live_current_owner_approval(tmp_path):
             "INSERT INTO jarvis_mission_approvals VALUES(?,?,?,?,?,?,?,?)",
             [
                 ("valid", owner, "current", 2, "a" * 64, "source-2", "approved", observed.timestamp() + 30),
+                ("valid-repeat", owner, "current", 2, "a" * 64, "source-2", "approved", observed.timestamp() + 30),
                 ("expired", owner, "current", 2, "a" * 64, "source-2", "approved", observed.timestamp() - 1),
                 ("spent", owner, "current", 2, "a" * 64, "source-2", "spent", observed.timestamp() + 30),
                 ("stale", owner, "stale", 2, "b" * 64, "source-2", "approved", observed.timestamp() + 30),
