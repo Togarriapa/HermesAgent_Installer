@@ -443,7 +443,7 @@ CLASSIFIER
         self.assertIn('readAloud: uiPreferences.readAloud, language: uiPreferences.language, voiceURI: uiPreferences.voiceURI', client)
         self.assertNotIn('safe.consent', client)
         self.assertIn('function shouldReduceMotion()', client)
-        self.assertIn('uiPreferences.motion === "reduce" || window.matchMedia', client)
+        self.assertIn('uiPreferences.motion === "reduce" || (uiPreferences.motion !== "full" && window.matchMedia', client)
         _content_type, stylesheet = reviewed_chat_asset("/chat/assets/app.css")
         css = stylesheet.decode("utf-8")
         self.assertIn('html[data-jarvis-density="compact"]', css)
