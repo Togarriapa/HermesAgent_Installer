@@ -1852,3 +1852,10 @@ The first Orchestrator specialization SHALL use a separately root-enrolled curre
 #### Scenario: Inherited capability unavailable
 - **WHEN** the effective native child closure includes a capability not authorized by the selected parent policy
 - **THEN** dispatch denies without changing source prompts or widening permissions.
+
+### Requirement: Truthful native inventory and task schema
+The system SHALL distinguish configured maximum tool metadata from effective native grants. Source-selected dispatch SHALL bind the actual registered resources_delegate goal schema separately from the downstream native delegation schema.
+
+#### Scenario: Inventory ambiguity
+- **WHEN** native listing cannot establish effective authorization or availability
+- **THEN** the UI reports configured or unknown status and execution relies on separate current policy and native filtering.

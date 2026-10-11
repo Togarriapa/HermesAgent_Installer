@@ -58,3 +58,5 @@ HI-T266.2/RT-T266.3 mission detail: implement the closed consent-only approve en
 HI-T266.2/RB-T266.4 first mission proof joins exact approved task/plan/source to gateway turn and observed native arguments; derive genuine source grants and deny mismatches. Multi-team execution remains pending until each real policy/intersection is proven.
 
 RB-T266.4 first policy: issue and consume the separate current root-enrolled inherited-tool Orchestrator policy, accounting for native MCP/depth/blocked rules without altering207 source prompts. Prove one actual owner specialization and failure on changed parent policy/route/source on Pi; full Resources acceptance remains open.
+
+Within RT-T266.3/HI-T266.2, prioritize native Models/config CAS, authentic Logs/tool/usage, owned artifact/browser visibility, channel/webhook/pairing adapters, measured graphs and voice/device ports in the design owner packages. RB-T266.4 preserves full Resources dispatch/enrichment; VD-T266.5 requires Pi evidence for each useful increment. All obligations remain open.
