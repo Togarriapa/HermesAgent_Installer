@@ -177,7 +177,12 @@ async def _refresh_root_master_plan(service: JarvisChatService, request: Any,
             data = await data
         from .core_gateway_inspector import RootVerifiedJarvisMasterPlanData
         if (type(data) is not RootVerifiedJarvisMasterPlanData
-                or data.is_root_verified_data() is not True):
+                or data.is_root_verified_data() is not True
+                or data.schema != 1 or data.source_profile_id != "hermes"
+                or not isinstance(data.gateway_turn_id, str)
+                or not _ID_RE.fullmatch(data.gateway_turn_id)
+                or not isinstance(data.owner_turn_handle, str)
+                or not data.owner_turn_handle):
             return False
         selected = data.selected_source_ids
         if type(selected) is not tuple or len(selected) > _TEAM_LIMIT:
