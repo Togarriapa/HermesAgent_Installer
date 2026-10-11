@@ -19,12 +19,32 @@ from hermes_installer.remote.jarvis_activity import NativeActivityEvent
 from hermes_installer.remote.jarvis_chat import ChatPrincipal, JarvisChatService, JarvisChatStore
 from hermes_installer.remote import jarvis_missions
 from hermes_installer.remote.jarvis_mission_executor import (
-    mission_execution_prompt, mission_goal_arguments_sha256, resolve_spent_mission_claim,
+    _native_child_result_state, mission_execution_prompt, mission_goal_arguments_sha256,
+    resolve_spent_mission_claim,
 )
 
 
 CORE = "a" * 64
 SOURCE = "b" * 64
+
+
+def test_mission_result_requires_matching_native_child_start_and_successful_completion():
+    child_a, child_b = "a" * 64, "b" * 64
+    assert _native_child_result_state([
+        {"child_ref": child_a, "type": "subagent.start", "status": "running"},
+        {"child_ref": child_a, "type": "subagent.complete", "status": "completed"},
+    ]) == (True, True)
+    assert _native_child_result_state([
+        {"child_ref": child_a, "type": "subagent.start", "status": "running"},
+        {"child_ref": child_b, "type": "subagent.complete", "status": "completed"},
+    ]) == (True, False)
+    assert _native_child_result_state([
+        {"child_ref": child_a, "type": "subagent.start", "status": "running"},
+        {"child_ref": child_a, "type": "message.complete", "status": "complete"},
+    ]) == (True, False)
+    assert _native_child_result_state([
+        {"child_ref": child_a, "type": "subagent.complete", "status": "completed"},
+    ]) == (False, False)
 
 
 class ObservedBackend:
@@ -45,10 +65,12 @@ class ObservedBackend:
         await before_submit("runtime-session")
         self.submitted.set()
         yield CoreTurnEvent("activity", activity=NativeActivityEvent(
-            "subagent.start", "running", "runtime-session", source_identity="child-1"))
+            "subagent.start", "running", "runtime-session", source_identity="native-subagent-id",
+            child_session_id="native-child-session-1"))
         yield CoreTurnEvent("delta", text="Observed local-source summary")
         yield CoreTurnEvent("activity", activity=NativeActivityEvent(
-            "subagent.complete", "completed", "runtime-session", source_identity="child-1"))
+            "subagent.complete", "completed", "runtime-session", source_identity="native-subagent-id",
+            child_session_id="native-child-session-1"))
         yield CoreTurnEvent("complete")
 
 
@@ -152,6 +174,12 @@ def test_approved_orchestrator_reaches_one_owned_turn_and_native_observation(tmp
             assert resolve_spent_mission_claim(
                 store, binding, run["turn_id"], "0" * 64, CORE, SOURCE, "orchestrator",
                 _goal_digest(approved_goal)) is False
+            private_child_rows = service.activity_store.native_child_events_for_turn(
+                "owner-a", run["turn_id"])
+            assert {row["type"] for row in private_child_rows} == {
+                "subagent.start", "subagent.complete"}
+            assert len({row["child_ref"] for row in private_child_rows}) == 1
+            assert "native-child-session-1" not in json.dumps(private_child_rows)
 
             foreign = await client.get(f"/chat/api/missions/{mission_id}",
                                        headers={**headers, "X-Test-Subject": "owner-b"})

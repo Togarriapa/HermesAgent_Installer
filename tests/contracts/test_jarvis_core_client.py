@@ -533,6 +533,24 @@ def test_native_activity_projection_is_session_bound_and_excludes_payload_conten
     assert "private-argument" not in repr(projected)
     assert client._activity_from_frame(frame, "runtime-b") is None
 
+    native_child = {"method": "event", "params": {
+        "type": "subagent.start", "session_id": "runtime-a", "payload": {
+            "goal": "private goal", "child_session_id": "native-child-session-42",
+            "subagent_id": "native-subagent-key", "status": "running", "task_count": 1,
+            "task_index": 0,
+        }}}
+    child = client._activity_from_frame(native_child, "runtime-a")
+    assert child.event_type == "subagent.start"
+    assert child.child_session_id == "native-child-session-42"
+    assert child.status == "running"
+    assert "private goal" not in repr(child)
+    assert "native-child-session-42" not in repr(child)
+    assert client._activity_from_frame(native_child, "runtime-b") is None
+    malformed_child = {"method": "event", "params": {
+        "type": "subagent.complete", "session_id": "runtime-a", "payload": {
+            "child_session_id": "runtime-a", "status": "completed"}}}
+    assert client._activity_from_frame(malformed_child, "runtime-a") is None
+
     delegation = {"method": "event", "params": {
         "type": "subagent.complete", "session_id": "runtime-a", "payload": {
             "goal": "secret user prompt", "subagent_id": "private-child-id", "status": "failed",

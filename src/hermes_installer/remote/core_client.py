@@ -566,6 +566,7 @@ class CoreRpcClient:
             return None
         duration = None
         identity: str | None = None
+        child_session_id: str | None = None
         usage: tuple[tuple[str, int], ...] | None = None
         if event_type in {"tool.start", "tool.complete"}:
             native_id = payload.get("tool_id")
@@ -589,7 +590,12 @@ class CoreRpcClient:
                 status = raw_status
             else:
                 status = status_by_event.get(event_type, "unknown")
-            native_id = payload.get("subagent_id") or payload.get("delegation_id")
+            child_session_id = payload.get("child_session_id")
+            if child_session_id is not None and (
+                    not _valid_session_id(child_session_id) or child_session_id == session_id):
+                return None
+            native_id = (payload.get("subagent_id") or payload.get("delegation_id")
+                         or child_session_id)
             raw_duration = payload.get("duration_seconds")
             if type(raw_duration) in (int, float) and math.isfinite(raw_duration) and 0 <= raw_duration <= 3600:
                 duration = round(raw_duration * 1000)
@@ -618,7 +624,7 @@ class CoreRpcClient:
             identity = native_id
         return NativeActivityEvent(event_type=event_type, status=status, session_id=session_id,
                                    source_identity=identity, duration_ms=duration, usage=usage,
-                                   source_at=None)
+                                   source_at=None, child_session_id=child_session_id)
 
     async def create_session(self) -> tuple[str, str]:
         result = await self._rpc("session.create", {

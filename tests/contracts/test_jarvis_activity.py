@@ -98,3 +98,26 @@ def test_activity_accepts_no_untyped_browser_observations(tmp_path):
             principal=_principal(), conversation_id=conversation["id"], turn_id=turn_id,
             core_generation="core-generation-a",
             event={"event_type": "tool.start", "session_id": "runtime-owner-a"})
+
+
+def test_native_child_correlation_is_private_stable_and_turn_scoped(tmp_path):
+    store = JarvisChatStore(tmp_path / "chat.sqlite3")
+    activity = JarvisActivityStore(store)
+    conversation, turn_id = _turn(store)
+    for event_type, status in (("subagent.start", "running"),
+                               ("subagent.complete", "completed")):
+        recorded = activity.record_core_event(
+            principal=_principal(), conversation_id=conversation["id"], turn_id=turn_id,
+            core_generation="core-generation-a",
+            event=NativeActivityEvent(event_type, status, "runtime-owner-a",
+                                      source_identity="child-control-id",
+                                      child_session_id="native-child-session-42"))
+        assert recorded["type"] == event_type
+        assert "child_session_id" not in recorded and "child_ref" not in recorded
+
+    child_rows = activity.native_child_events_for_turn("owner-a", turn_id)
+    assert [row["type"] for row in child_rows] == ["subagent.start", "subagent.complete"]
+    assert len({row["child_ref"] for row in child_rows}) == 1
+    assert len(child_rows[0]["child_ref"]) == 64
+    with pytest.raises(JarvisChatDenied, match="turn is unavailable"):
+        activity.native_child_events_for_turn("owner-b", turn_id)

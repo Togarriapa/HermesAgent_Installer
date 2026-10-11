@@ -46,6 +46,7 @@ class NativeActivityEvent:
     status: str
     session_id: str = field(repr=False)
     source_identity: str | None = field(default=None, repr=False)
+    child_session_id: str | None = field(default=None, repr=False)
     duration_ms: int | None = None
     usage: tuple[tuple[str, int], ...] | None = None
     source_at: float | None = None
@@ -60,6 +61,16 @@ class NativeActivityEvent:
         if self.source_identity is not None and (
                 not isinstance(self.source_identity, str) or not 1 <= len(self.source_identity) <= 512):
             raise ValueError("invalid native activity identity")
+        if self.child_session_id is not None and (
+                self.event_type not in {
+                    "subagent.spawn_requested", "subagent.start", "subagent.progress",
+                    "subagent.thinking", "subagent.tool", "subagent.complete",
+                }
+                or not isinstance(self.child_session_id, str)
+                or not 1 <= len(self.child_session_id) <= 512
+                or self.child_session_id == self.session_id
+                or any(ord(char) < 0x20 for char in self.child_session_id)):
+            raise ValueError("invalid native child session correlation")
         if self.duration_ms is not None and (
                 type(self.duration_ms) is not int or not 0 <= self.duration_ms <= 3_600_000):
             raise ValueError("invalid native activity duration")
@@ -79,6 +90,14 @@ def _identity_digest(event: NativeActivityEvent, turn_id: str, generation: str) 
     if event.source_identity is None:
         return None
     raw = "\0".join((generation, turn_id, event.event_type, event.source_identity))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _child_reference(event: NativeActivityEvent, turn_id: str, generation: str) -> str | None:
+    """Stable private join key for native events from the same child of this exact turn."""
+    if event.child_session_id is None:
+        return None
+    raw = "\0".join((generation, turn_id, event.session_id, event.child_session_id))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -126,8 +145,12 @@ class JarvisActivityStore:
                 status TEXT NOT NULL,
                 duration_ms INTEGER,
                 usage TEXT,
+                child_ref TEXT,
                 PRIMARY KEY(turn_id,sequence),
                 UNIQUE(turn_id,dedupe_key))""")
+            columns = {row[1] for row in db.execute("PRAGMA table_info(activity_events)")}
+            if "child_ref" not in columns:
+                db.execute("ALTER TABLE activity_events ADD COLUMN child_ref TEXT")
             db.execute("CREATE INDEX IF NOT EXISTS activity_recent ON activity_events(observed_at DESC,turn_id,sequence DESC)")
 
     def record_core_event(self, *, principal: Any, conversation_id: str, turn_id: str,
@@ -150,6 +173,7 @@ class JarvisActivityStore:
         source_id = None if dedupe is None else "evt_" + dedupe[:32]
         usage = None if event.usage is None else json.dumps(dict(event.usage), sort_keys=True,
                                                             separators=(",", ":"))
+        child_ref = _child_reference(event, turn_id, core_generation)
         now = time.time()
         with self._chat_store._connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -174,9 +198,11 @@ class JarvisActivityStore:
             sequence = db.execute("SELECT COALESCE(MAX(sequence),0)+1 FROM activity_events WHERE turn_id=?",
                                   (turn_id,)).fetchone()[0]
             try:
-                db.execute("INSERT INTO activity_events VALUES(?,?,?,?,?,?,?,?,?,?)",
+                db.execute("INSERT INTO activity_events "
+                           "(turn_id,sequence,dedupe_key,source_event_id,event_type,observed_at,source_at,"
+                           "status,duration_ms,usage,child_ref) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                            (turn_id, sequence, dedupe, source_id, event.event_type, now, event.source_at,
-                            event.status, event.duration_ms, usage))
+                            event.status, event.duration_ms, usage, child_ref))
             except sqlite3.IntegrityError:
                 db.execute("ROLLBACK")
                 return None
@@ -192,6 +218,19 @@ class JarvisActivityStore:
             ))
             db.execute("COMMIT")
         return _public_record(row)
+
+    def native_child_events_for_turn(self, subject: str, turn_id: str) -> list[dict[str, str]]:
+        """Private parent/child join for mission result validation; never used by HTTP projection."""
+        from .jarvis_chat import JarvisChatDenied
+        self._chat_store.owned_turn(subject, turn_id)
+        with self._chat_store._connect() as db:
+            rows = db.execute(
+                "SELECT child_ref,event_type,status FROM activity_events "
+                "WHERE turn_id=? AND child_ref IS NOT NULL AND event_type LIKE 'subagent.%' "
+                "ORDER BY sequence LIMIT ?", (turn_id, ACTIVITY_MAX_PER_TURN),
+            ).fetchall()
+        return [{"child_ref": row["child_ref"], "type": row["event_type"], "status": row["status"]}
+                for row in rows]
 
     def for_turn(self, subject: str, turn_id: str, *, before: int | None = None,
                  limit: int = ACTIVITY_PAGE_SIZE) -> tuple[list[dict[str, Any]], int | None]:

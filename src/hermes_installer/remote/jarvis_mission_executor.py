@@ -34,6 +34,25 @@ _MISSION_INSTRUCTION = (
 )
 
 
+def _native_child_result_state(events: Any) -> tuple[bool, bool]:
+    """Require start and successful terminal event from the same opaque native child ref."""
+    if not isinstance(events, list) or len(events) > 500:
+        return False, False
+    started: set[str] = set()
+    completed: set[str] = set()
+    for item in events:
+        if not isinstance(item, Mapping):
+            continue
+        child_ref = item.get("child_ref")
+        if not isinstance(child_ref, str) or _SHA256_RE.fullmatch(child_ref) is None:
+            continue
+        if item.get("type") == "subagent.start" and item.get("status") == "running":
+            started.add(child_ref)
+        elif item.get("type") == "subagent.complete" and item.get("status") == "completed":
+            completed.add(child_ref)
+    return bool(started), bool(started & completed)
+
+
 def _canonical(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
                       allow_nan=False).encode("utf-8")
@@ -532,16 +551,11 @@ class MissionExecutionAdapter:
             return result
         try:
             turn = self.store.owned_turn(subject, turn_id)
-            activity, _cursor = self.service.activity_store.for_turn(subject, turn_id, limit=100)
+            child_events = self.service.activity_store.native_child_events_for_turn(subject, turn_id)
         except Exception:
             result["status"] = "outcome_unknown"
             return result
-        kinds = {item.get("type") for item in activity}
-        child_started = bool(kinds & {"subagent.start", "subagent.progress", "subagent.thinking", "subagent.tool"})
-        child_completed = child_started and any(
-            item.get("type") == "subagent.complete" and item.get("status") in {"complete", "completed"}
-            for item in activity
-        )
+        child_started, child_completed = _native_child_result_state(child_events)
         if turn["status"] == "queued":
             status = "queued"
         elif turn["status"] == "running":
