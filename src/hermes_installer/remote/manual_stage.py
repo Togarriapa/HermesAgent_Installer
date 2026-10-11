@@ -578,6 +578,25 @@ class StageGatewayPolicySessionAdapter:
                 self._records.pop(handle, None)
                 raise ManualStageDenied("active native Xpra observation is stale") from None
 
+    def current_proof_deadline(self, handle: Any) -> float:
+        """Return the earliest original proof/session deadline for watchdog closure."""
+        with self._lock:
+            record = self._current(handle)
+            self.assert_current_proofs(handle)
+            ingress = record.last_ingress
+            observation = record.native_observation
+            deadline = min(
+                record.last_edge_check + MAX_PROBE_SECONDS,
+                ingress.witness_expires_monotonic,
+                observation.expires_monotonic,
+                record.admission.lease_expires_monotonic,
+                record.admission.jwt_expires_monotonic,
+            )
+            if self.monotonic() >= deadline:
+                self._records.pop(handle, None)
+                raise ManualStageDenied("active stage proof deadline has elapsed")
+            return deadline
+
     def refresh_active_edge(self, handle: Any) -> None:
         """Check the browser's fresh protected heartbeat; never replay a token."""
         self.assert_current_proofs(handle)
@@ -796,18 +815,8 @@ class _StageWebSocketConnector:
                     f"http://{XPRA_HOST}:{XPRA_PORT}/client/", protocols=("binary",),
                     autoping=False, autoclose=False, compress=0,
                     headers={"X-Forwarded-Proto": "https"})
-                async def edge_watchdog():
-                    while not self.websocket.closed:
-                        await asyncio.sleep(2)
-                        try:
-                            await asyncio.wait_for(asyncio.gather(
-                                asyncio.to_thread(self.owner.sessions.refresh_active_edge, self.admission.handle),
-                                asyncio.to_thread(self.owner.sessions.refresh_active_inspection, self.admission.handle)),
-                                timeout=3)
-                        except Exception:
-                            await self.websocket.close(code=1008, message=b"Access edge authorization expired")
-                            return
-                self._edge_watchdog = asyncio.create_task(edge_watchdog())
+                self._edge_watchdog = asyncio.create_task(_stage_edge_watchdog(
+                    self.websocket, self.owner.sessions, self.admission.handle))
             self.loop.run_until_complete(connect())
         except BaseException as exc:
             self._failure = exc
@@ -821,6 +830,7 @@ class _StageWebSocketConnector:
         if pending:
             self.loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
         self.loop.close()
+
 
     def _run(self, coro, timeout=5):
         if self._failure is not None:
@@ -896,6 +906,74 @@ class _StageWebSocketConnector:
                 pass
             self.loop.call_soon_threadsafe(self.loop.stop)
             self._thread.join(timeout=3)
+
+
+async def _stage_edge_watchdog(websocket: Any, sessions: StageGatewayPolicySessionAdapter,
+                              handle: Any, *, poll_seconds: float = 2.0) -> None:
+    """Close the browser WS at the earliest original witness/session deadline."""
+    async def deny() -> None:
+        try:
+            await websocket.close(code=1008, message=b"Access edge authorization expired")
+        except Exception:
+            pass
+
+    async def cancel_and_drain(task: Any) -> None:
+        if task is not None and not task.done():
+            task.cancel()
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
+
+    while not websocket.closed:
+        checks = None
+        timer = None
+        try:
+            deadline = sessions.current_proof_deadline(handle)
+            remaining = deadline - sessions.monotonic()
+            if remaining <= 0:
+                await deny()
+                return
+            await asyncio.sleep(min(poll_seconds, remaining))
+            if websocket.closed:
+                return
+            deadline = sessions.current_proof_deadline(handle)
+            remaining = deadline - sessions.monotonic()
+            if remaining <= 0:
+                await deny()
+                return
+            checks = asyncio.gather(
+                asyncio.to_thread(sessions.refresh_active_edge, handle),
+                asyncio.to_thread(sessions.refresh_active_inspection, handle))
+            timer = asyncio.create_task(asyncio.sleep(remaining))
+            done, _pending = await asyncio.wait((checks, timer), return_when=asyncio.FIRST_COMPLETED)
+            if timer in done:
+                await cancel_and_drain(checks)
+                # A concurrent request may have supplied a fresh browser proof.
+                # Recompute from the retained original native/ingress deadlines;
+                # an expired proof is never extended by this check.
+                try:
+                    deadline = sessions.current_proof_deadline(handle)
+                except Exception:
+                    await deny()
+                    return
+                if sessions.monotonic() >= deadline:
+                    await deny()
+                    return
+                continue
+            await cancel_and_drain(timer)
+            await checks
+            deadline = sessions.current_proof_deadline(handle)
+            if sessions.monotonic() >= deadline:
+                await deny()
+                return
+        except asyncio.CancelledError:
+            await cancel_and_drain(checks)
+            await cancel_and_drain(timer)
+            raise
+        except Exception:
+            await cancel_and_drain(checks)
+            await cancel_and_drain(timer)
+            await deny()
+            return
 
 
 class StageGatewayLaunch:

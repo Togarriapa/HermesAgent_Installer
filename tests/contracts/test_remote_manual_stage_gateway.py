@@ -1260,6 +1260,89 @@ class ManualStageGatewayTests(unittest.TestCase):
             with self.assertRaises(ManualStageDenied):
                 sessions.current(admission.handle)
 
+    def test_edge_watchdog_closes_at_proof_deadline_during_slow_refresh(self):
+        import asyncio
+        from hermes_installer.remote.manual_stage import _stage_edge_watchdog
+
+        class Sessions:
+            def __init__(self):
+                self.deadline = time.monotonic() + 0.12
+                self.edge_checks = 0
+                self.inspection_checks = 0
+            def monotonic(self):
+                return time.monotonic()
+            def current_proof_deadline(self, _handle):
+                return self.deadline
+            def refresh_active_edge(self, _handle):
+                self.edge_checks += 1
+                time.sleep(0.25)
+            def refresh_active_inspection(self, _handle):
+                self.inspection_checks += 1
+                time.sleep(0.25)
+
+        class WebSocket:
+            closed = False
+            def __init__(self):
+                self.close_code = None
+                self.outbound = []
+            async def close(self, *, code, message):
+                self.close_code = code
+                self.closed = True
+
+        async def exercise():
+            sessions = Sessions()
+            websocket = WebSocket()
+            task = asyncio.create_task(_stage_edge_watchdog(
+                websocket, sessions, object(), poll_seconds=0.01))
+            await asyncio.wait_for(task, timeout=0.5)
+            return websocket, sessions
+
+        websocket, sessions = asyncio.run(exercise())
+        self.assertTrue(websocket.closed)
+        self.assertEqual(websocket.close_code, 1008)
+        self.assertEqual(websocket.outbound, [])
+        # Refresh work began but did not hold the socket open past its proof.
+        self.assertGreater(sessions.edge_checks + sessions.inspection_checks, 0)
+
+    def test_edge_watchdog_keeps_socket_open_after_timely_refresh(self):
+        import asyncio
+        from hermes_installer.remote.manual_stage import _stage_edge_watchdog
+
+        class Sessions:
+            def __init__(self):
+                self.deadline = time.monotonic() + 0.20
+                self.refreshes = 0
+            def monotonic(self):
+                return time.monotonic()
+            def current_proof_deadline(self, _handle):
+                return self.deadline
+            def refresh_active_edge(self, _handle):
+                self.refreshes += 1
+                self.deadline = time.monotonic() + 0.20
+            def refresh_active_inspection(self, _handle):
+                self.refreshes += 1
+                self.deadline = time.monotonic() + 0.20
+
+        class WebSocket:
+            closed = False
+            async def close(self, **_kwargs):
+                self.closed = True
+
+        async def exercise():
+            sessions = Sessions()
+            websocket = WebSocket()
+            task = asyncio.create_task(_stage_edge_watchdog(
+                websocket, sessions, object(), poll_seconds=0.01))
+            await asyncio.sleep(0.06)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            return websocket, sessions
+
+        websocket, sessions = asyncio.run(exercise())
+        self.assertFalse(websocket.closed)
+        self.assertGreater(sessions.refreshes, 0)
+
     def test_manual_websocket_lease_is_bounded_and_failed_renewal_revokes_handle(self):
         class FixtureEdge:
             def __init__(self, config):
