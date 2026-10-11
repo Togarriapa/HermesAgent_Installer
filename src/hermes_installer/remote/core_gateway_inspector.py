@@ -94,7 +94,7 @@ CORE_NATIVE_ADAPTER_SOURCE_FILES = {
     "hermes_installer/native_invocations.py": "16878d0b5416a763743ca9fa8b1714db93e5c9b063d3f71880ca429ebf16dc63",
     "hermes_installer/remote/jarvis_final_effects.py": "ca625acb83476605659954764bcbdec35632db1add32ff6712cc7263f3b10b2f",
     "hermes_installer/remote/obsidian_native_tools.py": "6578f07111f2e81ff1ae64fd64de58b33c74d26417eca574236c6e49bfff70a3",
-    "hermes_installer/remote/obsidian_native_scope.py": "ae9ab3148d9955a88d766b1bdfe1b649bb7fa1384e25fc739377ec2c9f84bd2f",
+    "hermes_installer/remote/obsidian_native_scope.py": "06409003f1aab5fd9402b35014ff2930d2e066fc4d7c98fbe89e793ed0300746",
     "hermes_installer/remote/obsidian_owner_lifecycle.py": "a35bba1ec02051401904d78255510edef65442275e69a60ac51cfe5d470888c5",
 }
 CORE_NATIVE_PLUGIN_STAGED_FILES = {

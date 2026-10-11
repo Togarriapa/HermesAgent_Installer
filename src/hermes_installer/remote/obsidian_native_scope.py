@@ -173,7 +173,7 @@ def _decode_call_scope(row: Mapping[str, Any], *, binding: RootSelectedObsidianV
                 and (type(row["selected_note_ids"]) is not list
                      or len(row["selected_note_ids"]) > 200
                      or any(type(note_id) is not str for note_id in row["selected_note_ids"])
-                     or len(set(row["selected_note_ids"])) != len(row["selected_note_ids"]))):
+                     or len(set(row["selected_note_ids"])) != len(row["selected_note_ids"])))):
         raise ObsidianRootScopeUnavailable("root Obsidian call scope response schema differs")
     try:
         mission = (None if row["mission_binding"] is None else
