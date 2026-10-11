@@ -27,7 +27,7 @@ _VIEW = """<section class="overview-page" aria-labelledby="overview-title">
         <span class="reactor-label">J.A.R.V.I.S.<small>PERSONAL ASSISTANT</small></span>
       </div>
       <h1 id="overview-title">At your service.</h1>
-      <p class="reactor-state" data-reactor-state role="status" aria-live="polite">Activity is loading…</p>
+      <p class="reactor-state" data-reactor-state role="status" aria-live="polite">Checking current service observation…</p>
       <section class="reactor-connection" aria-labelledby="overview-core-heading">
         <div><h2 id="overview-core-heading">Service status</h2><p data-core-status role="status" aria-live="polite">Checking verified status</p></div>
         <p data-core-readiness>Functional readiness has not been verified.</p>
@@ -182,16 +182,19 @@ _CSS += """
 [data-feature-root="overview"] .reactor-connection p{margin:.15rem 0;color:#b6cccf;font-size:.66rem;line-height:1.45}
 [data-feature-root="overview"] .reactor-connection [data-core-status]{color:#e8f7f7;font-size:.74rem;font-weight:580}
 [data-feature-root="overview"] .reactor-connection [data-core-observed]{grid-column:1/-1;color:#95afb3}
-[data-feature-root="overview"] .overview-stage[data-activity="active"] .reactor-orbit-outer{stroke:#efc57c;animation:jarvis-reactor-pulse 1.8s ease-in-out infinite}
-[data-feature-root="overview"] .overview-stage[data-activity="active"] .reactor-core{stroke:#f1d39a;fill:rgba(211,158,67,.1)}
+[data-feature-root="overview"] .overview-stage[data-core-state="verified"][data-activity="active"] .reactor-orbit-outer{stroke:#efc57c;animation:jarvis-reactor-pulse 1.8s ease-in-out infinite}
+[data-feature-root="overview"] .overview-stage[data-core-state="verified"][data-activity="active"] .reactor-core{stroke:#f1d39a;fill:rgba(211,158,67,.1)}
 [data-feature-root="overview"] .overview-stage[data-activity="quiet"] .reactor-state{color:#aee0dc}
 [data-feature-root="overview"] .overview-stage[data-activity="unknown"] .reactor-state{color:#e8c581}
-[data-feature-root="overview"] .overview-stage[data-stale="true"] .reactor-orbit-outer{stroke:#e8c581}
+[data-feature-root="overview"] .overview-stage[data-core-state="unverified"] .reactor-figure{opacity:.52;filter:saturate(.45) drop-shadow(0 10px 22px rgba(0,0,0,.25))}
+[data-feature-root="overview"][data-stale="true"] .overview-stage .reactor-dial,[data-feature-root="overview"][data-stale="true"] .overview-stage .reactor-orbit{animation:none!important;transform:none!important}
 @keyframes jarvis-reactor-turn{to{transform:rotate(1turn)}}
 @keyframes jarvis-reactor-reverse{to{transform:rotate(-1turn)}}
 @keyframes jarvis-reactor-pulse{0%,100%{opacity:.62;stroke-width:1.1}50%{opacity:1;stroke-width:2}}
-[data-feature-root="overview"] .overview-stage:not([data-activity="unknown"]) .reactor-orbit-inner{transform-box:view-box;transform-origin:120px 120px;animation:jarvis-reactor-turn 22s linear infinite}
-[data-feature-root="overview"] .overview-stage:not([data-activity="unknown"]) .reactor-dial{transform-box:view-box;transform-origin:120px 120px;animation:jarvis-reactor-reverse 36s linear infinite}
+[data-feature-root="overview"] .overview-stage[data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"]) .reactor-orbit-inner{transform-box:view-box;transform-origin:120px 120px;animation:jarvis-reactor-turn 22s linear infinite}
+[data-feature-root="overview"] .overview-stage[data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"]) .reactor-dial{transform-box:view-box;transform-origin:120px 120px;animation:jarvis-reactor-reverse 36s linear infinite}
+[data-feature-root="overview"] .overview-stage[data-core-state="verified"][data-activity="quiet"] .reactor-orbit-inner{animation-duration:44s}
+[data-feature-root="overview"] .overview-stage[data-core-state="verified"][data-activity="quiet"] .reactor-dial{animation-duration:72s}
 [data-feature-root="overview"] .overview-toolbar{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.65rem 0;border-top:1px solid rgba(117,191,199,.15);border-bottom:1px solid rgba(117,191,199,.15)}
 [data-feature-root="overview"] .overview-toolbar [data-observation]{margin:0;color:#a8c2c5;font-size:.72rem;line-height:1.5}
 [data-feature-root="overview"] .overview-toolbar button{min-width:92px;min-height:44px;border:1px solid rgba(95,199,208,.3);border-radius:9px;background:rgba(8,36,44,.68);color:#e1f9fa;padding:.5rem .9rem;font:inherit;font-size:.75rem;cursor:pointer}
@@ -253,8 +256,8 @@ _CSS += """
  [data-feature-root="overview"] .overview-readout strong{font-size:1.5rem}
  [data-feature-root="overview"] .command-form{align-items:stretch;flex-direction:column}
  [data-feature-root="overview"] .command-form button{width:100%}
- [data-feature-root="overview"] .quick-actions{display:flex;flex-wrap:nowrap;overflow-x:auto;overscroll-behavior-inline:contain;scroll-snap-type:x proximity;padding-bottom:.3rem}
- [data-feature-root="overview"] .quick-actions button{flex:0 0 auto;scroll-snap-align:start}
+ [data-feature-root="overview"] .quick-actions{display:flex;flex-wrap:wrap;overflow:visible;gap:.45rem;padding-bottom:.3rem}
+ [data-feature-root="overview"] .quick-actions button{flex:1 1 auto;justify-content:center}
  [data-feature-root="overview"] .overview-lower-grid{grid-template-columns:1fr}
  [data-feature-root="overview"] .overview-toolbar{align-items:flex-start}
  [data-feature-root="overview"] .overview-toolbar [data-observation]{max-width:32ch}
@@ -267,7 +270,7 @@ _CSS += """
 }
 @media(hover:hover) and (pointer:fine){[data-feature-root="overview"] .quick-actions button:hover,[data-feature-root="overview"] .overview-toolbar button:hover{border-color:rgba(88,228,235,.52);background:rgba(18,76,85,.45);color:#f2ffff}[data-feature-root="overview"] .command-form button:hover{filter:brightness(1.12)}}
 @media(prefers-reduced-motion:reduce){html:not([data-jarvis-motion="full"]) [data-feature-root="overview"] .reactor-dial,html:not([data-jarvis-motion="full"]) [data-feature-root="overview"] .reactor-orbit-inner,html:not([data-jarvis-motion="full"]) [data-feature-root="overview"] .reactor-orbit-outer{animation:none!important;transform:none!important}html:not([data-jarvis-motion="full"]) [data-feature-root="overview"] *{transition-duration:0s!important;transition-delay:0s!important}}
-@media(prefers-reduced-motion:reduce){html[data-jarvis-motion="full"] [data-feature-root="overview"] .overview-stage:not([data-activity="unknown"]) .reactor-orbit-inner{animation:jarvis-reactor-turn 22s linear infinite!important}html[data-jarvis-motion="full"] [data-feature-root="overview"] .overview-stage:not([data-activity="unknown"]) .reactor-dial{animation:jarvis-reactor-reverse 36s linear infinite!important}}
+@media(prefers-reduced-motion:reduce){html[data-jarvis-motion="full"] [data-feature-root="overview"] .overview-stage[data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"]) .reactor-orbit-inner{animation:jarvis-reactor-turn 22s linear infinite!important}html[data-jarvis-motion="full"] [data-feature-root="overview"] .overview-stage[data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"]) .reactor-dial{animation:jarvis-reactor-reverse 36s linear infinite!important}}
 [data-feature-root="overview"][data-stale="true"] .overview-stage .reactor-orbit-outer{stroke:#dbb66f;opacity:.45}
 html[data-jarvis-motion="reduce"] [data-feature-root="overview"] .reactor-dial,html[data-jarvis-motion="reduce"] [data-feature-root="overview"] .reactor-orbit-inner,html[data-jarvis-motion="reduce"] [data-feature-root="overview"] .reactor-orbit-outer{animation:none!important;transform:none!important}
 """
@@ -278,11 +281,14 @@ _MOUNT = r"""function mount(container, api) {
   const refreshButton = $('[data-refresh]');
   let stopped = false;
   let lastObservation = null;
+  let coreFreshnessTimer = null;
+  let coreFreshUntil = 0;
+  let lastCoreObservedAt = null;
   function node(tag, value) { const item = document.createElement(tag); item.textContent = value; return item; }
   function number(value) { return Number.isSafeInteger(value) && value >= 0 ? value : null; }
   function format(value) { return value === null ? 'Unknown' : value.toLocaleString(); }
   function time(value) { const parsed = typeof value === 'string' ? Date.parse(value) : NaN; return Number.isFinite(parsed) ? new Date(parsed).toLocaleString() : 'Unknown'; }
-  function renderCounts(counts) {
+  function renderCounts(counts, coreVerified) {
     for (const key of ['total','completed','active','failed']) {
       const target = $(`[data-metric="${key}"]`);
       if (target) target.textContent = format(number(counts && counts[key]));
@@ -292,25 +298,74 @@ _MOUNT = r"""function mount(container, api) {
     $('[data-metric="failed"]').closest('.overview-readout').dataset.attention = String(failed !== null && failed > 0);
     const stage = $('.overview-stage');
     const activity = $('[data-reactor-state]');
-    if (active === null) {
+    if (!coreVerified) {
+      stage.dataset.coreState = 'unverified';
       stage.dataset.activity = 'unknown';
-      activity.textContent = 'Current activity could not be verified.';
+      activity.textContent = active === null
+        ? 'Service observation unavailable; current activity is unverified.'
+        : `${format(active)} accepted turn${active === 1 ? '' : 's'} in progress; service observation is unverified.`;
     } else if (active > 0) {
+      stage.dataset.coreState = 'verified';
       stage.dataset.activity = 'active';
       activity.textContent = `${format(active)} accepted turn${active === 1 ? '' : 's'} in progress.`;
+    } else if (active === null) {
+      stage.dataset.coreState = 'verified';
+      stage.dataset.activity = 'unknown';
+      activity.textContent = 'Service observed · current activity could not be verified.';
     } else {
+      stage.dataset.coreState = 'verified';
       stage.dataset.activity = 'quiet';
-      activity.textContent = 'No accepted turns in progress.';
+      activity.textContent = 'Ready · standby. No accepted turns in progress.';
     }
-    $('[data-reactor-active-label]').textContent = active === null
+    $('[data-reactor-active-label]').textContent = !coreVerified
+      ? 'Service observation unverified' : active === null
       ? 'Current activity unavailable' : active === 1 ? 'Accepted turn in progress' : 'Accepted turns in progress';
+  }
+  function markCoreStale() {
+    if (stopped) return;
+    if (coreFreshnessTimer !== null) clearTimeout(coreFreshnessTimer);
+    coreFreshnessTimer = null;
+    coreFreshUntil = 0;
+    root.dataset.coreState = 'unverified';
+    root.dataset.stale = 'true';
+    const stage = $('.overview-stage');
+    stage.dataset.coreState = 'unverified';
+    stage.dataset.activity = 'unknown';
+    $('[data-core-status]').textContent = 'Last service observation is stale';
+    $('[data-core-readiness]').textContent = 'Current service readiness is unverified.';
+    $('[data-core-observed]').textContent = `Observed ${time(lastCoreObservedAt)} · stale`;
+    $('[data-reactor-state]').textContent = 'Service observation is stale; current activity is unverified.';
+    $('[data-reactor-active-label]').textContent = 'Service observation stale';
+  }
+  function recheckCoreFreshness() {
+    if (coreFreshUntil && Date.now() >= coreFreshUntil) markCoreStale();
+  }
+  function renderCore(core) {
+    lastCoreObservedAt = typeof core.observedAt === 'string' ? core.observedAt : null;
+    const observedAt = typeof core.observedAt === 'string' ? Date.parse(core.observedAt) : NaN;
+    const age = Date.now() - observedAt;
+    const verified = core.status === 'process-observed'
+      && Number.isFinite(observedAt) && age >= -30000 && age <= 120000;
+    coreFreshUntil = verified ? observedAt + 120000 : 0;
+    if (coreFreshnessTimer !== null) clearTimeout(coreFreshnessTimer);
+    coreFreshnessTimer = verified ? setTimeout(recheckCoreFreshness, Math.max(0, coreFreshUntil - Date.now())) : null;
+    root.dataset.coreState = verified ? 'verified' : 'unverified';
+    $('[data-core-status]').textContent = verified
+      ? 'Service process observed' : core.status === 'process-observed' ? 'Last service observation is stale' : 'Service observation unavailable';
+    $('[data-core-readiness]').textContent = verified && core.readiness === 'current-core-witness'
+      ? 'Current core witness; functional readiness is not independently verified.'
+      : 'Functional readiness is unverified.';
+    $('[data-core-observed]').textContent = `Observed ${time(core.observedAt)}${verified ? '' : ' · not current'}`;
+    return verified;
   }
   function render(data) {
     const chat = data && data.chat || {}; const stats = chat.statistics || {};
     const window = stats.window || {}; const counts = stats.turnCounts || {};
-    renderCounts(counts);
+    const coreVerified = renderCore(data && data.core || {});
+    renderCounts(counts, coreVerified);
     lastObservation = time(stats.observedAt);
     root.dataset.stale = 'false';
+    if (!coreVerified) root.dataset.stale = 'true';
     $('[data-observation]').textContent = `Owner activity updated ${lastObservation}.`;
     $('[data-window]').textContent = `Window: ${time(window.startAt)} to ${time(window.endAt)} · ${window.timezone === 'UTC' ? 'UTC' : 'timezone unknown'} · ${window.basis || 'Window basis unavailable'}`;
     $('[data-conversation-count]').textContent = format(number(chat.conversationCount));
@@ -354,6 +409,7 @@ _MOUNT = r"""function mount(container, api) {
     catch (_error) {
       if (!stopped) {
         root.dataset.stale = 'true';
+        markCoreStale();
         $('[data-observation]').textContent = lastObservation
           ? `Refresh failed · showing the last successful observation from ${lastObservation}.`
           : 'Current measured owner data is unavailable; no earlier observation is cached.';
@@ -404,7 +460,8 @@ _MOUNT = r"""function mount(container, api) {
     commandInput.style.height='auto'; commandInput.style.height=`${Math.min(commandInput.scrollHeight,144)}px`;
   });
   refreshButton.addEventListener('click',refresh); refresh();
-  return function cleanup() { stopped=true; refreshButton.disabled=false; commandForm.querySelector('button[type="submit"]').disabled=false; commandInput.disabled=false; newConversation.disabled=false; refreshButton.removeEventListener('click',refresh); commandForm.removeEventListener('submit',submitCommand); newConversation.removeEventListener('click',startNewConversation); for (const button of promptButtons) button.removeEventListener('click',promptHandlers.get(button)); };
+  document.addEventListener('visibilitychange',recheckCoreFreshness);
+  return function cleanup() { stopped=true; if (coreFreshnessTimer !== null) clearTimeout(coreFreshnessTimer); refreshButton.disabled=false; commandForm.querySelector('button[type="submit"]').disabled=false; commandInput.disabled=false; newConversation.disabled=false; refreshButton.removeEventListener('click',refresh); commandForm.removeEventListener('submit',submitCommand); newConversation.removeEventListener('click',startNewConversation); document.removeEventListener('visibilitychange',recheckCoreFreshness); for (const button of promptButtons) button.removeEventListener('click',promptHandlers.get(button)); };
 }"""
 
 _UNMOUNT = "function unmount() {}"

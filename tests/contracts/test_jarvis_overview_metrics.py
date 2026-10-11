@@ -163,3 +163,19 @@ def test_overview_reactor_uses_observed_activity_and_keeps_controls_accessible()
     assert "await api.command(text)" in js
     assert "await api.newConversation()" in js
     assert "commandInput.value = button.dataset.commandPrompt" in js
+
+
+def test_overview_presence_is_gated_by_fresh_core_witness():
+    css = FEATURE_ASSETS.css
+    js = FEATURE_ASSETS.mount_js
+
+    assert "core.status === 'process-observed'" in js
+    assert "age <= 120000" in js
+    assert "core.readiness === 'current-core-witness'" in js
+    assert "Service process observed" in js
+    assert "Ready · standby." in js
+    assert "setTimeout(recheckCoreFreshness" in js
+    assert "stage.dataset.coreState = 'unverified'" in js
+    assert '.overview-stage[data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"])' in css
+    assert '[data-feature-root="overview"][data-stale="true"] .overview-stage .reactor-dial' in css
+    assert '[data-feature-root="overview"] .quick-actions{display:flex;flex-wrap:wrap;overflow:visible' in css
