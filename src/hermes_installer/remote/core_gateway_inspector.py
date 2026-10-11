@@ -60,6 +60,8 @@ CORE_PATH = "/home/admin/.hermes/bin:/home/admin/.local/bin:/usr/local/bin:/usr/
 CORE_CREDENTIALS_DIRECTORY = "/run/credentials/hermes-jarvis-core.service"
 MAX_REQUEST = 1024
 MAX_RESPONSE = 4096
+MAX_SKILL_LEARNING_REQUEST_BYTES = 20 * 1024
+MAX_SKILL_LEARNING_RESPONSE_BYTES = 300 * 1024
 MAX_OUTPUT = 16_384
 MAX_HASH_FILE_BYTES = 512 * 1024 * 1024
 MAX_PROOF_SECONDS = 5.0
@@ -67,6 +69,9 @@ IPC_TIMEOUT = 2.0
 _PROOF_SEAL = object()
 _OVERVIEW_PROOF_SEAL = object()
 _SERVER_SLOTS = threading.BoundedSemaphore(16)
+_MAX_RETAINED_INGRESS_ISSUES = 128
+_RETAINED_INGRESS_ISSUES: dict[tuple[int, str, str, str], "_RetainedIngressIssue"] = {}
+_RETAINED_INGRESS_LOCK = threading.RLock()
 _OBSERVATION_FIELDS = (
     "schema", "nonce", "boot_id", "issued_monotonic", "expires_monotonic",
     "peer_pid", "peer_uid", "peer_gid", "peer_start_ticks", "tunnel_invocation_id",
@@ -86,6 +91,69 @@ def _observation_digest(values: dict[str, Any]) -> str:
     canonical = json.dumps(values, sort_keys=True, separators=(",", ":"),
                            allow_nan=False).encode("ascii")
     return hashlib.sha256(b"hermes-jarvis-core-ingress-v1\0" + canonical).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class _RetainedIngressIssue:
+    """One-use root memory of an actual ingress proof issuance."""
+
+    caller_pid: int
+    caller_start_ticks: str
+    nonce: str
+    proof_sha256: str
+    issued_monotonic: float
+    expires_monotonic: float
+    peer: tuple[int, int, int]
+    socket_identity: tuple[int, int]
+    core_generation: str
+    config_sha256: str
+    boot_id: str
+
+
+def _retain_ingress_issue(*, caller_pid: int, caller_start_ticks: str,
+                          proof: dict[str, Any]) -> None:
+    now = time.monotonic()
+    key = (caller_pid, caller_start_ticks, proof["nonce"], proof["proof_sha256"])
+    retained = _RetainedIngressIssue(
+        caller_pid, caller_start_ticks, proof["nonce"], proof["proof_sha256"],
+        proof["issued_monotonic"], proof["expires_monotonic"],
+        (proof["peer_pid"], proof["peer_uid"], proof["peer_gid"]),
+        (proof["origin_socket_device"], proof["origin_socket_inode"]),
+        proof["core_generation"], proof["config_sha256"], proof["boot_id"],
+    )
+    with _RETAINED_INGRESS_LOCK:
+        for old_key, old in tuple(_RETAINED_INGRESS_ISSUES.items()):
+            if old.expires_monotonic <= now:
+                _RETAINED_INGRESS_ISSUES.pop(old_key, None)
+        if len(_RETAINED_INGRESS_ISSUES) >= _MAX_RETAINED_INGRESS_ISSUES:
+            raise CoreInspectionDenied("one-use ingress proof capacity is full")
+        if key in _RETAINED_INGRESS_ISSUES:
+            raise CoreInspectionDenied("one-use ingress proof was already retained")
+        _RETAINED_INGRESS_ISSUES[key] = retained
+
+
+def _consume_ingress_issue(*, caller_pid: int, caller_start_ticks: str,
+                           nonce: str, proof_sha256: str,
+                           peer: tuple[int, int, int], core_generation: str,
+                           config: CoreGatewayConfig) -> _RetainedIngressIssue:
+    now = time.monotonic()
+    key = (caller_pid, caller_start_ticks, nonce, proof_sha256)
+    with _RETAINED_INGRESS_LOCK:
+        for old_key, old in tuple(_RETAINED_INGRESS_ISSUES.items()):
+            if old.expires_monotonic <= now:
+                _RETAINED_INGRESS_ISSUES.pop(old_key, None)
+        retained = _RETAINED_INGRESS_ISSUES.pop(key, None)
+    if (retained is None or retained.caller_pid != caller_pid
+            or retained.caller_start_ticks != caller_start_ticks
+            or retained.peer != peer or retained.core_generation != core_generation
+            or retained.config_sha256 != config.config_sha256
+            or retained.boot_id != config.boot_id
+            or retained.issued_monotonic >= now
+            or not retained.issued_monotonic < retained.expires_monotonic <=
+                retained.issued_monotonic + MAX_PROOF_SECONDS
+            or now >= retained.expires_monotonic):
+        raise CoreInspectionDenied("original ingress proof is unavailable or expired")
+    return retained
 
 
 def _overview_digest(values: dict[str, Any]) -> str:
@@ -563,7 +631,8 @@ def observe_current_ingress(config: CoreGatewayConfig, *, nonce: str, caller_pid
                             caller_uid: int, caller_gid: int, peer_pid: int,
                             peer_uid: int, peer_gid: int, _issued: float | None = None,
                             _deadline: float | None = None,
-                            _projection_factory: Any = None) -> dict[str, Any]:
+                            _projection_factory: Any = None,
+                            _retain_issuance: bool = True) -> dict[str, Any]:
     issued = time.monotonic() if _issued is None else _issued
     deadline = issued + IPC_TIMEOUT if _deadline is None else _deadline
     pidfds = []
@@ -627,6 +696,9 @@ def observe_current_ingress(config: CoreGatewayConfig, *, nonce: str, caller_pid
             "core_generation": core_generation, "config_sha256": config.config_sha256,
         }
         body["proof_sha256"] = _observation_digest(body)
+        if _retain_issuance:
+            _retain_ingress_issue(caller_pid=caller_pid,
+                                  caller_start_ticks=gateway_start, proof=body)
         return body
     finally:
         for pidfd in pidfds:

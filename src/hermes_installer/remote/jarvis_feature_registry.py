@@ -1,64 +1,89 @@
-"""Literal feature fragments included in the Jarvis dashboard build.
-
-The release integrator appends reviewed module imports here. Never discover
-fragments from a directory or user-controlled configuration at runtime.
-"""
+"""Literal feature fragments and their fixed route ownership for Jarvis."""
 from __future__ import annotations
 
-from . import jarvis_missions as _missions
+import re
+
 from . import jarvis_bots as _bots
-from . import jarvis_activity as _activity
+from . import jarvis_missions as _missions
+from .jarvis_activity_assets import FEATURE_ASSETS as _ACTIVITY_ASSETS
+from .jarvis_bots_ui import FEATURE_ASSETS as _BOTS_ASSETS
 from .jarvis_feature_contract import JarvisFeatureAssets
 from .jarvis_missions_assets import FEATURE_ASSETS as _MISSION_ASSETS
-from .jarvis_bots_ui import FEATURE_ASSETS as _BOT_ASSETS
-from .jarvis_activity_assets import FEATURE_ASSETS as _ACTIVITY_ASSETS
-from .jarvis_native_controls_assets import FEATURE_ASSETS as _CONTROL_ASSETS
+from .jarvis_native_controls_assets import FEATURE_ASSETS as _NATIVE_CONTROLS_ASSETS
 
-# Kept as a typed tuple so composition remains explicit and bounded. Feature
-# owners provide each FEATURE_ASSETS export for the integration checkpoint.
+# Runtime resources are compiled only from these explicit, reviewed modules.
 FEATURE_ASSETS: tuple[JarvisFeatureAssets, ...] = (
-    _MISSION_ASSETS, _BOT_ASSETS, _ACTIVITY_ASSETS, _CONTROL_ASSETS,
+    _MISSION_ASSETS, _BOTS_ASSETS, _ACTIVITY_ASSETS, _NATIVE_CONTROLS_ASSETS,
 )
 
-# Route installers are also an explicit, reviewed registry. An installed feature
-# cannot add an endpoint by dropping a module into this package or by request data.
+# New endpoint installers are explicit. Activity is installed exactly once by
+# JarvisChatService.install; native settings is installed by the dashboard API.
 FEATURE_ROUTE_INSTALLERS = (
     ("missions", _missions.install_jarvis_missions_routes, _missions.FEATURE_ROUTES),
     ("bots", _bots.install_jarvis_bots_routes, _bots.FEATURE_ROUTES),
 )
-
-# These routes belong to the shared chat/dashboard services installed first.
-# Validate their actual registration without installing a second handler.
-_PREINSTALLED_ROUTES = (
-    ("activity", _ACTIVITY_ASSETS.api_routes),
-    ("native-controls", (("GET", "/chat/api/settings"),)),
+FEATURE_ROUTE_OWNERS = (
+    ("activity", "chat-service.install", _ACTIVITY_ASSETS.api_routes),
+    ("native-controls", "dashboard", _NATIVE_CONTROLS_ASSETS.api_routes),
 )
 
 
+def _route_shape(route: tuple[str, str]) -> tuple[str, str]:
+    method, path = route
+    return method, re.sub(r"\{[a-z][a-z0-9_]*\}", "{}", path)
+
+
 def install_jarvis_feature_routes(app, service) -> None:
-    """Install exactly the route adapters represented by the literal UI registry."""
+    """Install only explicit feature adapters and validate static route ownership."""
     from .jarvis_feature_contract import validate_feature_assets
 
     validate_feature_assets(FEATURE_ASSETS)
     assets = {feature.feature_id: feature for feature in FEATURE_ASSETS}
-    installer_ids = [entry[0] for entry in FEATURE_ROUTE_INSTALLERS
-                     if (isinstance(entry, tuple) and len(entry) == 3
-                         and isinstance(entry[0], str) and callable(entry[1])
-                         and isinstance(entry[2], tuple))]
-    existing_ids = [entry[0] for entry in _PREINSTALLED_ROUTES]
-    if (len(installer_ids) != len(FEATURE_ROUTE_INSTALLERS)
-            or len(set(installer_ids + existing_ids)) != len(installer_ids + existing_ids)
-            or set(installer_ids + existing_ids) != set(assets)):
+    installers = {}
+    for entry in FEATURE_ROUTE_INSTALLERS:
+        if (not isinstance(entry, tuple) or len(entry) != 3
+                or not isinstance(entry[0], str) or not callable(entry[1])
+                or not isinstance(entry[2], tuple) or entry[0] in installers):
+            raise ValueError("dashboard feature route installer is invalid")
+        installers[entry[0]] = (entry[1], entry[2])
+    owners = {}
+    for entry in FEATURE_ROUTE_OWNERS:
+        if (not isinstance(entry, tuple) or len(entry) != 3
+                or entry[0] not in {"activity", "native-controls"}
+                or entry[1] not in {"chat-service.install", "dashboard"}
+                or not isinstance(entry[2], tuple) or entry[0] in owners):
+            raise ValueError("dashboard feature route owner is invalid")
+        owners[entry[0]] = (entry[1], entry[2])
+    if set(assets) != set(installers) | set(owners) or set(installers) & set(owners):
         raise ValueError("dashboard feature routes and static assets differ")
-    registered = {(route.method, route.resource.canonical) for route in app.router.routes()}
-    for feature_id, routes in _PREINSTALLED_ROUTES:
-        if assets[feature_id].api_routes != routes or not set(routes).issubset(registered):
-            raise ValueError("shared feature routes are not registered exactly")
-    for feature_id, installer, routes in FEATURE_ROUTE_INSTALLERS:
-        if assets[feature_id].api_routes != routes:
-            raise ValueError("dashboard feature asset and installer routes differ")
+
+    all_routes: set[tuple[str, str]] = set()
+    for feature_id, asset in assets.items():
+        declared = {_route_shape(route) for route in asset.api_routes}
+        if len(declared) != len(asset.api_routes) or all_routes & declared:
+            raise ValueError("dashboard feature API routes are ambiguous")
+        all_routes.update(declared)
+        if feature_id in installers:
+            installer, routes = installers[feature_id]
+            if {_route_shape(route) for route in routes} != declared:
+                raise ValueError("dashboard feature asset and installer routes differ")
+        else:
+            owner, routes = owners[feature_id]
+            if (owner == "chat-service.install") != (feature_id == "activity"):
+                raise ValueError("dashboard feature route owner differs")
+            if {_route_shape(route) for route in routes} != declared:
+                raise ValueError("dashboard feature asset and existing routes differ")
+            registered = {_route_shape((route.method, route.resource.canonical))
+                          for route in app.router.routes()}
+            if not declared.issubset(registered):
+                raise ValueError("shared feature routes are not registered exactly")
+
+    registered = {_route_shape((route.method, route.resource.canonical))
+                  for route in app.router.routes()}
+    for feature_id, (installer, _routes) in installers.items():
         installer(app, service)
-    added = {(route.method, route.resource.canonical) for route in app.router.routes()} - registered
-    expected = {route for _, _, routes in FEATURE_ROUTE_INSTALLERS for route in routes}
+    added = {_route_shape((route.method, route.resource.canonical))
+             for route in app.router.routes()} - registered
+    expected = {_route_shape(route) for _, routes in installers.values() for route in routes}
     if added != expected:
         raise ValueError("feature installer added an unreviewed route")

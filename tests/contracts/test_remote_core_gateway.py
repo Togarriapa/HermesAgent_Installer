@@ -26,6 +26,36 @@ from hermes_installer.remote.gateway import Principal, RemotePolicy
 
 
 class CoreGatewayInspectorClientTests(unittest.TestCase):
+    def test_retained_ingress_proof_is_one_use_and_bound_to_peer_generation(self):
+        config = _config()
+        now = time.monotonic()
+        proof = {
+            "nonce": "d" * 64, "proof_sha256": "e" * 64,
+            "issued_monotonic": now - 0.01, "expires_monotonic": now + 3.0,
+            "peer_pid": 551, "peer_uid": 63324, "peer_gid": 63324,
+            "origin_socket_device": 11, "origin_socket_inode": 12,
+            "core_generation": "f" * 64, "config_sha256": config.config_sha256,
+            "boot_id": config.boot_id,
+        }
+        with core_gateway_inspector._RETAINED_INGRESS_LOCK:
+            core_gateway_inspector._RETAINED_INGRESS_ISSUES.clear()
+        try:
+            core_gateway_inspector._retain_ingress_issue(
+                caller_pid=440, caller_start_ticks="88", proof=proof)
+            retained = core_gateway_inspector._consume_ingress_issue(
+                caller_pid=440, caller_start_ticks="88", nonce=proof["nonce"],
+                proof_sha256=proof["proof_sha256"], peer=(551, 63324, 63324),
+                core_generation=proof["core_generation"], config=config)
+            self.assertEqual(retained.issued_monotonic, proof["issued_monotonic"])
+            with self.assertRaises(core_gateway_inspector.CoreInspectionDenied):
+                core_gateway_inspector._consume_ingress_issue(
+                    caller_pid=440, caller_start_ticks="88", nonce=proof["nonce"],
+                    proof_sha256=proof["proof_sha256"], peer=(551, 63324, 63324),
+                    core_generation=proof["core_generation"], config=config)
+        finally:
+            with core_gateway_inspector._RETAINED_INGRESS_LOCK:
+                core_gateway_inspector._RETAINED_INGRESS_ISSUES.clear()
+
     def test_module_entry_delegates_to_canonical_gateway_module(self):
         called = []
 

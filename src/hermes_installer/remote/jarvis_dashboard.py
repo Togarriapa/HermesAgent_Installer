@@ -238,12 +238,32 @@ def install_jarvis_dashboard_routes(app: Any, service: Any) -> None:
             core_projection = observation.projection
         except Exception:
             raise web.HTTPServiceUnavailable(text="current core projection unavailable") from None
+
+        def verify_before_response() -> None:
+            try:
+                current = service._current(request)
+                from .core_gateway_inspector import CoreVerifiedOverviewObservation
+                if (current.subject != principal.subject
+                        or current.core_generation != principal.core_generation
+                        or type(observation) is not CoreVerifiedOverviewObservation
+                        or observation.verify_current(launch.config,
+                            peer_pid=accepted.peer_pid, peer_uid=accepted.peer_uid,
+                            peer_gid=accepted.peer_gid, accepted_ingress=accepted) is not True):
+                    raise ValueError
+            except Exception:
+                raise web.HTTPServiceUnavailable(
+                    text="current core projection expired") from None
+
         if request.path == "/chat/api/overview":
-            return web.json_response(build_overview(service.store, principal.subject,
-                core_projection=core_projection))
+            payload = build_overview(service.store, principal.subject,
+                core_projection=core_projection)
+            verify_before_response()
+            return web.json_response(payload)
         if request.path == "/chat/api/capabilities":
             try:
-                return web.json_response(build_capabilities(core_projection))
+                payload = build_capabilities(core_projection)
+                verify_before_response()
+                return web.json_response(payload)
             except Exception:
                 raise web.HTTPServiceUnavailable(text="capability inventory unavailable") from None
         plugins = None
@@ -277,12 +297,14 @@ def install_jarvis_dashboard_routes(app: Any, service: Any) -> None:
                 core_version=base["coreVersion"], plugins=plugins, mcp=mcp,
                 opaque_id=lambda kind, name: _native_id(
                     principal.subject, principal.core_generation, kind, name))
-            snapshot = decode_native_controls(payload)
+            snapshot = decode_native_controls(payload.to_public_dict())
             public_payload = snapshot.to_public_dict()
+            verify_before_response()
             return web.json_response(public_payload)
         except Exception:
             # The adapter is separately pinned/composed. Its absence or a strict
             # decode failure leaves the fixed settings projection pending.
+            verify_before_response()
             return web.json_response(base)
 
     for path in _ROUTES:

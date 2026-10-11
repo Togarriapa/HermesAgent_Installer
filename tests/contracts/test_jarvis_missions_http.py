@@ -137,8 +137,20 @@ def test_mission_routes_and_feature_assets_are_literal_and_finite():
         "/chat/api/missions/{mission_id}/stop",
         "/chat/api/missions/{mission_id}/review",
     }
-    assert jarvis_feature_registry.FEATURE_ASSETS == (MISSION_ASSETS,)
+    assert jarvis_feature_registry.FEATURE_ASSETS[0] == MISSION_ASSETS
+    assert {asset.feature_id for asset in jarvis_feature_registry.FEATURE_ASSETS} == {
+        "missions", "bots", "activity", "native-controls",
+    }
     assert jarvis_feature_registry.FEATURE_ROUTE_INSTALLERS == (
         ("missions", jarvis_missions.install_jarvis_missions_routes,
          jarvis_missions.FEATURE_ROUTES),
+        ("bots", jarvis_feature_registry._bots.install_jarvis_bots_routes,
+         jarvis_feature_registry._bots.FEATURE_ROUTES),
     )
+    assert {feature_id for feature_id, _owner, _routes
+            in jarvis_feature_registry.FEATURE_ROUTE_OWNERS} == {"activity", "native-controls"}
+    route_sets = [asset.api_routes for asset in jarvis_feature_registry.FEATURE_ASSETS]
+    flattened = [(method, path.replace("{id}", "{}").replace("{turn_id}", "{}")
+                  .replace("{mission_id}", "{}"))
+                 for rows in route_sets for method, path in rows]
+    assert len(flattened) == len(set(flattened))
