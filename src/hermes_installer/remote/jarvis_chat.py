@@ -685,14 +685,16 @@ class JarvisChatService:
                 if not next_delta.done():
                     next_delta.cancel()
                 await asyncio.gather(next_delta, return_exceptions=True)
-            if stream is not None:
-                close = getattr(stream, "aclose", None)
-                if close is not None:
-                    try:
-                        await close()
-                    except Exception:
-                        pass
-            self._workers.pop(turn_id, None)
+            try:
+                if stream is not None:
+                    close = getattr(stream, "aclose", None)
+                    if close is not None:
+                        try:
+                            await close()
+                        except (asyncio.CancelledError, Exception):
+                            pass
+            finally:
+                self._workers.pop(turn_id, None)
 
     async def heartbeat(self, request):
         from aiohttp import web
