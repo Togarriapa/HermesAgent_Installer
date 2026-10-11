@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import time
+from types import SimpleNamespace
 
 import pytest
 
 from hermes_installer.remote.jarvis_chat import (
     ChatPrincipal,
     JarvisChatDenied,
+    JarvisChatService,
     JarvisChatStore,
     MAX_ACTIVE_TURNS,
 )
@@ -14,6 +17,29 @@ from hermes_installer.remote.jarvis_chat import (
 
 def principal(subject: str) -> ChatPrincipal:
     return ChatPrincipal(subject, time.monotonic() + 120, time.monotonic() + 4, "core-generation-a")
+
+
+def test_history_failure_logs_only_fixed_phase_and_exception_class(tmp_path, caplog):
+    store = JarvisChatStore(tmp_path / "chat.sqlite3")
+    conversation = new_conversation(store, "subject-a")
+
+    class Backend:
+        async def history(self, _session_id):
+            raise RuntimeError("private upstream response marker")
+
+    request = SimpleNamespace(
+        match_info={"conversation_id": conversation["id"]},
+    )
+    service = JarvisChatService(
+        store, Backend(), principal_from_request=lambda _request: principal("subject-a"))
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(service.messages(request))
+
+    records = [record.getMessage() for record in caplog.records
+               if record.name.endswith("jarvis_chat")]
+    assert records == ["jarvis_chat_messages_failed phase=history_rpc exception=RuntimeError"]
+    assert "private upstream response marker" not in " ".join(records)
 
 
 def new_conversation(store: JarvisChatStore, subject: str, index: int = 1) -> dict:

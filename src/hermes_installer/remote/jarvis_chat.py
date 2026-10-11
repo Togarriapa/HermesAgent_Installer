@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import math
 import os
 import re
@@ -36,6 +37,21 @@ ID_RE = re.compile(r"^[A-Za-z0-9_-]{24,64}$")
 IDEMPOTENCY_RE = re.compile(r"^[A-Za-z0-9_-]{22,128}$")
 NONCE_RE = re.compile(r"^[0-9a-f]{64}$")
 _ACTIVE = ("queued", "running")
+_CHAT_LOGGER = logging.getLogger(__name__)
+_MESSAGE_DIAGNOSTIC_PHASES = frozenset({
+    "principal", "conversation_lookup", "runtime_resume", "runtime_resume_recheck",
+    "runtime_mapping", "history_rpc", "history_projection", "response",
+})
+
+
+def _log_messages_failure(phase: str, error: BaseException) -> None:
+    """Emit bounded troubleshooting data without request, session, or backend content."""
+    if phase not in _MESSAGE_DIAGNOSTIC_PHASES:
+        phase = "response"
+    safe_types = {ValueError, TypeError, KeyError, RuntimeError, OSError,
+                  sqlite3.Error, JarvisChatDenied}
+    kind = type(error).__name__ if type(error) in safe_types else "OtherError"
+    _CHAT_LOGGER.warning("jarvis_chat_messages_failed phase=%s exception=%s", phase, kind)
 
 
 class JarvisChatDenied(PermissionError):
@@ -474,14 +490,22 @@ class JarvisChatService:
             # A generation change invalidates every runtime id and any active run. Keep the exact
             # durable stored id; never substitute a new empty session for an unavailable transcript.
             self.store.fail_active_conversation_turns(current["id"])
-            runtime_id = await self.backend.resume_session(current["session_key"])
+            try:
+                runtime_id = await self.backend.resume_session(current["session_key"])
+            except Exception as error:
+                _log_messages_failure("runtime_resume", error)
+                raise
             principal = self._current(request)
             if (principal.subject != target_subject
                     or principal.core_generation != target_generation):
                 raise JarvisChatDenied("core generation changed during resume")
-            return self.store.update_runtime_session(
-                principal.subject, current["id"], current["core_generation"], runtime_id,
-                principal.core_generation)
+            try:
+                return self.store.update_runtime_session(
+                    principal.subject, current["id"], current["core_generation"], runtime_id,
+                    principal.core_generation)
+            except Exception as error:
+                _log_messages_failure("runtime_mapping", error)
+                raise
 
     def install(self, app) -> None:
         """Add only finite core-backed Jarvis JSON/SSE routes to the guarded app."""
@@ -546,13 +570,19 @@ class JarvisChatService:
 
     async def messages(self, request):
         from aiohttp import web
+        phase = "principal"
         try:
             principal = self._current(request)
+            phase = "conversation_lookup"
             conversation_id = request.match_info.get("conversation_id", "")
             conversation = self.store.get_conversation(principal.subject, conversation_id)
+            phase = "runtime_resume"
             conversation = await self._ensure_current_runtime(request, principal, conversation)
+            phase = "runtime_resume_recheck"
             self._current(request)
+            phase = "history_rpc"
             history = await self.backend.history(conversation["backend_id"])
+            phase = "history_projection"
             self._current(request)
             projected = []
             total = 0
@@ -570,11 +600,15 @@ class JarvisChatService:
                 projected.append({"id": _opaque_id(), "role": role, "content": content,
                                   "createdAt": created_at if isinstance(created_at, (int, float)) else 0})
             projected.reverse()
+            phase = "response"
             self._current(request)
             return web.json_response({"conversationId": conversation_id, "messages": projected},
                                      headers=_secure_headers())
         except JarvisChatDenied:
             raise web.HTTPNotFound(text="not found", headers=_secure_headers()) from None
+        except Exception as error:
+            _log_messages_failure(phase, error)
+            raise
 
     async def begin_turn(self, request):
         from aiohttp import web
