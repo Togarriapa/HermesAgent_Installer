@@ -91,6 +91,11 @@ class WizardTests(unittest.TestCase):
             prompts = []
             def answer(prompt):
                 prompts.append(prompt)
+                # This regression is about the retired native Desktop option.
+                # Keep the separate, optional Cloudflare integration disabled
+                # so unrelated enrollment cannot fail the result under test.
+                if "Select remote desktop " in prompt:
+                    return "no"
                 return _inputs()(prompt)
             result = run_setup_wizard(config, input_fn=answer, output_fn=lambda _: None)
             self.assertEqual(result.state, "pending")

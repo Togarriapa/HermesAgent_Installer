@@ -428,7 +428,7 @@ def run_setup_wizard(config: Mapping[str, Any] | None = None, *,
             "memory": "One selected long-term memory service",
             "colibri": "Experimental local GLM-5.2 runtime; large download remains opt-in",
             "coral": "Separate TPU delegate for supported quantized TensorFlow Lite models",
-            "remote_desktop": "Access-protected remote view of the official Hermes Desktop app",
+            "remote_desktop": "Access-protected Jarvis web entrypoint and Cloudflare enrollment",
         }
         for name in component_names:
             default = "yes" if selected_components.get(name, name in {"hermes_agent", "registry"}) else "no"
