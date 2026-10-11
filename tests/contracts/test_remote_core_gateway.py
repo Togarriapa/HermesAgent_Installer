@@ -27,6 +27,20 @@ from hermes_installer.remote.gateway import Principal, RemotePolicy
 
 
 class CoreGatewayInspectorClientTests(unittest.TestCase):
+    def test_skill_restore_ids_are_bound_to_the_selected_source_kind(self):
+        resources_id = "a" * 64
+        owner_id = "restore-token_0123456789"
+        self.assertTrue(core_gateway_inspector._valid_profile_skill_restore_id(
+            resources_id, "resources"))
+        self.assertFalse(core_gateway_inspector._valid_profile_skill_restore_id(
+            resources_id, "owner-added"))
+        self.assertTrue(core_gateway_inspector._valid_profile_skill_restore_id(
+            owner_id, "owner-added"))
+        self.assertFalse(core_gateway_inspector._valid_profile_skill_restore_id(
+            owner_id, "resources"))
+        self.assertFalse(core_gateway_inspector._valid_profile_skill_restore_id(
+            owner_id, "untrusted-source"))
+
     def test_owner_turn_mission_binding_requires_typed_value_and_spent_row_match(self):
         from hermes_installer.remote import jarvis_mission_executor
 

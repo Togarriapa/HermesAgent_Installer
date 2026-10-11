@@ -78,9 +78,10 @@ CORE_NATIVE_ADAPTER_SOURCE_FILES = {
     "hermes_installer/remote/core_native_observer.py": "8df595116d4acd3ded529fb53f575efb91b1569119183290f47932fcf084a24d",
     "hermes_installer/remote/jarvis_project_context_engine.py": "538f90d8191298b08e34b23f952c1ecdff8dcdac1dfe0898b8f3d93d12a6c468",
     "hermes_installer/primary_prompt_manager.py": "9e5a456478fdae763494da7ae4a197ad4b4cbf60e0ade454793c38713e603289",
-    "hermes_installer/core_runtime.py": "e8dc37be76d99e314644317cfd7f0f2c10edfd5e352443be828706ee75c5cfed",
-    "hermes_installer/registry/manual_jarvis_skills.py": "bb53f222930e6376a24788347536719c0a0ccce50b489b20a770599be2e96dfd",
+    "hermes_installer/core_runtime.py": "5570c89f925996659fb4754f03697fa283cfcebe9f3b9d8b9d5abda4e6b82be5",
+    "hermes_installer/registry/manual_jarvis_skills.py": "a64da81db1d8fcb3e5611dc9d15ae4ce29ce6a9e877107a86969e65401c89dc2",
     "hermes_installer/registry/resources_skill_overlay.py": "f34035f595fd39935e0bef5d4d42241134f4d6f1251aff34319ce0b647abe67f",
+    "hermes_installer/remote/jarvis_profile_source_adapter.py": "48cf1015d3c997a4b949b5bb8d2d2593d04bcec677f3a3b10fa43cff1cf130c6",
     "hermes_installer/remote/native_child_adapter.py": "5bf912a83bb011a0af55f0157204dd8a7ea7f00834bf4635de0de530e84ea365",
     "hermes_installer/remote/jarvis_master_planning.py": "88a1192fbf6a55b680a80192ed312428346484054df324270626bd8bb927b239",
     "hermes_installer/remote/native_plugin_bootstrap.py": "e39c230582bb1e99e67986001c5fe2d3c7baa581266786e264ee0da508d1fe66",
@@ -1840,6 +1841,17 @@ def observe_read_obsidian_vault(config: CoreGatewayConfig, *, request: dict[str,
     return {"schema": 1, "nonce": request["nonce"], "ok": True, "projection": projection}
 
 
+def _valid_profile_skill_restore_id(value: Any, source: str) -> bool:
+    """Accept only the restore-identifier grammar for the selected native source."""
+    if not isinstance(value, str):
+        return False
+    if source == "resources":
+        return re.fullmatch(r"[0-9a-f]{64}", value) is not None
+    if source == "owner-added":
+        return re.fullmatch(r"[A-Za-z0-9_-]{16,96}", value) is not None
+    return False
+
+
 def observe_profile_admin(config: CoreGatewayConfig, *, request: dict[str, Any],
                           caller_pid: int, caller_uid: int, caller_gid: int,
                           peer_pid: int, peer_uid: int, peer_gid: int) -> dict[str, Any]:
@@ -1888,8 +1900,8 @@ def observe_profile_admin(config: CoreGatewayConfig, *, request: dict[str, Any],
                 or re.fullmatch(r"[A-Za-z0-9_-]{22,128}", request["idempotency_key"]) is None):
             raise CoreInspectionDenied("Profile edit payload is invalid")
         if action == "skill-restore" and (not isinstance(request.get("restore_id"), str)
-                or re.fullmatch(r"[0-9a-f]{64}", request["restore_id"]) is None):
-            raise CoreInspectionDenied("Archived Resources version selector is invalid")
+                or re.fullmatch(r"(?:[0-9a-f]{64}|[A-Za-z0-9_-]{16,96})", request["restore_id"]) is None):
+            raise CoreInspectionDenied("Archived skill version selector is invalid")
         if action in {"write", "skill-write"} and (not isinstance(request["content"], str)
                 or len(request["content"].encode("utf-8", "strict")) > 64 * 1024
                 or "\x00" in request["content"]):
@@ -2046,6 +2058,9 @@ def observe_profile_admin(config: CoreGatewayConfig, *, request: dict[str, Any],
                             "source_generation": value.source_generation, "sha256": value.sha256,
                             "recovery_id": value.recovery_id, "effective_readback": value.readback}
                 elif action == "skill-restore":
+                    restore_source = "resources" if selected_skill in resource_ids else "owner-added"
+                    if not _valid_profile_skill_restore_id(request["restore_id"], restore_source):
+                        raise CoreInspectionDenied("Archived skill version does not match its selected source")
                     if selected_skill in resource_ids:
                         value = core.admin_resources_skill("restore", selected_skill,
                             expected_sha256=request["expected_sha256"], restore_id=request["restore_id"],
