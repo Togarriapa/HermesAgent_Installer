@@ -855,42 +855,84 @@ class ManualStageGatewayTests(unittest.TestCase):
                 await client.close()
         asyncio.run(exercise())
 
-    def test_inspector_serializes_fresh_proofs_without_caching_and_bounds_queue(self):
+    def test_inspector_burst_joins_one_original_fullscan_with_fresh_nonce_and_currentness(self):
         from hermes_installer.remote import manual_stage_inspector as inspector
-        active = 0
-        maximum = 0
-        calls = 0
-        guard = threading.Lock()
+        key = ("k" * 64, 456, self.config.boot_id)
+        scans = []
+        currentness_calls = []
+        gateway_calls = []
+        now = time.monotonic()
 
-        def observed(_config):
-            nonlocal active, maximum, calls
-            with guard:
-                calls += 1
-                serial = calls
-                active += 1
-                maximum = max(maximum, active)
-            try:
-                time.sleep(0.025)
-                return f"{serial:064x}"
-            finally:
-                with guard:
-                    active -= 1
+        def currentness(_config, *, deadline):
+            currentness_calls.append(deadline)
+            return key
 
-        with mock.patch.object(inspector, "_request_current_inspection", side_effect=observed):
-            with ThreadPoolExecutor(max_workers=6) as pool:
-                proofs = list(pool.map(
-                    lambda _n: verify_current_inspection(self.config, queue_timeout_seconds=1.0), range(6)))
-            self.assertEqual(len(set(proofs)), 6)
-            self.assertEqual(calls, 6)
-            self.assertEqual(maximum, 1)
+        def gateway(_config, *, pid, uid, gid, deadline):
+            gateway_calls.append((pid, uid, gid))
+            return 909, "424242"
 
-            inspector._INSPECTION_IPC_LOCK.acquire()
-            try:
-                with self.assertRaises(StageInspectionDenied):
-                    verify_current_inspection(self.config, queue_timeout_seconds=0.05)
-                self.assertEqual(calls, 6)
-            finally:
-                inspector._INSPECTION_IPC_LOCK.release()
+        def fullscan(_config, *, nonce):
+            scans.append(nonce)
+            time.sleep(0.05)
+            return {"schema": 1, "nonce": nonce, "proof_sha256": "a" * 64,
+                    "boot_id": self.config.boot_id, "issued_monotonic": now,
+                    "expires_monotonic": now + 4.8}
+
+        original_snapshot = inspector._NATIVE_OBSERVATION_SNAPSHOT
+        original_running = inspector._NATIVE_OBSERVATION_SCAN_RUNNING
+        with inspector._NATIVE_OBSERVATION_CONDITION:
+            inspector._NATIVE_OBSERVATION_SNAPSHOT = None
+            inspector._NATIVE_OBSERVATION_SCAN_RUNNING = False
+            inspector._NATIVE_OBSERVATION_CONDITION.notify_all()
+        try:
+            with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
+                 mock.patch.object(inspector, "_native_currentness_key", side_effect=currentness), \
+                 mock.patch.object(inspector, "_authenticate_gateway_inspector_peer", side_effect=gateway), \
+                 mock.patch.object(inspector, "observe_stage", side_effect=fullscan), \
+                 mock.patch.object(inspector, "_pid_start_ticks", return_value="424242"), \
+                 mock.patch.object(inspector, "_pidfd_exited", return_value=False), \
+                 mock.patch.object(inspector.os, "geteuid", return_value=0), \
+                 mock.patch.object(inspector.os, "close"):
+                with ThreadPoolExecutor(max_workers=6) as pool:
+                    responses = list(pool.map(lambda n: inspector.observe_current_native_observation(
+                        self.config, nonce=f"{n + 1:064x}", caller_pid=901,
+                        caller_uid=self.config.gateway_uid, caller_gid=self.config.gateway_gid), range(6)))
+            self.assertEqual(len(scans), 1)
+            self.assertGreaterEqual(len(currentness_calls), 7)  # the scan and each waiter recheck currentness
+            self.assertEqual(gateway_calls, [(901, self.config.gateway_uid, self.config.gateway_gid)] * 6)
+            self.assertEqual({row["nonce"] for row in responses}, {f"{n + 1:064x}" for n in range(6)})
+            self.assertEqual({(row["issued_monotonic"], row["expires_monotonic"]) for row in responses},
+                             {(now, now + 4.8)})
+            for row in responses:
+                body = {name: value for name, value in row.items() if name != "proof_sha256"}
+                expected = hashlib.sha256(b"hermes-manual-stage-native-observation-v264\0" +
+                    json.dumps(body, sort_keys=True, separators=(",", ":")).encode("ascii")).hexdigest()
+                self.assertEqual(row["proof_sha256"], expected)
+        finally:
+            with inspector._NATIVE_OBSERVATION_CONDITION:
+                inspector._NATIVE_OBSERVATION_SNAPSHOT = original_snapshot
+                inspector._NATIVE_OBSERVATION_SCAN_RUNNING = original_running
+                inspector._NATIVE_OBSERVATION_CONDITION.notify_all()
+
+    def test_native_ipc_peer_is_exact_fixed_gateway_process_not_uid_alone(self):
+        from hermes_installer.remote import manual_stage_inspector as inspector
+        expected = (77, self.config.gateway_uid, self.config.gateway_gid)
+        identity = (77, self.config.gateway_uid, self.config.gateway_gid,
+                    "31337", "invocation", "x" * 64)
+        with mock.patch.object(inspector, "_fixed_process", return_value=identity) as check:
+            self.assertEqual(inspector._authenticate_gateway_inspector_peer(
+                self.config, pid=expected[0], uid=expected[1], gid=expected[2], deadline=99.0),
+                (77, "31337"))
+        check.assert_called_once_with(self.config, unit=inspector.GATEWAY_UNIT,
+            expected_pid=expected[0], expected_uid=self.config.gateway_uid,
+            expected_gid=self.config.gateway_gid, executable=inspector.GATEWAY_EXECUTABLE,
+            executable_sha256=inspector.GATEWAY_EXECUTABLE_SHA256,
+            argv_expected=inspector.GATEWAY_ARGV, deadline=99.0)
+        with mock.patch.object(inspector, "_fixed_process") as check:
+            with self.assertRaises(StageInspectionDenied):
+                inspector._authenticate_gateway_inspector_peer(self.config,
+                    pid=expected[0], uid=expected[1] + 1, gid=expected[2], deadline=99.0)
+        check.assert_not_called()
 
     def test_connector_uses_only_fresh_admission_inspection_and_denies_stale_or_changed(self):
         from hermes_installer.remote.manual_stage import StageFixedXpraConnector

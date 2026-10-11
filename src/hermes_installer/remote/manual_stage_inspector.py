@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import select
@@ -32,6 +33,7 @@ TUNNEL_ARGV = ("/usr/bin/cloudflared", "--no-autoupdate", "tunnel", "run",
                "--token-file", "/run/credentials/hermes-jarvis-mvp-tunnel.service/tunnel-token")
 TABLE_FAMILY, TABLE_NAME, CHAIN_NAME = "inet", "hermes_jarvis_mvp", "output"
 DISPLAY_UNIT = "hermes-xpra-stage.service"
+DISPLAY_UNIT_PATH = Path("/etc/systemd/system/hermes-xpra-stage.service")
 MAX_REQUEST = 1024
 MAX_RESPONSE = 1024
 INGRESS_MAX_RESPONSE = 2048
@@ -42,13 +44,17 @@ MAX_INSPECTION_QUEUE_WAIT_SECONDS = 6.5
 WATCHDOG_INSPECTION_QUEUE_WAIT_SECONDS = 0.5
 MAX_APP_FILE_BYTES = 256 * 1024 * 1024
 MAX_APP_TREE_BYTES = 2 * 1024 * 1024 * 1024
-_INSPECTION_IPC_LOCK = threading.Lock()
 _INGRESS_SERVER_SLOTS = threading.BoundedSemaphore(8)
 _SERVER_CONNECTION_SLOTS = threading.BoundedSemaphore(16)
-_OBSERVATION_SERVER_SLOTS = threading.BoundedSemaphore(1)
+_OBSERVATION_SERVER_SLOTS = threading.BoundedSemaphore(8)
 _INGRESS_REQUEST_DEADLINE_SECONDS = 2.0
 _INGRESS_PROOF_TTL_SECONDS = 5.0
 _OBSERVATION_SEAL = object()
+_NATIVE_OBSERVATION_SEAL = object()
+_NATIVE_OBSERVATION_CONDITION = threading.Condition()
+_NATIVE_OBSERVATION_SNAPSHOT: dict[str, Any] | None = None
+_NATIVE_OBSERVATION_SCAN_RUNNING = False
+_NATIVE_OBSERVATION_MIN_REMAINING_SECONDS = 0.15
 GATEWAY_EXECUTABLE = Path("/usr/bin/python3.13")
 GATEWAY_EXECUTABLE_SHA256 = "bd241b38381974ae27d7d5098a6d0e6dda0a744b5e9fdd6fe3a1ae632588961e"
 GATEWAY_ARGV = ("/opt/hermes-jarvis-mvp-20261011/gateway-venv/bin/python", "-m",
@@ -126,6 +132,34 @@ class StageVerifiedIngressObservation:
 
 def _is_sha256(value: object) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+@dataclass(frozen=True, slots=True)
+class StageNativeInspectionObservation:
+    config_sha256: str
+    boot_id: str
+    native_observation_sha256: str
+    nonce: str
+    issued_monotonic: float
+    expires_monotonic: float
+    _seal: object = field(repr=False, compare=False)
+
+    def verify_current(self, config: Any, *, now: float | None = None) -> bool:
+        current = time.monotonic() if now is None else now
+        return bool(
+            self._seal is _NATIVE_OBSERVATION_SEAL
+            and self.config_sha256 == config.config_sha256
+            and self.boot_id == config.boot_id
+            and re.fullmatch(r"[0-9a-f-]{36}", self.boot_id)
+            and _is_sha256(self.config_sha256)
+            and _is_sha256(self.native_observation_sha256)
+            and re.fullmatch(r"[0-9a-f]{64}", self.nonce)
+            and type(current) in (int, float) and math.isfinite(current)
+            and type(self.issued_monotonic) in (int, float) and math.isfinite(self.issued_monotonic)
+            and type(self.expires_monotonic) in (int, float) and math.isfinite(self.expires_monotonic)
+            and self.issued_monotonic <= current < self.expires_monotonic
+            and self.expires_monotonic <= self.issued_monotonic + OBSERVATION_SECONDS
+        )
 
 
 def _check_app_file_size(size: int) -> None:
@@ -347,6 +381,59 @@ def _check_immutable_tree(appdir: Path, expected_manifest_sha256: str) -> str:
             os.close(root)
     except Exception:
         raise _deny() from None
+
+
+def _appdir_manifest_custody(appdir: Path, expected_manifest_sha256: str) -> tuple[int, int, int, int, int, str]:
+    """Cheaply bind root-owned AppDir and manifest identity without rehashing every member."""
+    parent_fd = -1
+    try:
+        parent_fd = os.open("/", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                            | getattr(os, "O_NOFOLLOW", 0))
+        current = parent_fd
+        for component in appdir.parts[1:]:
+            next_fd = os.open(component, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                              | getattr(os, "O_NOFOLLOW", 0), dir_fd=current)
+            info = os.fstat(next_fd)
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0
+                    or stat.S_IMODE(info.st_mode) & 0o022):
+                os.close(next_fd)
+                raise ValueError
+            if current != parent_fd:
+                os.close(current)
+            current = next_fd
+        app_info = os.fstat(current)
+        manifest_fd = os.open("MANIFEST.sha256", os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                              dir_fd=current)
+        try:
+            manifest_info = os.fstat(manifest_fd)
+            if (not stat.S_ISREG(manifest_info.st_mode) or manifest_info.st_uid != 0
+                    or stat.S_IMODE(manifest_info.st_mode) & 0o022
+                    or manifest_info.st_nlink != 1 or manifest_info.st_size > 1_048_576):
+                raise ValueError
+            digest = hashlib.sha256()
+            remaining = manifest_info.st_size
+            while remaining:
+                part = os.read(manifest_fd, min(65_536, remaining))
+                if not part:
+                    raise ValueError
+                digest.update(part)
+                remaining -= len(part)
+            if os.read(manifest_fd, 1) or digest.hexdigest() != expected_manifest_sha256:
+                raise ValueError
+            return (app_info.st_dev, app_info.st_ino, manifest_info.st_dev,
+                    manifest_info.st_ino, manifest_info.st_size, digest.hexdigest())
+        finally:
+            os.close(manifest_fd)
+    except Exception:
+        raise _deny() from None
+    finally:
+        if parent_fd >= 0:
+            try:
+                if current != parent_fd:
+                    os.close(current)
+            except (UnboundLocalError, OSError):
+                pass
+            os.close(parent_fd)
 
 
 def _scan_tree(directory_fd: int, prefix: str) -> tuple[set[str], set[str]]:
@@ -674,11 +761,14 @@ def observe_stage(config: Any, *, nonce: str) -> dict[str, Any]:
     _validate_nft(table, config.gateway_uid)
     props = _parse_props(_run_fixed(("/usr/bin/systemctl", "show", DISPLAY_UNIT, "--no-pager",
         "--property=LoadState", "--property=ActiveState", "--property=SubState", "--property=MainPID",
-        "--property=InvocationID", "--property=ControlGroup", "--property=User", "--property=FragmentPath"),
+        "--property=InvocationID", "--property=ControlGroup", "--property=User", "--property=FragmentPath",
+        "--property=DropInPaths"),
         deadline=deadline, maximum=8192))
     pid = int(props.get("MainPID", "0"))
-    if (props.get("LoadState") != "loaded" or props.get("ActiveState") != "active"
+    if (config.unit_fragment != DISPLAY_UNIT_PATH
+            or props.get("LoadState") != "loaded" or props.get("ActiveState") != "active"
             or props.get("SubState") != "running" or props.get("FragmentPath") != str(config.unit_fragment)
+            or props.get("DropInPaths") != ""
             or props.get("ControlGroup") != f"/system.slice/{DISPLAY_UNIT}"
             or props.get("User") not in {str(config.xpra_uid), "hermes-xpra-stage"}
             or not props.get("InvocationID") or pid <= 1):
@@ -701,7 +791,7 @@ def observe_stage(config: Any, *, nonce: str) -> dict[str, Any]:
         argv_digest = _validate_xpra_argv(config, pid)
         if not _listener_owned_by(pid):
             raise _deny()
-        if _hash_path(config.unit_fragment) != config.unit_sha256:
+        if _hash_path(config.unit_fragment, require_root_readonly=True) != config.unit_sha256:
             raise _deny()
         xpra_pinned_modules_digest = _verify_pinned_xpra_modules()
         app_digest = _check_immutable_tree(config.appdir, config.appdir_manifest_sha256)
@@ -721,6 +811,116 @@ def observe_stage(config: Any, *, nonce: str) -> dict[str, Any]:
     return {"schema": 1, "nonce": nonce, "proof_sha256": proof,
             "boot_id": boot_id, "issued_monotonic": started,
             "expires_monotonic": min(deadline, time.monotonic() + OBSERVATION_SECONDS)}
+
+
+def _authenticate_gateway_inspector_peer(config: Any, *, pid: int, uid: int, gid: int,
+                                         deadline: float) -> tuple[int, str]:
+    if (type(pid) is not int or pid <= 1 or type(uid) is not int or type(gid) is not int
+            or (uid, gid) != (config.gateway_uid, config.gateway_gid)):
+        raise _deny()
+    identity = _fixed_process(config, unit=GATEWAY_UNIT, expected_pid=pid,
+        expected_uid=config.gateway_uid, expected_gid=config.gateway_gid,
+        executable=GATEWAY_EXECUTABLE, executable_sha256=GATEWAY_EXECUTABLE_SHA256,
+        argv_expected=GATEWAY_ARGV, deadline=deadline)
+    return identity[0], identity[3]
+
+
+def _native_response(config: Any, *, nonce: str, snapshot: dict[str, Any]) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "schema": 2, "nonce": nonce, "config_sha256": config.config_sha256,
+        "boot_id": snapshot["boot_id"],
+        "native_observation_sha256": snapshot["native_observation_sha256"],
+        "issued_monotonic": snapshot["issued_monotonic"],
+        "expires_monotonic": snapshot["expires_monotonic"],
+    }
+    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"),
+                           allow_nan=False).encode("ascii")
+    body["proof_sha256"] = hashlib.sha256(
+        b"hermes-manual-stage-native-observation-v264\0" + canonical).hexdigest()
+    return body
+
+
+def observe_current_native_observation(config: Any, *, nonce: str, caller_pid: int,
+                                       caller_uid: int, caller_gid: int) -> dict[str, Any]:
+    """Join fresh cheap root observations to one native fullscan within its original lease."""
+    global _NATIVE_OBSERVATION_SNAPSHOT, _NATIVE_OBSERVATION_SCAN_RUNNING
+    if (os.geteuid() != 0 or type(nonce) is not str or not re.fullmatch(r"[0-9a-f]{64}", nonce)):
+        raise _deny()
+    request_started = time.monotonic()
+    request_deadline = request_started + MAX_INSPECTION_QUEUE_WAIT_SECONDS
+    gateway_pidfd = -1
+    try:
+        from .manual_stage import _read_config_current
+        _read_config_current(config)
+        gateway_pidfd, gateway_start = _authenticate_gateway_inspector_peer(
+            config, pid=caller_pid, uid=caller_uid, gid=caller_gid, deadline=request_deadline)
+        while True:
+            if time.monotonic() >= request_deadline:
+                raise _deny()
+            current_key, xpra_pid, boot_id = _native_currentness_key(config, deadline=request_deadline)
+            with _NATIVE_OBSERVATION_CONDITION:
+                now = time.monotonic()
+                snapshot = _NATIVE_OBSERVATION_SNAPSHOT
+                if snapshot is not None and (
+                        snapshot["key"] != current_key or snapshot["boot_id"] != boot_id
+                        or snapshot["config_sha256"] != config.config_sha256
+                        or snapshot["expires_monotonic"] - now
+                            <= _NATIVE_OBSERVATION_MIN_REMAINING_SECONDS):
+                    _NATIVE_OBSERVATION_SNAPSHOT = None
+                    snapshot = None
+                if snapshot is not None:
+                    if (_pid_start_ticks(caller_pid) != gateway_start or _pidfd_exited(gateway_pidfd)
+                            or time.monotonic() >= request_deadline):
+                        raise _deny()
+                    return _native_response(config, nonce=nonce, snapshot=snapshot)
+                if _NATIVE_OBSERVATION_SCAN_RUNNING:
+                    remaining = request_deadline - now
+                    if remaining <= 0:
+                        raise _deny()
+                    _NATIVE_OBSERVATION_CONDITION.wait(timeout=remaining)
+                    continue
+                _NATIVE_OBSERVATION_SCAN_RUNNING = True
+                _NATIVE_OBSERVATION_SNAPSHOT = None
+                break
+
+        try:
+            # Full native custody scan keeps its own true start and <=5s expiry.
+            full = observe_stage(config, nonce=nonce)
+            after_key, after_pid, after_boot = _native_currentness_key(config, deadline=request_deadline)
+            completed = time.monotonic()
+            if (after_key != current_key or after_pid != xpra_pid or after_boot != boot_id
+                    or full.get("schema") != 1 or full.get("nonce") != nonce
+                    or full.get("boot_id") != boot_id
+                    or not _is_sha256(full.get("proof_sha256"))
+                    or type(full.get("issued_monotonic")) not in (int, float)
+                    or type(full.get("expires_monotonic")) not in (int, float)
+                    or full["issued_monotonic"] > completed
+                    or full["expires_monotonic"] <= completed + _NATIVE_OBSERVATION_MIN_REMAINING_SECONDS
+                    or full["expires_monotonic"] > full["issued_monotonic"] + OBSERVATION_SECONDS
+                    or time.monotonic() >= request_deadline
+                    or _pid_start_ticks(caller_pid) != gateway_start or _pidfd_exited(gateway_pidfd)):
+                raise _deny()
+            snapshot = {
+                "key": current_key, "config_sha256": config.config_sha256,
+                "boot_id": boot_id, "native_observation_sha256": full["proof_sha256"],
+                "issued_monotonic": full["issued_monotonic"],
+                "expires_monotonic": full["expires_monotonic"],
+            }
+            with _NATIVE_OBSERVATION_CONDITION:
+                _NATIVE_OBSERVATION_SNAPSHOT = snapshot
+            return _native_response(config, nonce=nonce, snapshot=snapshot)
+        finally:
+            with _NATIVE_OBSERVATION_CONDITION:
+                _NATIVE_OBSERVATION_SCAN_RUNNING = False
+                _NATIVE_OBSERVATION_CONDITION.notify_all()
+    except Exception:
+        with _NATIVE_OBSERVATION_CONDITION:
+            _NATIVE_OBSERVATION_SNAPSHOT = None
+            _NATIVE_OBSERVATION_CONDITION.notify_all()
+        raise _deny() from None
+    finally:
+        if gateway_pidfd >= 0:
+            os.close(gateway_pidfd)
 
 
 def observe_current_ingress(config: Any, *, nonce: str, caller_pid: int,
@@ -804,12 +1004,77 @@ def _verify_pinned_xpra_modules() -> str:
     return hashlib.sha256(b"hermes-xpra-pinned-modules-v262\0" + b"\0".join(binding)).hexdigest()
 
 
+def _native_currentness_key(config: Any, *, deadline: float) -> tuple[str, int, str]:
+    """Fresh cheap joins for a retained full scan; deliberately excludes AppDir member hashing."""
+    from .manual_stage import _read_config_current
+    _read_config_current(config)
+    if config.unit_fragment != DISPLAY_UNIT_PATH:
+        raise _deny()
+    boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    if boot_id != config.boot_id or not re.fullmatch(r"[0-9a-f-]{36}", boot_id):
+        raise _deny()
+    table = _run_fixed(("/usr/sbin/nft", "-j", "-n", "list", "table", TABLE_FAMILY,
+                        TABLE_NAME), deadline=deadline)
+    _validate_nft(table, config.gateway_uid)
+    props = _parse_props(_run_fixed(("/usr/bin/systemctl", "show", DISPLAY_UNIT, "--no-pager",
+        "--property=LoadState", "--property=ActiveState", "--property=SubState", "--property=MainPID",
+        "--property=InvocationID", "--property=ControlGroup", "--property=User", "--property=FragmentPath",
+        "--property=DropInPaths"), deadline=deadline, maximum=8192))
+    try:
+        pid = int(props["MainPID"])
+        if (props.get("LoadState") != "loaded" or props.get("ActiveState") != "active"
+                or props.get("SubState") != "running" or props.get("DropInPaths") != ""
+                or props.get("FragmentPath") != str(config.unit_fragment)
+                or props.get("ControlGroup") != f"/system.slice/{DISPLAY_UNIT}"
+                or props.get("User") not in {str(config.xpra_uid), "hermes-xpra-stage"}
+                or not props.get("InvocationID") or pid <= 1):
+            raise ValueError
+        pidfd = os.pidfd_open(pid, 0)
+    except Exception:
+        raise _deny() from None
+    try:
+        started_ticks = _pid_start_ticks(pid)
+        cgroup = Path(f"/proc/{pid}/cgroup").read_text().splitlines()
+        status = Path(f"/proc/{pid}/status").read_text()
+        uid = next(row for row in status.splitlines() if row.startswith("Uid:")).split()
+        if (int(uid[1]) != config.xpra_uid or f"0::{props['ControlGroup']}" not in cgroup
+                or Path(f"/proc/{pid}/exe").resolve(strict=True) != config.xpra_binary
+                or _hash_path(config.xpra_binary) != config.xpra_binary_sha256
+                or _hash_path(config.xpra_program) != config.xpra_program_sha256):
+            raise _deny()
+        _require_xpra_config_isolated_environment(pid)
+        argv_digest = _validate_xpra_argv(config, pid)
+        if not _listener_owned_by(pid):
+            raise _deny()
+        if _hash_path(config.unit_fragment, require_root_readonly=True) != config.unit_sha256:
+            raise _deny()
+        module_digest = _verify_pinned_xpra_modules()
+        appdir_custody = _appdir_manifest_custody(config.appdir, config.appdir_manifest_sha256)
+        if (_pid_start_ticks(pid) != started_ticks or _pidfd_exited(pidfd)
+                or time.monotonic() >= deadline):
+            raise _deny()
+        identity = {
+            "appdir_custody": list(appdir_custody), "argv_sha256": argv_digest,
+            "boot_id": boot_id, "config_sha256": config.config_sha256,
+            "firewall_sha256": hashlib.sha256(table).hexdigest(),
+            "invocation_id": props["InvocationID"], "module_sha256": module_digest,
+            "pid": pid, "pid_start_ticks": started_ticks,
+            "unit_sha256": config.unit_sha256,
+        }
+        canonical = json.dumps(identity, sort_keys=True, separators=(",", ":"),
+                               allow_nan=False).encode("ascii")
+        return hashlib.sha256(b"hermes-manual-stage-native-currentness-v264\0" + canonical).hexdigest(), pid, boot_id
+    finally:
+        os.close(pidfd)
+
+
 def _hash_path(path: Path, *, expected_size: int | None = None,
                require_root_readonly: bool = False) -> str:
     parent_fd = None
     if require_root_readonly:
         allowed = {row[0] for row in XPRA_PINNED_MODULES} | {
             GATEWAY_UNIT_PATH, TUNNEL_UNIT_PATH, CLOUDFLARED_PATH, GATEWAY_EXECUTABLE,
+            DISPLAY_UNIT_PATH,
         }
         if path not in allowed or not path.is_absolute():
             raise _deny()
@@ -940,13 +1205,16 @@ def serve_inspection_socket(config: Any) -> None:
                     if not acquired.acquire(blocking=False):
                         acquired = None
                         return
-                    result = observe_stage(config, nonce=request["nonce"])
+                    result = observe_current_native_observation(config, nonce=request["nonce"],
+                        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid)
                 else:
                     return
                 raw = json.dumps(result, sort_keys=True, separators=(",", ":"),
                                  allow_nan=False).encode("ascii")
                 limit = INGRESS_MAX_RESPONSE if request["op"] == "observe-ingress" else MAX_RESPONSE
-                if len(raw) <= limit and time.monotonic() < frame_deadline + 1.0:
+                response_deadline = frame_deadline + (MAX_INSPECTION_QUEUE_WAIT_SECONDS
+                    if request["op"] == "observe" else 1.0)
+                if len(raw) <= limit and time.monotonic() < response_deadline:
                     conn.sendall(struct.pack("!I", len(raw)) + raw)
             except Exception:
                 return
@@ -1101,30 +1369,30 @@ def verify_current_ingress(config: Any, *, peer_pid: int, peer_uid: int,
         raise StageInspectionDenied("root current-ingress proof is unavailable or stale") from None
 
 
-def verify_current_inspection(config: Any, *, queue_timeout_seconds: float = MAX_INSPECTION_QUEUE_WAIT_SECONDS) -> str:
-    """Ask for a fresh nonce-bound root observation, serializing the slow file walk."""
+def verify_current_inspection(config: Any, *, queue_timeout_seconds: float = MAX_INSPECTION_QUEUE_WAIT_SECONDS) -> StageNativeInspectionObservation:
+    """Request a fresh per-call join to the root's original short native observation."""
     if (type(queue_timeout_seconds) not in (int, float)
             or not 0.05 <= queue_timeout_seconds <= MAX_INSPECTION_QUEUE_WAIT_SECONDS):
         raise StageInspectionDenied("root manual-stage proof queue bound is invalid")
-    if not _INSPECTION_IPC_LOCK.acquire(timeout=queue_timeout_seconds):
-        raise StageInspectionDenied("root manual-stage proof queue is busy")
-    try:
-        return _request_current_inspection(config)
-    finally:
-        _INSPECTION_IPC_LOCK.release()
+    return _request_current_inspection(config, queue_timeout_seconds=queue_timeout_seconds)
 
 
-def _request_current_inspection(config: Any) -> str:
-    """Perform exactly one fresh IPC proof; callers never reuse this result."""
+def _request_current_inspection(config: Any, *, queue_timeout_seconds: float) -> StageNativeInspectionObservation:
+    """Perform one nonce-bound IPC; root bounds singleflight and does not extend expiry."""
     nonce = os.urandom(32).hex()
     try:
+        from .manual_stage import _read_config_current
+        _read_config_current(config)
         info = os.lstat(SOCKET_PATH)
         if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != 0
                 or info.st_gid != config.gateway_gid or stat.S_IMODE(info.st_mode) != 0o660):
             raise ValueError
         conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        deadline = time.monotonic() + INSPECTION_IPC_TIMEOUT_SECONDS
-        conn.settimeout(INSPECTION_IPC_TIMEOUT_SECONDS)
+        # Retain the former independent 2s IPC budget after the client lock was
+        # removed; the queue argument remains an additive bounded allowance.
+        ipc_budget = min(INSPECTION_IPC_TIMEOUT_SECONDS + queue_timeout_seconds, 3.0)
+        deadline = time.monotonic() + ipc_budget
+        conn.settimeout(ipc_budget)
         conn.connect(str(SOCKET_PATH))
         try:
             if not hasattr(socket, "SO_PEERCRED"):
@@ -1147,22 +1415,42 @@ def _request_current_inspection(config: Any) -> str:
         finally:
             conn.close()
         if not isinstance(result, dict) or set(result) != {
-                "schema", "nonce", "proof_sha256", "boot_id", "issued_monotonic", "expires_monotonic"}:
+                "schema", "nonce", "config_sha256", "boot_id", "native_observation_sha256",
+                "issued_monotonic", "expires_monotonic", "proof_sha256"}:
             raise ValueError
         now = time.monotonic()
         local_boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
-        if (result["schema"] != 1 or result["nonce"] != nonce or result["boot_id"] != local_boot_id
+        if (type(result["schema"]) is not int or result["schema"] != 2
+                or result["nonce"] != nonce or result["config_sha256"] != config.config_sha256
+                or result["boot_id"] != local_boot_id
                 or not re.fullmatch(r"[0-9a-f-]{36}", local_boot_id)
-                or not isinstance(result["proof_sha256"], str) or len(result["proof_sha256"]) != 64
-                or any(c not in "0123456789abcdef" for c in result["proof_sha256"])
+                or not _is_sha256(result["config_sha256"])
+                or not _is_sha256(result["native_observation_sha256"])
+                or not _is_sha256(result["proof_sha256"])
                 or type(result["issued_monotonic"]) not in (int, float)
                 or type(result["expires_monotonic"]) not in (int, float)
-                or not __import__("math").isfinite(result["issued_monotonic"])
-                or not __import__("math").isfinite(result["expires_monotonic"])
+                or not math.isfinite(result["issued_monotonic"])
+                or not math.isfinite(result["expires_monotonic"])
                 or result["issued_monotonic"] > now or result["expires_monotonic"] <= now
-                or result["expires_monotonic"] > result["issued_monotonic"] + OBSERVATION_SECONDS):
+                or result["expires_monotonic"] > result["issued_monotonic"] + OBSERVATION_SECONDS
+                or time.monotonic() >= deadline):
             raise ValueError
-        return result["proof_sha256"]
+        body = {key: value for key, value in result.items() if key != "proof_sha256"}
+        canonical = json.dumps(body, sort_keys=True, separators=(",", ":"),
+                               allow_nan=False).encode("ascii")
+        expected = hashlib.sha256(
+            b"hermes-manual-stage-native-observation-v264\0" + canonical).hexdigest()
+        if result["proof_sha256"] != expected:
+            raise ValueError
+        observation = StageNativeInspectionObservation(
+            config_sha256=result["config_sha256"], boot_id=result["boot_id"],
+            native_observation_sha256=result["native_observation_sha256"], nonce=result["nonce"],
+            issued_monotonic=result["issued_monotonic"], expires_monotonic=result["expires_monotonic"],
+            _seal=_NATIVE_OBSERVATION_SEAL)
+        completed = time.monotonic()
+        if completed >= deadline or not observation.verify_current(config, now=completed):
+            raise ValueError
+        return observation
     except Exception:
         raise StageInspectionDenied("root manual-stage proof is unavailable or stale") from None
 

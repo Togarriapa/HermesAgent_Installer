@@ -41,6 +41,68 @@ def _proof_body(config, *, now, pid=321, uid=63324, gid=63324):
 
 
 class ManualStageInspectorIngressTests(unittest.TestCase):
+    def test_native_client_mints_typed_v264_proof_after_nonce_and_digest_validation(self):
+        config = _config()
+
+        def exchange(*, corrupt=False):
+            timeouts = []
+            class FakeSocket:
+                def __init__(self, *_args):
+                    self.remaining = b""
+                def settimeout(self, _timeout):
+                    timeouts.append(_timeout)
+                def connect(self, _path):
+                    pass
+                def getsockopt(self, *_args):
+                    return struct.pack("3i", 123, 0, 0)
+                def sendall(self, data):
+                    length = struct.unpack("!I", data[:4])[0]
+                    request = json.loads(data[4:4 + length])
+                    body = {"schema": 2, "nonce": request["nonce"],
+                        "config_sha256": config.config_sha256, "boot_id": config.boot_id,
+                        "native_observation_sha256": "a" * 64,
+                        "issued_monotonic": time.monotonic() - 0.01,
+                        "expires_monotonic": time.monotonic() + 4.7}
+                    canonical = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("ascii")
+                    digest = hashlib.sha256(
+                        b"hermes-manual-stage-native-observation-v264\0" + canonical).hexdigest()
+                    body["proof_sha256"] = "0" * 64 if corrupt else digest
+                    raw = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("ascii")
+                    self.remaining = struct.pack("!I", len(raw)) + raw
+                def recv(self, count):
+                    chunk, self.remaining = self.remaining[:count], self.remaining[count:]
+                    return chunk
+                def close(self):
+                    pass
+
+            class SocketStat:
+                st_mode = __import__("stat").S_IFSOCK | 0o660
+                st_uid = 0
+                st_gid = 981
+
+            with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
+                 mock.patch.object(inspector.os, "lstat", return_value=SocketStat()), \
+                 mock.patch.object(inspector.os, "urandom", return_value=b"\xff" * 32), \
+                 mock.patch.object(inspector.socket, "SO_PEERCRED", 17, create=True), \
+                 mock.patch.object(inspector.socket, "socket", FakeSocket), \
+                 mock.patch.object(Path, "read_text", return_value=config.boot_id):
+                proof = inspector.verify_current_inspection(config, queue_timeout_seconds=0.5)
+                self_outer.assertGreaterEqual(timeouts[0], 2.0)
+                self_outer.assertLessEqual(timeouts[0], 3.0)
+                return proof
+
+        self_outer = self
+        proof = exchange()
+        self.assertIsInstance(proof, inspector.StageNativeInspectionObservation)
+        self.assertTrue(proof.verify_current(config))
+        self.assertLessEqual(proof.expires_monotonic - proof.issued_monotonic, 5.0)
+        self.assertFalse(proof.verify_current(config, now=proof.expires_monotonic))
+        self.assertFalse(proof.verify_current(config, now=proof.issued_monotonic - 0.01))
+        changed = SimpleNamespace(**{**vars(config), "config_sha256": "e" * 64})
+        self.assertFalse(proof.verify_current(changed))
+        with self.assertRaises(inspector.StageInspectionDenied):
+            exchange(corrupt=True)
+
     def test_valid_typed_proof_is_exact_peer_bound_and_expires_within_five_seconds(self):
         config = _config()
         issued = time.monotonic() - 0.05
