@@ -32,8 +32,25 @@ _VIEW = """<section class=\"runtime-page\" aria-labelledby=\"runtime-title\">
   <section class=\"runtime-card\" aria-labelledby=\"runtime-usage-title\">
     <div class=\"runtime-card-heading\"><div><p class=\"runtime-eyebrow\">HERMES COUNTERS</p><h2 id=\"runtime-usage-title\">Usage snapshot</h2></div>
       <button type=\"button\" data-refresh>Refresh</button></div>
+    <div class=\"runtime-usage-chart\" data-usage-chart role=\"group\" aria-label=\"Reported token counters for this session snapshot\"></div>
+    <p class=\"runtime-empty\" data-usage-chart-empty hidden>No supported token counter was reported for this snapshot.</p>
     <dl class=\"runtime-usage\" data-usage><div><dt>Usage</dt><dd>Unavailable</dd></div></dl>
-    <p class=\"runtime-note\">Counters are session-cumulative snapshots. Billed cost is unknown because this event feed does not report it.</p>
+    <p class=\"runtime-note\">Counters are session-cumulative snapshots and may overlap; they are not added together. Billed cost is unknown because this event feed does not report it.</p>
+  </section>
+  <section class=\"runtime-card\" aria-labelledby=\"runtime-insights-title\">
+    <div class=\"runtime-card-heading\"><div><p class=\"runtime-eyebrow\">MEASURED IN THIS TURN</p><h2 id=\"runtime-insights-title\">Status and duration</h2></div></div>
+    <div class=\"runtime-insights-grid\">
+      <section aria-labelledby=\"runtime-status-chart-title\"><h3 id=\"runtime-status-chart-title\">Recorded event statuses</h3>
+        <ul class=\"runtime-chart-list\" data-status-chart></ul>
+        <p class=\"runtime-empty\" data-status-empty hidden>No status events are recorded.</p></section>
+      <section aria-labelledby=\"runtime-duration-chart-title\"><h3 id=\"runtime-duration-chart-title\">Reported durations</h3>
+        <dl class=\"runtime-duration-stats\"><div><dt>Measured events</dt><dd data-duration-count>0</dd></div>
+          <div><dt>Median</dt><dd data-duration-median>Unknown</dd></div><div><dt>Longest</dt><dd data-duration-max>Unknown</dd></div></dl>
+        <ol class=\"runtime-chart-list\" data-duration-chart></ol>
+        <p class=\"runtime-empty\" data-duration-empty hidden>No durations were reported for this turn.</p>
+        <p class=\"runtime-note\">Each bar is a reported event duration. Event durations may overlap and are never summed.</p></section>
+    </div>
+    <p class=\"runtime-note\" data-insights-note>Status counts and duration statistics summarize the loaded event page; older event pages are excluded when present.</p>
   </section>
   <section class=\"runtime-card\" aria-labelledby=\"runtime-events-title\">
     <div class=\"runtime-card-heading\"><div><p class=\"runtime-eyebrow\">AUTHENTIC EVENT TIMELINE</p><h2 id=\"runtime-events-title\">Turn events</h2></div></div>
@@ -59,6 +76,21 @@ _CSS = """
 [data-feature-root=\"activity\"] .runtime-summary,[data-feature-root=\"activity\"] .runtime-usage{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:.6rem;margin:.5rem 0}
 [data-feature-root=\"activity\"] .runtime-summary div,[data-feature-root=\"activity\"] .runtime-usage div{min-width:0;padding:.65rem;border-radius:10px;background:rgba(255,255,255,.035)}
 [data-feature-root=\"activity\"] .runtime-summary dd,[data-feature-root=\"activity\"] .runtime-usage dd{margin:.25rem 0 0;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+[data-feature-root=\"activity\"] .runtime-insights-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1.25rem}
+[data-feature-root=\"activity\"] .runtime-insights-grid h3{margin:.3rem 0 .7rem;font-size:.9rem}
+[data-feature-root=\"activity\"] .runtime-chart-list{display:grid;gap:.45rem;list-style:none;margin:.5rem 0;padding:0}
+[data-feature-root=\"activity\"] .runtime-chart-list li{display:grid;grid-template-columns:minmax(90px,.7fr) minmax(60px,1fr) auto;gap:.6rem;align-items:center;font-size:.78rem}
+[data-feature-root=\"activity\"] .runtime-chart-list progress{display:block;width:100%;height:.7rem;accent-color:var(--accent,#83d9ca)}
+[data-feature-root=\"activity\"] .runtime-chart-value{font-variant-numeric:tabular-nums;color:var(--muted,#9bafb4)}
+[data-feature-root=\"activity\"] .runtime-duration-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.4rem;margin:.4rem 0}
+[data-feature-root=\"activity\"] .runtime-duration-stats div{padding:.5rem;border-radius:8px;background:rgba(255,255,255,.035)}
+[data-feature-root=\"activity\"] .runtime-duration-stats dt{font-size:.7rem;color:var(--muted,#9bafb4)}
+[data-feature-root=\"activity\"] .runtime-duration-stats dd{margin:.2rem 0 0;font-variant-numeric:tabular-nums}
+[data-feature-root=\"activity\"] .runtime-usage-chart{display:grid;gap:.5rem;margin:.75rem 0}
+[data-feature-root=\"activity\"] .runtime-usage-chart:empty{display:none}
+[data-feature-root=\"activity\"] .runtime-usage-chart li{display:grid;grid-template-columns:minmax(100px,.65fr) minmax(80px,1fr) auto;gap:.6rem;align-items:center;font-size:.78rem}
+[data-feature-root=\"activity\"] .runtime-usage-chart progress{display:block;width:100%;height:.75rem;accent-color:var(--accent,#83d9ca)}
+[data-feature-root=\"activity\"] .runtime-usage-chart ul{display:grid;gap:.45rem;list-style:none;margin:0;padding:0}
 [data-feature-root=\"activity\"] .runtime-unavailable{padding:.75rem;border-left:3px solid var(--muted,#9bafb4);background:rgba(255,255,255,.035);line-height:1.5}
 [data-feature-root=\"activity\"] .runtime-events{list-style:none;margin:0;padding:0}
 [data-feature-root=\"activity\"] .runtime-events li{display:grid;grid-template-columns:minmax(130px,1fr) minmax(90px,.6fr) minmax(130px,1fr);gap:.65rem;padding:.8rem .15rem;border-top:1px solid var(--border,#20373e);align-items:start}
@@ -66,6 +98,7 @@ _CSS = """
 [data-feature-root=\"activity\"] .runtime-meta,[data-feature-root=\"activity\"] .runtime-empty{font-size:.82rem;color:var(--muted,#9bafb4);overflow-wrap:anywhere}
 [data-feature-root=\"activity\"] [hidden]{display:none!important}
 @media(max-width:680px){[data-feature-root=\"activity\"] .runtime-grid{grid-template-columns:1fr}[data-feature-root=\"activity\"] .runtime-events li{grid-template-columns:1fr auto}[data-feature-root=\"activity\"] .runtime-events li .runtime-meta:last-child{grid-column:1/-1}}
+@media(max-width:680px){[data-feature-root=\"activity\"] .runtime-insights-grid{grid-template-columns:1fr}}
 """
 
 _MOUNT = r"""function mount(container, api) {
@@ -73,6 +106,16 @@ _MOUNT = r"""function mount(container, api) {
   const select = root.querySelector('[data-turn]');
   const eventsNode = root.querySelector('[data-events]');
   const usageNode = root.querySelector('[data-usage]');
+  const usageChartNode = root.querySelector('[data-usage-chart]');
+  const usageChartEmptyNode = root.querySelector('[data-usage-chart-empty]');
+  const statusChartNode = root.querySelector('[data-status-chart]');
+  const statusEmptyNode = root.querySelector('[data-status-empty]');
+  const durationChartNode = root.querySelector('[data-duration-chart]');
+  const durationEmptyNode = root.querySelector('[data-duration-empty]');
+  const durationCountNode = root.querySelector('[data-duration-count]');
+  const durationMedianNode = root.querySelector('[data-duration-median]');
+  const durationMaxNode = root.querySelector('[data-duration-max]');
+  const insightsNoteNode = root.querySelector('[data-insights-note]');
   const outcomeNode = root.querySelector('[data-outcome]');
   const emptyNode = root.querySelector('[data-empty]');
   const noteNode = root.querySelector('[data-note]');
@@ -104,6 +147,13 @@ _MOUNT = r"""function mount(container, api) {
     item.textContent = value;
     return item;
   }
+  function formatDuration(milliseconds) {
+    const rounded = Math.round(milliseconds * 10) / 10;
+    if (rounded >= 1000) {
+      return `${(rounded / 1000).toFixed(2).replace(/0+$/, '').replace(/\.$/, '')} s`;
+    }
+    return `${rounded} ms`;
+  }
   function validId(value) {
     return typeof value === 'string' && /^[A-Za-z0-9_-]{24,80}$/.test(value);
   }
@@ -114,9 +164,11 @@ _MOUNT = r"""function mount(container, api) {
   }
   function renderUsage(data) {
     usageNode.replaceChildren();
+    usageChartNode.replaceChildren();
     const usage = data && data.usage && typeof data.usage === 'object' ? data.usage : null;
     if (!usage) {
       usageNode.append(node('div', 'No usage snapshot was recorded for this turn.'));
+      usageChartEmptyNode.hidden = false;
       return;
     }
     for (const [key, label] of counterLabels) {
@@ -129,6 +181,90 @@ _MOUNT = r"""function mount(container, api) {
     const cost = document.createElement('div');
     cost.append(node('dt', 'Billed cost'), node('dd', 'Unknown'));
     usageNode.append(cost);
+
+    // Prefer one total counter. Without it, show the input/output pair; never add
+    // aliases, component counters, or repeated snapshots together.
+    let tokenRows = [];
+    if (Number.isSafeInteger(usage.total) && usage.total >= 0) {
+      tokenRows = [['total', 'Total tokens']];
+    } else {
+      tokenRows = [['input', 'Input tokens'], ['output', 'Output tokens']]
+        .filter(([key]) => Number.isSafeInteger(usage[key]) && usage[key] >= 0);
+      if (!tokenRows.length) {
+        tokenRows = [['prompt', 'Prompt tokens'], ['completion', 'Completion tokens']]
+          .filter(([key]) => Number.isSafeInteger(usage[key]) && usage[key] >= 0);
+      }
+    }
+    usageChartEmptyNode.hidden = tokenRows.length !== 0;
+    if (tokenRows.length) {
+      const list = document.createElement('ul');
+      const maximum = Math.max(1, ...tokenRows.map(([key]) => usage[key]));
+      for (const [key, label] of tokenRows) {
+        const value = usage[key];
+        const row = document.createElement('li');
+        const bar = document.createElement('progress');
+        bar.max = maximum;
+        bar.value = value;
+        bar.setAttribute('aria-label', `${label}: ${value}`);
+        row.append(node('span', label), bar, node('span', String(value), 'runtime-chart-value'));
+        list.append(row);
+      }
+      usageChartNode.append(list);
+    }
+  }
+  function renderInsights(events, hasOlderEvents) {
+    statusChartNode.replaceChildren();
+    durationChartNode.replaceChildren();
+    insightsNoteNode.textContent = hasOlderEvents
+      ? 'Statistics summarize the latest loaded event page only; older events remain outside this chart.'
+      : 'Statistics summarize recorded events returned for the selected owner turn.';
+    const statusCounts = new Map();
+    for (const event of events) statusCounts.set(event.status, (statusCounts.get(event.status) || 0) + 1);
+    const statuses = [...statusCounts.keys()].sort((left, right) =>
+      statusCounts.get(right) - statusCounts.get(left) || left.localeCompare(right));
+    statusEmptyNode.hidden = statuses.length !== 0;
+    const maxStatusCount = Math.max(1, ...statuses.map(status => statusCounts.get(status)));
+    for (const status of statuses) {
+      const count = statusCounts.get(status);
+      const row = document.createElement('li');
+      const bar = document.createElement('progress');
+      bar.max = maxStatusCount;
+      bar.value = count;
+      bar.setAttribute('aria-label', `${status}: ${count} events`);
+      row.append(node('span', status), bar, node('span', String(count), 'runtime-chart-value'));
+      statusChartNode.append(row);
+    }
+
+    const measured = events.filter(event => Number.isSafeInteger(event.duration_ms)
+      && event.duration_ms >= 0).map(event => ({type: event.type, status: event.status, duration: event.duration_ms}));
+    durationCountNode.textContent = String(measured.length);
+    durationChartNode.replaceChildren();
+    durationEmptyNode.hidden = measured.length !== 0;
+    if (!measured.length) {
+      durationMedianNode.textContent = 'Unknown';
+      durationMaxNode.textContent = 'Unknown';
+      return;
+    }
+    const ordered = [...measured].sort((left, right) => left.duration - right.duration);
+    const middle = Math.floor(ordered.length / 2);
+    const median = ordered.length % 2
+      ? ordered[middle].duration
+      : (ordered[middle - 1].duration + ordered[middle].duration) / 2;
+    const maximum = ordered[ordered.length - 1].duration;
+    durationMedianNode.textContent = formatDuration(median);
+    durationMaxNode.textContent = formatDuration(maximum);
+    const visible = [...measured].sort((left, right) => right.duration - left.duration).slice(0, 8);
+    const scale = Math.max(1, maximum);
+    for (const item of visible) {
+      const row = document.createElement('li');
+      const label = `${labels[item.type]} · ${item.status}`;
+      const bar = document.createElement('progress');
+      bar.max = scale;
+      bar.value = item.duration;
+      bar.setAttribute('aria-label', `${label}: ${formatDuration(item.duration)}`);
+      row.append(node('span', label), bar, node('span', formatDuration(item.duration), 'runtime-chart-value'));
+      durationChartNode.append(row);
+    }
   }
   function renderEvents(events) {
     eventsNode.replaceChildren();
@@ -183,6 +319,7 @@ _MOUNT = r"""function mount(container, api) {
       throw new Error('turn activity unavailable');
     }
     renderEvents(activity.events);
+    renderInsights(activity.events, Boolean(activity.nextBefore));
     renderUsage(usage);
     const completed = [...activity.events].reverse().find(event => event.type === 'message.complete');
     outcomeNode.textContent = completed ? completed.status : 'Not recorded';
@@ -203,6 +340,7 @@ _MOUNT = r"""function mount(container, api) {
       selectedTurn = turnId;
       if (!turnId) {
         renderEvents([]);
+        renderInsights([]);
         renderUsage(null);
         outcomeNode.textContent = 'Not recorded';
         noteNode.textContent = 'No owner turns with recorded activity are available.';
@@ -212,6 +350,7 @@ _MOUNT = r"""function mount(container, api) {
     } catch (_) {
       if (!stopped && version === requestVersion) {
         eventsNode.replaceChildren();
+        renderInsights([]);
         renderUsage(null);
         outcomeNode.textContent = 'Unavailable';
         emptyNode.hidden = false;
@@ -232,6 +371,7 @@ _MOUNT = r"""function mount(container, api) {
     loadTurn(value, version).catch(() => {
       if (!stopped && version === requestVersion) {
         eventsNode.replaceChildren();
+        renderInsights([]);
         renderUsage(null);
         outcomeNode.textContent = 'Unavailable';
         emptyNode.hidden = false;

@@ -40,6 +40,21 @@ class JarvisRuntimeVisibilityAssetTests(unittest.TestCase):
         self.assertIn("api.get(`/chat/api/turns/${encodeURIComponent(turnId)}/usage`)",
                       FEATURE_ASSETS.mount_js)
 
+    def test_charts_derive_status_duration_and_single_snapshot_values(self):
+        self.assertIn('data-status-chart', FEATURE_ASSETS.view_html)
+        self.assertIn('data-duration-chart', FEATURE_ASSETS.view_html)
+        self.assertIn('data-usage-chart', FEATURE_ASSETS.view_html)
+        self.assertIn('const statusCounts = new Map()', FEATURE_ASSETS.mount_js)
+        self.assertIn('event.duration_ms >= 0', FEATURE_ASSETS.mount_js)
+        self.assertIn('const median = ordered.length % 2', FEATURE_ASSETS.mount_js)
+        self.assertIn('const maximum = ordered[ordered.length - 1].duration', FEATURE_ASSETS.mount_js)
+        self.assertIn('if (Number.isSafeInteger(usage.total)', FEATURE_ASSETS.mount_js)
+        self.assertIn('tokenRows = [[\'input\', \'Input tokens\'], [\'output\', \'Output tokens\']]',
+                      FEATURE_ASSETS.mount_js)
+        self.assertIn('they are not added together', FEATURE_ASSETS.view_html)
+        self.assertIn('Event durations may overlap and are never summed', FEATURE_ASSETS.view_html)
+        self.assertIn('Billed cost is unknown', FEATURE_ASSETS.view_html)
+
 
 if __name__ == "__main__":
     unittest.main()
