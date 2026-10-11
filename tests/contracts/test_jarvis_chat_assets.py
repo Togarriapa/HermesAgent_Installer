@@ -96,7 +96,10 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn(".nav-item{min-height:44px}", stylesheet.decode("utf-8"))
         self.assertIn("Runtime readiness pending", client)
         self.assertIn("Internal profile · catalog only; not selectable", client)
-        self.assertIn('"current-core-witness": "Presence is observed; functional operation is not confirmed."', client)
+        self.assertIn(
+            '"current-core-witness": "A current process and listener were observed; functional readiness has not been verified."',
+            client,
+        )
 
     def test_command_centre_direct_navigation_preserves_all_routes_and_command_results(self):
         _content_type, page = reviewed_chat_asset("/chat")
@@ -190,7 +193,7 @@ class JarvisChatAssetTests(unittest.TestCase):
         ):
             with self.subTest(feature=feature_id):
                 self.assertTrue(any(f'id:"{feature_id}"' in chunk for chunk in chunk_sources))
-                self.assertIn(f'data-view="{feature_id}"', source)
+                self.assertIn(f'data-view="{feature_id}"', markup)
         css_assets = [reviewed_chat_asset(path)[1].decode("utf-8")
                       for path in ("/chat/assets/app.css", *FEATURE_CSS_CHUNK_PATHS)]
         css = "\n".join(css_assets)
