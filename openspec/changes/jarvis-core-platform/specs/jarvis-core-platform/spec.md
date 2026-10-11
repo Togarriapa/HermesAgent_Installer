@@ -1923,3 +1923,10 @@ Jarvis SHALL be the sole user-facing master, selecting OneShot or Kanban and ind
 #### Scenario: Expert final action
 - **WHEN** an expert requests publication, posting, merging or other final external effect
 - **THEN** its dispatch authority denies and returns a proposal for Jarvis review, including during an autonomous task.
+
+### Requirement: Separate mission review and owner authority
+Mission state SHALL distinguish Jarvis-selected execution mode, explicit initial owner autonomy, launch consent and Jarvis result review. No one of these records SHALL imply another or authorize expert final effects.
+
+#### Scenario: Reviewed result without owner authorization
+- **WHEN** Jarvis approves an internal result but no current owner final-effect scope exists
+- **THEN** it requests approval and waits rather than publishing.

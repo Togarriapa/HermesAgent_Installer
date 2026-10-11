@@ -67,3 +67,5 @@ Prioritize full native Bot interactions, owned context/profile visibility, insta
 Native Bot Chat is globally canonical per profile and cannot safely provide family-owner DMs on the shared default. Deliver honestly labeled durable Jarvis conversations through the existing owned session map first; retain native Bot/room/relay parity pending secure unique enrollment.
 
 Direct user clarification establishes Jarvis as sole master, flexible expert/team routing and default approval unless explicit task-start autonomy. Experts may develop internal work and knowledge but never hold final external-effect authority. Correct source/compiler routing before primary adoption; preserve all Resources and actual connected capability scope.
+
+Clarify schema2 mission state so Jarvis chooses execution mode and owner autonomy remains a scoped explicit task-start grant. Internal review and launch consent do not substitute for final-effect authority.
