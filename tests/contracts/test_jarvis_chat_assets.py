@@ -204,7 +204,7 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertEqual(markup.count(overview.view_html), 1)
         self.assertEqual(source.count(overview.mount_js), 1)
         self.assertIn('class="reactor-dial"', overview.view_html)
-        self.assertIn('class="reactor-orbit-inner"', overview.view_html)
+        self.assertIn('class="reactor-orbit reactor-orbit-inner"', overview.view_html)
         self.assertIn(
             '.overview-stage[data-core-state="verified"][data-activity="active"] .reactor-orbit-outer',
             overview.css,
