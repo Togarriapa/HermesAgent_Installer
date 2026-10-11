@@ -63,3 +63,5 @@ Address missing actions and useful visibility after the current menu shell throu
 Close the primary prompt adoption gap: storing the compiled Jarvis SOUL in the registry does not activate it. Adopt one fully verified managed block with exact owner-context preservation, journaled recovery and native effective prompt qualification; discovery and full Resources readiness remain distinct.
 
 Prioritize full native Bot interactions, owned context/profile visibility, installable mobile/tablet usability and a polished accessible data-driven shell in parallel. Existing native contracts provide bounded starting points; unsupported memory mutation, relay and native wake-word require their own verified effects rather than menu-shell claims.
+
+Native Bot Chat is globally canonical per profile and cannot safely provide family-owner DMs on the shared default. Deliver honestly labeled durable Jarvis conversations through the existing owned session map first; retain native Bot/room/relay parity pending secure unique enrollment.

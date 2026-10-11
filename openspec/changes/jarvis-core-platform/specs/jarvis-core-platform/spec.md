@@ -1905,3 +1905,10 @@ The system SHALL port canonical Bot DM, durable rooms/groups and relay through f
 #### Scenario: Undeveloped native surface
 - **WHEN** memory editing, group relay or wake-word lacks a verified adapter
 - **THEN** the capability remains explicitly pending without exposing broad native APIs or claiming parity.
+
+### Requirement: Owner-safe durable Jarvis conversations
+The first durable DM SHALL use the authenticated owner conversation map and exact native stored-session continuity. It SHALL NOT adopt the shared native profile's global Bot Chat or duplicate credential profiles to claim Bot parity.
+
+#### Scenario: Shared canonical transcript
+- **WHEN** a canonical Bot Chat belongs to the shared profile without unique owner enrollment
+- **THEN** it is not adopted or exposed as another owner's conversation.
