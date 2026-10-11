@@ -1375,3 +1375,13 @@ The manual MVP SHALL use the finite v259b stage adapter without fabricated manag
 #### Scenario: Existing token is revoked while socket is active
 - **WHEN** the actual protected edge denies the original token or its bounded proof expires
 - **THEN** the stage closes the exact session/socket and denies further app bytes/input, preserving managed authority checks and full AC OPEN
+
+
+## ADDED Requirements
+
+### Requirement: Guard-only locally identified Xpra repair
+The MVP SHALL permit only the v260 exact disabled-control guard in a separately identified xpra-server local rebuild from verified signed input, preserving all security flags and validating unchanged payload/control members.
+
+#### Scenario: Control module is deliberately disabled
+- **WHEN** features.control is false and the control module is unavailable
+- **THEN** args_control returns before import while enabled control behavior and all other guards remain unchanged

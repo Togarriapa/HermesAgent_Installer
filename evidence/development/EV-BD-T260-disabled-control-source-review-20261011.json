@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "task_ids": [
+    "BD-T260.1",
+    "VD-T260.2"
+  ],
+  "kind": "independent source review and bounded method regression; no target acceptance",
+  "package": {
+    "package": "xpra-server",
+    "version": "6.5.4-r0-1",
+    "architecture": "arm64",
+    "archive_name": "xpra-server_6.5.4-r0-1_arm64.deb",
+    "size_bytes": 407788,
+    "sha256": "5e46390ee30241e4c5fdcd0ac29218c5c21990ce4a8cce3dd80306c704424b31",
+    "trust": "Original v238 official signed repository metadata and exact archive hash, independently rechecked; local rebuilt archive does not acquire vendor signature."
+  },
+  "member": {
+    "path": "usr/lib/python3/dist-packages/xpra/server/subsystem/stub.py",
+    "original_size_bytes": 4978,
+    "original_sha256": "d0f4cf681095d90c3f1ab039c2932e7fb6b450d3c01ba48fa873e10ff1c95a4e",
+    "patched_size_bytes": 5071,
+    "patched_sha256": "da12f27c1421dc71248b568791f186ee3d470d0969c4020da0d9d6d7a1a02279",
+    "allowed_change": "Insert exactly from xpra.server import features; if not features.control: return, with correct indentation, immediately before args_control imports xpra.net.control.common. No other source change."
+  },
+  "observations": [
+    "Original source bytes independently match member extracted from actual exact-hash DEB payload.",
+    "Diff exactly three inserted lines; all remaining source bytes identical.",
+    "Actual original method with deliberately blocked control module raises ModuleNotFoundError.",
+    "Actual patched method with features.control false returns before import.",
+    "Actual patched enabled method registers original callback and supplied argument bounds.",
+    "Tests restored all prior sys.modules entries; no privileged host installer or package mutation."
+  ],
+  "limitations": [
+    "Signed metadata acquisition originated in existing reviewed official source evidence; this review independently checks actual retained archive/member bytes.",
+    "Local rebuilt DEB/complete graph/installed readback/live app launch remains OPEN."
+  ]
+}

@@ -215,3 +215,8 @@ Manual owned MVP source/package/configuration/runtime evidence may establish thi
 ## Manual stage gateway seam v259b
 
 `planning/jarvis-manual-stage-gateway-seam-v259b.json` supplies the distinct typed manual launch/session/fixed connector and genuine bounded edge revocation probe. Same MVP tasks; managed authority unchanged. Actual edge denial and owned unit/socket readback required; no management secret or fake active records. All AC OPEN.
+
+
+## Xpra disabled-control MVP repair v260
+
+`planning/xpra-disabled-control-mvp-repair-v260.json` permits only the measured three-line args_control guard and separately identified local xpra-server+jarvis1 DEB from verified signed original. Exact payload/control comparison, regression and installed member readback required; no xpra-common change, vendor hotpatch, arbitrary PYTHONPATH or security relaxation. BD259.1/full AC OPEN.

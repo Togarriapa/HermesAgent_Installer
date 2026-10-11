@@ -272,3 +272,7 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 ### v259b implementation detail under existing MVP tasks
 
 RT-T259.3/LC-T259.4/VD-T259.5 additionally require the separate stage adapter, production-path JWT/one-use edge probe/current unit connector tests and actual bounded revocation/restart evidence. Existing checkboxes remain OPEN.
+
+
+- [ ] BD-T260.1: Implement exact source-reviewed disabled-control guard and fixed-input local xpra-server+jarvis1 repack with normalized payload/control graph comparison.
+- [ ] VD-T260.2: Verify disabled/enabled control behavior, input/extra patch/graph failures and actual owned ARM64 app-only launch; all MVP/full acceptance separate OPEN.

@@ -1121,3 +1121,13 @@ The installer SHALL prioritize verified official native Jarvis Desktop visibilit
 #### Scenario: Retained diagnostic artifact only
 - **WHEN** official AppDir build or local visibility exists without current installation custody, eligible chat, Access enforcement or durable restart
 - **THEN** preserve it as partial evidence and finish only the concrete missing deployment joins without claiming stage completion or weakening security
+
+
+## ADDED Requirements
+
+### Requirement: Guard-only locally identified Xpra repair
+The MVP SHALL permit only the v260 exact disabled-control guard in a separately identified xpra-server local rebuild from verified signed input, preserving all security flags and validating unchanged payload/control members.
+
+#### Scenario: Control module is deliberately disabled
+- **WHEN** features.control is false and the control module is unavailable
+- **THEN** args_control returns before import while enabled control behavior and all other guards remain unchanged

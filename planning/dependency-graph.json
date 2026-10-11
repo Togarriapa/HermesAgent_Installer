@@ -3815,5 +3815,19 @@
     ],
     "extends": "jarvis_visible_desktop_mvp_stage_v259",
     "acceptance": "actual edge revocation/unit/connector/restart required; all AC OPEN"
+  },
+  "xpra_disabled_control_mvp_repair_v260": {
+    "contract": "planning/xpra-disabled-control-mvp-repair-v260.json",
+    "amendment": "plans/amendments/2026-10-11-xpra-disabled-control-mvp-repair-v260.md",
+    "tasks": {
+      "BD-T259.1": [
+        "BD-T260.1",
+        "VD-T260.2"
+      ],
+      "VD-T260.2": [
+        "BD-T260.1"
+      ]
+    },
+    "scope": "guard-only owned local xpra-server rebuild under BD259.1; all AC OPEN"
   }
 }

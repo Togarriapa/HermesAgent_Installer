@@ -255,3 +255,8 @@ Confirmed jarvis.togarriapahome.uk. `planning/jarvis-visible-desktop-mvp-stage-v
 ## Manual stage gateway seam v259b
 
 `planning/jarvis-manual-stage-gateway-seam-v259b.json`; same RT259.3/LC259.4/VD259.5 tasks OPEN. Distinct manual adapter, real JWT + same-app nonce edge proof and owned fixed connector; no counterfeit active rows or copied management credentials. Actual revocation/restart gates MVP.
+
+
+## Xpra disabled-control MVP repair v260
+
+`planning/xpra-disabled-control-mvp-repair-v260.json`; BD-T260.1/VD-T260.2 required within BD259.1. Only exact args_control guard/local xpra-server+jarvis1 rebuild with signed original and full unchanged graph/readback. Exact member guard and bounded method regression reviewed; full repack/installed readback/live launch pending, all AC OPEN.

@@ -317,3 +317,8 @@ Preserve BD-F03/LC-F03/AC01..02 and v235/v242. Use exact source-reviewed histori
 User prioritizes actual visible official native Jarvis Desktop/chat at confirmed jarvis.togarriapahome.uk, Access OTP/app-only gateway and owned durable restart. Exact concise milestones in `planning/jarvis-visible-desktop-mvp-stage-v259.json`. Reuse actual verified existing official artifact when eligible; provenance/sandbox/privacy/budget/currentness stay mandatory. Broader requirements remain deferred OPEN, not removed; no diagnostic/full installer equivalence.
 
 Manual owned MVP source/package/configuration/runtime evidence may establish this separate stage without counterfeit full installer authority; Debian-signed isolated display/gateway runtime preserves Hermes PM3.14 and actual sustained owned unit/session controls.
+
+
+## Xpra disabled-control MVP repair v260
+
+`planning/xpra-disabled-control-mvp-repair-v260.json` permits only the measured three-line args_control guard and separately identified local xpra-server+jarvis1 DEB from verified signed original. Exact payload/control comparison, regression and installed member readback required; no xpra-common change, vendor hotpatch, arbitrary PYTHONPATH or security relaxation. BD259.1/full AC OPEN.

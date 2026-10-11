@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "id": "xpra-disabled-control-mvp-repair-v260",
+  "status": "exact member guard source-reviewed; implementation/repack/target acceptance OPEN",
+  "baseline_requirements": [
+    "AC13",
+    "AC14",
+    "AC15",
+    "BD-T259.1"
+  ],
+  "reason": "Actual owned Pi official signed Xpra6.5.4 fails with --control=no: feature setup suppresses xpra.net.control, but StubServerMixin.args_control unconditionally imports it. The affected member belongs to xpra-server, not xpra-common.",
+  "source": {
+    "package": "xpra-server",
+    "version": "6.5.4-r0-1",
+    "architecture": "arm64",
+    "archive_name": "xpra-server_6.5.4-r0-1_arm64.deb",
+    "size_bytes": 407788,
+    "sha256": "5e46390ee30241e4c5fdcd0ac29218c5c21990ce4a8cce3dd80306c704424b31",
+    "trust": "Original v238 official signed repository metadata and exact archive hash, independently rechecked; local rebuilt archive does not acquire vendor signature."
+  },
+  "member": {
+    "path": "usr/lib/python3/dist-packages/xpra/server/subsystem/stub.py",
+    "original_size_bytes": 4978,
+    "original_sha256": "d0f4cf681095d90c3f1ab039c2932e7fb6b450d3c01ba48fa873e10ff1c95a4e",
+    "patched_size_bytes": 5071,
+    "patched_sha256": "da12f27c1421dc71248b568791f186ee3d470d0969c4020da0d9d6d7a1a02279",
+    "allowed_change": "Insert exactly from xpra.server import features; if not features.control: return, with correct indentation, immediately before args_control imports xpra.net.control.common. No other source change."
+  },
+  "repair": "Produce separately identified local xpra-server6.5.4-r0-1+jarvis1 ARM64 DEB from held verified original. Change only exact stub.py bytes, DEB Version suffix and corresponding md5sums/integrity metadata; preserve all other payload/modes/owner/link/control dependency/maintainer script bytes. Independently compare normalized original/repacked member graphs and readback installed patched hash. Do not modify xpra-common, inject arbitrary PYTHONPATH, edit vendor files directly, disable features differently or claim vendor approval. Root records reversible owned package/configuration backups before authorized deployment.",
+  "security": "Keep --control=no and every existing disabled-control check, selected app-only Xpra flags, sandbox/TLS/JWT controls and exact fixed gateway listener checks. Enabled control path retains ordinary import/behavior. Missing original, changed input, extra patch, source hash/graph mismatch or failed regression denies local package.",
+  "tasks": {
+    "BD-T260.1": "Implement exact guard and fixed-input local repack; record actual source/package hashes, regression and payload/control graph comparison under BD-T259.1.",
+    "VD-T260.2": "Exercise disabled control with deliberately unavailable module, enabled control behavior, mismatched input/extra member/metadata failure and actual ARM64 app-only Xpra launch; preserve MVP milestones/full AC OPEN."
+  },
+  "dependencies": {
+    "BD-T259.1": [
+      "BD-T260.1",
+      "VD-T260.2"
+    ],
+    "VD-T260.2": [
+      "BD-T260.1"
+    ]
+  },
+  "source_review": "Sol independently reopened exact original DEB and data archive, matched packaged original member, verified exact three-line diff and both SHA/size tuples. AST execution of actual method reproduced original disabled ModuleNotFoundError, patched disabled return and unchanged enabled registration. No rebuilt DEB or target acceptance inferred.",
+  "acceptance": "Local regression/repack proves only repair properties. Actual Pi native app/window/input/JWT/domain/restart evidence remains separate v259. Full installer AC/deferred scope OPEN."
+}
