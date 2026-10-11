@@ -1005,6 +1005,16 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       throw error;
     }
   }
+  function refreshConversationsInBackground() {
+    return refreshConversations().catch((error) => {
+      // A list refresh is secondary to an accepted/completed turn. Its own
+      // session-count message already reports history unavailability; only a
+      // real session-expiry response belongs in the global connection notice.
+      if (error && error.message === "Your secure session is no longer current. Sign in again to continue.") {
+        showError(error.message);
+      }
+    });
+  }
   async function loadConversation(id) {
     if (typeof id !== "string" || !id) return;
     stopRecognition("Push-to-talk stopped when switching conversations.");
@@ -1082,7 +1092,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
         closeStream();
         setConnection("ready", "Secure connection");
         speakCompletedReply(reply.content);
-        refreshConversations().catch((error) => showError(error.message));
+        refreshConversationsInBackground();
         return true;
       }
       if (attempt === 0) await new Promise((resolve) => window.setTimeout(resolve, 150));
@@ -1146,7 +1156,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       const finalText = assistantBody.textContent;
       closeStream();
       speakCompletedReply(finalText);
-      refreshConversations().catch((error) => showError(error.message));
+      refreshConversationsInBackground();
     });
     eventSource.addEventListener("message.completed", () => { if (activeTurnId === turnId) waiting.remove(); });
     eventSource.addEventListener("turn.cancelled", () => { if (activeTurnId === turnId) { waiting.remove(); closeStream(); stopSpeech(); } });
@@ -1210,7 +1220,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       });
       if (!data || data.status !== "queued") throw new Error("Jarvis could not safely queue this response.");
       watchTurn(data.turnId, data.heartbeatNonce, assistantBody, waiting, conversationId, text);
-      refreshConversations().catch((error) => showError(error.message));
+      refreshConversationsInBackground();
       return true;
     } catch (error) {
       ui.input.disabled = false;
