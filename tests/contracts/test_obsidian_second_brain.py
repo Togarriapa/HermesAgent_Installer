@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from pathlib import Path
 
 import pytest
 
@@ -23,9 +24,16 @@ from hermes_installer.remote.obsidian_second_brain import (
 OWNER = "a" * 64
 
 
+def test_config_accepts_platform_path_and_pins_the_approved_owner_uid(tmp_path):
+    config = ObsidianVaultConfig(Path(tmp_path), OWNER, owner_uid=1000)
+    assert config.managed_data_root == Path(tmp_path)
+    with pytest.raises(ValueError, match="malformed"):
+        ObsidianVaultConfig(Path(tmp_path), OWNER, owner_uid=0)
+
+
 def _store(root):
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    return prepare_obsidian_vault(ObsidianVaultConfig(root, OWNER))
+    return prepare_obsidian_vault(ObsidianVaultConfig(root, OWNER, owner_uid=1000))
 
 
 def test_vault_preparation_is_idempotent_and_preserves_existing_obsidian_files(tmp_path):
@@ -41,10 +49,12 @@ def test_vault_preparation_is_idempotent_and_preserves_existing_obsidian_files(t
     config = settings / "app.json"
     config.write_text('{"alwaysUpdateLinks":true}\n', encoding="utf-8")
 
-    first = prepare_obsidian_vault(ObsidianVaultConfig(root, OWNER))
-    second = prepare_obsidian_vault(ObsidianVaultConfig(root, OWNER))
+    first = prepare_obsidian_vault(ObsidianVaultConfig(root, OWNER, owner_uid=1000))
+    second = prepare_obsidian_vault(ObsidianVaultConfig(root, OWNER, owner_uid=1000))
 
     assert first._root == second._root == vault
+    assert (root.stat().st_mode & 0o777) == 0o700
+    assert (vault.stat().st_mode & 0o777) == 0o700
     assert note.read_text(encoding="utf-8") == "# Existing\nKeep these bytes.\n"
     assert config.read_text(encoding="utf-8") == '{"alwaysUpdateLinks":true}\n'
     assert all((vault / name).is_dir() for name in ("Projects", "Sources", "Daily"))
@@ -139,7 +149,8 @@ def test_stale_external_edit_keeps_owner_bytes_and_reviewed_draft(tmp_path):
     from unittest.mock import patch
     from hermes_installer.native_invocations import NativeToolDispatch, canonical_tool_arguments
 
-    canonical = canonical_tool_arguments(args)
+    canonical = canonical_tool_arguments({key: value for key, value in args.items()
+                                          if key != "execution_id"})
     dispatch = NativeToolDispatch(object(), observed.tool_call_id,
                                   "obsidian_promote_reviewed_draft", canonical)
     with patch("hermes_installer.native_invocations.current_native_tool_dispatch",
@@ -167,7 +178,8 @@ def test_promotion_requires_exact_typed_root_permit_and_current_dispatch(tmp_pat
     from unittest.mock import patch
     from hermes_installer.native_invocations import NativeToolDispatch, canonical_tool_arguments
 
-    canonical = canonical_tool_arguments(args)
+    canonical = canonical_tool_arguments({key: value for key, value in args.items()
+                                          if key != "execution_id"})
     dispatch = NativeToolDispatch(object(), observed.tool_call_id,
                                   "obsidian_promote_reviewed_draft", canonical)
     with pytest.raises(ObsidianVaultError, match="exact current root owner permit"):
@@ -256,7 +268,9 @@ def _root_effect_proof(arguments, owner):
     from hermes_installer.remote.jarvis_final_effects import FinalEffectPermit, review_digest
 
     name = "obsidian_promote_reviewed_draft"
-    digest = hashlib.sha256(canonical_tool_arguments(arguments)).hexdigest()
+    public_arguments = {key: value for key, value in arguments.items()
+                        if key != "execution_id"}
+    digest = hashlib.sha256(canonical_tool_arguments(public_arguments)).hexdigest()
     observed = ObservedNativeToolCall(
         handle="B" * 43, attempt_handle="C" * 43, owner_turn_handle="D" * 43,
         tool_call_id="obsidian-call-1", tool_name=name, arguments_sha256=digest,

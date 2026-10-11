@@ -67,13 +67,12 @@ class ObsidianVaultConfig:
 
     managed_data_root: Path
     owner_scope_sha256: str
-    owner_uid: int | None = None
+    owner_uid: int
 
     def __post_init__(self) -> None:
-        if (type(self.managed_data_root) is not Path or not self.managed_data_root.is_absolute()
+        if (not isinstance(self.managed_data_root, Path) or not self.managed_data_root.is_absolute()
                 or not _HASH.fullmatch(self.owner_scope_sha256 or "")
-                or (self.owner_uid is not None and
-                    (type(self.owner_uid) is not int or self.owner_uid < 0))):
+                or type(self.owner_uid) is not int or self.owner_uid != 1000):
             raise ValueError("fixed selected-owner Obsidian root configuration is malformed")
 
     @property
@@ -246,6 +245,8 @@ def prepare_obsidian_vault(config: ObsidianVaultConfig) -> "ObsidianVaultStore":
     """
     if type(config) is not ObsidianVaultConfig:
         raise TypeError("trusted fixed-owner Obsidian configuration is required")
+    if os.geteuid() != 1000:
+        raise ObsidianVaultError("vault preparation must run as the selected Hermes owner UID 1000")
     _validate_managed_root(config)
     vault = config.vault_root
     if vault.is_symlink():
@@ -255,12 +256,34 @@ def prepare_obsidian_vault(config: ObsidianVaultConfig) -> "ObsidianVaultStore":
     except FileExistsError:
         pass
     _validate_directory(vault, config.owner_uid)
+    _validate_private_directory(vault)
     store = ObsidianVaultStore(config)
     for relative in (*NOTE_DIRECTORIES, ".obsidian", ".hermes-private",
                      ".hermes-private/drafts", ".hermes-private/revisions",
                      ".hermes-private/journal"):
         store._ensure_directory(relative)
     return store
+
+
+def prepare_selected_owner_data_root() -> Path:
+    """Create only the fixed private data root during UID-1000 service startup."""
+    if os.geteuid() != 1000:
+        raise ObsidianVaultError("selected-owner data-root preparation requires UID 1000")
+    home = Path("/home")
+    admin_home = home / "admin"
+    parent = admin_home / ".hermes"
+    target = parent / "jarvis-second-brain"
+    if home.is_symlink() or admin_home.is_symlink() or parent.is_symlink() or not parent.is_dir():
+        raise ObsidianVaultError("selected-owner Hermes home is unavailable")
+    _validate_directory(admin_home, 1000)
+    _validate_directory(parent, 1000)
+    try:
+        target.mkdir(mode=0o700)
+    except FileExistsError:
+        pass
+    _validate_directory(target, 1000)
+    _validate_private_directory(target)
+    return target
 
 
 class ObsidianVaultStore:
@@ -273,6 +296,7 @@ class ObsidianVaultStore:
         self._root = config.vault_root
         _validate_managed_root(config)
         _validate_directory(self._root, config.owner_uid)
+        _validate_private_directory(self._root)
 
     def list_notes(self, *, limit: int = 20, cursor: str | None = None,
                    note_scope: frozenset[str] | None = None) -> NotePage:
@@ -464,8 +488,10 @@ class ObsidianVaultStore:
 
         execution_id = _safe_identifier(execution_id, "execution")
         relative = _note_relative_path(destination)
+        # ROOT derives the private execution path from the admitted owner/child
+        # context. The permit binds the exact public draft/digest/destination/base
+        # CAS, while caller scope and the owner turn bind this private execution.
         exact_arguments = {
-            "execution_id": execution_id,
             "draft_id": draft_id,
             "expected_draft_sha256": expected_draft_sha256,
             "destination": destination,
@@ -1278,9 +1304,32 @@ class ObsidianVaultStore:
 
 def _validate_managed_root(config: ObsidianVaultConfig) -> None:
     parent = config.managed_data_root
+    if parent == Path("/home/admin/.hermes/jarvis-second-brain"):
+        _validate_fixed_owner_parents()
     if parent.is_symlink() or not parent.is_dir():
         raise ObsidianVaultError("selected-owner managed data root must be an existing directory")
     _validate_directory(parent, config.owner_uid)
+    _validate_private_directory(parent)
+
+
+def _validate_fixed_owner_parents() -> None:
+    """Check every fixed path component without following symbolic links."""
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open("/", flags)
+    try:
+        expected = (("home", 0), ("admin", 1000), (".hermes", 1000))
+        for component, uid in expected:
+            next_fd = os.open(component, flags, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+            info = os.fstat(fd)
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != uid
+                    or stat.S_IMODE(info.st_mode) & 0o022):
+                raise ObsidianVaultError("fixed selected-owner vault parent custody changed")
+    except OSError as exc:
+        raise ObsidianVaultError("fixed selected-owner vault parent is unavailable") from exc
+    finally:
+        os.close(fd)
 
 
 def _validate_directory(path: Path, owner_uid: int | None) -> None:
@@ -1291,6 +1340,15 @@ def _validate_directory(path: Path, owner_uid: int | None) -> None:
     if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
         raise ObsidianVaultError("managed vault path must be a real directory")
     _check_owner(info, os.getuid() if owner_uid is None else owner_uid, directory=True)
+
+
+def _validate_private_directory(path: Path) -> None:
+    try:
+        mode = stat.S_IMODE(path.lstat().st_mode)
+    except OSError as exc:
+        raise ObsidianVaultError("managed vault directory is unavailable") from exc
+    if mode != 0o700:
+        raise ObsidianVaultError("managed Obsidian directories must have mode 0700")
 
 
 def _check_owner(info: os.stat_result, uid: int, *, directory: bool) -> None:

@@ -105,6 +105,7 @@ MAX_RESPONSE = 4096
 MAX_FINAL_EFFECT_RESPONSE = 64 * 1024
 MAX_MASTER_PLAN_RESPONSE = 32 * 1024
 MAX_NATIVE_ACTIVITY_RESPONSE = 128 * 1024
+MAX_OBSIDIAN_VAULT_RESPONSE = 2 * 1024 * 1024
 MAX_SKILL_LEARNING_REQUEST_BYTES = 20 * 1024
 MAX_SKILL_LEARNING_RESPONSE_BYTES = 700 * 1024
 MAX_OWNER_TURN_REQUEST_BYTES = 24 * 1024
@@ -1592,6 +1593,153 @@ def observe_read_native_activity(config: CoreGatewayConfig, *, request: dict[str
     except Exception:
         raise CoreInspectionDenied("current native activity is unavailable") from None
     return {"schema": 1, "nonce": request["nonce"], "ok": True, "activity": activity}
+
+
+def _obsidian_owner_registration() -> tuple[Path, str]:
+    """Read the one root-owned selected-owner registration; it grants no access."""
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    current = os.open("/", flags)
+    try:
+        components = ("var", "lib", "hermes-installer", "core-runtime")
+        for index, component in enumerate(components):
+            child = os.open(component, flags, dir_fd=current)
+            os.close(current)
+            current = child
+            info = os.fstat(current)
+            mode = stat.S_IMODE(info.st_mode)
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                    or mode & 0o022 or (index == len(components) - 1 and mode != 0o700)):
+                raise PermissionError("Obsidian registration directory custody changed")
+        fd = os.open("obsidian-registration.json", os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                     dir_fd=current)
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1
+                    or not 1 <= info.st_size <= 2048):
+                raise PermissionError("Obsidian registration custody changed")
+            raw = b""
+            while len(raw) <= 2048:
+                chunk = os.read(fd, 2049 - len(raw))
+                if not chunk:
+                    break
+                raw += chunk
+            if len(raw) != info.st_size or len(raw) > 2048:
+                raise PermissionError("Obsidian registration size changed")
+        finally:
+            os.close(fd)
+    finally:
+        os.close(current)
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate registration key")
+            result[key] = value
+        return result
+
+    registration = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=unique_object)
+    if (type(registration) is not dict
+            or set(registration) != {"schema", "core_uid", "data_root", "owner_subject_sha256"}
+            or type(registration["schema"]) is not int or registration["schema"] != 1
+            or type(registration["core_uid"]) is not int or registration["core_uid"] != 1000
+            or registration["data_root"] != "/home/admin/.hermes/jarvis-second-brain"
+            or not isinstance(registration["owner_subject_sha256"], str)
+            or not _is_hash(registration["owner_subject_sha256"])):
+        raise PermissionError("Obsidian registration schema is not the approved fixed owner")
+    return Path(registration["data_root"]), registration["owner_subject_sha256"]
+
+
+def observe_read_obsidian_vault(config: CoreGatewayConfig, *, request: dict[str, Any],
+                                caller_pid: int, caller_uid: int, caller_gid: int,
+                                peer_pid: int, peer_uid: int, peer_gid: int) -> dict[str, Any]:
+    """Read one bounded projection from the fixed vault for the accepted owner JWT."""
+    base = {"schema", "op", "nonce", "peer_pid", "peer_uid", "peer_gid", "access_jwt",
+            "core_generation", "ingress_nonce", "ingress_proof_sha256", "view"}
+    view = request.get("view") if isinstance(request, dict) else None
+    extra = ({"query", "limit", "cursor"} if view == "search" else
+             {"limit", "cursor"} if view == "notes" else
+             {"note_id"} if view in {"note", "links"} else set())
+    if (view not in {"overview", "notes", "search", "note", "links", "graph"}
+            or type(request) is not dict or set(request) != base | extra
+            or type(request.get("schema")) is not int or request["schema"] != 1
+            or request.get("op") != "read-obsidian-vault"
+            or (request.get("peer_pid"), request.get("peer_uid"), request.get("peer_gid"))
+                != (peer_pid, peer_uid, peer_gid)
+            or not all(type(value) is int for value in (peer_pid, peer_uid, peer_gid))
+            or not isinstance(request.get("nonce"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", request["nonce"]) is None
+            or not isinstance(request.get("access_jwt"), str)
+            or not 1 <= len(request["access_jwt"]) <= 16_384
+            or not request["access_jwt"].isascii()
+            or not _is_hash(request.get("core_generation"))
+            or not isinstance(request.get("ingress_nonce"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", request["ingress_nonce"]) is None
+            or not _is_hash(request.get("ingress_proof_sha256"))):
+        raise CoreInspectionDenied("Obsidian read request is invalid")
+    if view in {"notes", "search"}:
+        if (type(request["limit"]) is not int or not 1 <= request["limit"] <= 50
+                or (request["cursor"] is not None and
+                    (type(request["cursor"]) is not str or
+                     re.fullmatch(r"v1:(?:0|[1-9][0-9]{0,6})", request["cursor"]) is None))):
+            raise CoreInspectionDenied("Obsidian note page request is invalid")
+    if view == "search" and (type(request["query"]) is not str or not 1 <= len(request["query"]) <= 256):
+        raise CoreInspectionDenied("Obsidian search request is invalid")
+    if view in {"note", "links"} and (type(request["note_id"]) is not str or
+            re.fullmatch(r"[A-Za-z0-9_-]{1,96}", request["note_id"]) is None):
+        raise CoreInspectionDenied("Obsidian note reference is invalid")
+
+    caller_start = _proc_start_ticks(caller_pid)
+    retained = _consume_ingress_issue(caller_pid=caller_pid, caller_start_ticks=caller_start,
+        nonce=request["ingress_nonce"], proof_sha256=request["ingress_proof_sha256"],
+        peer=(peer_pid, peer_uid, peer_gid), core_generation=request["core_generation"], config=config)
+    deadline = min(time.monotonic() + MAX_PROOF_SECONDS, retained.expires_monotonic)
+    current = observe_current_ingress(config, nonce=retained.nonce,
+        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+        peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+        _issued=retained.issued_monotonic, _deadline=deadline, _retain_issuance=False)
+    gateway_pidfd, gateway_start, _invocation = _check_unit_process(
+        config, unit=CORE_GATEWAY_UNIT, pid=caller_pid, deadline=deadline)
+    try:
+        if gateway_start != retained.caller_start_ticks or current["proof_sha256"] != retained.proof_sha256:
+            raise CoreInspectionDenied("Obsidian read gateway witness changed")
+    finally:
+        os.close(gateway_pidfd)
+    from .gateway import validate_access_jwt
+    principal = validate_access_jwt(request["access_jwt"],
+        policy=config.policy(_learning_jwks(config, deadline=deadline)), deadline_monotonic=deadline)
+    owner_hash = hashlib.sha256(principal.subject.encode("utf-8", "strict")).hexdigest()
+    data_root, selected_owner = _obsidian_owner_registration()
+    if (principal.email.casefold() not in config.allowed_emails
+            or hashlib.sha256(request["access_jwt"].encode("ascii")).hexdigest() != principal.token_fingerprint
+            or owner_hash != selected_owner
+            or request["core_generation"] != current["core_generation"]):
+        raise CoreInspectionDenied("Obsidian vault owner is unavailable")
+    from .obsidian_second_brain import ObsidianVaultConfig, ObsidianVaultStore
+    store = ObsidianVaultStore(ObsidianVaultConfig(data_root, selected_owner, owner_uid=1000))
+    if view == "overview":
+        projection = store.dashboard_projection()
+    elif view == "notes":
+        projection = store.list_notes(limit=request["limit"], cursor=request["cursor"]).to_projection()
+    elif view == "search":
+        projection = store.search_notes(request["query"], limit=request["limit"],
+                                        cursor=request["cursor"]).to_projection()
+    elif view == "note":
+        projection = store.read_note(request["note_id"]).to_projection()
+    elif view == "links":
+        projection = store.links_for(request["note_id"]).to_projection()
+    else:
+        projection = store.graph_snapshot().to_projection()
+    final = observe_current_ingress(config, nonce=retained.nonce,
+        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+        peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+        _issued=retained.issued_monotonic, _deadline=deadline, _retain_issuance=False)
+    if (final["proof_sha256"] != retained.proof_sha256 or time.monotonic() >= deadline
+            or _obsidian_owner_registration() != (data_root, selected_owner)
+            or hashlib.sha256(principal.subject.encode("utf-8", "strict")).hexdigest() != selected_owner):
+        raise CoreInspectionDenied("Obsidian read ingress or owner registration changed")
+    return {"schema": 1, "nonce": request["nonce"], "ok": True, "projection": projection}
 
 
 def observe_final_effect_request(config: CoreGatewayConfig, *, request: dict[str, Any],
@@ -3531,6 +3679,12 @@ def _serve_connection(conn: socket.socket, config: CoreGatewayConfig) -> None:
                 peer_gid=request.get("peer_gid"), custody=_CORE_NATIVE_CUSTODY,
                 registry=_CORE_NATIVE_REGISTRY)
             maximum = MAX_NATIVE_ACTIVITY_RESPONSE
+        elif request.get("op") == "read-obsidian-vault":
+            result = observe_read_obsidian_vault(config, request=request,
+                caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+                peer_pid=request.get("peer_pid"), peer_uid=request.get("peer_uid"),
+                peer_gid=request.get("peer_gid"))
+            maximum = MAX_OBSIDIAN_VAULT_RESPONSE
         elif request.get("op") in {"list-final-effects", "decide-final-effect"}:
             result = observe_final_effect_request(config, request=request, caller_pid=caller_pid,
                 caller_uid=caller_uid, caller_gid=caller_gid, peer_pid=request.get("peer_pid"),
@@ -4142,6 +4296,79 @@ class CoreGatewayInspector:
             return activity
         except Exception:
             raise CoreGatewayDenied("root native activity response is invalid") from None
+
+    def read_obsidian_vault(self, access_jwt: str, accepted_ingress: Any,
+                            *, view: str, query: str | None = None,
+                            limit: int | None = None, cursor: str | None = None,
+                            note_id: str | None = None) -> dict[str, Any]:
+        """Read a finite owner-vault projection through root's fresh ingress witness."""
+        from .core_gateway import CoreAcceptedIngressObservation, _read_config_current
+        if (view not in {"overview", "notes", "search", "note", "links", "graph"}
+                or type(accepted_ingress) is not CoreAcceptedIngressObservation
+                or not isinstance(access_jwt, str) or not 1 <= len(access_jwt) <= 16_384
+                or not access_jwt.isascii()
+                or hashlib.sha256(access_jwt.encode("ascii")).hexdigest()
+                    != accepted_ingress.principal.token_fingerprint):
+            raise CoreGatewayDenied("current authenticated Obsidian ingress is required")
+        if view == "search" and (type(query) is not str or not 1 <= len(query) <= 256):
+            raise CoreGatewayDenied("bounded Obsidian search input is required")
+        if view in {"notes", "search"} and (type(limit) is not int or not 1 <= limit <= 50
+                or (cursor is not None and (type(cursor) is not str
+                    or re.fullmatch(r"v1:(?:0|[1-9][0-9]{0,6})", cursor) is None))):
+            raise CoreGatewayDenied("bounded Obsidian note page is required")
+        if view in {"note", "links"} and (type(note_id) is not str
+                or re.fullmatch(r"[A-Za-z0-9_-]{1,96}", note_id) is None):
+            raise CoreGatewayDenied("opaque Obsidian note reference is required")
+        _read_config_current(self._config)
+        if accepted_ingress.verify_current(self._config) is not True:
+            raise CoreGatewayDenied("current authenticated Obsidian ingress is required")
+        proof = accepted_ingress.root_observation
+        nonce = os.urandom(32).hex()
+        deadline = min(time.monotonic() + MAX_PROOF_SECONDS, accepted_ingress.expires_monotonic)
+        info = os.lstat(CORE_INSPECTOR_SOCKET)
+        if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != 0
+                or info.st_gid != self._config.gateway_gid
+                or stat.S_IMODE(info.st_mode) != 0o660):
+            raise CoreGatewayDenied("root Obsidian inspector is unavailable")
+        body = {"schema": 1, "op": "read-obsidian-vault", "nonce": nonce,
+            "peer_pid": accepted_ingress.peer_pid, "peer_uid": accepted_ingress.peer_uid,
+            "peer_gid": accepted_ingress.peer_gid, "access_jwt": access_jwt,
+            "core_generation": accepted_ingress.core_generation,
+            "ingress_nonce": proof.nonce, "ingress_proof_sha256": proof.proof_sha256,
+            "view": view}
+        if view in {"notes", "search"}:
+            body.update({"limit": limit, "cursor": cursor})
+        if view == "search":
+            body["query"] = query
+        if view in {"note", "links"}:
+            body["note_id"] = note_id
+        raw = json.dumps(body, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("ascii")
+        if len(raw) > MAX_OWNER_TURN_REQUEST_BYTES or time.monotonic() >= deadline:
+            raise CoreGatewayDenied("root Obsidian read request exceeded its bound")
+        conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            conn.settimeout(max(0.05, deadline - time.monotonic()))
+            conn.connect(str(CORE_INSPECTOR_SOCKET))
+            if not hasattr(socket, "SO_PEERCRED"):
+                raise ValueError
+            pid, uid, _gid = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            if uid != 0 or pid <= 1:
+                raise ValueError
+            conn.sendall(struct.pack("!I", len(raw)) + raw)
+            result = _read_frame(conn, deadline, MAX_OBSIDIAN_VAULT_RESPONSE)
+        except Exception:
+            raise CoreGatewayDenied("root Obsidian vault is unavailable") from None
+        finally:
+            conn.close()
+        _read_config_current(self._config)
+        if accepted_ingress.verify_current(self._config) is not True:
+            raise CoreGatewayDenied("Obsidian ingress changed during read")
+        if (set(result) != {"schema", "nonce", "ok", "projection"}
+                or type(result["schema"]) is not int or result["schema"] != 1
+                or result["nonce"] != nonce or result["ok"] is not True
+                or type(result["projection"]) is not dict or time.monotonic() >= deadline):
+            raise CoreGatewayDenied("root Obsidian projection is malformed or stale")
+        return result["projection"]
 
     def preflight_native_mission(self, binding: Any, *, owner_subject_sha256: str,
                                  gateway_turn_id: str) -> bool:

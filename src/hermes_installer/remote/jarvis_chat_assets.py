@@ -1206,6 +1206,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       overview: "command-centre", chat: "conversations", sessions: "conversations",
       missions: "work", bots: "work", capabilities: "resources", "resources-learning": "resources",
       "native-inventory": "resources", files: "resources", context: "resources",
+      "second-brain": "resources",
       settings: "system", "models-settings": "system", integrations: "system",
       activity: "system", "native-controls": "system"
     };
@@ -1366,6 +1367,7 @@ def _compose_feature_assets() -> None:
             "overview": "command-centre", "missions": "work", "bots": "work",
             "resources-learning": "resources", "native-inventory": "resources", "files": "resources",
             "context": "resources", "native-controls": "system", "models-settings": "system",
+            "second-brain": "resources",
             "integrations": "system", "activity": "system",
         }.get(feature.feature_id)
         if group is None:

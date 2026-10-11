@@ -4,6 +4,8 @@ from __future__ import annotations
 import unittest
 
 from hermes_installer.remote.jarvis_feature_contract import validate_feature_assets
+from hermes_installer.remote.jarvis_feature_registry import FEATURE_ASSETS as REGISTERED_ASSETS
+from hermes_installer.remote.jarvis_obsidian_vault import FEATURE_ROUTES
 from hermes_installer.remote.jarvis_second_brain_assets import FEATURE_ASSETS
 
 
@@ -11,6 +13,8 @@ class JarvisSecondBrainAssetTests(unittest.TestCase):
     def test_feature_declares_only_the_reviewed_owner_read_routes(self):
         validate_feature_assets((FEATURE_ASSETS,))
         self.assertEqual(FEATURE_ASSETS.feature_id, "second-brain")
+        self.assertIn(FEATURE_ASSETS, REGISTERED_ASSETS)
+        self.assertEqual(FEATURE_ASSETS.api_routes, FEATURE_ROUTES)
         self.assertEqual(FEATURE_ASSETS.api_routes, (
             ("GET", "/chat/api/second-brain/overview"),
             ("GET", "/chat/api/second-brain/notes"),
