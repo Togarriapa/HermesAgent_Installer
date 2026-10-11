@@ -556,6 +556,53 @@ class JarvisChatStore:
                        (operation_id, owner))
             db.execute("COMMIT")
 
+    def bind_model_selection_session(self, subject: str, operation_id: str, *,
+                                     core_generation: str, runtime_session_id: str) -> bool:
+        """Bind the resumed native session while this owned selection blocks new turns."""
+        if (not re.fullmatch(r"[0-9a-f]{32}", operation_id or "")
+                or not isinstance(core_generation, str) or not 1 <= len(core_generation) <= 256
+                or not _valid_core_session_id(runtime_session_id)):
+            raise JarvisChatDenied("model session binding is invalid")
+        owner, now = self._owner(subject), _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            operation = db.execute(
+                "SELECT o.conversation_id,o.core_generation,o.runtime_session_id AS reserved_runtime_id,"
+                "c.backend_id,c.core_generation AS current_generation "
+                "FROM model_selection_ops o JOIN conversations c ON c.id=o.conversation_id "
+                "WHERE o.id=? AND o.owner=? AND c.owner=? AND o.state='unknown-pending'",
+                (operation_id, owner, owner)).fetchone()
+            lease = db.execute(
+                "SELECT 1 FROM model_selection_locks WHERE operation_id=? AND owner=? "
+                "AND core_generation=? AND expires>?",
+                (operation_id, owner, core_generation, now)).fetchone()
+            active = (None if operation is None else db.execute(
+                "SELECT 1 FROM turns WHERE conversation_id=? AND status IN ('queued','running') LIMIT 1",
+                (operation["conversation_id"],)).fetchone())
+            if (operation is None or lease is None or active is not None
+                    or operation["core_generation"] != core_generation
+                    or operation["current_generation"] != core_generation
+                    or operation["backend_id"] != operation["reserved_runtime_id"]):
+                db.execute("ROLLBACK")
+                return False
+            changed = db.execute(
+                "UPDATE conversations SET backend_id=? WHERE id=? AND owner=? AND core_generation=? AND backend_id=?",
+                (runtime_session_id, operation["conversation_id"], owner, core_generation,
+                 operation["reserved_runtime_id"])).rowcount
+            if changed != 1:
+                db.execute("ROLLBACK")
+                return False
+            changed = db.execute(
+                "UPDATE model_selection_ops SET runtime_session_id=?,updated=? WHERE id=? AND owner=? "
+                "AND core_generation=? AND runtime_session_id=? AND state='unknown-pending'",
+                (runtime_session_id, now, operation_id, owner, core_generation,
+                 operation["reserved_runtime_id"])).rowcount
+            if changed != 1:
+                db.execute("ROLLBACK")
+                return False
+            db.execute("COMMIT")
+        return True
+
     def latest_model_selection(self, subject: str, conversation_id: str,
                                core_generation: str, runtime_session_id: str) -> dict[str, str] | None:
         owner = self._owner(subject)

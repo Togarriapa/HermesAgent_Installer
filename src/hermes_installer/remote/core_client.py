@@ -196,20 +196,55 @@ class CoreRpcClient:
             "known_model": model in CODEX_KNOWN_MODEL_ID_SET,
         }
 
-    async def set_session_model(self, session_id: str, model_id: str) -> dict[str, Any]:
-        """Select one pinned Codex model for a single already-owned live session.
+    async def _rpc_on_socket(self, ws: Any, ws_types: Any, method: str,
+                             params: dict[str, Any]) -> dict[str, Any]:
+        """Issue one finite RPC without changing the native session's socket binding."""
+        if method not in {"session.resume", "config.set"}:
+            raise JarvisChatDenied("core method is outside the fixed model adapter")
+        request_id = secrets.token_hex(12)
+        try:
+            await ws.send_json({"jsonrpc": "2.0", "id": request_id,
+                                "method": method, "params": params})
+            return await self._receive(ws, ws_types, expected_id=request_id)
+        except JarvisChatDenied:
+            raise
+        except Exception:
+            raise JarvisChatDenied("official core model request failed") from None
+
+    async def set_session_model(self, stored_session_id: str, model_id: str, *,
+                                before_set: Callable[[str], Any]) -> dict[str, Any]:
+        """Resume an owned durable session, then set its model on that same socket.
 
         The browser cannot supply a native command, provider, key, or config
         key. ``--session`` is always included so the native parser cannot turn
-        this request into a profile-default write.
+        this request into a profile-default write. The callback atomically binds
+        the actual resumed runtime ID to the already-reserved owner conversation
+        before config.set runs. Keeping resume and set on one WebSocket avoids
+        Hermes detaching the session between RPCs.
         """
-        if (not _valid_session_id(session_id) or not isinstance(model_id, str)
-                or model_id not in CODEX_MODEL_ID_SET):
+        if (not _valid_session_id(stored_session_id) or not isinstance(model_id, str)
+                or model_id not in CODEX_MODEL_ID_SET or not callable(before_set)):
             raise JarvisChatDenied("model selection is outside the fixed session adapter")
         value = f"{model_id} --provider {CODEX_PROVIDER_ID} --session"
-        result = await self._rpc("config.set", {
-            "key": "model", "value": value, "session_id": session_id,
-        })
+        client, ws, ws_types = await self._connect()
+        try:
+            resumed = await self._rpc_on_socket(ws, ws_types, "session.resume", {
+                "session_id": stored_session_id, "source": "jarvis",
+            })
+            runtime_id = resumed.get("session_id")
+            if (not _valid_session_id(runtime_id) or resumed.get("resumed") != stored_session_id):
+                raise JarvisChatDenied("official core resume did not confirm the owned session")
+            binding = before_set(runtime_id)
+            if inspect.isawaitable(binding):
+                binding = await binding
+            if binding is not True:
+                raise JarvisChatDenied("owned model session binding was not confirmed")
+            result = await self._rpc_on_socket(ws, ws_types, "config.set", {
+                "key": "model", "value": value, "session_id": runtime_id,
+            })
+        finally:
+            await ws.close()
+            await client.close()
         if (result.get("key") != "model" or result.get("value") != model_id
                 or result.get("scope") != "session"
                 or type(result.get("confirm_required")) is not bool

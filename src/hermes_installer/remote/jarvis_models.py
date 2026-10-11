@@ -200,8 +200,24 @@ def install_jarvis_models_routes(app: Any, service: JarvisChatService) -> None:
                         or conversation["core_generation"] != principal.core_generation
                         or conversation["backend_id"] != runtime_session_id):
                     raise JarvisChatDenied("conversation session mapping changed")
+
+                async def bind_resumed_session(actual_session_id: str) -> bool:
+                    nonlocal runtime_session_id
+                    latest = service._current(request)
+                    verify_current()
+                    if (latest.subject != principal.subject
+                            or latest.core_generation != principal.core_generation
+                            or not service.store.bind_model_selection_session(
+                                principal.subject, operation_id,
+                                core_generation=principal.core_generation,
+                                runtime_session_id=actual_session_id)):
+                        raise JarvisChatDenied("resumed model session ownership changed")
+                    runtime_session_id = actual_session_id
+                    return True
+
                 response = await asyncio.wait_for(service.backend.set_session_model(
-                    runtime_session_id, body["model_id"]), timeout=5.0)
+                    conversation["session_key"], body["model_id"],
+                    before_set=bind_resumed_session), timeout=10.0)
                 verify_current()
                 after = await _native_status(service)
                 verify_current()

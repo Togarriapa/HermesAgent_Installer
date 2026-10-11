@@ -145,21 +145,27 @@ def test_models_status_rejects_ambiguous_or_malformed_codex_authentication():
 
 def test_models_selection_constructs_only_fixed_session_scoped_native_call():
     client = CoreRpcClient(token_file=Path("/private/fake/token"))
-    calls = []
+    socket = _ModelsWebSocket()
 
-    async def rpc(method, params):
-        calls.append((method, params))
-        return {"key": "model", "value": "gpt-6-sol", "scope": "session",
-                "warning": "", "confirm_required": False, "confirm_message": ""}
+    async def connect():
+        return _FakeClient(), socket, _WsTypes
 
-    client._rpc = rpc
-    assert asyncio.run(client.set_session_model("runtime-a", "gpt-6-sol")) == {
+    client._connect = connect
+    bindings = []
+
+    async def bind(actual_session_id):
+        bindings.append(actual_session_id)
+        return True
+
+    assert asyncio.run(client.set_session_model("stored-a", "gpt-6-sol",
+                                                before_set=bind)) == {
         "model": "gpt-6-sol", "state": "selected-for-session",
     }
-    assert calls == [("config.set", {
-        "key": "model", "value": "gpt-6-sol --provider openai-codex --session",
-        "session_id": "runtime-a",
-    })]
+    assert [frame["method"] for frame in socket.sent] == ["session.resume", "config.set"]
+    assert socket.sent[0]["params"] == {"session_id": "stored-a", "source": "jarvis"}
+    assert socket.sent[1]["params"] == {"key": "model",
+        "value": "gpt-6-sol --provider openai-codex --session", "session_id": "runtime-a"}
+    assert bindings == ["runtime-a"]
 
 
 @pytest.mark.parametrize("session_id,model_id", [
@@ -174,30 +180,33 @@ def test_models_selection_rejects_unbounded_ids_before_rpc(session_id, model_id)
         calls.append((method, params))
         return {}
 
+    async def bind(_runtime_id):
+        return True
+
     client._rpc = rpc
     with pytest.raises(JarvisChatDenied):
-        asyncio.run(client.set_session_model(session_id, model_id))
+        asyncio.run(client.set_session_model(session_id, model_id, before_set=bind))
     assert calls == []
 
 
 def test_models_selection_reports_deferred_and_denies_unexpected_scope():
     client = CoreRpcClient(token_file=Path("/private/fake/token"))
+    async def run_with(result):
+        socket = _ModelsWebSocket(set_result=result)
+        async def connect():
+            return _FakeClient(), socket, _WsTypes
+        client._connect = connect
+        async def bind(_runtime_id):
+            return True
+        return await client.set_session_model("stored-a", "gpt-6-sol", before_set=bind)
 
-    async def deferred(_method, _params):
-        return {"key": "model", "value": "gpt-6-sol", "scope": "session",
-                "warning": "", "confirm_required": False, "confirm_message": "",
-                "deferred": True}
-
-    client._rpc = deferred
-    assert asyncio.run(client.set_session_model("runtime-a", "gpt-6-sol"))["state"] == "deferred-next-turn"
-
-    async def global_scope(_method, _params):
-        return {"key": "model", "value": "gpt-6-sol", "scope": "global",
-                "warning": "", "confirm_required": False, "confirm_message": ""}
-
-    client._rpc = global_scope
+    deferred = {"key": "model", "value": "gpt-6-sol", "scope": "session",
+                "warning": "", "confirm_required": False, "confirm_message": "", "deferred": True}
+    assert asyncio.run(run_with(deferred))["state"] == "deferred-next-turn"
+    global_scope = {"key": "model", "value": "gpt-6-sol", "scope": "global",
+                    "warning": "", "confirm_required": False, "confirm_message": ""}
     with pytest.raises(JarvisChatDenied):
-        asyncio.run(client.set_session_model("runtime-a", "gpt-6-sol"))
+        asyncio.run(run_with(global_scope))
 
 
 class _FakeClient:
@@ -212,6 +221,32 @@ class _FakeWebSocket:
 
     async def send_json(self, frame):
         self.sent = frame
+
+    async def receive(self):
+        return self.frames.pop(0)
+
+    async def close(self):
+        pass
+
+
+_WsTypes = SimpleNamespace(CLOSED=2, CLOSE=3, ERROR=4, TEXT=1)
+
+
+class _ModelsWebSocket:
+    def __init__(self, *, set_result=None):
+        self.frames = []
+        self.sent = []
+        self.set_result = set_result or {"key": "model", "value": "gpt-6-sol", "scope": "session",
+            "warning": "", "confirm_required": False, "confirm_message": ""}
+
+    async def send_json(self, frame):
+        self.sent.append(frame)
+        if frame["method"] == "session.resume":
+            result = {"session_id": "runtime-a", "resumed": frame["params"]["session_id"]}
+        else:
+            result = self.set_result
+        self.frames.append(_frame("rpc", json.dumps({"jsonrpc": "2.0", "id": frame["id"],
+                                                       "result": result})))
 
     async def receive(self):
         return self.frames.pop(0)

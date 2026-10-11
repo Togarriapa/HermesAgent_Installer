@@ -29,8 +29,11 @@ class _Backend:
         return {"model": "gpt-6-luna", "provider_hint": "unknown",
                 "codex_credential_configured": True, "known_model": True}
 
-    async def set_session_model(self, session_id, model_id):
-        self.selections.append((session_id, model_id))
+    async def set_session_model(self, stored_session_id, model_id, *, before_set):
+        runtime_session_id = "resumed-" + stored_session_id
+        if await before_set(runtime_session_id) is not True:
+            raise RuntimeError("binding denied")
+        self.selections.append((stored_session_id, runtime_session_id, model_id))
         return {"model": model_id, "state": "selected-for-session"}
 
 
@@ -58,7 +61,7 @@ def _app(tmp_path, monkeypatch):
 
 
 def test_models_routes_are_fixed_and_apply_only_once_to_owned_conversation(tmp_path, monkeypatch):
-    app, _store, conversation, backend = _app(tmp_path, monkeypatch)
+    app, store, conversation, backend = _app(tmp_path, monkeypatch)
     assert FEATURE_ROUTES == (
         ("GET", "/chat/api/models/conversations"),
         ("GET", "/chat/api/conversations/{conversation_id}/model-settings"),
@@ -89,6 +92,9 @@ def test_models_routes_are_fixed_and_apply_only_once_to_owned_conversation(tmp_p
                 f"/chat/api/conversations/{conversation['id']}/model-selection", json=body)
             assert changed.status == 200
             assert await changed.json() == {"model": "gpt-6-sol", "state": "selected-for-session"}
+            assert store.get_conversation("subject-a", conversation["id"])["backend_id"] == (
+                "resumed-stored-session-a")
+            assert backend.selections == [("stored-session-a", "resumed-stored-session-a", "gpt-6-sol")]
             replay = await client.post(
                 f"/chat/api/conversations/{conversation['id']}/model-selection", json=body)
             assert replay.status == 200

@@ -143,12 +143,18 @@ def test_model_selection_revision_is_owner_bound_one_use_and_serialized_with_tur
     with pytest.raises(RuntimeError, match="model selection"):
         begin(store, "subject-a", conversation, "turn-during-model-change-001")
 
+    resumed_runtime_id = "resumed-runtime-session-a"
+    assert store.bind_model_selection_session(
+        "subject-a", reserved["operation_id"], core_generation="core-generation-a",
+        runtime_session_id=resumed_runtime_id) is True
+    assert store.get_conversation("subject-a", conversation["id"])["backend_id"] == resumed_runtime_id
+
     store.finish_model_selection(
         "subject-a", reserved["operation_id"], state="selected-for-session",
-        runtime_session_id=runtime_id)
+        runtime_session_id=resumed_runtime_id)
     assert store.latest_model_selection(
         "subject-a", conversation["id"], "core-generation-a",
-        runtime_id) == {"model": "gpt-6-sol", "state": "selected-for-session"}
+        resumed_runtime_id) == {"model": "gpt-6-sol", "state": "selected-for-session"}
     replay = store.reserve_model_selection("subject-a", conversation["id"], **request)
     assert replay["replayed"] is True
     assert replay["state"] == "selected-for-session"
