@@ -55,3 +55,7 @@ Align the verified resources_delegate {goal} schema and configured-maximum inven
 Provide a useful first Models effect through the native session-only selector and fixed source-known Codex IDs, preserving owner conversation and subscription route boundaries. Persistent global configuration and dynamic catalogs remain separate.
 
 Prioritize three independent visible increments on existing backend support: browser voice/personal settings, truthful activity/statistics and capability/native-learning detail. These improve useful daily interaction without introducing another architecture or claiming full parity.
+
+## Mandatory UI/UX revision before deployment
+
+The direct user mandate refines existing R0203/RT-T266.3/VD-T266.5: every feature, behavior, menu or settings change triggers an explicit affected-flow UI/UX revision before deployment. Major navigation/input changes also require whole-shell hierarchy review. Evidence must identify the exact candidate and show actual phone/tablet/desktop renders, navigation/placement/names, keyboard/touch/accessibility, motion/error/consequence and deletion/Obsidian-retention behavior. Fixtures and live target evidence remain clearly distinguished; documentation/templates alone do not satisfy review. Keep all 219 scope and eight full acceptance tasks OPEN until their real qualification; this gate adds no obsolete frozen/Desktop governance or new requirement-ID forest.

@@ -1873,3 +1873,21 @@ The system SHALL deliver voice/settings, authentic activity statistics and capab
 #### Scenario: Missing source or browser feature
 - **WHEN** voice, usage or a management adapter is unavailable
 - **THEN** text and read-only views remain usable and the missing capability is stated explicitly.
+
+### Requirement: Every changed user flow receives predeployment UI/UX revision
+Every feature, behavior, menu or settings change SHALL trigger a focused affected-flow UI/UX revision before deployment. Major navigation/input/shared-context/voice/edit-delete changes SHALL also review whole-shell hierarchy and actual end-to-end interaction. Review SHALL cover labels/placement/reachability, scope/consequences, keyboard/touch/accessibility, motion/error/permission/recovery and relevant Obsidian retention.
+
+#### Scenario: Backend behavior changes a user consequence
+- **WHEN** a change affects a visible control, state or action consequence without modifying UI assets
+- **THEN** the affected user flow still receives documented UI/UX review and any needed revision before deployment; unchanged UI decisions require actual evidence rather than omission.
+
+### Requirement: Candidate-bound rendered evidence with honest qualification
+Predeployment UI/UX evidence SHALL identify exact candidate/source/runtime bytes and include actual phone/tablet/desktop rendered flow states, with fixture versus live target proof and remaining blockers distinguished. Evidence SHALL refresh after subsequent affected edits and SHALL NOT close unrelated full acceptance.
+
+#### Scenario: Stale candidate capture or fixture-only target claim
+- **WHEN** captures refer to different candidate bytes or only controlled fixtures establish the behavior
+- **THEN** deployment review cannot claim current rendered/live qualification, affected evidence is refreshed and unavailable target/account/device acceptance remains OPEN.
+
+#### Scenario: Delete or extension consequence
+- **WHEN** a change affects Chat/Project deletion/restoration or extension/profile/Skill administration
+- **THEN** review verifies record scope, retention/CAS/recovery and preserved Obsidian knowledge/auth/data consequences against exact candidate effects before deployment.
