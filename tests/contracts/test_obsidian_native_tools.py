@@ -100,12 +100,11 @@ def test_master_read_uses_exact_current_call_and_fixed_owner_store(tmp_path):
     observed, caller, _permit, dispatch, execution, source, mission, selected = _binding(
         store, "obsidian_search_notes", args)
 
-    with _admit_current_obsidian_call(
+    with patch("hermes_installer.remote.obsidian_native_tools.current_native_tool_dispatch",
+               return_value=dispatch), _admit_current_obsidian_call(
             observed_call=observed, caller=caller, owner_subject_sha256=OWNER,
             execution_id=execution, source_instance_id=source,
-            mission_binding=mission, selected_note_ids=selected), \
-            patch("hermes_installer.remote.obsidian_native_tools.current_native_tool_dispatch",
-                  return_value=dispatch):
+            mission_binding=mission, selected_note_ids=selected):
         result = tool(args)
 
     assert [note["title"] for note in result["notes"]] == ["Owner"]
@@ -125,12 +124,11 @@ def test_expert_reads_are_restricted_to_root_selected_notes(tmp_path):
         execution_id="mission_123", source="expert_alpha", mission=_mission(),
         selected=frozenset({rows["Granted"].note_id}))
 
-    with _admit_current_obsidian_call(
+    with patch("hermes_installer.remote.obsidian_native_tools.current_native_tool_dispatch",
+               return_value=dispatch), _admit_current_obsidian_call(
             observed_call=observed, caller=caller, owner_subject_sha256=OWNER,
             execution_id=execution, source_instance_id=source,
-            mission_binding=mission, selected_note_ids=frozenset({rows["Granted"].note_id})), \
-            patch("hermes_installer.remote.obsidian_native_tools.current_native_tool_dispatch",
-                  return_value=dispatch):
+            mission_binding=mission, selected_note_ids=frozenset({rows["Granted"].note_id})):
         assert [row["title"] for row in tool(args)["notes"]] == ["Granted"]
 
     with pytest.raises(ObsidianNativeToolUnavailable, match="root-selected notes"):
@@ -153,12 +151,11 @@ def test_private_draft_identity_comes_from_root_context_and_not_arguments(tmp_pa
         execution_id="mission_123", source="expert_alpha", mission=_mission(),
         selected=frozenset())
 
-    with _admit_current_obsidian_call(
+    with patch("hermes_installer.remote.obsidian_native_tools.current_native_tool_dispatch",
+               return_value=dispatch), _admit_current_obsidian_call(
             observed_call=observed, caller=caller, owner_subject_sha256=OWNER,
             execution_id=execution, source_instance_id=source,
-            mission_binding=mission, selected_note_ids=selected), \
-            patch("hermes_installer.remote.obsidian_native_tools.current_native_tool_dispatch",
-                  return_value=dispatch):
+            mission_binding=mission, selected_note_ids=selected):
         result = tool(args)
 
     assert result["executionId"] == "mission_123"
@@ -182,14 +179,13 @@ def test_promotion_requires_master_effect_permit_and_expert_cannot_write_owner_n
         with_permit=True)
     assert permit is not None
 
-    with _admit_current_obsidian_call(
+    with patch("hermes_installer.remote.obsidian_native_tools.current_native_tool_dispatch",
+               return_value=dispatch), \
+            patch("hermes_installer.native_invocations.current_native_tool_dispatch",
+                  return_value=dispatch), _admit_current_obsidian_call(
             observed_call=observed, caller=caller, owner_subject_sha256=OWNER,
             execution_id=execution, source_instance_id=source,
-            mission_binding=mission, selected_note_ids=selected, permit=permit), \
-            patch("hermes_installer.remote.obsidian_native_tools.current_native_tool_dispatch",
-                  return_value=dispatch), \
-            patch("hermes_installer.native_invocations.current_native_tool_dispatch",
-                  return_value=dispatch):
+            mission_binding=mission, selected_note_ids=selected, permit=permit):
         saved = tool(args)
     assert saved["contentSha256"] == draft.content_sha256
     assert (store._root / "Notes" / "Final.md").read_text(encoding="utf-8") == "# Final\nReviewed.\n"
