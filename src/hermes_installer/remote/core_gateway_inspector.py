@@ -880,7 +880,7 @@ def observe_current_ingress(config: CoreGatewayConfig, *, nonce: str, caller_pid
                             _projection_factory: Any = None,
                             _retain_issuance: bool = True) -> dict[str, Any]:
     issued = time.monotonic() if _issued is None else _issued
-    deadline = issued + IPC_TIMEOUT if _deadline is None else _deadline
+    deadline = issued + MAX_PROOF_SECONDS if _deadline is None else _deadline
     pidfds = []
     try:
         if (os.geteuid() != 0 or not re.fullmatch(r"[0-9a-f]{64}", nonce)
@@ -1352,8 +1352,8 @@ def _read_frame(conn: socket.socket, deadline: float, maximum: int, *,
 def _serve_connection(conn: socket.socket, config: CoreGatewayConfig) -> None:
     try:
         issued = time.monotonic()
-        deadline = issued + 1.5
-        conn.settimeout(1.5)
+        deadline = issued + MAX_PROOF_SECONDS
+        conn.settimeout(MAX_PROOF_SECONDS)
         if not hasattr(socket, "SO_PEERCRED"):
             return
         caller_pid, caller_uid, caller_gid = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
@@ -1509,13 +1509,13 @@ def verify_current_core_overview(config: CoreGatewayConfig, *, peer_pid: int,
     from .core_gateway import _log_ingress_denial, _read_config_current
     _read_config_current(config)
     nonce = os.urandom(32).hex()
-    deadline = time.monotonic() + IPC_TIMEOUT
+    deadline = time.monotonic() + MAX_PROOF_SECONDS
     info = os.lstat(CORE_INSPECTOR_SOCKET)
     if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != 0 or info.st_gid != config.gateway_gid
             or stat.S_IMODE(info.st_mode) != 0o660):
         raise CoreGatewayDenied("root core overview inspector is unavailable")
     conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    conn.settimeout(IPC_TIMEOUT)
+    conn.settimeout(MAX_PROOF_SECONDS)
     try:
         conn.connect(str(CORE_INSPECTOR_SOCKET))
         if not hasattr(socket, "SO_PEERCRED"):
@@ -1575,7 +1575,7 @@ def verify_current_skill_learning(config: CoreGatewayConfig, *, access_jwt: str,
         raise CoreGatewayDenied("current accepted owner ingress is required")
     root_proof = accepted_ingress.root_observation
     nonce = os.urandom(32).hex()
-    deadline = min(time.monotonic() + IPC_TIMEOUT, accepted_ingress.expires_monotonic)
+    deadline = min(time.monotonic() + MAX_PROOF_SECONDS, accepted_ingress.expires_monotonic)
     info = os.lstat(CORE_INSPECTOR_SOCKET)
     if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != 0 or info.st_gid != config.gateway_gid
             or stat.S_IMODE(info.st_mode) != 0o660):
