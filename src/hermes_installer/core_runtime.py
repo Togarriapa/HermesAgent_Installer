@@ -109,8 +109,28 @@ def _owned_file(path,body,mode,uid,gid,expected,repair):
  _atomic(path,body,mode,uid,gid)
 def _identity():
  if not SOURCE.is_dir() or SOURCE.is_symlink(): raise CoreRuntimeError("pinned source unavailable")
- rev=_run(["git","-C",str(SOURCE),"rev-parse","HEAD"]).stdout.strip()
- dirty=_run(["git","-C",str(SOURCE),"status","--porcelain"]).stdout.strip()
+ # The reviewed generation lives beneath admin's private installer tree. Reject
+ # symlinked or differently-owned path components before asking Git to inspect it.
+ admin_home=Path("/home/admin")
+ if SOURCE!=Path("/home/admin/HermesInstaller/data/generations/hermes-agent-7085fbf77532") or not SOURCE.is_absolute():
+  raise CoreRuntimeError("pinned source path differs from reviewed location")
+ home_stat=admin_home.lstat()
+ if stat.S_ISLNK(home_stat.st_mode) or not stat.S_ISDIR(home_stat.st_mode) or home_stat.st_uid!=1000:
+  raise CoreRuntimeError("admin home is not the reviewed real directory")
+ current=admin_home
+ for part in SOURCE.relative_to(admin_home).parts:
+  current=current/part
+  try: component_stat=current.lstat()
+  except OSError as exc: raise CoreRuntimeError("pinned source parent chain is incomplete") from exc
+  if stat.S_ISLNK(component_stat.st_mode) or not stat.S_ISDIR(component_stat.st_mode) or component_stat.st_uid!=1000:
+   raise CoreRuntimeError("pinned source parent chain is not admin-owned directories")
+ source_stat=SOURCE.lstat()
+ git_dir=SOURCE/".git"
+ if source_stat.st_uid!=1000 or git_dir.is_symlink() or not git_dir.is_dir() or git_dir.stat().st_uid!=1000:
+  raise CoreRuntimeError("pinned source custody differs from the reviewed admin-owned checkout")
+ git_prefix=["git","-c","safe.directory="+str(SOURCE),"-C",str(SOURCE)]
+ rev=_run([*git_prefix,"rev-parse","HEAD"]).stdout.strip()
+ dirty=_run([*git_prefix,"status","--porcelain"]).stdout.strip()
  lock=SOURCE/"pm"/"lock.json"
  if rev!=COMMIT or dirty or not lock.is_file() or _digest(lock)!=LOCK_SHA256: raise CoreRuntimeError("source or PM lock differs from pin")
  if not PYTHON.is_symlink() or os.readlink(PYTHON)!=PYTHON_LINK_TARGET or PYTHON.resolve(strict=True)!=PYTHON_REAL or not PYTHON_REAL.is_file() or PYTHON_REAL.is_symlink(): raise CoreRuntimeError("PM Python link or realpath differs from reviewed pin")
