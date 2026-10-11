@@ -6,7 +6,7 @@ Start with [CURRENT-PLAN.md](CURRENT-PLAN.md), the [complete current functional 
 
 Core installation comes first, followed by individual capability ports, Jarvis, full Resources and actual end-to-end review. Desktop/Xpra is excluded from the product. Existing data, authentication, PM runtime, Resources and unrelated services must survive adoption and owned cleanup. Public routes retain Cloudflare Access OTP, JWT/binding, conversation ownership and bounded expiry/revocation; raw backend RPC, host shell and management proxies are excluded.
 
-The selected Pi has an independently owned core service and a real private Jarvis chat probe. This does not establish fresh-install acceptance, public-route readiness, full capability parity or full Resources operation. Read actual candidate evidence before enabling any capability.
+The selected Pi has an independently owned core service and verified private and Cloudflare-protected public Jarvis chat. Hermes also discovered all 396 bundled native skills; the 208 profile records are preserved, with 207 retained for internal routing. The expanded dashboard is tested on the Pi and awaits deployment. Fresh-install acceptance, full capability parity and complete Resources operation remain open. See [current runtime evidence](docs/evidence/jarvis-core-current.md).
 
 All tests, fixtures, previews and validators run only on the identified Pi through the root browser. Local source/spec editing and Git are permitted. Zero additional metered spending is the default. No account secrets, huge model downloads, reimage or unrelated service replacement are implied by setup.
 
