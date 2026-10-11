@@ -18,7 +18,7 @@ deny() { printf 'refusing Xpra MVP repair: %s\n' "$*" >&2; exit 1; }
 [[ $(sha256sum "$INPUT" | cut -d' ' -f1) == "$EXPECTED_INPUT_SHA" ]] || deny 'retained signed input hash differs'
 [[ -f $REBUILDER && ! -L $REBUILDER ]] || deny 'reviewed patch helper is absent or not a regular file'
 [[ $(sha256sum "$REBUILDER" | cut -d' ' -f1) == \
-   c7c1d352ae57d2b96d297117984aae701b29ce6f1c43f6f923f26d99b45909fa ]] || deny 'patch helper hash differs from reviewed implementation'
+   295b96bb5601d982ac95535c667d6935af3f9dc0ae8b71919c2392054c90483d ]] || deny 'patch helper hash differs from reviewed implementation'
 
 mode=${1:-}
 case "$mode" in

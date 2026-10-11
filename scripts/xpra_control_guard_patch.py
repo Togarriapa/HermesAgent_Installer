@@ -87,10 +87,12 @@ def update_control_directory(directory: Path) -> None:
     md5_path.write_text("".join(lines), encoding="ascii")
 
 
-def _tree_manifest(root: Path) -> dict[str, tuple]:
+def _tree_manifest(root: Path, *, exclude_top: frozenset[str] = frozenset()) -> dict[str, tuple]:
     manifest: dict[str, tuple] = {}
     def visit(directory: Path, rel: Path = Path()) -> None:
         for entry in sorted(os.scandir(directory), key=lambda item: item.name):
+            if rel == Path() and entry.name in exclude_top:
+                continue
             child_rel = rel / entry.name
             child = Path(entry.path)
             info = child.lstat()
@@ -110,9 +112,14 @@ def _tree_manifest(root: Path) -> dict[str, tuple]:
     return manifest
 
 
-def verify_payload_trees(original: Path, rebuilt: Path) -> None:
-    before = _tree_manifest(original)
-    after = _tree_manifest(rebuilt)
+def verify_payload_trees(
+    original: Path,
+    rebuilt: Path,
+    *,
+    exclude_top: frozenset[str] = frozenset(),
+) -> None:
+    before = _tree_manifest(original, exclude_top=exclude_top)
+    after = _tree_manifest(rebuilt, exclude_top=exclude_top)
     key = STUB_RELATIVE.as_posix()
     if set(before) != set(after):
         raise ValueError("rebuilt data archive changed the package member set")
@@ -153,16 +160,15 @@ def verify_control_directories(original: Path, rebuilt: Path) -> None:
 
 
 def verify_repacked_package(original_root: Path, rebuilt_root: Path) -> None:
-    """Compare independently unpacked data/control roots against the exact allowance."""
-    verify_payload_trees(original_root / "data", rebuilt_root / "data")
+    """Compare dpkg-deb --raw-extract roots (payload plus DEBIAN metadata)."""
+    verify_payload_trees(
+        original_root,
+        rebuilt_root,
+        exclude_top=frozenset({"DEBIAN"}),
+    )
     verify_control_directories(original_root / "DEBIAN", rebuilt_root / "DEBIAN")
 
 
-OLD = (
-    b'    def args_control(self, name: str, descr: str, **kwargs) -> None:\n'
-    b'        from xpra.net.control.common import add_args_control_command\n'
-    b'        run = getattr(self, "control_command_%s" % name.replace("-", "_"), noop)\n'
-)
 def main() -> int:
     valid = (len(sys.argv) == 3 and sys.argv[1] in {"patch", "metadata"}) or (len(sys.argv) == 4 and sys.argv[1] == "verify")
     if not valid:

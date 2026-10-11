@@ -92,11 +92,11 @@ def test_repacked_payload_and_control_graph_allow_only_the_reviewed_delta(tmp_pa
     original = tmp_path / "original"
     rebuilt = tmp_path / "rebuilt"
     for root in (original, rebuilt):
-        (root / "data" / patcher.STUB_RELATIVE.parent).mkdir(parents=True)
-        (root / "data/usr/share/xpra").mkdir(parents=True)
+        (root / patcher.STUB_RELATIVE.parent).mkdir(parents=True)
+        (root / "usr/share/xpra").mkdir(parents=True)
         (root / "DEBIAN").mkdir()
-        (root / "data" / patcher.STUB_RELATIVE).write_bytes(ORIGINAL_STUB.read_bytes())
-        (root / "data" / "usr/share/xpra/unchanged.txt").write_text("kept", encoding="utf-8")
+        (root / patcher.STUB_RELATIVE).write_bytes(ORIGINAL_STUB.read_bytes())
+        (root / "usr/share/xpra/unchanged.txt").write_text("kept", encoding="utf-8")
         (root / "DEBIAN/control").write_text(
             "Package: xpra-server\nVersion: 6.5.4-r0-1\nArchitecture: arm64\n",
             encoding="utf-8",
@@ -105,11 +105,11 @@ def test_repacked_payload_and_control_graph_allow_only_the_reviewed_delta(tmp_pa
             f"{patcher.SOURCE_MD5}  {patcher.STUB_RELATIVE.as_posix()}\n",
             encoding="ascii",
         )
-    patcher.patch_tree(rebuilt / "data")
+    patcher.patch_tree(rebuilt)
     patcher.update_control_directory(rebuilt / "DEBIAN")
     patcher.verify_repacked_package(original, rebuilt)
 
-    (rebuilt / "data/usr/share/xpra/unchanged.txt").write_text("changed", encoding="utf-8")
+    (rebuilt / "usr/share/xpra/unchanged.txt").write_text("changed", encoding="utf-8")
     try:
         patcher.verify_repacked_package(original, rebuilt)
     except ValueError as exc:
