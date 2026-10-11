@@ -1000,6 +1000,28 @@ def run_source_bootstrap_update() -> RootSetupResult:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hermes-installer-root-setup")
     arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments and arguments[0] == "core-service":
+        if len(arguments) != 2 or arguments[1] not in {"install", "resume", "status", "rollback"}:
+            print("Use exactly: core-service {install|resume|status|rollback}.", file=sys.stderr)
+            return 2
+        if arguments[1] == "status":
+            from .core_runtime import status
+            print(status(), file=sys.stderr)
+            return 0
+        try:
+            _require_root_linux()
+            from .core_runtime import CoreRuntimeError, install_or_resume, rollback
+            message = rollback() if arguments[1] == "rollback" else install_or_resume()
+            print(message, file=sys.stderr)
+            return 0
+        except Exception as exc:
+            # Keep runtime or credential details out of service logs.
+            from .core_runtime import CoreRuntimeError
+            if isinstance(exc, CoreRuntimeError):
+                print(f"Core service action pending ({type(exc).__name__}).", file=sys.stderr)
+                return 4
+            print(f"Core service action failed ({type(exc).__name__}).", file=sys.stderr)
+            return 1
     if arguments and arguments[0] == "source-update":
         if arguments != ["source-update"]:
             parser.error("use exactly: source-update")

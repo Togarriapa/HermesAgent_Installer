@@ -42,11 +42,15 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--dry-run", action="store_true", help="Explicitly request no changes")
     install = command("install", "Apply the supported installation plan")
     install.add_argument("--dry-run", action="store_true", help="Print the plan without changes")
+    install.add_argument("--core-only", action="store_true",
+                         help="Adopt the pinned Hermes core through the fixed root service action")
     install.add_argument("--non-interactive", action="store_true", help="Require complete validated configuration")
     setup = command("setup", "Choose components and configure accounts")
     setup.add_argument("--non-interactive", action="store_true", help="Use only explicit config and secure credential references")
     setup.add_argument("--save-config", type=Path, help="Write the secret-reference-only result to a new private config file")
-    command("resume", "Resume the last checkpointed operation")
+    resume = command("resume", "Resume the last checkpointed operation")
+    resume.add_argument("--core-only", action="store_true",
+                        help="Resume the fixed root-owned Hermes core service action")
     status = command("status", "Show discovered and recorded component states")
     status.add_argument("component", nargs="?", help="Limit status to a component")
     command("doctor", "Run read-only host diagnostics")
@@ -711,6 +715,18 @@ def run(args: argparse.Namespace) -> CommandResult:
             request_path=args.request, result_path=args.result,
         )
     if args.command in {"install", "resume"}:
+        if getattr(args, "core_only", False):
+            if getattr(args, "dry_run", False):
+                return CommandResult("install", OutcomeState.PENDING,
+                    "Core-only dry run is descriptive; the root service adoption remains pending.",
+                    (Finding("core-runtime.adoption", "No service, credential, or account was changed.", OutcomeState.PENDING),),
+                    resume_command="sudo -- hermes-installer-root-setup core-service install")
+            return CommandResult("install", OutcomeState.PENDING,
+                "Core-only adoption is delegated to the fixed root-owned service action; no desktop or resource stages are implied.",
+                (Finding("core-runtime.adoption", "Pinned PM runtime and isolated authenticated loopback service require root verification.", OutcomeState.PENDING),),
+                resume_command=("sudo -- hermes-installer-root-setup core-service resume"
+                                if args.command == "resume" else
+                                "sudo -- hermes-installer-root-setup core-service install"))
         facts = discover_host()
         if not facts.supported_arm64_linux:
             return CommandResult(args.command, OutcomeState.FAILED, "Installation is restricted to supported Linux ARM64 targets; this host was not changed.", findings=_host_findings(config), exit_code=3)
