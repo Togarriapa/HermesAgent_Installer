@@ -465,6 +465,7 @@ def create_core_gateway_app(launch: CoreGatewayLaunch):
     from aiohttp import web
     from .jarvis_chat import build_jarvis_chat_service, install_jarvis_chat_routes
     from .jarvis_dashboard import install_jarvis_dashboard_routes
+    from .jarvis_ecosystem import install_jarvis_ecosystem_routes
     from .jarvis_feature_registry import install_jarvis_feature_routes
     from .core_gateway_inspector import CoreGatewayInspector
     from .jarvis_final_effects import install_jarvis_final_effect_routes
@@ -483,6 +484,7 @@ def create_core_gateway_app(launch: CoreGatewayLaunch):
     install_jarvis_chat_routes(app, service)
     install_jarvis_final_effect_routes(app, service)
     install_jarvis_dashboard_routes(app, service)
+    install_jarvis_ecosystem_routes(app, service)
     install_jarvis_feature_routes(app, service)
     _install_core_chat_asset_routes(app)
     app.middlewares.insert(0, web.middleware(_core_ingress_middleware))
