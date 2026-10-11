@@ -446,6 +446,7 @@ def create_core_gateway_app(launch: CoreGatewayLaunch):
     """Compose the finite Jarvis UI and chat adapter behind Access middleware."""
     from aiohttp import web
     from .jarvis_chat import build_jarvis_chat_service, install_jarvis_chat_routes
+    from .jarvis_dashboard import install_jarvis_dashboard_routes
 
     if (type(launch) is not CoreGatewayLaunch or launch.policy.hostname != launch.config.hostname
             or launch.policy.issuer != launch.config.issuer
@@ -456,6 +457,7 @@ def create_core_gateway_app(launch: CoreGatewayLaunch):
     app["core_gateway_launch"] = launch
     service = build_jarvis_chat_service(launch.principal_from_request)
     install_jarvis_chat_routes(app, service)
+    install_jarvis_dashboard_routes(app, service)
     _install_core_chat_asset_routes(app)
     app.middlewares.insert(0, web.middleware(_core_ingress_middleware))
     app.on_response_prepare.append(_verify_ingress_before_response_bytes)
