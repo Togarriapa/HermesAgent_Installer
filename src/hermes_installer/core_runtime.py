@@ -18,6 +18,8 @@ TOKEN=Path("/etc/hermes-installer/jarvis-core/session-token")
 JOURNAL=Path("/var/lib/hermes-installer/core-runtime/ownership.json")
 RESOURCES_RECORD=Path("/var/lib/hermes-installer/core-runtime/resources-discovery.json")
 RESOURCES_CAS=Path("/var/lib/hermes-installer/core-runtime/resources-cas")
+PRIMARY_PROMPT_JOURNAL=Path("/var/lib/hermes-installer/core-runtime/primary-prompt-ownership.json")
+PRIMARY_PROMPT_BACKUPS=Path("/var/lib/hermes-installer/core-runtime/primary-prompt-backups")
 ADAPTER_MIGRATION_BACKUP=Path("/var/lib/hermes-installer/core-runtime/adapter-migration-backup")
 # This exact older package was materialized before the importer helper was
 # hardened. Its only difference from the current package is that helper member;
@@ -486,7 +488,7 @@ def _current_primary_prompt():
  finally:
   for fd in reversed(fds): os.close(fd)
 
-def _root_native_readback(manifest,files,active_prompt):
+def _root_native_readback(manifest,files,active_prompt,*,expected_managed_block_sha256=None):
  """Independently ask the pinned native loader to read the root-verified files."""
  from .registry.native_install import _PROBE
  account=pwd.getpwnam("admin")
@@ -500,7 +502,8 @@ def _root_native_readback(manifest,files,active_prompt):
   "HERMES_DISABLE_LAZY_INSTALLS":"1","PYTHONPATH":str(SOURCE),
   "PYTHONNOUSERSITE":"1","PYTHONDONTWRITEBYTECODE":"1"}
  argv=[str(RUNUSER),"-u","admin","--",str(PYTHON),"-c",_PROBE,
-  str(SOURCE),"default",json.dumps(skill_ids,separators=(",",":"))]
+  str(SOURCE),"default",json.dumps(skill_ids,separators=(",",":")),
+  expected_managed_block_sha256 or ""]
  try:
   result=subprocess.run(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,
    stderr=subprocess.DEVNULL,timeout=300,env=env,cwd=str(SOURCE),check=False)
@@ -512,14 +515,18 @@ def _root_native_readback(manifest,files,active_prompt):
  except (ValueError,TypeError):
   raise CoreRuntimeError("independent pinned native read-back is invalid") from None
  expected_keys={"python_version","profile","skills","loaded","visible_profiles",
-  "profile_display_name","profile_file_sha256","digests"}
+  "profile_display_name","profile_file_sha256","managed_prompt_block_sha256",
+  "effective_prompt_contains_managed_block","effective_prompt_truncated",
+  "native_effective_prompt_sha256","native_effective_prompt_chars",
+  "expected_managed_block_sha256","digests"}
  expected_digests={"profile:default":hashlib.sha256(active_prompt).hexdigest()}
  expected_digests.update({"skill:"+row["skill_id"]:hashlib.sha256(files[row["archive_path"]]).hexdigest()
   for row in manifest["skill_members"]})
  discovered=value.get("skills") if isinstance(value,dict) else None
  loaded=value.get("loaded") if isinstance(value,dict) else None
  profiles=value.get("visible_profiles") if isinstance(value,dict) else None
- diagnostic=_native_readback_mismatch(value,expected_keys,skill_ids,expected_digests)
+ diagnostic=_native_readback_mismatch(value,expected_keys,skill_ids,expected_digests,
+                                     expected_managed_block_sha256=expected_managed_block_sha256)
  if diagnostic["mismatches"]:
   encoded=json.dumps(diagnostic,sort_keys=True,separators=(",",":"))
   raise CoreRuntimeError("independent pinned native read-back did not match the root-verified files; "+encoded)
@@ -531,9 +538,14 @@ def _root_native_readback(manifest,files,active_prompt):
   "active_primary_prompt_sha256":expected_digests["profile:default"],
   "native_loaded_primary_prompt_sha256":value["digests"]["profile:default"],
   "bundled_primary_prompt_sha256":bundled_sha,
-  "active_prompt_matches_bundled_primary":expected_digests["profile:default"]==bundled_sha}
+  "active_prompt_matches_bundled_primary":expected_digests["profile:default"]==bundled_sha,
+  "managed_prompt_block_sha256":value["managed_prompt_block_sha256"],
+  "effective_prompt_contains_managed_block":value["effective_prompt_contains_managed_block"],
+  "effective_prompt_truncated":value["effective_prompt_truncated"],
+  "native_effective_prompt_sha256":value["native_effective_prompt_sha256"],
+  "native_effective_prompt_chars":value["native_effective_prompt_chars"]}
 
-def _native_readback_mismatch(value,expected_keys,skill_ids,expected_digests):
+def _native_readback_mismatch(value,expected_keys,skill_ids,expected_digests,*,expected_managed_block_sha256=None):
  """Return bounded, non-content diagnostics for a failed native projection."""
  codes=[]; details={"schema":1,"expected_skill_count":len(skill_ids)}
  if not isinstance(value,dict):
@@ -582,6 +594,27 @@ def _native_readback_mismatch(value,expected_keys,skill_ids,expected_digests):
   details["profile_display_name_length"]=len(display)
   details["profile_display_name_sha256"]=hashlib.sha256(display.encode("utf-8",errors="replace")).hexdigest()
   if len(display)>120: codes.append("profile_display_name_length")
+ block_sha=value.get("managed_prompt_block_sha256")
+ block_loaded=value.get("effective_prompt_contains_managed_block")
+ truncated=value.get("effective_prompt_truncated")
+ expected_block=value.get("expected_managed_block_sha256")
+ effective_sha=value.get("native_effective_prompt_sha256")
+ effective_chars=value.get("native_effective_prompt_chars")
+ details["managed_prompt_block_present"]=isinstance(block_sha,str)
+ details["effective_prompt_contains_managed_block"]=block_loaded is True
+ details["effective_prompt_truncated"]=truncated is True
+ if (type(block_loaded) is not bool or type(truncated) is not bool
+     or not isinstance(effective_sha,str) or re.fullmatch(r"[0-9a-f]{64}",effective_sha) is None
+     or type(effective_chars) is not int or not 0<effective_chars<=1024*1024
+     or expected_block!=expected_managed_block_sha256):
+  codes.append("managed_prompt_readback_shape")
+ if expected_managed_block_sha256 is not None:
+  if (block_sha!=expected_managed_block_sha256 or block_loaded is not True
+      or truncated is not False):
+   codes.append("managed_prompt_not_fully_effective")
+ elif block_sha is not None and (not isinstance(block_sha,str)
+      or re.fullmatch(r"[0-9a-f]{64}",block_sha) is None):
+  codes.append("managed_prompt_block_digest_shape")
  expected_profile_sha=expected_digests.get("profile:default")
  observed_profile_sha=value.get("profile_file_sha256")
  profile_file_matches=(isinstance(observed_profile_sha,str)
@@ -593,6 +626,8 @@ def _native_readback_mismatch(value,expected_keys,skill_ids,expected_digests):
                                           for key,item in observed.items()):
   codes.append("digests_shape")
  else:
+  if observed.get("profile:default")!=effective_sha:
+   codes.append("effective_prompt_digest_mismatch")
   expected_skill_keys={key for key in expected_digests if key.startswith("skill:")}
   observed_skill_keys={key for key in observed if key.startswith("skill:")}
   expected_keys=expected_skill_keys|{"profile:default"}

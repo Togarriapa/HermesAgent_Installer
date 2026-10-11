@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Sequence
 
 
+
 PINNED_HERMES_REVISION = "7085fbf7753266fc4943c55ac04926186bc90005"
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_-]{0,95}$")
 _PROFILE_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -126,6 +127,7 @@ if sys.version_info[:2] != (3, 14):
 root = Path(sys.argv[1]).resolve()
 profile_id = sys.argv[2]
 skill_ids = json.loads(sys.argv[3])
+expected_managed_block_sha256 = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else None
 sys.path.insert(0, str(root))
 
 from hermes_cli.profiles import list_profiles
@@ -179,6 +181,25 @@ raw_soul_after, raw_soul_signature_after = read_soul_identity()
 if (raw_soul_before != raw_soul_after
         or raw_soul_signature_before != raw_soul_signature_after):
     raise RuntimeError("profile identity changed while Hermes loaded it")
+begin_marker = b"<!-- HERMES-INSTALLER-MANAGED-JARVIS-PRIMARY v1 BEGIN -->"
+end_marker = b"<!-- HERMES-INSTALLER-MANAGED-JARVIS-PRIMARY v1 END -->"
+managed_count = raw_soul_before.count(begin_marker)
+end_count = raw_soul_before.count(end_marker)
+managed_block_sha256 = None
+effective_prompt_contains_managed_block = False
+if managed_count == 1 and end_count == 1:
+    start = raw_soul_before.find(begin_marker)
+    finish = raw_soul_before.find(end_marker, start + len(begin_marker))
+    if finish > start and raw_soul_before.endswith(end_marker + b"\n"):
+        managed_block = raw_soul_before[start:finish + len(end_marker) + 1]
+        managed_block_sha256 = hashlib.sha256(managed_block).hexdigest()
+        try:
+            # Hermes strips file-edge whitespace before prompt injection. The
+            # final marker newline is file formatting, not effective content.
+            effective_prompt_contains_managed_block = managed_block.rstrip(b"\r\n").decode("utf-8") in soul
+        except UnicodeDecodeError:
+            effective_prompt_contains_managed_block = False
+effective_prompt_truncated = "[...truncated SOUL.md:" in soul
 
 # Exercise Hermes' own skill catalog and progressive-disclosure loader in this
 # profile's HERMES_HOME. No model/session is started. Compiled installer skills
@@ -211,6 +232,12 @@ print(json.dumps({"python_version": sys.version.split()[0], "profile": profile_i
                   "visible_profiles": visible_profiles,
                   "profile_display_name": str(matches[0].display_name or ""),
                   "profile_file_sha256": hashlib.sha256(raw_soul_before).hexdigest(),
+                  "managed_prompt_block_sha256": managed_block_sha256,
+                  "effective_prompt_contains_managed_block": effective_prompt_contains_managed_block,
+                  "effective_prompt_truncated": effective_prompt_truncated,
+                  "native_effective_prompt_sha256": hashlib.sha256(soul.encode()).hexdigest(),
+                  "native_effective_prompt_chars": len(soul),
+                  "expected_managed_block_sha256": expected_managed_block_sha256,
                   "digests": digests}, sort_keys=True))
 '''
 

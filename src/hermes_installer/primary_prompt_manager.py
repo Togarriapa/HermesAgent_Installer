@@ -1,0 +1,636 @@
+"""Fixed root-owned transaction for adopting the bundled Jarvis primary prompt."""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import secrets
+import stat
+from datetime import datetime, timezone
+from typing import Any
+
+from .registry.primary_prompt import (
+    MAX_SOUL_BYTES,
+    append_managed_block,
+    render_managed_block,
+    split_managed_block,
+)
+
+SCHEMA = 1
+HOME_UID = 1000
+HOME_GID = 1000
+_RECORD_FIELDS = {
+    "schema", "state", "core_source_generation", "resources_revision", "resources_tree",
+    "artifact_sha256", "source_prompt_sha256", "managed_block_sha256", "owner_backup_name",
+    "owner_prefix_sha256", "owner_prefix_length", "owner_separator_hex", "prior_soul_sha256",
+    "prior_soul_signature", "result_soul_sha256", "result_soul_signature", "stage_name",
+    "native_effective_prompt_sha256", "native_effective_prompt_chars", "observed_at_utc", "error_code",
+}
+
+
+class PrimaryPromptAdoptionError(RuntimeError):
+    """The primary prompt cannot be safely adopted, verified, or restored."""
+
+
+def _sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _safe_hash(value: Any) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+
+def _valid_file_signature(value: Any) -> bool:
+    return bool(
+        isinstance(value, list) and len(value) == 9
+        and all(type(part) is int and part >= 0 for part in value)
+        and stat.S_ISREG(value[2]) and value[3] == HOME_UID and value[4] == HOME_GID
+        and value[5] == 1 and not (stat.S_IMODE(value[2]) & 0o022)
+        and 0 < value[6] <= MAX_SOUL_BYTES
+    )
+
+
+def _open_home(core) -> int:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    fd = os.open("/", flags)
+    try:
+        for component, uid, gid, mode in (("home", 0, 0, 0o755), ("admin", HOME_UID, HOME_GID, 0o700), (".hermes", HOME_UID, HOME_GID, 0o700)):
+            child = os.open(component, flags, dir_fd=fd)
+            info = os.fstat(child)
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != uid or info.st_gid != gid
+                    or stat.S_IMODE(info.st_mode) != mode or info.st_nlink < 2):
+                os.close(child)
+                raise PrimaryPromptAdoptionError("Hermes home directory custody differs")
+            os.close(fd)
+            fd = child
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _signature(info: os.stat_result) -> list[int]:
+    return [info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid,
+            info.st_nlink, info.st_size, info.st_mtime_ns, info.st_ctime_ns]
+
+
+def _read_soul(core) -> tuple[bytes, list[int]]:
+    parent = _open_home(core)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open("SOUL.md", flags, dir_fd=parent)
+        try:
+            before = os.fstat(fd)
+            if (not stat.S_ISREG(before.st_mode) or before.st_uid != HOME_UID or before.st_gid != HOME_GID
+                    or before.st_nlink != 1 or stat.S_IMODE(before.st_mode) & 0o022
+                    or before.st_size <= 0 or before.st_size > MAX_SOUL_BYTES):
+                raise PrimaryPromptAdoptionError("primary SOUL file custody differs")
+            try:
+                attributes = os.listxattr(fd)
+            except OSError:
+                raise PrimaryPromptAdoptionError("primary SOUL extended-attribute custody is unavailable") from None
+            if attributes:
+                raise PrimaryPromptAdoptionError("primary SOUL has metadata this transaction cannot preserve")
+            chunks = bytearray()
+            while len(chunks) <= MAX_SOUL_BYTES:
+                block = os.read(fd, min(65536, MAX_SOUL_BYTES + 1 - len(chunks)))
+                if not block:
+                    break
+                chunks.extend(block)
+            after = os.fstat(fd)
+            named = os.stat("SOUL.md", dir_fd=parent, follow_symlinks=False)
+            if (len(chunks) != before.st_size or _signature(before) != _signature(after)
+                    or _signature(before) != _signature(named)):
+                raise PrimaryPromptAdoptionError("primary SOUL changed during read")
+            return bytes(chunks), _signature(before)
+        finally:
+            os.close(fd)
+    finally:
+        os.close(parent)
+
+
+def _atomic_admin_replace(core, body: bytes, *, expected_signature: list[int], uid: int = 1000,
+                          gid: int = 1000, mode: int = 0o600, stage_name: str | None = None) -> list[int]:
+    """Replace fixed SOUL through a held directory FD after exact inode recheck."""
+    import re
+    if not isinstance(body, bytes) or not 0 < len(body) <= MAX_SOUL_BYTES:
+        raise PrimaryPromptAdoptionError("replacement SOUL size is invalid")
+    if stage_name is None or not re.fullmatch(r"\.SOUL\.md\.jarvis-[0-9a-f]{24}\.stage", stage_name):
+        raise PrimaryPromptAdoptionError("staged SOUL identity is invalid")
+    parent = _open_home(core)
+    temp_fd = None
+    try:
+        current_fd = os.open("SOUL.md", os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent)
+        try:
+            current = os.fstat(current_fd)
+            if _signature(current) != expected_signature or current.st_uid != uid:
+                raise PrimaryPromptAdoptionError("owner SOUL changed before atomic replacement")
+        finally:
+            os.close(current_fd)
+        try:
+            temp_fd = os.open(stage_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                              | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+                              mode, dir_fd=parent)
+        except FileExistsError:
+            existing = os.open(stage_name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent)
+            try:
+                info = os.fstat(existing)
+                previous = bytearray()
+                while len(previous) <= MAX_SOUL_BYTES:
+                    part = os.read(existing, min(65536, MAX_SOUL_BYTES + 1 - len(previous)))
+                    if not part:
+                        break
+                    previous.extend(part)
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_gid != gid
+                        or stat.S_IMODE(info.st_mode) != mode or info.st_nlink != 1
+                        or bytes(previous) != body):
+                    raise PrimaryPromptAdoptionError("interrupted SOUL stage is not journal-owned")
+            finally:
+                os.close(existing)
+        else:
+            os.fchown(temp_fd, uid, gid)
+            os.fchmod(temp_fd, mode)
+            offset = 0
+            while offset < len(body):
+                offset += os.write(temp_fd, body[offset:])
+            os.fsync(temp_fd)
+            os.close(temp_fd)
+            temp_fd = None
+        current_named = os.stat("SOUL.md", dir_fd=parent, follow_symlinks=False)
+        if _signature(current_named) != expected_signature:
+            raise PrimaryPromptAdoptionError("owner SOUL changed during atomic replacement")
+        os.replace(stage_name, "SOUL.md", src_dir_fd=parent, dst_dir_fd=parent)
+        os.fsync(parent)
+        installed = os.stat("SOUL.md", dir_fd=parent, follow_symlinks=False)
+        if (not stat.S_ISREG(installed.st_mode) or installed.st_uid != uid or installed.st_gid != gid
+                or stat.S_IMODE(installed.st_mode) != mode or installed.st_nlink != 1):
+            raise PrimaryPromptAdoptionError("atomic SOUL replacement metadata differs")
+        installed_fd = os.open("SOUL.md", os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent)
+        try:
+            if os.listxattr(installed_fd):
+                raise PrimaryPromptAdoptionError("atomic SOUL replacement metadata differs")
+        finally:
+            os.close(installed_fd)
+        return _signature(installed)
+    finally:
+        if temp_fd is not None:
+            os.close(temp_fd)
+        os.close(parent)
+
+
+def _ensure_dirs(core) -> None:
+    core._ensure_dir(core.JOURNAL.parent, core.ROOT_UID, core.ROOT_UID, 0o700)
+    core._ensure_dir(core.PRIMARY_PROMPT_BACKUPS, core.ROOT_UID, core.ROOT_UID, 0o700)
+
+
+def _read_record(core) -> dict[str, Any] | None:
+    try:
+        raw = core._projection_file(core.PRIMARY_PROMPT_JOURNAL, owner=core.ROOT_UID,
+                                    group=core.ROOT_UID, mode=0o600, maximum=64 * 1024)
+    except FileNotFoundError:
+        return None
+    try:
+        value = json.loads(raw)
+    except (ValueError, TypeError):
+        raise PrimaryPromptAdoptionError("managed primary prompt journal is invalid") from None
+    result_signature = value.get("result_soul_signature") if isinstance(value, dict) else None
+    prior_signature = value.get("prior_soul_signature") if isinstance(value, dict) else None
+    if (not isinstance(value, dict) or set(value) != _RECORD_FIELDS
+            or type(value.get("schema")) is not int or value.get("schema") != SCHEMA
+            or value.get("state") not in {"preparing", "writing", "adopted", "rolling_back", "rolled_back"}
+            or not _safe_hash(value.get("core_source_generation"))
+            or not _safe_hash(value.get("artifact_sha256"))
+            or not _safe_hash(value.get("source_prompt_sha256"))
+            or not _safe_hash(value.get("managed_block_sha256"))
+            or not _safe_hash(value.get("owner_backup_name"))
+            or not _safe_hash(value.get("owner_prefix_sha256"))
+            or not _safe_hash(value.get("prior_soul_sha256"))
+            or not _valid_file_signature(prior_signature)
+            or type(value.get("owner_prefix_length")) is not int
+            or not 0 <= value["owner_prefix_length"] <= MAX_SOUL_BYTES
+            or value.get("owner_prefix_sha256") != value.get("prior_soul_sha256")
+            or value.get("owner_prefix_length") != prior_signature[6]
+            or value.get("owner_separator_hex") not in {"", "0a", "0a0a"}
+            or not isinstance(result_signature, list)
+            or (value.get("state") in {"adopted", "rolling_back", "rolled_back"}
+                and not _valid_file_signature(result_signature))
+            or (value.get("state") in {"preparing", "writing"} and result_signature not in ([], prior_signature))
+            or not isinstance(value.get("stage_name"), str)
+            or not re.fullmatch(r"\.SOUL\.md\.jarvis-[0-9a-f]{24}\.stage", value["stage_name"])
+            or value.get("state") in {"writing", "adopted", "rolling_back", "rolled_back"}
+                and not _safe_hash(value.get("result_soul_sha256"))
+            or value.get("error_code") not in {None, "effective_prompt_readback_failed"}
+            or value.get("owner_backup_name") != value.get("prior_soul_sha256")):
+        raise PrimaryPromptAdoptionError("managed primary prompt journal fields are unsupported")
+    return value
+
+
+def _write_record(core, record: dict[str, Any]) -> None:
+    if set(record) != _RECORD_FIELDS:
+        raise PrimaryPromptAdoptionError("managed primary prompt journal schema differs")
+    data = (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
+    try:
+        os.lstat(core.PRIMARY_PROMPT_JOURNAL)
+    except FileNotFoundError:
+        core._atomic(core.PRIMARY_PROMPT_JOURNAL, data, 0o600, core.ROOT_UID, core.ROOT_UID)
+    else:
+        core._atomic_replace(core.PRIMARY_PROMPT_JOURNAL, data, 0o600, core.ROOT_UID, core.ROOT_UID)
+
+
+def _backup_bytes(core, record: dict[str, Any], prior: bytes) -> None:
+    path = core.PRIMARY_PROMPT_BACKUPS / f"{record['owner_backup_name']}.bin"
+    try:
+        existing = core._projection_file(path, owner=core.ROOT_UID, group=core.ROOT_UID,
+                                         mode=0o600, maximum=MAX_SOUL_BYTES)
+    except FileNotFoundError:
+        core._atomic(path, prior, 0o600, core.ROOT_UID, core.ROOT_UID)
+        existing = core._projection_file(path, owner=core.ROOT_UID, group=core.ROOT_UID,
+                                         mode=0o600, maximum=MAX_SOUL_BYTES)
+    if existing != prior or _sha(existing) != record["owner_backup_name"]:
+        raise PrimaryPromptAdoptionError("owner SOUL backup does not match its journal")
+
+
+def _backup_read(core, record):
+    path = core.PRIMARY_PROMPT_BACKUPS / f"{record['owner_backup_name']}.bin"
+    try:
+        raw = core._projection_file(path, owner=core.ROOT_UID, group=core.ROOT_UID,
+                                    mode=0o600, maximum=MAX_SOUL_BYTES)
+    except FileNotFoundError:
+        raise PrimaryPromptAdoptionError("owner SOUL backup is missing") from None
+    if _sha(raw) != record["owner_backup_name"] or _sha(raw) != record["prior_soul_sha256"]:
+        raise PrimaryPromptAdoptionError("owner SOUL backup digest differs")
+    return raw
+
+
+def _fixed_bundle(core, *, recovery_record=None, current_prompt_sha256=None):
+    from .registry import manual_jarvis_skills as native
+    source_generation = core._core_source_generation()
+    discovery = core.read_current_resources_discovery(core_source_generation=source_generation)
+    recovery = discovery.get("resources_state") != "discovered"
+    if recovery:
+        # Only an explicit interrupted transaction may recover a receipt made
+        # stale by its own already-journaled SOUL replacement. The persisted
+        # receipt must still bind the exact prior prefix, and the independent
+        # root verifier must re-prove the complete Resources tree and native
+        # loader before recovery continues.
+        if (not isinstance(recovery_record, dict)
+                or recovery_record.get("state") not in {"preparing", "writing", "rolling_back"}
+                or current_prompt_sha256 not in {recovery_record.get("prior_soul_sha256"),
+                                                 recovery_record.get("result_soul_sha256")}):
+            raise PrimaryPromptAdoptionError("current bundled Resources discovery is unavailable")
+        retained = core._projection_file(core.RESOURCES_RECORD, owner=core.ROOT_UID,
+                                         group=core.ROOT_UID, mode=0o600, maximum=16 * 1024)
+        retained_record = json.loads(retained)
+        if (retained_record.get("core_source_generation") != source_generation
+                or retained_record.get("artifact_sha256") != recovery_record.get("artifact_sha256")
+                or retained_record.get("active_primary_prompt_sha256")
+                != recovery_record.get("prior_soul_sha256")):
+            raise PrimaryPromptAdoptionError("stale Resources receipt is not owned by this prompt transaction")
+        archive, current_payload = core._verified_resources_payload()
+        artifact_now = _sha(archive)
+        if (artifact_now != recovery_record.get("artifact_sha256")
+                or current_payload.get("core_source_generation") != source_generation
+                or current_payload.get("active_primary_prompt_sha256") != current_prompt_sha256):
+            raise PrimaryPromptAdoptionError("interrupted prompt recovery failed independent native readback")
+        discovery = {
+            "resources_state": "discovered", "artifact_sha256": artifact_now,
+            "resources_revision": current_payload["resources_revision"],
+            "resources_tree": current_payload["resources_tree"],
+        }
+    else:
+        archive = None
+    artifact_sha = discovery.get("artifact_sha256")
+    if not _safe_hash(artifact_sha):
+        raise PrimaryPromptAdoptionError("current bundled Resources artifact identity is invalid")
+    if archive is None:
+        archive = core._projection_file(core.RESOURCES_CAS / f"{artifact_sha}.zip", owner=core.ROOT_UID,
+                                        group=core.ROOT_UID, mode=0o600, maximum=16 * 1024 * 1024)
+    if _sha(archive) != artifact_sha:
+        raise PrimaryPromptAdoptionError("current bundled Resources artifact digest differs")
+    manifest, files = native._read_artifact(archive, artifact_sha)
+    current_bytes = core._projection_file(core.RESOURCES_RECORD, owner=core.ROOT_UID,
+                                          group=core.ROOT_UID, mode=0o600, maximum=16 * 1024)
+    current_record = json.loads(current_bytes)
+    if (manifest.get("source", {}).get("revision") != discovery.get("resources_revision")
+            or manifest.get("source", {}).get("git_tree") != discovery.get("resources_tree")
+            or current_record.get("artifact_sha256") != artifact_sha
+            or current_record.get("core_source_generation") != source_generation):
+        raise PrimaryPromptAdoptionError("current Resources source receipt changed")
+    # read_current_resources_discovery above is the strict owner-side verifier:
+    # it checks the root receipt/CAS, immutable generation journal, exact
+    # membership and every current member byte before returning discovered.
+    prompt = files.get("registry/profiles/hermes/SOUL.md")
+    if not isinstance(prompt, bytes) or not prompt:
+        raise PrimaryPromptAdoptionError("verified Jarvis primary prompt is absent")
+    after = core.read_current_resources_discovery(core_source_generation=source_generation)
+    retained_after = core._projection_file(core.RESOURCES_RECORD, owner=core.ROOT_UID,
+                                           group=core.ROOT_UID, mode=0o600, maximum=16 * 1024)
+    if retained_after != current_bytes or core._core_source_generation() != source_generation:
+        raise PrimaryPromptAdoptionError("Resources receipt changed during prompt preparation")
+    if not recovery and after != discovery:
+        raise PrimaryPromptAdoptionError("Resources source changed during prompt preparation")
+    if not recovery and (after.get("resources_state") != "discovered"
+                         or after.get("artifact_sha256") != artifact_sha):
+        raise PrimaryPromptAdoptionError("Resources source changed during prompt preparation")
+    return source_generation, discovery, artifact_sha, manifest, files, prompt
+
+
+def _verify_native(core, manifest, files, current: bytes, block_sha: str | None):
+    receipt = core._root_native_readback(
+        manifest, files, current, expected_managed_block_sha256=block_sha
+    )
+    if block_sha is not None and (receipt.get("managed_prompt_block_sha256") != block_sha
+            or receipt.get("effective_prompt_contains_managed_block") is not True
+            or receipt.get("effective_prompt_truncated") is not False):
+        raise PrimaryPromptAdoptionError("native effective primary prompt omitted or truncated its managed block")
+    return receipt
+
+
+def _record_matches_current(core, record, current: bytes, manifest, files) -> dict[str, Any]:
+    from .registry.primary_prompt import render_managed_block
+    prefix, _separator, block = split_managed_block(
+        current, owner_prefix_length=record["owner_prefix_length"],
+        separator=bytes.fromhex(record["owner_separator_hex"]),
+    )
+    source_prompt = files.get("registry/profiles/hermes/SOUL.md")
+    if (_sha(prefix) != record["owner_prefix_sha256"]
+            or _sha(current) != record.get("result_soul_sha256")
+            or _sha(block) != record["managed_block_sha256"]
+            or not isinstance(source_prompt, bytes) or source_prompt not in block
+            or record.get("source_prompt_sha256") != _sha(source_prompt)
+            or block != render_managed_block(source_prompt)
+            or record.get("resources_revision") != manifest.get("source", {}).get("revision")
+            or record.get("resources_tree") != manifest.get("source", {}).get("git_tree")):
+        raise PrimaryPromptAdoptionError("active primary prompt differs from its owned block receipt")
+    receipt = _verify_native(core, manifest, files, current, record["managed_block_sha256"])
+    if receipt.get("active_primary_prompt_sha256") != _sha(current):
+        raise PrimaryPromptAdoptionError("native primary prompt raw readback differs")
+    return receipt
+
+
+def _check_root_context(core, *, require_listener=True):
+    if os.geteuid() != core.ROOT_UID or not os.path.isdir("/proc"):
+        raise PrimaryPromptAdoptionError("requires the fixed Linux root actor")
+    core._identity()
+    service_record = core._journal()
+    if service_record.get("state") not in {"installed", "active"}:
+        raise PrimaryPromptAdoptionError("journal-owned core service is not installed")
+    if require_listener and not core._owned_listener():
+        raise PrimaryPromptAdoptionError("journal-owned core listener is not current")
+    return service_record
+
+
+def _new_record(source_generation, discovery, artifact_sha, prompt, block, prior,
+                signature, prefix, separator):
+    return {
+        "schema": SCHEMA, "state": "preparing", "core_source_generation": source_generation,
+        "resources_revision": discovery["resources_revision"], "resources_tree": discovery["resources_tree"],
+        "artifact_sha256": artifact_sha, "source_prompt_sha256": _sha(prompt),
+        "managed_block_sha256": _sha(block), "owner_backup_name": _sha(prior),
+        "owner_prefix_sha256": _sha(prefix), "owner_prefix_length": len(prefix),
+        "owner_separator_hex": separator.hex(), "prior_soul_sha256": _sha(prior),
+        "prior_soul_signature": signature, "result_soul_sha256": _sha(prefix + separator + block),
+        "result_soul_signature": [], "stage_name": ".SOUL.md.jarvis-" + secrets.token_hex(12) + ".stage",
+        "native_effective_prompt_sha256": None, "native_effective_prompt_chars": None,
+        "observed_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "error_code": None,
+    }
+
+
+def adopt_primary_prompt() -> dict[str, Any]:
+    """Append the verified Jarvis primary prompt through a root-owned transaction."""
+    from . import core_runtime as core
+    from .registry.primary_prompt import append_managed_block, render_managed_block
+
+    if os.geteuid() != core.ROOT_UID:
+        raise PrimaryPromptAdoptionError("requires the fixed Linux root actor")
+    _check_root_context(core)
+    _ensure_dirs(core)
+    record = _read_record(core)
+    current, signature = _read_soul(core)
+    source_generation, discovery, artifact_sha, manifest, files, source_prompt = _fixed_bundle(
+        core, recovery_record=record, current_prompt_sha256=_sha(current)
+    )
+    block = render_managed_block(source_prompt)
+    block_sha = _sha(block)
+
+    if record is not None:
+        try:
+            backup = _backup_read(core, record)
+        except PrimaryPromptAdoptionError:
+            if (record.get("state") == "preparing"
+                    and _sha(current) == record.get("prior_soul_sha256")):
+                _backup_bytes(core, record, current)
+                backup = current
+            else:
+                raise
+        if record["state"] == "adopted":
+            if (record["core_source_generation"] != source_generation
+                    or record["artifact_sha256"] != artifact_sha
+                    or record["managed_block_sha256"] != block_sha):
+                raise PrimaryPromptAdoptionError("managed prompt source changed; reviewed rebase is required")
+            if signature != record["result_soul_signature"]:
+                raise PrimaryPromptAdoptionError("active SOUL metadata changed after managed adoption")
+            receipt = _record_matches_current(core, record, current, manifest, files)
+            return _status_record(record, receipt)
+        if record["state"] == "rolled_back":
+            if current != backup:
+                raise PrimaryPromptAdoptionError("rolled-back SOUL changed; refusing to replace owner edits")
+            record = None
+        elif record["state"] in {"preparing", "writing"}:
+            if (record["core_source_generation"] != source_generation
+                    or record["artifact_sha256"] != artifact_sha
+                    or record["source_prompt_sha256"] != _sha(source_prompt)
+                    or record["managed_block_sha256"] != block_sha):
+                raise PrimaryPromptAdoptionError("interrupted prompt transaction has stale source custody")
+            desired = backup + bytes.fromhex(record["owner_separator_hex"]) + block
+            if current == desired:
+                return _finalize_adoption(core, record, manifest, files, current, signature)
+            if current != backup:
+                raise PrimaryPromptAdoptionError("interrupted prompt transaction found changed owner bytes")
+            _backup_bytes(core, record, current)
+            return _commit_adoption(core, record, manifest, files, current, signature, desired)
+        elif record["state"] == "rolling_back":
+            raise PrimaryPromptAdoptionError("primary prompt rollback is incomplete; resume rollback")
+        else:
+            raise PrimaryPromptAdoptionError("managed prompt journal state is unsupported")
+
+    if record is None:
+        if (b"<!-- HERMES-INSTALLER-MANAGED-JARVIS-PRIMARY v1 BEGIN -->" in current
+                or b"<!-- HERMES-INSTALLER-MANAGED-JARVIS-PRIMARY v1 END -->" in current):
+            raise PrimaryPromptAdoptionError("unowned primary prompt marker is ambiguous")
+        desired, separator = append_managed_block(current, block)
+        record = _new_record(source_generation, discovery, artifact_sha, source_prompt,
+                             block, current, signature, current, separator)
+        _write_record(core, record)
+    _backup_bytes(core, record, current)
+    return _commit_adoption(core, record, manifest, files, current, signature, desired)
+
+
+def _commit_adoption(core, record, manifest, files, prior, prior_signature, desired):
+    if record.get("state") == "preparing":
+        record["state"] = "writing"
+        _write_record(core, record)
+    _backup_bytes(core, record, prior if _sha(prior) == record["prior_soul_sha256"] else _backup_read(core, record))
+    installed_signature = _atomic_admin_replace(
+        core, desired, expected_signature=prior_signature,
+        uid=prior_signature[3], gid=prior_signature[4],
+        mode=stat.S_IMODE(prior_signature[2]), stage_name=record["stage_name"],
+    )
+    record["result_soul_signature"] = installed_signature
+    return _finalize_adoption(core, record, manifest, files, desired, installed_signature)
+
+
+def _finalize_adoption(core, record, manifest, files, current, signature):
+    try:
+        receipt = _record_matches_current(core, record, current, manifest, files)
+        if core._core_source_generation() != record["core_source_generation"]:
+            raise PrimaryPromptAdoptionError("source or Resources custody changed during prompt readback")
+        # The active SOUL digest changed by design. Refresh the root receipt
+        # only after exact native effective-prompt verification succeeded.
+        core._write_resources_discovery()
+        final_discovery = core.read_current_resources_discovery(
+                core_source_generation=record["core_source_generation"]
+        )
+        if (final_discovery.get("resources_state") != "discovered"
+                or final_discovery.get("artifact_sha256") != record["artifact_sha256"]):
+            raise PrimaryPromptAdoptionError("updated Resources receipt did not verify")
+    except Exception:
+        active, active_signature = _read_soul(core)
+        if active == current and _sha(active) == record.get("result_soul_sha256"):
+            backup = _backup_read(core, record)
+            restored_signature = _atomic_admin_replace(
+                core, backup, expected_signature=active_signature,
+                uid=active_signature[3], gid=active_signature[4],
+                mode=stat.S_IMODE(active_signature[2]), stage_name=record["stage_name"])
+            record["state"] = "rolled_back"
+            record["result_soul_sha256"] = _sha(backup)
+            record["result_soul_signature"] = restored_signature
+            record["error_code"] = "effective_prompt_readback_failed"
+            _write_record(core, record)
+            try:
+                core._write_resources_discovery()
+            except Exception:
+                pass
+        raise
+    record["state"] = "adopted"
+    record["native_effective_prompt_sha256"] = receipt["native_effective_prompt_sha256"]
+    record["native_effective_prompt_chars"] = receipt["native_effective_prompt_chars"]
+    record["result_soul_signature"] = signature
+    record["observed_at_utc"] = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    _write_record(core, record)
+    return _status_record(record, receipt)
+
+
+def _status_record(record, receipt):
+    return {
+        "state": record["state"], "managed_primary_block_verified": record["state"] == "adopted",
+        "effective_prompt_contains_full_block": receipt.get("effective_prompt_contains_managed_block") is True,
+        "effective_prompt_truncated": receipt.get("effective_prompt_truncated") is True,
+        "resources_revision": record["resources_revision"], "resources_tree": record["resources_tree"],
+        "artifact_sha256": record["artifact_sha256"],
+        "source_prompt_sha256": record["source_prompt_sha256"],
+        "managed_block_sha256": record["managed_block_sha256"],
+        "owner_prefix_sha256": record["owner_prefix_sha256"],
+        "owner_backup_sha256": record["owner_backup_name"],
+        "active_soul_sha256": record["result_soul_sha256"],
+        "native_effective_prompt_sha256": receipt.get("native_effective_prompt_sha256"),
+        "native_effective_prompt_chars": receipt.get("native_effective_prompt_chars"),
+        "functional": False,
+    }
+
+
+def primary_prompt_status() -> dict[str, Any]:
+    from . import core_runtime as core
+    record = _read_record(core)
+    if record is None:
+        return {"state": "pending", "managed_primary_block_verified": False,
+                "effective_prompt_contains_full_block": False, "effective_prompt_truncated": None,
+                "functional": False}
+    if record["state"] in {"preparing", "writing", "rolling_back"}:
+        return {"state": "recovery-required", "managed_primary_block_verified": False,
+                "effective_prompt_contains_full_block": False, "effective_prompt_truncated": None,
+                "owner_backup_sha256": record["owner_backup_name"], "functional": False}
+    _check_root_context(core)
+    source_generation, _discovery, artifact_sha, manifest, files, _prompt = _fixed_bundle(core)
+    if (source_generation != record["core_source_generation"]
+            or artifact_sha != record["artifact_sha256"]):
+        raise PrimaryPromptAdoptionError("managed primary block is stale for current source")
+    current, signature = _read_soul(core)
+    if record["state"] == "rolled_back":
+        backup = _backup_read(core, record)
+        if current != backup or _sha(current) != record["result_soul_sha256"]:
+            raise PrimaryPromptAdoptionError("restored owner SOUL changed after rollback")
+        receipt = core._root_native_readback(manifest, files, current)
+        if (receipt.get("active_primary_prompt_sha256") != _sha(current)
+                or receipt.get("managed_prompt_block_sha256") is not None):
+            raise PrimaryPromptAdoptionError("native restored prompt readback differs")
+        return {"state": "rolled_back", "managed_primary_block_verified": False,
+                "effective_prompt_contains_full_block": False,
+                "effective_prompt_truncated": receipt["effective_prompt_truncated"],
+                "restored_owner_soul_sha256": _sha(current), "functional": False}
+    if record["state"] != "adopted":
+        return {"state": "recovery-required", "managed_primary_block_verified": False,
+                "effective_prompt_contains_full_block": False, "effective_prompt_truncated": None,
+                "functional": False}
+    if signature != record["result_soul_signature"]:
+        raise PrimaryPromptAdoptionError("active SOUL metadata changed after managed adoption")
+    _backup_read(core, record)
+    receipt = _record_matches_current(core, record, current, manifest, files)
+    return _status_record(record, receipt)
+
+
+def rollback_primary_prompt() -> dict[str, Any]:
+    from . import core_runtime as core
+    record = _read_record(core)
+    if record is None or record["state"] not in {"adopted", "rolling_back", "rolled_back"}:
+        raise PrimaryPromptAdoptionError("no verified managed primary prompt is available to roll back")
+    _check_root_context(core, require_listener=False)
+    current, signature = _read_soul(core)
+    source_generation, _discovery, artifact_sha, manifest, files, _prompt = _fixed_bundle(
+        core, recovery_record=record, current_prompt_sha256=_sha(current)
+    )
+    if (source_generation != record["core_source_generation"] or artifact_sha != record["artifact_sha256"]):
+        raise PrimaryPromptAdoptionError("current source differs from the adopted primary prompt")
+    if record["state"] == "rolled_back":
+        backup = _backup_read(core, record)
+        if current != backup:
+            raise PrimaryPromptAdoptionError("rolled-back owner SOUL changed after restoration")
+        receipt = core._root_native_readback(manifest, files, current)
+        if receipt.get("active_primary_prompt_sha256") != _sha(current):
+            raise PrimaryPromptAdoptionError("native restored prompt readback differs")
+        return {"state": "rolled_back", "restored_owner_soul_sha256": _sha(current),
+                "managed_primary_block_verified": False, "functional": False}
+    backup = _backup_read(core, record)
+    if record["state"] == "adopted":
+        if signature != record["result_soul_signature"] or _sha(current) != record["result_soul_sha256"]:
+            raise PrimaryPromptAdoptionError("active SOUL or managed block was edited; refusing rollback")
+        _record_matches_current(core, record, current, manifest, files)
+        record["state"] = "rolling_back"
+        _write_record(core, record)
+    if _sha(current) == record["result_soul_sha256"]:
+        if signature != record["result_soul_signature"]:
+            raise PrimaryPromptAdoptionError("active SOUL changed during managed rollback")
+        _atomic_admin_replace(core, backup, expected_signature=signature,
+                              uid=signature[3], gid=signature[4],
+                              mode=stat.S_IMODE(signature[2]), stage_name=record["stage_name"])
+    elif current != backup or _sha(current) != record["prior_soul_sha256"]:
+        raise PrimaryPromptAdoptionError("active SOUL changed during managed rollback")
+    restored, restored_signature = _read_soul(core)
+    if restored != backup or _sha(restored) != record["prior_soul_sha256"]:
+        raise PrimaryPromptAdoptionError("exact owner SOUL restoration readback failed")
+    core._write_resources_discovery()
+    receipt = core._root_native_readback(manifest, files, restored)
+    if (receipt.get("active_primary_prompt_sha256") != _sha(restored)
+            or receipt.get("managed_prompt_block_sha256") is not None):
+        raise PrimaryPromptAdoptionError("native prompt rollback readback differs")
+    record["native_effective_prompt_sha256"] = receipt["native_effective_prompt_sha256"]
+    record["native_effective_prompt_chars"] = receipt["native_effective_prompt_chars"]
+    record["state"] = "rolled_back"
+    record["result_soul_sha256"] = _sha(restored)
+    record["result_soul_signature"] = restored_signature
+    record["observed_at_utc"] = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    _write_record(core, record)
+    return {"state": "rolled_back", "restored_owner_soul_sha256": _sha(restored),
+            "managed_primary_block_verified": False, "functional": False}

@@ -508,7 +508,13 @@ def test_root_native_readback_checks_current_loader_results_against_owned_bytes(
                              for row in rows})
     payload = {"python_version": "3.14.7", "profile": "default", "skills": skills,
         "loaded": skills, "visible_profiles": ["default"], "profile_display_name": "Default",
-        "profile_file_sha256": expected_digests["profile:default"], "digests": expected_digests}
+        "profile_file_sha256": expected_digests["profile:default"],
+        "managed_prompt_block_sha256": None,
+        "effective_prompt_contains_managed_block": False,
+        "effective_prompt_truncated": False,
+        "native_effective_prompt_sha256": expected_digests["profile:default"],
+        "native_effective_prompt_chars": len("existing active prompt"),
+        "expected_managed_block_sha256": None, "digests": expected_digests}
     monkeypatch.setattr(core.pwd, "getpwnam", lambda _name: SimpleNamespace(
         pw_uid=1000, pw_gid=1000, pw_dir="/home/admin"))
     monkeypatch.setattr(core, "_validated_executable", lambda path, _owners: path)
@@ -524,6 +530,7 @@ def test_root_native_readback_checks_current_loader_results_against_owned_bytes(
     # digest may differ from raw file bytes; the separate raw-file digest binds
     # the loaded profile to the root-verified file without duplicating loader logic.
     payload["digests"]["profile:default"] = "b" * 64
+    payload["native_effective_prompt_sha256"] = "b" * 64
     receipt = core._root_native_readback(manifest, files, active_prompt)
     assert receipt["loaded_skill_count"] == 396
     assert receipt["active_primary_prompt_sha256"] == hashlib.sha256(active_prompt).hexdigest()
