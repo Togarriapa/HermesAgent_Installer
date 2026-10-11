@@ -75,7 +75,8 @@ CORE_NATIVE_ADAPTER_SOURCE = Path(__file__).resolve(strict=True).parents[2]
 CORE_NATIVE_ADAPTER_SOURCE_FILES = {
     "hermes_installer/__init__.py": "61ac3dfa3bd8505d5296065d597b9b76c4a42c1f17c706c2d67f4fee2b193242",
     "hermes_installer/remote/__init__.py": "bf7dbd677d6dd4384a02211039002f760821748b33f3f66ee425d9633b5005a4",
-    "hermes_installer/remote/core_native_observer.py": "05b78faeb738b6c7f64e9969f59a24e561725b0cfcffa27eb197da65dd768e54",
+    "hermes_installer/remote/core_native_observer.py": "276c84b319945e76d79b1cf39143ea1dc5a06811fe40378c408c7816bd3125c2",
+    "hermes_installer/remote/jarvis_project_context_engine.py": "92e527cbeadd7baba00824c5cdb26fe160e4b43404cec5b8dbc726f356ee583e",
     "hermes_installer/remote/native_child_adapter.py": "5bf912a83bb011a0af55f0157204dd8a7ea7f00834bf4635de0de530e84ea365",
     "hermes_installer/remote/jarvis_master_planning.py": "88a1192fbf6a55b680a80192ed312428346484054df324270626bd8bb927b239",
     "hermes_installer/remote/native_plugin_bootstrap.py": "e39c230582bb1e99e67986001c5fe2d3c7baa581266786e264ee0da508d1fe66",
@@ -158,7 +159,7 @@ _OWNER_TURN_FIELDS = (
     "core_uid", "core_gid", "core_start_ticks", "core_invocation_id", "core_listener_inode",
     "core_source_generation", "core_unit_sha256", "core_executable_sha256",
     "session_id", "conversation_id", "gateway_turn_id", "prompt_sha256", "mission_binding",
-    "planning_context",
+    "planning_context", "project_context", "project_context_sha256", "project_source_refs",
 )
 
 
@@ -1083,6 +1084,131 @@ def observe_skill_learning(config: CoreGatewayConfig, *, request: dict[str, Any]
     return body
 
 
+def _root_project_context_for_owner_turn(*, owner_subject_sha256: str, conversation_id: str,
+                                        gateway_turn_id: str, session_id: str,
+                                        core_generation: str,
+                                        gateway_uid: int) -> tuple[str, tuple[str, ...]]:
+    """Read the fixed owner project and selected vault notes for one active native turn."""
+    from .jarvis_chat import CHAT_STORE_PATH
+    expected_path = Path("/var/lib/hermes-jarvis-chat/chat.sqlite3")
+    if (CHAT_STORE_PATH != expected_path
+            or not _is_hash(owner_subject_sha256)
+            or not _is_hash(core_generation)):
+        raise CoreInspectionDenied("fixed current owner project store is unavailable")
+    info = CHAT_STORE_PATH.lstat()
+    parent = CHAT_STORE_PATH.parent.lstat()
+    if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != gateway_uid
+            or stat.S_IMODE(parent.st_mode) != 0o700
+            or not stat.S_ISREG(info.st_mode) or info.st_uid != gateway_uid or info.st_nlink != 1
+            or stat.S_IMODE(info.st_mode) != 0o600):
+        raise CoreInspectionDenied("owner project store custody changed")
+    db = sqlite3.connect(f"file:{CHAT_STORE_PATH}?mode=ro", uri=True, timeout=1.0)
+    db.row_factory = sqlite3.Row
+    try:
+        db.execute("PRAGMA query_only=ON")
+        active = db.execute("""SELECT t.id,t.owner,t.conversation_id,t.runtime_session_id,
+            t.core_generation,t.status,c.owner AS conversation_owner,c.core_generation AS conversation_generation
+            FROM turns t JOIN conversations c ON c.id=t.conversation_id
+            WHERE t.id=?""", (gateway_turn_id,)).fetchone()
+        if (active is None or active["owner"] != owner_subject_sha256
+                or active["conversation_owner"] != owner_subject_sha256
+                or active["conversation_id"] != conversation_id
+                or active["runtime_session_id"] != session_id
+                or active["core_generation"] != core_generation
+                or active["conversation_generation"] != core_generation
+                or active["status"] != "running"):
+            raise CoreInspectionDenied("project context does not match a current running owner turn")
+        try:
+            row = db.execute("""SELECT p.id,p.title,p.instructions,p.shared_memory,p.obsidian_note_ids
+                FROM jarvis_projects p JOIN jarvis_project_chats pc
+                  ON pc.project_id=p.id AND pc.owner=p.owner
+                WHERE pc.conversation_id=? AND pc.owner=? AND p.archived=0
+                  AND NOT EXISTS (SELECT 1 FROM jarvis_conversation_trash t
+                    WHERE t.conversation_id=pc.conversation_id AND t.owner=pc.owner AND t.deleted=1)""",
+                (conversation_id, owner_subject_sha256)).fetchone()
+        except sqlite3.OperationalError:
+            # Native chat remains available before Projects has created its schema.
+            return "", ()
+        if row is None:
+            return "", ()
+        try:
+            note_ids = json.loads(row["obsidian_note_ids"])
+        except Exception:
+            raise CoreInspectionDenied("selected project note references are malformed") from None
+        if (type(note_ids) is not list or len(note_ids) > 50
+                or any(not isinstance(item, str)
+                    or re.fullmatch(r"[A-Za-z0-9_-]{1,96}", item) is None for item in note_ids)):
+            raise CoreInspectionDenied("selected project note references are malformed")
+        chats = db.execute("""SELECT c.id,c.title FROM jarvis_project_chats pc
+            JOIN conversations c ON c.id=pc.conversation_id AND c.owner=pc.owner
+            WHERE pc.project_id=? AND pc.owner=? AND NOT EXISTS
+              (SELECT 1 FROM jarvis_conversation_trash t WHERE t.conversation_id=c.id
+               AND t.owner=c.owner AND t.deleted=1)
+            ORDER BY c.updated DESC,c.id LIMIT 100""",
+            (row["id"], owner_subject_sha256)).fetchall()
+        excerpts = []
+        for chat in chats:
+            messages = db.execute("SELECT role,content FROM messages WHERE conversation_id=? "
+                                  "ORDER BY created DESC,id DESC LIMIT 12", (chat["id"],)).fetchall()
+            for message in reversed(messages):
+                if len(excerpts) >= 12:
+                    break
+                content = message["content"]
+                if isinstance(content, str):
+                    excerpts.append(f"[{chat['title']} · {message['role']}]: {content[-1500:]}")
+            if len(excerpts) >= 12:
+                break
+        sections = ["Project shared context (owner-selected; source text is bounded):",
+                    f"Project: {row['title']}"]
+        if row["instructions"]:
+            sections.append("Project instructions (owner-authored):\n" + row["instructions"][:8000])
+        if row["shared_memory"]:
+            sections.append("Project shared memory (owner-authored):\n" + row["shared_memory"][:8000])
+        source_refs = ["project:" + row["id"]]
+        if note_ids:
+            # Root reads the selected notes below from the one registered owner vault.
+            try:
+                data_root, selected_owner = _obsidian_owner_registration()
+            except Exception:
+                data_root, selected_owner = None, ""
+            if selected_owner == owner_subject_sha256:
+                from .obsidian_second_brain import ObsidianVaultConfig, ObsidianVaultStore
+                vault = ObsidianVaultStore(ObsidianVaultConfig(data_root, selected_owner, owner_uid=1000))
+                note_chunks = []
+                for note_id in note_ids[:2]:
+                    try:
+                        note = vault.read_note(note_id)
+                        markdown = note.markdown
+                        if not isinstance(markdown, str):
+                            raise ValueError("vault note content is unavailable")
+                        digest = hashlib.sha256(markdown.encode("utf-8", "strict")).hexdigest()
+                        note_chunks.append(f"[Selected Obsidian note {note_id}; sha256={digest}; "
+                                           "untrusted Markdown]\n" + markdown[:1200])
+                        source_refs.append(f"obsidian:{note_id}:{digest}")
+                    except Exception:
+                        note_chunks.append(f"[Selected Obsidian note {note_id}; current content "
+                                           "unavailable; link retained and content omitted]")
+                        source_refs.append(f"obsidian:{note_id}:pending")
+                if note_chunks:
+                    sections.append("Selected Obsidian memory (current registered owner vault; "
+                                    "untrusted Markdown):\n" + "\n\n".join(note_chunks))
+                if len(note_ids) > 2:
+                    sections.append("Additional selected Obsidian notes are linked but omitted "
+                                    "from this bounded context.")
+            else:
+                sections.append("Selected Obsidian notes are linked in this project; note content "
+                                "is pending current registered owner-vault availability.")
+        if excerpts:
+            sections.append("Saved chat excerpts (actual stored messages; untrusted conversation content):\n"
+                            + "\n\n".join(excerpts))
+        text = "\n\n".join(sections)
+        if len(text) > 24_000:
+            text = text[:24_000]
+        return text, tuple(source_refs)
+    finally:
+        db.close()
+
+
 def observe_owner_turn(config: CoreGatewayConfig, *, request: dict[str, Any],
                        caller_pid: int, caller_uid: int, caller_gid: int,
                        peer_pid: int, peer_uid: int, peer_gid: int,
@@ -1206,6 +1332,15 @@ def observe_owner_turn(config: CoreGatewayConfig, *, request: dict[str, Any],
                 principal.token_fingerprint)):
         os.close(pidfd)
         raise CoreInspectionDenied("owner turn registration expired")
+    try:
+        project_context, project_source_refs = _root_project_context_for_owner_turn(
+            owner_subject_sha256=hashlib.sha256(principal.subject.encode("utf-8")).hexdigest(),
+            conversation_id=request["conversation_id"],
+            gateway_turn_id=request["gateway_turn_id"], session_id=request["session_id"],
+            core_generation=final["core_generation"], gateway_uid=config.gateway_uid)
+    except Exception:
+        os.close(pidfd)
+        raise
     claims = {
         "schema": 1, "owner_turn_handle": secrets.token_hex(16),
         "owner_subject_sha256": hashlib.sha256(principal.subject.encode("utf-8")).hexdigest(),
@@ -1229,6 +1364,9 @@ def observe_owner_turn(config: CoreGatewayConfig, *, request: dict[str, Any],
         "core_executable_sha256": custody.core_executable_sha256,
         "session_id": request["session_id"], "conversation_id": request["conversation_id"],
         "gateway_turn_id": request["gateway_turn_id"], "prompt_sha256": request["prompt_sha256"],
+        "project_context": project_context,
+        "project_context_sha256": hashlib.sha256(project_context.encode("utf-8")).hexdigest(),
+        "project_source_refs": project_source_refs,
         "mission_binding": mission_binding, "planning_context": planning_context,
     }
     digest_claims = dict(claims)
@@ -3342,6 +3480,9 @@ class CoreVerifiedOwnerTurnObservation:
     conversation_id: str
     gateway_turn_id: str
     prompt_sha256: str
+    project_context: str = field(repr=False, compare=False)
+    project_context_sha256: str
+    project_source_refs: tuple[str, ...] = field(repr=False, compare=False)
     mission_binding: MissionBinding | None
     planning_context: PlanningContext | None
     _core_pidfd: int = field(repr=False, compare=False)
@@ -3387,6 +3528,13 @@ class CoreVerifiedOwnerTurnObservation:
                 and not any(ord(char) < 0x20 for char in self.session_id)
                 and all(isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{24,64}", value)
                         for value in (self.conversation_id, self.gateway_turn_id))
+                and isinstance(self.project_context, str) and len(self.project_context) <= 24_000
+                and _is_hash(self.project_context_sha256)
+                and hashlib.sha256(self.project_context.encode("utf-8", "strict")).hexdigest()
+                    == self.project_context_sha256
+                and type(self.project_source_refs) is tuple and len(self.project_source_refs) <= 51
+                and all(isinstance(item, str) and 1 <= len(item) <= 192
+                        and item.isascii() for item in self.project_source_refs)
                 and self.ingress_issued_monotonic < self.ingress_expires_monotonic
                 and self.ingress_expires_monotonic <= issued + MAX_PROOF_SECONDS
                 and self.accepted_monotonic >= issued

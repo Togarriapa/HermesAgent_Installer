@@ -1218,6 +1218,7 @@ class CoreNativeObservationClient:
             "read-selected-expert-source", "admit-selected-expert-child",
             "planning-turn-context", "bind-obsidian-native-vault",
             "authorize-obsidian-call-scope",
+            "current-project-context",
         }:
             raise CoreNativeObservationUnavailable("observer operation is not supported")
         nonce = secrets.token_urlsafe(32)
@@ -1318,6 +1319,50 @@ class CoreNativeObservationClient:
         if context.planner_prompt_sha256 != prompt_sha256:
             raise CoreNativeObservationUnavailable("planning prompt changed before provider dispatch")
         return context
+
+    def current_project_context(self, *, session_id: str,
+                                prompt_sha256: str) -> dict[str, Any] | None:
+        """Read root-joined Projects context for the exact active owner submission."""
+        if (not isinstance(session_id, str) or not 1 <= len(session_id) <= 512
+                or not session_id.isascii() or any(ord(char) < 0x20 for char in session_id)
+                or not _HASH.fullmatch(prompt_sha256 or "")):
+            raise CoreNativeObservationUnavailable("native project-context request is malformed")
+        row = self._rpc("current-project-context", {
+            "session_id": session_id, "prompt_sha256": prompt_sha256,
+        })
+        if set(row) != {"schema", "nonce", "ok", "available", "session_id",
+                        "prompt_sha256", "owner_turn_handle", "conversation_id", "gateway_turn_id",
+                        "owner_subject_sha256", "core_generation", "context_sha256", "text",
+                        "project_source_refs"}:
+            raise CoreNativeObservationUnavailable("root project-context response has an unknown schema")
+        if type(row["available"]) is not bool:
+            raise CoreNativeObservationUnavailable("root project-context availability is malformed")
+        if not row["available"]:
+            if any(row[name] is not None for name in (
+                    "conversation_id", "gateway_turn_id", "owner_subject_sha256",
+                    "core_generation", "context_sha256", "text", "owner_turn_handle",
+                    "project_source_refs")):
+                raise CoreNativeObservationUnavailable("unavailable project context carried data")
+            return None
+        if (row["session_id"] != session_id or row["prompt_sha256"] != prompt_sha256
+                or any(not isinstance(row[name], str) for name in (
+                    "conversation_id", "gateway_turn_id", "owner_subject_sha256",
+                    "core_generation", "context_sha256", "text"))
+                or not re.fullmatch(r"[A-Za-z0-9_-]{24,64}", row["conversation_id"])
+                or not re.fullmatch(r"[A-Za-z0-9_-]{24,64}", row["gateway_turn_id"])
+                or not re.fullmatch(r"[0-9a-f]{32}", row["owner_turn_handle"])
+                or not _HASH.fullmatch(row["owner_subject_sha256"])
+                or not _HASH.fullmatch(row["core_generation"])
+                or not _HASH.fullmatch(row["context_sha256"])
+                or type(row["project_source_refs"]) is not list
+                or len(row["project_source_refs"]) > 51
+                or any(not isinstance(item, str) or not 1 <= len(item) <= 192
+                       or not item.isascii() for item in row["project_source_refs"])
+                or len(row["text"]) > 24_000
+                or hashlib.sha256(row["text"].encode("utf-8", "strict")).hexdigest()
+                    != row["context_sha256"]):
+            raise CoreNativeObservationUnavailable("root project context is malformed or stale")
+        return row
 
     def register_response(self, *, attempt: ObservedProviderAttempt,
                           response_sha256: str, response_text_sha256: str | None,
@@ -3258,6 +3303,63 @@ class RootCoreNativeObservationRegistry:
                     config=self._config, custody=self._custody, preparing=False)
                 return {"schema": 1, "nonce": nonce, "ok": True,
                         "planning": True, "planning_context": owner.planning_context.to_wire()}
+            if op == "current-project-context":
+                if set(request) != {"schema", "op", "nonce", "session_id", "prompt_sha256"}:
+                    raise ValueError("project-context lookup schema mismatch")
+                session_id, prompt_sha256 = request["session_id"], request["prompt_sha256"]
+                if (not isinstance(session_id, str) or not 1 <= len(session_id) <= 512
+                        or not session_id.isascii() or any(ord(char) < 0x20 for char in session_id)
+                        or not _HASH.fullmatch(prompt_sha256 or "")):
+                    raise ValueError("project-context lookup is malformed")
+                matches = [item for item in self._owners.values()
+                           if item.session_id == session_id and item.prompt_sha256 == prompt_sha256]
+                empty = {"conversation_id": None, "gateway_turn_id": None,
+                         "owner_turn_handle": None,
+                         "owner_subject_sha256": None, "core_generation": None,
+                         "context_sha256": None, "text": None, "project_source_refs": None}
+                if len(matches) != 1:
+                    return {"schema": 1, "nonce": nonce, "ok": True,
+                        "available": False, "session_id": session_id,
+                        "prompt_sha256": prompt_sha256, **empty}
+                owner = matches[0]
+                now = time.monotonic()
+                if (owner.is_current_sealed(self._config, custody=self._custody, now=now) is not True
+                        or owner.core_generation != self._custody.core_generation
+                        or owner.core_source_generation != self._custody.core_source_generation):
+                    raise ValueError("registered owner project context is stale")
+                from hermes_installer.remote.core_gateway_inspector import _root_project_context_for_owner_turn
+                current_text, current_refs = _root_project_context_for_owner_turn(
+                    owner_subject_sha256=owner.owner_subject_sha256,
+                    conversation_id=owner.conversation_id,
+                    gateway_turn_id=owner.gateway_turn_id,
+                    session_id=owner.session_id,
+                    core_generation=owner.core_generation,
+                    gateway_uid=self._config.gateway_uid)
+                current_digest = hashlib.sha256(current_text.encode("utf-8", "strict")).hexdigest()
+                if (current_digest != owner.project_context_sha256
+                        or current_text != owner.project_context
+                        or current_refs != owner.project_source_refs
+                        or owner.is_current_sealed(self._config, custody=self._custody,
+                                                   now=time.monotonic()) is not True):
+                    raise ValueError("current owner project context changed after turn registration")
+                if not current_text:
+                    return {"schema": 1, "nonce": nonce, "ok": True,
+                        "available": False, "session_id": session_id,
+                        "prompt_sha256": prompt_sha256,
+                        "owner_turn_handle": None,
+                        "conversation_id": None, "gateway_turn_id": None,
+                        "owner_subject_sha256": None, "core_generation": None,
+                        "context_sha256": None, "text": None, "project_source_refs": None}
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                    "available": True, "session_id": owner.session_id,
+                    "prompt_sha256": owner.prompt_sha256,
+                    "owner_turn_handle": owner.owner_turn_handle,
+                    "conversation_id": owner.conversation_id,
+                    "gateway_turn_id": owner.gateway_turn_id,
+                    "owner_subject_sha256": owner.owner_subject_sha256,
+                    "core_generation": owner.core_generation,
+                    "context_sha256": current_digest, "text": current_text,
+                    "project_source_refs": list(current_refs)}
             if op == "authorize-master-read-call":
                 if set(request) != {"schema", "op", "nonce", "observed_call_handle"}:
                     raise ValueError("caller classification schema mismatch")
