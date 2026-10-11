@@ -138,7 +138,7 @@ _CSS = '''@charset "UTF-8";
 '''.encode("utf-8")
 
 
-_JS = r'''/* Browser client is deliberately a text-only view over the finite Jarvis API. */
+_JS = r'''/* Browser client is text-first with optional, explicitly enabled browser voice. */
 (() => {
   "use strict";
   const byId = (id) => document.getElementById(id);
@@ -280,7 +280,8 @@ _JS = r'''/* Browser client is deliberately a text-only view over the finite Jar
   }
   function startRecognition() {
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!voiceSupported || !byId("speech-consent").checked || !Recognition) return;
+    if (!voiceSupported || !byId("speech-consent").checked || !Recognition
+        || byId("main-content").hidden || document.visibilityState !== "visible") return;
     if (ui.input.disabled) return;
     stopSpeech();
     let current;
@@ -290,18 +291,34 @@ _JS = r'''/* Browser client is deliberately a text-only view over the finite Jar
     current.interimResults = false;
     current.lang = navigator.language || "en-US";
     let transcriptReceived = false;
+    const captureEligible = () => byId("speech-consent").checked
+      && !ui.input.disabled && !byId("main-content").hidden
+      && document.visibilityState === "visible";
     current.onresult = (event) => {
+      if (recognition !== current) return;
+      if (!captureEligible()) { stopRecognition(); return; }
       const transcript = [...event.results].slice(event.resultIndex || 0).filter((result) => result.isFinal)
         .map((result) => result[0] && result[0].transcript || "").join(" ").trim();
       if (!transcript) return;
       transcriptReceived = true;
-      const existing = ui.input.value.trimEnd();
-      ui.input.value = existing ? `${existing} ${transcript}` : transcript;
+      const existing = ui.input.value;
+      const separator = existing && !/\s$/.test(existing) ? " " : "";
+      const limit = ui.input.maxLength >= 0 ? ui.input.maxLength : existing.length + transcript.length + separator.length;
+      const accepted = transcript.slice(0, Math.max(0, limit - existing.length - separator.length));
+      if (!accepted) {
+        showVoiceStatus("The message is at its character limit. You can edit it or start a new message.");
+        return;
+      }
+      ui.input.value = `${existing}${separator}${accepted}`;
       ui.input.dispatchEvent(new Event("input", { bubbles: true }));
       ui.input.focus({ preventScroll: true });
-      showVoiceStatus("Transcript added to your message. Review it before sending.");
+      showVoiceStatus(accepted.length < transcript.length
+        ? "Transcript shortened to fit the message limit. Review it before sending."
+        : "Transcript added to your message. Review it before sending.");
     };
     current.onerror = (event) => {
+      if (recognition !== current) return;
+      if (!captureEligible()) { stopRecognition(); return; }
       const messages = {
         "not-allowed": "Microphone permission was denied. You can continue by typing.",
         "service-not-allowed": "The browser speech service is unavailable. You can continue by typing.",
@@ -313,6 +330,7 @@ _JS = r'''/* Browser client is deliberately a text-only view over the finite Jar
     };
     current.onend = () => {
       if (recognition !== current) return;
+      if (!captureEligible()) { stopRecognition(); return; }
       recognition = null;
       ui.voiceInput.hidden = !byId("speech-consent").checked;
       ui.voiceInput.dataset.listening = "false";
@@ -719,6 +737,12 @@ _JS = r'''/* Browser client is deliberately a text-only view over the finite Jar
   ui.scrim.addEventListener("click", () => setPanel(false));
   for (const button of document.querySelectorAll(".nav-item")) button.addEventListener("click", () => showView(button.dataset.view));
   window.addEventListener("pagehide", () => { closeStream(); stopRecognition(); stopSpeech(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") {
+      stopRecognition("Push-to-talk stopped when this page went into the background.");
+      stopSpeech("Reply audio stopped when this page went into the background.");
+    }
+  });
   configureVoice();
   (async () => {
     try {

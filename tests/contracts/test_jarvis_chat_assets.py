@@ -96,6 +96,10 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn("speakCompletedReply(finalText)", source)
         self.assertIn("utterance.onend", source)
         self.assertIn("stopRecognition(); stopSpeech();", source)
+        self.assertGreaterEqual(source.count("if (recognition !== current) return;"), 3)
+        self.assertIn('&& !ui.input.disabled && !byId("main-content").hidden', source)
+        self.assertIn("transcript.slice(0, Math.max(0, limit - existing.length - separator.length))", source)
+        self.assertIn('document.visibilityState !== "visible"', source)
 
 
 if __name__ == "__main__":
