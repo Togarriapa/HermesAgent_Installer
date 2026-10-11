@@ -27,6 +27,56 @@ from hermes_installer.remote.gateway import Principal, RemotePolicy
 
 
 class CoreGatewayInspectorClientTests(unittest.TestCase):
+    def test_owner_turn_mission_binding_requires_typed_value_and_spent_row_match(self):
+        from hermes_installer.remote import jarvis_mission_executor
+
+        self.assertIsNone(core_gateway_inspector._mission_binding_from_wire(None))
+        self.assertIsNone(core_gateway_inspector._mission_binding_wire(None))
+        binding = jarvis_mission_executor.MissionBinding.from_wire({
+            "schema": 1, "mission_id": "m" * 24, "revision": 2,
+            "plan_sha256": "a" * 64, "task_sha256": "b" * 64,
+            "source_profile_id": "orchestrator",
+        })
+        self.assertEqual(core_gateway_inspector._mission_binding_wire(binding), binding.to_wire())
+        with self.assertRaises(core_gateway_inspector.CoreInspectionDenied):
+            core_gateway_inspector._mission_binding_wire(binding.to_wire())
+
+        reader = object()
+        seen = {}
+
+        def resolve(store, resolved_binding, **kwargs):
+            seen.update(store=store, binding=resolved_binding, **kwargs)
+            return True
+
+        def reader_for_fixed_path(*, path):
+            seen["ledger_path"] = path
+            return reader
+
+        with patch.object(jarvis_mission_executor, "MissionLedgerReader",
+                          side_effect=reader_for_fixed_path), \
+             patch.object(jarvis_mission_executor, "resolve_spent_mission_binding", resolve):
+            verified = core_gateway_inspector._resolve_spent_mission_binding(
+                binding, owner_subject_sha256="c" * 64, gateway_turn_id="d" * 24,
+                core_generation="e" * 64, core_source_generation="f" * 64,
+                deadline=time.monotonic() + 5)
+        self.assertEqual(verified.to_wire(), binding.to_wire())
+        self.assertIs(seen["store"], reader)
+        self.assertEqual(str(seen["ledger_path"]), "/var/lib/hermes-jarvis-chat/chat.sqlite3")
+        self.assertEqual(seen["gateway_turn_id"], "d" * 24)
+        self.assertEqual(seen["owner_subject_sha256"], "c" * 64)
+        self.assertEqual(seen["core_generation"], "e" * 64)
+        self.assertEqual(seen["core_source_generation"], "f" * 64)
+
+        with patch.object(jarvis_mission_executor, "MissionLedgerReader",
+                          side_effect=reader_for_fixed_path), \
+             patch.object(jarvis_mission_executor, "resolve_spent_mission_binding",
+                          return_value=False), \
+             self.assertRaises(core_gateway_inspector.CoreInspectionDenied):
+            core_gateway_inspector._resolve_spent_mission_binding(
+                binding, owner_subject_sha256="c" * 64, gateway_turn_id="d" * 24,
+                core_generation="e" * 64, core_source_generation="f" * 64,
+                deadline=time.monotonic() + 5)
+
     def test_retained_ingress_proof_is_one_use_and_bound_to_peer_generation(self):
         config = _config()
         now = time.monotonic()

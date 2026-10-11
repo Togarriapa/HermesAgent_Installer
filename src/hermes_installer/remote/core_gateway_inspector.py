@@ -21,7 +21,10 @@ import selectors
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .jarvis_mission_executor import MissionBinding
 
 from .core_gateway import (
     CORE_CONFIG, CORE_GATEWAY_UNIT, CORE_GATEWAY_UNIT_PATH, CORE_HOST, CORE_INGRESS_SOCKET,
@@ -69,6 +72,7 @@ CORE_NATIVE_ADAPTER_SOURCE_FILES = {
     "hermes_installer/remote/__init__.py": "bf7dbd677d6dd4384a02211039002f760821748b33f3f66ee425d9633b5005a4",
     "hermes_installer/remote/core_native_observer.py": "c544becc6f5bc80439fec25491d17aad656334009a07ec71df162ddcdb8f2fc8",
     "hermes_installer/remote/native_plugin_bootstrap.py": "9b32c9d0b2ece976dc217ee853d08063b04cf5504eb9f91ea03c33392ad94cc8",
+    "hermes_installer/remote/jarvis_mission_executor.py": "5de7ec4a810d27635e60a80206dc46d851f9f3d3ce81e960485291659df9cd3f",
     "hermes_installer/components/__init__.py": "eb02d685a1fb560210c2915296f7553e279e100b511d6b63892d3e877ccd7e7b",
     "hermes_installer/components/resources_internal_dispatch.py": "050afe835279e022ba3e4ec479f597692f5bdc88f7488eb630863d08a6b8cf9c",
     "hermes_installer/components/resources_native_plugin_bundle/plugin.yaml": "c10104ad621d134685ecab018a1a0b975572cb2266d68bc1832c17730210e65b",
@@ -139,7 +143,7 @@ _OWNER_TURN_FIELDS = (
     "gateway_invocation_id", "tunnel_invocation_id", "core_generation", "core_pid",
     "core_uid", "core_gid", "core_start_ticks", "core_invocation_id", "core_listener_inode",
     "core_source_generation", "core_unit_sha256", "core_executable_sha256",
-    "session_id", "conversation_id", "gateway_turn_id", "prompt_sha256",
+    "session_id", "conversation_id", "gateway_turn_id", "prompt_sha256", "mission_binding",
 )
 class CoreInspectionDenied(PermissionError):
     pass
@@ -224,6 +228,80 @@ def _owner_turn_digest(values: dict[str, Any]) -> str:
     canonical = json.dumps(values, sort_keys=True, separators=(",", ":"),
                            allow_nan=False).encode("utf-8")
     return hashlib.sha256(b"hermes-jarvis-owner-turn-v1\0" + canonical).hexdigest()
+
+
+def _mission_binding_wire(value: Any) -> dict[str, Any] | None:
+    """Return only the exact mission DTO shape; arbitrary request mappings are never authority."""
+    if value is None:
+        return None
+    try:
+        from .jarvis_mission_executor import MissionBinding
+        if type(value) is not MissionBinding:
+            raise ValueError
+        wire = value.to_wire()
+        if (type(wire) is not dict
+                or set(wire) != {"schema", "mission_id", "revision", "plan_sha256",
+                                 "task_sha256", "source_profile_id"}
+                or type(wire.get("schema")) is not int or wire["schema"] != 1
+                or wire.get("source_profile_id") != "orchestrator"
+                or type(wire.get("revision")) is not int or wire["revision"] < 1
+                or not isinstance(wire.get("mission_id"), str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{24,64}", wire["mission_id"]) is None
+                or not _is_hash(wire.get("plan_sha256"))
+                or not _is_hash(wire.get("task_sha256"))):
+            raise ValueError
+        decoded = MissionBinding.from_wire(wire)
+        if type(decoded) is not MissionBinding or decoded != value:
+            raise ValueError
+        return wire
+    except Exception:
+        raise CoreInspectionDenied("mission binding is not a verified typed value") from None
+
+
+def _mission_binding_from_wire(value: Any) -> Any:
+    if value is None:
+        return None
+    if (type(value) is not dict
+            or set(value) != {"schema", "mission_id", "revision", "plan_sha256",
+                             "task_sha256", "source_profile_id"}):
+        raise CoreInspectionDenied("mission binding wire shape is invalid")
+    try:
+        from .jarvis_mission_executor import MissionBinding
+        binding = MissionBinding.from_wire(value)
+        if type(binding) is not MissionBinding or _mission_binding_wire(binding) != value:
+            raise ValueError
+        return binding
+    except Exception:
+        raise CoreInspectionDenied("mission binding wire value is invalid") from None
+
+
+def _resolve_spent_mission_binding(value: Any, *, owner_subject_sha256: str,
+                                   gateway_turn_id: str, core_generation: str,
+                                   core_source_generation: str, deadline: float) -> Any:
+    """Re-read the exact spent approval before root seals its mission correlation."""
+    wire = _mission_binding_wire(value)
+    if wire is None:
+        return None
+    if time.monotonic() >= deadline:
+        raise CoreInspectionDenied("mission binding expired")
+    try:
+        from .jarvis_chat import CHAT_STORE_PATH
+        from .jarvis_mission_executor import (
+            MissionBinding, MissionLedgerReader, resolve_spent_mission_binding,
+        )
+        if CHAT_STORE_PATH != Path("/var/lib/hermes-jarvis-chat/chat.sqlite3"):
+            raise ValueError
+        binding = MissionBinding.from_wire(wire)
+        store = MissionLedgerReader(path=CHAT_STORE_PATH)
+        persisted = resolve_spent_mission_binding(store, binding,
+            gateway_turn_id=gateway_turn_id, owner_subject_sha256=owner_subject_sha256,
+            core_generation=core_generation, core_source_generation=core_source_generation)
+        if (type(binding) is not MissionBinding or persisted is not True
+                or time.monotonic() >= deadline):
+            raise ValueError
+        return binding
+    except Exception:
+        raise CoreInspectionDenied("spent mission binding is unavailable or changed") from None
 
 
 def _valid_learning_candidates(candidates: Any, readiness: str) -> bool:
@@ -465,7 +543,8 @@ def observe_owner_turn(config: CoreGatewayConfig, *, request: dict[str, Any],
     required = {"schema", "op", "nonce", "peer_pid", "peer_uid", "peer_gid", "access_jwt",
                 "core_generation", "ingress_nonce", "ingress_proof_sha256", "session_id",
                 "conversation_id", "gateway_turn_id", "prompt_sha256"}
-    if (type(request) is not dict or set(request) != required or type(request.get("schema")) is not int
+    if (type(request) is not dict or set(request) not in (required, required | {"mission_binding"})
+            or type(request.get("schema")) is not int
             or request["schema"] != 1 or request.get("op") != "observe-owner-turn"
             or (request.get("peer_pid"), request.get("peer_uid"), request.get("peer_gid"))
                 != (peer_pid, peer_uid, peer_gid)
@@ -514,6 +593,12 @@ def observe_owner_turn(config: CoreGatewayConfig, *, request: dict[str, Any],
     if (time.monotonic() >= deadline
             or principal.email.casefold() not in config.allowed_emails):
         raise CoreInspectionDenied("owner turn ingress expired")
+    mission_binding = _resolve_spent_mission_binding(
+        _mission_binding_from_wire(request.get("mission_binding")),
+        owner_subject_sha256=hashlib.sha256(principal.subject.encode("utf-8")).hexdigest(),
+        gateway_turn_id=request["gateway_turn_id"],
+        core_generation=retained.core_generation,
+        core_source_generation=current["core_source_generation"], deadline=deadline)
     final = observe_current_ingress(config, nonce=retained.nonce,
         caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
         peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
@@ -574,9 +659,12 @@ def observe_owner_turn(config: CoreGatewayConfig, *, request: dict[str, Any],
         "core_executable_sha256": custody.core_executable_sha256,
         "session_id": request["session_id"], "conversation_id": request["conversation_id"],
         "gateway_turn_id": request["gateway_turn_id"], "prompt_sha256": request["prompt_sha256"],
+        "mission_binding": mission_binding,
     }
+    digest_claims = dict(claims)
+    digest_claims["mission_binding"] = _mission_binding_wire(mission_binding)
     observation = CoreVerifiedOwnerTurnObservation(
-        **claims, proof_sha256=_owner_turn_digest(claims), _core_pidfd=pidfd,
+        **claims, proof_sha256=_owner_turn_digest(digest_claims), _core_pidfd=pidfd,
         _seal=_OWNER_TURN_SEAL)
     if (observation.verify_current(config, custody=custody, now=accepted_at) is not True
             or time.monotonic() >= deadline):
@@ -2096,6 +2184,7 @@ class CoreVerifiedOwnerTurnObservation:
     conversation_id: str
     gateway_turn_id: str
     prompt_sha256: str
+    mission_binding: MissionBinding | None
     _core_pidfd: int = field(repr=False, compare=False)
     _seal: object = field(repr=False, compare=False)
 
@@ -2104,6 +2193,7 @@ class CoreVerifiedOwnerTurnObservation:
         current = time.monotonic() if now is None else now
         try:
             claims = {name: getattr(self, name) for name in _OWNER_TURN_FIELDS}
+            claims["mission_binding"] = _mission_binding_wire(self.mission_binding)
             issued = self.ingress_issued_monotonic
             return bool(
                 self._seal is _OWNER_TURN_SEAL and type(self.schema) is int and self.schema == 1
@@ -2697,9 +2787,13 @@ def verify_current_skill_learning(config: CoreGatewayConfig, *, access_jwt: str,
 def verify_current_owner_turn(config: CoreGatewayConfig, *, access_jwt: str,
                               accepted_ingress: Any, session_id: str,
                               conversation_id: str, gateway_turn_id: str,
-                              prompt_sha256: str) -> str:
+                              prompt_sha256: str, mission_binding: Any = None) -> str:
     """Ask the root inspector to mint one current owner-turn handle; return no proof fields."""
     from .core_gateway import CoreAcceptedIngressObservation, _log_ingress_denial, _read_config_current
+    try:
+        mission_wire = _mission_binding_wire(mission_binding)
+    except Exception:
+        raise CoreGatewayDenied("current accepted owner turn is required") from None
     if (type(accepted_ingress) is not CoreAcceptedIngressObservation
             or not isinstance(access_jwt, str) or not 1 <= len(access_jwt) <= 16_384
             or not access_jwt.isascii()
@@ -2742,6 +2836,7 @@ def verify_current_owner_turn(config: CoreGatewayConfig, *, access_jwt: str,
             "ingress_proof_sha256": root_proof.proof_sha256,
             "session_id": session_id, "conversation_id": conversation_id,
             "gateway_turn_id": gateway_turn_id, "prompt_sha256": prompt_sha256,
+            "mission_binding": mission_wire,
         }
         raw = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("ascii")
         if len(raw) > MAX_OWNER_TURN_REQUEST_BYTES or time.monotonic() >= deadline:
