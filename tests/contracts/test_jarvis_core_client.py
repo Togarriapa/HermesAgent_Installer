@@ -162,10 +162,56 @@ def test_models_selection_constructs_only_fixed_session_scoped_native_call():
         "model": "gpt-6-sol", "state": "selected-for-session",
     }
     assert [frame["method"] for frame in socket.sent] == ["session.resume", "config.set"]
-    assert socket.sent[0]["params"] == {"session_id": "stored-a", "source": "jarvis"}
+    assert socket.sent[0]["params"] == {"session_id": "stored-a", "source": "jarvis",
+                                         "eager_build": True}
     assert socket.sent[1]["params"] == {"key": "model",
         "value": "gpt-6-sol --provider openai-codex --session", "session_id": "runtime-a"}
     assert bindings == ["runtime-a"]
+
+
+@pytest.mark.parametrize("event_timing", ["early", "after-resume"])
+def test_models_cold_resume_waits_for_matching_built_session_info(event_timing):
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
+    socket = _ModelsWebSocket(
+        resume_info={"model": "gpt-6-luna", "provider": "openai-codex", "lazy": True},
+        ready_event_timing=event_timing)
+
+    async def connect():
+        return _FakeClient(), socket, _WsTypes
+
+    client._connect = connect
+    calls = []
+
+    async def bind(actual_session_id):
+        calls.append(("bind", actual_session_id))
+        return True
+
+    result = asyncio.run(client.set_session_model("stored-a", "gpt-6-sol", before_set=bind))
+    assert result == {"model": "gpt-6-sol", "state": "selected-for-session"}
+    assert [frame["method"] for frame in socket.sent] == ["session.resume", "config.set"]
+    assert calls == [("bind", "runtime-a")]
+
+
+def test_models_cold_resume_timeout_does_not_bind_or_set_model():
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
+    client._timeout_seconds = 0.01
+    socket = _ModelsWebSocket(
+        resume_info={"model": "gpt-6-luna", "provider": "openai-codex", "lazy": True})
+
+    async def connect():
+        return _FakeClient(), socket, _WsTypes
+
+    client._connect = connect
+    bindings = []
+
+    async def bind(actual_session_id):
+        bindings.append(actual_session_id)
+        return True
+
+    with pytest.raises(JarvisChatDenied):
+        asyncio.run(client.set_session_model("stored-a", "gpt-6-sol", before_set=bind))
+    assert [frame["method"] for frame in socket.sent] == ["session.resume"]
+    assert bindings == []
 
 
 @pytest.mark.parametrize("session_id,model_id", [
@@ -233,23 +279,45 @@ _WsTypes = SimpleNamespace(CLOSED=2, CLOSE=3, ERROR=4, TEXT=1)
 
 
 class _ModelsWebSocket:
-    def __init__(self, *, set_result=None):
+    def __init__(self, *, set_result=None, resume_info=None, ready_event_timing=None):
         self.frames = []
         self.sent = []
+        self.resume_info = resume_info
+        self.ready_event_timing = ready_event_timing
+        self.ready_event_sent = False
         self.set_result = set_result or {"key": "model", "value": "gpt-6-sol", "scope": "session",
             "warning": "", "confirm_required": False, "confirm_message": ""}
 
     async def send_json(self, frame):
         self.sent.append(frame)
         if frame["method"] == "session.resume":
-            result = {"session_id": "runtime-a", "resumed": frame["params"]["session_id"]}
+            stored_id = frame["params"]["session_id"]
+            result = {"session_id": "runtime-a", "resumed": stored_id,
+                      "info": self.resume_info or {
+                          "model": "gpt-6-luna", "provider": "openai-codex",
+                          "stored_session_id": stored_id}}
+            if self.ready_event_timing == "early":
+                self.frames.append(self._ready_event(stored_id))
         else:
             result = self.set_result
         self.frames.append(_frame("rpc", json.dumps({"jsonrpc": "2.0", "id": frame["id"],
                                                        "result": result})))
 
     async def receive(self):
+        if not self.frames and self.ready_event_timing == "after-resume" and not self.ready_event_sent:
+            stored_id = self.sent[0]["params"]["session_id"]
+            self.ready_event_sent = True
+            return self._ready_event(stored_id)
+        if not self.frames:
+            await asyncio.Future()
         return self.frames.pop(0)
+
+    @staticmethod
+    def _ready_event(stored_id):
+        return _frame("event", json.dumps({"jsonrpc": "2.0", "method": "event",
+            "params": {"type": "session.info", "session_id": "runtime-a", "payload": {
+                "model": "gpt-6-luna", "provider": "openai-codex",
+                "stored_session_id": stored_id}}}))
 
     async def close(self):
         pass

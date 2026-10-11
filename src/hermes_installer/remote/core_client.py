@@ -26,6 +26,8 @@ CORE_PATH = "/api/ws"
 MAX_RPC_FRAME_BYTES = 256 * 1024
 MAX_CORE_TEXT_CHARS = 64_000
 MAX_FILE_ATTACHMENT_BYTES = 128 * 1024
+MAX_EARLY_MODEL_SESSION_INFO = 16
+MODEL_SESSION_READY_TIMEOUT_SECONDS = 9.0
 _ATTACHMENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,119}$")
 
 
@@ -93,7 +95,8 @@ class CoreRpcClient:
 
     async def _receive(self, ws, ws_types, *, expected_id: str | None = None,
                        session_id: str | None = None, deadline: float | None = None,
-                       early_events: list[dict] | None = None) -> dict:
+                       early_events: list[dict] | None = None,
+                       early_session_info: list[dict] | None = None) -> dict:
         while True:
             timeout = self._timeout_seconds
             if deadline is not None:
@@ -125,6 +128,13 @@ class CoreRpcClient:
                 if not isinstance(result, dict):
                     raise JarvisChatDenied("official core gateway result was invalid")
                 return result
+            if (early_session_info is not None and frame.get("method") == "event"
+                    and isinstance(frame.get("params"), dict)
+                    and frame["params"].get("type") == "session.info"):
+                if len(early_session_info) >= MAX_EARLY_MODEL_SESSION_INFO:
+                    raise JarvisChatDenied("official core sent too many early session snapshots")
+                early_session_info.append(frame)
+                continue
             if session_id is not None and frame.get("method") in {"event", "approval"}:
                 params = frame.get("params")
                 direct_match = isinstance(params, dict) and params.get("session_id") == session_id
@@ -197,7 +207,8 @@ class CoreRpcClient:
         }
 
     async def _rpc_on_socket(self, ws: Any, ws_types: Any, method: str,
-                             params: dict[str, Any]) -> dict[str, Any]:
+                             params: dict[str, Any], *, deadline: float | None = None,
+                             early_session_info: list[dict] | None = None) -> dict[str, Any]:
         """Issue one finite RPC without changing the native session's socket binding."""
         if method not in {"session.resume", "config.set"}:
             raise JarvisChatDenied("core method is outside the fixed model adapter")
@@ -205,11 +216,53 @@ class CoreRpcClient:
         try:
             await ws.send_json({"jsonrpc": "2.0", "id": request_id,
                                 "method": method, "params": params})
-            return await self._receive(ws, ws_types, expected_id=request_id)
+            return await self._receive(ws, ws_types, expected_id=request_id, deadline=deadline,
+                                       early_session_info=early_session_info)
         except JarvisChatDenied:
             raise
         except Exception:
             raise JarvisChatDenied("official core model request failed") from None
+
+    @staticmethod
+    def _model_session_info_ready(info: Any, stored_session_id: str) -> bool:
+        """Accept only the pinned gateway's built-agent SessionLiveInfo projection.
+
+        `_lazy_resume_info` sets `lazy: true` and does not include stored_session_id. The full
+        `server._session_info` projection includes stored_session_id/model/provider and is emitted
+        only after the agent has been attached. These fields are defined by the pinned
+        `tui_gateway.contracts.common.SessionLiveInfo` contract.
+        """
+        if not isinstance(info, dict) or info.get("lazy") is True:
+            return False
+        model, provider = info.get("model"), info.get("provider")
+        return (info.get("stored_session_id") == stored_session_id
+                and isinstance(model, str) and 1 <= len(model) <= 160
+                and not any(ord(char) < 0x20 for char in model)
+                and provider == CODEX_PROVIDER_ID)
+
+    async def _wait_for_model_session_ready(self, ws: Any, ws_types: Any, *,
+                                            runtime_session_id: str, stored_session_id: str,
+                                            resume_info: Any, early_session_info: list[dict],
+                                            deadline: float) -> None:
+        if self._model_session_info_ready(resume_info, stored_session_id):
+            return
+
+        def ready_event(frame: Any) -> bool:
+            if not isinstance(frame, dict) or frame.get("method") != "event":
+                return False
+            params = frame.get("params")
+            return (isinstance(params, dict) and params.get("type") == "session.info"
+                    and params.get("session_id") == runtime_session_id
+                    and self._model_session_info_ready(params.get("payload"), stored_session_id))
+
+        if any(ready_event(frame) for frame in early_session_info):
+            return
+        while asyncio.get_running_loop().time() < deadline:
+            frame = await self._receive(ws, ws_types, session_id=runtime_session_id,
+                                        deadline=deadline)
+            if ready_event(frame):
+                return
+        raise JarvisChatDenied("official core model session did not become ready")
 
     async def set_session_model(self, stored_session_id: str, model_id: str, *,
                                 before_set: Callable[[str], Any]) -> dict[str, Any]:
@@ -226,22 +279,33 @@ class CoreRpcClient:
                 or model_id not in CODEX_MODEL_ID_SET or not callable(before_set)):
             raise JarvisChatDenied("model selection is outside the fixed session adapter")
         value = f"{model_id} --provider {CODEX_PROVIDER_ID} --session"
+        deadline = asyncio.get_running_loop().time() + min(
+            MODEL_SESSION_READY_TIMEOUT_SECONDS, self._timeout_seconds)
         client, ws, ws_types = await self._connect()
         try:
+            early_session_info: list[dict] = []
             resumed = await self._rpc_on_socket(ws, ws_types, "session.resume", {
-                "session_id": stored_session_id, "source": "jarvis",
-            })
+                "session_id": stored_session_id, "source": "jarvis", "eager_build": True,
+            }, deadline=deadline, early_session_info=early_session_info)
             runtime_id = resumed.get("session_id")
             if (not _valid_session_id(runtime_id) or resumed.get("resumed") != stored_session_id):
                 raise JarvisChatDenied("official core resume did not confirm the owned session")
+            await self._wait_for_model_session_ready(
+                ws, ws_types, runtime_session_id=runtime_id, stored_session_id=stored_session_id,
+                resume_info=resumed.get("info"), early_session_info=early_session_info,
+                deadline=deadline)
+            if asyncio.get_running_loop().time() >= deadline:
+                raise JarvisChatDenied("official core model readiness budget expired")
             binding = before_set(runtime_id)
             if inspect.isawaitable(binding):
                 binding = await binding
             if binding is not True:
                 raise JarvisChatDenied("owned model session binding was not confirmed")
+            if asyncio.get_running_loop().time() >= deadline:
+                raise JarvisChatDenied("official core model readiness budget expired")
             result = await self._rpc_on_socket(ws, ws_types, "config.set", {
                 "key": "model", "value": value, "session_id": runtime_id,
-            })
+            }, deadline=deadline)
         finally:
             await ws.close()
             await client.close()
