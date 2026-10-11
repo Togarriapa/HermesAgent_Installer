@@ -1,0 +1,11 @@
+# Contributing
+
+Work only in the authorized HermesAgent_Installer repository and preserve unrelated changes/services. Read [AGENTS.md](../AGENTS.md), [CURRENT-PLAN.md](../CURRENT-PLAN.md), the [current scope](../requirements/current-scope.json) and all four jarvis-core-platform artifacts. Sol owns specifications/refinements; Luna implements. Update the current artifacts and requirement links directly; do not create obsolete plan archives or frozen-baseline requirements at branch HEAD. Existing Git history/tags remain unchanged.
+
+Implement modular typed Python orchestration with finite reviewed component adapters and durable ownership/checkpoint state. Use official Hermes PM-managed runtime separately from installer/components. Preserve original source identities, licenses, aliases, complete skills/assets/helper paths and actual native Resources dispatch. Keep downloaded/configured/authenticated/functional/enabled/target states distinct.
+
+All tests, fixtures, previews and validators run only on the identified Pi via root browser. Local reading/editing/Git is allowed; no privileged local installer. On Pi use the pinned node/OpenSpec toolchain, strict current specs/scope checks and meaningful runtime effects/failure/denial/recovery tests. Do not weaken tests or declare unavailable accounts/hardware passed.
+
+Every substantive commit names jarvis-core-platform and affected requirement/task IDs. Review scope/security/ownership drift and redacted exact-candidate evidence. Full release needs actual end-to-end core/UI/Resources/account/hardware and lifecycle qualification; stable documentation follows that proof. Source availability or a fixture is not live acceptance.
+
+The optional manual GitHub workflow targets a self-hosted Linux ARM64 runner labeled `hermes-authorized-pi`. No such runner is enrolled or provisioned by this change; automated CI execution remains pending. Root-browser validation on the identified Pi remains the required current path.

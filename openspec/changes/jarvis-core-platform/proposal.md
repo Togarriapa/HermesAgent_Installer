@@ -2,44 +2,24 @@
 
 ## Why
 
-The user explicitly drops Desktop as active product and wants core Hermes first, individual capability ports, then Jarvis UI and Resources. Source audit proves headless core exists but Bots orchestration and native conveniences are not automatically portable.
+Implement official Hermes headless core with responsive Jarvis and preserve every requested functional component. One current plan prevents obsolete presentation requirements from directing development.
 
 ## What Changes
 
-- Replace active Desktop install/presentation with independent core Hermes and a narrow custom Jarvis product.
-- Preserve data/authentication and reversibly retire only owned native services after core proof.
-- Sequence five increments with honest per-capability availability; do not wait for all original obligations before a useful MVP.
+- Install/adopt/recover official core first, then port capabilities individually, deliver Jarvis, import full Resources, and perform actual end-to-end review.
+- Remove obsolete planning files from current branch contents; preserve executable contracts, source/license assets, implementation and tests independently of planning.
+- Retire only proven owned Desktop/Xpra after working private core and protected public chat/security/restart proof.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `jarvis-core-platform`: core-first installation, incremental capability migration and protected responsive Jarvis.
+- `jarvis-core-platform`: core installer, capability ports, protected responsive Jarvis and full Resources.
 
 ### Modified Capabilities
 
-None in canonical runtime specs; historical proposals are linked and explicitly superseded only for Desktop product selection.
+None in canonical runtime specs until verified implementation qualifies.
 
 ## Impact
 
-Sol v266 controls installer-bootstrap-desktop, remote-desktop-tunnel and v265 presentation assumptions. Luna implements CLI selection/preflight, official runtime adapters, owned service migration and later finite core/UI adapters. Frozen baseline and every remaining Resources/privacy/budget/account/hardware obligation persist. See planning/jarvis-core-first-migration-v266.json and the source-backed exploration.
-
-
-### v266a clarification
-
-Same phase tasks include server-only official stored-session resume after restart and the concrete selected-target reviewed root install/resume/rollback action. See planning/jarvis-core-session-resume-owned-action-v266a.json; no broader authority or completed acceptance.
-
-
-## v267 Desktop removal
-
-The user removes Desktop from active Pi and planning; retain it only as capability benchmark. Verified owned cleanup is added; legacy mixed changes are historical at openspec/superseded/v267, with functional mappings retained. See planning/ACTIVE-PLAN.md.
-
-
-## Final release documentation v268
-
-After actual phase-5 checks, present the finished product through verified usage/operations/troubleshooting/contributor/AI guides rather than development-first ledgers. Preserve indexed historical evidence and frozen/tag integrity. No stable claim now.
-
-
-## v266b authorization lease clarification
-
-The <=30s bound is per independently issued lease, not whole assistant turn. Fresh protected continuation preserves original JWT/run bounds and <=5s revocation witness. No old proof is extended or revived; same task scope.
+CURRENT-PLAN.md and requirements/current-scope.json contain complete current scope, original component aliases and AC01..18. Sol owns specifications; Luna implements. Tests and validators run only on the identified Pi via root browser. Full acceptance remains OPEN.
