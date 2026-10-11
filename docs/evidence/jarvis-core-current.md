@@ -1,31 +1,30 @@
 # Jarvis core runtime evidence
 
-Requirement/task mapping: `jarvis-core-platform`; BD-T266.1, HI-T266.2, RT-T266.3, RB-T266.4, VD-T266.5. These are observed partial results, not release qualification.
+Requirement/task mapping: `jarvis-core-platform`; BD-T266.1, HI-T266.2, RT-T266.3, RB-T266.4, VD-T266.5. These are operator-reported partial observations, not release qualification. Exact timestamps were not supplied for this snapshot.
 
-## Selected Pi and source
+## Current Pi and deployed source
 
-PI-HERMES is a Raspberry Pi 5 running ARM64 Debian Trixie. Product tests, validators, OpenSpec commands and runtime checks run only through its browser terminal. Local work is source/spec editing, Git coordination and artifact packaging.
+The root operator reports source candidate `12b9e83dd246052558ba64f4299b52ad63e2b5f1` deployed at `https://jarvis.togarriapahome.uk/`. The official Hermes source remains the unmodified `7085fbf7753266fc4943c55ac04926186bc90005`, using PM-managed Python 3.14.7 and the existing Codex account. The private core process was preserved during the deployment. A post-deployment Resources receipt refresh is still pending: an independent native readback found a digest mismatch, so no refreshed receipt is treated as ready.
 
-Official Hermes remains the unmodified `7085fbf7753266fc4943c55ac04926186bc90005` generation, with PM-managed Python 3.14.7 and existing Codex authentication. The owned isolated core listens on `127.0.0.1:8766`. Public gateway and inspector source `8cfbee0a4` is deployed at <https://jarvis.togarriapahome.uk/> behind Cloudflare Access email OTP and origin JWT/ownership/expiry checks.
+The Pi run reported 199 tests passed, 17 warnings, no skips, in 15.27 seconds. Generated JavaScript syntax, strict OpenSpec, current-plan validation, and OpenSpec status/apply checks passed; the status/apply output showed eight tasks still open. These results do not qualify the public product, every UI action, installation, Resources, or acceptance.
 
-The integrated Pi suite at `8cfbee0a4` passed **178 tests**, with 17 warnings and no skips. OpenSpec status/apply and both spec/plan validators passed. All eight broad acceptance groups remain open. Private test logs reside under `/var/tmp/hermes-jarvis-core-checks-20261011/`; deployment logs and protected rollback copies are under `/var/tmp/hermes-jarvis-deploy-8cfbee0a4/`.
+## Observed public interface and real owner use
 
-## Observed public behavior
+After a fresh Cloudflare email-OTP login, the public interface exposed Chat, Sessions, Overview, Capabilities, Models, Settings, Missions, Bots, Logs, Integrations, Learning, Tools & Skills, and Files. Menu visibility is not proof of capability completion.
 
-The authenticated interface displayed Chat, Sessions, Overview, Capabilities, Settings, Missions, Bots, Logs, Integrations, Learning, Tools & Skills and Files. Menu visibility does not qualify every operation within those menus.
+- The Models page read the configured provider as `openai-codex` and profile as `gpt6Luna`, with credentials configured. An immediate request using the approved same `gpt6Luna` selection returned `conversationSelection: gpt6Luna·selected-for-session`. This proves selection for that request only; durable default inference and cold resume remain pending.
+- Logs showed a completed status bar and event timeline. The displayed native-session counters were total 24,978, input 1,134, output 36, reasoning 25, prompt 24,942, cache hit 95, and context 272,000. Turn duration and cost were unknown and are not inferred.
+- Settings exposed 180 browser voices plus rate, pitch, language, density, text-size, reduced-motion, and read-aloud controls. Local preference changes worked and were not persisted as consent. Phone speech input, audio output, and wake-word behavior remain unqualified.
+- Capabilities search for `orchestrator` returned one `Bundled` match; readiness remains pending. The native inventory reported 63 toolsets and 449 skills. Inventory and discovery do not establish functional use or full parity.
+- A mission draft could be previewed; it was not executed.
+- After an idle interval of several minutes, a new turn displayed `Jarvis is ready.` This is one observation, not proof of all reaping thresholds, restart, or cold-resume behavior.
 
-- An actual owned Codex chat returned **“I'm Jarvis, your assistant.”** The deployed adapter resumes its durable session and submits on the same WebSocket, atomically binding the actual runtime session before submission. A longer idle/reaping scenario still needs observation after this fix.
-- Stored conversations restored actual message history. Overview displayed observed service/listener status, owned conversation/turn counts and a seven-day turn graph.
-- Native discovery and the public Tools & Skills panel reported **449 skills: 53 stock plus all 396 bundled Resources skills**, and 63 toolsets/1,348 tool metadata entries. Discovery is distinct from successful use or effective permission to invoke a tool.
-- The offline import preserved 208 source profile records, including 207 internal records, and 88 other declarations. Existing authentication, configuration and primary identity bytes were preserved. Internal profiles are not family-selectable identities or process/filesystem sandboxes.
-- Missions saved and previewed a harmless owned draft. Execution was unavailable pending the native dispatcher/parent-turn integration. No mission was launched.
-- Logs displayed a real owned `message.complete` event and native usage counters. Cost and browser-tool attribution stayed unknown; no invented values or arbitrary raw tool output were exposed.
-- A prior browser TTS run reported spoken-reply completion. Physical phone microphone/audio and Android assistant/wake-word behavior remain unqualified.
+The earlier isolated private-core evidence is recorded in [`jarvis-core-pi.json`](../../evidence/current/jarvis-core-pi.json): a live Jarvis response and one owned-unit restart/resume with prior READY history. That earlier observation is separate from this deployed public candidate and does not qualify public chat or durable model selection.
 
 ## Remaining acceptance
 
-Resources root discovery-receipt refresh is pending the verified PM ancestor-mode repair. Live native skill discovery is observed, but full internal routing, imported plugin effects, external authentication and enrichment remain open. Model controls, richer voice settings, capability details and activity charts require their matching source tests and public browser checks.
+The Resources receipt refresh and its native-readback digest mismatch remain unresolved. The initial 208 profile/396 skill inventory and current 63-toolset/449-skill discovery do not establish all 219 resource identities, the 62 capability mappings, functional parity, or imported action behavior. Bots, channel setup, full mission execution, native learning, browser-use controls, and complete capability behavior remain open.
 
-Family concurrency/isolation, mission execution, Bots/channel configuration, browser-use controls, native learning effects, full capability parity, fresh installation, restart/recovery and boot qualification remain open. Home Assistant is deferred. The gateway is not boot-qualified. Owned retired-runtime cleanup must preserve shared services, PM/runtime data, credentials, selected Hermes home and recovery copies.
+Phone chat text entry has not been verified: the user reports that tapping the chat box does not bring up the soft keyboard. This makes practical phone and family use pending despite the prior phone viewer pixels. Family concurrency, multiple-user behavior, physical reboot, all restart/reaping boundaries, cold resume, public denial/expiry/revocation matrices, and fresh installer acceptance remain open. Home Assistant remains deferred.
 
-Deployments preserve the private core process unless an explicitly verified owned-core restart is required. Gateway/inspector/tunnel source changes retain protected unit/configuration backups and check that only identified owned services are changed.
+All initial AC01–AC18 remain open. BD-T266.1, HI-T266.2, RT-T266.3, RB-T266.4, and VD-T266.5 remain open; observed slices are partial evidence only. Resources deletion remains unsafe. Private screenshots were retained outside the repository at `/private/tmp/jarvis-live-voice-settings-20261011.png`, `/private/tmp/jarvis-live-activity-charts-20261011.png`, and `/private/tmp/jarvis-live-model-controls-20261011.png`; they are not included here. No metered cost or unobserved outcome is inferred.
