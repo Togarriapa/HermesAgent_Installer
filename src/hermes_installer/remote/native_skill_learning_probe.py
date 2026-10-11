@@ -387,6 +387,9 @@ def _collect(home: Path, approval: Any) -> dict[str, Any]:
 def read_native_skill_learning_candidates() -> dict[str, Any]:
     """Read the fixed canonical owner's native skill review queue, fail-closed."""
     try:
+        if (os.getuid() != _UID or os.geteuid() != _UID
+                or os.getgid() != _UID or os.getegid() != _UID):
+            return _partial({"pending_directory_unavailable"})
         from hermes_constants import get_hermes_home
         import tools.write_approval as approval
 
