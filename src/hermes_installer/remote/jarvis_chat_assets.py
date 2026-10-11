@@ -857,22 +857,62 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       ui.input.focus({ preventScroll: true });
     } catch (error) { showError(error.message); }
   }
-  function startHeartbeat() {
+  async function renewHeartbeat(turnId, nonce, isCurrentTurn, reconcileCompletedTurn, reportCurrentFailure = () => {}) {
+    try {
+      const data = await request(`${API}/heartbeat`, { method: "POST", body: JSON.stringify({ turnId, nonce }) });
+      if (!isCurrentTurn()) return;
+      if (!data || data.turnId !== turnId || typeof data.nonce !== "string" || !/^[0-9a-f]{64}$/.test(data.nonce)) {
+        const error = new Error("Secure connection could not be renewed.");
+        reportCurrentFailure(error); closeStream(); showError(error.message); setConnection("error", "Access unavailable");
+        return;
+      }
+      heartbeatNonce = data.nonce;
+    } catch (error) {
+      if (!isCurrentTurn()) return;
+      if (error.message === "Your secure session is no longer current. Sign in again to continue.") {
+        try { if (await reconcileCompletedTurn()) return; } catch (_) { /* fall through to the truthful connection error */ }
+        if (!isCurrentTurn()) return;
+      }
+      reportCurrentFailure(error); closeStream(); showError(error.message); setConnection("error", "Access unavailable");
+    }
+  }
+  async function reconcileCompletedTurn(turnId, conversationAtStart, prompt, assistantBody, waiting) {
+    if (activeTurnId !== turnId || conversationId !== conversationAtStart) return activeTurnId !== turnId;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const data = await request(`${API}/conversations/${encodeURIComponent(conversationAtStart)}/messages`);
+      if (activeTurnId !== turnId || conversationId !== conversationAtStart) return activeTurnId !== turnId;
+      if (!data || !Array.isArray(data.messages)) return false;
+      let userIndex = -1;
+      for (let index = 0; index < data.messages.length; index += 1) {
+        const item = data.messages[index];
+        if (item && item.role === "user" && item.content === prompt) userIndex = index;
+      }
+      const reply = userIndex < 0 ? null : data.messages.slice(userIndex + 1)
+        .find((item) => item && item.role === "assistant" && typeof item.content === "string");
+      if (reply) {
+        assistantBody.textContent = reply.content;
+        waiting.remove();
+        closeStream();
+        setConnection("ready", "Secure connection");
+        speakCompletedReply(reply.content);
+        refreshConversations().catch((error) => showError(error.message));
+        return true;
+      }
+      if (attempt === 0) await new Promise((resolve) => window.setTimeout(resolve, 150));
+    }
+    return false;
+  }
+  function startHeartbeat(turnId, conversationAtStart, prompt, assistantBody, waiting) {
     heartbeatTimer = window.setInterval(async () => {
-      if (!activeTurnId || !heartbeatNonce) return;
-      const turnId = activeTurnId;
+      if (activeTurnId !== turnId || !heartbeatNonce) return;
       const nonce = heartbeatNonce;
       heartbeatNonce = null;
-      try {
-        const data = await request(`${API}/heartbeat`, { method: "POST", body: JSON.stringify({ turnId, nonce }) });
-        if (activeTurnId !== turnId || data.turnId !== turnId || typeof data.nonce !== "string" || !/^[0-9a-f]{64}$/.test(data.nonce)) throw new Error("Secure connection could not be renewed.");
-        heartbeatNonce = data.nonce;
-      } catch (error) {
-        closeStream(); showError(error.message); setConnection("error", "Access unavailable");
-      }
+      await renewHeartbeat(turnId, nonce, () => activeTurnId === turnId,
+        () => reconcileCompletedTurn(turnId, conversationAtStart, prompt, assistantBody, waiting),
+        () => { waiting.textContent = "The secure connection ended before this reply was confirmed. Reload this conversation to check its saved state."; });
     }, 2000);
   }
-  function watchTurn(turnId, initialNonce, assistantBody, waiting) {
+  function watchTurn(turnId, initialNonce, assistantBody, waiting, conversationAtStart, prompt) {
     if (typeof turnId !== "string" || !turnId || typeof initialNonce !== "string" || !/^[0-9a-f]{64}$/.test(initialNonce)) throw new Error("Jarvis did not start this response securely.");
     activeTurnId = turnId;
     heartbeatNonce = initialNonce;
@@ -881,8 +921,9 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     // controls before opening SSE, whose connection can fail immediately.
     renderTurnControls(true);
     eventSource = new EventSource(`${API}/turns/${encodeURIComponent(turnId)}/events`, { withCredentials: true });
-    startHeartbeat();
+    startHeartbeat(turnId, conversationAtStart, prompt, assistantBody, waiting);
     eventSource.addEventListener("message.delta", (event) => {
+      if (activeTurnId !== turnId) return;
       let payload;
       try { payload = JSON.parse(event.data); } catch (_) { closeStream(); showError("Jarvis sent an unreadable update."); return; }
       if (!payload || !Number.isSafeInteger(payload.sequence) || payload.sequence < 1 || payload.sequence <= latestSequence || typeof payload.text !== "string") return;
@@ -897,22 +938,24 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       ui.scroll.scrollTop = ui.scroll.scrollHeight;
     });
     eventSource.addEventListener("turn.completed", () => {
+      if (activeTurnId !== turnId) return;
       waiting.remove();
       const finalText = assistantBody.textContent;
       closeStream();
       speakCompletedReply(finalText);
       refreshConversations().catch((error) => showError(error.message));
     });
-    eventSource.addEventListener("message.completed", () => { waiting.remove(); });
-    eventSource.addEventListener("turn.cancelled", () => { waiting.remove(); closeStream(); stopSpeech(); });
+    eventSource.addEventListener("message.completed", () => { if (activeTurnId === turnId) waiting.remove(); });
+    eventSource.addEventListener("turn.cancelled", () => { if (activeTurnId === turnId) { waiting.remove(); closeStream(); stopSpeech(); } });
     eventSource.addEventListener("turn.failed", () => {
+      if (activeTurnId !== turnId) return;
       waiting.remove();
       closeStream();
       stopSpeech();
       showError("Jarvis could not finish that response. You can try again.");
     });
     eventSource.addEventListener("error", (event) => {
-      if (!activeTurnId) return;
+      if (activeTurnId !== turnId) return;
       waiting.remove();
       let code = "";
       try { code = JSON.parse(event.data).code; } catch (_) {}
@@ -957,7 +1000,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
         headers: { "Idempotency-Key": createIdempotencyKey() }
       });
       if (!data || data.status !== "queued") throw new Error("Jarvis could not safely queue this response.");
-      watchTurn(data.turnId, data.heartbeatNonce, assistantBody, waiting);
+      watchTurn(data.turnId, data.heartbeatNonce, assistantBody, waiting, conversationId, text);
       refreshConversations().catch((error) => showError(error.message));
       return true;
     } catch (error) {
