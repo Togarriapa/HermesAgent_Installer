@@ -25,10 +25,10 @@ FEATURE_ASSETS = JarvisFeatureAssets(
     ),
     api_routes=(("GET", "/chat/api/resources/learning"),),
     mount_js=(
-        "async function mount(container, api, state){"
+        "function mount(container, api, state){"
         "const root=container.querySelector('.learning');if(!root)return;"
         "const status=root.querySelector('[data-status]'),list=root.querySelector('[data-candidates]'),next=root.querySelector('[data-next]');"
-        "let stopped=false;"
+        "let stopped=false;(async ()=>{"
         "try{const result=await api.get('/chat/api/resources/learning');"
         "if(stopped)return;if(!result||result.schema!==1||!['read-only-native-review','partial','unavailable'].includes(result.state)||!Array.isArray(result.candidates))throw new Error('invalid');"
         "if(result.state==='unavailable'){status.textContent='Native skill review is unavailable.';next.textContent=(result.pendingReasons||[]).join(', ');return ()=>{stopped=true;};}"
@@ -41,7 +41,7 @@ FEATURE_ASSETS = JarvisFeatureAssets(
         "const reasons=Array.isArray(result.pendingReasons)&&result.pendingReasons.length?` Pending: ${result.pendingReasons.join(', ')}.`:'';"
         "next.textContent=(typeof result.nextStep==='string'?result.nextStep:'')+reasons;"
         "}catch{if(!stopped)status.textContent='Native proposal review is unavailable. Existing skills were not changed.';}"
-        "return ()=>{stopped=true;};}"
+        "})();return ()=>{stopped=true;};}"
     ),
     unmount_js="function unmount(){}",
 )
