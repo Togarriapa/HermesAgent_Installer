@@ -41,6 +41,11 @@ MAX_REQUEST_BYTES = 1_024
 MAX_RESPONSE_BYTES = 4_096
 MAX_PROBE_SECONDS = 5.0
 _ACCEPTED_INGRESS_SEAL = object()
+_CHAT_CONTENT_SECURITY_POLICY = (
+    "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; "
+    "form-action 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; "
+    "connect-src 'self'; font-src 'self'"
+)
 
 
 def _accepted_claim_digest(*, principal: Principal, jwt_expiry: float, root_proof: Any,
@@ -378,7 +383,7 @@ class CoreGatewayLaunch:
 
 
 def create_core_gateway_app(launch: CoreGatewayLaunch):
-    """Compose only the finite Jarvis chat adapter behind the Access middleware."""
+    """Compose the finite Jarvis UI and chat adapter behind Access middleware."""
     from aiohttp import web
     from .jarvis_chat import build_jarvis_chat_service, install_jarvis_chat_routes
 
@@ -391,9 +396,36 @@ def create_core_gateway_app(launch: CoreGatewayLaunch):
     app["core_gateway_launch"] = launch
     service = build_jarvis_chat_service(launch.principal_from_request)
     install_jarvis_chat_routes(app, service)
+    _install_core_chat_asset_routes(app)
     app.middlewares.insert(0, web.middleware(_core_ingress_middleware))
     app.on_response_prepare.append(_verify_ingress_before_response_bytes)
     return app
+
+
+def _install_core_chat_asset_routes(app: Any) -> None:
+    """Install only the reviewed UI paths; no static root or arbitrary file route."""
+    from aiohttp import web
+    from .jarvis_chat_assets import reviewed_chat_asset
+
+    async def home(request: Any):
+        if request.raw_path != "/":
+            raise web.HTTPNotFound(text="not found")
+        raise web.HTTPFound(location="/chat", headers={"Cache-Control": "no-store"})
+
+    async def asset(request: Any):
+        try:
+            # raw_path makes encoded aliases and query-bearing asset URLs fail closed.
+            content_type, body = reviewed_chat_asset(request.raw_path)
+        except ValueError:
+            raise web.HTTPNotFound(text="not found") from None
+        headers = {"Content-Type": content_type}
+        if request.raw_path in {"/chat", "/chat/"}:
+            headers["Content-Security-Policy"] = _CHAT_CONTENT_SECURITY_POLICY
+        return web.Response(body=body, headers=headers)
+
+    app.router.add_get("/", home, allow_head=False)
+    for path in ("/chat", "/chat/", "/chat/assets/app.css", "/chat/assets/app.js"):
+        app.router.add_get(path, asset, allow_head=False)
 
 
 async def _verify_ingress_before_response_bytes(request: Any, response: Any) -> None:
