@@ -6,6 +6,7 @@ import dataclasses
 import hashlib
 import json
 import os
+import time
 import runpy
 import stat
 import struct
@@ -673,12 +674,13 @@ class CoreGatewayProofTests(unittest.TestCase):
             b"PATH": core_gateway_inspector.CORE_PATH.encode(),
             b"HERMES_DISABLE_LAZY_INSTALLS": b"1", b"PYTHONNOUSERSITE": b"1",
             b"PYTHONDONTWRITEBYTECODE": b"1",
-            b"PYTHONPATH": str(core_gateway_inspector.CORE_SOURCE).encode(),
+            b"PYTHONPATH": core_gateway_inspector._core_pythonpath().encode(),
             b"CREDENTIALS_DIRECTORY": core_gateway_inspector.CORE_CREDENTIALS_DIRECTORY.encode(),
             b"HERMES_DASHBOARD_SESSION_TOKEN": secret,
         }
         core_gateway_inspector._validate_core_process_environment(environment, secret)
         for key, value in ((b"PYTHONPATH", b"/tmp/unreviewed"),
+                           (b"PYTHONPATH", (core_gateway_inspector._core_pythonpath() + ":/tmp/extra").encode()),
                            (b"HERMES_DISABLE_LAZY_INSTALLS", b"0"),
                            (b"CREDENTIALS_DIRECTORY", b"/tmp/elsewhere")):
             changed = dict(environment)
@@ -689,6 +691,29 @@ class CoreGatewayProofTests(unittest.TestCase):
         changed[b"PYTHONHOME"] = b"/tmp/python"
         with self.assertRaises(core_gateway_inspector.CoreInspectionDenied):
             core_gateway_inspector._validate_core_process_environment(changed, secret)
+
+    def test_native_adapter_source_generation_is_closed_over_fixed_files(self, tmp_path, monkeypatch):
+        inspector = core_gateway_inspector
+        source = tmp_path / "src"
+        module = source / "hermes_installer" / "remote" / "core_gateway_inspector.py"
+        module.parent.mkdir(parents=True)
+        module.write_text("fixed inspector source fixture")
+        monkeypatch.setattr(inspector, "__file__", str(module))
+        monkeypatch.setattr(inspector, "CORE_NATIVE_ADAPTER_SOURCE", source)
+        monkeypatch.setattr(inspector, "_root_immutable_directory", lambda _path: None)
+        reported = dict(inspector.CORE_NATIVE_ADAPTER_SOURCE_FILES)
+
+        def fixed_digest(path, **_kwargs):
+            relative = path.relative_to(source).as_posix()
+            return reported[relative]
+
+        monkeypatch.setattr(inspector, "_protected_file_sha", fixed_digest)
+        deadline = time.monotonic() + 5
+        valid = inspector._current_native_adapter_generation(deadline=deadline)
+        self.assertRegex(valid, r"^[0-9a-f]{64}$")
+        reported[next(iter(reported))] = "0" * 64
+        with self.assertRaises(inspector.CoreInspectionDenied):
+            inspector._current_native_adapter_generation(deadline=deadline)
 
     def test_proc_environment_reader_returns_hashable_bytes_and_rejects_bad_entries(self):
         environment = core_gateway_inspector._read_proc_environment(

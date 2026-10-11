@@ -1,10 +1,11 @@
 """Fixed, journaled adoption of the pinned Hermes core service."""
 from __future__ import annotations
-import grp, hashlib, json, os, pwd, re, secrets, stat, subprocess, sys, tempfile, time
+import grp, hashlib, json, os, pwd, re, secrets, shlex, stat, subprocess, sys, tempfile, time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 SOURCE=Path("/home/admin/HermesInstaller/data/generations/hermes-agent-7085fbf77532")
+ADAPTER_SOURCE=Path(__file__).resolve(strict=True).parents[1]
 PYTHON=Path("/home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0/venv/bin/python")
 PYTHON_LINK_TARGET="/home/admin/HermesInstaller/data/tools/python-3.14.7+20260901-linux-arm64/bin/python3"
 PYTHON_REAL=Path("/home/admin/HermesInstaller/data/tools/python-3.14.7+20260901-linux-arm64/bin/python3.14")
@@ -838,7 +839,33 @@ def _owned_file(path,body,mode,uid,gid,expected,repair):
   path.unlink()
   _sync_directory(path.parent)
  _atomic(path,body,mode,uid,gid)
+def _validate_adapter_source_path():
+ """Only add the root-owned immutable installer generation to core imports."""
+ declared=Path(__file__).absolute()
+ resolved=Path(__file__).resolve(strict=True)
+ if (declared!=resolved or ADAPTER_SOURCE!=resolved.parents[1]
+     or ADAPTER_SOURCE.parent.parent!=Path("/opt")
+     or not re.fullmatch(r"hermes-installer-core-[0-9a-f]{9,64}",ADAPTER_SOURCE.parent.name)):
+  raise CoreRuntimeError("fixed installer adapter generation path differs")
+ fd=os.open("/",os.O_RDONLY|getattr(os,"O_DIRECTORY",0)|getattr(os,"O_NOFOLLOW",0))
+ try:
+  for component in ADAPTER_SOURCE.parts[1:]:
+   child=os.open(component,os.O_RDONLY|getattr(os,"O_DIRECTORY",0)
+                 |getattr(os,"O_NOFOLLOW",0),dir_fd=fd)
+   info=os.fstat(child)
+   if (not stat.S_ISDIR(info.st_mode) or info.st_uid!=ROOT_UID
+       or stat.S_IMODE(info.st_mode)&0o022):
+    os.close(child); raise CoreRuntimeError("installer adapter generation custody differs")
+   os.close(fd); fd=child
+  info=os.stat(resolved,follow_symlinks=False)
+  if (not stat.S_ISREG(info.st_mode) or info.st_uid!=ROOT_UID or info.st_nlink!=1
+      or stat.S_IMODE(info.st_mode)&0o022):
+   raise CoreRuntimeError("installer adapter source file custody differs")
+ finally:
+  os.close(fd)
+
 def _identity(*,verify_python_version=True):
+ _validate_adapter_source_path()
  if not SOURCE.is_dir() or SOURCE.is_symlink(): raise CoreRuntimeError("pinned source unavailable")
  # The reviewed generation lives beneath admin's private installer tree. Reject
  # symlinked or differently-owned path components before asking Git to inspect it.
@@ -986,7 +1013,8 @@ def _repair_verified_pm_directory_fds(opened,parents,contract):
   if stat.S_IMODE(os.fstat(fd).st_mode)!=0o755:
    raise CoreRuntimeError("PM directory metadata repair failed")
 def _launcher():
- return b"""#!/bin/sh
+ pythonpath=shlex.quote(f"{SOURCE}:{ADAPTER_SOURCE}")
+ return f"""#!/bin/sh
 set -eu
 cred="$CREDENTIALS_DIRECTORY/hermes-session-token"
 test -f "$cred" && test ! -L "$cred"
@@ -998,10 +1026,10 @@ export HOME=/home/admin HERMES_HOME=/home/admin/.hermes
 export PATH=/home/admin/.hermes/bin:/home/admin/.local/bin:/usr/local/bin:/usr/bin:/bin
 export HERMES_DISABLE_LAZY_INSTALLS=1
 export PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1
-export PYTHONPATH=/home/admin/HermesInstaller/data/generations/hermes-agent-7085fbf77532
+export PYTHONPATH={pythonpath}
 cd /home/admin/.hermes/workspaces/jarvis-core
-exec /home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0/venv/bin/python -m hermes_cli.main serve --isolated --host 127.0.0.1 --port 8766
-"""
+exec /home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0/venv/bin/python -P -m hermes_cli.main serve --isolated --host 127.0.0.1 --port 8766
+""".encode("ascii")
 def _unit():
  a=pwd.getpwnam("admin")
  if a.pw_uid!=1000 or a.pw_gid!=1000 or a.pw_dir!="/home/admin": raise CoreRuntimeError("admin identity mismatch")
@@ -1071,7 +1099,7 @@ def _owned_listener():
   if Path(os.readlink(proc/"cwd")).resolve(strict=True)!=WORKSPACE.resolve(strict=True): return False
   argv=(proc/"cmdline").read_bytes().decode(errors="replace").split("\0")
   if argv[-1]=="": argv.pop()
-  expected=[str(PYTHON),"-m","hermes_cli.main","serve","--isolated","--host","127.0.0.1","--port","8766"]
+  expected=[str(PYTHON),"-P","-m","hermes_cli.main","serve","--isolated","--host","127.0.0.1","--port","8766"]
   if argv!=expected: return False
   if not any(SERVICE in line for line in (proc/"cgroup").read_text().splitlines()): return False
   socket_inodes=set()

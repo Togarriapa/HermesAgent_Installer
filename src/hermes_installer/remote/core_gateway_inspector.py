@@ -39,7 +39,7 @@ CORE_LAUNCHER = Path("/usr/local/libexec/hermes-jarvis-core-launcher")
 CORE_PYTHON_LINK = Path("/home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0/venv/bin/python")
 CORE_PYTHON_REAL = Path("/home/admin/HermesInstaller/data/tools/python-3.14.7+20260901-linux-arm64/bin/python3.14")
 CORE_PYTHON_LINK_TARGET = "/home/admin/HermesInstaller/data/tools/python-3.14.7+20260901-linux-arm64/bin/python3"
-CORE_ARGV_TAIL = ("-m", "hermes_cli.main", "serve", "--isolated", "--host",
+CORE_ARGV_TAIL = ("-P", "-m", "hermes_cli.main", "serve", "--isolated", "--host",
                   CORE_HOST, "--port", str(CORE_PORT))
 CORE_TOKEN_SOURCE = Path("/etc/hermes-installer/jarvis-core/session-token")
 CORE_ADMIN_HOME = Path("/home/admin")
@@ -60,6 +60,29 @@ CORE_SOURCE_FILES = {
 CORE_NATIVE_TOOL_SOURCE_FILES = {
     "tui_gateway/methods_tools.py": "afedca2ea72e8f8751cf7736283ae8d786305a1b1e309bdf05ea52ec4bd89c11",
 }
+# The core imports the fixed native observer and Resources handler from the
+# active, root-owned installer generation. Keep these pins separate from the
+# official Hermes source-generation receipt above.
+CORE_NATIVE_ADAPTER_SOURCE = Path(__file__).resolve(strict=True).parents[2]
+CORE_NATIVE_ADAPTER_SOURCE_FILES = {
+    "hermes_installer/__init__.py": "61ac3dfa3bd8505d5296065d597b9b76c4a42c1f17c706c2d67f4fee2b193242",
+    "hermes_installer/remote/__init__.py": "bf7dbd677d6dd4384a02211039002f760821748b33f3f66ee425d9633b5005a4",
+    "hermes_installer/remote/core_native_observer.py": "eaab983caf0b01fc7bbadbea581abc4138a6868fd1366c3339c9d349fa7b6938",
+    "hermes_installer/remote/native_plugin_bootstrap.py": "734a4d19369ec01dd04b1b0e4eb9b1cf6355e59cf2536acc3672e44e9c71b614",
+    "hermes_installer/components/resources_native_plugin_bundle/plugin.yaml": "c10104ad621d134685ecab018a1a0b975572cb2266d68bc1832c17730210e65b",
+    "hermes_installer/components/resources_native_plugin_bundle/__init__.py": "874ca2b69828b7bbc24f622c6b2c2a4f308f3163cc47dbfd582b1e72b4b2356d",
+    "hermes_installer/components/resources_internal_dispatch.py": "4111e1244887f5bcb5f92cf449a0e55888f9b2637c78ebe43232fa1db968e2f2",
+    "hermes_installer/components/__init__.py": "eb02d685a1fb560210c2915296f7553e279e100b511d6b63892d3e877ccd7e7b",
+    "hermes_installer/components/resources_internal_dispatch.py": "4111e1244887f5bcb5f92cf449a0e55888f9b2637c78ebe43232fa1db968e2f2",
+    "hermes_installer/components/resources_native_plugin_bundle/plugin.yaml": "c10104ad621d134685ecab018a1a0b975572cb2266d68bc1832c17730210e65b",
+    "hermes_installer/components/resources_native_plugin_bundle/__init__.py": "874ca2b69828b7bbc24f622c6b2c2a4f308f3163cc47dbfd582b1e72b4b2356d",
+    "hermes_installer/remote/native_plugin_bootstrap.py": "734a4d19369ec01dd04b1b0e4eb9b1cf6355e59cf2536acc3672e44e9c71b614",
+}
+CORE_NATIVE_PLUGIN_STAGED_FILES = {
+    "plugin.yaml": "c10104ad621d134685ecab018a1a0b975572cb2266d68bc1832c17730210e65b",
+    "__init__.py": "874ca2b69828b7bbc24f622c6b2c2a4f308f3163cc47dbfd582b1e72b4b2356d",
+}
+CORE_NATIVE_PLUGIN_ID = "hermes-installer-resources-delegation"
 CORE_PYVENV_CFG_SHA256 = "d982d4b71a70c99f49afef3c0b2cf683c2f053a802da8885d366657b9565f1ad"
 CORE_PYTHON_SHA256 = "566f5e480aa1adccd3214f6251f50cab08daf768158d778fd9a73d19ab1fe001"
 CORE_WORKSPACE = Path("/home/admin/.hermes/workspaces/jarvis-core")
@@ -752,7 +775,7 @@ def _validate_core_process_environment(environment: dict[bytes, bytes], secret: 
         b"HERMES_DISABLE_LAZY_INSTALLS": b"1",
         b"PYTHONNOUSERSITE": b"1",
         b"PYTHONDONTWRITEBYTECODE": b"1",
-        b"PYTHONPATH": str(CORE_SOURCE).encode("ascii"),
+        b"PYTHONPATH": _core_pythonpath().encode("ascii"),
         b"CREDENTIALS_DIRECTORY": CORE_CREDENTIALS_DIRECTORY.encode("ascii"),
     }
     if (any(environment.get(key) != value for key, value in expected.items())
@@ -855,6 +878,119 @@ def _run_source_git(args: tuple[str, ...], *, deadline: float, maximum: int) -> 
             except subprocess.TimeoutExpired:
                 pass
         proc.stdout.close()
+
+
+def _root_immutable_directory(path: Path) -> None:
+    """Require every fixed adapter path component to be a real root directory."""
+    absolute = Path(os.path.abspath(path))
+    fd = os.open("/", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                 | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        for component in absolute.parts[1:]:
+            child = os.open(component, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                            | getattr(os, "O_NOFOLLOW", 0), dir_fd=fd)
+            info = os.fstat(child)
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0
+                    or stat.S_IMODE(info.st_mode) & 0o022):
+                os.close(child)
+                _deny()
+            os.close(fd)
+            fd = child
+    finally:
+        os.close(fd)
+
+
+def _current_native_adapter_generation(*, deadline: float) -> str:
+    """Verify the immutable installer adapter closure used by the live core."""
+    try:
+        declared_file = Path(__file__).absolute()
+        resolved_file = Path(__file__).resolve(strict=True)
+        source = CORE_NATIVE_ADAPTER_SOURCE
+        if (declared_file != resolved_file or not source.is_absolute()
+                or source != resolved_file.parents[2]
+                or source != CORE_NATIVE_ADAPTER_SOURCE):
+            _deny()
+        _root_immutable_directory(source)
+        values: dict[str, str] = {}
+        for relative, expected in CORE_NATIVE_ADAPTER_SOURCE_FILES.items():
+            if time.monotonic() >= deadline:
+                raise TimeoutError("native adapter source proof deadline expired")
+            path = source / relative
+            _root_immutable_directory(path.parent)
+            actual = _protected_file_sha(path, owner_uid=0, deadline=deadline)
+            if actual != expected:
+                _deny()
+            values[relative] = actual
+        canonical = json.dumps({"adapter_source": str(source), "files": values},
+                               sort_keys=True, separators=(",", ":")).encode("ascii")
+        return hashlib.sha256(
+            b"hermes-jarvis-native-adapter-source-v1\0" + canonical).hexdigest()
+    except Exception:
+        _deny()
+
+
+def _core_pythonpath() -> str:
+    """The sole allowed import path: pinned Hermes followed by installer adapter."""
+    return f"{CORE_SOURCE}:{CORE_NATIVE_ADAPTER_SOURCE}"
+
+
+def verify_staged_native_resources_plugin(*, deadline: float) -> str:
+    """Root-read back the fixed staged plugin bytes before native owner admission.
+
+    This proves the copied bundle matches the immutable installer package. It
+    does not prove activation or registration; the native live ToolEntry receipt
+    and observed provider request remain separate required evidence.
+    """
+    if os.geteuid() != 0 or time.monotonic() >= deadline:
+        _deny()
+    source_generation = _current_native_adapter_generation(deadline=deadline)
+    account = pwd.getpwnam("admin")
+    if account.pw_uid != 1000 or account.pw_gid != 1000 or account.pw_dir != str(CORE_ADMIN_HOME):
+        _deny()
+    directory_fd = os.open("/", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                           | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        expectations = (
+            ("home", 0, 0, None),
+            ("admin", account.pw_uid, account.pw_gid, None),
+            (".hermes", account.pw_uid, account.pw_gid, 0o700),
+            ("plugins", account.pw_uid, account.pw_gid, None),
+            (CORE_NATIVE_PLUGIN_ID, 0, 0, 0o555),
+        )
+        for component, owner, group, exact_mode in expectations:
+            child_fd = os.open(component, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                               | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+            info = os.fstat(child_fd)
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != owner or info.st_gid != group
+                    or stat.S_IMODE(info.st_mode) & 0o022
+                    or (exact_mode is not None and stat.S_IMODE(info.st_mode) != exact_mode)):
+                os.close(child_fd)
+                _deny()
+            os.close(directory_fd)
+            directory_fd = child_fd
+        from ..core_runtime import _projection_at
+        if set(os.listdir(directory_fd)) != set(CORE_NATIVE_PLUGIN_STAGED_FILES):
+            _deny()
+        values: dict[str, str] = {}
+        for name, expected in CORE_NATIVE_PLUGIN_STAGED_FILES.items():
+            if time.monotonic() >= deadline:
+                raise TimeoutError("staged native plugin proof deadline expired")
+            data = _projection_at(directory_fd, name, owner=0,
+                                  group=0, mode=0o444, maximum=64 * 1024)
+            actual = hashlib.sha256(data).hexdigest()
+            if actual != expected:
+                _deny()
+            values[name] = actual
+        if time.monotonic() >= deadline or _current_native_adapter_generation(deadline=deadline) != source_generation:
+            _deny()
+        canonical = json.dumps({"adapter_generation": source_generation, "bundle": values},
+                               sort_keys=True, separators=(",", ":")).encode("ascii")
+        return hashlib.sha256(
+            b"hermes-jarvis-native-plugin-staged-v1\0" + canonical).hexdigest()
+    except Exception:
+        _deny()
+    finally:
+        os.close(directory_fd)
 
 
 def _current_core_source(config: CoreGatewayConfig, *, deadline: float) -> str:

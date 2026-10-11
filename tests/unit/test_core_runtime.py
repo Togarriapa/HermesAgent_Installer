@@ -122,6 +122,15 @@ def test_install_resume_and_rollback_use_only_fixed_owned_paths(tmp_path, monkey
                for argv, unit_exists in calls)
 
 
+def test_launcher_uses_only_pinned_hermes_and_installer_adapter_paths():
+    import shlex
+
+    launcher = core._launcher().decode("ascii")
+    expected = shlex.quote(f"{core.SOURCE}:{core.ADAPTER_SOURCE}")
+    assert f"export PYTHONPATH={expected}" in launcher
+    assert "python -P -m hermes_cli.main" in launcher
+
+
 def test_failed_start_is_resumable_without_rotating_session_credential(tmp_path, monkeypatch):
     _fake_runtime(tmp_path, monkeypatch, fail_enable_once=True)
     with pytest.raises(core.CoreRuntimeError, match="injected"):
