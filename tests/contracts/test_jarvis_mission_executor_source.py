@@ -241,7 +241,8 @@ def test_master_planner_prompt_is_bounded_and_treats_owner_sources_as_hints():
     assert len(prompt) <= 8_000
     assert '"owner_source_preferences":["reviewer"]' in prompt
     assert "preferences are hints" in prompt
-    assert "Choose zero or more internal expert profile IDs" in prompt
+    assert "Select zero or more internal expert profile IDs only from available_profile_ids" in prompt
+    assert "owner_source_preferences are hints" in prompt
     assert "do not use tools, launch work, or perform any external effect" in prompt
     assert '"goal_sha256":"' in prompt and '"catalog_sha256":"' in prompt
 
@@ -283,7 +284,7 @@ def test_master_plan_turn_reserves_exact_owned_turn_once_before_scheduling(tmp_p
                  '["reviewer"]', "pending", "create-key", "request-hash", now, now),
             )
         ingress = SimpleNamespace(root_observation=SimpleNamespace(
-            core_generation="generation-a", core_source_generation="source-a"))
+            core_generation=CORE, core_source_generation="source-a"))
         request = Request(ingress)
         backend = Backend()
         service = JarvisChatService(store, backend, principal_from_request=_principal)
@@ -339,7 +340,9 @@ def test_master_plan_turn_reserves_exact_owned_turn_once_before_scheduling(tmp_p
         assert row["conversation_id"] == first["conversation_id"]
         assert row["task_sha256"] == jarvis_missions._hash(
             {"goal": "Review the approved local source."})
-        assert row["source_binding"] == '{"core_generation":"generation-a","core_source_generation":"source-a"}'
+        assert row["source_binding"] == jarvis_missions._canonical({
+            "core_generation": CORE, "core_source_generation": "source-a",
+        }).decode("utf-8")
         assert row["master_prompt_sha256"] == "d" * 64
 
     asyncio.run(scenario())

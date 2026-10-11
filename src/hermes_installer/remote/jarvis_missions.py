@@ -793,6 +793,8 @@ def _preview(store: Any, owner: str, row: sqlite3.Row, binding: dict[str, str | 
         "title": row["title"],
         "brief": row["brief"],
         "team": team,
+        "selected_source_ids": (json.loads(row["selected_source_ids"])
+                                if row["selected_source_ids"] else None),
         "execution_mode": row["execution_mode"],
         "autonomy_mode": row["autonomy_mode"],
         "master_plan": (json.loads(row["master_plan_json"])
