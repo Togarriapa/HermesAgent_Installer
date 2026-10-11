@@ -7,6 +7,7 @@ import pytest
 from hermes_installer.remote.core_client import CoreRpcClient
 from hermes_installer.remote.jarvis_chat import JarvisChatDenied
 from hermes_installer.remote.jarvis_extensions_admin import (
+    _valid_plugin_setting,
     _source_label,
     build_extension_snapshot,
 )
@@ -56,6 +57,11 @@ def test_extension_native_write_postconditions_fail_closed():
     client.result = {"installed": False, "name": "owner-helper"}
     with pytest.raises(JarvisChatDenied):
         asyncio.run(client.install_skill("owner-helper"))
+    client.result = {"output": "1 skill(s) available", "result": {
+        "added": [], "removed": [], "unchanged": [], "total": 1, "commands": 1,
+    }}
+    assert asyncio.run(client.reload_skills()) == {"total": 1, "commands": 1}
+    assert client.calls[-1] == ("skills.reload", {})
 
 
 def test_extension_snapshot_keeps_provenance_and_prefixes_builtins():
@@ -104,6 +110,13 @@ def test_extension_snapshot_rejects_unbounded_native_inventory():
 ])
 def test_provenance_labels_are_truthful(source, provenance, label):
     assert _source_label(source, "files") == (provenance, label)
+
+
+def test_plugin_setting_edits_match_the_native_nonsecret_schema():
+    assert _valid_plugin_setting({"type": "enum", "choices": ["safe", "strict"]}, "strict")
+    assert not _valid_plugin_setting({"type": "enum", "choices": ["safe", "strict"]}, "unsafe")
+    assert not _valid_plugin_setting({"type": "secret"}, "secret-value")
+    assert not _valid_plugin_setting({"type": "number"}, True)
 
 
 def test_extensions_feature_asset_uses_only_fixed_routes():

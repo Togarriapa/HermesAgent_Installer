@@ -218,7 +218,7 @@ class CoreRpcClient:
                           "session.context_breakdown", "session.status",
                           "profiles.list", "cron.manage", "plugins.list", "mcp.servers.status",
                           "mcp.servers.list", "mcp.catalog", "mcp.servers.add", "mcp.servers.remove",
-                          "file.attach", "tools.list", "skills.manage", "plugins.manage",
+                          "file.attach", "tools.list", "skills.manage", "skills.reload", "plugins.manage",
                           "config.get", "config.set"}:
             raise JarvisChatDenied("core method is outside the fixed adapter")
         client, ws, ws_types = await self._connect()
@@ -708,6 +708,17 @@ class CoreRpcClient:
         if result.get("installed") is not True or installed_name is None:
             raise JarvisChatDenied("official skill install was not confirmed")
         return {"installed": True, "name": installed_name}
+
+    async def reload_skills(self) -> dict[str, Any]:
+        """Ask the pinned gateway to rescan the fixed launch profile skill root."""
+        result = await self._rpc("skills.reload", {})
+        diff = result.get("result")
+        if (not isinstance(result.get("output"), str) or len(result["output"]) > 8_192
+                or not isinstance(diff, dict)
+                or type(diff.get("total")) is not int or not 0 <= diff["total"] <= 20_000
+                or type(diff.get("commands")) is not int or not 0 <= diff["commands"] <= 20_000):
+            raise JarvisChatDenied("official skill reload was not confirmed")
+        return {"total": diff["total"], "commands": diff["commands"]}
 
     async def list_managed_plugins(self) -> list[dict[str, Any]]:
         """Read plugin management rows, dropping host paths and secret settings values."""

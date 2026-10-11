@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import math
 import re
 from typing import Any
 
@@ -26,6 +27,20 @@ FEATURE_ROUTES = (
 _IDEMPOTENCY = re.compile(r"^[A-Za-z0-9_-]{22,128}$", re.ASCII)
 _KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@/-]{0,159}$", re.ASCII)
 _MAX_SKILLS = 2000
+
+
+def _valid_plugin_setting(field: dict[str, Any], value: Any) -> bool:
+    kind = field.get("type")
+    if kind == "string":
+        return isinstance(value, str) and len(value) <= 2048
+    if kind == "number":
+        return type(value) in {int, float} and (type(value) is int or math.isfinite(value))
+    if kind == "boolean":
+        return type(value) is bool
+    if kind == "enum":
+        choices = field.get("choices", [])
+        return isinstance(value, str) and isinstance(choices, list) and value in choices
+    return False
 
 
 def _slug(value: str) -> str:
@@ -275,6 +290,11 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                 if (not isinstance(values, dict) or not values or len(values) > 32
                         or not set(values).issubset(settings)):
                     raise web.HTTPBadRequest(text="invalid plugin settings", headers=_secure_headers())
+                for setting_key, value in values.items():
+                    field = settings[setting_key]
+                    if (not _valid_plugin_setting(field, value)
+                            or (field.get("required") is True and value == "")):
+                        raise web.HTTPBadRequest(text="invalid plugin setting value", headers=_secure_headers())
             if operation == "plugins:toggle" and (type(body.get("enabled")) is not bool
                                                    or target.get("source") != "useradded"):
                 raise web.HTTPConflict(text="this plugin cannot be changed", headers=_secure_headers())
@@ -291,6 +311,8 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                                          headers=_secure_headers())
             if operation == "skills:add":
                 result = await service.backend.install_skill(body["identifier"])
+                reload_result = await service.backend.reload_skills()
+                result["reload"] = reload_result
                 status = 201
             elif operation == "plugins:add":
                 result = await service.backend.install_plugin(body["catalog_name"])
