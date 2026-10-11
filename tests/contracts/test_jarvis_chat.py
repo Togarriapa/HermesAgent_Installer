@@ -178,6 +178,21 @@ def test_model_selection_revision_rejects_stale_generation_and_active_turn(tmp_p
             "subject-a", conversation["id"], "core-generation-a", "a" * 64)
 
 
+def test_per_message_model_effort_is_bound_into_turn_idempotency(tmp_path):
+    store = JarvisChatStore(tmp_path / "chat.sqlite3")
+    conversation = new_conversation(store, "subject-a")
+    request = {
+        "model_id": "gpt-6-sol",
+        "reasoning_effort": "high",
+    }
+    store.begin_turn("subject-a", conversation["id"], "same prompt", "per-message-key-000000000001",
+                     principal("subject-a"), turn_configuration=request)
+    with pytest.raises(JarvisChatDenied, match="idempotency"):
+        store.begin_turn("subject-a", conversation["id"], "same prompt", "per-message-key-000000000001",
+                         principal("subject-a"), turn_configuration={
+                             "model_id": "gpt-6-sol", "reasoning_effort": "low"})
+
+
 def test_server_turn_mapping_runs_before_worker_and_failure_compensates_without_submit(tmp_path):
     store = JarvisChatStore(tmp_path / "chat.sqlite3")
     conversation = new_conversation(store, "subject-a")

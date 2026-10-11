@@ -60,9 +60,10 @@ def _valid_session_id(value: Any) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class CoreTurnEvent:
-    kind: Literal["delta", "complete", "failed", "cancelled", "activity"]
+    kind: Literal["delta", "complete", "failed", "cancelled", "activity", "configuration"]
     text: str = ""
     activity: NativeActivityEvent | None = None
+    configuration: dict[str, str] | None = None
 
 
 class CoreRpcClient:
@@ -311,7 +312,7 @@ class CoreRpcClient:
                              params: dict[str, Any], *, deadline: float | None = None,
                              early_session_info: list[dict] | None = None) -> dict[str, Any]:
         """Issue one finite RPC without changing the native session's socket binding."""
-        if method not in {"session.resume", "config.set"}:
+        if method not in {"session.resume", "session.branch_whole", "config.set"}:
             raise JarvisChatDenied("core method is outside the fixed model adapter")
         request_id = secrets.token_hex(12)
         try:
@@ -344,9 +345,17 @@ class CoreRpcClient:
     async def _wait_for_model_session_ready(self, ws: Any, ws_types: Any, *,
                                             runtime_session_id: str, stored_session_id: str,
                                             resume_info: Any, early_session_info: list[dict],
-                                            deadline: float) -> None:
-        if self._model_session_info_ready(resume_info, stored_session_id):
-            return
+                                            deadline: float, expected_model_id: str | None = None,
+                                            expected_reasoning_effort: str | None = None
+                                            ) -> dict[str, Any]:
+        def matches(info: Any) -> bool:
+            return (self._model_session_info_ready(info, stored_session_id)
+                    and (expected_model_id is None or info.get("model") == expected_model_id)
+                    and (expected_reasoning_effort is None
+                         or info.get("reasoning_effort") == expected_reasoning_effort))
+
+        if matches(resume_info):
+            return resume_info
 
         def ready_event(frame: Any) -> bool:
             if not isinstance(frame, dict) or frame.get("method") != "event":
@@ -354,16 +363,59 @@ class CoreRpcClient:
             params = frame.get("params")
             return (isinstance(params, dict) and params.get("type") == "session.info"
                     and params.get("session_id") == runtime_session_id
-                    and self._model_session_info_ready(params.get("payload"), stored_session_id))
+                    and matches(params.get("payload")))
 
         if any(ready_event(frame) for frame in early_session_info):
-            return
+            return next(frame["params"]["payload"] for frame in early_session_info if ready_event(frame))
         while asyncio.get_running_loop().time() < deadline:
             frame = await self._receive(ws, ws_types, session_id=runtime_session_id,
                                         deadline=deadline)
             if ready_event(frame):
-                return
+                return frame["params"]["payload"]
         raise JarvisChatDenied("official core model session did not become ready")
+
+    async def _branch_isolated_turn_session(self, ws: Any, ws_types: Any, *,
+                                            runtime_session_id: str,
+                                            model_id: str,
+                                            reasoning_effort: str | None,
+                                            early_session_info: list[dict[str, Any]],
+                                            deadline: float) -> tuple[str, str, dict[str, Any]]:
+        """Branch the complete native transcript, then set only this child session's route."""
+        from .jarvis_model_catalog import (
+            CODEX_MODEL_EFFORTS, CODEX_MODEL_ID_SET, CODEX_PROVIDER_ID,
+        )
+        if (not _valid_session_id(runtime_session_id) or not isinstance(model_id, str)
+                or model_id not in CODEX_MODEL_ID_SET
+                or (reasoning_effort is not None
+                    and reasoning_effort not in CODEX_MODEL_EFFORTS.get(model_id, ()))):
+            raise JarvisChatDenied("per-message model or effort is outside the pinned Codex catalog")
+        branch = await self._rpc_on_socket(ws, ws_types, "session.branch_whole", {
+            "session_id": runtime_session_id, "name": "Jarvis turn",
+            "idempotency_key": "jarvis_turn_" + secrets.token_urlsafe(24),
+        }, deadline=deadline, early_session_info=early_session_info)
+        child_runtime, child_stored = branch.get("session_id"), branch.get("stored_session_id")
+        count = branch.get("message_count")
+        if (not _valid_session_id(child_runtime) or not _valid_session_id(child_stored)
+                or type(count) is not int or count < 1 or branch.get("messages_omitted") is not True):
+            raise JarvisChatDenied("official core full-history turn branch was not confirmed")
+        model_set = await self._rpc_on_socket(ws, ws_types, "config.set", {
+            "key": "model", "value": f"{model_id} --provider {CODEX_PROVIDER_ID} --session",
+            "session_id": child_runtime,
+        }, deadline=deadline, early_session_info=early_session_info)
+        if (model_set.get("key") != "model" or model_set.get("value") != model_id
+                or model_set.get("scope") != "session"
+                or type(model_set.get("confirm_required")) is not bool
+                or model_set.get("confirm_required")
+                or model_set.get("warning", "") or model_set.get("confirm_message", "")
+                or model_set.get("deferred") is True):
+            raise JarvisChatDenied("official core isolated model selection was not confirmed")
+        if reasoning_effort is not None:
+            effort_set = await self._rpc_on_socket(ws, ws_types, "config.set", {
+                "key": "reasoning", "value": reasoning_effort, "session_id": child_runtime,
+            }, deadline=deadline, early_session_info=early_session_info)
+            if (effort_set.get("key") != "reasoning" or effort_set.get("value") != reasoning_effort):
+                raise JarvisChatDenied("official core isolated reasoning selection was not confirmed")
+        return child_runtime, child_stored, {"branch": branch, "model": model_set}
 
     async def set_session_model(self, stored_session_id: str, model_id: str, *,
                                 before_set: Callable[[str], Any]) -> dict[str, Any]:
@@ -795,7 +847,10 @@ class CoreRpcClient:
         return self._project_history_rows(rows)
 
     async def stream_owned_turn(self, stored_session_id: str, text: str, *,
-                                before_submit: Callable[[str], Any] | None = None
+                                before_submit: Callable[[str], Any] | None = None,
+                                isolated_model_id: str | None = None,
+                                isolated_reasoning_effort: str | None = None,
+                                on_isolated_session: Callable[[str, str], Any] | None = None
                                 ) -> AsyncIterator[CoreTurnEvent]:
         """Resume the durable session and submit on one WebSocket transport.
 
@@ -804,18 +859,60 @@ class CoreRpcClient:
         connection before ``prompt.submit`` is sent, and both operations must share the socket.
         The optional trusted callback runs with the actual runtime id between those operations.
         """
-        if not _valid_session_id(stored_session_id) or not isinstance(text, str):
+        if (not _valid_session_id(stored_session_id) or not isinstance(text, str)
+                or (isolated_reasoning_effort is not None and isolated_model_id is None)
+                or ((isolated_model_id is None) != (on_isolated_session is None))):
             raise JarvisChatDenied("official core turn is invalid")
+        expected_model = isolated_model_id
         client, ws, ws_types = await self._connect()
         try:
             resume_id = secrets.token_hex(12)
+            early_session_info: list[dict] = []
             await ws.send_json({"jsonrpc": "2.0", "id": resume_id, "method": "session.resume",
-                                "params": {"session_id": stored_session_id, "source": "jarvis"}})
-            resumed = await self._receive(ws, ws_types, expected_id=resume_id)
+                                "params": {"session_id": stored_session_id, "source": "jarvis",
+                                           "eager_build": expected_model is not None}})
+            resumed = await self._receive(ws, ws_types, expected_id=resume_id,
+                                          early_session_info=early_session_info)
             session_id, resumed_key = resumed.get("session_id"), resumed.get("resumed")
             if not _valid_session_id(session_id) or resumed_key != stored_session_id:
                 raise JarvisChatDenied("official core resume did not confirm the stored session")
-            if before_submit is not None:
+            if expected_model is not None:
+                deadline = asyncio.get_running_loop().time() + min(
+                    MODEL_SESSION_READY_TIMEOUT_SECONDS, self._timeout_seconds)
+                await self._wait_for_model_session_ready(
+                    ws, ws_types, runtime_session_id=session_id, stored_session_id=stored_session_id,
+                    resume_info=resumed.get("info"), early_session_info=early_session_info,
+                    deadline=deadline)
+                session_id, submitted_stored_id, _branch_result = await self._branch_isolated_turn_session(
+                    ws, ws_types, runtime_session_id=session_id, model_id=expected_model,
+                    reasoning_effort=isolated_reasoning_effort,
+                    early_session_info=early_session_info, deadline=deadline)
+                info = await self._wait_for_model_session_ready(
+                    ws, ws_types, runtime_session_id=session_id, stored_session_id=submitted_stored_id,
+                    resume_info=None, early_session_info=early_session_info, deadline=deadline,
+                    expected_model_id=expected_model,
+                    expected_reasoning_effort=isolated_reasoning_effort)
+                from .jarvis_model_catalog import CODEX_PROVIDER_ID
+                actual_effort = info.get("reasoning_effort")
+                if (info.get("model") != expected_model or info.get("provider") != CODEX_PROVIDER_ID
+                        or (isolated_reasoning_effort is not None
+                            and actual_effort != isolated_reasoning_effort)
+                        or not isinstance(actual_effort, str)
+                        or not isinstance(info.get("reasoning_effort_wire"), str)):
+                    raise JarvisChatDenied("official core per-message model readback did not match")
+                if not callable(on_isolated_session):
+                    raise JarvisChatDenied("isolated session mapping callback is unavailable")
+                bound = on_isolated_session(session_id, submitted_stored_id)
+                if inspect.isawaitable(bound):
+                    bound = await bound
+                if bound is not True:
+                    raise JarvisChatDenied("isolated turn session ownership was not confirmed")
+                yield CoreTurnEvent("configuration", configuration={
+                    "provider": CODEX_PROVIDER_ID, "modelId": expected_model,
+                    "reasoningEffort": actual_effort,
+                    "reasoningEffortWire": info["reasoning_effort_wire"],
+                })
+            elif before_submit is not None:
                 if not callable(before_submit):
                     raise JarvisChatDenied("official core turn mapping callback is invalid")
                 result = before_submit(session_id)

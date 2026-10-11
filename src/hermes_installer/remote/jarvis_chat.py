@@ -292,11 +292,12 @@ class JarvisChatStore:
 
     def rebind_active_turn_session(self, principal: ChatPrincipal, conversation_id: str,
                                    turn_id: str, old_runtime_id: str,
-                                   runtime_id: str) -> None:
+                                   runtime_id: str, *, stored_session_id: str | None = None) -> None:
         """Atomically bind a queued/running owned turn to its just-resumed native session."""
         if (not isinstance(principal, ChatPrincipal) or not ID_RE.fullmatch(conversation_id or "")
                 or not ID_RE.fullmatch(turn_id or "") or not _valid_core_session_id(old_runtime_id)
                 or not _valid_core_session_id(runtime_id)
+                or (stored_session_id is not None and not _valid_core_session_id(stored_session_id))
                 or time.monotonic() >= principal.expires_monotonic):
             raise JarvisChatDenied("official core turn mapping is stale")
         owner = self._owner(principal.subject)
@@ -318,9 +319,11 @@ class JarvisChatStore:
                 db.execute("ROLLBACK")
                 raise JarvisChatDenied("official core turn mapping changed before submit")
             conversation_changed = db.execute(
-                "UPDATE conversations SET backend_id=? WHERE id=? AND owner=? AND backend_id=? "
+                "UPDATE conversations SET backend_id=?,session_key=COALESCE(?,session_key) "
+                "WHERE id=? AND owner=? AND backend_id=? "
                 "AND core_generation=?",
-                (runtime_id, conversation_id, owner, old_runtime_id, principal.core_generation)).rowcount
+                (runtime_id, stored_session_id, conversation_id, owner, old_runtime_id,
+                 principal.core_generation)).rowcount
             turn_changed = db.execute(
                 "UPDATE turns SET runtime_session_id=?,updated=? WHERE id=? AND owner=? "
                 "AND conversation_id=? AND runtime_session_id=? AND core_generation=? "
@@ -359,7 +362,8 @@ class JarvisChatStore:
                 for r in rows]
 
     def begin_turn(self, subject: str, conversation_id: str, text: str, idempotency_key: str,
-                   principal: ChatPrincipal) -> tuple[str, str, sqlite3.Row]:
+                   principal: ChatPrincipal, *, turn_configuration: dict[str, Any] | None = None
+                   ) -> tuple[str, str, sqlite3.Row]:
         if (not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT_CHARS
                 or not IDEMPOTENCY_RE.fullmatch(idempotency_key or "")):
             raise ValueError("invalid turn request")
@@ -374,7 +378,16 @@ class JarvisChatStore:
         if expiry <= now:
             raise JarvisChatDenied("protected chat lease is expired")
         turn_id, nonce = _opaque_id(), secrets.token_hex(32)
-        key_hash, text_hash = _digest(owner + ":" + idempotency_key), _digest(text)
+        if turn_configuration is not None and (
+                not isinstance(turn_configuration, dict)
+                or set(turn_configuration) != {"model_id", "reasoning_effort"}
+                or not isinstance(turn_configuration.get("model_id"), str)
+                or (turn_configuration.get("reasoning_effort") is not None
+                    and not isinstance(turn_configuration.get("reasoning_effort"), str))):
+            raise JarvisChatDenied("per-message model configuration is invalid")
+        request_hash = _digest(json.dumps({"text": text, "turn_configuration": turn_configuration},
+                                          sort_keys=True, separators=(",", ":")))
+        key_hash = _digest(owner + ":" + idempotency_key)
         wall = _now()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -382,7 +395,7 @@ class JarvisChatStore:
                 existing = db.execute("SELECT id,request_hash FROM turns WHERE owner=? AND idempotency_hash=?",
                                       (owner, key_hash)).fetchone()
                 if existing:
-                    if existing["request_hash"] != text_hash:
+                    if existing["request_hash"] != request_hash:
                         raise JarvisChatDenied("idempotency key was already used")
                     raise JarvisChatDenied("turn request replay was denied")
                 active = db.execute("SELECT COUNT(*) FROM turns WHERE status IN ('queued','running')").fetchone()[0]
@@ -400,7 +413,7 @@ class JarvisChatStore:
                         or active_conversation >= MAX_ACTIVE_TURNS_PER_CONVERSATION):
                     raise RuntimeError("busy")
                 db.execute("INSERT INTO turns(id,owner,conversation_id,idempotency_hash,request_hash,status,heartbeat_nonce,heartbeat_expiry,jwt_expiry,runtime_session_id,core_generation,created,updated) VALUES(?,?,?,?,?,'queued',?,?,?,?,?,?,?)",
-                           (turn_id, owner, conversation_id, key_hash, text_hash, nonce, expiry,
+                           (turn_id, owner, conversation_id, key_hash, request_hash, nonce, expiry,
                             principal.expires_monotonic, conversation["backend_id"],
                             conversation["core_generation"], wall, wall))
                 db.execute("INSERT INTO messages VALUES(?,?,?,?,?)",
@@ -611,8 +624,8 @@ class JarvisChatStore:
         with self._connect() as db:
             row = db.execute(
                 "SELECT model_id,state FROM model_selection_ops WHERE owner=? AND conversation_id=? "
-                "AND core_generation=? AND runtime_session_id=? ORDER BY updated DESC LIMIT 1",
-                (owner, conversation_id, core_generation, runtime_session_id)).fetchone()
+                "AND core_generation=? ORDER BY updated DESC LIMIT 1",
+                (owner, conversation_id, core_generation)).fetchone()
         if row is None:
             return None
         return {"model": row["model_id"], "state": row["state"]}
@@ -692,6 +705,31 @@ class JarvisChatStore:
             db.execute("UPDATE turns SET partial=?,updated=? WHERE id=?", (content, _now(), turn_id))
             db.execute("INSERT INTO turn_events VALUES(?,?,?,?)",
                        (turn_id, sequence, "message.delta", json.dumps({"sequence": sequence, "text": visible})))
+            db.execute("COMMIT")
+        return sequence
+
+    def append_turn_configuration(self, turn_id: str, configuration: dict[str, str]) -> int:
+        """Persist the actual isolated-session readback before the native prompt is submitted."""
+        required = {"provider", "modelId", "reasoningEffort", "reasoningEffortWire"}
+        if (not isinstance(configuration, dict) or set(configuration) != required
+                or any(not isinstance(value, str) for value in configuration.values())):
+            raise JarvisChatDenied("per-message model readback is invalid")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT status,heartbeat_expiry,jwt_expiry FROM turns WHERE id=?",
+                             (turn_id,)).fetchone()
+            if (row is None or row["status"] not in _ACTIVE
+                    or time.monotonic() >= min(row["heartbeat_expiry"], row["jwt_expiry"])):
+                db.execute("ROLLBACK")
+                raise JarvisChatDenied("per-message model readback arrived after its turn lease")
+            sequence = db.execute("SELECT COALESCE(MAX(sequence),0)+1 FROM turn_events WHERE turn_id=?",
+                                  (turn_id,)).fetchone()[0]
+            if sequence > MAX_EVENTS_PER_TURN:
+                db.execute("ROLLBACK")
+                raise JarvisChatDenied("chat event bound exceeded")
+            db.execute("INSERT INTO turn_events VALUES(?,?,?,?)",
+                       (turn_id, sequence, "turn.configuration", json.dumps(configuration,
+                        sort_keys=True, separators=(",", ":"))))
             db.execute("COMMIT")
         return sequence
 
@@ -997,18 +1035,64 @@ class JarvisChatService:
         from aiohttp import web
         try:
             principal = self._current(request)
-            body = await _read_body(request, {"text"})
+            body = await _read_body(request, {"text", "modelId", "reasoningEffort"})
             principal = self._current(request)
             keys = request.headers.getall("Idempotency-Key", [])
             if len(keys) != 1:
                 raise ValueError
             key = keys[0]
+            turn_configuration = None
+            accepted_configuration = None
+            if "modelId" in body or "reasoningEffort" in body:
+                from .jarvis_model_catalog import CODEX_MODEL_EFFORTS, CODEX_SELECTABLE_MODELS
+                from .jarvis_models import _native_status, _selection_ready, _verified_snapshot
+
+                principal, _accepted, _launch, observation, verify_current = await _verified_snapshot(
+                    request, self)
+                native = await _native_status(self)
+                verify_current()
+                if not _selection_ready(observation.projection, native):
+                    raise web.HTTPConflict(text="model selection unavailable", headers=_secure_headers())
+                conversation_id = request.match_info.get("conversation_id", "")
+                conversation = self.store.get_conversation(principal.subject, conversation_id)
+                current_default = self.store.latest_model_selection(
+                    principal.subject, conversation_id, principal.core_generation,
+                    conversation["backend_id"])
+                profile_model = observation.projection.get("model")
+                selected_default = (current_default.get("model") if current_default
+                                    and current_default.get("state") in {
+                                        "selected-for-session", "deferred-next-turn"}
+                                    else profile_model)
+                requested_model = body.get("modelId")
+                requested_effort = body.get("reasoningEffort")
+                if (requested_model is not None and
+                        (not isinstance(requested_model, str)
+                         or requested_model not in CODEX_SELECTABLE_MODELS)):
+                    raise web.HTTPBadRequest(text="invalid model selection", headers=_secure_headers())
+                if requested_effort is not None and (
+                        not isinstance(requested_effort, str)
+                        or requested_effort not in CODEX_MODEL_EFFORTS.get(
+                            requested_model or selected_default, ())):
+                    raise web.HTTPBadRequest(text="invalid reasoning effort", headers=_secure_headers())
+                resolved_model = requested_model or selected_default
+                if resolved_model not in CODEX_MODEL_EFFORTS:
+                    raise web.HTTPConflict(text="profile model is outside the selectable Codex catalog",
+                                           headers=_secure_headers())
+                turn_configuration = {"model_id": resolved_model,
+                                      "reasoning_effort": requested_effort}
+                accepted_configuration = {"state": "queued", "modelId": resolved_model,
+                                          "reasoningEffort": requested_effort}
+                verify_current()
             queued = await self.start_server_turn(
                 request, conversation_id=request.match_info.get("conversation_id", ""),
-                text=body["text"], idempotency_key=key)
+                text=body["text"], idempotency_key=key,
+                turn_configuration=turn_configuration)
             self._current(request)
-            return web.json_response({"turnId": queued["turn_id"], "status": "queued",
-                                      "heartbeatNonce": queued["heartbeat_nonce"]},
+            payload = {"turnId": queued["turn_id"], "status": "queued",
+                       "heartbeatNonce": queued["heartbeat_nonce"]}
+            if accepted_configuration is not None:
+                payload["turnConfiguration"] = accepted_configuration
+            return web.json_response(payload,
                                      status=202, headers=_secure_headers())
         except web.HTTPException:
             raise
@@ -1029,7 +1113,8 @@ class JarvisChatService:
                                 mission_binding: Any | None = None,
                                 require_mission_binding: bool = False,
                                 planning_context: Any | None = None,
-                                require_planning_context: bool = False) -> dict[str, str]:
+                                require_planning_context: bool = False,
+                                turn_configuration: dict[str, Any] | None = None) -> dict[str, str]:
         """Queue one protected turn from a trusted server feature, before any native submit.
 
         ``before_schedule`` is an internal durable mapping hook, not an authorization source. It
@@ -1052,7 +1137,8 @@ class JarvisChatService:
             conversation = await self._ensure_current_runtime(request, principal, conversation)
             principal = self._current(request)
             turn_id, nonce, conversation = self.store.begin_turn(
-                principal.subject, conversation_id, text, idempotency_key, principal)
+                principal.subject, conversation_id, text, idempotency_key, principal,
+                turn_configuration=turn_configuration)
             try:
                 if (require_mission_binding or mission_binding is not None
                         or planning_context is not None) and before_schedule is None:
@@ -1092,7 +1178,8 @@ class JarvisChatService:
                         owner_turn_context=owner_turn_context,
                         require_mission_binding=require_mission_binding,
                         planning_context=planning_context,
-                        require_planning_context=require_planning_context))
+                        require_planning_context=require_planning_context,
+                        turn_configuration=turn_configuration))
                     self._workers[turn_id] = task
             except BaseException:
                 if on_schedule_failure is not None:
@@ -1116,7 +1203,8 @@ class JarvisChatService:
                    owner_turn_context: tuple[str, Any, Any | None] | None = None,
                    require_mission_binding: bool = False,
                    planning_context: Any | None = None,
-                   require_planning_context: bool = False):
+                   require_planning_context: bool = False,
+                   turn_configuration: dict[str, Any] | None = None):
         total = 0
         next_delta: asyncio.Task | None = None
         stream = None
@@ -1188,8 +1276,28 @@ class JarvisChatService:
                                 raise JarvisChatDenied(
                                     "mission owner-turn verification is unavailable") from None
 
-                stream = resume_stream(stored_session_id, text,
-                                      before_submit=bind_resumed_session).__aiter__()
+                async def bind_isolated_session(actual_session_id: str,
+                                                actual_stored_session_id: str) -> bool:
+                    nonlocal session_id
+                    latest = self._current(request)
+                    if (latest.subject != activity_principal.subject
+                            or latest.core_generation != activity_principal.core_generation):
+                        raise JarvisChatDenied("per-message turn ownership changed")
+                    self.store.rebind_active_turn_session(
+                        activity_principal, conversation_id, turn_id, session_id,
+                        actual_session_id, stored_session_id=actual_stored_session_id)
+                    session_id = actual_session_id
+                    return True
+
+                if turn_configuration is not None:
+                    stream = resume_stream(
+                        stored_session_id, text,
+                        isolated_model_id=turn_configuration["model_id"],
+                        isolated_reasoning_effort=turn_configuration["reasoning_effort"],
+                        on_isolated_session=bind_isolated_session).__aiter__()
+                else:
+                    stream = resume_stream(stored_session_id, text,
+                                          before_submit=bind_resumed_session).__aiter__()
             else:
                 # Compatibility for deterministic/fake adapters only. CoreRpcClient exposes the
                 # explicit owned-turn capability above, which always resumes on its submit socket.
@@ -1230,6 +1338,11 @@ class JarvisChatService:
                             pass
                         except Exception:
                             pass
+                elif kind == "configuration":
+                    configuration = getattr(item, "configuration", None)
+                    if not isinstance(configuration, dict):
+                        raise JarvisChatDenied("per-message model readback was missing")
+                    self.store.append_turn_configuration(turn_id, configuration)
                 elif kind == "delta":
                     delta = getattr(item, "text", "")
                     if isinstance(delta, str):
@@ -1336,7 +1449,7 @@ class JarvisChatService:
                     name = row["name"]
                     payload = row["data"]
                     if name not in {"message.delta", "message.completed", "turn.completed", "turn.failed",
-                                    "turn.cancelled", "activity.event"}:
+                                    "turn.cancelled", "turn.configuration", "activity.event"}:
                         continue
                     try:
                         self._current(request)

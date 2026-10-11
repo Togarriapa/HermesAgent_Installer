@@ -12,6 +12,9 @@ from .jarvis_model_catalog import (
     CODEX_MODEL_SOURCE_REVISION,
     CODEX_MODEL_SOURCE_SHA256,
     CODEX_PROVIDER_ID,
+    CODEX_EFFORT_SOURCE_PATH,
+    CODEX_EFFORT_SOURCE_SHA256,
+    CODEX_MODEL_EFFORTS,
     CODEX_SELECTABLE_MODELS,
 )
 
@@ -69,10 +72,11 @@ def _selection_ready(projection: dict[str, Any], native: dict[str, Any]) -> bool
 
 
 def _catalog() -> list[dict[str, Any]]:
-    return ([{"id": model, "selectable": True, "status": "pinned-codex-catalog"}
+    return ([{"id": model, "selectable": True, "status": "pinned-codex-catalog",
+              "reasoningEfforts": list(CODEX_MODEL_EFFORTS[model])}
              for model in CODEX_SELECTABLE_MODELS]
             + [{"id": CODEX_ACCOUNT_GATED_MODEL, "selectable": False,
-                "status": "account-entitlement-unverified"}])
+                "status": "account-entitlement-unverified", "reasoningEfforts": []}])
 
 
 def install_jarvis_models_routes(app: Any, service: JarvisChatService) -> None:
@@ -126,6 +130,16 @@ def install_jarvis_models_routes(app: Any, service: JarvisChatService) -> None:
             last = service.store.latest_model_selection(
                 principal.subject, conversation_id, principal.core_generation,
                 conversation["backend_id"])
+            selected_default = (last.get("model") if last
+                                and last.get("state") in {"selected-for-session", "deferred-next-turn"}
+                                else projection.get("model"))
+            default_model_source = ("conversation-selection" if last
+                                    and last.get("state") in {"selected-for-session", "deferred-next-turn"}
+                                    else "profile-default" if projection.get("model") else "unknown")
+            turn_availability = (
+                "provider-or-credential-unverified" if not ready else
+                "turn-active" if activity == "busy" else
+                "available" if selected_default in CODEX_MODEL_EFFORTS else "unsupported-profile-model")
             payload = {
                 "status": "observed",
                 "provider": {"id": projection.get("provider"),
@@ -141,8 +155,19 @@ def install_jarvis_models_routes(app: Any, service: JarvisChatService) -> None:
                     "turn-active" if activity == "busy" else
                     "available" if revision else "revision-unavailable"),
                 "models": _catalog(),
+                "turnSelection": {
+                    "availability": turn_availability,
+                    "provider": CODEX_PROVIDER_ID if ready else None,
+                    "defaultModel": {"id": selected_default,
+                                     "source": default_model_source},
+                    "defaultReasoningEffort": {"id": None,
+                                               "source": "profile-default-unobserved"},
+                    "models": _catalog(),
+                },
                 "source": {"revision": CODEX_MODEL_SOURCE_REVISION,
-                           "sha256": CODEX_MODEL_SOURCE_SHA256},
+                           "sha256": CODEX_MODEL_SOURCE_SHA256,
+                           "effortPath": CODEX_EFFORT_SOURCE_PATH,
+                           "effortSha256": CODEX_EFFORT_SOURCE_SHA256},
                 "revision": revision,
             }
             verify_current()

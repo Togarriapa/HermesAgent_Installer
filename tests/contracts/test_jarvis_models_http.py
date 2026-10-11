@@ -79,9 +79,18 @@ def test_models_routes_are_fixed_and_apply_only_once_to_owned_conversation(tmp_p
             assert payload["selectionAvailability"] == "available"
             assert payload["codexCredential"] == "configured"
             assert len(payload["models"]) == 9
+            assert payload["models"][0]["reasoningEfforts"] == [
+                "none", "low", "medium", "high", "xhigh", "max"]
             assert payload["models"][-1] == {
                 "id": "gpt-5.3-codex-spark", "selectable": False,
-                "status": "account-entitlement-unverified",
+                "status": "account-entitlement-unverified", "reasoningEfforts": [],
+            }
+            assert payload["turnSelection"] == {
+                "availability": "available", "provider": "openai-codex",
+                "defaultModel": {"id": "gpt-6-luna", "source": "profile-default"},
+                "defaultReasoningEffort": {"id": None,
+                                           "source": "profile-default-unobserved"},
+                "models": payload["models"],
             }
             body = {
                 "model_id": "gpt-6-sol", "revision": payload["revision"]["revision"],
@@ -141,6 +150,38 @@ def test_models_routes_do_not_cross_conversation_owners(tmp_path, monkeypatch):
                 f"/chat/api/conversations/{other['id']}/model-settings")
             assert response.status in {403, 404}
             assert conversation["id"] != other["id"]
+        finally:
+            await client.close()
+
+    asyncio.run(exercise())
+
+
+def test_turn_rejects_effort_outside_selected_model_without_scheduling(tmp_path, monkeypatch):
+    from hermes_installer.remote.jarvis_models import install_jarvis_models_routes
+
+    _fixture_snapshot(monkeypatch)
+    store = JarvisChatStore(tmp_path / "chat.sqlite3")
+    conversation = store.create_conversation(
+        "subject-a", "runtime-session-a", "stored-session-a", "core-generation-a")
+    backend = _Backend()
+    service = JarvisChatService(store, backend, principal_from_request=_principal)
+    app = web.Application(client_max_size=16 * 1024)
+    service.install(app)
+    install_jarvis_models_routes(app, service)
+
+    async def exercise():
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            response = await client.post(
+                f"/chat/api/conversations/{conversation['id']}/turns",
+                json={"text": "use high effort", "modelId": "gpt-5.5",
+                      "reasoningEffort": "max"},
+                headers={"Idempotency-Key": "per-message-selection-denial-0001"})
+            assert response.status == 400
+            with store._connect() as db:
+                assert db.execute("SELECT COUNT(*) FROM turns").fetchone()[0] == 0
+            assert backend.selections == []
         finally:
             await client.close()
 
