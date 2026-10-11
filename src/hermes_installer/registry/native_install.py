@@ -317,15 +317,15 @@ def discover_and_load_selected(
     """
     if not isinstance(profile_id, str) or not _PROFILE_ID.fullmatch(profile_id):
         raise NativeInstallError("selected profile id is malformed")
-    if len(skill_ids) > 64 or any(not isinstance(name, str) or not _IDENTIFIER.fullmatch(name) for name in skill_ids):
-        raise NativeInstallError("selected skill ids are malformed or exceed the probe bound")
+    if len(skill_ids) > 512 or any(not isinstance(name, str) or not _IDENTIFIER.fullmatch(name) for name in skill_ids):
+        raise NativeInstallError("selected skill ids are malformed or exceed the 512-skill probe bound")
     if len(set(skill_ids)) != len(skill_ids):
         raise NativeInstallError("selected skill ids contain duplicates")
     try:
         timeout = float(timeout)
     except (TypeError, ValueError):
         raise NativeInstallError("probe timeout is invalid") from None
-    if not 0.1 <= timeout <= 60:
+    if not 0.1 <= timeout <= 300:
         raise NativeInstallError("probe timeout is outside the supported bound")
 
     source_input = Path(hermes_source)
@@ -351,10 +351,11 @@ def discover_and_load_selected(
         raise NativeInstallError("selected Hermes profile home is not materialized")
 
     env = {
-        "PATH": os.environ.get("PATH", ""),
+        "PATH": "/home/admin/.hermes/bin:/home/admin/.local/bin:/usr/local/bin:/usr/bin:/bin",
         "HOME": str(root),
-        "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
+        "TMPDIR": "/tmp",
         "HERMES_HOME": str(root),
+        "HERMES_DISABLE_LAZY_INSTALLS": "1",
         "HERMES_REQUIRE_SOLE_PROFILE": "1" if require_sole_profile else "0",
         "PYTHONPATH": str(source),
         "PYTHONNOUSERSITE": "1",

@@ -1,5 +1,34 @@
 # Native Resources profile and skill handoff
 
+## Offline core-home import
+
+`hermes_installer.registry.manual_jarvis_skills.install_bundled_resources()` is a
+separate, user-owned importer for the ordinary Hermes home. It verifies the
+checked-in Resources archive offline, compiles all 396 native `SKILL.md` cards,
+and compiles all 208 effective profile prompt/identity records. The primary
+`hermes` source identity is recorded as Jarvis/default; the other 207 profile
+records stay beneath the import's `registry/profiles/` namespace. They are not
+copied into Hermes' selectable `profiles/` roster. All other declarations and
+generated adapter data stay beneath `registry/package/` until a separately
+reviewed adapter invokes them.
+
+The importer publishes one revision-namespaced tree under
+`$HERMES_HOME/skills/installer-resources-113f42d33be9/`. Hermes scans the
+`skills/` subtree and the importer then uses pinned Hermes APIs to discover the
+default profile, load its current `SOUL.md`, list skills, and `skill_view` all
+396 cards. Every returned card digest must match the compiled artifact. Existing
+`SOUL.md`, config, memories, auth references, skill trees and other home files
+are preserved. An unowned, modified, symlinked, or conflicting generation is
+refused without overwrite. Run the import as the owner of `$HERMES_HOME`, with
+the fixed pinned Hermes source checkout and official PM Python supplied by the
+core installer; never call it as root against an admin-owned home.
+
+This is a native discovery/content-load receipt only. It does not update the
+existing `SOUL.md`, expose secondary profiles, prove model-selected skill use,
+authenticate providers, enable plugins, invoke external effects, or establish
+functional Resources dispatch/enrichment. `RB-T266.4` and target acceptance
+remain open until those effects are separately demonstrated on the Pi.
+
 `NativeRegistry.materialize()` stages profile identity and skill documents in the verified generation. The lifecycle owner remains responsible for ownership-safe writes, overlay preservation, recovery, and activation. For a generation resolved to one profile and its dependency closure, call `selected_profile_materialization(generation, profile_id)` and pass the returned mapping to `GenerationLifecycle.materialize()`. This maps source skills into Hermes' actual named-profile `profiles/<id>/skills/` directory and leaves other profile roots and installer records in the generation. Retain the lifecycle result's installed/updated/preserved paths as the conflict receipt. Then call `discover_and_load_selected()` with the exact pinned Hermes source checkout, official PM-managed Python 3.14 executable, Hermes root, selected profile ID, and the skills selected for that workflow.
 
 The handoff runs a separate, bounded Python process with a sanitized environment. It requires Python 3.14 and verifies Hermes revision `7085fbf7753266fc4943c55ac04926186bc90005`, calls the pinned `hermes_cli.profiles.list_profiles()` API, loads the profile `SOUL.md` through Hermes' `agent.prompt_builder.load_soul_md()`, discovers skills through `tools.skills_tool.skills_list()`, and loads each selected skill through `tools.skills_tool.skill_view()`. It makes no model call and does not change account state. Generated skill documents must not declare package-manager dependencies; the handoff rejects dependency installation notes.

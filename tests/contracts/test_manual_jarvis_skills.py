@@ -8,13 +8,19 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from hermes_installer.registry.manual_jarvis_skills import (
+    _BUNDLE_PROFILE_COUNT,
+    _BUNDLE_SKILL_COUNT,
     ManualJarvisSkillsError,
     PRIMARY_SKILLS,
+    _read_artifact,
     build_manual_jarvis_skills_artifact,
+    install_and_verify_manual_jarvis_skills,
     install_manual_jarvis_skills,
 )
+from hermes_installer.registry.native_install import NativeInstallReceipt
 
 
 class ManualJarvisSkillsTests(unittest.TestCase):
@@ -50,9 +56,16 @@ class ManualJarvisSkillsTests(unittest.TestCase):
             self.assertFalse(result["discovered"])
             generation = Path(result["generation_path"])
             journal = json.loads((generation / ".hermes-installer-resource-ownership.json").read_text())
-            self.assertEqual(len(journal["members"]), 4)
+            _manifest, artifact_files = _read_artifact(self.bundle, self.digest)
+            self.assertEqual(len(journal["members"]), len(artifact_files))
             self.assertEqual(
-                {p.parent.name for p in generation.glob("*/SKILL.md")}, set(PRIMARY_SKILLS))
+                {p.parent.name for p in generation.glob("skills/*/SKILL.md")},
+                {row["skill_id"] for row in json.loads((generation / ".hermes-installer-resource-ownership.json").read_text())["members"]
+                 if row["path"].startswith("installer-resources-113f42d33be9/skills/")
+                 and row["path"].endswith("/SKILL.md")})
+            self.assertEqual(len(list((generation / "skills").glob("*/SKILL.md"))), _BUNDLE_SKILL_COUNT)
+            self.assertEqual(len(list((generation / "registry/profiles").glob("*/SOUL.md"))), _BUNDLE_PROFILE_COUNT)
+            self.assertFalse((home / "profiles").exists())
             self.assertEqual((home / "SOUL.md").read_bytes(), before["soul"])
             self.assertEqual((home / "config.yaml").read_bytes(), before["config"])
             self.assertEqual((home / "memories/keep.txt").read_bytes(), before["memory"])
@@ -91,6 +104,64 @@ class ManualJarvisSkillsTests(unittest.TestCase):
                 install_manual_jarvis_skills(
                     self.bundle, hermes_home=home, expected_sha256=self.digest)
             self.assertEqual(skill.read_text(), "user edit\n")
+
+    def test_import_receipt_requires_actual_native_readback_for_every_bundled_skill(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self.make_home(tmp)
+            manifest, files = _read_artifact(self.bundle, self.digest)
+            skill_ids = tuple(sorted(row["skill_id"] for row in manifest["skill_members"]))
+            content_digests = {
+                f"skill:{name}": hashlib.sha256(files[f"skills/{name}/SKILL.md"]).hexdigest()
+                for name in skill_ids
+            }
+            content_digests["profile:default"] = hashlib.sha256(
+                files["registry/profiles/hermes/SOUL.md"]).hexdigest()
+            receipt = NativeInstallReceipt(
+                hermes_revision="7085fbf7753266fc4943c55ac04926186bc90005",
+                python_version="3.14.7", profile_id="default", discovered_profile=True,
+                profile_identity_loaded=True, profile_display_name="Jarvis",
+                discovered_skills=skill_ids, loaded_skills=skill_ids,
+                content_digests=content_digests,
+            )
+            with patch("hermes_installer.registry.native_install.discover_and_load_selected",
+                       return_value=receipt) as discover:
+                result = install_and_verify_manual_jarvis_skills(
+                    self.bundle, hermes_home=home, expected_sha256=self.digest,
+                    hermes_source="/pin/hermes", python="/pin/python")
+            self.assertEqual(result["state"], "discovered")
+            self.assertTrue(result["discovered"])
+            self.assertEqual(result["resource_counts"]["native_skills"], _BUNDLE_SKILL_COUNT)
+            self.assertEqual(result["resource_counts"]["internal_profiles"], _BUNDLE_PROFILE_COUNT - 1)
+            self.assertEqual(result["native_receipt"]["loaded_skill_count"], _BUNDLE_SKILL_COUNT)
+            self.assertEqual(set(result["selectable_profile_mutations"]), set())
+            self.assertTrue(result["native_receipt"]["active_prompt_matches_bundled_primary"])
+            discover.assert_called_once()
+            self.assertEqual(set(discover.call_args.kwargs["skill_ids"]), set(skill_ids))
+
+    def test_import_never_claims_native_discovery_when_loaded_bytes_differ(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self.make_home(tmp)
+            manifest, files = _read_artifact(self.bundle, self.digest)
+            skill_ids = tuple(sorted(row["skill_id"] for row in manifest["skill_members"]))
+            content_digests = {
+                f"skill:{name}": hashlib.sha256(files[f"skills/{name}/SKILL.md"]).hexdigest()
+                for name in skill_ids
+            }
+            content_digests["skill:" + skill_ids[0]] = "0" * 64
+            receipt = NativeInstallReceipt(
+                hermes_revision="7085fbf7753266fc4943c55ac04926186bc90005",
+                python_version="3.14.7", profile_id="default", discovered_profile=True,
+                profile_identity_loaded=True, profile_display_name="Jarvis",
+                discovered_skills=skill_ids, loaded_skills=skill_ids,
+                content_digests=content_digests,
+            )
+            with patch("hermes_installer.registry.native_install.discover_and_load_selected",
+                       return_value=receipt):
+                with self.assertRaises(ManualJarvisSkillsError):
+                    install_and_verify_manual_jarvis_skills(
+                        self.bundle, hermes_home=home, expected_sha256=self.digest,
+                        hermes_source="/pin/hermes", python="/pin/python")
+            self.assertTrue((home / "skills/installer-resources-113f42d33be9").is_dir())
 
 
 if __name__ == "__main__":
