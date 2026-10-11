@@ -483,9 +483,9 @@ def install_jarvis_final_effect_middleware(ctx: Any, client: Any) -> tuple[Any, 
     """Gate every normal master native tool dispatch on a one-use root permit.
 
     The pinned executor supplies a lexical call tuple through
-    ``current_native_tool_dispatch``. The four fixed read/research tools are
-    bypassed only with a one-use root receipt bound to the advertised provider
-    call. Every other tool, including generic shell, requires one-use approval.
+    ``current_native_tool_dispatch``. Root classifies the exact observed call
+    as master read, master effect, or admitted expert research. Master effects
+    require a one-use owner permit; experts never request one.
     """
     register = getattr(ctx, "register_middleware", None)
     if not callable(register):
@@ -523,6 +523,14 @@ def install_jarvis_final_effect_middleware(ctx: Any, client: Any) -> tuple[Any, 
             if canonical != current.canonical_arguments:
                 return deny("Final effect blocked: dispatched arguments changed after review.")
 
+            # This fixed Resources handler consumes its own root-observed
+            # lineage and performs its own bounded per-operation root checks.
+            # Letting the generic middleware observe/bind the call first would
+            # consume that single-use lineage and prevent the trusted handler
+            # from launching the already-approved internal operation.
+            if name == "resources_delegate":
+                return next_call(args)
+
             observed = register_tool_call_from_current_parent(
                 client=client, parent_agent=current.agent,
                 tool_call_id=current.tool_call_id, tool_name=name, arguments=args,
@@ -531,20 +539,21 @@ def install_jarvis_final_effect_middleware(ctx: Any, client: Any) -> tuple[Any, 
                 return deny("Final effect blocked: root call observation is unavailable.")
             args_sha = hashlib.sha256(canonical).hexdigest()
 
-            # The four fixed read/research tools remain available only when
-            # root proves this exact call was advertised in the current master
-            # source's live provider request. A matching name alone is never
-            # enough to bypass review.
-            if name in {"web_search", "web_extract", "skills_list", "skill_view"}:
-                from .core_native_observer import RootVerifiedMasterReadCall
-                read_receipt = client.authorize_master_read_call(
-                    observed_call=observed,
-                )
-                if (type(read_receipt) is not RootVerifiedMasterReadCall
-                        or not read_receipt.matches_call(
-                            observed, tool_name=name, arguments_sha256=args_sha)):
-                    return deny("Read-only tool blocked: current master source proof is unavailable.")
+            from .core_native_observer import RootVerifiedMasterReadCall
+            caller_receipt = client.authorize_current_tool_call(observed_call=observed)
+            if (type(caller_receipt) is not RootVerifiedMasterReadCall
+                    or not caller_receipt.matches_call(
+                        observed, tool_name=name, arguments_sha256=args_sha)):
+                return deny("Native tool blocked: current root caller proof is unavailable.")
+
+            if caller_receipt.mode in {"master_read", "expert_read"}:
+                if name not in {"web_search", "web_extract", "skills_list", "skill_view"}:
+                    return deny("Read-only tool blocked: tool is outside the fixed research closure.")
                 return next_call(args)
+            if caller_receipt.mode != "master_effect":
+                return deny("Native tool blocked: caller is not authorized for an owner effect review.")
+            if name in {"web_search", "web_extract", "skills_list", "skill_view"}:
+                return deny("Native tool blocked: research tool has an invalid root caller mode.")
 
             digest = review_digest(name, args_sha)
             pending = client.request_final_effect(

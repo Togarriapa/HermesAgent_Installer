@@ -30,11 +30,12 @@ def _client():
     return CoreNativeObservationClient()
 
 
-def _call(*, owner_handle="A" * 43, call_id="tool-call-1", name="shell"):
+def _call(*, owner_handle="A" * 43, call_id="tool-call-1", name="shell",
+          arguments=b'{"command":"x"}'):
     return ObservedNativeToolCall(
         handle="B" * 43, attempt_handle="C" * 43,
         owner_turn_handle=owner_handle, tool_call_id=call_id,
-        tool_name=name, arguments_sha256=hashlib.sha256(b'{"command":"x"}').hexdigest(),
+        tool_name=name, arguments_sha256=hashlib.sha256(arguments).hexdigest(),
         expires_monotonic=time.monotonic() + 20,
     )
 
@@ -52,6 +53,17 @@ def _permit(observed, args_sha, digest, *, owner_handle=None, pending_id="D" * 4
     )
 
 
+class _CallerReceipt:
+    """Small test double for the bridge's sealed root caller classification."""
+    def __init__(self, observed, mode):
+        self.observed = observed
+        self.mode = mode
+
+    def matches_call(self, observed, *, tool_name, arguments_sha256):
+        return (observed is self.observed and observed.tool_name == tool_name
+                and observed.arguments_sha256 == arguments_sha256)
+
+
 class JarvisFinalEffectMiddlewareTests(unittest.TestCase):
     def _install(self, client):
         ctx = _Context()
@@ -59,17 +71,25 @@ class JarvisFinalEffectMiddlewareTests(unittest.TestCase):
         self.assertIn("tool_execution", ctx.callbacks)
         return ctx.callbacks["tool_execution"]
 
-    def _run(self, client, *, args=None, dispatch_args=None):
-        arguments = args if args is not None else {"command": "x"}
-        dispatch = NativeToolDispatch(object(), "tool-call-1", "shell", b'{"command":"x"}')
-        observed = _call()
+    def _run(self, client, *, args=None, dispatch_args=None, name="shell", caller_mode="master_effect"):
+        default_arguments = {"query": "x"} if name == "web_search" else {"command": "x"}
+        arguments = default_arguments
+        from hermes_installer.native_invocations import canonical_tool_arguments
+        canonical = canonical_tool_arguments(default_arguments)
+        dispatch = NativeToolDispatch(object(), "tool-call-1", name, canonical)
+        observed = _call(name=name, arguments=canonical)
+        client.authorize_current_tool_call = lambda *, observed_call: _CallerReceipt(
+            observed_call, caller_mode)
         calls = []
         callback = self._install(client)
         with patch("hermes_installer.native_invocations.current_native_tool_dispatch",
                    return_value=dispatch), patch(
                        "hermes_installer.remote.core_native_observer.register_tool_call_from_current_parent",
-                       return_value=observed):
-            result = callback(tool_name="shell", args=dispatch_args or arguments,
+                       return_value=observed), patch(
+                           "hermes_installer.remote.core_native_observer.RootVerifiedMasterReadCall",
+                           _CallerReceipt, create=True):
+            result = callback(tool_name=name, args=dispatch_args if dispatch_args is not None
+                              else args if args is not None else arguments,
                               next_call=lambda value: calls.append(value) or {"ok": True})
         return result, calls, observed, arguments
 
@@ -84,6 +104,54 @@ class JarvisFinalEffectMiddlewareTests(unittest.TestCase):
             result, calls, _observed, arguments = self._run(client)
         self.assertEqual(result, {"ok": True})
         self.assertEqual(calls, [arguments])
+
+    def test_root_proved_expert_research_executes_without_owner_final_effect_request(self):
+        client = _client()
+        result, calls, _observed, arguments = self._run(
+            client, name="web_search", caller_mode="expert_read")
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(calls, [arguments])
+
+    def test_expert_effect_is_denied_before_final_effect_request(self):
+        client = _client()
+        requests = []
+        client.request_final_effect = lambda **kwargs: requests.append(kwargs)
+        result, calls, _observed, _arguments = self._run(client, caller_mode="expert_read")
+        self.assertFalse(calls)
+        self.assertFalse(requests)
+        self.assertEqual(result["effect_executed"], "false")
+
+    def test_fixed_resources_handler_receives_exact_call_without_gate_consuming_lineage(self):
+        """The fixed adapter performs its own root claim/lineage checks."""
+        arguments = {"goal": "research the requested topic"}
+        dispatch = NativeToolDispatch(
+            object(), "resources-call-1", "resources_delegate",
+            b'{"goal":"research the requested topic"}',
+        )
+        calls = []
+        callback = self._install(_client())
+        with patch("hermes_installer.native_invocations.current_native_tool_dispatch",
+                   return_value=dispatch), patch(
+                       "hermes_installer.remote.core_native_observer.register_tool_call_from_current_parent",
+                       side_effect=AssertionError("generic gate consumed handler lineage")):
+            result = callback(tool_name="resources_delegate", args=arguments,
+                              next_call=lambda value: calls.append(value) or {"accepted": True})
+        self.assertEqual(result, {"accepted": True})
+        self.assertEqual(calls, [arguments])
+
+    def test_fixed_resources_handler_rejects_changed_arguments_before_dispatch(self):
+        dispatch = NativeToolDispatch(
+            object(), "resources-call-1", "resources_delegate",
+            b'{"goal":"approved goal"}',
+        )
+        calls = []
+        callback = self._install(_client())
+        with patch("hermes_installer.native_invocations.current_native_tool_dispatch",
+                   return_value=dispatch):
+            result = callback(tool_name="resources_delegate", args={"goal": "changed goal"},
+                              next_call=lambda value: calls.append(value))
+        self.assertFalse(calls)
+        self.assertEqual(result["effect_executed"], "false")
 
     def test_owner_mismatch_never_reaches_native_executor(self):
         args_sha = hashlib.sha256(b'{"command":"x"}').hexdigest()
