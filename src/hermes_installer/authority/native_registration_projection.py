@@ -993,8 +993,8 @@ def reviewed_local_registration_result_schemas(
         raise NativeRegistrationResultSchemaDenied("all actual registration sources are required")
     by_name = {row.native_tool_name: row for row in captured}
     root = Path(__file__).resolve().parents[3]
-    map_path = root / "plans/amendments/2026-10-10-native-schema-catalog-identities-v114/native-local-schema-artifact-map-v2.json"
-    bounds_path = root / "plans/amendments/2026-10-10-native-local-result-bounds-v110/native-local-registration-results-v1.json"
+    map_path = root / "contracts/schemas/native-local-schema-artifact-map-v2.json"
+    bounds_path = root / "contracts/schemas/native-local-registration-results-v1.json"
     try:
         artifact_map = json.loads(map_path.read_text(encoding="utf-8"))
         bounds = json.loads(bounds_path.read_text(encoding="utf-8"))
@@ -1049,7 +1049,7 @@ def reviewed_local_registration_result_schemas(
             raise NativeRegistrationResultSchemaDenied("local result schema artifact identity is not source-reviewed")
         relative = raw["path"]
         if not isinstance(relative, str) or not relative.startswith(
-                "plans/amendments/2026-10-10-native-local-schema-artifacts-v112/"):
+                "contracts/schemas/"):
             raise NativeRegistrationResultSchemaDenied("local result schema file is outside its fixed reviewed directory")
         path = root / relative
         try:
@@ -1089,7 +1089,7 @@ def reviewed_packaged_registration_result_schemas(
     local = reviewed_local_registration_result_schemas(registrations)
     root = Path(__file__).resolve().parents[3]
     try:
-        contract = json.loads((root / "planning/native-package-binding-contract.json").read_text(encoding="utf-8"))
+        contract = json.loads((root / "contracts/native/native-package-binding-contract.json").read_text(encoding="utf-8"))
         v121 = contract["financial_alias_source_bound_v121"]
         v120 = contract["financial_web_results_v120"]
         v140 = contract["registration_source_pin_refinement_v140"]["source_record"]
@@ -1120,7 +1120,7 @@ def reviewed_packaged_registration_result_schemas(
                    != expected_source_paths[tool]
                 or row["schema_id"] != row["artifact_id"]
                 or not isinstance(relative, str)
-                or not relative.startswith("plans/amendments/2026-10-10-")
+                or not relative.startswith("contracts/")
                 or type(row["size_bytes"]) is not int or not 1 <= row["size_bytes"] <= 16_384
                 or not isinstance(row["sha256"], str) or len(row["sha256"]) != 64
                 or any(ch not in "0123456789abcdef" for ch in row["sha256"])):

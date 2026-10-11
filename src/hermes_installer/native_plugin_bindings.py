@@ -2,7 +2,7 @@
 
 This module is the worker-side half of HI08/HI09/RB08's root-owned native
 package catalog.  It accepts only the fixed authority DTOs documented in
-``planning/native-package-binding-contract.json``.  Resolver rows describe
+``contracts/native/native-package-binding-contract.json``.  Resolver rows describe
 what can be discovered and registered; they are never effect authorization.
 The root must re-resolve current package, schema, identity, source closure and
 one-use authorization at every effect boundary.

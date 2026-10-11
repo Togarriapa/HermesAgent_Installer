@@ -237,7 +237,7 @@ def test_fixture_owned_existing_tree_verifies_pinned_members_by_fd(tmp_path: Pat
 def test_pinned_glm_manifest_parses_from_already_observed_bytes() -> None:
     from hermes_installer.models.artifacts import MODEL_BYTES, MODEL_SIZE_CLAIM
 
-    metadata = Path("planning/glm52-artifact-metadata.json").read_bytes()
+    metadata = Path("contracts/model-sources/glm52-artifact-metadata.json").read_bytes()
     manifest = ArtifactManifest.from_metadata_bytes(metadata)
     assert manifest.model_id == "mastouri/GLM-5.2-colibri-int4-g64-with-int8-mtp"
     assert manifest.revision == "6bbb01ed3e515a8730b694dfae73aadfd6774581"

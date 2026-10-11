@@ -46,7 +46,7 @@ class _Release:
         rows = []
         catalog_path = REPO / APPLICATION_EFFECT_SOURCE_CATALOG_PATH
         self._add(rows, APPLICATION_EFFECT_SOURCE_CATALOG_ARTIFACT_ID,
-                  APPLICATION_EFFECT_SOURCE_CATALOG_PATH, "amendment", catalog_path)
+                  APPLICATION_EFFECT_SOURCE_CATALOG_PATH, "contract", catalog_path)
         changed_member_path: Path | None = None
         for artifact_id, path, role, digest, size in APPLICATION_EFFECT_SOURCE_MEMBERS:
             source = REPO / path

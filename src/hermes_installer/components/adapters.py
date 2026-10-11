@@ -1206,7 +1206,7 @@ for _adapter in COMPONENT_ADAPTERS:
         _BY_NAME[_key] = _adapter
 
 # MCP handlers are owned by hermes_installer.mcp; these IDs and links remain
-# in planning/component-contracts.json to prevent duplicated protocol handlers.
+# in the reviewed component catalog to prevent duplicated protocol handlers.
 MCP_COMPONENT_IDS = frozenset(
     {"figma-mcp", "playwright-mcp", "revenuecat-mcp", "google", "home-assistant"}
 )

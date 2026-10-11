@@ -234,7 +234,7 @@ class RootApplicationEffectSourceObserver:
                     catalog_rows[0].size_bytes, catalog_rows[0].roles)
                     != (APPLICATION_EFFECT_SOURCE_CATALOG_PATH,
                         APPLICATION_EFFECT_SOURCE_CATALOG_SHA256,
-                        APPLICATION_EFFECT_SOURCE_CATALOG_SIZE, ("amendment",))
+                        APPLICATION_EFFECT_SOURCE_CATALOG_SIZE, ("contract",))
                 or catalog_rows[0].artifact_id not in plan.allowed_artifact_ids):
             raise AuthorityDenied("application.effect.source", "v175 source catalog is absent from the selected release")
         catalog_bytes = self._read_fd(release, catalog_rows[0], limit=_MAX_CATALOG_BYTES)
@@ -329,7 +329,7 @@ class RootApplicationEffectSourceObserver:
             catalog_handle = self._new_receipt(
                 member_id="application-effect-sources-v175", application_id=context.application_id,
                 workflow_id=recipe.workflow_id, artifact_id=catalog_row.artifact_id,
-                relative_path=catalog_row.relative_path, role="amendment", sha256=catalog_row.sha256,
+                relative_path=catalog_row.relative_path, role="contract", sha256=catalog_row.sha256,
                 size_bytes=catalog_row.size_bytes, context=context, selection=selection,
                 release_selection_handle=release_selection_handle, expiry=expiry)
             receipts[catalog_handle.source_receipt_handle] = catalog_handle
@@ -513,7 +513,7 @@ class RootApplicationEffectSourceObserver:
             raise AuthorityDenied("application.effect.source", "effect source member role or identity changed")
         if receipt.member_id == "application-effect-sources-v175":
             expected = (APPLICATION_EFFECT_SOURCE_CATALOG_ARTIFACT_ID,
-                APPLICATION_EFFECT_SOURCE_CATALOG_PATH, "amendment",
+                APPLICATION_EFFECT_SOURCE_CATALOG_PATH, "contract",
                 APPLICATION_EFFECT_SOURCE_CATALOG_SHA256, APPLICATION_EFFECT_SOURCE_CATALOG_SIZE)
         else:
             expected = next((row for row in APPLICATION_EFFECT_SOURCE_MEMBERS
@@ -526,7 +526,7 @@ class RootApplicationEffectSourceObserver:
             expected_identity = (expected[0], expected[1], expected[2], expected[3], expected[4])
         if (receipt.artifact_id, receipt.relative_path, receipt.role, receipt.sha256, receipt.size_bytes) != expected_identity:
             raise AuthorityDenied("application.effect.source", "effect source receipt does not match its role pin")
-        body = self._read_fd(release, rows[0], limit=_MAX_CATALOG_BYTES if receipt.role == "amendment" else _MAX_MEMBER_BYTES)
+        body = self._read_fd(release, rows[0], limit=_MAX_CATALOG_BYTES if receipt.role == "contract" else _MAX_MEMBER_BYTES)
         actor.verify_current(release)
         return body
 

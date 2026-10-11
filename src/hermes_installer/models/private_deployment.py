@@ -37,13 +37,13 @@ _GLM_LICENSE_ARTIFACT_ID = "glm52-upstream-mit-license-cf457fa"
 _GLM_QUANTIZED_README_ARTIFACT_ID = "glm52-quantized-readme-6bbb01e"
 _GLM_RELEASE_SOURCE_MEMBERS = {
     _GLM_SOURCE_MANIFEST_ARTIFACT_ID: (
-        "planning/glm52-artifact-metadata.json",
+        "contracts/model-sources/glm52-artifact-metadata.json",
         "b42e3fa6fd5c287b95fcda4d370697bd4c0ef226767ddc08fae4e5bebcfecd1a", 56232),
     _GLM_LICENSE_ARTIFACT_ID: (
-        "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-upstream-MIT-LICENSE.txt",
+        "contracts/model-sources/glm52-upstream-MIT-LICENSE.txt",
         "f4a18c6ae40b0a8e7d2b7667f52f6e1994e54a46430d2e172b73cb8c9b5eb0d7", 1065),
     _GLM_QUANTIZED_README_ARTIFACT_ID: (
-        "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-quantized-README.md",
+        "contracts/model-sources/glm52-quantized-README.md",
         "85fc4cf947276c376f09ad1226926ebc03eefbb99d184cd05f34412d32d8406b", 17468),
 }
 _MODEL_SELECTION_JOURNAL_CHILD = "existing-model-selections"

@@ -1,0 +1,1 @@
+{"authentik":{},"delegations":{},"key_id":{"root_binding":"authority_key.key_id"},"mcp_http_bindings":{},"mcp_services":{},"memory_providers":{},"native_bridges":{},"normalization_policies":{},"principals":{},"process_profiles":{},"provider_enrollments":{},"rules":{},"schema":1,"service_generations":{"root_binding":"prepared_service_generation.exact_empty_snapshot"}}

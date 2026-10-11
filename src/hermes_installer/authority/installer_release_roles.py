@@ -11,6 +11,7 @@ RELEASE_MEMBER_ROLES = frozenset({
     "module",
     "source-module",
     "template",
+    "contract",
     "plan",
     "artifact-catalog",
     "bootstrap-policy",

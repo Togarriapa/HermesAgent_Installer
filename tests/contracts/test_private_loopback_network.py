@@ -39,7 +39,7 @@ class PrivateLoopbackNetworkContracts(unittest.TestCase):
         self.digest = "a" * 64
 
     def test_installed_policy_bytes_are_exact_v97_artifact(self):
-        source = Path(__file__).resolve().parents[2] / "plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97/private-loopback-policy-v1.json"
+        source = Path(__file__).resolve().parents[2] / "contracts/policies/private-loopback-policy-v1.json"
         installed = POLICY_PATH.read_bytes()
         self.assertEqual(installed, source.read_bytes())
         self.assertEqual(len(installed), 1482)

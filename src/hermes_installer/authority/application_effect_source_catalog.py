@@ -1,14 +1,12 @@
 """Fixed installer-owned sources for local application qualification effects.
 
 This catalog is deliberately separate from upstream application generation,
-runtime ABI probes, and their receipts. Values mirror the v175 Sol-owned
-append-only descriptor; tests keep the two representations byte-for-byte
-aligned.
+runtime ABI probes, and their receipts. Values mirror the stable runtime
+contract descriptor; tests keep the two representations byte-for-byte aligned.
 """
 
 APPLICATION_EFFECT_SOURCE_CATALOG_PATH = (
-    "plans/amendments/2026-10-10-application-effect-sources-v175/"
-    "application-effect-sources-v1.json"
+    "contracts/source-tables/application-effect-sources-v1.json"
 )
 APPLICATION_EFFECT_SOURCE_CATALOG_ARTIFACT_ID = "release-file:eda54c5b908c9d5176afef9ee2bf434b"
 APPLICATION_EFFECT_SOURCE_CATALOG_SHA256 = "de6df1701fa51727127cdbdb30c6e12a6f4e07297ffce686b758fd3ead1076b4"

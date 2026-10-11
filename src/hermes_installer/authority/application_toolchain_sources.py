@@ -49,7 +49,7 @@ _BUN_LICENSE_PIN = (
 
 SOURCE_POLICY_ARTIFACT_ID = "installer-application-toolchain-source-policy-v144"
 SOURCE_POLICY_PATH = (
-    "plans/amendments/2026-10-10-hyperframes-toolchain-source-v144/"
+    "contracts/source-tables/"
     "hyperframes-toolchain-source-v1.json")
 SOURCE_POLICY_SHA256 = "81b9e3655ddb627c46d828690687a1600fd9a7455af4c4fc5a90c32b3991a5d6"
 SOURCE_POLICY_BYTES = 7060
@@ -432,7 +432,7 @@ class RootSelectedApplicationToolchainSourceObserver:
     def _verify_source_policy(self) -> None:
         row = self.release.resolve_reviewed_source_artifact(SOURCE_POLICY_ARTIFACT_ID)
         if (row.relative_path != SOURCE_POLICY_PATH or row.sha256 != SOURCE_POLICY_SHA256
-                or row.size_bytes != SOURCE_POLICY_BYTES or row.roles != ("amendment",)):
+                or row.size_bytes != SOURCE_POLICY_BYTES or row.roles != ("contract",)):
             raise ApplicationToolchainSourceDenied("held toolchain source policy member differs from its exact pin")
         fd = self.release.open_reviewed_source_artifact(SOURCE_POLICY_ARTIFACT_ID)
         try:

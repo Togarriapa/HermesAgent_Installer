@@ -210,7 +210,7 @@ class LivePeerProcess:
 
 @dataclass(frozen=True, slots=True)
 class LoadedPackageClosureProof:
-    """Immutable DTO matching planning/protected-runtime-assembly-contract.json."""
+    """Immutable DTO matching the protected runtime assembly contract."""
 
     schema: int
     proof_id: str

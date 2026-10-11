@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "kind": "read-only target diagnosis reported by root; source Git bytes independently inspected by Sol",
+  "candidate_git_sha": "cc81abffe3cbb1df447889bca269d1e6c0be77ea",
+  "new_source_commit": "9dd53e823058cfc7c516075572aad6fb510cfcc8",
+  "failure_before_candidate_tty": "InstallerReleaseBuildError: present deployment predecessor is not a verified installed release; caused by InstallerReleaseError: finite native target source module differs from its reviewed pin",
+  "target_observation": {
+    "closure_manifest_sha256": "a8c2e34d62710087877f549828bc14c7d086493a274ff87b892cb406e946d40b",
+    "manifest_size_bytes": 1043975,
+    "member_count": 5315,
+    "baseline_tree_sha256": "039a6ab93f6bd44d80df01e99368c24c4348624305b6f4d17816eed25a167ade",
+    "scope": "Readonly instance observation only; no runtime trustpins or target acceptance."
+  },
+  "source_blobs": [
+    {
+      "relative_path": "src/hermes_installer/authority/installer_release_roles.py",
+      "sha256": "77414427c957315b5039e4d90f75c997739d7fd3caa18014f874aa7fed7806f0",
+      "size_bytes": 1162
+    },
+    {
+      "relative_path": "src/hermes_installer/authority/application_effect_source_catalog.py",
+      "sha256": "cc77027546df592d439da36cd162f36841176cdb8a37ca12d213da2ff3666c78",
+      "size_bytes": 3150
+    },
+    {
+      "relative_path": "src/hermes_installer/authority/installer_release.py",
+      "sha256": "aceb07d75a0723ae7abc80aba68aa544056ff9eec49885b73ca0af7190a3780e",
+      "size_bytes": 80261
+    },
+    {
+      "relative_path": "src/hermes_installer/root_setup.py",
+      "sha256": "5bd49b6e0105d65d342302df953ed41f6ab0f0edd2bb90d7e7c2b4b4ada30563",
+      "size_bytes": 62517
+    },
+    {
+      "relative_path": "src/hermes_installer/authority/installer_release_build.py",
+      "sha256": "6355198dd122046469b7aba2d9c02ffae43fc17dd3b7263c1e782b560f06b12f",
+      "size_bytes": 258915
+    }
+  ],
+  "source_tree": "74dca3566f212e185cbdada7a2d401cf0d63f6e9",
+  "deployment_receipt_sha256": "4fb20b47f759986696cb23ee9752c04a08a91e43bbc0025990c1b14062f5ee9e",
+  "claim_limit": "No update acceptance, no execution of old verifier by Sol, no instance-specific runtime trustpins; root target read-only evidence and independently inspected exactGit source support schema only."
+}

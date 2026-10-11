@@ -31,7 +31,7 @@ from .application_runtime_preparation import (
     inspect_reviewed_backend_wheel,
 )
 
-_POLICY_PATH = "plans/amendments/2026-10-10-pep517-backend-source-closure-v152/application-pep517-backend-source-table-v1.json"
+_POLICY_PATH = "contracts/source-tables/application-pep517-backend-source-table-v1.json"
 _POLICY_BYTES = 15_907
 _MAX_WHEEL_BYTES = 1_048_576
 _MAX_TTL = 1800.0

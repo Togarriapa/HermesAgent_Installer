@@ -45,6 +45,7 @@ from .application_effect_source_catalog import (
     APPLICATION_EFFECT_SOURCE_CATALOG_PATH, APPLICATION_EFFECT_SOURCE_CATALOG_SHA256,
     APPLICATION_EFFECT_SOURCE_CATALOG_SIZE,
 )
+from .contract_set import CONTRACT_SET_PATH, ContractSetError, verify_contract_set
 from .installer_release_roles import NETWORK_STARTUP_HELPER, RELEASE_MEMBER_ROLES
 
 
@@ -56,38 +57,37 @@ BASELINE_TAG = "hermes-installer-plan-2026-10-09-v1"
 BASELINE_TAG_OBJECT = "c47c90cf2e0a6b1cd5779257fdcba9e487ee08f8"
 BASELINE_COMMIT = "653ac5fbc7a02613c9951859a7d794599603459b"
 BASELINE_TREE_SHA256 = "039a6ab93f6bd44d80df01e99368c24c4348624305b6f4d17816eed25a167ade"
-PLAN_TEMPLATE_PATH = "plans/amendments/2026-10-10-closed-root-plan-template-selection-v81/root-setup-plan-template-v1.json"
+PLAN_TEMPLATE_PATH = "contracts/templates/root-setup-plan-template-v1.json"
 PLAN_TEMPLATE_ID = "installer-root-setup-plan-template-v1"
 PLAN_TEMPLATE_SHA256 = "210114d336b54ec86b40861a1d808508db48d20c9ecfb0a20b30049b2e4f84f5"
 PLAN_TEMPLATE_BYTES = 920
-COMPILER_TEMPLATE_PATH = "plans/amendments/2026-10-09-closed-bootstrap-compiler-template-v30/bootstrap-compiler-template-v1.json"
+COMPILER_TEMPLATE_PATH = "contracts/templates/bootstrap-compiler-template-v1.json"
 COMPILER_TEMPLATE_ID = "installer-bootstrap-compiler-template-v1"
 COMPILER_TEMPLATE_SHA256 = "27854f8f8c67ce42832f020dbfd96512607e39576b27e484598ff397cb9432e5"
 COMPILER_TEMPLATE_BYTES = 4281
-IDENTITY_TEMPLATE_PATH = "plans/amendments/2026-10-09-authentik-template-actor-api-v49/authentik-policy-template-v1.json"
+IDENTITY_TEMPLATE_PATH = "contracts/policies/authentik-policy-template-v1.json"
 IDENTITY_TEMPLATE_ID = "installer-authentik-policy-template-v1"
 IDENTITY_TEMPLATE_SHA256 = "617f78fc4a692de6a22dd69456fd92b874c9bc82e0869f3817910c953bd2ceb8"
 IDENTITY_TEMPLATE_BYTES = 261
-PREPARED_BASE_TEMPLATE_PATH = "plans/amendments/2026-10-10-prepared-base-reader-release-manifest-v63/prepared-authority-base-template-v1.json"
+PREPARED_BASE_TEMPLATE_PATH = "contracts/templates/prepared-authority-base-template-v1.json"
 PREPARED_BASE_TEMPLATE_ID = "installer-prepared-authority-base-template-v1"
 PREPARED_BASE_TEMPLATE_SHA256 = "da20ce244bbbc771dfaf463d8ce8914d87b6eb9898228952a55681e1aa6fb953"
 PREPARED_BASE_TEMPLATE_BYTES = 369
-RECEIPT_BINDINGS_TEMPLATE_PATH = "plans/amendments/2026-10-10-literal-bootstrap-receipt-bindings-v72/bootstrap-receipt-bindings-template-v1.json"
+RECEIPT_BINDINGS_TEMPLATE_PATH = "contracts/templates/bootstrap-receipt-bindings-template-v1.json"
 RECEIPT_BINDINGS_TEMPLATE_ID = "installer-bootstrap-receipt-bindings-template-v1"
 RECEIPT_BINDINGS_TEMPLATE_SHA256 = "2036e9443b8c1c085cf7c90a4eb26c162f7d787f030cd759e35d92ca17b3e609"
 RECEIPT_BINDINGS_TEMPLATE_BYTES = 10_195
-COMPOSIO_POLICY_TEMPLATE_PATH = "plans/amendments/2026-10-10-prepared-base-reader-release-manifest-v63/composio-whatsapp-catalog-read-policy-v1.json"
+COMPOSIO_POLICY_TEMPLATE_PATH = "contracts/policies/composio-whatsapp-catalog-read-policy-v1.json"
 COMPOSIO_POLICY_TEMPLATE_ID = "installer-composio-whatsapp-catalog-read-policy-v1"
 COMPOSIO_POLICY_TEMPLATE_SHA256 = "319076116a060e371c10886e5c2cfea274ed4d985aa03f5e66a4f611f949cfc5"
 COMPOSIO_POLICY_TEMPLATE_BYTES = 528
 EXISTING_MODEL_STORE_TEMPLATE_PATH = (
-    "plans/amendments/2026-10-10-existing-model-store-selection-source-v139/"
-    "existing-model-store-root-template-v1.json")
+    "contracts/templates/existing-model-store-root-template-v1.json")
 EXISTING_MODEL_STORE_TEMPLATE_ID = "installer-existing-model-store-root-template-v1"
 EXISTING_MODEL_STORE_TEMPLATE_SHA256 = "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f"
 EXISTING_MODEL_STORE_TEMPLATE_BYTES = 712
 PRIVATE_LOOPBACK_POLICY_TEMPLATE_PATH = (
-    "plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97/"
+    "contracts/policies/"
     "private-loopback-policy-v1.json")
 PRIVATE_LOOPBACK_POLICY_TEMPLATE_ID = "installer-private-loopback-nft-v1"
 PRIVATE_LOOPBACK_POLICY_TEMPLATE_SHA256 = "77a48f3a31f115693b04245146158e3c2467f297ff14746a52375850d76237cc"
@@ -242,7 +242,7 @@ REVIEWED_HEALTH_FIXTURES = (
     ("src/hermes_installer/native_health_fixture/recipe.json", "fixtures/native-health/recipe.json",
      "ba7486d3070f725d125ed0e8c42aa986969bc8a597c2473024705d6fd8ac05a7", 845),
 )
-REVIEWED_CAPABILITY_MAP_PATH = "plans/amendments/2026-10-10-reviewed-native-capability-selection-v91/reviewed-native-capability-map-v1.json"
+REVIEWED_CAPABILITY_MAP_PATH = "contracts/policies/reviewed-native-capability-map-v1.json"
 REVIEWED_CAPABILITY_MAP_ID = "installer-reviewed-native-capability-map-v1"
 REVIEWED_CAPABILITY_MAP_SHA256 = "41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565"
 REVIEWED_CAPABILITY_MAP_BYTES = 2026
@@ -513,12 +513,6 @@ class RootInstallerDistributionRegistry:
             baseline_commit = self._git(["-C", str(work), "rev-parse", f"{BASELINE_TAG}^{{commit}}"]).decode("ascii").strip()
             if tag_object != BASELINE_TAG_OBJECT or baseline_commit != BASELINE_COMMIT:
                 raise InstallerReleaseBuildError("frozen baseline tag identity differs from the protected plan")
-            tagged_baseline_tree = self._git(["-C", str(work), "rev-parse",
-                                               f"{BASELINE_COMMIT}:{BASELINE_DIRECTORY}"]).decode("ascii").strip()
-            selected_baseline_tree = self._git(["-C", str(work), "rev-parse",
-                                                 f"{candidate_git_sha}:{BASELINE_DIRECTORY}"]).decode("ascii").strip()
-            if tagged_baseline_tree != selected_baseline_tree:
-                raise InstallerReleaseBuildError("selected candidate changed the frozen baseline Git tree")
             self._git(["-C", str(work), "checkout", "--detach", candidate_git_sha])
             actual = self._git(["-C", str(work), "rev-parse", "HEAD"]).decode("ascii").strip()
             tree = self._git(["-C", str(work), "rev-parse", "HEAD^{tree}"]).decode("ascii").strip()
@@ -539,10 +533,20 @@ class RootInstallerDistributionRegistry:
             try:
                 rows = _inspect_source_tree(root_fd, files)
                 source_digest = _manifest_digest({row.relative_path: row.sha256 for row in rows})
-                baseline_digest = _verify_frozen_baseline(root_fd, rows)
-                if baseline_digest != BASELINE_TREE_SHA256:
-                    raise InstallerReleaseBuildError("complete frozen baseline digest differs from the pinned v1 tree")
-                amendment_digest = _amendment_digest(rows)
+                if any(row.relative_path == CONTRACT_SET_PATH for row in rows):
+                    # Keep the established receipt field names as stable typed
+                    # join keys: these values now bind the exact current
+                    # contract manifest and its complete payload set.
+                    baseline_digest, amendment_digest = _current_contract_set_digests(root_fd, rows)
+                else:
+                    # Versioned reader for source CAS objects created by the
+                    # predecessor release format. Current candidates must
+                    # carry contracts/contract-set-v1.json instead.
+                    baseline_digest = _verify_frozen_baseline(root_fd, rows)
+                    if baseline_digest != BASELINE_TREE_SHA256:
+                        raise InstallerReleaseBuildError(
+                            "legacy predecessor source CAS frozen baseline digest differs")
+                    amendment_digest = _amendment_digest(rows)
                 catalog_row = next((row for row in rows if row.relative_path == CATALOG_SOURCE_PATH), None)
                 if catalog_row is None:
                     raise InstallerReleaseBuildError("candidate source artifact catalog is missing")
@@ -3229,20 +3233,18 @@ class RootInstalledReleaseBuilder:
         helper_row = self._stage_network_startup_helper(source, output_fd)
         if helper_row is not None:
             staged.append(helper_row)
-        # The v175 descriptor selects the exact setup-only effect source rows.
+        # The stable descriptor selects the exact setup-only effect source rows.
         effect_catalog = source_files.get(APPLICATION_EFFECT_SOURCE_CATALOG_PATH)
         if (effect_catalog is None or effect_catalog.sha256 != APPLICATION_EFFECT_SOURCE_CATALOG_SHA256
                 or effect_catalog.size_bytes != APPLICATION_EFFECT_SOURCE_CATALOG_SIZE):
             raise InstallerReleaseBuildError("application effect source descriptor differs from its fixed pin")
-        # Include exact full frozen baseline and selected amendment bytes under stable roots.
+        # The current release contains only the manifest-bound contract set.
+        # Historical baseline/amendment payloads are staged only when reading
+        # a previously created predecessor CAS object.
         for row in source.files:
-            if row.relative_path.startswith(BASELINE_DIRECTORY + "/"):
+            if row.relative_path.startswith("contracts/"):
                 target = row.relative_path
-                self._copy_source(source, output_fd, row.relative_path, target, ("baseline",))
-                staged.append(self._last_output_row)
-            elif row.relative_path.startswith("plans/amendments/"):
-                target = "plans/" + row.relative_path.removeprefix("plans/")
-                self._copy_source(source, output_fd, row.relative_path, target, ("amendment",))
+                self._copy_source(source, output_fd, row.relative_path, target, ("contract",))
                 staged.append(self._last_output_row)
         staged.extend(self._stage_actor_module_rows(source, output_fd, actor.module_rows))
         staged_paths = {row[0] for row in staged}
@@ -3642,6 +3644,24 @@ def _amendment_digest(rows: tuple[DistributionFile, ...]) -> str:
             or template.size_bytes != PLAN_TEMPLATE_BYTES):
         raise InstallerReleaseBuildError("root setup plan template differs from its reviewed v53 bytes")
     return _manifest_digest(selected)
+
+
+def _current_contract_set_digests(
+        root_fd: int, rows: tuple[DistributionFile, ...]) -> tuple[str, str]:
+    manifest_row = next((row for row in rows if row.relative_path == CONTRACT_SET_PATH), None)
+    if manifest_row is None:
+        raise InstallerReleaseBuildError("current runtime contract-set manifest is missing")
+    try:
+        raw = _read_relative(root_fd, CONTRACT_SET_PATH, 4 * 1024 * 1024)
+        available = {
+            row.relative_path: (row.sha256, row.size_bytes)
+            for row in rows if row.relative_path.startswith("contracts/")
+            and row.relative_path != CONTRACT_SET_PATH
+        }
+        return verify_contract_set(raw, available)
+    except (OSError, ValueError, ContractSetError):
+        raise InstallerReleaseBuildError(
+            "current runtime contract files differ from their complete source manifest") from None
 
 
 def _validate_source_catalog(raw: bytes) -> Mapping[str, Any]:

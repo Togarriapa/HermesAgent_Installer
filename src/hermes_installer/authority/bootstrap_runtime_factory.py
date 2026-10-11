@@ -122,13 +122,13 @@ _XPRA_TRANSFORM_MODULE = (
 )
 _PREPARED_BUILD_TEMPLATE = (
     "installer-prepared-build-service-template-v1",
-    "plans/amendments/2026-10-10-prepared-build-service-selection-v115/prepared-build-service-template-v1.json",
+    "contracts/templates/prepared-build-service-template-v1.json",
     "0d98bdabf27185d769f55de12e9242d5286e07d11e5d62369c2eeedf1fa4b967",
     1235,
 )
 _PREPARED_APPLICATION_BUILD_TEMPLATE = (
     "installer-prepared-application-build-service-template-v1",
-    "plans/amendments/2026-10-10-application-offline-runtime-build-v132/prepared-application-build-service-template-v1.json",
+    "contracts/templates/prepared-application-build-service-template-v1.json",
     "8cc3bbce52901c5f05bab99622d77d9d4d44f4a5fe27eb636e3fe8e23beab0d9",
     1498,
     "prepared-build-service-template",
@@ -3557,7 +3557,7 @@ class RootInitialCompilationRegistry:
             plan = files[self.release.selected_plan_artifact_id]
             catalog = files[_CATALOG_ID]
             if (template.sha256 != "27854f8f8c67ce42832f020dbfd96512607e39576b27e484598ff397cb9432e5"
-                    or template.relative_path != "plans/amendments/2026-10-09-closed-bootstrap-compiler-template-v30/bootstrap-compiler-template-v1.json"
+                    or template.relative_path != "contracts/templates/bootstrap-compiler-template-v1.json"
                     or plan.sha256 != self.release.selected_plan_sha256
                     or "plan" not in plan.roles or "artifact-catalog" not in catalog.roles):
                 raise BootstrapEnrollmentPending("installed release does not include the exact selected compiler inputs")
@@ -9205,7 +9205,7 @@ class RootBootstrapSession:
             self) -> tuple[RootPreparedReleaseMemberReceipt, ...]:
         """Read the three v158 profiles and exact v171 discovery profile.
 
-        These amendment files define capture validation limits and source IDs;
+        These contract files define capture validation limits and source IDs;
         the receipts prove only their selected-release bytes. They do not
         create action, observer, or process-role authority.
         """
@@ -9218,16 +9218,16 @@ class RootBootstrapSession:
                 "native capture profiles require current empty prepared custody")
         pins = (
             ("installer-native-input-capture-profile-v1",
-             "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-input-capture-profile-v1.json",
+             "contracts/capture-profiles/installer-native-input-capture-profile-v1.json",
              "bfdf7175ee1df681b60ab4b707ffe9d314d8cc7fdc5a30a56e19d2cb1372c1d0", 837),
             ("installer-native-tool-result-capture-profile-v1",
-             "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-tool-result-capture-profile-v1.json",
+             "contracts/capture-profiles/installer-native-tool-result-capture-profile-v1.json",
              "470fcc43b3d268a6594e0d6bdf2c635ba3bf4e6cd0cfe2dfcd57840d7bee105a", 984),
             ("installer-native-provider-result-capture-profile-v1",
-             "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-provider-result-capture-profile-v1.json",
+             "contracts/capture-profiles/installer-native-provider-result-capture-profile-v1.json",
              "a2c6ae9243a7854f114ed492afd395d867f02ed58d50a3f1692fe0ea7efbd8eb", 993),
             ("installer-native-mcp-discovery-capture-profile-v171",
-             "plans/amendments/2026-10-10-mcp-discovery-capture-v171/mcp-discovery-capture-v1.json",
+             "contracts/capture-profiles/mcp-discovery-capture-v1.json",
              "bf9b3b649bf995d5743a38597415ef003928e1d67dc337ab5c7f3e7ec9643e8a", 4601),
         )
         release, actor = self._factory._release, self._factory._actor
@@ -9238,9 +9238,9 @@ class RootBootstrapSession:
             rows = [row for row in release.files if row.artifact_id == artifact_id]
             if (artifact_id not in plan.allowed_artifact_ids or len(rows) != 1
                     or rows[0].relative_path != relative_path or rows[0].sha256 != digest
-                    or rows[0].size_bytes != size_bytes or "amendment" not in rows[0].roles):
+                    or rows[0].size_bytes != size_bytes or rows[0].roles != ("contract",)):
                 raise BootstrapEnrollmentPending(
-                    "native capture profile is not uniquely pinned as a v158 release amendment")
+                    "native capture profile is not uniquely pinned as a current release contract")
             prior = next((item for item in self._prepared_release_file_receipts.values()
                           if item.artifact_id == artifact_id
                           and item.prepared_generation_id == prepared.generation_id), None)
@@ -9250,9 +9250,9 @@ class RootBootstrapSession:
                     artifact_id, relative_path, digest, size_bytes,
                     release.release_commit, release.deployment_receipt_sha256,
                     handle, self._handle.session_id, prepared.generation_id,
-                    _PREPARED_RELEASE_MEMBER_SEAL, self._seal, self, "amendment")
+                    _PREPARED_RELEASE_MEMBER_SEAL, self._seal, self, "contract")
                 self._prepared_release_file_receipts[handle] = prior
-            if prior.role != "amendment":
+            if prior.role != "contract":
                 raise BootstrapEnrollmentPending("capture profile receipt has a different release role")
             prior.read_current()
             output.append(prior)
@@ -10500,7 +10500,7 @@ class RootBootstrapSession:
         source_module_ok = (row is not None and row.artifact_id in worker_source_ids
                             and row.roles == ("source-module",) and row.mode == 0o444)
         if (row is None or row.artifact_id not in plan.allowed_artifact_ids
-                or not (source_module_ok or row.roles == ("amendment",))
+                or not (source_module_ok or row.roles == ("contract",))
                 or row.relative_path != receipt.relative_path
                 or row.sha256 != receipt.sha256 or row.size_bytes != receipt.size_bytes
                 or release.release_commit != receipt.release_commit

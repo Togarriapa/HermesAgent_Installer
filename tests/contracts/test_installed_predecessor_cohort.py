@@ -14,8 +14,7 @@ from hermes_installer.authority import installer_release as release
 class InstalledPredecessorCohortTests(unittest.TestCase):
     def test_compiled_historical_data_matches_the_reviewed_append_only_artifact(self) -> None:
         artifact = Path(__file__).resolve().parents[2] / (
-            "plans/amendments/2026-10-10-version-aware-predecessor-verification-v249/"
-            "cc81-reviewed-predecessor-cohort-v1.json")
+            "contracts/compatibility/cc81-reviewed-predecessor-cohort-v1.json")
         raw = artifact.read_bytes()
         self.assertEqual(len(raw), 29_545)
         self.assertEqual(hashlib.sha256(raw).hexdigest(), release._CC81_COHORT_SHA256)

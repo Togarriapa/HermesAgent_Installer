@@ -1,0 +1,172 @@
+{
+  "schema": 1,
+  "requirements": [
+    "SK-T104",
+    "SK-T107",
+    "SK-T130",
+    "SK-T132"
+  ],
+  "why": "Actual functional effect assets are separate installer-owned sources, not upstream app generation or ABI probe receipts. Hyperframes requires three fixed managed stages rather than generic max_steps=1.",
+  "source_checkout": "Measured committed source assets in /private/tmp/hermes-app-execution-luna; original source history and exact member bytes govern, no candidate/runtime acceptance inferred.",
+  "members": [
+    {
+      "artifact_id": "installer-application-effect-graphify-entrypoint-v1",
+      "source_path": "src/hermes_installer/components/probes/graphify_fixture/entrypoint.py",
+      "release_member_path": "src/hermes_installer/components/probes/graphify_fixture/entrypoint.py",
+      "role": "source-module",
+      "sha256": "db0e49e0878f0406d9dba29c9f9860bee2bc7260e59c9ac7e20ecf88b5a03378",
+      "size_bytes": 153,
+      "purpose": "qualification-effect source only; not runtime ABI/import-origin probe or upstream application generation",
+      "source_commit": "947f67041ac0648520dfe8ad794441b476cf61fb"
+    },
+    {
+      "artifact_id": "installer-application-effect-graphify-helper-v1",
+      "source_path": "src/hermes_installer/components/probes/graphify_fixture/helper.py",
+      "release_member_path": "src/hermes_installer/components/probes/graphify_fixture/helper.py",
+      "role": "source-module",
+      "sha256": "acc16fab89297ad11006519103d1033d611b1315529b5614098a3d60c80c2f74",
+      "size_bytes": 155,
+      "purpose": "qualification-effect source only; not runtime ABI/import-origin probe or upstream application generation",
+      "source_commit": "947f67041ac0648520dfe8ad794441b476cf61fb"
+    },
+    {
+      "artifact_id": "installer-application-effect-graphify-result-validator-v1",
+      "source_path": "src/hermes_installer/components/probes/graphify_result.py",
+      "release_member_path": "src/hermes_installer/components/probes/graphify_result.py",
+      "role": "source-module",
+      "sha256": "f3f0b44d9d9d707daceee4d563be1d028080ec661c11a29e85e1f38cda0901e9",
+      "size_bytes": 6481,
+      "purpose": "qualification-effect source only; not runtime ABI/import-origin probe or upstream application generation",
+      "source_commit": "947f67041ac0648520dfe8ad794441b476cf61fb"
+    },
+    {
+      "artifact_id": "installer-application-effect-graphify-result-schema-v1",
+      "source_path": "src/hermes_installer/components/probes/graphify_probe_result.schema.json",
+      "release_member_path": "src/hermes_installer/components/probes/graphify_probe_result.schema.json",
+      "role": "application-effect-fixture",
+      "sha256": "0649acf5c5e96c629b73e884683df7fe2f98e1fead448c1548f52c22cdd18136",
+      "size_bytes": 1157,
+      "purpose": "qualification-effect source only; not runtime ABI/import-origin probe or upstream application generation",
+      "source_commit": "947f67041ac0648520dfe8ad794441b476cf61fb"
+    },
+    {
+      "artifact_id": "installer-application-effect-browser-use-probe-v1",
+      "source_path": "src/hermes_installer/components/browser_use_qualification_probe.py",
+      "release_member_path": "src/hermes_installer/components/browser_use_qualification_probe.py",
+      "role": "source-module",
+      "sha256": "2f939a6cd82f73f4e7474ed7f0c412e9a22fb65df01e7765c1a87cf675a52e58",
+      "size_bytes": 4404,
+      "purpose": "qualification-effect source only; not runtime ABI/import-origin probe or upstream application generation",
+      "source_commit": "947f67041ac0648520dfe8ad794441b476cf61fb"
+    },
+    {
+      "artifact_id": "installer-application-effect-browser-use-result-validator-v1",
+      "source_path": "src/hermes_installer/components/browser_use.py",
+      "release_member_path": "src/hermes_installer/components/browser_use.py",
+      "role": "source-module",
+      "sha256": "2e27c93d701de22792fae24ddb097d3d0dd7424dd5a25ce510ee75fecc90740f",
+      "size_bytes": 6531,
+      "purpose": "qualification-effect source only; not runtime ABI/import-origin probe or upstream application generation",
+      "source_commit": "947f67041ac0648520dfe8ad794441b476cf61fb"
+    },
+    {
+      "artifact_id": "installer-application-effect-scrapegraph-probe-v1",
+      "source_path": "src/hermes_installer/components/probes/scrapegraph_ai_probe.py",
+      "release_member_path": "src/hermes_installer/components/probes/scrapegraph_ai_probe.py",
+      "role": "source-module",
+      "sha256": "30974c44d2bd9e60847bcad6ba3849cf8b2a262f8c08f79b832a9bba723ed6ab",
+      "size_bytes": 5446,
+      "purpose": "qualification-effect source only; not runtime ABI/import-origin probe or upstream application generation",
+      "source_commit": "947f67041ac0648520dfe8ad794441b476cf61fb"
+    },
+    {
+      "artifact_id": "installer-application-effect-scrapegraph-result-validator-v1",
+      "source_path": "src/hermes_installer/components/scrapegraph_ai.py",
+      "release_member_path": "src/hermes_installer/components/scrapegraph_ai.py",
+      "role": "source-module",
+      "sha256": "e2ac08afa32b9940705403eb9e2af35b08e21cc6f61ed6731438a6c1c1c98dcb",
+      "size_bytes": 11891,
+      "purpose": "qualification-effect source only; not runtime ABI/import-origin probe or upstream application generation",
+      "source_commit": "947f67041ac0648520dfe8ad794441b476cf61fb"
+    },
+    {
+      "artifact_id": "installer-application-effect-hyperframes-probe-v1",
+      "source_path": "src/hermes_installer/components/probes/hyperframes_probe.py",
+      "release_member_path": "src/hermes_installer/components/probes/hyperframes_probe.py",
+      "role": "source-module",
+      "sha256": "f4a63a90b4467ae2db4fcdf7d874bc8f6b75e6b1f02910e326e75fcb49d498aa",
+      "size_bytes": 12692,
+      "purpose": "qualification-effect source only; not runtime ABI/import-origin probe or upstream application generation",
+      "source_commit": "947f67041ac0648520dfe8ad794441b476cf61fb"
+    },
+    {
+      "artifact_id": "installer-application-effect-hyperframes-composition-v1",
+      "source_path": "src/hermes_installer/components/probes/hyperframes_fixture/composition.html",
+      "release_member_path": "src/hermes_installer/components/probes/hyperframes_fixture/composition.html",
+      "role": "application-effect-fixture",
+      "sha256": "fc20eaf85de0fe9bbc63bf4b315892a4fb0934d19819eb8b9450fa5bb7ed6052",
+      "size_bytes": 707,
+      "purpose": "qualification-effect source only; not runtime ABI/import-origin probe or upstream application generation",
+      "source_commit": "947f67041ac0648520dfe8ad794441b476cf61fb"
+    }
+  ],
+  "release_semantics": "Source-only prepared member receipts over exact held release bytes; Python source-module is not a root actor import receipt or worker loaded proof. Root-imported validator, if actually loaded by installed actor, separately requires normal installer-module identity at lib/python and identical reviewed bytes. No fabricated import or runtime proof from catalog entry. Source-only release role permits only this finite member table, not arbitrary executable source.",
+  "profiles": [
+    {
+      "workflow_id": "qualify-graphify-v1",
+      "probe_recipe_id": "application-graphify-qualification-effect-v1",
+      "max_steps": 1,
+      "stage_ids": [
+        "graphify-local-extraction-v1"
+      ],
+      "semantics": "Two fixed owned Python source nodes and one extracted imports_from edge; strict graph schema; kernel network denied. Actual upstream graphify must produce semantic graph, not fixture JSON substituted."
+    },
+    {
+      "workflow_id": "qualify-browser-use-v1",
+      "probe_recipe_id": "application-browser-use-qualification-effect-v1",
+      "max_steps": 1,
+      "stage_ids": [
+        "browser-use-owned-loopback-interaction-v1"
+      ],
+      "semantics": "Actual selected sandboxed browser navigates owned 127.0.0.1 fixture, verifies title/ready, clicks fixed action and verifies interaction-ok, bounded PNG <=8MiB. Root retains browser descendant cleanup; no provider/cloud/external URL."
+    },
+    {
+      "workflow_id": "qualify-scrapegraph-v1",
+      "probe_recipe_id": "application-scrapegraph-qualification-effect-v1",
+      "max_steps": 1,
+      "stage_ids": [
+        "scrapegraph-owned-local-fetch-mock-answer-v1"
+      ],
+      "semantics": "Actual pinned SmartScraperGraph local fetch and GenerateAnswer with explicit deterministic in-process fixture model mock, no provider/model/GLM acceptance. Exact Cedar Mug/$18.50 structured result, fixed local source origin joined to observed environment; kernel network denied and telemetry false."
+    },
+    {
+      "workflow_id": "qualify-hyperframes-v1",
+      "probe_recipe_id": "application-hyperframes-qualification-effect-v1",
+      "max_steps": 3,
+      "stage_ids": [
+        "hyperframes-owned-render-v1",
+        "hyperframes-owned-ffprobe-v1",
+        "hyperframes-owned-framehash-v1"
+      ],
+      "semantics": "Ordered fixed render via application_handlers.build_hyperframes_render_fixture, ffprobe via build_hyperframes_probe_invocation, framehash via hyperframes_probe.build_hyperframes_framehash_invocation; same owned output inode/artifact. H264 320x180 yuv420p24fps48frames2sec, frames12/36 distinct, output<=10MiB, no external resources/network/provider. Local FFmpeg-only evidence does not prove Hyperframes renderer/Node/Bun/browser acceptance."
+    }
+  ],
+  "managed_admission": "RootApplicationQualificationRequest and effect admission derive exact max_steps/stage IDs from selected held recipe and workflow; caller cannot choose commands/count/stages. Each stage uses actual root-selected process.start recipe/grant, exact held executable/source/runtime/fixture/output/current controller/namespace and original overall deadline; stage grants are one-use and linked to request+prior terminal. Stage completion requires actual terminal/output/source facts and full bounded descendant cleanup. No arbitrary command dispatcher or invented native app action mapping. Existing application.dispatch operational row checks unchanged.",
+  "browser_fixture": {
+    "source_module": "hermes_installer.authority.application_workload_execution",
+    "source_field": "RootOwnedApplicationFixtureServer._BODY",
+    "size_bytes": 258,
+    "sha256": "0bdda9ea71bfd5b16b953136e8d64717bc0c93217ab0458f2a646623503c0dd8",
+    "rule": "Actual held root-loaded module receipt plus exact produced body digest and owned loopback fixture receipt. No invented standalone file/artifact path; source owner may provide a separately committed exact fixture file in a later reviewed source row."
+  },
+  "missing_source": "ScrapeGraph owned HTML must be actual held separately verified fixture source (probe expects SHA d84bb550cc5d5d43ce04b7172d6df3e32925f7ff85f98b746b58d60f803b9cdf); no catalog row or positive receipt is fabricated here. Actual app ABI probe, offline environment closure, renderer/browser/native prerequisites remain distinct required proofs.",
+  "source_api": "RootApplicationProbeSourceCatalog consumes exact selected release/catalog member receipts keyed by above artifact IDs and fixed probe_recipe_id; verify current held bytes/closure/source history before returning selection. Source receipt is not effect result. Root effect result registry retains actual managed terminal/member/output semantic evidence independently.",
+  "tasks": [
+    {
+      "id": "SK-T175.1",
+      "owner": "broker/factory/application execution/wiring/custody",
+      "work": "Enroll exact finite effect source members, retain current prepared source receipts and fixed stage-count admission, then observe actual functional effects/cleanup. Keep ABI and model/provider acceptance separate."
+    }
+  ],
+  "acceptance": "All original obligations/AC remain open. No full application/Pi/runtime acceptance; baseline unchanged."
+}

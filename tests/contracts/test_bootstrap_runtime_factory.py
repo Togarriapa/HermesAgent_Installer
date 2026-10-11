@@ -533,7 +533,7 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         with self.assertRaisesRegex(BootstrapEnrollmentPending, "current runnable role"):
             session._resolve_current_runtime_receipt("official-pm-runtime", "opaque-cas-handle")
 
-    def test_capture_profile_members_remain_pending_when_release_lacks_exact_amendments(self):
+    def test_capture_profile_members_remain_pending_when_release_lacks_exact_contracts(self):
         session = object.__new__(RootBootstrapSession)
         session._check_live = lambda: None
         session._refresh_authorization = lambda: None
@@ -554,13 +554,13 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         from hermes_installer.authority.bootstrap_runtime_factory import _PREPARED_RELEASE_MEMBER_SEAL
 
         with tempfile.NamedTemporaryFile() as file:
-            raw = b"reviewed amendment bytes"
+            raw = b"reviewed contract bytes"
             file.write(raw)
             file.flush()
             digest = hashlib.sha256(raw).hexdigest()
             release = SimpleNamespace(
-                files=[SimpleNamespace(artifact_id="capture-profile", roles=("amendment",),
-                                       relative_path="plans/capture.json", sha256=digest,
+                files=[SimpleNamespace(artifact_id="capture-profile", roles=("contract",),
+                                       relative_path="contracts/capture-profile.json", sha256=digest,
                                        size_bytes=len(raw))],
                 release_commit="commit", deployment_receipt_sha256="d" * 64,
                 open_file=lambda _artifact_id: os.open(file.name, os.O_RDONLY))
@@ -577,7 +577,7 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
             session._seal = "session-seal"
             session._prepared_release_file_receipts = {}
             receipt = RootPreparedReleaseMemberReceipt(
-                "capture-profile", "plans/capture.json", digest, len(raw), "commit",
+                "capture-profile", "contracts/capture-profile.json", digest, len(raw), "commit",
                 "d" * 64, "receipt-handle", "session", "g",
                 _PREPARED_RELEASE_MEMBER_SEAL, "session-seal", session)
             session._prepared_release_file_receipts[receipt.source_receipt_handle] = receipt
@@ -696,8 +696,7 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
     def test_reviewed_capability_map_resolves_only_exact_release_pin(self):
         import hermes_installer.authority.bootstrap_runtime_factory as factory_module
 
-        raw = Path("plans/amendments/2026-10-10-reviewed-native-capability-selection-v91/"
-                   "reviewed-native-capability-map-v1.json").read_bytes()
+        raw = Path("contracts/policies/reviewed-native-capability-map-v1.json").read_bytes()
         session = SimpleNamespace(compilation_session_handle="a" * 64)
         registry = object.__new__(RootInitialCompilationRegistry)
         registry._seal = "test-registry-seal"
@@ -726,8 +725,7 @@ class RootBootstrapRuntimeFactoryContracts(unittest.TestCase):
         import hermes_installer.authority.bootstrap_runtime_factory as factory_module
         from hermes_installer.authority.bootstrap_enrollment import RootSetupSessionHandle
 
-        raw = Path("plans/amendments/2026-10-10-reviewed-native-capability-selection-v91/"
-                   "reviewed-native-capability-map-v1.json").read_bytes()
+        raw = Path("contracts/policies/reviewed-native-capability-map-v1.json").read_bytes()
         handle = RootSetupSessionHandle("c" * 64, "fixture-session-seal")
         authorization = SimpleNamespace(transaction_handle="d" * 64, plan_digest="e" * 64)
         live = object()

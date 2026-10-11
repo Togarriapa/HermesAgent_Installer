@@ -17,7 +17,7 @@ from hermes_installer.authority.application_backend_sources import (
 class BackendPolicyContractTests(unittest.TestCase):
     def test_held_policy_source_table_has_exact_digest_and_finite_app_closures(self):
         path = Path(
-            "plans/amendments/2026-10-10-pep517-backend-source-closure-v152/"
+            "contracts/source-tables/"
             "application-pep517-backend-source-table-v1.json")
         payload = path.read_bytes()
         self.assertEqual(len(payload), _POLICY_BYTES)
@@ -32,7 +32,7 @@ class BackendPolicyContractTests(unittest.TestCase):
 
     def test_policy_row_tampering_and_unpinned_wheel_origin_are_rejected(self):
         path = Path(
-            "plans/amendments/2026-10-10-pep517-backend-source-closure-v152/"
+            "contracts/source-tables/"
             "application-pep517-backend-source-table-v1.json")
         table = json.loads(path.read_bytes())
         table["packages"][0]["url"] = "https://evil.example/packages/wheel.whl"

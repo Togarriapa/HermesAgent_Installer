@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_exact_reviewed_glm_manifest_inventory() -> None:
-    manifest = ArtifactManifest.from_metadata(ROOT / "planning/glm52-artifact-metadata.json")
+    manifest = ArtifactManifest.from_metadata(ROOT / "contracts/model-sources/glm52-artifact-metadata.json")
     assert manifest.model_id == MODEL_ID
     assert manifest.revision == MODEL_REVISION
     assert len(manifest.files) == 149

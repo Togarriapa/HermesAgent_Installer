@@ -14,13 +14,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_captured_registrations_match_actual_source_inventory_without_authority_claims():
-    inventory_path = (ROOT / "plans/amendments/2026-10-10-native-registration-projection-v99"
-                      / "source-registration-inventory.json")
+    inventory_path = ROOT / "contracts/schemas/source-registration-inventory.json"
     inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
     assert inventory["operational_projection"] is False
     assert inventory["registration_count"] == 42
     source_by_name = {row["native_tool_name"]: row for row in inventory["registrations"]}
-    contract = json.loads((ROOT / "planning/native-package-binding-contract.json").read_text())
+    contract = json.loads((ROOT / "contracts/native/native-package-binding-contract.json").read_text())
     current_source_pins = {
         record["relative_path"]: record["sha256"]
         for version in ("registration_source_pin_refinement_v140", "registration_source_pin_refinement_v141")

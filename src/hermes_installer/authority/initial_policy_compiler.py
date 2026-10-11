@@ -480,7 +480,7 @@ class RootFirstStagePolicyCompiler:
 
         _, raw = release_bytes(
             TEMPLATE_ARTIFACT_ID, TEMPLATE_SHA256, TEMPLATE_SIZE_BYTES,
-            "plans/amendments/2026-10-09-closed-bootstrap-compiler-template-v30/bootstrap-compiler-template-v1.json")
+            "contracts/templates/bootstrap-compiler-template-v1.json")
         _, base_raw = release_bytes(
             PREPARED_BASE_TEMPLATE_ARTIFACT_ID, PREPARED_BASE_TEMPLATE_SHA256,
             PREPARED_BASE_TEMPLATE_SIZE_BYTES,

@@ -121,7 +121,7 @@ def test_capture_profile_record_cannot_be_constructed_from_caller_fields() -> No
         "native_policy_selection_handle": "selection",
         "source_definition_receipt_handle": "definition-receipt",
         "artifact_id": "installer-native-input-capture-profile-v1",
-        "relative_path": "plans/amendments/capture-profile.json",
+        "relative_path": "contracts/capture-profiles/installer-native-input-capture-profile-v1.json",
         "sha256": "a" * 64,
         "size_bytes": 100,
         "capture_schema_id": "native-authenticated-input-v1",

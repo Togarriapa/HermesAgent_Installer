@@ -474,7 +474,7 @@ def test_v94_schema_catalog_digests_match_committed_schema_artifacts():
     import hermes_installer.authority.resource_event_issuance as module
 
     root = Path(__file__).parents[2]
-    schema_dir = root / "plans/amendments/2026-10-10-http-audio-observed-event-schemas-v94"
+    schema_dir = root / "contracts/schemas"
     for filename, schema_id in (
             ("channel-http-observed-event-v1.json", "channel-http-observed-event-v1"),
             ("channel-audio-observed-event-v1.json", "channel-audio-observed-event-v1")):

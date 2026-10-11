@@ -1,0 +1,220 @@
+{
+  "files": [
+    {
+      "path": "contracts/capture-profiles/installer-native-input-capture-profile-v1.json",
+      "sha256": "bfdf7175ee1df681b60ab4b707ffe9d314d8cc7fdc5a30a56e19d2cb1372c1d0",
+      "size_bytes": 837
+    },
+    {
+      "path": "contracts/capture-profiles/installer-native-provider-result-capture-profile-v1.json",
+      "sha256": "a2c6ae9243a7854f114ed492afd395d867f02ed58d50a3f1692fe0ea7efbd8eb",
+      "size_bytes": 993
+    },
+    {
+      "path": "contracts/capture-profiles/installer-native-tool-result-capture-profile-v1.json",
+      "sha256": "470fcc43b3d268a6594e0d6bdf2c635ba3bf4e6cd0cfe2dfcd57840d7bee105a",
+      "size_bytes": 984
+    },
+    {
+      "path": "contracts/capture-profiles/mcp-discovery-capture-v1.json",
+      "sha256": "bf9b3b649bf995d5743a38597415ef003928e1d67dc337ab5c7f3e7ec9643e8a",
+      "size_bytes": 4601
+    },
+    {
+      "path": "contracts/compatibility/cc81-reviewed-predecessor-cohort-v1.json",
+      "sha256": "a0dbe6d7711ffd71e9250674e8ed54ff556e784a6653e526e7d12851d771ffbd",
+      "size_bytes": 29263
+    },
+    {
+      "path": "contracts/compatibility/readonly-predecessor-diagnostic.json",
+      "sha256": "4f168cd6e6ca11b39e0b832f496d8285cac7b27f0d719c4578c74231034c0489",
+      "size_bytes": 2285
+    },
+    {
+      "path": "contracts/compatibility/version-aware-predecessor-verification-v1.json",
+      "sha256": "ff84ecd92c6eb1dcc3b1e7eac5a29d723d7409bea098e3a15003c73198633ecf",
+      "size_bytes": 11946
+    },
+    {
+      "path": "contracts/model-sources/glm52-artifact-metadata.json",
+      "sha256": "b42e3fa6fd5c287b95fcda4d370697bd4c0ef226767ddc08fae4e5bebcfecd1a",
+      "size_bytes": 56232
+    },
+    {
+      "path": "contracts/model-sources/glm52-quantized-README.md",
+      "sha256": "85fc4cf947276c376f09ad1226926ebc03eefbb99d184cd05f34412d32d8406b",
+      "size_bytes": 17468
+    },
+    {
+      "path": "contracts/model-sources/glm52-upstream-MIT-LICENSE.txt",
+      "sha256": "f4a18c6ae40b0a8e7d2b7667f52f6e1994e54a46430d2e172b73cb8c9b5eb0d7",
+      "size_bytes": 1065
+    },
+    {
+      "path": "contracts/native/native-package-binding-contract.json",
+      "sha256": "2ad941f97cbdb50d9ec95cd0261a3f84e7469fc490983380be5b237a299599cf",
+      "size_bytes": 234670
+    },
+    {
+      "path": "contracts/native/network-row-wire.json",
+      "sha256": "c6b1e383633b5a3aad139bb71072133d10ad2cde8a6e4358b48bd12ac011f0a5",
+      "size_bytes": 20058
+    },
+    {
+      "path": "contracts/policies/authentik-policy-template-v1.json",
+      "sha256": "617f78fc4a692de6a22dd69456fd92b874c9bc82e0869f3817910c953bd2ceb8",
+      "size_bytes": 261
+    },
+    {
+      "path": "contracts/policies/composio-whatsapp-catalog-read-policy-v1.json",
+      "sha256": "319076116a060e371c10886e5c2cfea274ed4d985aa03f5e66a4f611f949cfc5",
+      "size_bytes": 528
+    },
+    {
+      "path": "contracts/policies/private-loopback-policy-v1.json",
+      "sha256": "77a48f3a31f115693b04245146158e3c2467f297ff14746a52375850d76237cc",
+      "size_bytes": 1482
+    },
+    {
+      "path": "contracts/policies/reviewed-native-capability-map-v1.json",
+      "sha256": "41b00c5d949ae6e460cc28ffc1136d729b15f7d5f61c4618e6fb60b132733565",
+      "size_bytes": 2026
+    },
+    {
+      "path": "contracts/release-source-members-v1.json",
+      "sha256": "3368a769a1619088b560c2f7ce17d4bf76bff099ac2534496cf154200da2bf1c",
+      "size_bytes": 19590
+    },
+    {
+      "path": "contracts/schemas/agent37_discover_skills.result.schema.json",
+      "sha256": "fdf550a9698f31ba06a8e093630e5b0c96f4e0d2aa6cb8b75abe2a44c585bc9d",
+      "size_bytes": 247
+    },
+    {
+      "path": "contracts/schemas/agent37_inspect_skill.result.schema.json",
+      "sha256": "fdf550a9698f31ba06a8e093630e5b0c96f4e0d2aa6cb8b75abe2a44c585bc9d",
+      "size_bytes": 247
+    },
+    {
+      "path": "contracts/schemas/channel-audio-observed-event-v1.json",
+      "sha256": "cfbd9c9a41299293776666201298e4cdf3be388e91ec7c8ff05d2931520965fb",
+      "size_bytes": 787
+    },
+    {
+      "path": "contracts/schemas/channel-http-observed-event-v1.json",
+      "sha256": "7626756c12b9020248423114e0df294fc7c2c5c74def36e535244de81bd4452c",
+      "size_bytes": 630
+    },
+    {
+      "path": "contracts/schemas/financial_data_read.result.schema.json",
+      "sha256": "82cd949838fa3ff2037fb616de92342fa8ff9b3074612fc11b2b8b09367a94f3",
+      "size_bytes": 984
+    },
+    {
+      "path": "contracts/schemas/mcp_registry_discover.result.schema.json",
+      "sha256": "50f0ae652265cd9ccba17417179b428cdc8155db491016e1d01fa1cd395277df",
+      "size_bytes": 260
+    },
+    {
+      "path": "contracts/schemas/mcp_registry_inspect.result.schema.json",
+      "sha256": "50f0ae652265cd9ccba17417179b428cdc8155db491016e1d01fa1cd395277df",
+      "size_bytes": 260
+    },
+    {
+      "path": "contracts/schemas/native-local-registration-results-v1.json",
+      "sha256": "2bc50e29087e8725159c7cb71000cc06f37e8cda08a67780d3dd00227173863c",
+      "size_bytes": 4889
+    },
+    {
+      "path": "contracts/schemas/native-local-schema-artifact-map-v2.json",
+      "sha256": "c1ce4134046e8e357f4256c0aafb684da689ef2faa75c8d4c8e5117ce2bd820b",
+      "size_bytes": 5698
+    },
+    {
+      "path": "contracts/schemas/resource_overlay_delete.result.schema.json",
+      "sha256": "3572956bdc827ed057de0f7253dae2b48a32ea50b406861486796a7f45191912",
+      "size_bytes": 283
+    },
+    {
+      "path": "contracts/schemas/resource_overlay_history.result.schema.json",
+      "sha256": "5069d7469c89174278f0158cf7b5b3d70e54d53106a07085d4cdda6e5c1154fd",
+      "size_bytes": 309
+    },
+    {
+      "path": "contracts/schemas/resource_overlay_read.result.schema.json",
+      "sha256": "cd520b2360a36ffc2aa4a6892a63a89cd70b226ff545b927b3e297a8eaf82b19",
+      "size_bytes": 607
+    },
+    {
+      "path": "contracts/schemas/resource_overlay_write.result.schema.json",
+      "sha256": "c250bdf7f703773c26c21b352af1d8c3560683aa02ad9d11968e1f7394552edb",
+      "size_bytes": 267
+    },
+    {
+      "path": "contracts/schemas/source-registration-inventory.json",
+      "sha256": "efb44b18361a3466d8970d30a3979843394c46d7ca8af8d515597a80f3b2920f",
+      "size_bytes": 64110
+    },
+    {
+      "path": "contracts/schemas/web_retrieve.result.schema.json",
+      "sha256": "dea89695c5206d563b2f0cd199490042af85612981fd504086e16a92ab767e13",
+      "size_bytes": 1315
+    },
+    {
+      "path": "contracts/source-tables/application-effect-sources-v1.json",
+      "sha256": "de6df1701fa51727127cdbdb30c6e12a6f4e07297ffce686b758fd3ead1076b4",
+      "size_bytes": 11830
+    },
+    {
+      "path": "contracts/source-tables/application-pep517-backend-source-table-v1.json",
+      "sha256": "c7d64c6ca0a186437d32b8093df0be0a3dc660fc721172e7ce1a56fd5a87c623",
+      "size_bytes": 15907
+    },
+    {
+      "path": "contracts/source-tables/existing-model-store-selection-source-v1.json",
+      "sha256": "035a1155b463594ea6a5a08f35589bd012df2e3878d3321ade275d7bc5aeb539",
+      "size_bytes": 7738
+    },
+    {
+      "path": "contracts/source-tables/hyperframes-toolchain-source-v1.json",
+      "sha256": "81b9e3655ddb627c46d828690687a1600fd9a7455af4c4fc5a90c32b3991a5d6",
+      "size_bytes": 7060
+    },
+    {
+      "path": "contracts/templates/bootstrap-compiler-template-v1.json",
+      "sha256": "27854f8f8c67ce42832f020dbfd96512607e39576b27e484598ff397cb9432e5",
+      "size_bytes": 4281
+    },
+    {
+      "path": "contracts/templates/bootstrap-receipt-bindings-template-v1.json",
+      "sha256": "2036e9443b8c1c085cf7c90a4eb26c162f7d787f030cd759e35d92ca17b3e609",
+      "size_bytes": 10195
+    },
+    {
+      "path": "contracts/templates/existing-model-store-root-template-v1.json",
+      "sha256": "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f",
+      "size_bytes": 712
+    },
+    {
+      "path": "contracts/templates/prepared-application-build-service-template-v1.json",
+      "sha256": "8cc3bbce52901c5f05bab99622d77d9d4d44f4a5fe27eb636e3fe8e23beab0d9",
+      "size_bytes": 1498
+    },
+    {
+      "path": "contracts/templates/prepared-authority-base-template-v1.json",
+      "sha256": "da20ce244bbbc771dfaf463d8ce8914d87b6eb9898228952a55681e1aa6fb953",
+      "size_bytes": 369
+    },
+    {
+      "path": "contracts/templates/prepared-build-service-template-v1.json",
+      "sha256": "0d98bdabf27185d769f55de12e9242d5286e07d11e5d62369c2eeedf1fa4b967",
+      "size_bytes": 1235
+    },
+    {
+      "path": "contracts/templates/root-setup-plan-template-v1.json",
+      "sha256": "210114d336b54ec86b40861a1d808508db48d20c9ecfb0a20b30049b2e4f84f5",
+      "size_bytes": 920
+    }
+  ],
+  "schema": 1
+}

@@ -104,7 +104,7 @@ class NativePluginToolResultTests(unittest.TestCase):
     def test_v113_backend_result_is_exact_untrusted_envelope(self):
         import json
 
-        schema_path = (Path(__file__).resolve().parents[2] / "plans/amendments/2026-10-10-"
+        schema_path = (Path(__file__).resolve().parents[2] / "contracts/"
                        "protected-native-registration-records-v113/"
                        "bounded-native-backend-result-v1.schema.json")
         result_schema = json.loads(schema_path.read_text(encoding="utf-8"))
@@ -131,7 +131,7 @@ class NativePluginToolResultTests(unittest.TestCase):
     def test_v113_backend_result_accepts_arrays_and_bounds_escaped_serialization(self):
         import json
 
-        schema_path = (Path(__file__).resolve().parents[2] / "plans/amendments/2026-10-10-"
+        schema_path = (Path(__file__).resolve().parents[2] / "contracts/"
                        "protected-native-registration-records-v113/"
                        "bounded-native-backend-result-v1.schema.json")
         candidate_module = __import__("hermes_installer.native_plugin_loader", fromlist=["SelectedNativeCandidate"])
@@ -154,7 +154,7 @@ class NativePluginToolResultTests(unittest.TestCase):
     def test_v113_backend_result_rejects_untrusted_scalars_and_bounds(self):
         import json
 
-        schema_path = (Path(__file__).resolve().parents[2] / "plans/amendments/2026-10-10-"
+        schema_path = (Path(__file__).resolve().parents[2] / "contracts/"
                        "protected-native-registration-records-v113/"
                        "bounded-native-backend-result-v1.schema.json")
         result_schema = json.loads(schema_path.read_text(encoding="utf-8"))
@@ -180,7 +180,7 @@ class NativePluginToolResultTests(unittest.TestCase):
     def test_proxy_applies_wrapper_only_to_exact_selected_registration_and_schema(self):
         import json
 
-        schema_path = (Path(__file__).resolve().parents[2] / "plans/amendments/2026-10-10-"
+        schema_path = (Path(__file__).resolve().parents[2] / "contracts/"
                        "protected-native-registration-records-v113/"
                        "bounded-native-backend-result-v1.schema.json")
         result_schema = json.loads(schema_path.read_text(encoding="utf-8"))

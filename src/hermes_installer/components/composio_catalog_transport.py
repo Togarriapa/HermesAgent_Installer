@@ -25,7 +25,7 @@ COMPOSIO_TOOLKIT_VERSION = "20260721_00"
 COMPOSIO_COLLECTION_PATH = "/api/v3.1/triggers_types"
 COMPOSIO_CATALOG_POLICY_ID = "installer-composio-whatsapp-catalog-read-policy-v1"
 COMPOSIO_CATALOG_POLICY_ARTIFACT_PATH = (
-    "plans/amendments/2026-10-10-prepared-base-reader-release-manifest-v63/"
+    "contracts/policies/"
     "composio-whatsapp-catalog-read-policy-v1.json"
 )
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024

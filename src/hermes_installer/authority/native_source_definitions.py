@@ -60,7 +60,7 @@ class NativeCaptureProfileDeclaration:
 _CAPTURE_PROFILES = (
     NativeCaptureProfileDeclaration(
         "installer-native-input-capture-profile-v1",
-        "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-input-capture-profile-v1.json",
+        "contracts/capture-profiles/installer-native-input-capture-profile-v1.json",
         "bfdf7175ee1df681b60ab4b707ffe9d314d8cc7fdc5a30a56e19d2cb1372c1d0",
         837, "native-authenticated-input-v1", "native-input",
         ("authenticated-input",), 1_048_576,
@@ -68,7 +68,7 @@ _CAPTURE_PROFILES = (
     ),
     NativeCaptureProfileDeclaration(
         "installer-native-tool-result-capture-profile-v1",
-        "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-tool-result-capture-profile-v1.json",
+        "contracts/capture-profiles/installer-native-tool-result-capture-profile-v1.json",
         "470fcc43b3d268a6594e0d6bdf2c635ba3bf4e6cd0cfe2dfcd57840d7bee105a",
         984, "native-registered-tool-result-v1", "tool-result",
         (), 1_048_576, "hermes-native-invocations-v1",
@@ -76,7 +76,7 @@ _CAPTURE_PROFILES = (
     ),
     NativeCaptureProfileDeclaration(
         "installer-native-provider-result-capture-profile-v1",
-        "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-provider-result-capture-profile-v1.json",
+        "contracts/capture-profiles/installer-native-provider-result-capture-profile-v1.json",
         "a2c6ae9243a7854f114ed492afd395d867f02ed58d50a3f1692fe0ea7efbd8eb",
         993, "native-root-provider-response-v1", "tool-result",
         ("root-provider-response-v1",), 4_194_304,
@@ -84,7 +84,7 @@ _CAPTURE_PROFILES = (
     ),
     NativeCaptureProfileDeclaration(
         "installer-native-mcp-discovery-capture-profile-v171",
-        "plans/amendments/2026-10-10-mcp-discovery-capture-v171/mcp-discovery-capture-v1.json",
+        "contracts/capture-profiles/mcp-discovery-capture-v1.json",
         "bf9b3b649bf995d5743a38597415ef003928e1d67dc337ab5c7f3e7ec9643e8a",
         4601, "native-root-mcp-discovery-response-v1", "tool-result",
         ("root-mcp-tools-list-discovery-v1",), 1_048_576,
@@ -289,7 +289,7 @@ class RootNativeSourceDefinitionRegistry:
                 parsed = json.loads(raw)
             except (UnicodeDecodeError, json.JSONDecodeError):
                 raise NativeSourceDefinitionUnavailable("capture profile JSON is invalid") from None
-            # v171 is an append-only amendment describing a dedicated
+            # v171 is a retained capture contract describing a dedicated
             # discovery event, so its reviewed profile lives under `profile`
             # and intentionally has no self-referential artifact_id.
             declaration = (parsed.get("profile") if type(parsed) is dict

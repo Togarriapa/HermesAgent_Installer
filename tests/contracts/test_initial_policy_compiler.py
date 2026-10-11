@@ -18,9 +18,9 @@ from hermes_installer.authority.initial_policy_compiler import (
 
 
 REPO = Path(__file__).resolve().parents[2]
-TEMPLATE = REPO / "plans/amendments/2026-10-09-closed-bootstrap-compiler-template-v30/bootstrap-compiler-template-v1.json"
-PREPARED_BASE = REPO / "plans/amendments/2026-10-10-prepared-base-reader-release-manifest-v63/prepared-authority-base-template-v1.json"
-RECEIPT_BINDINGS = REPO / "plans/amendments/2026-10-10-literal-bootstrap-receipt-bindings-v72/bootstrap-receipt-bindings-template-v1.json"
+TEMPLATE = REPO / "contracts/templates/bootstrap-compiler-template-v1.json"
+PREPARED_BASE = REPO / "contracts/templates/prepared-authority-base-template-v1.json"
+RECEIPT_BINDINGS = REPO / "contracts/templates/bootstrap-receipt-bindings-template-v1.json"
 
 
 def _binding_names(value):

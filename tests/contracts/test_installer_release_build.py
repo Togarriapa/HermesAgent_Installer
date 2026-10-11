@@ -319,7 +319,7 @@ def test_initial_setup_prefixes_reject_foreign_owned_existing_directory(tmp_path
 def test_release_builder_pins_literal_model_store_template_and_native_source_modules():
     assert release_build.EXISTING_MODEL_STORE_TEMPLATE_ID == "installer-existing-model-store-root-template-v1"
     assert release_build.EXISTING_MODEL_STORE_TEMPLATE_PATH.endswith(
-        "2026-10-10-existing-model-store-selection-source-v139/existing-model-store-root-template-v1.json")
+        "contracts/templates/existing-model-store-root-template-v1.json")
     assert release_build.EXISTING_MODEL_STORE_TEMPLATE_SHA256 == (
         "3a145ddd21cf8ba524307844a1ab7fb78a4a066afad59bfbbb9164327c2f570f")
     assert release_build.EXISTING_MODEL_STORE_TEMPLATE_BYTES == 712

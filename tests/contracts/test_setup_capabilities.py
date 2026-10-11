@@ -16,7 +16,7 @@ from hermes_installer.authority.setup_principal import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
-MAP = ROOT / "plans/amendments/2026-10-10-reviewed-native-capability-selection-v91/reviewed-native-capability-map-v1.json"
+MAP = ROOT / "contracts/policies/reviewed-native-capability-map-v1.json"
 
 
 class ReviewedNativeCapabilitySelectionTests(unittest.TestCase):

@@ -219,68 +219,12 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
             )
 
     def test_reviewed_native_source_modules_are_finite_pinned_release_rows(self):
-        reviewed = json.loads((Path(__file__).parents[2]
-                               / "planning/final-coherent-source-pin-review-v195.json").read_text())
+        source_members = json.loads((Path(__file__).parents[2]
+                                     / "contracts/release-source-members-v1.json").read_text())
         expected = {
-            row["installed_artifact_id"]: (
-                row["installed_member"], row["sha256"], row["size_bytes"], row["roles"][0])
-            for row in reviewed["members"]
-            if "module" in row["roles"]
+            row["artifact_id"]: (row["path"], row["sha256"], row["size_bytes"], row["role"])
+            for row in source_members["members"]
         }
-        expected.update({
-            row["installed_artifact_id"]: (
-                row["installed_member"], row["sha256"], row["size_bytes"], row["roles"][0])
-            for row in reviewed["worker_source_members"]
-        })
-        replacement = json.loads((Path(__file__).parents[2]
-                                  / "planning/typed-bootstrap-diagnostic-source-review-v204.json").read_text())
-        expected.update({
-            row["installed_artifact_id"]: (
-                row["installed_member"], row["sha256"], row["size_bytes"], row["roles"][0])
-            for row in replacement["replaces_only_members"]
-        })
-        reconfirmation = json.loads((Path(__file__).parents[2]
-                                     / "planning/bootstrap-handoff-reconfirmation-source-review-v211.json").read_text())
-        expected.update({
-            row["installed_artifact_id"]: (
-                row["installed_member"], row["sha256"], row["size_bytes"], row["roles"][0])
-            for row in reconfirmation["replaces_only_members"]
-        })
-        v228 = json.loads((Path(__file__).parents[2]
-                           / "planning/jarvis-runtime-source-pin-review-v228.json").read_text())
-        expected.update({
-            row["installed_artifact_id"]: (
-                row["installed_path"], row["sha256"], row["size_bytes"], row["role"])
-            for row in v228["reviewed_module_updates"]
-        })
-        expected.update({
-            row["artifact_id"]: (
-                row["installed_path"], row["sha256"], row["size_bytes"], row["role"])
-            for row in v228["new_reviewed_module_members"]
-        })
-        v241 = json.loads((Path(__file__).parents[2]
-                           / "planning/candidate-update-source-review-v241.json").read_text())
-        prior_pin = v241["static_pin_update"]
-        v247 = json.loads((Path(__file__).parents[2]
-                           / "planning/source-update-entry-source-review-v247.json").read_text())
-        approved_pin = v247["source"]
-        pin_application = v247["pin_application"]
-        artifact_id = prior_pin["installed_artifact_id"]
-        self.assertEqual(artifact_id, approved_pin["installed_artifact_id"])
-        self.assertEqual(prior_pin["sha256"], pin_application["old_sha256"])
-        self.assertEqual(prior_pin["size_bytes"], pin_application["old_size_bytes"])
-        self.assertEqual(prior_pin["installed_member"], approved_pin["installed_member"])
-        self.assertEqual(prior_pin["role"], approved_pin["role"])
-        self.assertEqual(prior_pin["source_path"], approved_pin["source_path"])
-        self.assertEqual(prior_pin["tables"], pin_application["tables"])
-        self.assertEqual(approved_pin["sha256"], "0b7d7203b41d3496ebb14d6997fa3e3aaef58aafa98bb8c498004aaf31960616")
-        self.assertEqual(approved_pin["size_bytes"], 71543)
-        source_bytes = (Path(__file__).parents[2] / approved_pin["source_path"]).read_bytes()
-        self.assertEqual(len(source_bytes), approved_pin["size_bytes"])
-        self.assertEqual(hashlib.sha256(source_bytes).hexdigest(), approved_pin["sha256"])
-        expected[artifact_id] = (
-            approved_pin["installed_member"], approved_pin["sha256"],
-            approved_pin["size_bytes"], approved_pin["role"])
         actual_release = {artifact_id: (path, digest, size, role)
                           for artifact_id, path, digest, size, role in REVIEWED_SOURCE_MODULES}
         actual_builder = {
@@ -289,9 +233,16 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
             in release_build.REVIEWED_SOURCE_MODULES
         }
         self.assertEqual(actual_release, expected)
-        self.assertEqual(actual_builder[approved_pin["module_name"]], (
-            approved_pin["source_path"], approved_pin["installed_member"],
-            approved_pin["sha256"], approved_pin["size_bytes"], approved_pin["role"]))
+        for row in source_members["members"]:
+            self.assertRegex(row["sha256"], r"^[0-9a-f]{64}$")
+            self.assertGreater(row["size_bytes"], 0)
+        members_by_path = {(row["path"], row["role"]): row
+                           for row in source_members["members"]}
+        for name, source_path, installed_path, digest, size, role in release_build.REVIEWED_SOURCE_MODULES:
+            row = members_by_path[(installed_path, role)]
+            self.assertEqual((row["path"], row["sha256"], row["size_bytes"], row["role"]),
+                             (installed_path, digest, size, role))
+            self.assertEqual(actual_builder[name], (source_path, installed_path, digest, size, role))
         rows = [
             VerifiedReleaseFile("installer-root-setup-launcher-v1", ("launcher",), LAUNCHER_PATH,
                                 "1" * 64, 1, 1, 1, 0o555),
@@ -319,13 +270,7 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
         rows.extend(VerifiedReleaseFile(artifact_id, (role,), path, digest, size, 1, 150 + i, 0o444)
                     for i, (artifact_id, path, digest, size, role) in enumerate(REVIEWED_SOURCE_ARTIFACTS)
                     if role == "native-health-fixture")
-        rows.extend((
-            VerifiedReleaseFile("baseline-file", ("baseline",), "plans/2026-10-09-v1/file.json",
-                                "5" * 64, 1, 1, 200, 0o444),
-            VerifiedReleaseFile("amendment-file", ("amendment",), "plans/amendments/ref/file.json",
-                                "6" * 64, 1, 1, 201, 0o444),
-        ))
-        rows.append(VerifiedReleaseFile(APPLICATION_EFFECT_SOURCE_CATALOG_ARTIFACT_ID, ("amendment",),
+        rows.append(VerifiedReleaseFile(APPLICATION_EFFECT_SOURCE_CATALOG_ARTIFACT_ID, ("contract",),
                                         APPLICATION_EFFECT_SOURCE_CATALOG_PATH,
                                         APPLICATION_EFFECT_SOURCE_CATALOG_SHA256,
                                         APPLICATION_EFFECT_SOURCE_CATALOG_SIZE, 1, 210, 0o444))
@@ -412,33 +357,33 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
                     _validate_fixed_layout_role(
                         path, changed_sha, len(body), changed_roles, mode=changed_mode)
 
-    def test_glm_source_artifact_ids_bind_exact_baseline_and_amendment_members(self):
+    def test_glm_source_artifact_ids_bind_exact_contract_members(self):
         repo = Path(__file__).parents[2]
         expected = {
             "installer-application-toolchain-source-policy-v144": (
-                "plans/amendments/2026-10-10-hyperframes-toolchain-source-v144/hyperframes-toolchain-source-v1.json",
-                "81b9e3655ddb627c46d828690687a1600fd9a7455af4c4fc5a90c32b3991a5d6", 7_060, "amendment"),
+                "contracts/source-tables/hyperframes-toolchain-source-v1.json",
+                "81b9e3655ddb627c46d828690687a1600fd9a7455af4c4fc5a90c32b3991a5d6", 7_060, "contract"),
             "installer-application-pep517-backend-sources-v1": (
-                "plans/amendments/2026-10-10-pep517-backend-source-closure-v152/application-pep517-backend-source-table-v1.json",
-                "c7d64c6ca0a186437d32b8093df0be0a3dc660fc721172e7ce1a56fd5a87c623", 15_907, "amendment"),
+                "contracts/source-tables/application-pep517-backend-source-table-v1.json",
+                "c7d64c6ca0a186437d32b8093df0be0a3dc660fc721172e7ce1a56fd5a87c623", 15_907, "contract"),
             "glm52-artifact-metadata-v1": (
-                "planning/glm52-artifact-metadata.json",
-                "b42e3fa6fd5c287b95fcda4d370697bd4c0ef226767ddc08fae4e5bebcfecd1a", 56_232, "baseline"),
+                "contracts/model-sources/glm52-artifact-metadata.json",
+                "b42e3fa6fd5c287b95fcda4d370697bd4c0ef226767ddc08fae4e5bebcfecd1a", 56_232, "contract"),
             "glm52-upstream-mit-license-cf457fa": (
-                "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-upstream-MIT-LICENSE.txt",
-                "f4a18c6ae40b0a8e7d2b7667f52f6e1994e54a46430d2e172b73cb8c9b5eb0d7", 1_065, "amendment"),
+                "contracts/model-sources/glm52-upstream-MIT-LICENSE.txt",
+                "f4a18c6ae40b0a8e7d2b7667f52f6e1994e54a46430d2e172b73cb8c9b5eb0d7", 1_065, "contract"),
             "glm52-quantized-readme-6bbb01e": (
-                "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-quantized-README.md",
-                "85fc4cf947276c376f09ad1226926ebc03eefbb99d184cd05f34412d32d8406b", 17_468, "amendment"),
+                "contracts/model-sources/glm52-quantized-README.md",
+                "85fc4cf947276c376f09ad1226926ebc03eefbb99d184cd05f34412d32d8406b", 17_468, "contract"),
             "installer-native-input-capture-profile-v1": (
-                "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-input-capture-profile-v1.json",
-                "bfdf7175ee1df681b60ab4b707ffe9d314d8cc7fdc5a30a56e19d2cb1372c1d0", 837, "amendment"),
+                "contracts/capture-profiles/installer-native-input-capture-profile-v1.json",
+                "bfdf7175ee1df681b60ab4b707ffe9d314d8cc7fdc5a30a56e19d2cb1372c1d0", 837, "contract"),
             "installer-native-tool-result-capture-profile-v1": (
-                "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-tool-result-capture-profile-v1.json",
-                "470fcc43b3d268a6594e0d6bdf2c635ba3bf4e6cd0cfe2dfcd57840d7bee105a", 984, "amendment"),
+                "contracts/capture-profiles/installer-native-tool-result-capture-profile-v1.json",
+                "470fcc43b3d268a6594e0d6bdf2c635ba3bf4e6cd0cfe2dfcd57840d7bee105a", 984, "contract"),
             "installer-native-provider-result-capture-profile-v1": (
-                "plans/amendments/2026-10-10-native-capture-profiles-v158/installer-native-provider-result-capture-profile-v1.json",
-                "a2c6ae9243a7854f114ed492afd395d867f02ed58d50a3f1692fe0ea7efbd8eb", 993, "amendment"),
+                "contracts/capture-profiles/installer-native-provider-result-capture-profile-v1.json",
+                "a2c6ae9243a7854f114ed492afd395d867f02ed58d50a3f1692fe0ea7efbd8eb", 993, "contract"),
             "hermes-agent-health-request-v1": (
                 "fixtures/native-health/request.txt",
                 "a8ff376fd03484db8c7dc0af141e8e894671467cdc5833ee50a08571d0ee3e7c", 182, "native-health-fixture"),
@@ -455,11 +400,18 @@ class InstalledReleaseVerifierTests(unittest.TestCase):
                 "fixtures/native-health/recipe.json",
                 "ba7486d3070f725d125ed0e8c42aa986969bc8a597c2473024705d6fd8ac05a7", 845, "native-health-fixture"),
             "installer-native-mcp-discovery-capture-profile-v171": (
-                "plans/amendments/2026-10-10-mcp-discovery-capture-v171/mcp-discovery-capture-v1.json",
-                "bf9b3b649bf995d5743a38597415ef003928e1d67dc337ab5c7f3e7ec9643e8a", 4_601, "amendment"),
+                "contracts/capture-profiles/mcp-discovery-capture-v1.json",
+                "bf9b3b649bf995d5743a38597415ef003928e1d67dc337ab5c7f3e7ec9643e8a", 4_601, "contract"),
         }
         self.assertEqual({artifact_id: (path, digest, size, role)
                           for artifact_id, path, digest, size, role in REVIEWED_SOURCE_ARTIFACTS}, expected)
+        for artifact_id, path, _digest, _size, role in REVIEWED_SOURCE_ARTIFACTS:
+            if role == "contract":
+                self.assertEqual(release._artifact_id_for(path, ["contract"]), artifact_id)
+        self.assertEqual(
+            release._artifact_id_for(APPLICATION_EFFECT_SOURCE_CATALOG_PATH, ["contract"]),
+            APPLICATION_EFFECT_SOURCE_CATALOG_ARTIFACT_ID,
+        )
         source_paths = {
             "fixtures/native-health/request.txt": "src/hermes_installer/native_health_fixture/request.txt",
             "fixtures/native-health/seed-value.txt": "src/hermes_installer/native_health_fixture/seed-value.txt",

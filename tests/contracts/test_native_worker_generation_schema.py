@@ -12,7 +12,7 @@ from hermes_installer.authority.enrollment import _validate_native_worker_genera
 
 def test_runtime_row_schema_adds_only_the_v189_committed_venv_identity():
     root = Path(__file__).resolve().parents[2]
-    contract = json.loads((root / "planning/network-row-wire-v184.json").read_text())
+    contract = json.loads((root / "contracts/native/network-row-wire.json").read_text())
     actual = json.loads(json.dumps(NETWORK_ROW_DEFS))
     runtime = actual["native_worker_runtime_record"]
     identity = runtime["properties"].pop("committed_venv_identity")
