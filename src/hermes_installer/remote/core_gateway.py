@@ -617,4 +617,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    # ``python -m`` executes this file as ``__main__``.  Keep runtime classes,
+    # seals, and configuration construction in the canonical package module.
+    from hermes_installer.remote.core_gateway import main as canonical_main
+
+    canonical_main()

@@ -6,11 +6,13 @@ import dataclasses
 import hashlib
 import json
 import os
+import runpy
 import stat
 import struct
 import tempfile
 import time
 import unittest
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -24,6 +26,23 @@ from hermes_installer.remote.gateway import Principal, RemotePolicy
 
 
 class CoreGatewayInspectorClientTests(unittest.TestCase):
+    def test_module_entry_delegates_to_canonical_gateway_module(self):
+        called = []
+
+        def canonical_entry():
+            called.append(core_gateway.CoreGatewayConfig)
+
+        with patch.object(core_gateway, "main", canonical_entry), \
+             warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            executed = runpy.run_module(
+                "hermes_installer.remote.core_gateway", run_name="__main__")
+
+        self.assertEqual(called, [core_gateway.CoreGatewayConfig])
+        # -m still creates a duplicate __main__ class namespace, but does not
+        # use it to construct runtime state or invoke its duplicate main().
+        self.assertIsNot(executed["CoreGatewayConfig"], core_gateway.CoreGatewayConfig)
+
     def test_real_ingress_verifier_denies_unowned_inspector_socket(self):
         config = _config()
         wrong_socket = SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=0,
