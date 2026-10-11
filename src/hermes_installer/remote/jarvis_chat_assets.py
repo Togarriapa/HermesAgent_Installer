@@ -1,7 +1,8 @@
 """Finite installer-owned assets for the practical Jarvis chat surface.
 
-Only the reviewed `/chat`, `/chat/assets/app.css`, and `/chat/assets/app.js`
-paths are exposed. The bundle contains no provider credentials or user data.
+Only the reviewed `/chat`, `/chat/assets/app.css`, `/chat/assets/features.js`,
+and `/chat/assets/app.js` paths are exposed. The bundle contains no provider
+credentials or user data.
 """
 from __future__ import annotations
 
@@ -24,6 +25,7 @@ _HTML = '''<!doctype html>
   <meta name="theme-color" content="#071319">
   <title>Jarvis</title>
   <link rel="stylesheet" href="/chat/assets/app.css">
+  <script defer src="/chat/assets/features.js"></script>
   <script defer src="/chat/assets/app.js"></script>
 </head>
 <body>
@@ -299,7 +301,9 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   let preferenceStorageAvailable = true;
   const API = "/chat/api";
   const mountCapabilityDetails = (__JARVIS_CAPABILITY_DETAILS_MOUNT__);
-  const FEATURE_ASSETS = __JARVIS_FEATURE_ASSETS__;
+  const featureRegistryScript = document.querySelector('script[src="/chat/assets/features.js"]');
+  const FEATURE_ASSETS = featureRegistryScript && featureRegistryScript.jarvisReviewedFeatures;
+  if (!Array.isArray(FEATURE_ASSETS)) throw new Error("The reviewed dashboard features are unavailable.");
   const featuresById = new Map(FEATURE_ASSETS.map((feature) => [feature.id, feature]));
   let mountedFeature = null;
   let mountedFeatureCleanup = null;
@@ -1268,9 +1272,12 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
 '''.encode("utf-8")
 
 
+_FEATURES_JS = b""
+
+
 def _compose_feature_assets() -> None:
-    """Embed the literal reviewed feature registry in the three fixed assets."""
-    global _HTML, _CSS, _JS
+    """Compose reviewed feature markup, styles, and the separately bounded registry."""
+    global _HTML, _CSS, _JS, _FEATURES_JS
     validate_feature_assets(FEATURE_ASSETS)
     nav: list[str] = []
     panels: list[str] = []
@@ -1308,12 +1315,8 @@ def _compose_feature_assets() -> None:
     html = html.replace("__JARVIS_CAPABILITY_DETAILS__", _CAPABILITY_DETAILS_HTML)
     if "JARVIS_FEATURE_" in html:
         raise ValueError("Jarvis feature asset template markers were not fully replaced")
-    script = _JS.decode("utf-8").replace(
-        "__JARVIS_FEATURE_ASSETS__", "[" + ",".join(javascript) + "]"
-    )
+    script = _JS.decode("utf-8")
     script = script.replace("__JARVIS_CAPABILITY_DETAILS_MOUNT__", _CAPABILITY_DETAILS_MOUNT_JS)
-    if "__JARVIS_FEATURE_ASSETS__" in script:
-        raise ValueError("Jarvis feature registry marker was not fully replaced")
     if "__JARVIS_CAPABILITY_DETAILS_MOUNT__" in script:
         raise ValueError("Jarvis capability detail marker was not fully replaced")
     if "__JARVIS_CAPABILITY_DETAILS__" in html:
@@ -1322,6 +1325,26 @@ def _compose_feature_assets() -> None:
     _CSS += ("\n".encode("utf-8") + b"\n".join(css_fragments)) if css_fragments else b""
     _CSS += ("\n" + _CAPABILITY_DETAILS_CSS).encode("utf-8")
     _JS = script.encode("utf-8")
+    registry = "[" + ",".join(javascript) + "]"
+    _FEATURES_JS = (
+        "(() => {\n"
+        '  "use strict";\n'
+        "  const script = document.currentScript;\n"
+        '  if (!script || script.tagName !== "SCRIPT" || script.getAttribute("src") !== "/chat/assets/features.js") {\n'
+        '    throw new Error("The reviewed Jarvis feature registry was loaded from an unexpected script.");\n'
+        "  }\n"
+        f"  const features = {registry};\n"
+        "  const frozenFeatures = Object.freeze(features.map((feature) => Object.freeze({\n"
+        "    id: feature.id,\n"
+        "    routes: Object.freeze(feature.routes.map((route) => Object.freeze({method: route.method, path: route.path}))),\n"
+        "    mount: feature.mount,\n"
+        "    unmount: feature.unmount,\n"
+        "  })));\n"
+        '  Object.defineProperty(script, "jarvisReviewedFeatures", {\n'
+        "    value: frozenFeatures, enumerable: false, writable: false, configurable: false,\n"
+        "  });\n"
+        "})();\n"
+    ).encode("utf-8")
 
 
 _compose_feature_assets()
@@ -1330,6 +1353,7 @@ _ASSETS = MappingProxyType({
     "/chat": ("text/html; charset=utf-8", _HTML),
     "/chat/": ("text/html; charset=utf-8", _HTML),
     "/chat/assets/app.css": ("text/css; charset=utf-8", _CSS),
+    "/chat/assets/features.js": ("text/javascript; charset=utf-8", _FEATURES_JS),
     "/chat/assets/app.js": ("text/javascript; charset=utf-8", _JS),
 })
 

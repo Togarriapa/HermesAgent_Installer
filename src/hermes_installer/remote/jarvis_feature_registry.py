@@ -51,6 +51,21 @@ def _route_shape(route: tuple[str, str]) -> tuple[str, str]:
     return method, re.sub(r"\{[a-z][a-z0-9_]*\}", "{}", path)
 
 
+def _validate_feature_asset_routes(assets: tuple[JarvisFeatureAssets, ...]) -> None:
+    """Allow one exact shared GET declaration, while rejecting route aliases."""
+    all_routes: dict[tuple[str, str], tuple[str, str]] = {}
+    for asset in assets:
+        declared = {_route_shape(route) for route in asset.api_routes}
+        if len(declared) != len(asset.api_routes):
+            raise ValueError("dashboard feature API routes are ambiguous")
+        for route in asset.api_routes:
+            shape = _route_shape(route)
+            previous = all_routes.get(shape)
+            if previous is not None and (route[0] != "GET" or route != previous):
+                raise ValueError("dashboard feature API routes are ambiguous")
+            all_routes[shape] = route
+
+
 def install_jarvis_feature_routes(app, service) -> None:
     """Install only explicit feature adapters and validate static route ownership."""
     from .jarvis_feature_contract import validate_feature_assets
@@ -75,12 +90,11 @@ def install_jarvis_feature_routes(app, service) -> None:
     if set(assets) != set(installers) | set(owners) or set(installers) & set(owners):
         raise ValueError("dashboard feature routes and static assets differ")
 
-    all_routes: set[tuple[str, str]] = set()
+    _validate_feature_asset_routes(FEATURE_ASSETS)
     for feature_id, asset in assets.items():
         declared = {_route_shape(route) for route in asset.api_routes}
-        if len(declared) != len(asset.api_routes) or all_routes & declared:
+        if len(declared) != len(asset.api_routes):
             raise ValueError("dashboard feature API routes are ambiguous")
-        all_routes.update(declared)
         if feature_id in installers:
             installer, routes = installers[feature_id]
             if {_route_shape(route) for route in routes} != declared:

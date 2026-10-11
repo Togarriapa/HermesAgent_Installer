@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import tempfile
@@ -7,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from hermes_installer.remote.jarvis_chat_assets import reviewed_chat_asset
+from hermes_installer.remote.jarvis_feature_registry import FEATURE_ASSETS
 
 
 class JarvisChatAssetTests(unittest.TestCase):
@@ -63,6 +65,37 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn("Runtime readiness pending", client)
         self.assertIn("Internal profile · catalog only; not selectable", client)
         self.assertIn('"current-core-witness": "A current process and listener were observed; functional readiness has not been verified."', client)
+
+    def test_feature_registry_is_a_separate_ordered_immutable_fixed_asset(self):
+        _content_type, page = reviewed_chat_asset("/chat")
+        markup = page.decode("utf-8")
+        features_tag = '<script defer src="/chat/assets/features.js"></script>'
+        app_tag = '<script defer src="/chat/assets/app.js"></script>'
+        self.assertLess(markup.index(features_tag), markup.index(app_tag))
+        self.assertEqual(markup.count('<button type="button" class="nav-item"'), 5 + len(FEATURE_ASSETS))
+
+        _content_type, registry = reviewed_chat_asset("/chat/assets/features.js")
+        source = registry.decode("utf-8")
+        self.assertIn('Object.defineProperty(script, "jarvisReviewedFeatures"', source)
+        self.assertIn("writable: false, configurable: false", source)
+        self.assertIn("Object.freeze(features.map", source)
+        self.assertNotIn("import(", source)
+        self.assertNotIn("https://", source)
+        self.assertNotIn("http://", source)
+        for feature in FEATURE_ASSETS:
+            with self.subTest(feature=feature.feature_id):
+                self.assertIn("id:" + json.dumps(feature.feature_id), source)
+                self.assertIn(feature.view_html, markup)
+                self.assertIn(feature.mount_js, source)
+                self.assertIn(feature.unmount_js, source)
+                for method, path in feature.api_routes:
+                    self.assertIn('"method":"' + method + '","path":"' + path + '"', source)
+
+        _content_type, app_script = reviewed_chat_asset("/chat/assets/app.js")
+        client = app_script.decode("utf-8")
+        self.assertIn('script[src="/chat/assets/features.js"]', client)
+        self.assertIn("featureRegistryScript.jarvisReviewedFeatures", client)
+        self.assertNotIn("__JARVIS_FEATURE_ASSETS__", client)
 
     def test_capability_inventory_filter_and_details_are_data_backed(self):
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
@@ -149,6 +182,7 @@ class JarvisChatAssetTests(unittest.TestCase):
             "/chat": "text/html; charset=utf-8",
             "/chat/": "text/html; charset=utf-8",
             "/chat/assets/app.css": "text/css; charset=utf-8",
+            "/chat/assets/features.js": "text/javascript; charset=utf-8",
             "/chat/assets/app.js": "text/javascript; charset=utf-8",
         }
         for route, content_type in expected.items():
@@ -160,22 +194,25 @@ class JarvisChatAssetTests(unittest.TestCase):
         for route in (
             "/chat/assets/../gateway.py", "/chat/api/conversations",
             "/chat/assets/app.js?x=1", "/chat/assets/%61pp.js", "/chat//assets/app.js",
+            "/chat/assets/features.js?x=1", "/chat/assets/custom.js",
         ):
             with self.subTest(route=route), self.assertRaises(ValueError):
                 reviewed_chat_asset(route)
 
     def test_browser_bundle_passes_node_syntax_check(self):
-        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
         with tempfile.TemporaryDirectory() as temporary:
-            path = Path(temporary) / "app.js"
-            path.write_bytes(script)
-            result = subprocess.run(
-                ["node", "--check", str(path)],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-        self.assertEqual(result.returncode, 0, result.stderr)
+            for asset_name in ("features.js", "app.js"):
+                with self.subTest(asset=asset_name):
+                    _content_type, script = reviewed_chat_asset(f"/chat/assets/{asset_name}")
+                    path = Path(temporary) / asset_name
+                    path.write_bytes(script)
+                    result = subprocess.run(
+                        ["node", "--check", str(path)],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_accepted_queued_turn_exposes_stop_until_terminal_cleanup(self):
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")

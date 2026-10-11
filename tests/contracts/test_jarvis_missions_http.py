@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import asyncio
 import time
+import pytest
 
 from aiohttp.test_utils import TestClient, TestServer
 
 from hermes_installer.remote.jarvis_chat import ChatPrincipal, JarvisChatService, JarvisChatStore
 from hermes_installer.remote import jarvis_missions
 from hermes_installer.remote import jarvis_feature_registry
+from hermes_installer.remote.jarvis_feature_contract import JarvisFeatureAssets
 from hermes_installer.remote.jarvis_missions_assets import FEATURE_ASSETS as MISSION_ASSETS
 
 
@@ -218,8 +220,43 @@ def test_mission_routes_and_feature_assets_are_literal_and_finite():
     assert {feature_id for feature_id, _owner, _routes
             in jarvis_feature_registry.FEATURE_ROUTE_OWNERS} == {
                 "activity", "native-controls", "resources-learning"}
-    route_sets = [asset.api_routes for asset in jarvis_feature_registry.FEATURE_ASSETS]
-    flattened = [(method, path.replace("{id}", "{}").replace("{turn_id}", "{}")
-                  .replace("{mission_id}", "{}"))
-                 for rows in route_sets for method, path in rows]
-    assert len(flattened) == len(set(flattened))
+    routes_by_shape = {}
+    for asset in jarvis_feature_registry.FEATURE_ASSETS:
+        for method, path in asset.api_routes:
+            shape = (method, path.replace("{id}", "{}").replace("{turn_id}", "{}")
+                     .replace("{mission_id}", "{}"))
+            previous = routes_by_shape.get(shape)
+            assert previous is None or (method == "GET" and previous == (method, path))
+            routes_by_shape[shape] = (method, path)
+
+
+def test_features_may_share_only_the_same_read_only_route():
+    def feature(feature_id, routes):
+        return JarvisFeatureAssets(
+            feature_id=feature_id,
+            nav_label=feature_id,
+            title=feature_id,
+            view_html="<section></section>",
+            css="",
+            api_routes=routes,
+            mount_js="function mount() {}",
+            unmount_js="function unmount() {}",
+        )
+
+    shared_read = ("GET", "/chat/api/channels")
+    jarvis_feature_registry._validate_feature_asset_routes((
+        feature("one", (shared_read,)), feature("two", (shared_read,)),
+    ))
+    for first, second in (
+        (("GET", "/chat/api/channels"), ("POST", "/chat/api/channels")),
+        (("GET", "/chat/api/items/{id}"), ("GET", "/chat/api/items/{item_id}")),
+    ):
+        with pytest.raises(ValueError):
+            jarvis_feature_registry._validate_feature_asset_routes((
+                feature("one", (first,)), feature("two", (second,)),
+            ))
+    with pytest.raises(ValueError):
+        jarvis_feature_registry._validate_feature_asset_routes((
+            feature("one", (("POST", "/chat/api/approve"),)),
+            feature("two", (("POST", "/chat/api/approve"),)),
+        ))
