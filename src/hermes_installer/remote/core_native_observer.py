@@ -831,6 +831,19 @@ class RootCoreNativeObservationRegistry:
             return None
         return policy
 
+    def is_current_orchestrator_policy(self, policy: Any, owner_turn_observation: Any) -> bool:
+        """Verify the exact root-retained policy before the gateway op returns."""
+        if type(policy) is not RootSelectedOrchestratorDelegationPolicy:
+            return False
+        with self._lock:
+            now = time.monotonic()
+            if (self._closed
+                    or self._owners.get(getattr(owner_turn_observation, "owner_turn_handle", None))
+                        is not owner_turn_observation
+                    or self._policy_for_owner(owner_turn_observation, now) is not policy):
+                return False
+            return True
+
     def _handle(self, peer: tuple[int, int, int], request: dict[str, Any]) -> dict[str, Any]:
         op = request.get("op")
         nonce = request.get("nonce")
