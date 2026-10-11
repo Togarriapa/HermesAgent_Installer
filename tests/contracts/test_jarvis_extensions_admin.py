@@ -103,20 +103,29 @@ def test_skill_snapshot_joins_root_manifest_to_native_skills_and_preserves_sourc
         plugins=[], mcps=[], skill_catalog={"resource-helper"},
         native_skill_files=[
             SimpleNamespace(skill_id="owner-helper", display_name="owner-helper",
-                sha256="a" * 64, source="owner-added", editable=True),
+                sha256="a" * 64, source="owner-added", editable=True, overlay_active=False),
             SimpleNamespace(skill_id="resource-helper", display_name="resource-helper",
-                sha256="b" * 64, source="pinned", editable=False),
-            SimpleNamespace(skill_id="core-helper", display_name="core-helper",
-                sha256="c" * 64, source="pinned", editable=False),
+                sha256="b" * 64, source="resources", editable=True, overlay_active=False),
+            SimpleNamespace(skill_id="resource-edit", display_name="resource-edit",
+                sha256="c" * 64, source="resources", editable=True, overlay_active=True),
+        ], archived_skill_files=[
+            {"skill_id": "resource-helper", "source": "resources", "versions": [
+                {"restore_id": "d" * 64, "sha256": "e" * 64}]},
+            {"skill_id": "archived-owner-helper", "source": "owner-added", "versions": [
+                {"restore_id": "restore-token_0123456789", "sha256": "f" * 64}]},
         ])
     by_name = {row["name"]: row for row in result["items"] if row["kind"] == "skills"}
     assert by_name["owner-helper"]["source"] == "useradded"
     assert by_name["owner-helper"]["editable"] is True
     assert by_name["owner-helper"]["loaded"] is True
     assert by_name["resource-helper"]["source"] == "bundledResources"
-    assert by_name["resource-helper"]["label"] == "resource-helper"
-    assert by_name["core-helper"]["source"] == "builtin"
-    assert by_name["core-helper"]["label"] == "Hermes core-helper"
+    assert by_name["resource-helper"]["originLabel"] == "Resources (owner overlay)"
+    assert by_name["resource-helper"]["overlayActive"] is False
+    assert by_name["resource-helper"]["removable"] is False
+    assert by_name["resource-edit"]["overlayActive"] is True
+    assert by_name["resource-edit"]["removable"] is True
+    assert by_name["resource-helper"]["archivedVersions"][0]["restoreId"] == "d" * 64
+    assert by_name["archived-owner-helper"]["archivedVersions"][0]["restoreId"] == "restore-token_0123456789"
     assert result["availableActions"]["skills"]["edit"] is True
     assert result["availableActions"]["skills"]["remove"] is True
 
@@ -151,3 +160,5 @@ def test_extensions_feature_asset_uses_only_fixed_routes():
     assert ("POST", "/chat/api/extensions/plugins/remove") in FEATURE_ASSETS.api_routes
     assert ("POST", "/chat/api/extensions/skills/edit") in FEATURE_ASSETS.api_routes
     assert ("POST", "/chat/api/extensions/skills/remove") in FEATURE_ASSETS.api_routes
+    assert ("POST", "/chat/api/extensions/skills/restore-list") in FEATURE_ASSETS.api_routes
+    assert ("POST", "/chat/api/extensions/skills/restore") in FEATURE_ASSETS.api_routes

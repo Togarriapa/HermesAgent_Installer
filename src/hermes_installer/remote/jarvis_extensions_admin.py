@@ -19,6 +19,8 @@ FEATURE_ROUTES = (
     ("POST", "/chat/api/extensions/skills/read"),
     ("POST", "/chat/api/extensions/skills/edit"),
     ("POST", "/chat/api/extensions/skills/remove"),
+    ("POST", "/chat/api/extensions/skills/restore-list"),
+    ("POST", "/chat/api/extensions/skills/restore"),
     ("POST", "/chat/api/extensions/plugins/add"),
     ("POST", "/chat/api/extensions/plugins/edit"),
     ("POST", "/chat/api/extensions/plugins/toggle"),
@@ -57,6 +59,14 @@ def _safe_label(value: Any, *, maximum: int = 96) -> str | None:
     return value
 
 
+def _native_skill_loaded(skills: Any, skill_id: str) -> bool:
+    if not isinstance(skills, list):
+        return False
+    return any(isinstance(group, dict) and isinstance(group.get("names"), list)
+               and any(isinstance(name, str) and _slug(name) == skill_id for name in group["names"])
+               for group in skills)
+
+
 def _source_label(source: str, name: str) -> tuple[str, str]:
     """Render provenance from observed native source fields only."""
     if source in {"bundled", "builtin", "built-in"}:
@@ -70,6 +80,7 @@ def _source_label(source: str, name: str) -> tuple[str, str]:
 
 def build_extension_snapshot(*, skills: Any, plugins: Any, mcps: Any,
                              native_skill_files: Any = (),
+                             archived_skill_files: Any = (),
                              skill_catalog: set[str] | None = None) -> dict[str, Any]:
     """Build a closed, secret-free inventory. Missing source claims remain unknown."""
     rows: list[dict[str, Any]] = []
@@ -106,11 +117,14 @@ def build_extension_snapshot(*, skills: Any, plugins: Any, mcps: Any,
         source_kind = getattr(descriptor, "source", None)
         sha256 = getattr(descriptor, "sha256", None)
         editable = getattr(descriptor, "editable", None)
+        overlay_active = getattr(descriptor, "overlay_active", None)
         if (not isinstance(skill_id, str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", skill_id) is None
                 or skill_id in seen_skill_ids or not isinstance(display_name, str)
-                or source_kind not in {"pinned", "owner-added"}
+                or source_kind not in {"resources", "owner-added"}
                 or not isinstance(sha256, str) or re.fullmatch(r"[0-9a-f]{64}", sha256) is None
-                or type(editable) is not bool or editable != (source_kind == "owner-added")):
+                or type(editable) is not bool or editable is not True
+                or type(overlay_active) is not bool
+                or (source_kind == "owner-added" and overlay_active)):
             raise ValueError("native skill source row was invalid")
         seen_skill_ids.add(skill_id)
         rows = [row for row in rows if not (row.get("kind") == "skills"
@@ -118,14 +132,53 @@ def build_extension_snapshot(*, skills: Any, plugins: Any, mcps: Any,
         loaded_name = next((name for group in skills if isinstance(group, dict)
                             for name in group.get("names", []) if isinstance(name, str)
                             and _slug(name) == skill_id), None)
-        source = ("useradded" if source_kind == "owner-added" else
-                  "bundledResources" if _slug(display_name) in catalog or skill_id in catalog else "builtin")
-        label = f"Hermes {display_name}" if source == "builtin" else display_name
+        source = "useradded" if source_kind == "owner-added" else "bundledResources"
+        origin_label = "Hermes home (owner-added)" if source_kind == "owner-added" else "Resources (owner overlay)"
+        label = display_name
         rows.append({"kind": "skills", "name": skill_id, "label": label,
                      "category": skill_categories.get(skill_id, "native"), "source": source,
-                     "editable": editable, "removable": editable, "sha256": sha256,
+                     "originLabel": origin_label, "overlayActive": overlay_active,
+                     "editable": editable, "removable": editable and (source_kind == "owner-added" or overlay_active), "sha256": sha256,
                      "loaded": loaded_name is not None,
-                     "actionState": "loaded" if loaded_name is not None else "source-present-not-loaded"})
+                     "actionState": (("owner overlay active" if overlay_active else "pinned base")
+                                     if source_kind == "resources" else
+                                     ("loaded" if loaded_name is not None else "source present, not loaded"))})
+    if not isinstance(archived_skill_files, (list, tuple)) or len(archived_skill_files) > _MAX_SKILLS:
+        raise ValueError("native archived skill inventory exceeded its bound")
+    rows_by_skill = {row["name"]: row for row in rows if row.get("kind") == "skills"}
+    for archive in archived_skill_files:
+        skill_id = archive.get("skill_id") if isinstance(archive, dict) else None
+        source_kind = archive.get("source") if isinstance(archive, dict) else None
+        versions = archive.get("versions") if isinstance(archive, dict) else None
+        if (not isinstance(skill_id, str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", skill_id) is None
+                or source_kind not in {"resources", "owner-added"}
+                or not isinstance(versions, (list, tuple)) or not versions or len(versions) > 4096):
+            raise ValueError("native archived skill row was invalid")
+        safe_versions = []
+        for version in versions:
+            if (not isinstance(version, dict) or not isinstance(version.get("restore_id"), str)
+                    or re.fullmatch(r"[0-9a-f]{64}" if source_kind == "resources"
+                                    else r"[A-Za-z0-9_-]{16,96}", version["restore_id"]) is None
+                    or not isinstance(version.get("sha256"), str)
+                    or re.fullmatch(r"[0-9a-f]{64}", version["sha256"]) is None):
+                raise ValueError("native archived skill version was invalid")
+            safe_versions.append({"restoreId": version["restore_id"], "sha256": version["sha256"]})
+        row = rows_by_skill.get(skill_id)
+        expected_source = "bundledResources" if source_kind == "resources" else "useradded"
+        if row is not None:
+            if row["source"] != expected_source:
+                raise ValueError("skill archive provenance differs from the current source")
+            row["archivedVersions"] = safe_versions
+            continue
+        if source_kind == "resources":
+            raise ValueError("archived Resources skill is absent from the pinned source manifest")
+        placeholder = {"kind": "skills", "name": skill_id, "label": skill_id,
+            "category": "native", "source": "useradded", "originLabel": "Hermes home (owner-added)",
+            "overlayActive": False, "editable": False, "removable": False,
+            "sha256": safe_versions[-1]["sha256"], "loaded": False,
+            "actionState": "archived · recovery available", "archivedVersions": safe_versions}
+        rows.append(placeholder)
+        rows_by_skill[skill_id] = placeholder
     for kind, values in (("plugins", plugins), ("mcps", mcps)):
         if not isinstance(values, list) or len(values) > 512:
             raise ValueError("native extension inventory exceeded its bound")
@@ -162,7 +215,7 @@ def build_extension_snapshot(*, skills: Any, plugins: Any, mcps: Any,
             "items": rows,
             "availableActions": {
                 "skills": {"add": True, "edit": True, "remove": True,
-                           "reason": "Owner-added skill files use the root-journaled native source adapter; pinned skills are read-only."},
+                           "reason": "Resources skills use owner overlays; Hermes-home owner-added files use the root journal. Hermes stock skills remain read-only."},
                 "plugins": {"add": True, "edit": True, "remove": True,
                             "reason": ("Removal permanently deletes the plugin package and Hermes "
                                        "registration; the owner must explicitly confirm it.")},
@@ -223,13 +276,18 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
             service.backend.list_mcp_servers())
         accepted = request.get("core_ingress")
         principal = current_owner(request)
-        skill_files = skill_provider(request).list_skills(core_generation=principal.core_generation,
-            access_jwt=access_jwt(request), accepted_ingress=accepted)
+        provider = skill_provider(request)
+        token = access_jwt(request)
+        skill_files = provider.list_skills(core_generation=principal.core_generation,
+            access_jwt=token, accepted_ingress=accepted)
+        archived_skill_files = provider.list_skill_archives(core_generation=principal.core_generation,
+            access_jwt=token, accepted_ingress=accepted)
         bundle = _verified_bundle_inventory()
         skill_catalog = {_slug(row["name"]) for row in bundle["items"]
                          if row.get("kind") == "skills" and isinstance(row.get("name"), str)}
         return build_extension_snapshot(skills=skills, plugins=plugins, mcps=mcps,
                                         native_skill_files=skill_files,
+                                        archived_skill_files=archived_skill_files,
                                         skill_catalog=skill_catalog)
 
     async def get_extensions(request: Any) -> Any:
@@ -322,7 +380,7 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                                        headers=_secure_headers())
             name = body.get("catalog_name") or body.get("identifier")
             target = None
-            if operation in {"skills:edit", "skills:remove", "plugins:edit", "plugins:toggle", "plugins:remove", "mcps:remove"}:
+            if operation in {"skills:edit", "skills:remove", "skills:restore", "plugins:edit", "plugins:toggle", "plugins:remove", "mcps:remove"}:
                 kind = ("skills" if operation.startswith("skills:") else
                         "plugins" if operation.startswith("plugins:") else "mcps")
                 target = resolve_item_id(body, before_inventory["items"], kind,
@@ -335,7 +393,21 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                              "plugins:toggle": "ENABLE" if body.get("enabled") is True else "DISABLE",
                              "plugins:remove": "DELETE PERMANENTLY",
                              "mcps:add": "ADD", "mcps:remove": "DELETE"}
-            confirm(body, f"{confirm_words[operation]} {target['label'] if target else name}")
+            if operation == "skills:remove" and target.get("source") == "bundledResources":
+                confirm_words[operation] = "ARCHIVE OVERLAY"
+            expected_confirmation = None
+            if operation == "skills:restore":
+                restore_id = body.get("restore_id")
+                restore_sha = body.get("restore_sha256")
+                restore_id_pattern = (r"[0-9a-f]{64}" if target.get("source") == "bundledResources"
+                                      else r"[A-Za-z0-9_-]{16,96}")
+                if (not isinstance(restore_id, str) or re.fullmatch(restore_id_pattern, restore_id) is None
+                        or not isinstance(restore_sha, str) or re.fullmatch(r"[0-9a-f]{64}", restore_sha) is None):
+                    raise web.HTTPBadRequest(text="invalid restore selection", headers=_secure_headers())
+                expected_confirmation = f"RESTORE {target['label']} {restore_id}"
+            if expected_confirmation is None:
+                expected_confirmation = f"{confirm_words[operation]} {target['label'] if target else name}"
+            confirm(body, expected_confirmation)
             if operation == "plugins:edit":
                 if target.get("source") != "useradded":
                     raise web.HTTPConflict(text="plugin settings are unavailable for this item",
@@ -353,13 +425,17 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                             or (field.get("required") is True and value == "")):
                         raise web.HTTPBadRequest(text="invalid plugin setting value", headers=_secure_headers())
             if operation in {"skills:edit", "skills:remove"}:
-                if target.get("source") != "useradded" or target.get("editable") is not True:
-                    raise web.HTTPConflict(text="pinned Hermes and bundled skills are read-only",
+                if (target.get("source") not in {"useradded", "bundledResources"}
+                        or target.get("editable") is not True
+                        or (operation == "skills:remove" and target.get("removable") is not True)):
+                    raise web.HTTPConflict(text="this native skill or pinned base cannot be changed",
                                            headers=_secure_headers())
                 current_file = skill_provider(request).read_skill(core_generation=before.core_generation,
                     skill_id=target["name"], access_jwt=access_jwt(request),
                     accepted_ingress=request.get("core_ingress"))
-                if current_file.source != "owner-added" or current_file.sha256 != target.get("sha256"):
+                source_expected = "resources" if target.get("source") == "bundledResources" else "owner-added"
+                if (current_file.source != source_expected or current_file.sha256 != target.get("sha256")
+                        or current_file.overlay_active != target.get("overlayActive")):
                     raise web.HTTPConflict(text="skill source changed; refresh before editing",
                                            headers=_secure_headers())
                 if operation == "skills:edit":
@@ -388,7 +464,12 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
             if operation == "skills:add":
                 result = await service.backend.install_skill(body["identifier"])
                 reload_result = await service.backend.reload_skills()
+                observed = await service.backend.skills_inventory()
+                if not _native_skill_loaded(observed, _slug(result["name"])):
+                    return web.json_response({"status": "pending", "reason": "skill install was accepted but is not present in the refreshed native inventory"},
+                                             status=202, headers=_secure_headers())
                 result["reload"] = reload_result
+                result["nativeInventoryConfirmed"] = True
                 status = 201
             elif operation == "skills:edit":
                 write = skill_provider(request).write_skill(core_generation=before.core_generation,
@@ -399,17 +480,24 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                     complete_action(body, before.subject)
                     raise web.HTTPConflict(text="skill source changed; refresh and retry",
                                            headers=_secure_headers())
-                if (write.state != "active" or write.effective_readback is not True
+                expected_write_state = "discovered" if target.get("source") == "bundledResources" else "active"
+                recovery_id_valid = ((write.recovery_id is None or re.fullmatch(r"[0-9a-f]{64}", write.recovery_id) is not None) if target.get("source") == "bundledResources"
+                    else isinstance(write.recovery_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{16,96}", write.recovery_id) is not None)
+                if (write.state != expected_write_state or write.effective_readback is not True
                         or write.sha256 != hashlib.sha256(body["content"].encode("utf-8")).hexdigest()
                         or not isinstance(write.source_generation, str)
                         or not re.fullmatch(r"[0-9a-f]{64}", write.source_generation)
-                        or not isinstance(write.recovery_id, str)
-                        or not re.fullmatch(r"[A-Za-z0-9_-]{16,96}", write.recovery_id)):
+                        or not recovery_id_valid):
                     return web.json_response({"status": "pending", "reason": "skill source was saved but active readback is pending"},
                                              status=202, headers=_secure_headers())
-                result = {"state": write.state, "sha256": write.sha256,
+                reloaded = await service.backend.reload_skills()
+                observed = await service.backend.skills_inventory()
+                if not _native_skill_loaded(observed, target["name"]):
+                    return web.json_response({"status": "pending", "reason": "skill source was saved but is absent from the refreshed native inventory"},
+                                             status=202, headers=_secure_headers())
+                result = {"state": write.state, "sha256": write.sha256, "action": "edit",
                           "sourceGeneration": write.source_generation,
-                          "reload": await service.backend.reload_skills()}
+                          "reload": reloaded, "nativeInventoryConfirmed": True}
                 status = 200
             elif operation == "skills:remove":
                 archived = skill_provider(request).archive_skill(core_generation=before.core_generation,
@@ -420,16 +508,67 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                     complete_action(body, before.subject)
                     raise web.HTTPConflict(text="skill source changed; refresh and retry",
                                            headers=_secure_headers())
-                if (archived.state != "archived" or archived.effective_readback is not True
-                        or archived.sha256 != current_file.sha256
-                        or not isinstance(archived.recovery_id, str)
-                        or not re.fullmatch(r"[A-Za-z0-9_-]{16,96}", archived.recovery_id)):
+                expected_archive_state = "discovered" if target.get("source") == "bundledResources" else "archived"
+                archive_id_valid = (isinstance(archived.recovery_id, str)
+                    and (re.fullmatch(r"[0-9a-f]{64}", archived.recovery_id) is not None
+                         if target.get("source") == "bundledResources"
+                         else re.fullmatch(r"[A-Za-z0-9_-]{16,96}", archived.recovery_id) is not None))
+                archive_sha_valid = (isinstance(archived.sha256, str)
+                    and re.fullmatch(r"[0-9a-f]{64}", archived.sha256) is not None
+                    if target.get("source") == "bundledResources"
+                    else archived.sha256 == current_file.sha256)
+                if (archived.state != expected_archive_state or archived.effective_readback is not True
+                        or not archive_sha_valid
+                        or not archive_id_valid):
                     return web.json_response({"status": "pending", "reason": "skill archive outcome is pending"},
                                              status=202, headers=_secure_headers())
                 reload_result = await service.backend.reload_skills()
+                observed = await service.backend.skills_inventory()
+                should_be_loaded = target.get("source") == "bundledResources"
+                if _native_skill_loaded(observed, target["name"]) is not should_be_loaded:
+                    return web.json_response({"status": "pending", "reason": "archive was recorded but refreshed native skill state is not confirmed"},
+                                             status=202, headers=_secure_headers())
                 result = {"state": archived.state, "recoveryId": archived.recovery_id,
+                          "action": "archive",
                           "sourceGeneration": archived.source_generation,
-                          "reload": reload_result, "effectiveReadback": archived.effective_readback}
+                          "reload": reload_result, "effectiveReadback": archived.effective_readback,
+                          "nativeInventoryConfirmed": True}
+                status = 200
+            elif operation == "skills:restore":
+                provider = skill_provider(request)
+                archive_rows = provider.list_skill_archives(core_generation=before.core_generation,
+                    access_jwt=access_jwt(request), accepted_ingress=request.get("core_ingress"))
+                archive_row = next((item for item in archive_rows if item["skill_id"] == target["name"]
+                                    and item["source"] == ("resources" if target.get("source") == "bundledResources" else "owner-added")), None)
+                versions = archive_row["versions"] if archive_row else ()
+                archived = next((item for item in versions if item["restore_id"] == body["restore_id"]), None)
+                if archived is None or archived["sha256"] != body.get("restore_sha256"):
+                    raise web.HTTPConflict(text="archived skill version changed; refresh before restoring",
+                                           headers=_secure_headers())
+                restore_expected_sha = (target["sha256"] if target.get("source") == "bundledResources"
+                                        else archived["sha256"])
+                restored = provider.restore_skill(core_generation=before.core_generation,
+                    skill_id=target["name"], expected_sha256=restore_expected_sha,
+                    restore_id=archived["restore_id"], idempotency_key=body["idempotency_key"],
+                    access_jwt=access_jwt(request), accepted_ingress=request.get("core_ingress"))
+                expected_restore_state = "discovered" if target.get("source") == "bundledResources" else "restored"
+                restore_id_valid = ((restored.recovery_id is None or re.fullmatch(r"[0-9a-f]{64}", restored.recovery_id) is not None)
+                    if target.get("source") == "bundledResources" else restored.recovery_id == body["restore_id"])
+                if (restored.state != expected_restore_state or restored.effective_readback is not True
+                        or restored.sha256 != archived["sha256"] or not restore_id_valid
+                        or not isinstance(restored.source_generation, str)
+                        or not re.fullmatch(r"[0-9a-f]{64}", restored.source_generation)):
+                    return web.json_response({"status": "pending", "reason": "restore outcome is pending"},
+                                             status=202, headers=_secure_headers())
+                reload_result = await service.backend.reload_skills()
+                observed = await service.backend.skills_inventory()
+                if not _native_skill_loaded(observed, target["name"]):
+                    return web.json_response({"status": "pending", "reason": "restored source is not present in refreshed native inventory"},
+                                             status=202, headers=_secure_headers())
+                result = {"state": restored.state, "recoveryId": restored.recovery_id,
+                          "action": "restore",
+                          "sourceGeneration": restored.source_generation, "sha256": restored.sha256,
+                          "reload": reload_result, "nativeInventoryConfirmed": True}
                 status = 200
             elif operation == "plugins:add":
                 result = await service.backend.install_plugin(body["catalog_name"])
@@ -475,6 +614,37 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
 
     async def skills_remove(request: Any) -> Any:
         return await mutate(request, operation="skills:remove")
+
+    async def skills_restore(request: Any) -> Any:
+        return await mutate(request, operation="skills:restore")
+
+    async def skills_restore_list(request: Any) -> Any:
+        from aiohttp import web
+        try:
+            if request.raw_path != request.path:
+                raise web.HTTPNotFound(text="not found", headers=_secure_headers())
+            before = current_owner(request, require_origin=True)
+            body = await _read_body(request, _BODY_FIELDS["skills:restore-list"])
+            snapshot = await asyncio.wait_for(inventory(request), timeout=8.0)
+            if body.get("revision") != snapshot["revision"]:
+                raise web.HTTPConflict(text="extension inventory changed; refresh before listing archives",
+                                       headers=_secure_headers())
+            row = resolve_item_id(body, snapshot["items"], "skills", before.subject, before.core_generation)
+            archive_rows = skill_provider(request).list_skill_archives(core_generation=before.core_generation,
+                access_jwt=access_jwt(request), accepted_ingress=request.get("core_ingress"))
+            archive_row = next((item for item in archive_rows if item["skill_id"] == row["name"]), None)
+            versions = archive_row["versions"] if archive_row else ()
+            after = current_owner(request, require_origin=True)
+            if after.subject != before.subject or after.core_generation != before.core_generation:
+                raise JarvisChatDenied("owner or core generation changed during archive inventory")
+            return web.json_response({"skill": row["label"], "versions": [
+                {"restoreId": item["restore_id"], "sha256": item["sha256"]} for item in versions
+            ]}, headers=_secure_headers())
+        except web.HTTPException:
+            raise
+        except Exception:
+            raise web.HTTPServiceUnavailable(text="archived skill versions are unavailable",
+                                             headers=_secure_headers()) from None
 
     async def skills_read(request: Any) -> Any:
         from aiohttp import web
@@ -530,6 +700,8 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
         ("/chat/api/extensions/skills/read", skills_read),
         ("/chat/api/extensions/skills/edit", skills_edit),
         ("/chat/api/extensions/skills/remove", skills_remove),
+        ("/chat/api/extensions/skills/restore-list", skills_restore_list),
+        ("/chat/api/extensions/skills/restore", skills_restore),
         ("/chat/api/extensions/plugins/add", plugins_add),
         ("/chat/api/extensions/plugins/edit", plugins_edit),
         ("/chat/api/extensions/plugins/toggle", plugins_toggle),
@@ -545,6 +717,8 @@ _BODY_FIELDS = {
     "skills:read": {"item_id", "revision"},
     "skills:edit": {"item_id", "content", "confirmation", "idempotency_key", "revision"},
     "skills:remove": {"item_id", "confirmation", "idempotency_key", "revision"},
+    "skills:restore-list": {"item_id", "revision"},
+    "skills:restore": {"item_id", "restore_id", "restore_sha256", "confirmation", "idempotency_key", "revision"},
     "plugins:add": {"catalog_name", "confirmation", "idempotency_key", "revision"},
     "plugins:edit": {"item_id", "values", "confirmation", "idempotency_key", "revision"},
     "plugins:toggle": {"item_id", "enabled", "confirmation", "idempotency_key", "revision"},

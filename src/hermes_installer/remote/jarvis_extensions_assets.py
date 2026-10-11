@@ -16,7 +16,7 @@ _VIEW = '''<section class="extensions-page" data-feature-root="extensions" aria-
     <form data-add-mcp><h3>Add an MCP server</h3><label>Official catalog name<input name="catalog_name" maxlength="160" required autocomplete="off"></label><button>Add MCP server</button><p>Credentials and custom commands are not collected here.</p></form>
   </div>
   <div data-extension-list class="extension-list"></div>
-  <p class="extensions-note">“Hermes” identifies a built-in item. Bundled Resources and owner-added items show their observed source. Owner-added skills can be edited or archived with a recoverable root backup; restoring that archive is not available in this dashboard. Custom MCP connection edits are unavailable in the pinned Hermes API.</p>
+  <p class="extensions-note">Hermes stock skills are read-only. Resources skills are edited as owner overlays; archiving an overlay reveals the pinned base again. Hermes-home owner-added skills can be archived with a recoverable backup. Restore is available for listed archived versions. Custom MCP connection edits are unavailable in the pinned Hermes API.</p>
 </section>'''
 
 _CSS = '''[data-feature-root="extensions"]{max-width:1100px;margin:0 auto;padding:clamp(18px,3vw,32px);color:var(--text,#edf5f6)}
@@ -53,19 +53,19 @@ _MOUNT = r'''function mount(container, api) {
     if (!exactConfirm(phrase)) return;
     busy = true; status.textContent = 'Applying the confirmed owner action…';
     try { const result = await api.post(path, {...body, confirmation:phrase, idempotency_key:makeKey(), revision:snapshot.revision});
-      status.textContent = result && result.status === 'applied' ? (result.result && result.result.recoveryId ? `Skill archived with recoverable backup ${result.result.recoveryId}; restore is not available in this dashboard.` : 'Owner action applied; refreshing observed state.') : 'The action may still be pending. Refresh to check current state.';
+      status.textContent = result && result.status === 'applied' ? (result.result && result.result.recoveryId ? `${result.result.action==='restore'?'Restored':'Archived'} skill version ${result.result.recoveryId}; refreshing native state.` : 'Owner action applied; refreshing observed state.') : 'The action may still be pending. Refresh to check current state.';
     } catch (_) { status.textContent = 'The action was not confirmed. Refresh to see the current native state.'; }
     finally { busy = false; await load(); }
   }
   function card(item) {
     const box = document.createElement('article'); box.className='extension-card';
-    text(box,'h3',item.label); text(box,'p',`${item.kind} · ${item.source}`);
+    text(box,'h3',item.label); text(box,'p',`${item.kind} · ${item.kind==='skills'?(item.originLabel||item.source):item.source}`);
     const detail = item.kind === 'plugins' ? `${item.state || 'status unknown'} · ${item.version || 'version unknown'}`
-      : item.kind === 'mcps' ? `${item.transport} · ${item.enabled ? 'enabled' : 'disabled'}` : `${item.category} · ${item.loaded ? 'loaded' : 'source present, not loaded'}`;
+      : item.kind === 'mcps' ? `${item.transport} · ${item.enabled ? 'enabled' : 'disabled'}` : `${item.category} · ${item.actionState || (item.loaded ? 'loaded' : 'source present, not loaded')}`;
     text(box,'p',detail);
     if (item.updateAvailable === true) text(box,'p','A catalog update is available; review remains required.');
     const actions = document.createElement('div'); actions.className='extension-actions';
-    if (item.kind === 'skills' && item.source === 'useradded' && item.editable) {
+    if (item.kind === 'skills' && ['useradded','bundledResources'].includes(item.source) && item.editable) {
       const edit=text(actions,'button','Edit skill'); edit.type='button'; edit.addEventListener('click',async()=>{
         try {
           const file=await api.post('/chat/api/extensions/skills/read',{item_id:item.id,revision:snapshot.revision});
@@ -83,9 +83,24 @@ _MOUNT = r'''function mount(container, api) {
           dialog.addEventListener('close',()=>dialog.remove(),{once:true}); dialog.showModal(); area.focus();
         } catch (_) { status.textContent='Current skill source is unavailable; refresh and retry.'; }
       });
-      const archive=text(actions,'button','Archive skill'); archive.type='button'; archive.addEventListener('click',()=>{
-        if (!window.confirm(`Archive ${item.label}? Its SKILL.md entrypoint will be removed from discovery. A root-private recovery backup is retained; this dashboard does not provide restore.`)) return;
-        void mutate('/chat/api/extensions/skills/remove',{item_id:item.id},`ARCHIVE (RECOVERABLE) ${item.label}`);
+      if (item.removable) { const archive=text(actions,'button',item.source==='bundledResources'?'Archive overlay':'Archive skill'); archive.type='button'; archive.addEventListener('click',()=>{
+        const resource = item.source==='bundledResources';
+        const warning = resource
+          ? `Archive the owner overlay for ${item.label}? Hermes will use the pinned Bundled Resources base again. The previous overlay is retained for recovery.`
+          : `Archive ${item.label}? Its owner-added SKILL.md entrypoint is moved out of discovery. A root-private recovery backup is retained.`;
+        if (!window.confirm(warning)) return;
+        void mutate('/chat/api/extensions/skills/remove',{item_id:item.id},`${resource?'ARCHIVE OVERLAY':'ARCHIVE (RECOVERABLE)'} ${item.label}`);
+      }); }
+    }
+    if (item.kind==='skills' && Array.isArray(item.archivedVersions) && item.archivedVersions.length
+        && (item.source==='bundledResources' || (item.source==='useradded' && !item.editable))) {
+      const restore=text(actions,'button','Restore archived version'); restore.type='button'; restore.addEventListener('click',async()=>{
+        const versions=item.archivedVersions;
+        const choices=versions.map((version,index)=>`${index+1}: ${version.sha256.slice(0,12)} · ${version.restoreId.slice(0,12)}`).join('\n');
+        const selected=Number(window.prompt(`Choose the archived version to restore for ${item.label}:\n${choices}`, '1'));
+        if (!Number.isInteger(selected)||selected<1||selected>versions.length) return;
+        const version=versions[selected-1];
+        await mutate('/chat/api/extensions/skills/restore',{item_id:item.id,restore_id:version.restoreId,restore_sha256:version.sha256},`RESTORE ${item.label} ${version.restoreId}`);
       });
     }
     if (item.kind === 'plugins' && item.editable && Array.isArray(item.settings) && item.settings.some((field)=>['string','number','boolean','enum'].includes(field.type))) {
