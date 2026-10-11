@@ -81,38 +81,39 @@ def read_registration() -> tuple[Path, str, str]:
     return OWNER_DATA_ROOT, value["owner_subject_sha256"], hashlib.sha256(raw).hexdigest()
 
 
-def _existing_chat_owners() -> tuple[str, ...]:
+def _query_existing_chat_owners_as_core() -> tuple[str, ...]:
+    if os.geteuid() != 1000:
+        raise ObsidianOwnerLifecycleError("Jarvis owner query requires the selected Core UID")
     from .jarvis_chat import CHAT_STATE_DIRECTORY, CHAT_STORE_PATH
 
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open("/", flags)
     try:
-        for component in CHAT_STATE_DIRECTORY.parts[1:]:
+        for index, component in enumerate(CHAT_STATE_DIRECTORY.parts[1:]):
             child = os.open(component, flags, dir_fd=fd)
             os.close(fd)
             fd = child
             info = os.fstat(fd)
-            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 1000
-                    or stat.S_IMODE(info.st_mode) != 0o700):
+            expected_uid = 0 if index < len(CHAT_STATE_DIRECTORY.parts[1:]) - 1 else 1000
+            expected_mode = None if expected_uid == 0 else 0o700
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != expected_uid
+                    or (expected_mode is not None and stat.S_IMODE(info.st_mode) != expected_mode)
+                    or (expected_uid == 0 and stat.S_IMODE(info.st_mode) & 0o022)):
                 raise ObsidianOwnerLifecycleError("existing Jarvis owner database directory is unavailable")
-        dbfd = os.open(CHAT_STORE_PATH.name,
-                       os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=fd)
-        try:
-            info = os.fstat(dbfd)
-            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 1000
-                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1
-                    or info.st_size < 1):
-                raise ObsidianOwnerLifecycleError("existing Jarvis owner database custody differs")
-            uri = f"file:/proc/self/fd/{dbfd}?mode=ro&immutable=1"
-            with sqlite3.connect(uri, uri=True, timeout=1) as db:
-                columns = {row[1] for row in db.execute("PRAGMA table_info(conversations)")}
-                if not {"id", "owner"} <= columns:
-                    raise ValueError
-                rows = db.execute("SELECT DISTINCT owner FROM conversations ORDER BY owner LIMIT 3").fetchall()
-        except Exception:
-            raise ObsidianOwnerLifecycleError("existing Jarvis owner scope could not be read") from None
-        finally:
-            os.close(dbfd)
+        info = os.stat(CHAT_STORE_PATH.name, dir_fd=fd, follow_symlinks=False)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 1000
+                or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1
+                or info.st_size < 1):
+            raise ObsidianOwnerLifecycleError("existing Jarvis owner database custody differs")
+        # Open the fixed path read-only (not immutable) so SQLite includes the
+        # current WAL state when the live chat service has recent owner rows.
+        uri = f"file:{CHAT_STORE_PATH.as_posix()}?mode=ro"
+        with sqlite3.connect(uri, uri=True, timeout=1) as db:
+            db.execute("PRAGMA query_only=ON")
+            columns = {row[1] for row in db.execute("PRAGMA table_info(conversations)")}
+            if not {"id", "owner"} <= columns:
+                raise ValueError
+            rows = db.execute("SELECT DISTINCT owner FROM conversations ORDER BY owner LIMIT 3").fetchall()
     finally:
         os.close(fd)
     owners = tuple(row[0] for row in rows)
@@ -120,6 +121,47 @@ def _existing_chat_owners() -> tuple[str, ...]:
             or _HASH.fullmatch(owners[0]) is None):
         raise ObsidianOwnerLifecycleError("database does not have one exact existing Jarvis owner scope")
     return owners
+
+
+def _existing_chat_owners() -> tuple[str, ...]:
+    """Read the current WAL-aware owner scope in a dropped-UID-1000 child."""
+    read_fd, write_fd = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        try:
+            os.close(read_fd)
+            os.setgroups([])
+            os.setgid(1000)
+            os.setuid(1000)
+            owners = _query_existing_chat_owners_as_core()
+            raw = json.dumps({"owners": list(owners)}, separators=(",", ":")).encode("ascii")
+            if len(raw) > 512:
+                raise ValueError("owner query result exceeded bound")
+            os.write(write_fd, raw)
+            os._exit(0)
+        except BaseException:
+            os._exit(1)
+    os.close(write_fd)
+    try:
+        raw = bytearray()
+        while len(raw) <= 512:
+            chunk = os.read(read_fd, 513 - len(raw))
+            if not chunk:
+                break
+            raw.extend(chunk)
+    finally:
+        os.close(read_fd)
+    _pid, status = os.waitpid(pid, 0)
+    if status != 0 or not raw or len(raw) > 512:
+        raise ObsidianOwnerLifecycleError("existing Jarvis owner scope could not be read")
+    try:
+        result = json.loads(bytes(raw).decode("ascii", "strict"))
+        owners = result["owners"]
+        if type(result) is not dict or set(result) != {"owners"} or type(owners) is not list:
+            raise ValueError
+        return tuple(owners)
+    except Exception:
+        raise ObsidianOwnerLifecycleError("existing Jarvis owner scope response is malformed") from None
 
 
 def _current_core(config: Any) -> tuple[int, str, str]:
@@ -238,6 +280,16 @@ def prepare_existing_chat_owner(owner_subject_sha256: str) -> dict[str, Any]:
     before = _current_core(config)
     if _existing_chat_owners() != (owner_subject_sha256,):
         raise ObsidianOwnerLifecycleError("selector does not name the sole current existing Jarvis DB owner")
+    # Refuse a different existing enrollment before the UID-1000 process can
+    # touch the persistent vault tree. Recovery/rebinding is a separate action.
+    try:
+        OWNER_REGISTRATION.lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        _root, registered_owner, _digest = read_registration()
+        if registered_owner != owner_subject_sha256:
+            raise ObsidianOwnerLifecycleError("another owner is already enrolled; explicit root recovery is required")
     _prepare_as_core(owner_subject_sha256)
     if _current_core(config) != before:
         raise ObsidianOwnerLifecycleError("Core process changed during vault preparation")

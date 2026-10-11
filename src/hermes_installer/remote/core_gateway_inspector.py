@@ -1597,58 +1597,9 @@ def observe_read_native_activity(config: CoreGatewayConfig, *, request: dict[str
 
 def _obsidian_owner_registration() -> tuple[Path, str]:
     """Read the one root-owned selected-owner registration; it grants no access."""
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    current = os.open("/", flags)
-    try:
-        components = ("var", "lib", "hermes-installer", "core-runtime")
-        for index, component in enumerate(components):
-            child = os.open(component, flags, dir_fd=current)
-            os.close(current)
-            current = child
-            info = os.fstat(current)
-            mode = stat.S_IMODE(info.st_mode)
-            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
-                    or mode & 0o022 or (index == len(components) - 1 and mode != 0o700)):
-                raise PermissionError("Obsidian registration directory custody changed")
-        fd = os.open("obsidian-registration.json", os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
-                     dir_fd=current)
-        try:
-            info = os.fstat(fd)
-            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
-                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1
-                    or not 1 <= info.st_size <= 2048):
-                raise PermissionError("Obsidian registration custody changed")
-            raw = b""
-            while len(raw) <= 2048:
-                chunk = os.read(fd, 2049 - len(raw))
-                if not chunk:
-                    break
-                raw += chunk
-            if len(raw) != info.st_size or len(raw) > 2048:
-                raise PermissionError("Obsidian registration size changed")
-        finally:
-            os.close(fd)
-    finally:
-        os.close(current)
-
-    def unique_object(pairs):
-        result = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError("duplicate registration key")
-            result[key] = value
-        return result
-
-    registration = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=unique_object)
-    if (type(registration) is not dict
-            or set(registration) != {"schema", "core_uid", "data_root", "owner_subject_sha256"}
-            or type(registration["schema"]) is not int or registration["schema"] != 1
-            or type(registration["core_uid"]) is not int or registration["core_uid"] != 1000
-            or registration["data_root"] != "/home/admin/.hermes/jarvis-second-brain"
-            or not isinstance(registration["owner_subject_sha256"], str)
-            or not _is_hash(registration["owner_subject_sha256"])):
-        raise PermissionError("Obsidian registration schema is not the approved fixed owner")
-    return Path(registration["data_root"]), registration["owner_subject_sha256"]
+    from .obsidian_owner_lifecycle import read_registration
+    root, owner, _registration_sha256 = read_registration()
+    return root, owner
 
 
 def observe_read_obsidian_vault(config: CoreGatewayConfig, *, request: dict[str, Any],
@@ -3307,6 +3258,51 @@ class CoreNativeObserverCustody:
             pid, uid, gid = struct.unpack(
                 "3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
             return self.verify_current(config, accepted_ingress, pid, uid, gid)
+        except Exception:
+            return False
+
+    def verify_current_core_peer(self, config: CoreGatewayConfig,
+                                 connection: socket.socket) -> bool:
+        """Verify the live selected Core Unix peer without requiring a chat turn."""
+        try:
+            if not hasattr(socket, "SO_PEERCRED") or self._seal is not _NATIVE_CUSTODY_SEAL:
+                return False
+            peer_pid, peer_uid, peer_gid = struct.unpack(
+                "3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            now = time.monotonic()
+            if ((peer_pid, peer_uid, peer_gid) != (self.core_pid, self.core_uid, self.core_gid)
+                    or self.core_uid != 1000 or self.core_uid != config.core_uid
+                    or self.core_gid != config.core_gid or self.boot_id != config.boot_id
+                    or self.config_sha256 != config.config_sha256
+                    or self.core_generation == "" or self.core_source_generation == ""
+                    or self.core_unit_sha256 != config.core_unit_sha256
+                    or self.core_executable_sha256 != config.core_python_sha256
+                    or _boot_id() != config.boot_id):
+                return False
+            held = select.poll()
+            held.register(self._core_pidfd, select.POLLIN | select.POLLHUP | select.POLLERR)
+            if held.poll(0) or _proc_start_ticks(self.core_pid) != self.core_start_ticks:
+                return False
+            deadline = now + MAX_PROOF_SECONDS
+            props = _unit_properties(CORE_SERVICE_UNIT, deadline=deadline)
+            if (int(props.get("MainPID", "0")) != self.core_pid
+                    or props.get("InvocationID") != self.core_invocation_id):
+                return False
+            pidfd, start, invocation = _check_unit_process(
+                config, unit=CORE_SERVICE_UNIT, pid=self.core_pid, deadline=deadline)
+            try:
+                if start != self.core_start_ticks or invocation != self.core_invocation_id:
+                    return False
+            finally:
+                os.close(pidfd)
+            if (_core_listener_inode(self.core_pid) != self.core_listener_inode
+                    or _current_core_source(config, deadline=deadline) != self.core_source_generation
+                    or Path(f"/proc/{self.core_pid}/cwd").resolve(strict=True) != CORE_WORKSPACE):
+                return False
+            _current_core_credential(self.core_pid, config, deadline=deadline)
+            from .core_gateway import _read_config_current
+            _read_config_current(config)
+            return time.monotonic() < deadline
         except Exception:
             return False
 

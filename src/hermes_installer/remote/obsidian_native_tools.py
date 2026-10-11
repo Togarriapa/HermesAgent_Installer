@@ -16,9 +16,11 @@ import re
 from typing import Any, Iterator, Mapping
 
 from hermes_installer.native_invocations import canonical_tool_arguments, current_native_tool_dispatch
-from .core_native_observer import ObservedNativeToolCall, RootVerifiedMasterReadCall
+from .core_native_observer import ObservedNativeToolCall
 from .jarvis_final_effects import FinalEffectPermit, review_digest
-from .jarvis_mission_executor import MissionBinding
+from .obsidian_native_scope import (
+    RootObsidianCallScope, RootSelectedObsidianVaultBinding,
+)
 from .obsidian_second_brain import ObsidianVaultStore
 
 _TOOL_NAMES = frozenset({
@@ -47,23 +49,16 @@ class AdmittedObsidianCall:
     """Short-lived root-middleware context for one exact Obsidian tool call."""
 
     observed_call: ObservedNativeToolCall
-    caller: RootVerifiedMasterReadCall
-    owner_subject_sha256: str
-    execution_id: str
-    source_instance_id: str
-    mission_binding: MissionBinding | None
-    selected_note_ids: frozenset[str] | None
+    scope: RootObsidianCallScope
+    binding: RootSelectedObsidianVaultBinding
     permit: FinalEffectPermit | None
     _seal: object
 
 
 @contextmanager
 def _admit_current_obsidian_call(*, observed_call: ObservedNativeToolCall,
-                                 caller: RootVerifiedMasterReadCall,
-                                 owner_subject_sha256: str, execution_id: str,
-                                 source_instance_id: str,
-                                 mission_binding: MissionBinding | None = None,
-                                 selected_note_ids: frozenset[str] | None = None,
+                                 scope: RootObsidianCallScope,
+                                 binding: RootSelectedObsidianVaultBinding,
                                  permit: FinalEffectPermit | None = None) -> Iterator[AdmittedObsidianCall]:
     """Bind only server-derived caller context around middleware ``next_call``.
 
@@ -73,53 +68,43 @@ def _admit_current_obsidian_call(*, observed_call: ObservedNativeToolCall,
     """
     dispatch = current_native_tool_dispatch()
     if (type(observed_call) is not ObservedNativeToolCall
-            or type(caller) is not RootVerifiedMasterReadCall
-            or caller.tool_name not in _TOOL_NAMES
-            or not caller.matches_call(observed_call, tool_name=caller.tool_name,
-                                       arguments_sha256=observed_call.arguments_sha256)
+            or type(scope) is not RootObsidianCallScope
+            or type(binding) is not RootSelectedObsidianVaultBinding
+            or scope.tool_name not in _TOOL_NAMES
+            or not scope.matches(observed_call, binding)
             or dispatch is None or dispatch.tool_call_id != observed_call.tool_call_id
             or dispatch.tool_name != observed_call.tool_name
             or hashlib.sha256(dispatch.canonical_arguments).hexdigest()
                 != observed_call.arguments_sha256
-            or not _HASH.fullmatch(owner_subject_sha256 or "")
-            or type(execution_id) is not str or not _ID.fullmatch(execution_id)
-            or type(source_instance_id) is not str or not _ID.fullmatch(source_instance_id)
-            or (mission_binding is not None and type(mission_binding) is not MissionBinding)
-            or (selected_note_ids is not None and
-                (type(selected_note_ids) is not frozenset
-                 or any(type(value) is not str or not _ID.fullmatch(value)
-                        for value in selected_note_ids)))
             or (permit is not None and type(permit) is not FinalEffectPermit)):
         raise ObsidianNativeToolUnavailable("current root-admitted Obsidian call is unavailable")
-    if (caller.mode == "master_read" and caller.tool_name not in _READ_TOOLS
-            or caller.mode == "expert_read" and caller.tool_name not in _EXPERT_TOOLS
-            or caller.mode == "master_effect" and caller.tool_name != "obsidian_promote_reviewed_draft"
-            or caller.mode not in {"master_read", "expert_read", "master_effect"}):
+    if (scope.mode == "master_read" and scope.tool_name not in _READ_TOOLS
+            or scope.mode == "expert_read" and scope.tool_name not in _EXPERT_TOOLS
+            or scope.mode == "master_effect" and scope.tool_name != "obsidian_promote_reviewed_draft"
+            or scope.mode not in {"master_read", "expert_read", "master_effect"}):
         raise ObsidianNativeToolUnavailable("root caller mode does not admit this Obsidian tool")
-    if caller.mode == "expert_read" and (selected_note_ids is None or mission_binding is None):
+    if scope.mode == "expert_read" and (scope.selected_note_ids is None or scope.mission_binding is None):
         raise ObsidianNativeToolUnavailable("Expert vault reads require root-selected notes and a current mission")
-    if caller.mode == "expert_read":
-        if (mission_binding.schema != 2 or execution_id != mission_binding.mission_id
-                or source_instance_id not in (mission_binding.selected_source_ids or ())):
+    if scope.mode == "expert_read":
+        if (scope.mission_binding.schema != 2
+                or scope.source_instance_id not in (scope.mission_binding.selected_source_ids or ())):
             raise ObsidianNativeToolUnavailable("Expert draft identity differs from its admitted mission source")
-    if caller.mode in {"master_read", "master_effect"} and (
-            execution_id != caller.owner_turn_handle or source_instance_id != "hermes"):
+    if scope.mode in {"master_read", "master_effect"} and (
+            scope.execution_id != scope.owner_turn_handle or scope.source_instance_id != "hermes"):
         raise ObsidianNativeToolUnavailable("Jarvis note identity differs from the current owner turn")
-    if caller.mode == "master_effect" and permit is None:
+    if scope.mode == "master_effect" and permit is None:
         raise ObsidianNativeToolUnavailable("owner review permit is required for final note promotion")
-    if caller.mode != "master_effect" and permit is not None:
+    if scope.mode != "master_effect" and permit is not None:
         raise ObsidianNativeToolUnavailable("a final-effect permit is invalid for this Obsidian call")
-    if caller.mode == "master_effect":
+    if scope.mode == "master_effect":
         digest = observed_call.arguments_sha256
-        if (permit.owner_subject_sha256 != owner_subject_sha256
+        if (permit.owner_subject_sha256 != scope.owner_subject_sha256
                 or permit.source_profile_id != "hermes"
                 or not permit.matches_call(
-                    observed_call, tool_name=caller.tool_name, arguments_sha256=digest,
-                    review_sha256=review_digest(caller.tool_name, digest))):
+                    observed_call, tool_name=scope.tool_name, arguments_sha256=digest,
+                    review_sha256=review_digest(scope.tool_name, digest))):
             raise ObsidianNativeToolUnavailable("owner permit does not match the exact Obsidian effect")
-    context = AdmittedObsidianCall(
-        observed_call, caller, owner_subject_sha256, execution_id, source_instance_id,
-        mission_binding, selected_note_ids, permit, _SEAL)
+    context = AdmittedObsidianCall(observed_call, scope, binding, permit, _SEAL)
     token = _CURRENT.set(context)
     try:
         yield context
@@ -194,8 +179,8 @@ class ObsidianNativeTools:
 
         def invoke(args: object) -> dict[str, Any]:
             context = _current_context(self._store, name, args)
-            selected = (context.selected_note_ids
-                        if context.caller.mode == "expert_read" else None)
+            selected = (context.scope.selected_note_ids
+                        if context.scope.mode == "expert_read" else None)
             if name == "obsidian_list_notes":
                 values = _args(args, {"limit", "cursor"})
                 result = self._store.list_notes(limit=values.get("limit", 20),
@@ -217,10 +202,11 @@ class ObsidianNativeTools:
                 return self._store.graph_snapshot(note_scope=selected).to_projection()
             if name == "obsidian_create_private_draft":
                 values = _args(args, {"title", "markdown", "base_note_id", "base_sha256", "citations"})
-                if context.caller.mode not in {"master_read", "expert_read"}:
+                if context.scope.mode not in {"master_read", "expert_read"}:
                     raise ObsidianNativeToolUnavailable("private draft creation requires an admitted owner or Expert execution")
                 draft = self._store.create_private_draft(
-                    execution_id=context.execution_id, source_instance_id=context.source_instance_id,
+                    execution_id=context.scope.execution_id,
+                    source_instance_id=context.scope.source_instance_id,
                     title=values["title"], markdown=values["markdown"],
                     base_note_id=values.get("base_note_id"), base_sha256=values.get("base_sha256"),
                     citations=values.get("citations", ()),
@@ -232,7 +218,7 @@ class ObsidianNativeTools:
             if permit is None:
                 raise ObsidianNativeToolUnavailable("root middleware did not forward the exact one-use final-effect permit")
             saved = self._store.promote_reviewed_draft(
-                execution_id=context.execution_id, draft_id=values["draft_id"],
+                execution_id=context.scope.execution_id, draft_id=values["draft_id"],
                 expected_draft_sha256=values["expected_draft_sha256"],
                 destination=values["destination"], expected_base_sha256=values["expected_base_sha256"],
                 observed_call=context.observed_call, permit=permit,
@@ -246,8 +232,9 @@ class ObsidianNativeTools:
 def _current_context(store: ObsidianVaultStore, name: str, args: object) -> AdmittedObsidianCall:
     context = _CURRENT.get()
     if (type(context) is not AdmittedObsidianCall or context._seal is not _SEAL
-            or context.caller.tool_name != name
-            or context.owner_subject_sha256 != store._config.owner_scope_sha256):
+            or context.scope.tool_name != name
+            or context.scope.owner_subject_sha256 != store._config.owner_scope_sha256
+            or not context.scope.matches(context.observed_call, context.binding)):
         raise ObsidianNativeToolUnavailable("native Obsidian tool lacks its exact admitted root call")
     values = _args(args, set(_SCHEMAS[name]["properties"]))
     required = set(_SCHEMAS[name].get("required", ()))
@@ -259,13 +246,12 @@ def _current_context(store: ObsidianVaultStore, name: str, args: object) -> Admi
             or dispatch.tool_call_id != context.observed_call.tool_call_id
             or dispatch.canonical_arguments != canonical
             or context.observed_call.arguments_sha256 != hashlib.sha256(canonical).hexdigest()
-            or not context.caller.matches_call(context.observed_call, tool_name=name,
-                                               arguments_sha256=hashlib.sha256(canonical).hexdigest())):
+            or context.scope.arguments_sha256 != hashlib.sha256(canonical).hexdigest()):
         raise ObsidianNativeToolUnavailable("native Obsidian arguments changed after root admission")
-    if context.caller.mode == "expert_read" and name not in _EXPERT_TOOLS:
+    if context.scope.mode == "expert_read" and name not in _EXPERT_TOOLS:
         raise ObsidianNativeToolUnavailable("Expert execution is outside the fixed vault read/draft closure")
     if name == "obsidian_promote_reviewed_draft":
-        if context.caller.mode != "master_effect" or context.permit is None:
+        if context.scope.mode != "master_effect" or context.permit is None:
             raise ObsidianNativeToolUnavailable("Expert final writes are forbidden; owner review is required")
     return context
 

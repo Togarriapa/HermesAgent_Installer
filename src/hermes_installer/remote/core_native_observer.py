@@ -713,7 +713,14 @@ class ObservedNativeToolCall:
 
 
 _MASTER_READ_CALL_SEAL = object()
-_MASTER_READ_TOOL_NAMES = frozenset({"web_search", "web_extract", "skills_list", "skill_view"})
+_OBSIDIAN_READ_TOOL_NAMES = frozenset({
+    "obsidian_list_notes", "obsidian_search_notes", "obsidian_read_note",
+    "obsidian_note_links", "obsidian_graph_snapshot", "obsidian_create_private_draft",
+})
+_OBSIDIAN_TOOL_NAMES = _OBSIDIAN_READ_TOOL_NAMES | {"obsidian_promote_reviewed_draft"}
+_MASTER_READ_TOOL_NAMES = frozenset({
+    "web_search", "web_extract", "skills_list", "skill_view",
+}) | _OBSIDIAN_READ_TOOL_NAMES
 
 
 @dataclass(frozen=True, slots=True)
@@ -1108,7 +1115,7 @@ class RootVerifiedNativeChildAuthorization:
         except (TypeError, AttributeError):
             return False
         fixed_names = frozenset(
-            {"web_search", "web_extract", "skills_list", "skill_view"}
+            {"web_search", "web_extract", "skills_list", "skill_view"} | _OBSIDIAN_READ_TOOL_NAMES
             if getattr(mode, "value", None) == "expert-read-research" else set()
         )
         expected_names = tuple(self.allowed_tool_names)
@@ -1209,7 +1216,8 @@ class CoreNativeObservationClient:
             "complete-native-child", "verify-planning-completion",
             "request-final-effect", "poll-final-effect", "authorize-master-read-call",
             "read-selected-expert-source", "admit-selected-expert-child",
-            "planning-turn-context",
+            "planning-turn-context", "bind-obsidian-native-vault",
+            "authorize-obsidian-call-scope",
         }:
             raise CoreNativeObservationUnavailable("observer operation is not supported")
         nonce = secrets.token_urlsafe(32)
@@ -1869,7 +1877,8 @@ class CoreNativeObservationClient:
         if (provider != _CODEX_PROVIDER or api_mode != _CODEX_MODE or base_url != _CODEX_ENDPOINT
                 or not isinstance(model, str) or not model
                 or tuple(sorted(set(tool_names))) != tool_names
-                or not set(tool_names).issubset({"web_search", "web_extract", "skills_list", "skill_view"})):
+                or not set(tool_names).issubset(
+                    {"web_search", "web_extract", "skills_list", "skill_view"} | _OBSIDIAN_READ_TOOL_NAMES)):
             raise CoreNativeObservationUnavailable("expert child route or finite tool closure differs")
         row = self._rpc("admit-selected-expert-child", {
             "claim_handle": native_claim.claim_handle,
@@ -2093,6 +2102,33 @@ class CoreNativeObservationClient:
         """Compatibility spelling for the root current-caller classifier."""
         return self.authorize_current_tool_call(observed_call=observed_call)
 
+    def bind_obsidian_native_vault(self):
+        """Request the fixed selected-owner vault binding for this exact Core process."""
+        from .obsidian_native_scope import _decode_startup_binding
+        row = self._rpc("bind-obsidian-native-vault", {})
+        binding = _decode_startup_binding(row)
+        if (binding.core_pid != os.getpid() or binding.selected_owner_uid != os.geteuid()
+                or os.geteuid() != 1000):
+            raise CoreNativeObservationUnavailable("root Obsidian binding names a different Core process")
+        return binding
+
+    def authorize_obsidian_call_scope(self, *, observed_call: ObservedNativeToolCall,
+                                      binding: Any):
+        """Obtain the exact root classification/mission/note scope for one call."""
+        from .obsidian_native_scope import (
+            RootSelectedObsidianVaultBinding, _decode_call_scope,
+        )
+        if (type(observed_call) is not ObservedNativeToolCall
+                or type(binding) is not RootSelectedObsidianVaultBinding
+                or binding.core_pid != os.getpid() or binding.selected_owner_uid != os.geteuid()
+                or os.geteuid() != 1000):
+            raise CoreNativeObservationUnavailable("current Core Obsidian binding and call are required")
+        row = self._rpc("authorize-obsidian-call-scope", {
+            "observed_call_handle": observed_call.handle,
+            "startup_binding_id": binding.binding_id,
+        })
+        return _decode_call_scope(row, binding=binding, observed_call=observed_call)
+
 
 class RootCoreNativeObservationRegistry:
     """Root-memory issuer joining real owner turns to protected native observations.
@@ -2143,6 +2179,8 @@ class RootCoreNativeObservationRegistry:
         self._master_selections: dict[str, dict[str, Any]] = {}
         self._selected_source_deliveries: dict[str, dict[str, Any]] = {}
         self._master_source_deliveries: dict[str, dict[str, Any]] = {}
+        self._obsidian_bindings: dict[str, dict[str, Any]] = {}
+        self._obsidian_scoped_calls: set[str] = set()
         self._master_source: Any = None
         self._final_effect_store: Any = None
         try:
@@ -2733,6 +2771,11 @@ class RootCoreNativeObservationRegistry:
             raise CoreNativeObservationUnavailable("spent mission preflight is unavailable") from None
 
     def _prune(self, now: float) -> None:
+        for handle, row in list(self._obsidian_bindings.items()):
+            if row["expiry"] <= now:
+                self._obsidian_bindings.pop(handle, None)
+        self._obsidian_scoped_calls = {handle for handle in self._obsidian_scoped_calls
+                                       if handle in self._calls and self._calls[handle]["expiry"] > now}
         for handle, row in list(self._policies.items()):
             policy = row.get("policy")
             if not isinstance(policy, RootSelectedOrchestratorDelegationPolicy) or policy.expires_monotonic <= now:
@@ -3061,6 +3104,126 @@ class RootCoreNativeObservationRegistry:
         with self._lock:
             self._ensure_open()
             self._prune(time.monotonic())
+            if op == "bind-obsidian-native-vault":
+                if set(request) != {"schema", "op", "nonce"}:
+                    raise ValueError("Obsidian startup binding schema mismatch")
+                # The listener verified SO_PEERCRED plus live process custody.
+                if peer != (self._custody.core_pid, self._custody.core_uid, self._custody.core_gid):
+                    raise ValueError("Obsidian startup binding peer differs from current Core")
+                from .obsidian_owner_lifecycle import OWNER_DATA_ROOT, read_registration
+                data_root, owner_sha, registration_sha = read_registration()
+                if (data_root != OWNER_DATA_ROOT or self._config.core_uid != 1000
+                        or self._config.core_gid != 1000):
+                    raise ValueError("selected owner vault registration or Core identity differs")
+                now = time.monotonic()
+                binding_id = secrets.token_urlsafe(32)
+                expiry = now + 30.0
+                self._obsidian_bindings[binding_id] = {
+                    "peer": peer, "owner_subject_sha256": owner_sha,
+                    "registration_sha256": registration_sha,
+                    "core_generation": self._custody.core_generation,
+                    "core_source_generation": self._custody.core_source_generation,
+                    "core_pid": self._custody.core_pid,
+                    "core_start_ticks": self._custody.core_start_ticks,
+                    "issued": now, "expiry": expiry,
+                }
+                while len(self._obsidian_bindings) > 64:
+                    oldest = min(self._obsidian_bindings, key=lambda key: self._obsidian_bindings[key]["issued"])
+                    self._obsidian_bindings.pop(oldest, None)
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                    "binding_id": binding_id, "registration_sha256": registration_sha,
+                    "owner_subject_sha256": owner_sha,
+                    "core_generation": self._custody.core_generation,
+                    "core_source_generation": self._custody.core_source_generation,
+                    "core_pid": self._custody.core_pid,
+                    "core_start_ticks": self._custody.core_start_ticks,
+                    "selected_owner_uid": 1000, "vault_root": str(data_root),
+                    "issued_monotonic": now, "expires_monotonic": expiry}
+            if op == "authorize-obsidian-call-scope":
+                if set(request) != {"schema", "op", "nonce", "observed_call_handle", "startup_binding_id"}:
+                    raise ValueError("Obsidian call scope schema mismatch")
+                handle, binding_id = request["observed_call_handle"], request["startup_binding_id"]
+                if (not isinstance(handle, str) or not _OPAQUE.fullmatch(handle)
+                        or not isinstance(binding_id, str) or not _OPAQUE.fullmatch(binding_id)
+                        or handle in self._obsidian_scoped_calls):
+                    raise ValueError("Obsidian call scope handle is invalid or replayed")
+                call, owner, source, mode = self._classify_current_call(handle, peer, now=time.monotonic())
+                if call["tool_name"] not in _OBSIDIAN_TOOL_NAMES:
+                    raise ValueError("observed native call is outside fixed Obsidian tools")
+                now = time.monotonic()
+                startup = self._obsidian_bindings.get(binding_id)
+                from .obsidian_owner_lifecycle import read_registration
+                data_root, registered_owner, registration_sha = read_registration()
+                if (startup is None or startup["peer"] != peer or startup["expiry"] <= now
+                        or startup["owner_subject_sha256"] != owner.owner_subject_sha256
+                        or startup["registration_sha256"] != registration_sha
+                        or registered_owner != owner.owner_subject_sha256
+                        or data_root.as_posix() != "/home/admin/.hermes/jarvis-second-brain"
+                        or startup["core_generation"] != owner.core_generation
+                        or startup["core_source_generation"] != owner.core_source_generation
+                        or startup["core_pid"] != self._custody.core_pid
+                        or startup["core_start_ticks"] != self._custody.core_start_ticks):
+                    raise ValueError("Obsidian owner registration or startup binding changed")
+                mission = None
+                selected_notes = None
+                if mode == "expert_read":
+                    binding = owner.mission_binding
+                    child = source
+                    selected_source = child.get("source") if isinstance(child, dict) else None
+                    source_id = child.get("profile_id") if isinstance(child, dict) else None
+                    selected = (self._selection_for_mission(owner, source_id, now)
+                                if isinstance(source_id, str) else None)
+                    if (type(binding) is not MissionBinding or binding.schema != 2
+                            or selected is None or selected_source is None
+                            or not callable(getattr(selected_source, "is_current_sealed", None))
+                            or selected_source.is_current_sealed(self._custody, now=now) is not True
+                            or source_id not in (binding.selected_source_ids or ())
+                            or call.get("attempt_session_id") not in self._child_sessions
+                            or self._child_sessions[call["attempt_session_id"]].get("owner") is not owner
+                            or call["tool_name"] not in self._child_sessions[
+                                call["attempt_session_id"]].get("tool_names", ())):
+                        raise ValueError("Expert Obsidian call is not joined to its current mission/source")
+                    mission = binding.to_wire()
+                    selected_notes = []
+                    execution_id = child["session_id"]
+                    source_instance_id = source_id
+                    source_generation = child["source_generation_sha256"]
+                else:
+                    if mode == "master_effect" and call["tool_name"] != "obsidian_promote_reviewed_draft":
+                        raise ValueError("only exact owner promotion is an Obsidian final effect")
+                    if mode == "master_read" and call["tool_name"] not in _OBSIDIAN_READ_TOOL_NAMES:
+                        raise ValueError("Obsidian call mode differs from its fixed read/draft tool")
+                    execution_id, source_instance_id = owner.owner_turn_handle, "hermes"
+                    source_generation = source.generation_sha256
+                if mode == "master_effect" and call["tool_name"] != "obsidian_promote_reviewed_draft":
+                    raise ValueError("only exact owner promotion can receive a final-effect scope")
+                self._obsidian_scoped_calls.add(handle)
+                if len(self._obsidian_scoped_calls) > 4096:
+                    # Live calls are separately retained for at most their short leases.
+                    self._obsidian_scoped_calls = {item for item in self._obsidian_scoped_calls
+                        if item in self._calls and self._calls[item].get("expiry", 0) > now}
+                expiry = min(float(call["expiry"]), float(owner.expires_monotonic),
+                             float(startup["expiry"]), now + 5.0)
+                child_row = self._child_sessions.get(call.get("attempt_session_id"))
+                if mode == "expert_read" and child_row is not None:
+                    expiry = min(expiry, float(child_row["expiry"]))
+                if not now < expiry <= now + 5.0:
+                    raise ValueError("Obsidian call scope lease is unavailable")
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                    "observed_call_handle": call["handle"],
+                    "owner_turn_handle": owner.owner_turn_handle,
+                    "tool_call_id": call["tool_call_id"], "tool_name": call["tool_name"],
+                    "arguments_sha256": call["arguments_sha256"],
+                    "owner_subject_sha256": owner.owner_subject_sha256,
+                    "registration_sha256": registration_sha,
+                    "startup_binding_id": binding_id,
+                    "core_generation": owner.core_generation,
+                    "core_source_generation": owner.core_source_generation,
+                    "source_generation_sha256": source_generation,
+                    "mode": mode, "execution_id": execution_id,
+                    "source_instance_id": source_instance_id,
+                    "mission_binding": mission, "selected_note_ids": selected_notes,
+                    "issued_monotonic": now, "expires_monotonic": expiry}
             if op == "planning-turn-context":
                 if set(request) != {"schema", "op", "nonce", "session_id", "turn_id", "prompt_sha256"}:
                     raise ValueError("planning-turn lookup schema mismatch")
@@ -3265,7 +3428,7 @@ class RootCoreNativeObservationRegistry:
                         or call["arguments_sha256"] != owner.mission_binding.task_sha256
                         or request["goal_sha256"] != hashlib.sha256(args["goal"].encode("utf-8", "strict")).hexdigest()):
                     raise ValueError("selected child goal does not match the approved task")
-                allowed = {"web_search", "web_extract", "skills_list", "skill_view"}
+                allowed = {"web_search", "web_extract", "skills_list", "skill_view"} | _OBSIDIAN_READ_TOOL_NAMES
                 names = request["tool_names"]
                 if (not isinstance(names, list) or len(names) > len(allowed)
                         or any(not isinstance(name, str) or name not in allowed for name in names)
@@ -3940,8 +4103,12 @@ class RootCoreNativeObservationRegistry:
         request = _read_frame(connection)
         nonce = request.get("nonce") if isinstance(request, dict) else None
         try:
-            if self._custody.verify_peer(self._config, self._owner_for_peer(request), connection) is not True:
-                raise PermissionError("core peer custody did not verify")
+            if request.get("op") == "bind-obsidian-native-vault":
+                if self._custody.verify_current_core_peer(self._config, connection) is not True:
+                    raise PermissionError("current Core startup peer custody did not verify")
+            else:
+                if self._custody.verify_peer(self._config, self._owner_for_peer(request), connection) is not True:
+                    raise PermissionError("core peer custody did not verify")
             result = self._handle((peer_pid, peer_uid, peer_gid), request)
         except Exception:
             result = {"schema": 1, "nonce": nonce, "ok": False}
@@ -3975,6 +4142,8 @@ class RootCoreNativeObservationRegistry:
             self._planning_completions.clear()
             self._master_selections.clear()
             self._selected_source_deliveries.clear()
+            self._obsidian_bindings.clear()
+            self._obsidian_scoped_calls.clear()
 
 
 def serve_core_native_observer(registry: RootCoreNativeObservationRegistry, *,

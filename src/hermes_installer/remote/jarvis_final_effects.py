@@ -481,7 +481,8 @@ def install_jarvis_final_effect_routes(app: Any, service: Any) -> None:
     app.router.add_post("/chat/api/turns/{turn_id}/final-effects/decision", decide)
 
 
-def install_jarvis_final_effect_middleware(ctx: Any, client: Any) -> tuple[Any, ...]:
+def install_jarvis_final_effect_middleware(ctx: Any, client: Any, *,
+                                          obsidian_binding: Any = None) -> tuple[Any, ...]:
     """Gate every normal master native tool dispatch on a one-use root permit.
 
     The pinned executor supplies a lexical call tuple through
@@ -548,6 +549,38 @@ def install_jarvis_final_effect_middleware(ctx: Any, client: Any) -> tuple[Any, 
                         observed, tool_name=name, arguments_sha256=args_sha)):
                 return deny("Native tool blocked: current root caller proof is unavailable.")
 
+            # Obsidian shares this lexical dispatch and root-observed call
+            # lineage, then obtains its own short-lived fixed-vault scope.
+            # The scope carries no authority beyond the observed call and is
+            # consumed only while dispatching the registered native handler.
+            if name.startswith("obsidian_"):
+                from .obsidian_native_tools import _TOOL_NAMES, _admit_current_obsidian_call
+                if name not in _TOOL_NAMES:
+                    return deny("Obsidian tool blocked: name is outside the fixed tool registry.")
+                try:
+                    if obsidian_binding is None:
+                        return deny("Obsidian tool blocked: Core startup vault binding is unavailable.")
+                    # Refresh the startup-bound receipt over the authenticated
+                    # current Core peer so a long-lived Core is not limited by
+                    # the short binding lease. The root observer verifies the
+                    # same PID, birth time, custody and registration each time.
+                    binding = client.bind_obsidian_native_vault()
+                    scope = client.authorize_obsidian_call_scope(
+                        observed_call=observed, binding=binding)
+                    if (scope.tool_name != name or scope.mode != caller_receipt.mode
+                            or scope.source_generation_sha256 != caller_receipt.source_generation_sha256):
+                        return deny("Obsidian tool blocked: root scope differs from the current call.")
+                    if scope.mode in {"master_read", "expert_read"}:
+                        with _admit_current_obsidian_call(
+                                observed_call=observed, scope=scope, binding=binding):
+                            return next_call(args)
+                    if scope.mode != "master_effect":
+                        return deny("Obsidian tool blocked: root did not admit this operation.")
+                except BaseException:
+                    return deny("Obsidian tool blocked: current root vault scope is unavailable.")
+            else:
+                binding = scope = None
+
             if caller_receipt.mode in {"master_read", "expert_read"}:
                 if name not in {"web_search", "web_extract", "skills_list", "skill_view"}:
                     return deny("Read-only tool blocked: tool is outside the fixed research closure.")
@@ -576,6 +609,12 @@ def install_jarvis_final_effect_middleware(ctx: Any, client: Any) -> tuple[Any, 
                         return deny("Final effect blocked: owner approval no longer matches this call.")
                     # This is the only path to downstream Hermes registry dispatch.
                     try:
+                        if name.startswith("obsidian_"):
+                            from .obsidian_native_tools import _admit_current_obsidian_call
+                            with _admit_current_obsidian_call(
+                                    observed_call=observed, scope=scope, binding=binding,
+                                    permit=permit):
+                                return next_call(args)
                         return next_call(args)
                     except BaseException:
                         # Do not retry a potentially partially executed effect.
