@@ -921,6 +921,25 @@ finally{clearTimeout(timer);busy=false}}
 beat();setInterval(beat,1500);
 })();</script>"""
 
+_XPRA_INDEX_PATH_ASSIGNMENT = (
+    'var path = getstrparam("path", ALLOWED_CHARS + "/") || window.location.pathname;')
+
+
+def _bind_stage_xpra_websocket_path(text: str, request: Any) -> str:
+    """Bind the HTML5 client's WebSocket path to the validated stage query.
+
+    The pinned Xpra frontend filters `?`, `=` and `&` from its path parameter.
+    Validate the finite lease/profile/nonce query first, then replace only its
+    exact path assignment with the JSON-quoted value.
+    """
+    from .server import _index_path_binding
+    _index_path_binding(request)
+    nested_path = request.query["path"]
+    if not isinstance(nested_path, str) or text.count(_XPRA_INDEX_PATH_ASSIGNMENT) != 1:
+        raise ManualStageDenied("pinned Xpra path assignment is unavailable")
+    replacement = "var path = " + json.dumps(nested_path, ensure_ascii=True) + ";"
+    return text.replace(_XPRA_INDEX_PATH_ASSIGNMENT, replacement, 1)
+
 
 def _request_peer_credentials(request, config: ManualGatewayStageConfig) -> tuple[int, int, int]:
     try:
@@ -1113,6 +1132,7 @@ async def _stage_ingress_middleware(request, handler):
         try:
             data = response.body
             text = data.decode("utf-8", "strict")
+            text = _bind_stage_xpra_websocket_path(text, request)
             head = re.search(r"<head(?:\s[^>]*)?>", text, flags=re.IGNORECASE)
             if head is None:
                 raise ValueError

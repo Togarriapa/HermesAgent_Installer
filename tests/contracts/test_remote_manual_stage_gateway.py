@@ -850,7 +850,9 @@ class ManualStageGatewayTests(unittest.TestCase):
         async def redirect(_request):
             raise web.HTTPFound("/client/bootstrap.html")
         async def index(_request):
-            return web.Response(text="<html><head><script src='/client/js/Client.js'></script></head><body></body></html>",
+            return web.Response(text=("<html><head><script>var path = getstrparam(\"path\", "
+                                    "ALLOWED_CHARS + \"/\") || window.location.pathname;</script>"
+                                    "<script src='/client/js/Client.js'></script></head><body></body></html>"),
                                 content_type="text/html")
         async def denied(_request):
             return web.Response(status=403, text="private-handler-detail")
@@ -869,9 +871,11 @@ class ManualStageGatewayTests(unittest.TestCase):
                 with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
                         mock.patch("hermes_installer.remote.manual_stage._accept_stage_ingress",
                                    new=mock.AsyncMock(return_value=ingress)):
-                    delivered = await client.get("/client/index.html")
+                    nested = "/client/?lease=" + "A" * 24 + "&profile=hermes-desktop&nonce=" + "B" * 24
+                    delivered = await client.get("/client/index.html", params={"path": nested})
                 body = await delivered.text()
                 self.assertEqual(delivered.status, 200)
+                self.assertIn('var path = ' + json.dumps(nested) + ';', body)
                 self.assertIn(_STAGE_HEARTBEAT_SCRIPT, body)
                 self.assertLess(body.index(_STAGE_HEARTBEAT_SCRIPT), body.index("/client/js/Client.js"))
                 with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
@@ -966,6 +970,25 @@ class ManualStageGatewayTests(unittest.TestCase):
                 inspector._authenticate_gateway_inspector_peer(self.config,
                     pid=expected[0], uid=expected[1] + 1, gid=expected[2], deadline=99.0)
         check.assert_not_called()
+    def test_stage_xpra_path_binding_preserves_only_validated_nested_websocket_query(self):
+        from types import SimpleNamespace
+        from hermes_installer.remote.manual_stage import _bind_stage_xpra_websocket_path
+        marker = 'var path = getstrparam("path", ALLOWED_CHARS + "/") || window.location.pathname;'
+        nested = "/client/?lease=" + "A" * 24 + "&profile=hermes-desktop&nonce=" + "B" * 24
+        changed = _bind_stage_xpra_websocket_path("<script>" + marker + "</script>",
+                                                  SimpleNamespace(query={"path": nested}))
+        self.assertIn("var path = " + json.dumps(nested) + ";", changed)
+        for query in (
+            {"path": "/client/?lease=short&profile=hermes-desktop&nonce=" + "B" * 24},
+            {"path": "/client/?lease=" + "A" * 24 + "&profile=other&nonce=" + "B" * 24},
+        ):
+            with self.subTest(query=query), self.assertRaises(GatewayDenied):
+                _bind_stage_xpra_websocket_path("<script>" + marker + "</script>",
+                                                SimpleNamespace(query=query))
+        with self.assertRaises(ManualStageDenied):
+            _bind_stage_xpra_websocket_path("<script>changed source</script>",
+                                             SimpleNamespace(query={"path": nested}))
+
     @unittest.skipUnless(HAS_AIOHTTP, "install the isolated gateway runtime dependencies")
     def test_threaded_admission_capture_reaches_parent_response_currentness(self):
         import asyncio
