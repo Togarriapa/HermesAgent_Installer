@@ -446,6 +446,16 @@ class CoreGatewayLaunch:
         return ChatPrincipal(proof.principal.subject, proof.jwt_expires_monotonic,
                              proof.expires_monotonic, proof.core_generation)
 
+    def register_owner_turn(self, *, access_jwt: str, accepted_ingress: Any,
+                            session_id: str, conversation_id: str,
+                            gateway_turn_id: str, prompt_sha256: str) -> str:
+        """Mint only a root-verified opaque handle for the exact current submitted turn."""
+        from .core_gateway_inspector import verify_current_owner_turn
+        return verify_current_owner_turn(self.config, access_jwt=access_jwt,
+            accepted_ingress=accepted_ingress, session_id=session_id,
+            conversation_id=conversation_id, gateway_turn_id=gateway_turn_id,
+            prompt_sha256=prompt_sha256)
+
 
 def create_core_gateway_app(launch: CoreGatewayLaunch):
     """Compose the finite Jarvis UI and chat adapter behind Access middleware."""
@@ -461,7 +471,8 @@ def create_core_gateway_app(launch: CoreGatewayLaunch):
         raise CoreGatewayDenied("core gateway policy/config binding changed")
     app = web.Application(client_max_size=64 * 1024)
     app["core_gateway_launch"] = launch
-    service = build_jarvis_chat_service(launch.principal_from_request)
+    service = build_jarvis_chat_service(launch.principal_from_request,
+                                       owner_turn_register=launch.register_owner_turn)
     install_jarvis_chat_routes(app, service)
     install_jarvis_dashboard_routes(app, service)
     install_jarvis_feature_routes(app, service)
