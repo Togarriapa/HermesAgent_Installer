@@ -121,6 +121,7 @@ def test_conversation_trash_is_recoverable_and_preserves_chat_and_project_links(
     again, replay = projects.trash_conversation("owner-a", conversation_id, key, 1)
     assert replay and again == trashed
     assert not projects.conversation_is_live("owner-a", conversation_id)
+    assert projects.conversation_version("owner-a", conversation_id) == 1
     assert projects.conversation_trash("owner-a")[0]["id"] == conversation_id
     assert projects.visible_conversations("owner-a") == []
     assert projects.conversation_trash("owner-b") == []
@@ -130,9 +131,11 @@ def test_conversation_trash_is_recoverable_and_preserves_chat_and_project_links(
     restored, replay = projects.restore_conversation("owner-a", conversation_id, idem(), 1)
     assert not replay and restored["deleted"] is False and restored["version"] == 2
     assert projects.conversation_is_live("owner-a", conversation_id)
+    assert projects.conversation_version("owner-a", conversation_id) == 2
     assert projects.get("owner-a", project["id"])["chats"][0]["id"] == conversation_id
     reloaded = JarvisProjectsStore(JarvisChatStore(path))
     assert reloaded.conversation_is_live("owner-a", conversation_id)
+    assert reloaded.conversation_version("owner-a", conversation_id) == 2
     reloaded.trash_conversation("owner-a", conversation_id, idem(), 2)
     assert reloaded.conversation_trash("owner-a")[0]["version"] == 3
 

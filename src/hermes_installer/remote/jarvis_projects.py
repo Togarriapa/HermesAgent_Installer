@@ -104,6 +104,15 @@ class JarvisProjectsStore:
             raise JarvisChatDenied("conversation is unavailable")
         return owner
 
+    def conversation_version(self, subject: str, conversation_id: str) -> int:
+        """Return a live chat's current trash CAS version (1 before its first delete)."""
+        owner = self._require_owned_conversation(subject, conversation_id)
+        with self.store._connect() as db:
+            row = db.execute("SELECT version FROM jarvis_conversation_trash "
+                             "WHERE conversation_id=? AND owner=?",
+                             (conversation_id, owner)).fetchone()
+        return 1 if row is None else int(row["version"])
+
     @staticmethod
     def _text(value: Any, maximum: int, *, allow_empty: bool = True) -> str:
         if (not isinstance(value, str) or len(value) > maximum
