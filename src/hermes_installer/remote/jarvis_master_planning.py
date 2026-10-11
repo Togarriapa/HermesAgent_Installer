@@ -56,7 +56,8 @@ def build_master_plan_prompt(*, mission_id: str, revision: int, title: str,
         raise JarvisMasterPlanningDenied("master planning context is invalid")
     prompt = (
         "You are Jarvis, the sole master planner. Choose execution_mode as oneshot or kanban, "
-        "and select one or more source IDs only from the verified catalog below. Experts are "
+        "and select zero or more source IDs only from the verified catalog below. Select no "
+        "experts when Jarvis can complete the task directly. Experts are "
         "internal collaborators; their output remains a draft for Jarvis review. Do not grant "
         "autonomy, permissions, external effects, or owner approval. Return one JSON object with "
         "exactly execution_mode, selected_source_ids, and plan fields.\n"
@@ -165,7 +166,7 @@ def parse_master_plan_output(raw: str, *, allowed_source_ids: Iterable[str]) -> 
     allowed = frozenset(allowed_source_ids)
     if (not allowed or any(not isinstance(item, str) or _ID.fullmatch(item) is None for item in allowed)
             or mode not in {"oneshot", "kanban"}
-            or type(selected) is not list or not 1 <= len(selected) <= 16
+            or type(selected) is not list or len(selected) > 16
             or any(not isinstance(item, str) or _ID.fullmatch(item) is None for item in selected)
             or len(set(selected)) != len(selected) or any(item not in allowed for item in selected)
             or type(plan) is not dict):
@@ -202,7 +203,7 @@ def parse_master_review_output(raw: str, *, expected_result_sha256: str) -> dict
 def _completion_type() -> type:
     """Resolve the bridge-owned exact receipt lazily; absent support stays unavailable."""
     try:
-        from .core_gateway_inspector import CoreVerifiedJarvisMasterPlanningCompletion
+        from .core_native_observer import CoreVerifiedJarvisMasterPlanningCompletion
         return CoreVerifiedJarvisMasterPlanningCompletion
     except (ImportError, AttributeError):
         raise JarvisMasterPlanningDenied("root no-effect completion proof is unavailable") from None
@@ -276,9 +277,12 @@ class CoreVerifiedJarvisMasterPlanDecision:
             return False
 
     def matches(self, *, owner_subject_sha256: str, mission_id: str, revision: int,
-                goal_sha256: str, core_generation: str, core_source_generation: str) -> bool:
+                gateway_turn_id: str, owner_turn_handle: str, goal_sha256: str,
+                core_generation: str, core_source_generation: str) -> bool:
         return bool(self.owner_subject_sha256 == owner_subject_sha256
                     and self.mission_id == mission_id and self.revision == revision
+                    and self.gateway_turn_id == gateway_turn_id
+                    and self.owner_turn_handle == owner_turn_handle
                     and self.goal_sha256 == goal_sha256 and self.core_generation == core_generation
                     and self.core_source_generation == core_source_generation)
 
@@ -329,10 +333,13 @@ class CoreVerifiedJarvisMasterReviewDecision:
             return False
 
     def matches(self, *, owner_subject_sha256: str, mission_id: str, revision: int,
-                run_id: str, result_sha256: str, core_generation: str,
+                gateway_turn_id: str, owner_turn_handle: str, run_id: str,
+                result_sha256: str, core_generation: str,
                 core_source_generation: str) -> bool:
         return bool(self.owner_subject_sha256 == owner_subject_sha256
                     and self.mission_id == mission_id and self.revision == revision
+                    and self.gateway_turn_id == gateway_turn_id
+                    and self.owner_turn_handle == owner_turn_handle
                     and self.run_id == run_id and self.result_sha256 == result_sha256
                     and self.core_generation == core_generation
                     and self.core_source_generation == core_source_generation)

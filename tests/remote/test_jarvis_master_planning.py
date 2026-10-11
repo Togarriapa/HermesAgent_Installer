@@ -37,6 +37,13 @@ def test_master_plan_parser_returns_exact_catalog_selection_and_canonical_digest
     assert parsed["response_sha256"] == hashlib.sha256(raw.encode()).hexdigest()
 
 
+def test_jarvis_only_oneshot_plan_needs_no_selected_expert():
+    raw = '{"execution_mode":"oneshot","selected_source_ids":[],"plan":{"steps":[]}}'
+    parsed = parse_master_plan_output(raw, allowed_source_ids=SOURCE_IDS)
+    assert parsed["execution_mode"] == "oneshot"
+    assert parsed["selected_source_ids"] == ()
+
+
 def test_master_plan_rejects_unverified_sources_and_authority_fields():
     unverified = '{"execution_mode":"oneshot","selected_source_ids":["outside"],"plan":{}}'
     authority = ('{"execution_mode":"oneshot","selected_source_ids":["researcher"],'
