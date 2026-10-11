@@ -19,7 +19,8 @@ from hermes_installer.remote.manual_stage_inspector import (
     MAX_APP_FILE_BYTES, MAX_APP_TREE_BYTES, XPRA_CONTROL_STUB_PATH,
     XPRA_CONTROL_STUB_SHA256, XPRA_CONTROL_STUB_SIZE, XPRA_CORE_PATH,
     XPRA_CORE_SHA256, XPRA_CORE_SIZE, XPRA_PINNED_MODULES, XPRA_WINDOW_PATH,
-    XPRA_WINDOW_SHA256, XPRA_WINDOW_SIZE, StageInspectionDenied,
+    XPRA_WINDOW_SHA256, XPRA_WINDOW_SIZE, XPRA_COMMAND_PATH, XPRA_COMMAND_SIZE,
+    XPRA_COMMAND_SHA256, StageInspectionDenied,
     _check_app_file_size, _validate_nft, _verify_pinned_xpra_modules,
 )
 
@@ -224,7 +225,7 @@ class ManualStageGatewayTests(unittest.TestCase):
                 "--daemon=no", "--systemd-run=no", "--bind=none", "--html=on", "--remote-logging=no",
                 "--start-child=/opt/hermes-jarvis-mvp-20261011/Hermes-Desktop.AppDir/Hermes",
                 "--exit-with-children=yes", "--terminate-children=yes", "--start-new-commands=no",
-                "--commands=no", "--shell=no", "--control=no", "--audio=no", "--tray=no",
+                "--commands=yes", "--shell=no", "--control=no", "--audio=no", "--tray=no",
                 "--file-transfer=no", "--open-files=no", "--open-url=no", "--forward-xdg-open=no",
                 "--clipboard=no", "--webcam=no", "--speaker=off", "--microphone=off",
                 "--notifications=no", "--system-tray=no", "--sharing=no", "--mdns=no",
@@ -239,11 +240,76 @@ class ManualStageGatewayTests(unittest.TestCase):
         with mock.patch("hermes_installer.remote.manual_stage_inspector._process_argv", return_value=bad):
             with self.assertRaises(StageInspectionDenied):
                 _validate_xpra_argv(config, 123)
+        bad = tuple("--commands=no" if x == "--commands=yes" else x for x in argv)
+        config = replace(self.config, xpra_argv_sha256=hashlib.sha256(b"\0".join(x.encode() for x in bad)).hexdigest())
+        with mock.patch("hermes_installer.remote.manual_stage_inspector._process_argv", return_value=bad):
+            with self.assertRaises(StageInspectionDenied):
+                _validate_xpra_argv(config, 123)
+        bad = (*argv, "--start=/tmp/unreviewed-command")
+        config = replace(self.config, xpra_argv_sha256=hashlib.sha256(b"\0".join(x.encode() for x in bad)).hexdigest())
+        with mock.patch("hermes_installer.remote.manual_stage_inspector._process_argv", return_value=bad):
+            with self.assertRaises(StageInspectionDenied):
+                _validate_xpra_argv(config, 123)
+        bad = (*argv, "--start-new-commands=no")
+        config = replace(self.config, xpra_argv_sha256=hashlib.sha256(b"\0".join(x.encode() for x in bad)).hexdigest())
+        with mock.patch("hermes_installer.remote.manual_stage_inspector._process_argv", return_value=bad):
+            with self.assertRaises(StageInspectionDenied):
+                _validate_xpra_argv(config, 123)
+        bad = (*argv, "--start-after-connect=/tmp/unreviewed-command")
+        config = replace(self.config, xpra_argv_sha256=hashlib.sha256(b"\0".join(x.encode() for x in bad)).hexdigest())
+        with mock.patch("hermes_installer.remote.manual_stage_inspector._process_argv", return_value=bad):
+            with self.assertRaises(StageInspectionDenied):
+                _validate_xpra_argv(config, 123)
+        for extra in ("--source-start=/tmp/unreviewed-source", "--exec-wrapper=/bin/sh"):
+            bad = (*argv, extra)
+            config = replace(self.config, xpra_argv_sha256=hashlib.sha256(
+                b"\0".join(x.encode() for x in bad)).hexdigest())
+            with self.subTest(extra=extra), mock.patch(
+                    "hermes_installer.remote.manual_stage_inspector._process_argv", return_value=bad):
+                with self.assertRaises(StageInspectionDenied):
+                    _validate_xpra_argv(config, 123)
         bad = tuple(arg for arg in argv if arg != "--remote-logging=no")
         config = replace(self.config, xpra_argv_sha256=hashlib.sha256(b"\0".join(x.encode() for x in bad)).hexdigest())
         with mock.patch("hermes_installer.remote.manual_stage_inspector._process_argv", return_value=bad):
             with self.assertRaises(StageInspectionDenied):
                 _validate_xpra_argv(config, 123)
+
+    def test_xpra_config_search_roots_must_be_explicitly_empty_and_unique(self):
+        import os
+        import tempfile
+        import hermes_installer.remote.manual_stage_inspector as inspector
+        from hermes_installer.remote.manual_stage_inspector import _require_xpra_config_isolated_environment
+
+        good = (b"PATH=/usr/bin\0XPRA_DEFAULT_CONF_DIRS=\0XPRA_SYSTEM_CONF_DIRS=\0"
+                b"XPRA_USER_CONF_DIRS=\0")
+        real_open = os.open
+        with tempfile.NamedTemporaryFile() as env_fixture:
+            env_fixture.write(good)
+            env_fixture.flush()
+            def fixture_open(path, flags, *args, **kwargs):
+                if path == "/proc/123/environ":
+                    self.assertTrue(flags & getattr(os, "O_NOFOLLOW", 0))
+                    return real_open(env_fixture.name, flags, *args, **kwargs)
+                return real_open(path, flags, *args, **kwargs)
+            with mock.patch.object(inspector.os, "open", side_effect=fixture_open):
+                _require_xpra_config_isolated_environment(123)
+        cases = {
+            "unset": b"PATH=/usr/bin\0XPRA_DEFAULT_CONF_DIRS=\0XPRA_SYSTEM_CONF_DIRS=\0",
+            "nonempty": good.replace(b"XPRA_USER_CONF_DIRS=\0", b"XPRA_USER_CONF_DIRS=/tmp\0"),
+            "duplicate": good + b"XPRA_USER_CONF_DIRS=\0",
+            "malformed": good.rstrip(b"\0"),
+        }
+        for label, raw in cases.items():
+            with self.subTest(case=label), tempfile.NamedTemporaryFile() as env_fixture:
+                env_fixture.write(raw)
+                env_fixture.flush()
+                def fixture_open(path, flags, *args, **kwargs):
+                    if path == "/proc/123/environ":
+                        return real_open(env_fixture.name, flags, *args, **kwargs)
+                    return real_open(path, flags, *args, **kwargs)
+                with mock.patch.object(inspector.os, "open", side_effect=fixture_open), \
+                        self.assertRaises(StageInspectionDenied):
+                    _require_xpra_config_isolated_environment(123)
 
     def test_inspector_accepts_observed_hermes_file_sizes_with_bounded_totals(self):
         _check_app_file_size(195_497_248)
@@ -311,6 +377,10 @@ class ManualStageGatewayTests(unittest.TestCase):
         self.assertEqual((XPRA_WINDOW_PATH, XPRA_WINDOW_SIZE, XPRA_WINDOW_SHA256),
                          (Path("/usr/lib/python3/dist-packages/xpra/server/subsystem/window.py"), 42476,
                           "7fd74d70e6a50e2f02727e263bdbec34826d23871abf4feedb230741ef09264f"))
+        self.assertEqual((XPRA_COMMAND_PATH, XPRA_COMMAND_SIZE, XPRA_COMMAND_SHA256),
+                         (Path("/usr/lib/python3/dist-packages/xpra/server/subsystem/command.py"),
+                          24117,
+                          "09e90f7dcb8a76687c59ee8c538faef21ce2881bdaed4cafb760eb8fe141f2d3"))
         self.assertEqual(XPRA_PINNED_MODULES, (
             (Path("/usr/lib/python3/dist-packages/xpra/server/subsystem/stub.py"), 5071,
              "da12f27c1421dc71248b568791f186ee3d470d0969c4020da0d9d6d7a1a02279"),
@@ -318,12 +388,15 @@ class ManualStageGatewayTests(unittest.TestCase):
              "95a8bb41304181555ac33482931ba1c2460b4a1b03e458c3c5e8825adcf34e77"),
             (Path("/usr/lib/python3/dist-packages/xpra/server/subsystem/window.py"), 42476,
              "7fd74d70e6a50e2f02727e263bdbec34826d23871abf4feedb230741ef09264f"),
+            (Path("/usr/lib/python3/dist-packages/xpra/server/subsystem/command.py"), 24117,
+             "09e90f7dcb8a76687c59ee8c538faef21ce2881bdaed4cafb760eb8fe141f2d3"),
         ))
 
         payloads = {
             "stub.py": b"positive patched stub module fixture\n",
             "core.py": b"positive patched core module fixture\n",
             "window.py": b"positive patched window module fixture\n",
+            "command.py": b"positive patched command module fixture\n",
         }
         fixture_modules = []
         with tempfile.TemporaryDirectory(dir="/private/tmp") as tmp:
@@ -349,10 +422,10 @@ class ManualStageGatewayTests(unittest.TestCase):
                     expected_binding.extend((str(path).encode("ascii"), str(size).encode("ascii"),
                                              digest.encode("ascii")))
                 expected_pin_digest = hashlib.sha256(
-                    b"hermes-xpra-pinned-modules-v261\0" + b"\0".join(expected_binding)).hexdigest()
+                    b"hermes-xpra-pinned-modules-v262\0" + b"\0".join(expected_binding)).hexdigest()
                 self.assertEqual(_verify_pinned_xpra_modules(), expected_pin_digest)
 
-                original_sizes = (4978, 75_650, 42_383)
+                original_sizes = (4978, 75_650, 42_383, 23_581)
                 for (path, _size, _digest), original_size in zip(fixture_modules, original_sizes):
                     path.chmod(0o600)
                     path.write_bytes(b"U" * original_size)

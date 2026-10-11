@@ -37,11 +37,15 @@ XPRA_CORE_SHA256 = "95a8bb41304181555ac33482931ba1c2460b4a1b03e458c3c5e8825adcf3
 XPRA_WINDOW_PATH = Path("/usr/lib/python3/dist-packages/xpra/server/subsystem/window.py")
 XPRA_WINDOW_SIZE = 42_476
 XPRA_WINDOW_SHA256 = "7fd74d70e6a50e2f02727e263bdbec34826d23871abf4feedb230741ef09264f"
+XPRA_COMMAND_PATH = Path("/usr/lib/python3/dist-packages/xpra/server/subsystem/command.py")
+XPRA_COMMAND_SIZE = 24_117
+XPRA_COMMAND_SHA256 = "09e90f7dcb8a76687c59ee8c538faef21ce2881bdaed4cafb760eb8fe141f2d3"
 XPRA_PORT = 14_500
 XPRA_PINNED_MODULES = (
     (XPRA_CONTROL_STUB_PATH, XPRA_CONTROL_STUB_SIZE, XPRA_CONTROL_STUB_SHA256),
     (XPRA_CORE_PATH, XPRA_CORE_SIZE, XPRA_CORE_SHA256),
     (XPRA_WINDOW_PATH, XPRA_WINDOW_SIZE, XPRA_WINDOW_SHA256),
+    (XPRA_COMMAND_PATH, XPRA_COMMAND_SIZE, XPRA_COMMAND_SHA256),
 )
 
 
@@ -325,6 +329,44 @@ def _process_argv(pid: int) -> tuple[str, ...]:
     return values
 
 
+def _require_xpra_config_isolated_environment(pid: int) -> None:
+    """Require Xpra's three config search roots to be explicitly disabled."""
+    fd = -1
+    try:
+        fd = os.open(f"/proc/{pid}/environ", os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+                     | getattr(os, "O_NOFOLLOW", 0))
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise _deny()
+        raw = bytearray()
+        while len(raw) <= 65_536:
+            block = os.read(fd, min(8192, 65_537 - len(raw)))
+            if not block:
+                break
+            raw.extend(block)
+    except OSError:
+        raise _deny() from None
+    finally:
+        if fd >= 0:
+            os.close(fd)
+    if not raw or len(raw) > 65_536 or raw[-1:] != b"\0":
+        raise _deny()
+    required = {
+        b"XPRA_DEFAULT_CONF_DIRS": 0,
+        b"XPRA_SYSTEM_CONF_DIRS": 0,
+        b"XPRA_USER_CONF_DIRS": 0,
+    }
+    found: dict[bytes, int] = {}
+    for entry in bytes(raw[:-1]).split(b"\0"):
+        key, separator, value = entry.partition(b"=")
+        if key in required:
+            if not separator or key in found:
+                raise _deny()
+            found[key] = len(value)
+    if found != required:
+        raise _deny()
+
+
 def _validate_xpra_argv(config: Any, pid: int) -> str:
     argv = _process_argv(pid)
     digest = hashlib.sha256(b"\0".join(arg.encode("utf-8") for arg in argv)).hexdigest()
@@ -341,13 +383,14 @@ def _validate_xpra_argv(config: Any, pid: int) -> str:
     if (len(bind_values) != 1
             or bind_values[0] != "--bind-tcp=127.0.0.1:14500,auth=http-header:property=X-Forwarded-Proto,value=https"):
         raise _deny()
-    # No user-controlled command launching or remote filesystem/audio devices.
-    # These exact disabled flags are part of the root-reviewed argv digest.
+    # The patched, pinned command module needs commands=yes to launch the one
+    # fixed child. It keeps direct client command starts/signals unavailable
+    # while start-new-commands=no; all non-child startup options stay absent.
     required_disabled = {
         "--daemon=no", "--systemd-run=no", "--bind=none", "--html=on",
         "--remote-logging=no",
         "--start-new-commands=no", "--exit-with-children=yes", "--terminate-children=yes",
-        "--commands=no", "--shell=no", "--control=no", "--audio=no", "--tray=no",
+        "--shell=no", "--control=no", "--audio=no", "--tray=no",
         "--clipboard=no", "--speaker=off", "--microphone=off", "--webcam=no",
         "--file-transfer=no", "--printing=no", "--open-files=no", "--open-url=no",
         "--forward-xdg-open=no", "--notifications=no", "--system-tray=no",
@@ -356,14 +399,20 @@ def _validate_xpra_argv(config: Any, pid: int) -> str:
     }
     if not required_disabled.issubset(argv[4:]):
         raise _deny()
+    if (argv[4:].count("--commands=yes") != 1
+            or argv[4:].count("--start-new-commands=no") != 1):
+        raise _deny()
     app_child = "--start-child=/opt/hermes-jarvis-mvp-20261011/Hermes-Desktop.AppDir/Hermes"
     start_children = [arg for arg in argv[4:] if arg.startswith("--start-child=")]
     if start_children != [app_child]:
         raise _deny()
+    allowed_start_options = {app_child, "--start-new-commands=no"}
+    if any(arg.startswith("--start") and arg not in allowed_start_options for arg in argv[4:]):
+        raise _deny()
     xvfb_values = [arg for arg in argv[4:] if arg.startswith("--xvfb=")]
     if len(xvfb_values) != 1 or not xvfb_values[0].startswith("--xvfb=/usr/bin/Xvfb"):
         raise _deny()
-    forbidden_prefixes = ("--start=", "--exec-wrapper=", "--bind-tcp=0.0.0.0",
+    forbidden_prefixes = ("--source-start", "--exec-wrapper", "--bind-tcp=0.0.0.0",
                           "--bind-tcp=::", "--bind=0.0.0.0", "--bind=::")
     if any(any(arg.startswith(prefix) for prefix in forbidden_prefixes) for arg in argv[4:]):
         raise _deny()
@@ -428,6 +477,7 @@ def observe_stage(config: Any, *, nonce: str) -> dict[str, Any]:
                 or _hash_path(executable) != config.xpra_binary_sha256
                 or _hash_path(config.xpra_program) != config.xpra_program_sha256):
             raise _deny()
+        _require_xpra_config_isolated_environment(pid)
         argv_digest = _validate_xpra_argv(config, pid)
         if not _listener_owned_by(pid):
             raise _deny()
@@ -435,6 +485,7 @@ def observe_stage(config: Any, *, nonce: str) -> dict[str, Any]:
             raise _deny()
         xpra_pinned_modules_digest = _verify_pinned_xpra_modules()
         app_digest = _check_immutable_tree(config.appdir, config.appdir_manifest_sha256)
+        _require_xpra_config_isolated_environment(pid)
         if _pid_start_ticks(pid) != start_ticks or _pidfd_exited(pidfd):
             raise _deny()
     finally:
@@ -444,7 +495,8 @@ def observe_stage(config: Any, *, nonce: str) -> dict[str, Any]:
     proof = hashlib.sha256(b"hermes-manual-stage-inspection-v1\0" + b"\0".join((
         config.config_sha256.encode(), hashlib.sha256(table).hexdigest().encode(),
         props["InvocationID"].encode(), str(pid).encode(), start_ticks.encode(),
-        argv_digest.encode(), xpra_pinned_modules_digest.encode(), app_digest.encode(),
+        argv_digest.encode(), b"xpra-config-search-dirs-disabled",
+        xpra_pinned_modules_digest.encode(), app_digest.encode(),
         boot_id.encode(), nonce.encode()))).hexdigest()
     return {"schema": 1, "nonce": nonce, "proof_sha256": proof,
             "boot_id": boot_id, "issued_monotonic": started,
@@ -453,15 +505,15 @@ def observe_stage(config: Any, *, nonce: str) -> dict[str, Any]:
 
 def _verify_pinned_xpra_modules() -> str:
     binding = []
-    if (len(XPRA_PINNED_MODULES) != 3
-            or len({row[0] for row in XPRA_PINNED_MODULES}) != 3):
+    if (len(XPRA_PINNED_MODULES) != 4
+            or len({row[0] for row in XPRA_PINNED_MODULES}) != 4):
         raise _deny()
     for path, size, expected_digest in XPRA_PINNED_MODULES:
         digest = _hash_path(path, expected_size=size, require_root_readonly=True)
         if digest != expected_digest:
             raise _deny()
         binding.extend((str(path).encode("ascii"), str(size).encode("ascii"), digest.encode("ascii")))
-    return hashlib.sha256(b"hermes-xpra-pinned-modules-v261\0" + b"\0".join(binding)).hexdigest()
+    return hashlib.sha256(b"hermes-xpra-pinned-modules-v262\0" + b"\0".join(binding)).hexdigest()
 
 
 def _hash_path(path: Path, *, expected_size: int | None = None,
