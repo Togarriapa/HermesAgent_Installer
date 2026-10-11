@@ -150,9 +150,12 @@ def test_server_turn_mapping_runs_before_worker_and_failure_compensates_without_
             request, conversation_id=conversation["id"], text="server authored goal",
             idempotency_key="server-request-key-00000001", before_schedule=before)
         assert queued["turn_id"] == observed[0][1]
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
         assert observed[0][0] == "mapped"
+        for _ in range(50):
+            if store.owned_turn("subject-a", queued["turn_id"])["status"] == "completed":
+                break
+            await asyncio.sleep(0.01)
+        assert store.owned_turn("subject-a", queued["turn_id"])["status"] == "completed"
         assert observed[1] == "submit"
 
         failure_turn = None
