@@ -137,7 +137,7 @@ def test_owner_draft_preview_is_persisted_but_never_fabricates_execution(tmp_pat
                 "idempotency_key": "mission-launch-idempotency-key-001",
             })
             assert launch.status == 409
-            assert "unavailable" in await launch.text()
+            assert "master planning decision is pending" in await launch.text()
             with store._connect() as db:
                 approval_row = db.execute(
                     "SELECT status, gateway_turn_id FROM jarvis_mission_approvals WHERE mission_id=?",

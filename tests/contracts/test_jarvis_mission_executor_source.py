@@ -203,7 +203,7 @@ def test_mission_stays_pending_until_root_seals_master_plan_decision(tmp_path, m
             launched = await client.post(f"/chat/api/missions/{mission_id}/launch",
                                          headers=headers, json=launch_body)
             assert launched.status == 409
-            assert "unavailable" in await launched.text()
+            assert "master planning decision is pending" in await launched.text()
             assert backend.sessions_created == 0
             assert backend.submitted_prompt is None
             assert registered == []

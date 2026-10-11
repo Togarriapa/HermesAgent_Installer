@@ -914,6 +914,10 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                 from .jarvis_mission_executor import (
                     _run_by_key, mission_execution_prompt, mission_goal_arguments_sha256,
                 )
+                if (row["master_plan_sha256"] is None
+                        or row["execution_mode"] == "pending"):
+                    raise web.HTTPConflict(text="Jarvis master planning decision is pending",
+                                           headers=_secure_headers())
                 nonce = body["approval_nonce"]
                 idem_hash = hashlib.sha256(body["idempotency_key"].encode("ascii")).hexdigest()
                 launch_hash = _hash({"mission_id": row["id"], "revision": revision,
