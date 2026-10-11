@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
 
 from hermes_installer.remote.jarvis_chat import (
     ChatPrincipal,
@@ -482,6 +484,87 @@ def test_heartbeat_nonce_is_owner_bound_single_use_and_expiring(tmp_path):
     store.finish_turn(turn_id, "cancelled")
     with pytest.raises(JarvisChatDenied):
         store.rotate_heartbeat("subject-a", turn_id, rotated, principal("subject-a"))
+
+
+def test_sse_transport_reconnects_with_cursor_after_request_witness_expires(tmp_path):
+    store = JarvisChatStore(tmp_path / "chat.sqlite3")
+    conversation = new_conversation(store, "subject-a")
+    turn_id, _nonce, _ = begin(store, "subject-a", conversation, "sse-reconnect-key-00000001")
+    store.append_delta(turn_id, "first")
+    accepted_requests = 0
+
+    @web.middleware
+    async def fresh_request_witness(request, handler):
+        nonlocal accepted_requests
+        accepted_requests += 1
+        request["principal"] = ChatPrincipal(
+            "subject-a", time.monotonic() + 60, time.monotonic() + 0.45,
+            "core-generation-a")
+        return await handler(request)
+
+    service = JarvisChatService(
+        store, object(), principal_from_request=lambda request: request["principal"])
+    app = web.Application(middlewares=[fresh_request_witness])
+    app.router.add_get("/events/{turn_id}", service.events)
+    client = TestClient(TestServer(app))
+
+    async def exercise():
+        await client.start_server()
+        try:
+            first = await client.get(f"/events/{turn_id}")
+            first_body = await first.text()
+            assert "id: 1\nevent: message.delta" in first_body
+            assert accepted_requests == 1
+            assert store.owned_turn("subject-a", turn_id)["status"] == "running"
+
+            store.append_delta(turn_id, "second")
+            store.finish_turn(turn_id, "completed")
+            resumed = await client.get(
+                f"/events/{turn_id}", headers={"Last-Event-ID": "1"})
+            resumed_body = await resumed.text()
+            assert accepted_requests == 2
+            assert "id: 2\nevent: message.delta" in resumed_body
+            assert "id: 4\nevent: turn.completed" in resumed_body
+            assert "first" not in resumed_body
+        finally:
+            await client.close()
+
+    asyncio.run(exercise())
+
+
+def test_sse_turn_lease_expiry_cancels_owned_turn_and_emits_terminal_event(tmp_path):
+    store = JarvisChatStore(tmp_path / "chat.sqlite3")
+    conversation = new_conversation(store, "subject-a")
+    turn_id, _nonce, _ = begin(store, "subject-a", conversation, "sse-expiry-key-000000001")
+    with store._connect() as db:
+        db.execute("UPDATE turns SET heartbeat_expiry=? WHERE id=?",
+                   (time.monotonic() - 1, turn_id))
+
+    @web.middleware
+    async def accepted_request(request, handler):
+        request["principal"] = ChatPrincipal(
+            "subject-a", time.monotonic() + 60, time.monotonic() + 3,
+            "core-generation-a")
+        return await handler(request)
+
+    service = JarvisChatService(
+        store, object(), principal_from_request=lambda request: request["principal"])
+    app = web.Application(middlewares=[accepted_request])
+    app.router.add_get("/events/{turn_id}", service.events)
+    client = TestClient(TestServer(app))
+
+    async def exercise():
+        await client.start_server()
+        try:
+            response = await client.get(f"/events/{turn_id}")
+            body = await response.text()
+            assert response.status == 200
+            assert "event: turn.cancelled" in body
+            assert store.owned_turn("subject-a", turn_id)["status"] == "cancelled"
+        finally:
+            await client.close()
+
+    asyncio.run(exercise())
 
 
 def test_runtime_mapping_generation_cas_preserves_stored_session_key(tmp_path):

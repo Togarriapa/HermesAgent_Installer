@@ -1429,7 +1429,13 @@ class JarvisChatService:
             self._current(request)
             await response.prepare(request)
             terminal = False
-            stream_deadline = time.monotonic() + SSE_CONNECTION_SECONDS
+            # An ingress observation belongs to this HTTP request and cannot be refreshed
+            # from inside its response. End the transport while that observation is still
+            # current; EventSource reconnects with Last-Event-ID through fresh middleware.
+            # This deadline is transport-only. The separately issued turn lease and original
+            # JWT deadline continue to govern the owned worker.
+            witness_cutoff = principal.witness_expires_monotonic - 0.05
+            stream_deadline = min(time.monotonic() + SSE_CONNECTION_SECONDS, witness_cutoff)
             while not terminal and time.monotonic() < stream_deadline:
                 # The long-lived response is authorized by the separately refreshed nonce lease.
                 # Each heartbeat passes fresh JWT+Unix ingress middleware and atomically rotates
@@ -1454,6 +1460,14 @@ class JarvisChatService:
                     try:
                         self._current(request)
                     except JarvisChatDenied:
+                        # A request-local witness expiring only closes this SSE segment. A
+                        # newly accepted reconnect obtains its own witness. JWT expiry still
+                        # cancels the exact turn; an earlier currentness failure cancels it.
+                        now = time.monotonic()
+                        if (now >= principal.witness_expires_monotonic
+                                and now < principal.expires_monotonic):
+                            terminal = True
+                            break
                         worker = self._workers.get(turn_id)
                         if worker is not None:
                             worker.cancel()
@@ -1464,6 +1478,11 @@ class JarvisChatService:
                         self._current(request)
                         await response.write(f"id: {cursor}\nevent: {name}\ndata: {payload}\n\n".encode())
                     except JarvisChatDenied:
+                        now = time.monotonic()
+                        if (now >= principal.witness_expires_monotonic
+                                and now < principal.expires_monotonic):
+                            terminal = True
+                            break
                         worker = self._workers.get(turn_id)
                         if worker is not None:
                             worker.cancel()
