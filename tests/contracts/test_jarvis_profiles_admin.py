@@ -85,19 +85,24 @@ def test_save_requires_fresh_single_use_review_token_and_exact_file_cas():
             preview_token=preview["previewToken"], idempotency_key="idempotency_key_1234567890")
 
 
-def test_primary_soul_is_read_only_until_journal_aware_effective_prompt_transaction():
+def test_primary_soul_prefix_is_editable_through_the_reviewed_transaction():
     provider = _Provider()
     admin = JarvisProfileAdmin(provider)
     auth = {"subject": "owner-a", "core_generation": "core-a",
             "access_jwt": "jwt", "accepted_ingress": object()}
     profile_id = admin.list_profiles(**auth)["profiles"][0]["id"]
     initial = admin.read_file(**auth, profile_id=profile_id, file_kind="soul")
-    assert initial["editable"] is False
-    assert "journal-aware effective-prompt transaction" in initial["editUnavailableReason"]
-    with pytest.raises(JarvisChatDenied, match="primary SOUL edits are unavailable"):
-        admin.preview(**auth, profile_id=profile_id, file_kind="soul",
-            base_sha256=initial["sha256"], content=initial["content"] + "Unsafe partial write.\n")
-    assert provider.writes == []
+    assert initial["editable"] is True
+    assert initial["protectedSuffix"] == ""
+    proposed = initial["content"] + "Owner-managed prompt prefix.\n"
+    preview = admin.preview(**auth, profile_id=profile_id, file_kind="soul",
+        base_sha256=initial["sha256"], content=proposed)
+    saved = admin.save(**auth, profile_id=profile_id, file_kind="soul",
+        base_sha256=initial["sha256"], content=proposed,
+        preview_token=preview["previewToken"], idempotency_key="primary_prefix_edit_1234567890")
+    assert saved["state"] == "active"
+    assert provider.files[("hermes", "soul")] == proposed
+    assert len(provider.writes) == 1
 
 
 def test_source_race_consumes_preview_without_repeating_the_write():
@@ -184,4 +189,5 @@ def test_editor_fragment_uses_fixed_routes_and_never_opens_expert_chat():
     assert "chat with" not in feature.mount_js.lower()
     assert "localStorage" not in feature.mount_js and "sessionStorage" not in feature.mount_js
     assert "file.editable===true" in feature.mount_js
-    assert "journal-aware effective-prompt transaction" in feature.mount_js
+    assert "value.managedPrimary?\"Jarvis owner prefix · managed overlay stays protected\"" in feature.mount_js
+    assert "protectedContent.textContent=value.protectedSuffix" in feature.mount_js
