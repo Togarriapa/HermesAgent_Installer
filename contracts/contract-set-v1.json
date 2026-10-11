@@ -1,4 +1,5 @@
 {
+  "schema": 1,
   "files": [
     {
       "path": "contracts/capture-profiles/installer-native-input-capture-profile-v1.json",
@@ -52,8 +53,8 @@
     },
     {
       "path": "contracts/native/native-package-binding-contract.json",
-      "sha256": "2ad941f97cbdb50d9ec95cd0261a3f84e7469fc490983380be5b237a299599cf",
-      "size_bytes": 234670
+      "sha256": "91a87a9bfcb2612cde6fb4be448cb63bd1a0e3596839193dea88682df8e86e33",
+      "size_bytes": 234635
     },
     {
       "path": "contracts/native/network-row-wire.json",
@@ -82,7 +83,7 @@
     },
     {
       "path": "contracts/release-source-members-v1.json",
-      "sha256": "3368a769a1619088b560c2f7ce17d4bf76bff099ac2534496cf154200da2bf1c",
+      "sha256": "2625ed08a4955ff2d275caae0985425c517c00fcbec4aece92c726147e90dceb",
       "size_bytes": 19590
     },
     {
@@ -94,6 +95,11 @@
       "path": "contracts/schemas/agent37_inspect_skill.result.schema.json",
       "sha256": "fdf550a9698f31ba06a8e093630e5b0c96f4e0d2aa6cb8b75abe2a44c585bc9d",
       "size_bytes": 247
+    },
+    {
+      "path": "contracts/schemas/bounded-native-backend-result-v1.schema.json",
+      "sha256": "8ef1ffe2ca1c26f2bb82fd9178b4cd223bbee4b3b7c1a8d784f850e289026cb4",
+      "size_bytes": 235
     },
     {
       "path": "contracts/schemas/channel-audio-observed-event-v1.json",
@@ -215,6 +221,5 @@
       "sha256": "210114d336b54ec86b40861a1d808508db48d20c9ecfb0a20b30049b2e4f84f5",
       "size_bytes": 920
     }
-  ],
-  "schema": 1
+  ]
 }

@@ -46,8 +46,8 @@
       "artifact_id": "installer-module:hermes_installer.authority.bootstrap_runtime_factory",
       "path": "lib/python/hermes_installer/authority/bootstrap_runtime_factory.py",
       "role": "module",
-      "sha256": "949e4bce79bfff32c9a8bb15152540968aca84b575d253725c80e3ecf23f64b7",
-      "size_bytes": 691421
+      "sha256": "fa33c61ff093bbda37bcea509e5f282ded54d497f103b3ce3d99ee08a55c877c",
+      "size_bytes": 691159
     },
     {
       "artifact_id": "installer-module:hermes_installer.authority.client",
@@ -95,8 +95,8 @@
       "artifact_id": "installer-module:hermes_installer.authority.initial_policy_compiler",
       "path": "lib/python/hermes_installer/authority/initial_policy_compiler.py",
       "role": "module",
-      "sha256": "34aa92870f6e5fabd327f9518f3fcd4e1a6afa90b43c0be4bcc02ae88996a708",
-      "size_bytes": 41486
+      "sha256": "23c2fe74453b6fc77e9610a8e3ab0dc0e5e70a6fab9c9ef1b1adff44819d9b22",
+      "size_bytes": 41439
     },
     {
       "artifact_id": "installer-module:hermes_installer.authority.listener_activation",
@@ -123,8 +123,8 @@
       "artifact_id": "installer-module:hermes_installer.authority.native_custody_proof",
       "path": "lib/python/hermes_installer/authority/native_custody_proof.py",
       "role": "module",
-      "sha256": "4b48a790a768b92204d84229e38910cd6d2da37ce5844ca72579ba36c5eb986e",
-      "size_bytes": 99355
+      "sha256": "4aa199bb9d268af380b1a08e487443f30fbfc394fe851901b3ed278184798546",
+      "size_bytes": 99345
     },
     {
       "artifact_id": "installer-module:hermes_installer.authority.native_definition_composition",
@@ -186,8 +186,8 @@
       "artifact_id": "installer-module:hermes_installer.authority.native_registration_projection",
       "path": "lib/python/hermes_installer/authority/native_registration_projection.py",
       "role": "module",
-      "sha256": "7afa35250c9cd82f34030d37a74b6c310f25fde88d2169cf30913eafcbcf266b",
-      "size_bytes": 82047
+      "sha256": "fbac50dc4395ee11c1129caf3a672625d3ee8eb9e1858e95b1e85d5b25bf0f52",
+      "size_bytes": 81902
     },
     {
       "artifact_id": "installer-module:hermes_installer.authority.native_request_observation",
@@ -207,8 +207,8 @@
       "artifact_id": "installer-module:hermes_installer.authority.native_source_definitions",
       "path": "lib/python/hermes_installer/authority/native_source_definitions.py",
       "role": "module",
-      "sha256": "4d66c49e798eb957fa77601c4dad021182b734b1eb8fe322d52ecca060223341",
-      "size_bytes": 32858
+      "sha256": "e1e88f7634ea0df32e29542c303a0b55730c0917a6dd3885237e9645929ff563",
+      "size_bytes": 32743
     },
     {
       "artifact_id": "installer-module:hermes_installer.authority.native_worker_endpoint_custody",
@@ -221,8 +221,8 @@
       "artifact_id": "installer-module:hermes_installer.authority.native_worker_generation_schema",
       "path": "lib/python/hermes_installer/authority/native_worker_generation_schema.py",
       "role": "module",
-      "sha256": "f03c0fc953bb54ace37d86d8e8315999eacb96055c1f61bebc6769eb2061fc83",
-      "size_bytes": 13871
+      "sha256": "e2db7f89b72ba77883c98936b1baae9ef8d094a71125f6f8e4296767896dbac7",
+      "size_bytes": 13874
     },
     {
       "artifact_id": "installer-module:hermes_installer.authority.native_worker_launch",
@@ -389,8 +389,8 @@
       "artifact_id": "installer-module:hermes_installer.native_plugin_bindings",
       "path": "lib/python/hermes_installer/native_plugin_bindings.py",
       "role": "module",
-      "sha256": "f5e9fcb74b555dcd5d98bc37eec29c42cbe85f3793cf43f2dc97536b030d1b26",
-      "size_bytes": 22679
+      "sha256": "57257e800e71d508c8fbfde54903c96667fc2faa8e87209a8de2d8c920354d98",
+      "size_bytes": 22687
     },
     {
       "artifact_id": "installer-module:hermes_installer.native_plugin_loader",

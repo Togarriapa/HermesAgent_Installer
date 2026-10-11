@@ -105,8 +105,7 @@ class NativePluginToolResultTests(unittest.TestCase):
         import json
 
         schema_path = (Path(__file__).resolve().parents[2] / "contracts/"
-                       "protected-native-registration-records-v113/"
-                       "bounded-native-backend-result-v1.schema.json")
+                       "schemas/bounded-native-backend-result-v1.schema.json")
         result_schema = json.loads(schema_path.read_text(encoding="utf-8"))
         result = {"status": "accepted", "receipt": {"id": "opaque", "count": 2}}
         candidate_module = __import__("hermes_installer.native_plugin_loader", fromlist=["SelectedNativeCandidate"])
@@ -132,8 +131,7 @@ class NativePluginToolResultTests(unittest.TestCase):
         import json
 
         schema_path = (Path(__file__).resolve().parents[2] / "contracts/"
-                       "protected-native-registration-records-v113/"
-                       "bounded-native-backend-result-v1.schema.json")
+                       "schemas/bounded-native-backend-result-v1.schema.json")
         candidate_module = __import__("hermes_installer.native_plugin_loader", fromlist=["SelectedNativeCandidate"])
         candidate = candidate_module.SelectedNativeCandidate(
             "financial_execute_one_order", "financial-execution-gateway",
@@ -155,8 +153,7 @@ class NativePluginToolResultTests(unittest.TestCase):
         import json
 
         schema_path = (Path(__file__).resolve().parents[2] / "contracts/"
-                       "protected-native-registration-records-v113/"
-                       "bounded-native-backend-result-v1.schema.json")
+                       "schemas/bounded-native-backend-result-v1.schema.json")
         result_schema = json.loads(schema_path.read_text(encoding="utf-8"))
         candidate_module = __import__("hermes_installer.native_plugin_loader", fromlist=["SelectedNativeCandidate"])
         candidate = candidate_module.SelectedNativeCandidate(
@@ -181,8 +178,7 @@ class NativePluginToolResultTests(unittest.TestCase):
         import json
 
         schema_path = (Path(__file__).resolve().parents[2] / "contracts/"
-                       "protected-native-registration-records-v113/"
-                       "bounded-native-backend-result-v1.schema.json")
+                       "schemas/bounded-native-backend-result-v1.schema.json")
         result_schema = json.loads(schema_path.read_text(encoding="utf-8"))
         candidate_module = __import__("hermes_installer.native_plugin_loader", fromlist=["SelectedNativeCandidate"])
         adapter_id = "agent-sandbox-wallet"

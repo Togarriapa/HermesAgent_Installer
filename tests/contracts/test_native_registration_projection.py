@@ -147,9 +147,16 @@ def test_all_packaged_registration_result_schemas_are_in_protected_artifact_cata
         assert artifact["sha256"] == row.sha256
         assert artifact["size_bytes"] == row.size_bytes
         assert artifact["max_bytes"] == row.size_bytes
+        schema_name = Path(row.relative_path).name
+        if schema_name.startswith(("agent37_", "mcp_registry_", "resource_overlay_")):
+            historical_member = f"plans/amendments/2026-10-10-native-local-schema-artifacts-v112/{schema_name}"
+        elif schema_name == "financial_data_read.result.schema.json":
+            historical_member = f"plans/amendments/2026-10-10-financial-alias-source-bound-v121/{schema_name}"
+        else:
+            historical_member = f"plans/amendments/2026-10-10-native-financial-web-results-v120/{schema_name}"
         assert artifact["source_url"] == (
             f"https://raw.githubusercontent.com/Togarriapa/HermesAgent_Installer/"
-            f"{source_commit}/{row.relative_path}"
+            f"{source_commit}/{historical_member}"
         )
 
 

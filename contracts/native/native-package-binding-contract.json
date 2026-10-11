@@ -1045,7 +1045,7 @@
     "bounded_passthrough_wrapper": {
       "schema_id": "installer-native-bounded-backend-result-v1",
       "artifact_id": "installer-native-bounded-backend-result-v1",
-      "path": "contracts/protected-native-registration-records-v113/bounded-native-backend-result-v1.schema.json",
+      "path": "contracts/schemas/bounded-native-backend-result-v1.schema.json",
       "sha256": "8ef1ffe2ca1c26f2bb82fd9178b4cd223bbee4b3b7c1a8d784f850e289026cb4",
       "size_bytes": 235,
       "applies_to": [
