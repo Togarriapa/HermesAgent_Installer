@@ -9,6 +9,16 @@ from hermes_installer.remote.jarvis_chat_assets import reviewed_chat_asset
 
 
 class JarvisChatAssetTests(unittest.TestCase):
+    def test_chat_shell_uses_jarvis_branding_without_desktop_admin_links(self):
+        _content_type, page = reviewed_chat_asset("/chat")
+        source = page.decode("utf-8")
+        self.assertIn("<title>Jarvis</title>", source)
+        self.assertIn("<strong>JARVIS</strong>", source)
+        self.assertNotIn("Hermes", source)
+        self.assertNotIn("/client/bootstrap.html", source)
+        self.assertNotIn("Owner Desktop", source)
+        self.assertNotIn("owner administration", source)
+
     def test_only_exact_reviewed_asset_routes_are_available(self):
         expected = {
             "/chat": "text/html; charset=utf-8",
