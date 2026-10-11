@@ -128,5 +128,18 @@ class NativeObservationProducerTests(unittest.TestCase):
         self.assertEqual(joined["expires_monotonic"], refreshed["expires_monotonic"])
         self.assertNotEqual(joined["nonce"], refreshed["nonce"])
 
+    def test_native_server_overload_denies_immediately_at_fixed_worker_bound(self):
+        acquired = []
+        try:
+            for _ in range(inspector.MAX_INSPECTION_CONNECTIONS):
+                self.assertTrue(inspector._try_acquire_observation_slot())
+                acquired.append(True)
+            start = time.monotonic()
+            self.assertFalse(inspector._try_acquire_observation_slot())
+            self.assertLess(time.monotonic() - start, 0.05)
+        finally:
+            for _ in acquired:
+                inspector._OBSERVATION_SERVER_SLOTS.release()
+
 if __name__ == "__main__":
     unittest.main()

@@ -930,14 +930,26 @@ class ManualStageGatewayTests(unittest.TestCase):
                  mock.patch.object(inspector, "_pidfd_exited", return_value=False), \
                  mock.patch.object(inspector.os, "geteuid", return_value=0), \
                  mock.patch.object(inspector.os, "close"):
-                with ThreadPoolExecutor(max_workers=6) as pool:
-                    responses = list(pool.map(lambda n: inspector.observe_current_native_observation(
-                        self.config, nonce=f"{n + 1:064x}", caller_pid=901,
-                        caller_uid=self.config.gateway_uid, caller_gid=self.config.gateway_gid), range(6)))
+                barrier = threading.Barrier(inspector.MAX_INSPECTION_CONNECTIONS)
+                def admitted_observation(n):
+                    if not inspector._try_acquire_observation_slot():
+                        raise AssertionError("worker-bound native slot was rejected")
+                    try:
+                        barrier.wait(timeout=2)
+                        return inspector.observe_current_native_observation(
+                            self.config, nonce=f"{n + 1:064x}", caller_pid=901,
+                            caller_uid=self.config.gateway_uid, caller_gid=self.config.gateway_gid)
+                    finally:
+                        inspector._OBSERVATION_SERVER_SLOTS.release()
+                with ThreadPoolExecutor(max_workers=inspector.MAX_INSPECTION_CONNECTIONS) as pool:
+                    responses = list(pool.map(admitted_observation,
+                        range(inspector.MAX_INSPECTION_CONNECTIONS)))
             self.assertEqual(len(scans), 1)
-            self.assertGreaterEqual(len(currentness_calls), 7)  # the scan and each waiter recheck currentness
-            self.assertEqual(gateway_calls, [(901, self.config.gateway_uid, self.config.gateway_gid)] * 6)
-            self.assertEqual({row["nonce"] for row in responses}, {f"{n + 1:064x}" for n in range(6)})
+            self.assertGreaterEqual(len(currentness_calls), inspector.MAX_INSPECTION_CONNECTIONS + 1)
+            self.assertEqual(gateway_calls, [(901, self.config.gateway_uid, self.config.gateway_gid)] *
+                inspector.MAX_INSPECTION_CONNECTIONS)
+            self.assertEqual({row["nonce"] for row in responses},
+                {f"{n + 1:064x}" for n in range(inspector.MAX_INSPECTION_CONNECTIONS)})
             self.assertEqual({(row["issued_monotonic"], row["expires_monotonic"]) for row in responses},
                              {(now, now + 4.8)})
             for row in responses:

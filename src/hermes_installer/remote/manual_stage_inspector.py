@@ -44,9 +44,10 @@ MAX_INSPECTION_QUEUE_WAIT_SECONDS = 6.5
 WATCHDOG_INSPECTION_QUEUE_WAIT_SECONDS = 0.5
 MAX_APP_FILE_BYTES = 256 * 1024 * 1024
 MAX_APP_TREE_BYTES = 2 * 1024 * 1024 * 1024
+MAX_INSPECTION_CONNECTIONS = 16
 _INGRESS_SERVER_SLOTS = threading.BoundedSemaphore(8)
-_SERVER_CONNECTION_SLOTS = threading.BoundedSemaphore(16)
-_OBSERVATION_SERVER_SLOTS = threading.BoundedSemaphore(8)
+_SERVER_CONNECTION_SLOTS = threading.BoundedSemaphore(MAX_INSPECTION_CONNECTIONS)
+_OBSERVATION_SERVER_SLOTS = threading.BoundedSemaphore(MAX_INSPECTION_CONNECTIONS)
 _INGRESS_REQUEST_DEADLINE_SECONDS = 2.0
 _INGRESS_PROOF_TTL_SECONDS = 5.0
 _OBSERVATION_SEAL = object()
@@ -171,6 +172,11 @@ def _check_app_file_size(size: int) -> None:
 
 def _deny() -> StageInspectionDenied:
     return StageInspectionDenied("manual stage current-state observation is unavailable")
+
+
+def _try_acquire_observation_slot() -> bool:
+    """Admit only within the fixed server-worker bound; overload fails immediately."""
+    return _OBSERVATION_SERVER_SLOTS.acquire(blocking=False)
 
 
 def _run_fixed(argv: tuple[str, ...], *, deadline: float, maximum: int = MAX_OUTPUT) -> bytes:
@@ -1204,7 +1210,7 @@ def serve_inspection_socket(config: Any) -> None:
                     if set(request) != {"op", "nonce"} or caller_uid != config.gateway_uid:
                         acquired = None
                         return
-                    if not acquired.acquire(blocking=False):
+                    if not _try_acquire_observation_slot():
                         acquired = None
                         return
                     result = observe_current_native_observation(config, nonce=request["nonce"],
