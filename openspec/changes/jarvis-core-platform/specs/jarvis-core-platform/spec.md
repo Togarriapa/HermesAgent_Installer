@@ -1937,3 +1937,41 @@ The system SHALL admit a new owner task's read-only no-tools Jarvis planning tur
 #### Scenario: Restarted Kanban plan
 - **WHEN** persisted plan data survives restart but its short completion receipt expired
 - **THEN** data remains visible while execution requires fresh current admission; no expired authority is revived.
+
+### Requirement: Command-centre landing and complete grouped navigation
+The Jarvis UI SHALL open Overview as its initial command-centre and home destination. Approximately five clear navigation groups SHALL preserve reachable existing Chat/Sessions, Overview, Capabilities, Settings, Missions, Bots, Logs, Integrations, Learning, Tools, Skills, Files and Models views through their reviewed finite adapters, including truthful pending states.
+
+#### Scenario: Initial and contextual navigation
+- **WHEN** an authenticated owner opens the protected site or selects Jarvis home
+- **THEN** Overview is the primary view, Chat is a dedicated selectable workspace, and the selected group/view is keyboard and touch accessible with visible focus and current-location semantics.
+- **AND** grouping never removes a requested capability, changes owner permission projection or exposes arbitrary native routes.
+
+### Requirement: Persistent truthful reactive Jarvis identity
+The UI SHALL retain one visible Jarvis orb and text state across destinations, derived from actual connection, owned active turn and explicitly consented browser recognition/synthesis events. It SHALL distinguish idle, listening, thinking, speaking and error without fabricated audio, health or work.
+
+#### Scenario: Stream and view change
+- **WHEN** an actual owned response streams while no speech synthesis is audible and the user changes views
+- **THEN** the persistent state remains thinking, changing views starts no audio/work, and stale callbacks cannot reset current activity.
+
+#### Scenario: Cancellation or unavailable voice
+- **WHEN** speech/work ends, fails or is cancelled, or voice is unavailable
+- **THEN** the orb settles from actual current facts with accessible text feedback; text use remains available and no listening/speaking state is simulated.
+
+### Requirement: Accurate customization and orchestration placement
+Conversation-local customization SHALL reuse existing session-scoped finite controls beside the owned Chat workspace, while global device preferences SHALL retain their actual scope. Jarvis SHALL remain sole master; internal experts/Teams and reusable Skills SHALL have distinct understandable presentation without alternate expert DM identities or new effect authority.
+
+#### Scenario: Unsupported customization or scope
+- **WHEN** a requested conversation customization lacks a reviewed session-scoped effect
+- **THEN** the UI reports its precise pending prerequisite rather than exposing a fake control or silently changing global configuration.
+
+### Requirement: Accessible purposeful command-centre visuals
+Original restrained dark/cyan layered visuals and responsive phone/tablet/wide layouts SHALL preserve readable real measurement provenance, unknown/stale states, keyboard focus, touch actions and mobile composer usability. Purposeful motion SHALL reuse CSS tokens, opacity/transform and bounded transitions with OS/local reduced-motion and pointer gating; frequent keyboard/view navigation SHALL remain immediate.
+
+#### Scenario: Reduced motion and missing measurements
+- **WHEN** reduced motion is requested or source measurements are unavailable/stale
+- **THEN** continuous movement is suppressed with gentle static/color/opacity state distinctions, and unavailable metrics remain unknown/stale rather than decorative fake telemetry.
+- **AND** actual state, navigation and send/stop remain usable across phone, tablet and wide layouts.
+
+#### Scenario: Reference evidence remains limited
+- **WHEN** supplied video coverage contains only some verified frames, metadata or unavailable transcripts
+- **THEN** the research record states that exact coverage and does not claim a full review, Hermes functionality or live qualification from those references.
