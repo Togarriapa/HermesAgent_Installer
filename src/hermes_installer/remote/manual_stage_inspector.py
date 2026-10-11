@@ -809,7 +809,7 @@ def _hash_path(path: Path, *, expected_size: int | None = None,
     parent_fd = None
     if require_root_readonly:
         allowed = {row[0] for row in XPRA_PINNED_MODULES} | {
-            GATEWAY_UNIT_PATH, TUNNEL_UNIT_PATH, CLOUDFLARED_PATH,
+            GATEWAY_UNIT_PATH, TUNNEL_UNIT_PATH, CLOUDFLARED_PATH, GATEWAY_EXECUTABLE,
         }
         if path not in allowed or not path.is_absolute():
             raise _deny()

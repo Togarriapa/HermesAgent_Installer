@@ -226,6 +226,12 @@ class ManualStageInspectorIngressTests(unittest.TestCase):
             with self.assertRaises(inspector.StageInspectionDenied):
                 inspector._unit_props(inspector.TUNNEL_UNIT, deadline=time.monotonic() + 2)
 
+    @unittest.skipUnless(inspector.GATEWAY_EXECUTABLE.exists(),
+                         "fixed Pi Python executable is absent on this host")
+    def test_gateway_executable_is_accepted_by_actual_root_readonly_hash_path(self):
+        digest = inspector._hash_path(inspector.GATEWAY_EXECUTABLE, require_root_readonly=True)
+        self.assertEqual(digest, inspector.GATEWAY_EXECUTABLE_SHA256)
+
 
 if __name__ == "__main__":
     unittest.main()
