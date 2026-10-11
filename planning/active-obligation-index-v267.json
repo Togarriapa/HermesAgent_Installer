@@ -99,5 +99,6 @@
     "VD-T261",
     "VD-T262"
   ],
-  "acceptance": "No historical acceptance relabeled passed; all retained functional acceptance OPEN."
+  "acceptance": "No historical acceptance relabeled passed; all retained functional acceptance OPEN.",
+  "coverage_semantics": "Coverage checker reads only the exact indexed superseded task files to retain original task IDs; this does not activate Desktop tasks or establish completion. Active core task plan is mandatory and historical IDs must exist in retained source."
 }

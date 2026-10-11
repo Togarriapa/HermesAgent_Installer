@@ -16,6 +16,19 @@ def check_coverage(base):
  for m in mapped.values():assert m['requirement_ids'] and all(x in req for x in m['requirement_ids']),'Unmapped source context/obligation'
  specs='\n'.join(p.read_text() for p in (base/'openspec').rglob('spec.md'))
  tasktext='\n'.join(p.read_text() for p in (base/'openspec/changes').rglob('tasks.md'))
+ # v267 moved mixed Desktop proposals verbatim to explicit superseded history.
+ # Their task IDs remain source coverage, never active/completed runtime evidence.
+ redirect=base/'planning/active-obligation-index-v267.json'
+ if redirect.exists():
+  index=load(redirect)
+  assert index['change']=='jarvis-core-platform','Unknown active obligation redirect'
+  assert (base/'openspec/changes/jarvis-core-platform/tasks.md').is_file(),'Missing active core task plan'
+  expected_history={name:'openspec/superseded/v267/'+name for name in ('installer-bootstrap-desktop','remote-desktop-tunnel')}
+  assert index['historical_changes']==expected_history,'Unexpected historical task source'
+  historical_text='\n'.join((base/path/'tasks.md').read_text() for path in expected_history.values())
+  for tid in index['historical_task_ids']:
+   assert tid in historical_text,'Historical task redirect lacks source '+tid
+  tasktext+='\n'+historical_text
  for rid,r in req.items():
   assert 'Requirement: '+rid+' ' in specs,'Missing OpenSpec requirement '+rid
   assert r['task_id'] in tasks and r['test_id'] in ev,'Missing task/evidence '+rid
