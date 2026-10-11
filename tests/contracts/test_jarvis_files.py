@@ -258,5 +258,14 @@ def test_files_feature_is_static_and_declares_only_fixed_owner_routes():
         ("POST", "/chat/api/conversations/{conversation_id}/files"),
     )
     assert "textContent" in FEATURE_ASSETS.mount_js
+    assert 'data-preview-bytes' in FEATURE_ASSETS.view_html
+    assert "new TextDecoder('utf-8', { fatal: true })" in FEATURE_ASSETS.mount_js
+    assert "previewBytes.textContent = decoded" in FEATURE_ASSETS.mount_js
+    assert "previewBytes.innerHTML" not in FEATURE_ASSETS.mount_js
+    assert "128 * 1024" in FEATURE_ASSETS.mount_js
+    assert "file.sha256" in FEATURE_ASSETS.mount_js
+    assert "Staged for next message" in FEATURE_ASSETS.mount_js
+    assert "Consumed by a turn" in FEATURE_ASSETS.mount_js
+    assert "Produced artifacts and native file reads are unavailable" in FEATURE_ASSETS.view_html
     assert "innerHTML" not in FEATURE_ASSETS.mount_js
     assert "download" in FEATURE_ASSETS.view_html.lower()

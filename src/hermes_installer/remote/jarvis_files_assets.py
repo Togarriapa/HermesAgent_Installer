@@ -14,6 +14,11 @@ _VIEW = """<section class="files-page" aria-labelledby="files-title">
     <label for="files-input">Text file</label>
     <input id="files-input" data-file type="file" accept=".txt,.md,.csv,.json,text/plain,text/markdown,text/csv,application/json">
     <p class="files-hint">TXT, Markdown, CSV, or JSON · up to 128 KiB · UTF-8 text only</p>
+    <section class="files-preview" data-preview hidden aria-labelledby="files-preview-title">
+      <h3 id="files-preview-title">Selected upload bytes</h3>
+      <p data-preview-meta class="files-meta"></p>
+      <pre data-preview-bytes tabindex="0" aria-label="UTF-8 preview of the selected upload"></pre>
+    </section>
     <button type="button" data-upload disabled>Stage for next message</button>
     <p data-note role="status" aria-live="polite">File contents are sent to the selected private conversation when you next message Jarvis.</p>
   </section>
@@ -22,7 +27,7 @@ _VIEW = """<section class="files-page" aria-labelledby="files-title">
     <ul data-files aria-live="polite"></ul>
     <p data-empty class="files-empty" hidden>No files are staged for this conversation.</p>
   </section>
-  <p class="files-limitation">This view shows owner-bound file metadata. Native Hermes does not provide a file preview or download reader through this protected interface.</p>
+  <p class="files-limitation">The preview reads only the selected upload bytes in this browser. “Staged” means ready for a next message; “Consumed by a turn” means that turn claimed the attachment. Produced artifacts, native file reads, and downloads are unavailable through this interface.</p>
 </section>"""
 
 _CSS = """
@@ -39,6 +44,9 @@ _CSS = """
 [data-feature-root="files"] button{background:transparent;border:1px solid var(--border,#38515a);color:inherit;border-radius:8px;padding:.55rem .85rem;cursor:pointer}
 [data-feature-root="files"] button:disabled{opacity:.5;cursor:not-allowed}
 [data-feature-root="files"] .files-hint{font-size:.78rem;margin:.45rem 0 .8rem}
+[data-feature-root="files"] .files-preview{margin:.9rem 0;padding:.8rem;border:1px solid var(--border,#294047);border-radius:10px;background:rgba(255,255,255,.025)}
+[data-feature-root="files"] .files-preview h3{margin:.1rem 0 .4rem;font-size:.88rem}
+[data-feature-root="files"] .files-preview pre{max-height:18rem;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;margin:.6rem 0 0;padding:.7rem;border-radius:7px;background:rgba(0,0,0,.18);font: .78rem/1.5 ui-monospace,monospace}
 [data-feature-root="files"] [data-note]{min-height:1.3em;color:var(--muted,#9bafb4);font-size:.82rem}
 [data-feature-root="files"] .files-list-heading{display:flex;align-items:center;justify-content:space-between;gap:1rem}
 [data-feature-root="files"] .files-list-heading h2{margin:.2rem 0 .8rem}
@@ -58,6 +66,9 @@ _MOUNT = r"""function mount(container, api, state) {
   const uploadButton = root.querySelector('[data-upload]');
   const refreshButton = root.querySelector('[data-refresh]');
   const note = root.querySelector('[data-note]');
+  const preview = root.querySelector('[data-preview]');
+  const previewMeta = root.querySelector('[data-preview-meta]');
+  const previewBytes = root.querySelector('[data-preview-bytes]');
   const list = root.querySelector('[data-files]');
   const empty = root.querySelector('[data-empty]');
   let stopped = false, busy = false, pendingAttempt = null, conversationId = '';
@@ -85,9 +96,13 @@ _MOUNT = r"""function mount(container, api, state) {
       const detail = document.createElement('span');
       addText(detail, 'span', file.name, 'files-name');
       addText(detail, 'span', (typeof file.mime_type === 'string' ? file.mime_type : 'Text file') +
-        ' · ' + sizeText(file.size_bytes), 'files-meta');
+        ' · ' + sizeText(file.size_bytes) +
+        (typeof file.sha256 === 'string' && /^[a-f0-9]{64}$/.test(file.sha256) ? ' · SHA-256 ' + file.sha256 : '') +
+        (Number.isFinite(file.created_at) ? ' · ' + new Date(file.created_at * 1000).toLocaleString() : ''), 'files-meta');
       row.append(detail);
-      addText(row, 'span', typeof file.state === 'string' ? file.state : 'unknown', 'files-state');
+      const stateLabel = ({ready: 'Staged for next message', attached: 'Consumed by a turn',
+        pending: 'Staging', unavailable: 'Unavailable'})[file.state] || 'Unknown';
+      addText(row, 'span', stateLabel, 'files-state');
       list.append(row);
     }
     empty.hidden = list.childElementCount > 0;
@@ -144,14 +159,38 @@ _MOUNT = r"""function mount(container, api, state) {
     }
     return btoa(binary);
   }
+  async function previewSelectedFile(file) {
+    preview.hidden = true;
+    previewMeta.textContent = '';
+    previewBytes.textContent = '';
+    if (!file) return false;
+    const suffix = file.name.toLocaleLowerCase().split('.').pop();
+    if (file.size < 1 || file.size > 128 * 1024 || !['txt', 'md', 'csv', 'json'].includes(suffix) ||
+        !/^[A-Za-z0-9][A-Za-z0-9._ -]{0,119}$/.test(file.name) || file.name.includes('..')) {
+      note.textContent = 'Choose a non-empty TXT, Markdown, CSV, or JSON file no larger than 128 KiB.';
+      return false;
+    }
+    try {
+      const bytes = await file.arrayBuffer();
+      const decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      if (stopped || fileInput.files?.[0] !== file) return false;
+      previewMeta.textContent = file.name + ' · ' + sizeText(file.size) + ' · UTF-8 upload bytes';
+      previewBytes.textContent = decoded;
+      preview.hidden = false;
+      note.textContent = 'Preview shows the selected file bytes decoded as UTF-8. Stage it to attach it to your next message.';
+      return true;
+    } catch (_) {
+      if (!stopped && fileInput.files?.[0] === file) {
+        note.textContent = 'This file is not valid UTF-8 text and cannot be staged.';
+      }
+      return false;
+    }
+  }
   async function stageFile() {
     if (stopped || busy || !conversationId) return;
     const file = fileInput.files && fileInput.files[0];
     if (!file) return;
-    if (file.size < 1 || file.size > 128 * 1024) {
-      note.textContent = 'Choose a non-empty text file no larger than 128 KiB.';
-      return;
-    }
+    if (!(await previewSelectedFile(file))) return;
     busy = true;
     uploadButton.disabled = true;
     note.textContent = 'Staging file in the selected Hermes conversation…';
@@ -184,12 +223,19 @@ _MOUNT = r"""function mount(container, api, state) {
     conversationId = conversationSelect.value || '';
     pendingAttempt = null;
     renderFiles([]);
-    uploadButton.disabled = !conversationId || !fileInput.files || fileInput.files.length === 0;
+    uploadButton.disabled = true;
+    previewSelectedFile(fileInput.files && fileInput.files[0]).then((valid) => {
+      if (!stopped) uploadButton.disabled = !conversationId || !valid;
+    });
     refreshFiles();
   }
   function onFileChange() {
     pendingAttempt = null;
-    uploadButton.disabled = !conversationId || !fileInput.files || fileInput.files.length === 0;
+    const file = fileInput.files && fileInput.files[0];
+    uploadButton.disabled = true;
+    previewSelectedFile(file).then((valid) => {
+      if (!stopped) uploadButton.disabled = !conversationId || !valid;
+    });
   }
   conversationSelect.addEventListener('change', onConversationChange);
   fileInput.addEventListener('change', onFileChange);
@@ -202,6 +248,7 @@ _MOUNT = r"""function mount(container, api, state) {
     fileInput.removeEventListener('change', onFileChange);
     uploadButton.removeEventListener('click', stageFile);
     refreshButton.removeEventListener('click', refreshFiles);
+    previewBytes.textContent = '';
   };
 }"""
 
