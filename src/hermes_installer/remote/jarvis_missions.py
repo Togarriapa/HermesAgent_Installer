@@ -66,28 +66,24 @@ def _timestamp(value: float) -> str:
 
 @lru_cache(maxsize=1)
 def _verified_team_catalog() -> dict[str, Any]:
-    """Return owner-selectable identity labels from the integrity-checked bundled profiles."""
-    from ..registry.native import NativeRegistry
-    from ..registry.source import load_bundled_source
+    """Project source identities from the dashboard's already verified JSON inventory.
 
-    registry = NativeRegistry.from_verified_source(load_bundled_source())
-    discovery = registry.discover_all()
-    profiles: dict[str, str] = {}
-    for resolved in discovery.resources:
-        resource = resolved.resource
-        if resource.kind.value != "profiles":
-            continue
-        metadata = resource.body.get("metadata", {})
-        label = _clean_text(metadata.get("name") if isinstance(metadata, dict) else "", 120)
-        profiles[resource.id] = label or resource.id.replace("-", " ").replace("_", " ").title()
-    source = registry.source
+    The packaged inventory's exact byte digest is checked by the shared dashboard loader. This
+    request path never invokes NativeRegistry, YAML parsing, or discovery against another HOME.
+    """
+    from .jarvis_dashboard import _BUNDLE_INVENTORY_SHA256, _verified_bundle_inventory
+
+    inventory = _verified_bundle_inventory()
+    profiles = {
+        item["id"]: _clean_text(item.get("displayName") or item["name"], 120)
+        for item in inventory["items"] if item["kind"] == "profiles"
+    }
     return {
         "profiles": profiles,
         "source": {
-            "revision": source.revision,
-            "tree": source.source_tree,
-            "content_digest": source.content_digest,
-            "catalog_version": source.catalog_version,
+            "revision": inventory["source"]["revision"],
+            "catalog_version": inventory["source"]["catalogVersion"],
+            "package_sha256": _BUNDLE_INVENTORY_SHA256,
         },
     }
 
@@ -153,8 +149,8 @@ def _recheck_principal(service: JarvisChatService, request: Any, expected: Any) 
 
 
 def _preview(store: Any, owner: str, row: sqlite3.Row, binding: dict[str, str | None],
-             *, persist: bool = True) -> dict[str, Any] | None:
-    catalog = _verified_team_catalog()
+             *, catalog: dict[str, Any], persist: bool = True,
+             before_commit: Any = None) -> dict[str, Any] | None:
     selected = json.loads(row["team_ids"])
     team = [
         {
@@ -190,7 +186,13 @@ def _preview(store: Any, owner: str, row: sqlite3.Row, binding: dict[str, str | 
                 raise ValueError("mission changed")
             db.execute("UPDATE jarvis_missions SET status='preview_pending', plan_sha256=?, source_binding=?, updated=? WHERE id=? AND owner=? AND revision=?",
                        (digest, _canonical(binding).decode("utf-8"), time.time(), row["id"], owner, row["revision"]))
-            db.commit()
+            try:
+                if before_commit is not None:
+                    before_commit()
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
     else:
         try:
             saved_binding = json.loads(row["source_binding"] or "null")
@@ -230,13 +232,13 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
             owner = service.store._owner(principal.subject)
             with service.store._connect() as db:
                 rows = db.execute("SELECT * FROM jarvis_missions WHERE owner=? ORDER BY updated DESC LIMIT 100", (owner,)).fetchall()
-            _recheck_principal(service, request, principal)
             catalog = _verified_team_catalog()
             team_options = [
                 {"id": identity, "label": label, "readiness": "pending",
                  "reason": "Verified bundled identity only; no current dispatch or execution authority."}
                 for identity, label in sorted(catalog["profiles"].items())
             ]
+            _recheck_principal(service, request, principal)
             return web.json_response({"missions": [_row_view(row) for row in rows],
                                       "team_options": team_options}, headers=_secure_headers())
         except JarvisChatDenied:
@@ -263,6 +265,7 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
             catalog = _verified_team_catalog()
             if any(identity not in catalog["profiles"] for identity in team_ids):
                 raise web.HTTPBadRequest(text="unknown team identity", headers=_secure_headers())
+            _recheck_principal(service, request, principal)
             owner = service.store._owner(principal.subject)
             key_hash = hashlib.sha256(key.encode("ascii")).hexdigest()
             canonical_input = {"title": title, "brief": brief, "team_ids": team_ids}
@@ -302,7 +305,11 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
             result = {"mission": _row_view(row), "preview": None}
             if row["status"] == "preview_pending":
                 try:
-                    result["preview"] = _preview(service.store, service.store._owner(principal.subject), row, _core_source_binding(request), persist=False)
+                    catalog = _verified_team_catalog()
+                    _recheck_principal(service, request, principal)
+                    binding = _core_source_binding(request)
+                    result["preview"] = _preview(service.store, service.store._owner(principal.subject), row, binding,
+                                                 catalog=catalog, persist=False)
                 except ValueError:
                     raise web.HTTPConflict(text="mission changed", headers=_secure_headers()) from None
             _recheck_principal(service, request, principal)
@@ -330,7 +337,11 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                 raise web.HTTPNotFound(text="not found", headers=_secure_headers())
             if int(row["revision"]) != revision:
                 raise web.HTTPConflict(text="mission revision changed", headers=_secure_headers())
-            result = _preview(service.store, owner, row, _core_source_binding(request))
+            catalog = _verified_team_catalog()
+            _recheck_principal(service, request, principal)
+            binding = _core_source_binding(request)
+            result = _preview(service.store, owner, row, binding, catalog=catalog,
+                              before_commit=lambda: _recheck_principal(service, request, principal))
             _recheck_principal(service, request, principal)
             return web.json_response(result, headers=_secure_headers())
         except web.HTTPException:
@@ -348,7 +359,7 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
             if request.raw_path != request.path:
                 raise web.HTTPNotFound(text="not found", headers=_secure_headers())
             principal = service._current(request)
-            action = request.match_info.get("action", "")
+            action = request.path.rsplit("/", 1)[-1]
             expected = {
                 "launch": {"revision", "plan_sha256", "approval_nonce", "idempotency_key"},
                 "stop": {"revision", "idempotency_key"},

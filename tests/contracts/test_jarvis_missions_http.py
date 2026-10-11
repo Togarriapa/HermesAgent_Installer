@@ -58,6 +58,25 @@ def test_owner_draft_preview_is_persisted_but_never_fabricates_execution(tmp_pat
             conflict = await client.post("/chat/api/missions", json={**body, "brief": "different"})
             assert conflict.status == 409
 
+            excess = await client.post("/chat/api/missions", json={
+                **body,
+                "idempotency_key": "mission-create-excess-team-key-001",
+                "team_ids": ["reviewer"] * 13,
+            })
+            assert excess.status == 400
+
+            concurrent_body = {**body, "idempotency_key": "mission-create-concurrent-key-001"}
+            first, second = await asyncio.gather(
+                client.post("/chat/api/missions", json=concurrent_body),
+                client.post("/chat/api/missions", json=concurrent_body),
+            )
+            assert first.status == second.status == 201
+            concurrent_ids = {
+                (await first.json())["mission"]["mission_id"],
+                (await second.json())["mission"]["mission_id"],
+            }
+            assert len(concurrent_ids) == 1
+
             preview_response = await client.post(
                 f"/chat/api/missions/{mission_id}/preview", json={"revision": 1})
             assert preview_response.status == 200
@@ -84,10 +103,19 @@ def test_owner_draft_preview_is_persisted_but_never_fabricates_execution(tmp_pat
             assert launch.status == 409
             assert "unavailable" in await launch.text()
 
+            stop = await client.post(f"/chat/api/missions/{mission_id}/stop", json={
+                "revision": 1, "idempotency_key": "mission-stop-idempotency-key-001",
+            })
+            review = await client.post(f"/chat/api/missions/{mission_id}/review", json={
+                "revision": 1, "decision": "accept",
+                "idempotency_key": "mission-review-idempotency-key-001",
+            })
+            assert stop.status == review.status == 409
+
             foreign = await client.get(f"/chat/api/missions/{mission_id}", headers={"X-Test-Subject": "owner-b"})
             assert foreign.status == 404
             listing = await client.get("/chat/api/missions")
-            assert len((await listing.json())["missions"]) == 1
+            assert len((await listing.json())["missions"]) == 2
             with store._connect() as db:
                 row = db.execute("SELECT status, plan_sha256 FROM jarvis_missions WHERE id=?", (mission_id,)).fetchone()
             assert row["status"] == "preview_pending"
