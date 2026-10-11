@@ -189,9 +189,11 @@ def test_root_enrolled_planning_turn_reaches_provider_with_zero_tools(tmp_path: 
     assert receipts[0]["response_text"] == response.output_text
 
 
-def test_master_plan_readback_requires_root_retained_completion_record():
-    """Gateway mission rows alone cannot create root-verified plan data."""
+def test_master_plan_readback_uses_canonical_root_durable_completion_record(monkeypatch):
+    """Only canonical root-published zero-tool records survive a registry restart."""
     import threading
+    import hashlib
+    import json
 
     import hermes_installer.remote.core_native_observer as observer
 
@@ -199,26 +201,47 @@ def test_master_plan_readback_requires_root_retained_completion_record():
     registry._lock = threading.RLock()
     registry._master_plan_records = {}
     key = ("a" * 64, "mission_12345678901234567890", 1)
+    monkeypatch.setattr(observer, "_read_root_master_plan_bytes", lambda *_args: None)
     assert registry.read_master_plan_record(
         owner_subject_sha256=key[0], mission_id=key[1], revision=key[2]) is None
+
+    plan = {"execution_mode": "oneshot", "selected_source_ids": [], "plan": {}}
+    plan_sha256 = hashlib.sha256(json.dumps(plan, ensure_ascii=False, sort_keys=True,
+        separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
 
     record = observer.RootObservedMasterPlanRecord(
         owner_subject_sha256=key[0], mission_id=key[1], revision=key[2],
         gateway_turn_id="turn_12345678901234567890", conversation_id="conversation_1234567890",
-        session_id="session_12345678901234567890", owner_turn_handle="o" * 32,
+        session_id="session_12345678901234567890", native_turn_id="native_turn_1234567890",
+        owner_turn_handle="o" * 32,
         core_generation="b" * 64, core_source_generation="c" * 64,
         goal_sha256="d" * 64, catalog_sha256="e" * 64, planner_prompt_sha256="f" * 64,
         master_source_generation_sha256="1" * 64, master_source_manifest_sha256="2" * 64,
-        master_prompt_sha256="3" * 64, plan_json="{}", plan_sha256="4" * 64,
+        master_prompt_sha256="3" * 64, attempt_handle="h" * 32,
+        api_request_id="request_1234567890123456", provider="openai-codex",
+        api_mode="codex_responses", base_url="https://chatgpt.com/backend-api/codex",
+        model="gpt-6-luna", account_fingerprint="6" * 64, request_sha256="7" * 64,
+        retry_count=0, completed=True, request_tool_count=0, tool_call_count=0,
+        plan_json="{}", plan_sha256=plan_sha256,
         response_sha256="5" * 64, selected_source_ids=(), execution_mode="oneshot",
         _seal=observer._MASTER_PLAN_RECORD_SEAL,
     )
-    registry._master_plan_records[key] = record
     assert record.is_root_observed() is True
+    durable = observer._master_plan_record_bytes(record)
+    # A fresh registry with no in-memory completion cache recovers only the exact
+    # canonical root record. The BFF row is not consulted by this method.
+    monkeypatch.setattr(observer, "_read_root_master_plan_bytes", lambda *_args: durable)
     assert registry.read_master_plan_record(
-        owner_subject_sha256=key[0], mission_id=key[1], revision=key[2]) is record
+        owner_subject_sha256=key[0], mission_id=key[1], revision=key[2]) == record
+    changed = json.loads(durable)
+    changed["tool_call_count"] = 1
+    changed_bytes = json.dumps(changed, ensure_ascii=False, sort_keys=True,
+        separators=(",", ":"), allow_nan=False).encode("utf-8")
+    assert observer._root_master_plan_record_from_bytes(changed_bytes,
+        owner_subject_sha256=key[0], mission_id=key[1], revision=key[2]) is None
+    monkeypatch.setattr(observer, "_read_root_master_plan_bytes", lambda *_args: durable + b" ")
     assert registry.read_master_plan_record(
-        owner_subject_sha256="6" * 64, mission_id=key[1], revision=key[2]) is None
+        owner_subject_sha256=key[0], mission_id=key[1], revision=key[2]) is None
 
 
 @pytest.mark.parametrize("retry_count", [None, -1, 1, True])

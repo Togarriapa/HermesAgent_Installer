@@ -41,6 +41,8 @@ _CODEX_ENDPOINT = "https://chatgpt.com/backend-api/codex"
 _CODEX_PROVIDER = "openai-codex"
 _CODEX_MODE = "codex_responses"
 _OBSERVER_RUNTIME_DIR = Path("/run/hermes-jarvis-native-observer")
+_MASTER_PLAN_STORE_MAX_BYTES = 48 * 1024
+_MASTER_PLAN_STORE_MAX_RECORDS = 4096
 _NATIVE_INHERITANCE_POLICY_SEAL = object()
 _MASTER_PLAN_RECORD_SEAL = object()
 
@@ -55,6 +57,7 @@ class RootObservedMasterPlanRecord:
     gateway_turn_id: str
     conversation_id: str
     session_id: str
+    native_turn_id: str
     owner_turn_handle: str
     core_generation: str
     core_source_generation: str
@@ -64,6 +67,18 @@ class RootObservedMasterPlanRecord:
     master_source_generation_sha256: str
     master_source_manifest_sha256: str
     master_prompt_sha256: str
+    attempt_handle: str
+    api_request_id: str
+    provider: str
+    api_mode: str
+    base_url: str
+    model: str
+    account_fingerprint: str
+    request_sha256: str
+    retry_count: int
+    completed: bool
+    request_tool_count: int
+    tool_call_count: int
     plan_json: str
     plan_sha256: str
     response_sha256: str
@@ -79,22 +94,273 @@ class RootObservedMasterPlanRecord:
                     "owner_subject_sha256", "core_generation", "core_source_generation",
                     "goal_sha256", "catalog_sha256", "planner_prompt_sha256",
                     "master_source_generation_sha256", "master_source_manifest_sha256",
-                    "master_prompt_sha256", "plan_sha256", "response_sha256"))
+                    "master_prompt_sha256", "account_fingerprint", "request_sha256",
+                    "plan_sha256", "response_sha256"))
                 and isinstance(self.mission_id, str) and _ID.fullmatch(self.mission_id)
                 and type(self.revision) is int and self.revision >= 1
                 and isinstance(self.gateway_turn_id, str) and _ID.fullmatch(self.gateway_turn_id)
                 and isinstance(self.conversation_id, str) and _ID.fullmatch(self.conversation_id)
                 and isinstance(self.session_id, str) and _ID.fullmatch(self.session_id)
+                and isinstance(self.native_turn_id, str) and _ID.fullmatch(self.native_turn_id)
                 and isinstance(self.owner_turn_handle, str) and _OPAQUE.fullmatch(self.owner_turn_handle)
+                and isinstance(self.attempt_handle, str) and _OPAQUE.fullmatch(self.attempt_handle)
+                and isinstance(self.api_request_id, str) and _ID.fullmatch(self.api_request_id)
+                and self.provider == _CODEX_PROVIDER and self.api_mode == _CODEX_MODE
+                and self.base_url == _CODEX_ENDPOINT
+                and isinstance(self.model, str) and _ID.fullmatch(self.model)
+                and type(self.retry_count) is int and self.retry_count == 0
+                and self.completed is True
+                and type(self.request_tool_count) is int and self.request_tool_count == 0
+                and type(self.tool_call_count) is int and self.tool_call_count == 0
                 and isinstance(self.plan_json, str) and 1 <= len(self.plan_json.encode("utf-8")) <= 16_384
                 and type(self.selected_source_ids) is tuple
                 and len(self.selected_source_ids) <= 12
                 and len(set(self.selected_source_ids)) == len(self.selected_source_ids)
                 and all(isinstance(item, str) and _ID.fullmatch(item) for item in self.selected_source_ids)
                 and self.execution_mode in {"oneshot", "kanban"}
-                and (bool(self.selected_source_ids) or self.execution_mode == "oneshot"))
+                and (bool(self.selected_source_ids) or self.execution_mode == "oneshot")
+                and _master_plan_content_matches(self))
         except Exception:
             return False
+
+
+def _master_plan_content_matches(record: RootObservedMasterPlanRecord) -> bool:
+    try:
+        plan = json.loads(record.plan_json, object_pairs_hook=_unique_json_pairs)
+        if not isinstance(plan, dict):
+            return False
+        canonical_plan = json.dumps(plan, ensure_ascii=False, sort_keys=True,
+                                    separators=(",", ":"), allow_nan=False)
+        if canonical_plan != record.plan_json:
+            return False
+        full = {"execution_mode": record.execution_mode,
+                "selected_source_ids": list(record.selected_source_ids), "plan": plan}
+        digest = hashlib.sha256(json.dumps(full, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"), allow_nan=False).encode("utf-8", errors="strict")).hexdigest()
+        return digest == record.plan_sha256
+    except Exception:
+        return False
+
+
+def _unique_json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
+_MASTER_PLAN_RECORD_FIELDS = frozenset({
+    "schema", "owner_subject_sha256", "mission_id", "revision", "gateway_turn_id",
+    "conversation_id", "session_id", "native_turn_id", "owner_turn_handle",
+    "core_generation", "core_source_generation", "goal_sha256", "catalog_sha256",
+    "planner_prompt_sha256", "master_source_generation_sha256",
+    "master_source_manifest_sha256", "master_prompt_sha256", "attempt_handle",
+    "api_request_id", "provider", "api_mode", "base_url", "model",
+    "account_fingerprint", "request_sha256", "retry_count", "completed",
+    "request_tool_count", "tool_call_count",
+    "plan_json", "plan_sha256", "response_sha256", "selected_source_ids",
+    "execution_mode",
+})
+
+
+def _master_plan_record_identity(owner_subject_sha256: str, mission_id: str,
+                                 revision: int) -> tuple[str, str]:
+    identity = json.dumps([owner_subject_sha256, mission_id, revision],
+                          ensure_ascii=True, separators=(",", ":"))
+    basename = "master-plan-" + hashlib.sha256(identity.encode("ascii")).hexdigest() + ".json"
+    return basename, identity
+
+
+def _open_root_master_plan_store() -> int:
+    """Open the existing root-private core runtime journal directory safely."""
+    if os.geteuid() != 0:
+        raise PermissionError("root is required for durable master-plan custody")
+    from hermes_installer.core_runtime import JOURNAL
+
+    expected = Path("/var/lib/hermes-installer/core-runtime")
+    if JOURNAL != expected / "ownership.json":
+        raise PermissionError("core runtime journal path is not fixed")
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open("/", flags)
+    try:
+        for component in ("var", "lib", "hermes-installer", "core-runtime"):
+            next_fd = os.open(component, flags, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+            info = os.fstat(fd)
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                    or info.st_mode & 0o022):
+                raise PermissionError("core runtime path custody changed")
+        if stat.S_IMODE(os.fstat(fd).st_mode) != 0o700:
+            raise PermissionError("core runtime journal directory mode changed")
+        journal_fd = os.open("ownership.json", os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=fd)
+        try:
+            journal = os.fstat(journal_fd)
+            if (not stat.S_ISREG(journal.st_mode) or journal.st_uid != 0 or journal.st_gid != 0
+                    or stat.S_IMODE(journal.st_mode) != 0o600 or journal.st_nlink != 1
+                    or journal.st_size > 64 * 1024):
+                raise PermissionError("core runtime ownership journal custody changed")
+        finally:
+            os.close(journal_fd)
+        result, fd = fd, -1
+        return result
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def _read_root_master_plan_bytes(owner_subject_sha256: str, mission_id: str,
+                                 revision: int) -> bytes | None:
+    basename, _identity = _master_plan_record_identity(owner_subject_sha256, mission_id, revision)
+    directory_fd = _open_root_master_plan_store()
+    try:
+        try:
+            fd = os.open(basename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+        except FileNotFoundError:
+            return None
+        try:
+            before = os.fstat(fd)
+            if (not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_gid != 0
+                    or stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1
+                    or not 1 <= before.st_size <= _MASTER_PLAN_STORE_MAX_BYTES):
+                raise PermissionError("master-plan journal record custody changed")
+            chunks: list[bytes] = []
+            remaining = _MASTER_PLAN_STORE_MAX_BYTES + 1
+            while remaining:
+                chunk = os.read(fd, min(8192, remaining))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            raw = b"".join(chunks)
+            after = os.fstat(fd)
+            named = os.stat(basename, dir_fd=directory_fd, follow_symlinks=False)
+            if (len(raw) != before.st_size or len(raw) > _MASTER_PLAN_STORE_MAX_BYTES
+                    or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+                        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+                    or (after.st_dev, after.st_ino) != (named.st_dev, named.st_ino)):
+                raise PermissionError("master-plan journal record changed during read")
+            return raw
+        finally:
+            os.close(fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _master_plan_record_bytes(record: RootObservedMasterPlanRecord) -> bytes:
+    if type(record) is not RootObservedMasterPlanRecord or record.is_root_observed() is not True:
+        raise ValueError("unverified master-plan record")
+    payload = {
+        "schema": 1, "owner_subject_sha256": record.owner_subject_sha256,
+        "mission_id": record.mission_id, "revision": record.revision,
+        "gateway_turn_id": record.gateway_turn_id, "conversation_id": record.conversation_id,
+        "session_id": record.session_id, "native_turn_id": record.native_turn_id,
+        "owner_turn_handle": record.owner_turn_handle,
+        "core_generation": record.core_generation,
+        "core_source_generation": record.core_source_generation,
+        "goal_sha256": record.goal_sha256, "catalog_sha256": record.catalog_sha256,
+        "planner_prompt_sha256": record.planner_prompt_sha256,
+        "master_source_generation_sha256": record.master_source_generation_sha256,
+        "master_source_manifest_sha256": record.master_source_manifest_sha256,
+        "master_prompt_sha256": record.master_prompt_sha256,
+        "attempt_handle": record.attempt_handle, "api_request_id": record.api_request_id,
+        "provider": record.provider, "api_mode": record.api_mode, "base_url": record.base_url,
+        "model": record.model, "account_fingerprint": record.account_fingerprint,
+        "request_sha256": record.request_sha256, "retry_count": record.retry_count,
+        "completed": record.completed, "request_tool_count": record.request_tool_count,
+        "tool_call_count": record.tool_call_count,
+        "plan_json": record.plan_json,
+        "plan_sha256": record.plan_sha256, "response_sha256": record.response_sha256,
+        "selected_source_ids": list(record.selected_source_ids),
+        "execution_mode": record.execution_mode,
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                       separators=(",", ":"), allow_nan=False).encode("utf-8", errors="strict")
+
+
+def _publish_root_master_plan_record(record: RootObservedMasterPlanRecord) -> None:
+    raw = _master_plan_record_bytes(record)
+    if len(raw) > _MASTER_PLAN_STORE_MAX_BYTES:
+        raise ValueError("master-plan record exceeds its fixed bound")
+    basename, _identity = _master_plan_record_identity(
+        record.owner_subject_sha256, record.mission_id, record.revision)
+    directory_fd = _open_root_master_plan_store()
+    temp = ".master-plan-" + secrets.token_hex(16) + ".tmp"
+    temp_created = False
+    try:
+        try:
+            existing = _read_root_master_plan_bytes(record.owner_subject_sha256,
+                record.mission_id, record.revision)
+            if existing is not None:
+                if existing != raw:
+                    raise FileExistsError("a different plan record already exists")
+                return
+            names = os.listdir(directory_fd)
+            if sum(1 for name in names
+                   if re.fullmatch(r"master-plan-[0-9a-f]{64}\.json", name)) >= _MASTER_PLAN_STORE_MAX_RECORDS:
+                raise OSError("root master-plan journal is full")
+            fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                         | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=directory_fd)
+            temp_created = True
+            try:
+                os.fchown(fd, 0, 0)
+                os.fchmod(fd, 0o600)
+                offset = 0
+                while offset < len(raw):
+                    offset += os.write(fd, raw[offset:])
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            try:
+                os.link(temp, basename, src_dir_fd=directory_fd, dst_dir_fd=directory_fd,
+                        follow_symlinks=False)
+            except FileExistsError:
+                existing = _read_root_master_plan_bytes(record.owner_subject_sha256,
+                    record.mission_id, record.revision)
+                if existing != raw:
+                    raise
+            os.unlink(temp, dir_fd=directory_fd)
+            os.fsync(directory_fd)
+            if _read_root_master_plan_bytes(record.owner_subject_sha256,
+                    record.mission_id, record.revision) != raw:
+                raise OSError("published master-plan record failed readback")
+        finally:
+            if temp_created:
+                try:
+                    os.unlink(temp, dir_fd=directory_fd)
+                except FileNotFoundError:
+                    pass
+    finally:
+        os.close(directory_fd)
+
+
+def _root_master_plan_record_from_bytes(raw: bytes, *, owner_subject_sha256: str,
+                                        mission_id: str, revision: int
+                                        ) -> RootObservedMasterPlanRecord | None:
+    if not isinstance(raw, bytes) or not 1 <= len(raw) <= _MASTER_PLAN_STORE_MAX_BYTES:
+        return None
+    try:
+        payload = json.loads(raw.decode("utf-8", errors="strict"), object_pairs_hook=_unique_json_pairs)
+        if (type(payload) is not dict or set(payload) != _MASTER_PLAN_RECORD_FIELDS
+                or type(payload.get("schema")) is not int or payload.get("schema") != 1
+                or payload.get("owner_subject_sha256") != owner_subject_sha256
+                or payload.get("mission_id") != mission_id or payload.get("revision") != revision
+                or type(payload.get("selected_source_ids")) is not list
+                or not isinstance(payload.get("plan_json"), str)):
+            return None
+        if json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                      separators=(",", ":"), allow_nan=False).encode("utf-8") != raw:
+            return None
+        values = dict(payload)
+        values.pop("schema")
+        values["selected_source_ids"] = tuple(values["selected_source_ids"])
+        values["_seal"] = _MASTER_PLAN_RECORD_SEAL
+        record = RootObservedMasterPlanRecord(**values)
+        return record if record.is_root_observed() is True else None
+    except Exception:
+        return None
 _RESOURCES_DELEGATE_REGISTRATION_SEAL = object()
 _RESOURCES_DELEGATE_SOURCE_SHA256 = "6eee1b932dfda36efc93e3901ccedf86af06af684d1c5c77bf882c1ba18a5d64"
 _RESOURCES_DELEGATE_SCHEMA_SHA256 = "9325cea421e122395475b0ba0d0517cb4aa4c16c3d4a14c5145f9fcc3f957f33"
@@ -2195,7 +2461,20 @@ class RootCoreNativeObservationRegistry:
         """Persist only a root-observed, current, zero-tool master plan result."""
         owner = attempt.get("owner")
         context = getattr(owner, "planning_context", None)
-        if owner is None or context is None:
+        if (owner is None or context is None
+                or attempt.get("provider") != _CODEX_PROVIDER
+                or attempt.get("api_mode") != _CODEX_MODE
+                or attempt.get("base_url") != _CODEX_ENDPOINT
+                or attempt.get("retry_count") != 0
+                or attempt.get("parent_tool_names") != ()
+                or not _HASH.fullmatch(attempt.get("account", ""))
+                or not _HASH.fullmatch(attempt.get("request_sha256", ""))
+                or not isinstance(attempt.get("api_request_id"), str)
+                or not _ID.fullmatch(attempt["api_request_id"])
+                or not isinstance(attempt.get("attempt_handle"), str)
+                or not _OPAQUE.fullmatch(attempt["attempt_handle"])
+                or not isinstance(attempt.get("turn_id"), str)
+                or not _ID.fullmatch(attempt["turn_id"])):
             raise ValueError("planning owner is unavailable")
         now = time.monotonic()
         if owner.is_current_sealed(self._config, custody=self._custody, now=now) is not True:
@@ -2302,7 +2581,8 @@ class RootCoreNativeObservationRegistry:
             owner_subject_sha256=owner.owner_subject_sha256,
             mission_id=context.mission_id, revision=context.revision,
             gateway_turn_id=owner.gateway_turn_id, conversation_id=owner.conversation_id,
-            session_id=owner.session_id, owner_turn_handle=owner.owner_turn_handle,
+            session_id=owner.session_id, native_turn_id=attempt["turn_id"],
+            owner_turn_handle=owner.owner_turn_handle,
             core_generation=owner.core_generation,
             core_source_generation=owner.core_source_generation,
             goal_sha256=context.goal_sha256, catalog_sha256=context.catalog_sha256,
@@ -2310,6 +2590,12 @@ class RootCoreNativeObservationRegistry:
             master_source_generation_sha256=context.master_source_generation_sha256,
             master_source_manifest_sha256=context.master_source_manifest_sha256,
             master_prompt_sha256=context.master_prompt_sha256,
+            attempt_handle=attempt["attempt_handle"], api_request_id=attempt["api_request_id"],
+            provider=attempt["provider"], api_mode=attempt["api_mode"],
+            base_url=attempt["base_url"], model=attempt["model"],
+            account_fingerprint=attempt["account"], request_sha256=attempt["request_sha256"],
+            retry_count=attempt["retry_count"], completed=True,
+            request_tool_count=len(attempt["parent_tool_names"]), tool_call_count=0,
             plan_json=plan_json, plan_sha256=parsed["plan_sha256"],
             response_sha256=response_text_sha256,
             selected_source_ids=tuple(parsed["selected_source_ids"]),
@@ -2321,6 +2607,7 @@ class RootCoreNativeObservationRegistry:
                     or owner.is_current_sealed(self._config, custody=self._custody,
                                                 now=time.monotonic()) is not True):
                 raise ValueError("planning owner changed before root result retention")
+            _publish_root_master_plan_record(record)
             self._master_plan_records[key] = record
             while len(self._master_plan_records) > 256:
                 self._master_plan_records.pop(next(iter(self._master_plan_records)))
@@ -2332,11 +2619,19 @@ class RootCoreNativeObservationRegistry:
                 or not isinstance(mission_id, str) or not _ID.fullmatch(mission_id or "")
                 or type(revision) is not int or revision < 1):
             return None
+        raw = _read_root_master_plan_bytes(owner_subject_sha256, mission_id, revision)
+        if raw is None:
+            return None
+        record = _root_master_plan_record_from_bytes(raw,
+            owner_subject_sha256=owner_subject_sha256, mission_id=mission_id, revision=revision)
+        if record is None:
+            return None
         with self._lock:
-            record = self._master_plan_records.get((owner_subject_sha256, mission_id, revision))
-            if record is None or record.is_root_observed() is not True:
+            cached = self._master_plan_records.get((owner_subject_sha256, mission_id, revision))
+            if cached is not None and _master_plan_record_bytes(cached) != raw:
                 return None
-            return record
+            self._master_plan_records[(owner_subject_sha256, mission_id, revision)] = record
+        return record
 
     def _policy_for_owner(self, owner: Any, now: float) -> RootSelectedOrchestratorDelegationPolicy | None:
         from hermes_installer.remote.core_gateway_inspector import CoreVerifiedNativeToolConfiguration
@@ -3015,13 +3310,16 @@ class RootCoreNativeObservationRegistry:
                         child["expiry"] = expiry
                 else:
                     expiry = min(float(owner.expires_monotonic), time.monotonic() + 30.0)
-                self._attempts[handle] = {"owner": owner, "session_id": request["session_id"],
+                self._attempts[handle] = {"attempt_handle": handle, "owner": owner,
+                    "session_id": request["session_id"],
                     "turn_id": request["turn_id"], "api_request_id": request["api_request_id"],
                     "account": request["account_fingerprint"], "expiry": expiry, "response": None,
                     "parent_tool_names": tuple(request["parent_tool_names"]),
                     "provider": request["provider"], "api_mode": request["api_mode"],
                     "base_url": request["base_url"],
                     "policy_handle": policy.policy_handle, "model": request["model"],
+                    "request_sha256": request["request_sha256"],
+                    "retry_count": request["retry_count"],
                     "child_admission_handle": child["admission_handle"] if is_child_attempt else None,
                     "response_text_sha256": None}
                 if is_child_attempt:
