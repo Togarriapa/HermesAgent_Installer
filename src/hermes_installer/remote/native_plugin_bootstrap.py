@@ -156,7 +156,7 @@ def stage_native_resources_plugin() -> StagedNativeResourcesPlugin:
             os.close(system_home_fd)
         try:
             hermes_fd = _open_child_directory(user_home_fd, ".hermes", uid=account.pw_uid,
-                                              gid=account.pw_gid, create=False)
+                                              gid=account.pw_gid, create=False, exact_mode=0o700)
         finally:
             os.close(user_home_fd)
         try:
