@@ -1354,6 +1354,7 @@ The system SHALL verify an old installed predecessor with an internally selected
 - **WHEN** a caller supplies a trustbundle, an unknown candidate or a release mixing historical/current pins
 - **THEN** predecessor verification denies before candidate effects and preserves the original pointer
 
+
 ### Requirement: Visible Jarvis MVP staging v259
 The installer SHALL prioritize verified official native Jarvis Desktop visibility, real eligible zero-additional-budget chat, Access OTP app-only domain and owned durable restart. Broader scope remains deferred OPEN. Provenance, sandbox, privacy, currentness and existing data/conflict protections remain mandatory.
 

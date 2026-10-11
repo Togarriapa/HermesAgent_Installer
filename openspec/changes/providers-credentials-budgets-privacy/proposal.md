@@ -60,6 +60,7 @@ MCP discovery capture v171: `plans/amendments/2026-10-10-mcp-discovery-capture-v
 
 Initial public TTY source v174: `plans/amendments/2026-10-10-initial-public-tty-source-v174.md`; actual fresh root foreground input/disclosure/source precedes admission, never promotes PRIVATE task input.
 
+
 ## Jarvis visible MVP priority stage v259
 
 User prioritizes actual visible official native Jarvis Desktop/chat at confirmed jarvis.togarriapahome.uk, Access OTP/app-only gateway and owned durable restart. Exact concise milestones in `planning/jarvis-visible-desktop-mvp-stage-v259.json`. Reuse actual verified existing official artifact when eligible; provenance/sandbox/privacy/budget/currentness stay mandatory. Broader requirements remain deferred OPEN, not removed; no diagnostic/full installer equivalence.

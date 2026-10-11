@@ -571,6 +571,7 @@ The implementation SHALL materialize only the exact v245 signed origin-bound gra
 - **WHEN** pinned glibc script and official HTML5 bytes match their held policy and independent graph/transform observer
 - **THEN** only the single reviewed private token transform and source-data copy SHALL be admitted; actual native/Xvfb/HTML5 session qualification remains required
 
+
 ### Requirement: Visible Jarvis MVP staging v259
 The installer SHALL prioritize verified official native Jarvis Desktop visibility, real eligible zero-additional-budget chat, Access OTP app-only domain and owned durable restart. Broader scope remains deferred OPEN. Provenance, sandbox, privacy, currentness and existing data/conflict protections remain mandatory.
 

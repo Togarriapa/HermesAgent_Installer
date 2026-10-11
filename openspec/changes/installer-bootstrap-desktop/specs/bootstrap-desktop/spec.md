@@ -1108,6 +1108,7 @@ The system SHALL verify an old installed predecessor with an internally selected
 #### Scenario: Unknown or mixed historical cohort is denied
 - **WHEN** a caller supplies a trustbundle, an unknown candidate or a release mixing historical/current pins
 - **THEN** predecessor verification denies before candidate effects and preserves the original pointer
+
 ## ADDED Requirements
 
 ### Requirement: Visible Jarvis MVP staging v259

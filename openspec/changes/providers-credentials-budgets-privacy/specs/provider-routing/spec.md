@@ -336,6 +336,7 @@ The installer SHALL require actual fresh foreground input and per-input public d
 - **WHEN** task stdin already has PRIVATE source ancestry
 - **THEN** the initial public TTY producer SHALL NOT relabel it or issue a public source receipt
 
+
 ### Requirement: Visible Jarvis MVP staging v259
 The installer SHALL prioritize verified official native Jarvis Desktop visibility, real eligible zero-additional-budget chat, Access OTP app-only domain and owned durable restart. Broader scope remains deferred OPEN. Provenance, sandbox, privacy, currentness and existing data/conflict protections remain mandatory.
 

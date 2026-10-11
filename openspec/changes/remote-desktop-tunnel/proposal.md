@@ -154,6 +154,7 @@ v245 supplies exact official HTML5 source observations and signed DEB link/sysro
 
 Exact contract: `planning/xpra-sysroot-html5-v245.json`.
 
+
 ## Jarvis visible MVP priority stage v259
 
 User prioritizes actual visible official native Jarvis Desktop/chat at confirmed jarvis.togarriapahome.uk, Access OTP/app-only gateway and owned durable restart. Exact concise milestones in `planning/jarvis-visible-desktop-mvp-stage-v259.json`. Reuse actual verified existing official artifact when eligible; provenance/sandbox/privacy/budget/currentness stay mandatory. Broader requirements remain deferred OPEN, not removed; no diagnostic/full installer equivalence.
