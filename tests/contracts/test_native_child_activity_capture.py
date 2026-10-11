@@ -163,4 +163,5 @@ def test_read_caps_instances_and_summaries():
     result = registry.read_native_activity(owner_subject_sha256="a" * 64,
         core_generation="d" * 64, core_source_generation="f" * 64)
     assert len(result["instances"]) == observer._NATIVE_ACTIVITY_MAX_INSTANCES
-    assert sum(len(item["events"]) for item in result["instances"]) <= 200
+    assert sum(len(item["events"]) for item in result["instances"]) == 200
+    assert all(item["events"] for item in result["instances"])

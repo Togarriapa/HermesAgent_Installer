@@ -2298,22 +2298,34 @@ class RootCoreNativeObservationRegistry:
                     or source is None or source.is_current_sealed(self._custody, now=current) is not True
                     or not self._activity_store_ok):
                 raise CoreNativeObservationUnavailable("current owner activity is unavailable")
-            instances = []
-            event_total = 0
-            for row in sorted(self._activity_records.values(),
-                              key=lambda item: item["updated_at"], reverse=True):
-                if (row["owner_subject_sha256"] != owner_subject_sha256
-                        or row["core_generation"] != core_generation
-                        or row["core_source_generation"] != core_source_generation
-                        or row["source_generation_sha256"] != source.artifact_sha256
-                        or not window_start <= row["created_at"] <= observed_at
-                        or not window_start <= row["updated_at"] <= observed_at):
-                    continue
-                remaining = _NATIVE_ACTIVITY_MAX_EVENTS_PER_READ - event_total
-                if remaining <= 0:
+            rows = [row for row in sorted(self._activity_records.values(),
+                    key=lambda item: item["updated_at"], reverse=True)
+                    if row["owner_subject_sha256"] == owner_subject_sha256
+                    and row["core_generation"] == core_generation
+                    and row["core_source_generation"] == core_source_generation
+                    and row["source_generation_sha256"] == source.artifact_sha256
+                    and window_start <= row["created_at"] <= observed_at
+                    and window_start <= row["updated_at"] <= observed_at]
+            rows = rows[:_NATIVE_ACTIVITY_MAX_INSTANCES]
+            event_rows = [[event for event in row["events"]
+                           if window_start <= event["at"] <= observed_at] for row in rows]
+            event_counts = [min(1, len(events)) for events in event_rows]
+            event_total = sum(event_counts)
+            while event_total < _NATIVE_ACTIVITY_MAX_EVENTS_PER_READ:
+                advanced = False
+                for index, events in enumerate(event_rows):
+                    if event_total >= _NATIVE_ACTIVITY_MAX_EVENTS_PER_READ:
+                        break
+                    if event_counts[index] < len(events):
+                        event_counts[index] += 1
+                        event_total += 1
+                        advanced = True
+                if not advanced:
                     break
-                recent = [event for event in row["events"]
-                          if window_start <= event["at"] <= observed_at][-remaining:]
+
+            instances = []
+            for row, available_events, event_count in zip(rows, event_rows, event_counts):
+                recent = available_events[-event_count:] if event_count else []
                 stale_after_restart = (row["status"] != "completed"
                                        and row["updated_at"] < self._activity_started_at)
                 visible_status = "unknown" if stale_after_restart else row["status"]
@@ -2329,9 +2341,6 @@ class RootCoreNativeObservationRegistry:
                     "events": [{key: event[key] for key in
                         ("kind", "status", "at", "duration_ms", "tool_count")} for event in recent],
                 })
-                event_total += len(recent)
-                if len(instances) >= _NATIVE_ACTIVITY_MAX_INSTANCES or event_total >= _NATIVE_ACTIVITY_MAX_EVENTS_PER_READ:
-                    break
             return {"schema": 1, "observed_at": observed_at, "window_seconds": 7 * 24 * 60 * 60,
                     "coverage": "observed-callbacks", "instances": instances, "relations": []}
 
