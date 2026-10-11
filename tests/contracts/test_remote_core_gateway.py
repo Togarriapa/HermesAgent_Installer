@@ -958,7 +958,8 @@ class CoreGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(overview["chat"]["turnCounts"]["total"], 0)
                     self.assertEqual(len(overview["chat"]["turnCountsByDay"]), 7)
 
-                    for path in ("/chat", "/chat/", "/chat/assets/app.css", "/chat/assets/app.js"):
+                    for path in ("/chat", "/chat/", "/chat/assets/app.css", "/chat/assets/app.js",
+                                 "/chat/assets/features.js"):
                         with self.subTest(path=path):
                             expected_type, expected_body = reviewed_chat_asset(path)
                             response = await client.get(path, headers=headers)

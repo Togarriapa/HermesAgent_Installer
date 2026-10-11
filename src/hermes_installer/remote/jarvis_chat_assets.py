@@ -1,7 +1,7 @@
 """Finite installer-owned assets for the practical Jarvis chat surface.
 
-Only the reviewed `/chat`, `/chat/assets/app.css`, and `/chat/assets/app.js`
-paths are exposed. The bundle contains no provider credentials or user data.
+Only the reviewed `/chat` document and three fixed static assets are exposed.
+The bundle contains no provider credentials or user data.
 """
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ _HTML = '''<!doctype html>
   <meta name="theme-color" content="#071319">
   <title>Jarvis</title>
   <link rel="stylesheet" href="/chat/assets/app.css">
+  <script defer src="/chat/assets/features.js"></script>
   <script defer src="/chat/assets/app.js"></script>
 </head>
 <body>
@@ -330,7 +331,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   let preferenceStorageAvailable = true;
   const API = "/chat/api";
   const mountCapabilityDetails = (__JARVIS_CAPABILITY_DETAILS_MOUNT__);
-  const FEATURE_ASSETS = __JARVIS_FEATURE_ASSETS__;
+  const FEATURE_ASSETS = window.JARVIS_FEATURE_ASSETS;
   const featuresById = new Map(FEATURE_ASSETS.map((feature) => [feature.id, feature]));
   let mountedFeature = null;
   let mountedFeatureCleanup = null;
@@ -1448,7 +1449,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
 
 
 def _compose_feature_assets() -> None:
-    """Embed the literal reviewed feature registry in the three fixed assets."""
+    """Embed reviewed views in HTML/CSS and serve feature code separately."""
     global _HTML, _CSS, _JS
     validate_feature_assets(FEATURE_ASSETS)
     grouped_nav: dict[str, list[str]] = {"work": [], "resources": [], "system": []}
@@ -1497,12 +1498,9 @@ def _compose_feature_assets() -> None:
     html = html.replace("__JARVIS_CAPABILITY_DETAILS__", _CAPABILITY_DETAILS_HTML)
     if "JARVIS_FEATURE_" in html or "JARVIS_GROUP_" in html:
         raise ValueError("Jarvis feature asset template markers were not fully replaced")
-    script = _JS.decode("utf-8").replace(
-        "__JARVIS_FEATURE_ASSETS__", "[" + ",".join(javascript) + "]"
-    )
+    script = _JS.decode("utf-8")
+    feature_script = "window.JARVIS_FEATURE_ASSETS=[" + ",".join(javascript) + "];"
     script = script.replace("__JARVIS_CAPABILITY_DETAILS_MOUNT__", _CAPABILITY_DETAILS_MOUNT_JS)
-    if "__JARVIS_FEATURE_ASSETS__" in script:
-        raise ValueError("Jarvis feature registry marker was not fully replaced")
     if "__JARVIS_CAPABILITY_DETAILS_MOUNT__" in script:
         raise ValueError("Jarvis capability detail marker was not fully replaced")
     if "__JARVIS_CAPABILITY_DETAILS__" in html:
@@ -1511,6 +1509,7 @@ def _compose_feature_assets() -> None:
     _CSS += ("\n".encode("utf-8") + b"\n".join(css_fragments)) if css_fragments else b""
     _CSS += ("\n" + _CAPABILITY_DETAILS_CSS).encode("utf-8")
     _JS = script.encode("utf-8")
+    _FEATURES_JS = feature_script.encode("utf-8")
 
 
 _compose_feature_assets()
@@ -1520,6 +1519,7 @@ _ASSETS = MappingProxyType({
     "/chat/": ("text/html; charset=utf-8", _HTML),
     "/chat/assets/app.css": ("text/css; charset=utf-8", _CSS),
     "/chat/assets/app.js": ("text/javascript; charset=utf-8", _JS),
+    "/chat/assets/features.js": ("text/javascript; charset=utf-8", _FEATURES_JS),
 })
 
 

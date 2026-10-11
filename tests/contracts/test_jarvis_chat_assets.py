@@ -9,6 +9,12 @@ from pathlib import Path
 from hermes_installer.remote.jarvis_chat_assets import reviewed_chat_asset
 
 
+def reviewed_client_bundle():
+    _app_type, app = reviewed_chat_asset("/chat/assets/app.js")
+    _feature_type, features = reviewed_chat_asset("/chat/assets/features.js")
+    return "text/javascript; charset=utf-8", app + b"\n" + features
+
+
 class JarvisChatAssetTests(unittest.TestCase):
     def test_chat_shell_uses_jarvis_branding_without_desktop_admin_links(self):
         _content_type, page = reviewed_chat_asset("/chat")
@@ -42,7 +48,7 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('id="speech-stop" type="button" aria-label="Stop reply audio"', source)
         self.assertIn("read-only integration status", source)
 
-        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
+        _content_type, script = reviewed_client_bundle()
         client = script.decode("utf-8")
         for endpoint in ("/overview", "/capabilities", "/settings"):
             with self.subTest(endpoint=endpoint):
@@ -68,6 +74,7 @@ class JarvisChatAssetTests(unittest.TestCase):
         _content_type, page = reviewed_chat_asset("/chat")
         source = page.decode("utf-8")
         self.assertIn('<div class="workspace" data-current-view="overview">', source)
+        self.assertIn('<script defer src="/chat/assets/features.js"></script>', source)
         self.assertIn('<main class="data-main" id="overview-view"', source)
         self.assertIn('data-view="overview"', source.split('data-nav-group="command-centre"', 1)[1].split("</details>", 1)[0])
         expected_groups = {
@@ -85,8 +92,15 @@ class JarvisChatAssetTests(unittest.TestCase):
                     else:
                         self.assertIn(f'data-view="{destination}"', markup)
 
-        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
+        _content_type, script = reviewed_client_bundle()
         client = script.decode("utf-8")
+        _registry_type, registry = reviewed_chat_asset("/chat/assets/features.js")
+        for feature_id in (
+            "missions", "bots", "activity", "native-controls", "resources-learning",
+            "native-inventory", "files", "models-settings",
+        ):
+            with self.subTest(feature=feature_id):
+                self.assertIn(f'id:"{feature_id}"', registry.decode("utf-8"))
         self.assertIn('const data = await request(`${API}/overview`);', client)
         sender = client.split("async function sendMessage(text) {", 1)[1].split("function createIdempotencyKey()", 1)[0]
         self.assertIn("return true;", sender)
@@ -103,7 +117,7 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('finally { if (contextualCleanup) contextualCleanup(); }', client)
 
     def test_capability_inventory_filter_and_details_are_data_backed(self):
-        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
+        _content_type, script = reviewed_client_bundle()
         client = script.decode("utf-8")
         renderer = client.split("function renderCapabilities() {", 1)[1].split("async function loadCapabilities()", 1)[0]
         self.assertIn('byId("capability-search").value.trim().toLocaleLowerCase()', renderer)
@@ -132,7 +146,7 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertEqual(markup.count('data-view="capabilities"'), 1)
         self.assertNotIn('data-view="capability-details"', markup)
 
-        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
+        _content_type, script = reviewed_client_bundle()
         client = script.decode("utf-8")
         self.assertIn("mountCapabilitiesDetails();", client)
         self.assertIn("if (currentView === \"capabilities\") mountCapabilitiesDetails();", client)
@@ -153,7 +167,7 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn(".capability-learning-diff", style)
 
     def test_sessions_are_searchable_owned_rows_and_read_aloud_can_always_be_stopped(self):
-        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
+        _content_type, script = reviewed_client_bundle()
         client = script.decode("utf-8")
         history = client.split("function renderHistory() {", 1)[1].split("async function openSessions()", 1)[0]
         self.assertIn('ui.sessionSearch.value.trim().toLocaleLowerCase()', history)
@@ -169,7 +183,7 @@ class JarvisChatAssetTests(unittest.TestCase):
         source = page.decode("utf-8")
         self.assertIn('inputmode="text" autocorrect="on" spellcheck="true"', source)
         self.assertIn('id="speech-voice-status" role="status" aria-live="polite"', source)
-        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
+        _content_type, script = reviewed_client_bundle()
         client = script.decode("utf-8")
         for state in ("checking", "ready", "listening", "busy", "speaking", "error"):
             with self.subTest(state=state):
@@ -188,6 +202,7 @@ class JarvisChatAssetTests(unittest.TestCase):
             "/chat/": "text/html; charset=utf-8",
             "/chat/assets/app.css": "text/css; charset=utf-8",
             "/chat/assets/app.js": "text/javascript; charset=utf-8",
+            "/chat/assets/features.js": "text/javascript; charset=utf-8",
         }
         for route, content_type in expected.items():
             with self.subTest(route=route):
@@ -197,26 +212,32 @@ class JarvisChatAssetTests(unittest.TestCase):
                 self.assertLessEqual(len(body), 128 * 1024)
         for route in (
             "/chat/assets/../gateway.py", "/chat/api/conversations",
-            "/chat/assets/app.js?x=1", "/chat/assets/%61pp.js", "/chat//assets/app.js",
+            "/chat/assets/app.js?x=1", "/chat/assets/features.js?x=1",
+            "/chat/assets/%61pp.js", "/chat//assets/app.js",
         ):
             with self.subTest(route=route), self.assertRaises(ValueError):
                 reviewed_chat_asset(route)
 
     def test_browser_bundle_passes_node_syntax_check(self):
-        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
+        assets = {
+            "app.js": reviewed_chat_asset("/chat/assets/app.js")[1],
+            "features.js": reviewed_chat_asset("/chat/assets/features.js")[1],
+        }
         with tempfile.TemporaryDirectory() as temporary:
-            path = Path(temporary) / "app.js"
-            path.write_bytes(script)
-            result = subprocess.run(
-                ["node", "--check", str(path)],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-        self.assertEqual(result.returncode, 0, result.stderr)
+            for name, script in assets.items():
+                with self.subTest(asset=name):
+                    path = Path(temporary) / name
+                    path.write_bytes(script)
+                    result = subprocess.run(
+                        ["node", "--check", str(path)],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_accepted_queued_turn_exposes_stop_until_terminal_cleanup(self):
-        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
+        _content_type, script = reviewed_client_bundle()
         source = script.decode("utf-8")
         self.assertIn("function renderTurnControls(active, stopping = false)", source)
         self.assertIn("ui.stop.hidden = !active", source)
@@ -234,7 +255,7 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('id="speech-voice"', markup)
         self.assertIn('id="speech-stop" type="button"', markup)
 
-        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
+        _content_type, script = reviewed_client_bundle()
         source = script.decode("utf-8")
         self.assertIn("window.SpeechRecognition || window.webkitSpeechRecognition", source)
         self.assertIn("current.interimResults = false", source)
@@ -256,7 +277,7 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn("browser or operating system chooses the microphone", markup)
         self.assertIn("Microphone permission and push-to-talk consent are never saved", markup)
 
-        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
+        _content_type, script = reviewed_client_bundle()
         client = script.decode("utf-8")
         self.assertIn('const preferenceKey = "jarvis.ui.preferences.v1"', client)
         self.assertIn('byId("speech-output").checked = uiPreferences.readAloud', client)
