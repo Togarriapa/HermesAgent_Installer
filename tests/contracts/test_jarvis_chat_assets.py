@@ -49,6 +49,9 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('data-integration-status', source)
         self.assertIn('id="session-search" type="search"', source)
         self.assertIn('id="session-count" role="status" aria-live="polite"', source)
+        self.assertIn('id="chat-trash"', source)
+        self.assertIn('id="trash-list" aria-label="Removed chats"', source)
+        self.assertIn('id="history-action-status" role="status" aria-live="polite"', source)
         self.assertIn('aria-label="Owned private chats"', source)
         self.assertIn('id="capability-map" class="capability-map"', source)
         self.assertIn("Profiles and bundles</strong> are internal specialists for Jarvis team missions", source)
@@ -142,6 +145,44 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertNotIn("__JARVIS_FEATURE_ASSETS__", client)
         _content_type, features = reviewed_chat_asset("/chat/assets/features.js")
         self.assertIn("turnCountsByDay", features.decode("utf-8"))
+        _content_type, app_script = reviewed_chat_asset("/chat/assets/app.js")
+        client = app_script.decode("utf-8")
+        _registry_type, registry = reviewed_chat_asset("/chat/assets/features.js")
+        for feature_id in (
+            "missions", "bots", "activity", "native-controls", "resources-learning",
+            "native-inventory", "files", "models-settings",
+        ):
+            with self.subTest(feature=feature_id):
+                self.assertIn(f'id:"{feature_id}"', registry.decode("utf-8"))
+        self.assertIn('const data = await request(`${API}/overview`);', client)
+        sender = client.split("async function sendMessage(text", 1)[1].split("function createIdempotencyKey()", 1)[0]
+        self.assertIn("return true;", sender)
+        self.assertIn("return false;", sender)
+        self.assertIn('modelId: choice && typeof choice.modelId === "string" ? choice.modelId : null', sender)
+        self.assertIn('reasoningEffort: choice && typeof choice.reasoningEffort === "string" ? choice.reasoningEffort : null', sender)
+        self.assertIn('eventSource.addEventListener("turn.configuration"', client)
+        self.assertIn('configuration.state !== "confirmed"', client)
+        self.assertIn('configuration.provider !== "openai-codex"', client)
+        self.assertIn('selection.availability === "available" && selection.provider === "openai-codex"', client)
+        self.assertIn('if (ui.input.value === text)', sender)
+        self.assertIn('ui.input.value = "";', sender)
+        self.assertIn('request(`${API}/conversations/trash`)', client)
+        trash = client.split("async function changeConversationTrash(", 1)[1].split("function setPanel(open)", 1)[0]
+        self.assertIn('Number.isSafeInteger(version)', trash)
+        self.assertIn('body: JSON.stringify({version})', trash)
+        self.assertIn('headers: {"Idempotency-Key": createIdempotencyKey()}', trash)
+        self.assertIn('await refreshTrash();', trash)
+        self.assertIn('result.conversation.id !== id', trash)
+        bridge = client.split("async function sendOverviewCommand(event) {", 1)[1].split("overviewForm.addEventListener", 1)[0]
+        self.assertIn("const accepted = await sendMessage(text, {modelId: null, reasoningEffort: null});", bridge)
+        self.assertIn("if (accepted)", bridge)
+        self.assertIn("Your text is preserved here", bridge)
+        self.assertIn("overviewCommandPending", bridge)
+        self.assertIn('if (feature.id === "models-settings") contextualCleanup = preselectCurrentModelConversation(root);', client)
+        model_context = client.split("function preselectCurrentModelConversation(root) {", 1)[1].split("function mountFeature(feature)", 1)[0]
+        self.assertIn('select.value = id;', model_context)
+        self.assertIn('observer.disconnect();', model_context)
+        self.assertIn('finally { if (contextualCleanup) contextualCleanup(); }', client)
 
     def test_capability_inventory_filter_and_details_are_data_backed(self):
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
@@ -263,7 +304,7 @@ class JarvisChatAssetTests(unittest.TestCase):
     def test_stale_heartbeat_cannot_clobber_turn_and_completed_reply_is_recovered(self):
         _content_type, script = reviewed_client_bundle()
         client = script.decode("utf-8")
-        turn_handlers = client.split("function watchTurn(", 1)[1].split("async function sendMessage(text)", 1)[0]
+        turn_handlers = client.split("function watchTurn(", 1)[1].split("async function sendMessage(text", 1)[0]
         self.assertIn('if (activeTurnId !== turnId) return;', turn_handlers)
         self.assertIn('if (activeTurnId === turnId) waiting.remove();', turn_handlers)
         renew = "async function renewHeartbeat(" + client.split(

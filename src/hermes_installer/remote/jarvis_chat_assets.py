@@ -70,9 +70,15 @@ _HTML = '''<!doctype html>
         <label class="session-search-label" for="session-search">Find a chat</label>
         <input class="session-search" id="session-search" type="search" autocomplete="off" placeholder="Search chats" aria-describedby="session-count">
         <p class="session-count" id="session-count" role="status" aria-live="polite">Loading chats…</p>
+        <p class="history-action-status" id="history-action-status" role="status" aria-live="polite" hidden></p>
         <nav class="conversation-list" id="conversation-list" aria-label="Owned private chats"></nav>
         <p class="history-empty" id="history-empty">No chats yet. Start a new conversation.</p>
         <p class="history-empty" id="history-filter-empty" hidden>No chats match this search.</p>
+        <details class="chat-trash" id="chat-trash">
+          <summary>Recently removed</summary>
+          <p class="history-empty" id="trash-status" role="status" aria-live="polite">Loading removed chats…</p>
+          <div class="trash-list" id="trash-list" aria-label="Removed chats"></div>
+        </details>
         <div class="panel-footer"><span class="privacy-mark" aria-hidden="true">◈</span><span>Private conversations</span></div>
       </aside>
 
@@ -117,6 +123,11 @@ _HTML = '''<!doctype html>
           <div class="notice" id="chat-notice" role="status" aria-live="polite" hidden></div>
           <form class="composer" id="composer">
             <label class="visually-hidden" for="message-input">Message Jarvis</label>
+            <div class="turn-model-controls" id="turn-model-controls" aria-label="Per-message model choice">
+              <label for="turn-model">Model<select id="turn-model" aria-label="Model for this message" disabled><option value="">Conversation default</option></select></label>
+              <label for="turn-effort">Reasoning<select id="turn-effort" aria-label="Reasoning effort for this message" disabled><option value="">Profile default</option></select></label>
+              <span id="turn-model-status" role="status" aria-live="polite">Start or open a chat to load verified choices.</span>
+            </div>
             <textarea id="message-input" name="message" rows="1" maxlength="8000"
               placeholder="Message Jarvis…" autocomplete="off" autocapitalize="sentences"
               inputmode="text" autocorrect="on" spellcheck="true"
@@ -389,12 +400,37 @@ html[data-page-visible="true"] .assistant-hud[data-state="idle"] .orb-halo{anima
 html[data-page-visible="true"] .assistant-hud[data-state="listening"] .orb-halo{animation:jarvis-halo-breathe 1.7s ease-in-out infinite}
 html[data-page-visible="true"] .assistant-hud[data-state="speaking"] .orb-ring{animation:presence-turn 16s linear infinite}
 .voice-button,.send-button,.stop-button{min-height:44px}
+.turn-model-controls{display:flex;align-items:center;gap:10px 14px;flex-wrap:wrap;padding:4px 5px 10px;border-bottom:1px solid rgba(123,197,213,.12)}
+.turn-model-controls label{display:grid;grid-template-columns:auto minmax(110px,1fr);align-items:center;gap:8px;color:#a9c3c7;font-size:10px}
+.turn-model-controls select{min-width:135px;max-width:min(260px,36vw);min-height:44px;padding:7px 30px 7px 10px;border:1px solid rgba(105,190,200,.28);border-radius:9px;background:#0a2027;color:#deeff1;font:inherit;font-size:12px}
+.turn-model-controls select:disabled{opacity:.65;color:#aac0c3}
+.turn-model-controls>span{flex:1 1 180px;color:#91adb2;font-size:10px;line-height:1.45}
+.turn-configuration{display:block;margin-top:4px;color:#81cbd0;font-size:10px;line-height:1.45}
+.turn-configuration[data-state="error"]{color:#f2c17e}
+.conversation-entry{min-width:0;display:grid;grid-template-columns:minmax(0,1fr) 58px;align-items:center;gap:3px;border:1px solid transparent;border-radius:11px}
+.conversation-entry[aria-current="true"]{border-color:rgba(88,228,235,.19);background:rgba(25,128,139,.13)}
+.conversation-entry .conversation-item{min-width:0;min-height:44px}
+.conversation-entry[aria-current="true"] .conversation-item{color:#dcfbfc}
+.conversation-trash-button,.trash-restore-button{min-width:44px;min-height:44px;border:1px solid transparent;border-radius:9px;background:transparent;color:#9db4b7;font:inherit;font-size:10px;cursor:pointer}
+.conversation-trash-button:hover,.trash-restore-button:hover{border-color:rgba(239,190,126,.35);background:rgba(120,83,42,.16);color:#f4d4a2}
+.chat-trash{margin-top:18px;border-top:1px solid var(--line);padding-top:12px}
+.chat-trash summary{min-height:44px;display:flex;align-items:center;color:#b6c9cb;font-size:11px;font-weight:650;cursor:pointer;list-style:none}
+.chat-trash summary::-webkit-details-marker{display:none}
+.chat-trash summary:after{content:"";width:6px;height:6px;margin-left:auto;border-right:1px solid currentColor;border-bottom:1px solid currentColor;transform:rotate(45deg) translateY(-2px)}
+.chat-trash[open] summary:after{transform:rotate(225deg) translateY(-2px)}
+.trash-list{display:grid;gap:4px}.trash-entry{min-width:0;display:grid;grid-template-columns:minmax(0,1fr) 68px;align-items:center;gap:3px;padding:3px;border:1px solid rgba(123,164,169,.13);border-radius:10px;background:rgba(10,29,36,.48)}
+.trash-entry-title{min-width:0;overflow-wrap:anywhere;color:#adc1c4;font-size:11px;line-height:1.45}
+.trash-restore-button{padding-inline:5px;color:#9bdbcf}.trash-restore-button:hover{border-color:rgba(121,211,188,.36);background:rgba(40,117,97,.16);color:#c5f5e7}
+.trash-list:empty{display:none}
+.history-action-status{min-height:18px;margin:6px 9px;color:#91cfc9;font-size:10px;line-height:1.4}
+.history-action-status[data-state="error"]{color:#f2c17e}
+.history-action-status[hidden]{display:none}
 .voice-wake-controls{max-width:880px;margin:8px 3px 0;color:#9bb6bb;font-size:11px;line-height:1.5}
 .voice-wake-controls label{min-height:44px;display:flex;align-items:center;gap:10px;color:#cce2e5;cursor:pointer}
 .voice-wake-controls input{width:18px;height:18px;flex:none;accent-color:var(--cyan)}
 .voice-wake-controls p{margin:0 0 0 28px;max-width:74ch}
 .voice-wake-button[aria-pressed="true"]{border-color:#83d7bd;background:rgba(39,137,111,.2);color:#c4f7e5}
-@media(max-width:760px){.composer-actions{flex-wrap:wrap}.composer-hint{flex:1 0 100%;padding:2px 0 5px}.voice-wake-controls p{margin-left:0}}
+@media(max-width:760px){.composer-actions{flex-wrap:wrap}.composer-hint{flex:1 0 100%;padding:2px 0 5px}.voice-wake-controls p{margin-left:0}.turn-model-controls{gap:6px 9px;padding-bottom:8px}.turn-model-controls label{grid-template-columns:1fr;gap:3px;flex:1 1 120px}.turn-model-controls select{min-width:0;max-width:100%;width:100%}.turn-model-controls>span{flex-basis:100%}.chat-trash{margin-top:12px}}
 @media(prefers-reduced-motion:reduce){html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-orbit-inner,html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-orbit-reactor,html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-orbit-outer,html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-core,html:not([data-jarvis-motion="full"]) .assistant-hud .orb-halo,html:not([data-jarvis-motion="full"]) .assistant-hud .orb-ring{animation:none!important;transform:none!important}}
 @media(prefers-reduced-motion:reduce){html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-orbit-inner{animation:presence-turn 58s linear infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-core{animation:reactor-core-breathe 6s ease-in-out infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="thinking"] .presence-orbit-inner{animation:presence-turn 18s linear infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="thinking"] .presence-orbit-reactor{animation:presence-turn 46s linear infinite reverse!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="listening"] .presence-orbit-outer{animation:reactor-listening 1.7s ease-in-out infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="speaking"] .presence-orbit-reactor{animation:presence-turn 34s linear infinite!important}html[data-jarvis-motion="full"][data-page-visible="true"] .assistant-hud[data-state="idle"] .orb-halo{animation:jarvis-halo-breathe 7s ease-in-out infinite!important}html[data-jarvis-motion="full"][data-page-visible="true"] .assistant-hud[data-state="listening"] .orb-halo{animation:jarvis-halo-breathe 1.7s ease-in-out infinite!important}html[data-jarvis-motion="full"][data-page-visible="true"] .assistant-hud[data-state="speaking"] .orb-ring{animation:presence-turn 16s linear infinite!important}}
 '''.encode("utf-8")
@@ -408,16 +444,22 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     connection: byId("connection-state"), history: byId("conversation-list"),
     empty: byId("history-empty"), historyFilterEmpty: byId("history-filter-empty"),
     sessionSearch: byId("session-search"), sessionCount: byId("session-count"), title: byId("conversation-title"),
+    historyActionStatus: byId("history-action-status"), trashStatus: byId("trash-status"), trash: byId("trash-list"),
     messages: byId("message-list"), welcome: byId("welcome-panel"),
     scroll: byId("message-scroll"), form: byId("composer"), input: byId("message-input"),
     send: byId("send-button"), stop: byId("stop-button"), notice: byId("chat-notice"),
     voiceInput: byId("voice-input"), voiceStop: byId("voice-stop"), voiceWake: byId("voice-wake-toggle"), speechStop: byId("speech-stop"),
+    turnModel: byId("turn-model"), turnEffort: byId("turn-effort"), turnModelStatus: byId("turn-model-status"),
     voiceStatus: byId("voice-status"),
     toggle: byId("history-toggle"), close: byId("history-close"), panel: byId("conversation-panel"),
     scrim: byId("panel-scrim"), newChat: byId("new-chat")
   };
   let conversations = [];
   let conversationId = null;
+  let turnSelection = null;
+  let turnSelectionConversationId = "";
+  let turnSelectionLoading = false;
+  let conversationHydrated = false;
   let activeTurnId = null;
   let eventSource = null;
   let heartbeatTimer = null;
@@ -568,8 +610,113 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     ui.stop.disabled = stopping;
     ui.voiceInput.hidden = active || !voiceSupported || !byId("speech-consent").checked;
     ui.voiceInput.disabled = active;
+    ui.voiceWake.hidden = active || !voiceSupported || !pushToTalkEnabled();
+    ui.voiceWake.disabled = active;
+    renderTurnModelControls();
     setAssistantState(active ? "busy" : "ready", active ? "Jarvis is responding" : "Ready for your message");
   }
+
+  function renderTurnModelControls() {
+    const selection = turnSelection;
+    const sameConversation = Boolean(conversationId && turnSelectionConversationId === conversationId);
+    const choices = selection && Array.isArray(selection.models)
+      ? selection.models.filter((model) => model && model.selectable === true && typeof model.id === "string" && model.id.length > 0 && model.id.length <= 200).slice(0, 64)
+      : [];
+    const available = sameConversation && !turnSelectionLoading && selection
+      && selection.availability === "available" && selection.provider === "openai-codex" && choices.length > 0;
+    const previousModel = ui.turnModel.value;
+    const modelDefault = selection && selection.defaultModel && typeof selection.defaultModel.id === "string"
+      ? selection.defaultModel.id : null;
+    const defaultOption = document.createElement("option");
+    defaultOption.value = "";
+    defaultOption.textContent = modelDefault ? `Conversation default · ${modelDefault}` : "Conversation default";
+    ui.turnModel.replaceChildren(defaultOption);
+    for (const model of choices) {
+      const option = document.createElement("option");
+      option.value = model.id;
+      option.textContent = model.id;
+      ui.turnModel.append(option);
+    }
+    ui.turnModel.value = choices.some((model) => model.id === previousModel) ? previousModel : "";
+
+    const selectedModelId = ui.turnModel.value || modelDefault;
+    const selectedModel = choices.find((model) => model.id === selectedModelId);
+    const previousEffort = ui.turnEffort.value;
+    const defaultEffort = selection && selection.defaultReasoningEffort;
+    const defaultEffortOption = document.createElement("option");
+    defaultEffortOption.value = "";
+    defaultEffortOption.textContent = defaultEffort && typeof defaultEffort.id === "string"
+      ? `Profile default · ${defaultEffort.id}` : "Profile default · not reported";
+    ui.turnEffort.replaceChildren(defaultEffortOption);
+    const efforts = selectedModel && Array.isArray(selectedModel.reasoningEfforts)
+      ? selectedModel.reasoningEfforts.filter((effort) => typeof effort === "string" && effort.length > 0 && effort.length <= 40).slice(0, 12)
+      : [];
+    for (const effort of efforts) {
+      const option = document.createElement("option");
+      option.value = effort;
+      option.textContent = effort;
+      ui.turnEffort.append(option);
+    }
+    ui.turnEffort.value = efforts.includes(previousEffort) ? previousEffort : "";
+    const blocked = Boolean(activeTurnId || ui.input.disabled || !available);
+    ui.turnModel.disabled = blocked;
+    ui.turnEffort.disabled = blocked || !selectedModel;
+
+    if (turnSelectionLoading) ui.turnModelStatus.textContent = "Loading verified per-message choices…";
+    else if (!conversationId) ui.turnModelStatus.textContent = "Start or open a chat to load verified choices.";
+    else if (turnSelectionStatusMessage && sameConversation) ui.turnModelStatus.textContent = turnSelectionStatusMessage;
+    else if (!sameConversation || !selection) ui.turnModelStatus.textContent = "Per-message choices are unavailable; text chat remains available.";
+    else if (selection.availability === "provider-or-credential-unverified") ui.turnModelStatus.textContent = "Model choices are unavailable until the OpenAI Codex route and credential are verified.";
+    else if (selection.availability === "unsupported-profile-model") ui.turnModelStatus.textContent = "The current profile model is outside the selectable catalog. You can continue with profile defaults.";
+    else if (selection.availability === "turn-active" || activeTurnId) ui.turnModelStatus.textContent = "A response is active. Per-message choices unlock when it finishes.";
+    else if (!available) ui.turnModelStatus.textContent = "No selectable model choices are currently verified. You can continue with profile defaults.";
+    else ui.turnModelStatus.textContent = `Verified for this chat · ${choices.length} selectable model${choices.length === 1 ? "" : "s"}. Null effort inherits the profile default.`;
+  }
+
+  let turnSelectionStatusMessage = "";
+  let turnSelectionRequestId = 0;
+  async function loadTurnSelection(id) {
+    const requestId = ++turnSelectionRequestId;
+    turnSelectionConversationId = id;
+    turnSelection = null;
+    turnSelectionStatusMessage = "";
+    turnSelectionLoading = true;
+    renderTurnModelControls();
+    try {
+      const data = await request(`${API}/conversations/${encodeURIComponent(id)}/model-settings`);
+      if (requestId !== turnSelectionRequestId || conversationId !== id) return;
+      if (!data || !data.turnSelection || typeof data.turnSelection !== "object") throw new Error("Model settings did not include the verified per-message selection state.");
+      turnSelection = data.turnSelection;
+    } catch (_) {
+      if (requestId !== turnSelectionRequestId || conversationId !== id) return;
+      turnSelectionStatusMessage = "Verified per-message settings could not be loaded. Text chat remains available.";
+    } finally {
+      if (requestId === turnSelectionRequestId && conversationId === id) {
+        turnSelectionLoading = false;
+        renderTurnModelControls();
+      }
+    }
+  }
+  function currentTurnChoice() {
+    return {modelId: ui.turnModel.value || null, reasoningEffort: ui.turnEffort.value || null};
+  }
+  function showTurnConfiguration(assistantBody, text, state) {
+    const row = assistantBody && assistantBody.parentElement;
+    if (!row) return;
+    let status = row.querySelector(".turn-configuration");
+    if (!status) {
+      status = document.createElement("span");
+      status.className = "turn-configuration";
+      row.append(status);
+    }
+    status.dataset.state = state;
+    status.textContent = text;
+  }
+
+  ui.turnModel.addEventListener("change", () => {
+    ui.turnEffort.value = "";
+    renderTurnModelControls();
+  });
 
   function setAssistantState(state, label) {
     const hud = byId("assistant-hud");
@@ -972,6 +1119,9 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       ? `${filtered.length} matching chats · ${conversations.length} owned in total`
       : `${conversations.length} owned chat${conversations.length === 1 ? "" : "s"}`;
     for (const entry of filtered) {
+      const row = document.createElement("div");
+      row.className = "conversation-entry";
+      if (entry.id === conversationId) row.setAttribute("aria-current", "true");
       const button = document.createElement("button");
       button.type = "button";
       button.className = "conversation-item";
@@ -980,7 +1130,79 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       button.addEventListener("click", () => {
         loadConversation(entry.id).catch((error) => showError(error.message)).finally(() => setPanel(false));
       });
-      ui.history.append(button);
+      row.append(button);
+      if (Number.isSafeInteger(entry.version) && entry.version > 0) {
+        const trash = document.createElement("button");
+        trash.type = "button";
+        trash.className = "conversation-trash-button";
+        trash.textContent = "Trash";
+        trash.setAttribute("aria-label", `Move ${button.textContent} to trash`);
+        trash.title = "Move this chat to Recently removed";
+        trash.addEventListener("click", () => changeConversationTrash(entry.id, entry.version, "trash"));
+        row.append(trash);
+      }
+      ui.history.append(row);
+    }
+  }
+  function renderTrash(items) {
+    ui.trash.replaceChildren();
+    const valid = Array.isArray(items) ? items.filter((item) => item && typeof item.id === "string" && item.id.length > 0
+      && item.id.length <= 200 && typeof item.title === "string" && Number.isSafeInteger(item.version) && item.version > 0) : [];
+    ui.trashStatus.textContent = valid.length ? `${valid.length} removed chat${valid.length === 1 ? "" : "s"}` : "Trash is empty.";
+    for (const entry of valid.slice(0, 100)) {
+      const row = document.createElement("div");
+      row.className = "trash-entry";
+      const title = document.createElement("span");
+      title.className = "trash-entry-title";
+      title.textContent = entry.title.trim() || "New conversation";
+      const restore = document.createElement("button");
+      restore.type = "button";
+      restore.className = "trash-restore-button";
+      restore.textContent = "Restore";
+      restore.setAttribute("aria-label", `Restore ${title.textContent}`);
+      restore.addEventListener("click", () => changeConversationTrash(entry.id, entry.version, "restore"));
+      row.append(title, restore);
+      ui.trash.append(row);
+    }
+  }
+  function setHistoryActionStatus(message, state = "ready") {
+    ui.historyActionStatus.hidden = !message;
+    ui.historyActionStatus.dataset.state = state;
+    ui.historyActionStatus.textContent = message || "";
+  }
+  async function refreshTrash() {
+    try {
+      const data = await request(`${API}/conversations/trash`);
+      if (!Array.isArray(data)) throw new Error("Removed chats are unavailable.");
+      renderTrash(data);
+    } catch (_) {
+      ui.trash.replaceChildren();
+      ui.trashStatus.textContent = "Recently removed chats could not be loaded.";
+    }
+  }
+  async function changeConversationTrash(id, version, action) {
+    if (typeof id !== "string" || !id || !Number.isSafeInteger(version) || version < 1 || !["trash", "restore"].includes(action)) return;
+    setHistoryActionStatus(action === "trash" ? "Moving chat to Recently removed…" : "Restoring chat…");
+    const path = `${API}/conversations/${encodeURIComponent(id)}/${action}`;
+    try {
+      const result = await request(path, {
+        method: "POST",
+        body: JSON.stringify({version}),
+        headers: {"Idempotency-Key": createIdempotencyKey()}
+      });
+      if (!result || !result.conversation || result.conversation.id !== id) throw new Error("The chat list did not confirm the change.");
+      if (action === "trash" && conversationId === id) {
+        stopRecognition("Voice listening stopped because this chat moved to Recently removed.");
+        closeStream();
+        conversationId = null;
+        await showView("overview");
+      }
+      await refreshConversations();
+      await refreshTrash();
+      setHistoryActionStatus(action === "trash" ? "Chat moved to Recently removed. Its history and linked work are retained." : "Chat restored to your list.");
+    } catch (error) {
+      await Promise.allSettled([refreshConversations(), refreshTrash()]);
+      setHistoryActionStatus(error.message || "The chat could not be changed. Refresh and try again.", "error");
     }
   }
   function setPanel(open) {
@@ -1009,6 +1231,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     if (response.status === 401 || response.status === 403) throw new Error("Your secure session is no longer current. Sign in again to continue.");
     if (response.status === 429) throw new Error("Jarvis is busy right now. Your conversation remains separate.");
     if (response.status === 503) throw new Error("The assistant service is currently unavailable.");
+    if (response.status === 409) throw new Error("This chat changed or has an active response. Refresh the list before trying again.");
     if (!response.ok) throw new Error("Jarvis could not complete that request. Try again in a moment.");
     try { return await response.json(); }
     catch (_) { throw new Error("Jarvis returned an unreadable response. Please reload this conversation."); }
@@ -1019,6 +1242,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       if (!data || !Array.isArray(data.conversations)) throw new Error("Conversation history is unavailable.");
       conversations = data.conversations.filter((item) => item && typeof item.id === "string" && typeof item.title === "string");
       renderHistory();
+      refreshTrash();
     } catch (error) {
       ui.sessionCount.textContent = "Your chat list is unavailable.";
       throw error;
@@ -1042,6 +1266,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       ui.welcome.hidden = data.messages.length !== 0;
       ui.title.textContent = conversations.find((item) => item.id === id)?.title || "Your conversation";
       renderHistory();
+      await loadTurnSelection(id);
       setPanel(false);
     } catch (error) { showError(error.message); }
   }
@@ -1057,6 +1282,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       ui.messages.replaceChildren();
       ui.welcome.hidden = false;
       ui.title.textContent = "A clear mind, at your service.";
+      await loadTurnSelection(conversationId);
       await refreshConversations();
       renderHistory();
       setPanel(false);
@@ -1158,18 +1384,35 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       assistantBody.append(document.createTextNode(payload.text));
       ui.scroll.scrollTop = ui.scroll.scrollHeight;
     });
+    eventSource.addEventListener("turn.configuration", (event) => {
+      if (activeTurnId !== turnId) return;
+      let configuration;
+      try { configuration = JSON.parse(event.data); } catch (_) { return; }
+      if (!configuration || configuration.state !== "confirmed" || configuration.provider !== "openai-codex"
+          || typeof configuration.modelId !== "string" || !configuration.modelId || configuration.modelId.length > 200) {
+        showTurnConfiguration(assistantBody, "Core model confirmation was not verified.", "error");
+        return;
+      }
+      const effort = typeof configuration.reasoningEffortWire === "string" && configuration.reasoningEffortWire
+        ? configuration.reasoningEffortWire.slice(0, 80)
+        : typeof configuration.reasoningEffort === "string" && configuration.reasoningEffort
+          ? configuration.reasoningEffort.slice(0, 80) : "profile default (not reported)";
+      showTurnConfiguration(assistantBody, `Core confirmed OpenAI Codex · ${configuration.modelId} · effort ${effort}`, "confirmed");
+    });
     eventSource.addEventListener("turn.completed", () => {
       waiting.remove();
       const finalText = assistantBody.textContent;
       closeStream();
+      loadTurnSelection(conversationAtStart);
       speakCompletedReply(finalText);
       refreshConversations().catch((error) => showError(error.message));
     });
-    eventSource.addEventListener("message.completed", () => { waiting.remove(); });
-    eventSource.addEventListener("turn.cancelled", () => { waiting.remove(); closeStream(); stopSpeech(); });
+    eventSource.addEventListener("message.completed", () => { if (activeTurnId === turnId) waiting.remove(); });
+    eventSource.addEventListener("turn.cancelled", () => { if (activeTurnId === turnId) { waiting.remove(); closeStream(); loadTurnSelection(conversationAtStart); stopSpeech(); } });
     eventSource.addEventListener("turn.failed", () => {
       waiting.remove();
       closeStream();
+      loadTurnSelection(conversationAtStart);
       stopSpeech();
       showError("Jarvis could not finish that response. You can try again.");
     });
@@ -1199,7 +1442,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       }
     });
   }
-  async function sendMessage(text) {
+  async function sendMessage(text, choice = currentTurnChoice()) {
     clearError();
     stopRecognition();
     stopSpeech();
@@ -1210,6 +1453,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       conversationId = data.conversation.id;
       ui.title.textContent = data.conversation.title || "Your conversation";
       await refreshConversations();
+      await loadTurnSelection(conversationId);
     }
     appendMessage("user", text);
     const assistantBody = appendMessage("assistant", "");
@@ -1219,17 +1463,33 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     assistantBody.append(waiting);
     ui.input.disabled = true;
     ui.send.disabled = true;
+    renderTurnModelControls();
     try {
       const data = await request(`${API}/conversations/${encodeURIComponent(conversationId)}/turns`, {
-        method: "POST", body: JSON.stringify({ text }),
+        method: "POST", body: JSON.stringify({
+          text,
+          modelId: choice && typeof choice.modelId === "string" ? choice.modelId : null,
+          reasoningEffort: choice && typeof choice.reasoningEffort === "string" ? choice.reasoningEffort : null
+        }),
         headers: { "Idempotency-Key": createIdempotencyKey() }
       });
       if (!data || data.status !== "queued") throw new Error("Jarvis could not safely queue this response.");
+      if (ui.input.value === text) {
+        ui.input.value = "";
+        ui.input.style.height = "auto";
+      }
+      if (data.turnConfiguration && data.turnConfiguration.state === "queued") {
+        const queuedModel = typeof data.turnConfiguration.modelId === "string" && data.turnConfiguration.modelId.length <= 200 ? data.turnConfiguration.modelId : "conversation default";
+        showTurnConfiguration(assistantBody, `Queued · server resolved ${queuedModel}; awaiting Core confirmation.`, "queued");
+      } else {
+        showTurnConfiguration(assistantBody, "Queued · awaiting Core model confirmation.", "queued");
+      }
       watchTurn(data.turnId, data.heartbeatNonce, assistantBody, waiting, conversationId, text);
       refreshConversations().catch((error) => showError(error.message));
     } catch (error) {
       ui.input.disabled = false;
       ui.send.disabled = false;
+      renderTurnModelControls();
       assistantBody.textContent = "";
       assistantBody.parentElement.dataset.state = "error";
       const status = document.createElement("span");
@@ -1459,9 +1719,8 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     event.preventDefault();
     const text = ui.input.value;
     if (!text.trim() || ui.input.disabled) return;
-    ui.input.value = "";
-    ui.input.style.height = "auto";
-    sendMessage(text).catch((error) => showError(error.message));
+    const choice = currentTurnChoice();
+    sendMessage(text, choice).catch((error) => showError(error.message));
   });
   ui.input.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
@@ -1577,7 +1836,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     overviewSend.disabled = true;
     try {
       await showView("chat");
-      const accepted = await sendMessage(text);
+      const accepted = await sendMessage(text, {modelId: null, reasoningEffort: null});
       if (accepted) {
         overviewInput.value = "";
         overviewStatus.hidden = true;
