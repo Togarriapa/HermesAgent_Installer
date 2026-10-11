@@ -1001,6 +1001,23 @@ def run_source_bootstrap_update() -> RootSetupResult:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hermes-installer-root-setup")
     arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments and arguments[0] == "obsidian-owner-prepare":
+        if (len(arguments) != 3 or arguments[1] != "--owner-subject-sha256"
+                or re.fullmatch(r"[0-9a-f]{64}", arguments[2]) is None):
+            print("Use exactly: obsidian-owner-prepare --owner-subject-sha256 <64 lowercase hexadecimal characters>.",
+                  file=sys.stderr)
+            return 2
+        try:
+            _require_root_linux()
+            from .remote.obsidian_owner_lifecycle import prepare_existing_chat_owner
+            result = prepare_existing_chat_owner(arguments[2])
+            print(json.dumps(result, sort_keys=True, separators=(",", ":")), file=sys.stderr)
+            return 0
+        except Exception as exc:
+            # This is a local root lifecycle action. Do not disclose DB, JWT,
+            # registration bytes or filesystem details to the caller.
+            print(f"Obsidian owner preparation unavailable ({type(exc).__name__}).", file=sys.stderr)
+            return 4
     if arguments and arguments[0] == "core-service":
         core_actions = {"install", "resume", "status", "rollback",
                         "primary-prompt-adopt", "primary-prompt-status", "primary-prompt-rollback"}
