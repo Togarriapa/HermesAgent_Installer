@@ -1838,3 +1838,10 @@ The system SHALL allow an owner to persist consent for an exact current mission 
 #### Scenario: Expired or changed intent
 - **WHEN** intent expires or mission revision/source changes
 - **THEN** launch denies and requires fresh explicit owner approval.
+
+### Requirement: Exact approved mission task binding
+The first native mission SHALL bind the approved unchanged brief and Orchestrator source selection to the actual owned turn and observed tool arguments. Profile grants SHALL derive from verified source policy, never from parent inventory copied as source authority.
+
+#### Scenario: Changed task or absent source grants
+- **WHEN** the model changes the approved task or source grants cannot be verified
+- **THEN** no mission delegation occurs.

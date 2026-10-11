@@ -54,3 +54,5 @@ RB-T266.4 bridge detail: enroll the reviewed current-core Codex transport observ
 RT-T266.3 finite next slice includes pause-only native schedules with current snapshot/nonce/idempotency and verified post-state; model choices remain drafts until protected CAS is reviewed. RB-T266.4 includes the concrete separate core observer registry and exact skill-base before/after custody. All existing task groups remain open.
 
 HI-T266.2/RT-T266.3 mission detail: implement the closed consent-only approve endpoint and durable revision/digest intent nonce; launch still requires actual native producer/current authority and must never auto-run pending consent. Validate ownership/revision/expiry/idempotency and unavailable execution on Pi before acceptance.
+
+HI-T266.2/RB-T266.4 first mission proof joins exact approved task/plan/source to gateway turn and observed native arguments; derive genuine source grants and deny mismatches. Multi-team execution remains pending until each real policy/intersection is proven.

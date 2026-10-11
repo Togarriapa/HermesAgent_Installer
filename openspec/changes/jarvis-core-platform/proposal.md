@@ -45,3 +45,5 @@ The actual Codex subscription bridge uses an explicitly enrolled protected core-
 Implement the next useful ports proportionately: owner-approved pause-only schedules, read-only native controls and truthful model drafts, plus the separate source-verified core observer leaf. Align learning reason enums to the actual fixed helper vocabulary and verify skill-base read custody before and after native diff.
 
 Mission owner consent can be persisted independently of execution readiness through a finite approve endpoint. Its bounded intent nonce does not authorize native dispatch and cannot trigger later unattended execution.
+
+The first real mission is a single source-selected Orchestrator task bound exactly to owner-approved text and plan. It cannot treat model-generated paraphrase or copied parent inventory as mission/source authorization.
