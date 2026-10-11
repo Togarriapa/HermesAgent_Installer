@@ -250,6 +250,48 @@ def test_discovery_refresh_requires_current_owned_listener_and_never_changes_ser
     assert "service lifecycle unchanged" in result
 
 
+def test_legacy_resources_refresh_requires_pinned_archive_and_identical_materialized_members(
+        tmp_path, monkeypatch):
+    from hermes_installer.registry import manual_jarvis_skills as native
+
+    archive = b"exact retained legacy artifact fixture"
+    digest = hashlib.sha256(archive).hexdigest()
+    cas = tmp_path / "cas"
+    cas.mkdir(mode=0o700)
+    retained = cas / (digest + ".zip")
+    retained.write_bytes(archive)
+    retained.chmod(0o600)
+    old_manifest = {"schema": 1, "source": {"revision": "pinned"},
+                    "installer": {"sha256": "old helper"}}
+    current_manifest = {**old_manifest, "installer": {"sha256": "new helper"}}
+    members = {"skills/example/SKILL.md": b"verified member"}
+    monkeypatch.setattr(core, "RESOURCES_CAS", cas)
+    monkeypatch.setattr(core, "LEGACY_MATERIALIZED_RESOURCES_ARTIFACT_SHA256", digest)
+    monkeypatch.setattr(core, "ROOT_UID", os.getuid())
+    monkeypatch.setattr(core, "HERMES_HOME", tmp_path / "home")
+    monkeypatch.setattr(core.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(native, "_read_artifact", lambda _archive, _digest:
+                        (old_manifest, dict(members)))
+    monkeypatch.setattr(native, "_canonical_json", lambda value:
+                        json.dumps(value, sort_keys=True, separators=(",", ":")).encode())
+    calls = []
+    monkeypatch.setattr(core, "_hash_generation_tree", lambda *args, **kwargs:
+                        calls.append((args[2], args[3], kwargs)) or "a" * 64)
+
+    result = core._verified_legacy_materialization(native, current_manifest, members,
+                                                    repair_umask_dirs=True)
+
+    assert result[0] == archive
+    assert result[1] == old_manifest and result[2] == members and result[3] == digest
+    assert calls == [(members, digest, {"repair_umask_dirs": True})]
+    with pytest.raises(core.CoreRuntimeError, match="byte-compatible"):
+        core._verified_legacy_materialization(native, current_manifest,
+            {**members, "skills/example/SKILL.md": b"changed"}, repair_umask_dirs=True)
+    with pytest.raises(core.CoreRuntimeError, match="not authorized"):
+        core._verified_legacy_materialization(native, current_manifest, members,
+                                               repair_umask_dirs=False)
+
+
 def test_root_native_readback_checks_current_loader_results_against_owned_bytes(monkeypatch, tmp_path):
     skills = [f"skill-{index:03d}" for index in range(396)]
     rows = [{"skill_id": name, "archive_path": f"skills/{name}/SKILL.md"} for name in skills]

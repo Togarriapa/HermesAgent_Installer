@@ -16,6 +16,10 @@ TOKEN=Path("/etc/hermes-installer/jarvis-core/session-token")
 JOURNAL=Path("/var/lib/hermes-installer/core-runtime/ownership.json")
 RESOURCES_RECORD=Path("/var/lib/hermes-installer/core-runtime/resources-discovery.json")
 RESOURCES_CAS=Path("/var/lib/hermes-installer/core-runtime/resources-cas")
+# This exact older package was materialized before the importer helper was
+# hardened. Its only difference from the current package is that helper member;
+# the helper itself is not installed into the owner's Hermes tree.
+LEGACY_MATERIALIZED_RESOURCES_ARTIFACT_SHA256="f73463c641ac3744007ee8395b663802d5c916f59256fa8184ad2b4f5594b274"
 ETC_INSTALLER=Path("/etc/hermes-installer")
 VAR_LIB_INSTALLER=Path("/var/lib/hermes-installer")
 SYSTEMD_UNIT_DIR=Path("/etc/systemd/system")
@@ -445,6 +449,37 @@ def native_inventory_bytes(manifest,files):
   for row in sorted(manifest["skill_members"],key=lambda item:item["skill_id"])],
   sort_keys=True,separators=(",",":")).encode("ascii")+b"\n"
 
+def _verified_legacy_materialization(native,current_manifest,current_files,*,repair_umask_dirs):
+ """Prove the exact pre-hardening artifact still owns the current byte-identical tree.
+
+ This is deliberately available only to the explicit root refresh path. The
+ archive digest is pinned, the independently parsed manifests must match after
+ removing only the non-materialized installer row, and every materialized
+ member must be byte-identical to today's verified package.
+ """
+ if not repair_umask_dirs or os.geteuid()!=ROOT_UID:
+  raise CoreRuntimeError("legacy Resources materialization is not authorized here")
+ artifact_sha=LEGACY_MATERIALIZED_RESOURCES_ARTIFACT_SHA256
+ archive=_projection_file(RESOURCES_CAS/(artifact_sha+".zip"),owner=ROOT_UID,
+   group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
+ if hashlib.sha256(archive).hexdigest()!=artifact_sha:
+  raise CoreRuntimeError("legacy Resources package digest differs")
+ try:
+  old_manifest,old_files=native._read_artifact(archive,artifact_sha)
+ except Exception as exc:
+  raise CoreRuntimeError("legacy Resources package is invalid") from exc
+ current_projection=dict(current_manifest); current_projection.pop("installer",None)
+ old_projection=dict(old_manifest); old_projection.pop("installer",None)
+ if (native._canonical_json(current_projection)!=native._canonical_json(old_projection)
+     or old_files!=current_files):
+  raise CoreRuntimeError("legacy Resources package is not byte-compatible with current bundle")
+ # The journal's artifact identity and all member bytes are checked by the
+ # same strict verifier used for current artifacts. Only the pinned old digest
+ # can reproduce this retained ownership marker.
+ manifest_sha=_hash_generation_tree(HERMES_HOME,old_manifest,old_files,artifact_sha,
+   repair_umask_dirs=True)
+ return archive,old_manifest,old_files,artifact_sha,manifest_sha
+
 def _verified_resources_payload(_admin_receipt=None,*,repair_umask_dirs=False):
  """Build a root-derived receipt and initiate a fresh pinned native-loader query."""
  from .registry import manual_jarvis_skills as native
@@ -457,8 +492,18 @@ def _verified_resources_payload(_admin_receipt=None,*,repair_umask_dirs=False):
  counts={"native_skills":396,"internal_profiles":207,
   "source_profiles_preserved":208,"other_declarations_preserved":expected_other}
  source_generation=_core_source_generation()
- manifest_sha=_hash_generation_tree(HERMES_HOME,manifest,files,artifact_sha,
-   repair_umask_dirs=repair_umask_dirs)
+ try:
+  manifest_sha=_hash_generation_tree(HERMES_HOME,manifest,files,artifact_sha,
+    repair_umask_dirs=repair_umask_dirs)
+ except CoreRuntimeError as exc:
+  # Existing generations retain their original artifact identity. A helper
+  # source update changes the ZIP digest even though that helper is not among
+  # the installed members. Permit only the single exact legacy package above,
+  # only during an explicit root refresh, and only after complete byte proof.
+  if "owned Resources manifest differs from the pinned bundle" not in str(exc):
+   raise
+  archive,manifest,files,artifact_sha,manifest_sha=_verified_legacy_materialization(
+    native,manifest,files,repair_umask_dirs=repair_umask_dirs)
  active_prompt=_current_primary_prompt()
  try: active_prompt.decode("utf-8")
  except UnicodeDecodeError: raise CoreRuntimeError("primary Jarvis prompt encoding is invalid") from None
