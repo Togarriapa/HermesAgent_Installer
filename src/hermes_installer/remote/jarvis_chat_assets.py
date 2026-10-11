@@ -629,14 +629,18 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     mountedFeature = null;
     mountedFeatureCleanup = null;
   }
-  function mountFeature(feature) {
+  function mountFeature(feature, context = {}) {
     if (mountedFeature === feature) return;
     unmountFeature();
     const root = byId(`${feature.id}-view`);
     if (!root || typeof feature.mount !== "function") return;
     mountedFeature = feature;
     try {
-      const cleanup = feature.mount(root, featureApi(feature, root), Object.freeze({}));
+      const mountContext = feature.id === "models-settings" && context
+        && typeof context.initialConversationId === "string"
+        ? Object.freeze({initialConversationId: context.initialConversationId})
+        : Object.freeze({});
+      const cleanup = feature.mount(root, featureApi(feature, root), mountContext);
       mountedFeatureCleanup = typeof cleanup === "function" ? cleanup : null;
     } catch (_) {
       mountedFeature = null;
@@ -1710,7 +1714,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       list.append(row);
     }
   }
-  async function showView(view, navSelection = view) {
+  async function showView(view, navSelection = view, featureContext = {}) {
     byId("chat-preferences").open = false;
     const selected = ["chat", "overview", "capabilities", "settings"].includes(view) || featuresById.has(view) ? view : "chat";
     const selectedNavigation = navSelection === "sessions" && selected === "chat" ? "sessions" : selected;
@@ -1749,7 +1753,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     }
     const feature = featuresById.get(selected);
     if (feature) {
-      mountFeature(feature);
+      mountFeature(feature, featureContext);
       return;
     }
     if (selected === "capabilities") {
@@ -1857,7 +1861,9 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   ui.scrim.addEventListener("click", () => setPanel(false));
   for (const button of document.querySelectorAll("[data-view]")) button.addEventListener("click", () => {
     for (const group of document.querySelectorAll(".nav-group")) group.open = false;
-    showView(button.dataset.view, button.dataset.openSessions === "true" ? "sessions" : button.dataset.view);
+    const featureContext = button.classList.contains("chat-model-link") && conversationId
+      ? {initialConversationId: conversationId} : {};
+    showView(button.dataset.view, button.dataset.openSessions === "true" ? "sessions" : button.dataset.view, featureContext);
   });
   byId("jarvis-home").addEventListener("click", (event) => {
     event.preventDefault();

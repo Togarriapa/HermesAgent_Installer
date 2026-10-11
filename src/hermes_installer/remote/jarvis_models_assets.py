@@ -30,7 +30,7 @@ _VIEW_HTML = '''
 _CSS = '''.models-settings-card{max-width:900px;margin:0 auto}.models-settings-card>h2{margin:0}.models-settings-card>label{display:block;margin:16px 0 6px;color:#8ba5aa;font-size:12px}.models-settings-card select{min-height:38px;width:100%;border:1px solid var(--line);border-radius:8px;background:#101e24;color:#e1f4f5;padding:7px 10px}.models-settings-values{margin:15px 0 0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:28px}.models-settings-values>div{display:flex;justify-content:space-between;gap:14px;padding:11px 0;border-bottom:1px solid var(--line)}.models-settings-values dt{color:#8ba5aa;font-size:12px}.models-settings-values dd{margin:0;text-align:right;color:#e1f4f5;font-size:12px;overflow-wrap:anywhere}.models-selection-draft{display:grid;grid-template-columns:120px minmax(0,1fr);align-items:center;gap:10px 14px;margin-top:20px;padding:16px;border:1px solid var(--line);border-radius:12px;background:rgba(12,31,38,.48)}.models-selection-draft h3,.models-selection-draft p{grid-column:1/-1;margin:0}.models-selection-draft h3{font-size:13px;color:#d5edef}.models-selection-draft label{font-size:12px;color:#8ba5aa}.models-selection-draft button{min-height:38px;border:1px solid var(--line);border-radius:8px;background:#245865;color:#e1f4f5;padding:7px 12px}.models-selection-draft button:disabled{opacity:.55}.models-settings-note{max-width:760px;margin:14px 0 0;font-size:11px}@media(max-width:640px){.models-settings-values{grid-template-columns:1fr}.models-selection-draft{grid-template-columns:1fr}.models-selection-draft h3,.models-selection-draft p{grid-column:1}}
 '''
 
-_MOUNT_JS = r'''function mount(root, api) {
+_MOUNT_JS = r'''function mount(root, api, context = {}) {
   let active = true;
   let revision = null;
   let snapshot = null;
@@ -42,6 +42,8 @@ _MOUNT_JS = r'''function mount(root, api) {
   const conversation = query("[data-models-conversation]");
   const safeId = (value) => typeof value === "string" && /^[A-Za-z0-9_-]{24,64}$/.test(value);
   const safeModel = (value) => typeof value === "string" && /^[a-z0-9][a-z0-9.-]{0,79}$/.test(value);
+  const initialConversationId = safeId(context && context.initialConversationId)
+    ? context.initialConversationId : null;
   function updateApply() {
     apply.disabled = !(snapshot && revision && snapshot.selectionAvailability === "available"
       && safeId(conversation.value) && safeModel(choice.value));
@@ -134,6 +136,13 @@ _MOUNT_JS = r'''function mount(root, api) {
         conversation.add(option);
       }
       conversation.disabled = conversation.options.length < 2;
+      const currentConversationIsOwned = initialConversationId
+        && Array.from(conversation.options).some((option) => option.value === initialConversationId);
+      if (currentConversationIsOwned) {
+        conversation.value = initialConversationId;
+        await refreshSettings();
+        return;
+      }
       status(conversation.disabled ? "Create a Jarvis conversation before selecting its model."
         : "Choose one of your conversations to inspect and change its model.");
     } catch (_) {

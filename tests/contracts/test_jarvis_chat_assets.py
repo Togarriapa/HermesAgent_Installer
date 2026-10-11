@@ -251,11 +251,27 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn(
             "finally { button.disabled = false; commandInput.disabled = false; }", overview_submit
         )
-        self.assertIn('if (feature.id === "models-settings") contextualCleanup = preselectCurrentModelConversation(root);', client)
-        model_context = client.split("function preselectCurrentModelConversation(root) {", 1)[1].split("function mountFeature(feature)", 1)[0]
-        self.assertIn('select.value = id;', model_context)
-        self.assertIn('observer.disconnect();', model_context)
-        self.assertIn('finally { if (contextualCleanup) contextualCleanup(); }', client)
+        models = next(feature for feature in FEATURE_ASSETS if feature.feature_id == "models-settings")
+        model_mount = models.mount_js
+        self.assertIn("do not change the profile default", models.view_html)
+        self.assertIn('button.classList.contains("chat-model-link") && conversationId', client)
+        self.assertIn("mountFeature(feature, featureContext);", client)
+        self.assertIn("Object.freeze({initialConversationId: context.initialConversationId})", client)
+        self.assertIn(
+            'new Option(data.conversations.length ? "Choose a conversation" : "No conversations yet", "")',
+            model_mount,
+        )
+        self.assertIn("const initialConversationId = safeId(context && context.initialConversationId)", model_mount)
+        self.assertIn("Array.from(conversation.options).some((option) => option.value === initialConversationId)", model_mount)
+        self.assertIn("if (currentConversationIsOwned)", model_mount)
+        self.assertIn('conversation.addEventListener("change", refreshSettings);', model_mount)
+        self.assertIn("const selectedConversation = conversation.value;", model_mount)
+        self.assertIn(
+            'api.post(`/chat/api/conversations/${encodeURIComponent(selectedConversation)}/model-selection`',
+            model_mount,
+        )
+        self.assertIn("model_id: choice.value, revision: revision.revision,", model_mount)
+        self.assertIn("approval_nonce: revision.approval_nonce, idempotency_key: token()", model_mount)
 
     def test_capability_inventory_filter_and_details_are_data_backed(self):
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
