@@ -31,6 +31,7 @@ def register(ctx):
         # only a sealed fixed-owner selection; the Gateway process never gets
         # a store or a filesystem path it can open.
         import os
+        from pathlib import Path
         if os.geteuid() != 1000:
             raise PermissionError("Obsidian native tools require the fixed Core UID")
         obsidian_binding = client.bind_obsidian_native_vault()
@@ -38,7 +39,8 @@ def register(ctx):
             ObsidianVaultConfig, prepare_obsidian_vault,
         )
         obsidian_store = prepare_obsidian_vault(ObsidianVaultConfig(
-            obsidian_binding.vault_root, obsidian_binding.owner_subject_sha256, owner_uid=1000))
+            Path(obsidian_binding.vault_root), obsidian_binding.owner_subject_sha256,
+            owner_uid=1000))
     except Exception:
         # Missing root enrollment or a failed fixed-vault custody check leaves
         # these tools unavailable without preventing unrelated Core tools.

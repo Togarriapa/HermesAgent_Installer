@@ -6,7 +6,6 @@ not prove ROOT's middleware issuance, per-call vault binding, or Pi acceptance.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import replace
 import time
 from unittest.mock import patch
 
@@ -111,7 +110,6 @@ def test_lazy_registration_does_not_need_startup_observer_binding(tmp_path):
     args = {"query": "owner"}
     observed, scope, binding, _permit, dispatch, *_ = _binding(
         store, "obsidian_search_notes", args)
-    binding = replace(binding, vault_root=str(root))
     context = _PluginContext()
     tools = ObsidianNativeTools()
 

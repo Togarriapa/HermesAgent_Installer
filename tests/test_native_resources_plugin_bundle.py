@@ -21,8 +21,12 @@ def test_official_register_entrypoint_installs_hooks_before_observer_startup(mon
     effects = importlib.import_module("hermes_installer.remote.jarvis_final_effects")
     projects = importlib.import_module("hermes_installer.remote.jarvis_project_context_engine")
     invocations = importlib.import_module("hermes_installer.native_invocations")
-    monkeypatch.setattr(effects, "install_jarvis_final_effect_middleware",
-                        lambda ctx, client: calls.append(("gate", ctx, client)) or ("effect-gate",))
+
+    def install_gate(ctx, client, **kwargs):
+        calls.append(("gate", ctx, client, kwargs))
+        return ("effect-gate",)
+
+    monkeypatch.setattr(effects, "install_jarvis_final_effect_middleware", install_gate)
     monkeypatch.setattr(projects, "install_current_project_context_middleware",
                         lambda ctx: calls.append(("projects", ctx)) or "projects-hook")
     monkeypatch.setattr(invocations, "install_pinned_tool_executor_dispatch_bridge",
@@ -35,6 +39,7 @@ def test_official_register_entrypoint_installs_hooks_before_observer_startup(mon
     assert [call[0] for call in calls] == ["gate", "projects", "pin", "observer"]
     assert calls[0][1] is ctx
     assert type(calls[0][2]) is Client
+    assert calls[0][3] == {"obsidian_binding": None}
     assert calls[-1] == ("observer", ctx, None)
     assert registrations == ("observer-hook", "effect-gate", "projects-hook")
 
@@ -54,8 +59,12 @@ def test_executor_pin_failure_keeps_effect_gate_and_observer_registered(monkeypa
     effects = importlib.import_module("hermes_installer.remote.jarvis_final_effects")
     projects = importlib.import_module("hermes_installer.remote.jarvis_project_context_engine")
     invocations = importlib.import_module("hermes_installer.native_invocations")
-    monkeypatch.setattr(effects, "install_jarvis_final_effect_middleware",
-                        lambda ctx, client: calls.append(("gate", ctx, client)) or ("effect-gate",))
+
+    def install_gate(ctx, client, **kwargs):
+        calls.append(("gate", ctx, client, kwargs))
+        return ("effect-gate",)
+
+    monkeypatch.setattr(effects, "install_jarvis_final_effect_middleware", install_gate)
     monkeypatch.setattr(projects, "install_current_project_context_middleware",
                         lambda ctx: calls.append(("projects", ctx)) or "projects-hook")
 
@@ -73,6 +82,7 @@ def test_executor_pin_failure_keeps_effect_gate_and_observer_registered(monkeypa
     assert [call[0] for call in calls] == ["gate", "projects", "pin-failed", "observer"]
     assert calls[0][1] is ctx
     assert type(calls[0][2]) is Client
+    assert calls[0][3] == {"obsidian_binding": None}
     assert registrations == ("observer-hook", "effect-gate", "projects-hook")
 
 
