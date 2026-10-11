@@ -62,13 +62,17 @@ _HTML = '''<!doctype html>
       <main class="chat-main" id="main-content" data-view-panel="chat">
         <div class="chat-heading">
           <div>
-            <span class="eyebrow">PERSONAL ASSISTANT</span>
+            <span class="eyebrow">PERSONAL ASSISTANT · PRIVATE SESSION</span>
             <h1 id="conversation-title">A clear mind, at your service.</h1>
+          </div>
+          <div class="assistant-hud" id="assistant-hud" data-state="checking" aria-label="Jarvis status">
+            <span class="assistant-orb" aria-hidden="true"><span class="orb-core"></span><span class="orb-ring"></span><span class="orb-halo"></span></span>
+            <span class="assistant-state"><strong id="assistant-state-label">JARVIS · CHECKING</strong><span id="assistant-mode" role="status" aria-live="polite">Checking secure connection</span></span>
           </div>
         </div>
         <section class="message-scroll" id="message-scroll" aria-label="Conversation" aria-live="polite" aria-relevant="additions text">
           <div class="welcome" id="welcome-panel">
-            <div class="welcome-orbit" aria-hidden="true"><span></span><i></i></div>
+            <div class="welcome-orbit" id="welcome-orb" data-state="checking" aria-hidden="true"><span></span><i></i></div>
             <p class="eyebrow">READY WHEN YOU ARE</p>
             <h2>What can I help you with?</h2>
             <p class="welcome-note">Ask a question or pick up a thought. Your conversation stays in this private space.</p>
@@ -152,6 +156,63 @@ _CSS = '''@charset "UTF-8";
 .primary-nav{display:flex;align-items:center;gap:4px;margin-left:24px}.nav-item{min-height:36px;padding:0 12px;border:1px solid transparent;border-radius:9px;background:transparent;color:#9ab1b5;font:inherit;font-size:12px;cursor:pointer}.nav-item:hover,.nav-item[aria-current="page"]{border-color:var(--line);background:rgba(88,228,235,.08);color:#ddfbfd}.workspace>.data-main{grid-column:2;grid-row:1}.data-main{min-width:0;overflow:auto;padding:40px clamp(20px,5vw,76px)}.data-main[hidden],.chat-main[hidden]{display:none}.page-heading{max-width:1080px;margin:0 auto 26px}.page-heading h1{margin:0;font-size:clamp(25px,3vw,34px);font-weight:550;letter-spacing:-.03em}.page-heading p,.muted{color:#8ba5aa;font-size:13px;line-height:1.6}.page-heading p{margin:8px 0}.dashboard-grid{max-width:1080px;margin:0 auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.data-card{min-width:0;padding:21px;border:1px solid var(--line);border-radius:15px;background:rgba(12,31,38,.78)}.data-card h2{margin:0;color:#acc2c6;font-size:13px;font-weight:600}.large-value{margin:14px 0 3px;color:#e6fbfc;font-size:29px;font-weight:550;letter-spacing:-.03em}.data-card .muted{margin:5px 0}.chart-card{grid-column:1/-1}.chart-bars{height:175px;display:grid;grid-template-columns:repeat(7,minmax(24px,1fr));align-items:end;gap:10px;margin:22px 4px 0;border-bottom:1px solid var(--line-strong)}.chart-day{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:7px;color:#88a2a7;font-size:10px}.chart-bar-track{height:124px;width:100%;display:flex;align-items:flex-end;justify-content:center}.chart-bar{width:min(35px,72%);min-height:2px;border-radius:5px 5px 1px 1px;background:linear-gradient(0deg,#137c88,#56dbe2)}.readiness-banner{max-width:1080px;margin:0 auto 16px;padding:14px 17px;border:1px solid rgba(245,194,117,.25);border-radius:12px;background:rgba(106,76,31,.12);color:#e7cca0;font-size:13px;line-height:1.6}.capability-filters{max-width:1080px;margin:0 auto 12px;display:grid;grid-template-columns:auto minmax(180px,1fr) auto minmax(150px,.35fr);align-items:center;gap:8px 12px}.capability-filters label{color:#9eb5b9;font-size:12px}.capability-filters input,.capability-filters select{min-width:0;min-height:40px;padding:8px 11px;border:1px solid var(--line-strong);border-radius:9px;background:#0c1f26;color:var(--text);font:inherit;font-size:13px}.capability-filters input:focus-visible,.capability-filters select:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}.capability-filters p{grid-column:1/-1;margin:0;color:#8ba5aa;font-size:12px}.capability-source{max-width:1080px;margin:0 auto 12px;overflow-wrap:anywhere}.capability-row summary{cursor:pointer;color:#d7edef;font-weight:600}.capability-meta{margin-top:10px;color:#8ba5aa;font-size:11px;overflow-wrap:anywhere}.feature-view{max-width:1120px;margin:0 auto}.capability-list{max-width:1080px;margin:auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.capability-row{padding:16px;border:1px solid var(--line);border-radius:12px;background:rgba(12,31,38,.66)}.capability-row h2{margin:0 0 6px;font-size:14px;font-weight:600}.capability-row p{margin:0;color:#8ba5aa;font-size:12px;line-height:1.6}.state-pill{display:inline-block;margin-top:11px;padding:4px 8px;border:1px solid var(--line);border-radius:999px;color:#abc2c5;font-size:10px;text-transform:capitalize}.settings-card{max-width:720px;margin:0 auto}.voice-settings-card{max-width:720px;margin:16px auto 0}.voice-choice{display:flex;align-items:flex-start;gap:12px;padding:15px 0;border-bottom:1px solid var(--line);cursor:pointer}.voice-choice input{width:18px;height:18px;margin:1px 0 0;accent-color:#42c6d0}.voice-choice span{display:grid;gap:5px}.voice-choice strong{font-size:13px;font-weight:600}.voice-choice small{max-width:560px;color:#8ba5aa;font-size:12px;line-height:1.55}.voice-select-row select{min-height:38px;min-width:min(280px,75vw);padding:7px 10px;border:1px solid var(--line-strong);border-radius:8px;background:#0c1f26;color:var(--text);font:inherit}.voice-unavailable,.voice-status{color:#95b1b5;font-size:11px;line-height:1.5}.voice-status{margin:5px 3px}.voice-button{min-height:34px;padding:0 11px;border:1px solid var(--line-strong);border-radius:9px;background:rgba(105,169,180,.08);color:#c9e5e8;font:inherit;font-size:11px;cursor:pointer}.voice-button:hover{border-color:var(--cyan);background:rgba(29,139,150,.22)}.voice-button:disabled{opacity:.55;cursor:wait}.voice-button[hidden]{display:none}.voice-button[data-listening="true"]{border-color:#83d7bd;color:#b9f5e1}.settings-list{margin:18px 0;display:grid;gap:0}.settings-list>div{display:flex;justify-content:space-between;gap:20px;padding:14px 0;border-bottom:1px solid var(--line)}.settings-list dt{color:#8ba5aa;font-size:13px}.settings-list dd{margin:0;text-align:right;color:#e1f4f5;font-size:13px;overflow-wrap:anywhere}
 @media(max-width:760px){.topbar{height:auto;min-height:64px;flex-wrap:wrap;padding-block:8px}.primary-nav{order:3;width:100%;margin:0;justify-content:space-around}.nav-item{flex:1;padding-inline:6px}.connection{margin-left:auto}.conversation-panel{top:calc(112px + env(safe-area-inset-top))}.scrim:not([hidden]){inset:calc(104px + env(safe-area-inset-top)) 0 0}.workspace{min-height:0}.workspace>.data-main{grid-column:1;grid-row:1}.data-main{padding:26px 16px calc(20px + env(safe-area-inset-bottom))}.dashboard-grid,.capability-list{grid-template-columns:1fr}.capability-filters{grid-template-columns:1fr 1fr}.capability-filters label:nth-of-type(2){grid-column:1}.capability-filters select{grid-column:2;grid-row:2}.chart-card{grid-column:auto}.data-card{padding:17px}.chart-bars{gap:5px}.settings-list>div{gap:12px}}
 @media(prefers-reduced-motion:reduce){.nav-item{transition:none}}
+/* Jarvis HUD: restrained cyan glass with amber reserved for attention states. */
+:root{--amber:#e9bd70;--amber-soft:rgba(233,189,112,.16);--ease-out:cubic-bezier(.23,1,.32,1)}
+.app-shell{background:radial-gradient(ellipse at 64% 22%,rgba(18,103,118,.11),transparent 48%),var(--bg)}
+.topbar{background:rgba(5,17,22,.88);border-bottom-color:rgba(102,188,202,.18)}
+.chat-main{background:radial-gradient(ellipse at 75% 22%,rgba(30,119,131,.055),transparent 52%)}
+.chat-heading{align-items:center;justify-content:space-between;gap:20px}
+.assistant-hud{display:flex;align-items:center;gap:12px;min-width:190px;padding:8px 13px 8px 9px;border:1px solid rgba(97,190,203,.17);border-radius:16px;background:linear-gradient(135deg,rgba(17,49,58,.72),rgba(9,25,32,.74));box-shadow:inset 0 1px rgba(255,255,255,.035)}
+.assistant-orb{position:relative;display:grid;place-items:center;flex:none;width:44px;height:44px;border-radius:50%;isolation:isolate}
+.orb-core,.orb-ring,.orb-halo{position:absolute;border-radius:50%;pointer-events:none}
+.orb-core{inset:12px;background:radial-gradient(circle at 38% 32%,#e8ffff,#66dbe3 38%,#0d8d99 72%,#092830);box-shadow:0 0 15px rgba(73,218,226,.44),inset 0 0 7px rgba(234,255,255,.55)}
+.orb-ring{inset:5px;border:1px solid rgba(114,235,239,.56);box-shadow:0 0 10px rgba(53,204,215,.16),inset 0 0 9px rgba(53,204,215,.08)}
+.orb-halo{inset:0;border:1px solid rgba(102,196,207,.2)}
+.assistant-state{display:grid;gap:4px;min-width:0}
+.assistant-state strong{color:#a6c7c8;font:600 9px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.16em}
+.assistant-state span{color:#e5f3f3;font-size:11px;line-height:1.35}
+.assistant-hud[data-state="listening"]{border-color:rgba(233,189,112,.48);background:linear-gradient(135deg,rgba(80,61,35,.35),rgba(9,25,32,.82))}
+.assistant-hud[data-state="listening"] .orb-core{background:radial-gradient(circle at 38% 32%,#fff7df,#e9bd70 45%,#92703e 78%,#332717);box-shadow:0 0 15px rgba(233,189,112,.36)}
+.assistant-hud[data-state="listening"] .orb-ring,.assistant-hud[data-state="error"] .orb-ring{border-color:rgba(233,189,112,.78)}
+.assistant-hud[data-state="listening"] .assistant-state strong,.assistant-hud[data-state="error"] .assistant-state strong{color:var(--amber)}
+.assistant-hud[data-state="busy"] .orb-halo{animation:jarvis-orb-breathe 1.35s ease-in-out infinite}
+.assistant-hud[data-state="speaking"] .orb-core{box-shadow:0 0 20px rgba(73,218,226,.72),inset 0 0 7px rgba(234,255,255,.7)}
+.assistant-hud[data-state="error"]{border-color:rgba(233,189,112,.48)}
+.welcome-orbit[data-state="listening"]{border-color:rgba(233,189,112,.56);box-shadow:0 0 40px rgba(233,189,112,.11),inset 0 0 24px rgba(233,189,112,.08)}
+.welcome-orbit[data-state="listening"]:before,.welcome-orbit[data-state="error"]:before{border-color:rgba(233,189,112,.72)}
+.welcome-orbit[data-state="listening"]:after,.welcome-orbit[data-state="error"]:after{border-color:rgba(233,189,112,.9)}
+.welcome-orbit[data-state="listening"] span{background:var(--amber);box-shadow:0 0 20px rgba(233,189,112,.82)}
+.welcome-orbit[data-state="speaking"] span{box-shadow:0 0 27px rgba(88,228,235,.95)}
+.welcome-orbit[data-state="busy"]:after{animation:jarvis-orb-breathe 1.35s ease-in-out infinite}
+@media(prefers-reduced-motion:reduce){.welcome-orbit[data-state="busy"]:after{animation:none;opacity:.72}}
+@keyframes jarvis-orb-breathe{0%,100%{opacity:.36}50%{opacity:1}}
+.data-card{border-color:rgba(102,188,202,.18);background:linear-gradient(145deg,rgba(15,40,48,.84),rgba(8,24,31,.88));box-shadow:inset 0 1px rgba(255,255,255,.035),0 14px 40px rgba(0,0,0,.12)}
+.data-card h2{color:#bed3d4;letter-spacing:.015em}
+.readiness-banner{border-color:rgba(233,189,112,.25);background:linear-gradient(110deg,rgba(83,64,37,.19),rgba(25,32,30,.18));color:#ead5ad}
+.composer{border-color:rgba(99,192,204,.25);background:rgba(9,27,34,.9);box-shadow:0 12px 36px rgba(0,0,0,.15),inset 0 1px rgba(255,255,255,.04)}
+.composer:focus-within{border-color:rgba(91,222,230,.62);box-shadow:0 0 0 3px rgba(88,228,235,.08),0 12px 36px rgba(0,0,0,.18)}
+.nav-item,.icon-button,.new-chat-button,.send-button,.stop-button,.voice-button{transition:transform 140ms var(--ease-out),color 140ms ease,background-color 140ms ease,border-color 140ms ease}
+.icon-button{min-width:42px;min-height:42px}.send-button,.stop-button,.voice-button{min-height:44px}.composer textarea{line-height:1.5}
+.nav-item:active,.icon-button:active,.new-chat-button:active,.send-button:active,.stop-button:active,.voice-button:active{transform:scale(.97)}
+:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+@media(hover:hover) and (pointer:fine){.data-card{transition:border-color 160ms ease}.data-card:hover{border-color:rgba(102,188,202,.3)}}
+@media(min-width:761px) and (max-width:1120px){.topbar{height:auto;min-height:72px;flex-wrap:wrap;padding-block:9px}.primary-nav{order:3;flex:1 1 100%;width:100%;margin:0;overflow-x:auto;scrollbar-width:thin}.nav-item{flex:0 0 auto}.workspace{min-height:0}}
+@media(max-width:760px){
+ .chat-heading{gap:10px}.chat-heading h1{max-width:42vw;font-size:clamp(17px,4.5vw,22px)}
+ .assistant-hud{min-width:0;padding:6px 9px 6px 6px;gap:8px;border-radius:14px}
+ .assistant-orb{width:38px;height:38px}.orb-core{inset:11px}.orb-ring{inset:4px}
+ .assistant-state strong{font-size:8px}.assistant-state span{max-width:110px;font-size:10px}
+ .workspace{padding-bottom:calc(66px + env(safe-area-inset-bottom))}
+ .primary-nav{position:fixed;z-index:12;left:50%;bottom:calc(7px + env(safe-area-inset-bottom));order:0;width:min(calc(100% - 20px),540px);height:58px;margin:0;padding:5px;justify-content:flex-start;gap:3px;overflow-x:auto;overscroll-behavior-inline:contain;scroll-snap-type:x proximity;transform:translateX(-50%);border:1px solid rgba(111,203,214,.2);border-radius:17px;background:rgba(7,23,30,.95);box-shadow:0 12px 32px rgba(0,0,0,.4),inset 0 1px rgba(255,255,255,.05);backdrop-filter:blur(16px) saturate(125%);scrollbar-width:none}
+ .primary-nav::-webkit-scrollbar{display:none}
+ .nav-item{flex:0 0 auto;min-width:64px;min-height:46px;padding:0 9px;scroll-snap-align:center}
+ .conversation-panel{top:calc(64px + env(safe-area-inset-top));bottom:calc(66px + env(safe-area-inset-bottom))}
+ .scrim:not([hidden]){inset:calc(64px + env(safe-area-inset-top)) 0 calc(66px + env(safe-area-inset-bottom))}
+}
+@media(max-width:390px){.assistant-hud{padding-right:7px}.assistant-state span{max-width:88px}.nav-item{min-width:60px;padding-inline:7px}}
+@media(prefers-reduced-motion:reduce){.assistant-hud[data-state="busy"] .orb-halo{animation:none;opacity:.72}.nav-item,.icon-button,.new-chat-button,.send-button,.stop-button,.voice-button,.data-card{transition:none}}
+@media(prefers-reduced-transparency:reduce){.topbar,.primary-nav,.data-card,.assistant-hud,.composer{backdrop-filter:none;background-color:#0a1d25}}
+@media(prefers-contrast:more){.assistant-hud,.data-card,.primary-nav,.composer{border-color:currentColor}}
 '''.encode("utf-8")
 
 
@@ -237,11 +298,22 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     ui.stop.disabled = stopping;
     ui.voiceInput.hidden = active || !voiceSupported || !byId("speech-consent").checked;
     ui.voiceInput.disabled = active;
+    setAssistantState(active ? "busy" : "ready", active ? "Jarvis is responding" : "Ready for your message");
+  }
+
+  function setAssistantState(state, label) {
+    const hud = byId("assistant-hud");
+    if (!hud) return;
+    hud.dataset.state = ["checking", "ready", "listening", "busy", "speaking", "error"].includes(state) ? state : "checking";
+    byId("welcome-orb").dataset.state = hud.dataset.state;
+    byId("assistant-state-label").textContent = `JARVIS · ${hud.dataset.state.toUpperCase()}`;
+    byId("assistant-mode").textContent = label;
   }
 
   function showError(message) {
     ui.notice.textContent = message;
     ui.notice.hidden = false;
+    setAssistantState("error", "Needs attention");
   }
   function showVoiceStatus(message) {
     ui.voiceStatus.textContent = message;
@@ -260,12 +332,14 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       try { current.abort(); } catch (_) {}
     }
     if (message && current) showVoiceStatus(message);
+    if (current && !activeTurnId) setAssistantState("ready", "Ready for your message");
   }
   function stopSpeech(message = "") {
     const wasSpeaking = speechUtterance !== null;
     if (synthesisSupported) window.speechSynthesis.cancel();
     speechUtterance = null;
     ui.speechStop.hidden = true;
+    if (wasSpeaking && !activeTurnId) setAssistantState("ready", "Ready for your message");
     if (message && wasSpeaking) showVoiceStatus(message);
   }
   function speakCompletedReply(text) {
@@ -283,11 +357,13 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       utterance.lang = voice.lang;
     }
     speechUtterance = utterance;
+    setAssistantState("speaking", "Reading the completed reply aloud");
     ui.speechStop.hidden = false;
     utterance.onend = () => {
       if (speechUtterance === utterance) {
         speechUtterance = null;
         ui.speechStop.hidden = true;
+        setAssistantState("ready", "Ready for your message");
         showVoiceStatus("Reply audio finished.");
       }
     };
@@ -295,6 +371,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       if (speechUtterance === utterance) {
         speechUtterance = null;
         ui.speechStop.hidden = true;
+        setAssistantState("error", "Read-aloud unavailable");
         showVoiceStatus("This device could not play the reply. Text chat is still available.");
       }
     };
@@ -302,6 +379,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     catch (_) {
       speechUtterance = null;
       ui.speechStop.hidden = true;
+      setAssistantState("error", "Read-aloud unavailable");
       showVoiceStatus("This device could not play the reply. Text chat is still available.");
     }
   }
@@ -349,7 +427,11 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     stopSpeech();
     let current;
     try { current = new Recognition(); }
-    catch (_) { showVoiceStatus("Could not access browser speech input. Check microphone access or type your message."); return; }
+    catch (_) {
+      showVoiceStatus("Could not access browser speech input. Check microphone access or type your message.");
+      setAssistantState("error", "Voice input unavailable");
+      return;
+    }
     current.continuous = false;
     current.interimResults = false;
     current.lang = navigator.language || "en-US";
@@ -390,6 +472,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
         network: "The browser speech service could not be reached. You can continue by typing."
       };
       stopRecognition(messages[event.error] || "Speech input stopped. You can continue by typing.");
+      setAssistantState("error", "Voice input unavailable");
     };
     current.onend = () => {
       if (recognition !== current) return;
@@ -398,17 +481,26 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       ui.voiceInput.hidden = !byId("speech-consent").checked;
       ui.voiceInput.dataset.listening = "false";
       ui.voiceStop.hidden = true;
+      setAssistantState("ready", "Ready for your message");
       if (!transcriptReceived) showVoiceStatus("Listening ended without a transcript. You can type your message instead.");
     };
     recognition = current;
     ui.voiceInput.hidden = true;
     ui.voiceInput.dataset.listening = "true";
     ui.voiceStop.hidden = false;
+    setAssistantState("listening", "Listening once · review before sending");
     showVoiceStatus("Listening once. Your speech will not be sent until you review and submit the text.");
     try { current.start(); }
-    catch (_) { stopRecognition("Could not start speech input. Check microphone access or type your message."); }
+    catch (_) {
+      stopRecognition("Could not start speech input. Check microphone access or type your message.");
+      setAssistantState("error", "Voice input unavailable");
+    }
   }
-  function clearError() { ui.notice.textContent = ""; ui.notice.hidden = true; }
+  function clearError() {
+    ui.notice.textContent = "";
+    ui.notice.hidden = true;
+    setAssistantState(activeTurnId ? "busy" : "ready", activeTurnId ? "Jarvis is responding" : "Ready for your message");
+  }
   function setConnection(state, label) {
     ui.connection.dataset.state = state;
     ui.connection.lastElementChild.textContent = label;
@@ -598,6 +690,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     clearError();
     stopRecognition();
     stopSpeech();
+    setAssistantState("busy", "Preparing your response");
     if (!conversationId) {
       const data = await request(`${API}/conversations`, { method: "POST", body: "{}" });
       if (!data.conversation || typeof data.conversation.id !== "string" || !data.conversation.id) throw new Error("Jarvis could not start a conversation.");
@@ -899,6 +992,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     try {
       await refreshConversations();
       setConnection("ready", "Secure connection");
+      setAssistantState("ready", "Ready for your message");
       if (conversations.length) await loadConversation(conversations[0].id);
     } catch (error) {
       setConnection("error", "Access unavailable");

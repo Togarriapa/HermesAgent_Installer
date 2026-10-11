@@ -18,6 +18,8 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertNotIn("/client/bootstrap.html", source)
         self.assertNotIn("Owner Desktop", source)
         self.assertNotIn("owner administration", source)
+        self.assertIn('id="assistant-hud" data-state="checking"', source)
+        self.assertIn('id="assistant-mode" role="status" aria-live="polite"', source)
 
     def test_navigation_and_read_only_views_use_finite_account_scoped_endpoints(self):
         _content_type, page = reviewed_chat_asset("/chat")
@@ -49,11 +51,28 @@ class JarvisChatAssetTests(unittest.TestCase):
     def test_capability_inventory_filter_and_details_are_data_backed(self):
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
         client = script.decode("utf-8")
-        self.assertIn("const filtered = capabilityItems.filter((item)", client)
-        self.assertIn("item.id, item.name, item.summary, item.kind", client)
-        self.assertIn('item.kind === "profiles" && item.id === "hermes"', client)
-        self.assertIn("Catalog ID: ${item.id}", client)
+        renderer = client.split("function renderCapabilities() {", 1)[1].split("async function loadCapabilities()", 1)[0]
+        self.assertIn('byId("capability-search").value.trim().toLocaleLowerCase()', renderer)
+        self.assertIn('byId("capability-kind").value', renderer)
+        self.assertIn("text.includes(query)", renderer)
+        self.assertIn('const isProfile = item.kind === "profiles"', renderer)
+        self.assertIn('const canonical = isProfile && item.id === "hermes"', renderer)
+        self.assertIn('summary.textContent = canonical ? "Jarvis · primary assistant" : item.name', renderer)
+        self.assertIn("description.textContent =", renderer)
+        self.assertIn("identity.textContent = isProfile", renderer)
+        self.assertNotIn(".innerHTML", renderer)
         self.assertIn("source.catalogVersion", client)
+
+    def test_assistant_hud_reflects_real_chat_and_voice_lifecycle(self):
+        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
+        client = script.decode("utf-8")
+        for state in ("checking", "ready", "listening", "busy", "speaking", "error"):
+            with self.subTest(state=state):
+                self.assertIn(f'"{state}"', client)
+        self.assertIn('setAssistantState("busy", "Preparing your response")', client)
+        self.assertIn('setAssistantState("listening", "Listening once · review before sending")', client)
+        self.assertIn('setAssistantState("speaking", "Reading the completed reply aloud")', client)
+        self.assertIn('setAssistantState("error", "Needs attention")', client)
 
     def test_only_exact_reviewed_asset_routes_are_available(self):
         expected = {
