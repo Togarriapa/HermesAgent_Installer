@@ -42,7 +42,7 @@ class NativeChildAdapterTests(unittest.TestCase):
 
         retained = apply_native_child_tool_closure(child, NativeChildMode.EXPERT_READ_RESEARCH)
 
-        expected = frozenset({"web_search", "web_extract", "todo_list", "skills_list", "skill_view"})
+        expected = frozenset({"web_search", "web_extract", "skills_list", "skill_view"})
         self.assertEqual(retained, expected)
         self.assertEqual(child.valid_tool_names, set(expected))
         self.assertEqual({item["function"]["name"] for item in child.tools}, set(expected))

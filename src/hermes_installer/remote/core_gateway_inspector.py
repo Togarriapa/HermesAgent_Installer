@@ -99,6 +99,7 @@ CORE_PATH = "/home/admin/.hermes/bin:/home/admin/.local/bin:/usr/local/bin:/usr/
 CORE_CREDENTIALS_DIRECTORY = "/run/credentials/hermes-jarvis-core.service"
 MAX_REQUEST = 1024
 MAX_RESPONSE = 4096
+MAX_FINAL_EFFECT_RESPONSE = 64 * 1024
 MAX_SKILL_LEARNING_REQUEST_BYTES = 20 * 1024
 MAX_SKILL_LEARNING_RESPONSE_BYTES = 700 * 1024
 MAX_OWNER_TURN_REQUEST_BYTES = 24 * 1024
@@ -253,7 +254,7 @@ def _mission_binding_wire(value: Any) -> dict[str, Any] | None:
         if (type(wire) is not dict
                 or set(wire) != fields
                 or type(wire.get("schema")) is not int or wire["schema"] != MISSION_BINDING_SCHEMA
-                or wire.get("source_profile_id") != "orchestrator"
+                or wire.get("source_profile_id") != "hermes"
                 or type(wire.get("revision")) is not int or wire["revision"] < 1
                 or not isinstance(wire.get("mission_id"), str)
                 or re.fullmatch(r"[A-Za-z0-9_-]{24,64}", wire["mission_id"]) is None
@@ -698,14 +699,21 @@ def observe_owner_turn(config: CoreGatewayConfig, *, request: dict[str, Any],
     except Exception:
         os.close(pidfd)
         raise CoreInspectionDenied("owner turn registration failed") from None
+    policy = None
     try:
         tool_configuration = observe_current_native_tool_configuration(
             config, custody=custody, owner_turn=observation)
-        policy = registry.enroll_current_orchestrator_policy(observation, tool_configuration)
+        candidate_policy = registry.enroll_current_orchestrator_policy(observation, tool_configuration)
         from .core_native_observer import RootSelectedOrchestratorDelegationPolicy
-        if (type(policy) is not RootSelectedOrchestratorDelegationPolicy
-                or registry.is_current_orchestrator_policy(policy, observation) is not True):
-            raise CoreInspectionDenied("native orchestrator policy enrollment is unavailable")
+        if (type(candidate_policy) is RootSelectedOrchestratorDelegationPolicy
+                and registry.is_current_orchestrator_policy(candidate_policy, observation) is True):
+            policy = candidate_policy
+    except Exception:
+        # Policy/source enrollment is an optional native capability. The root
+        # owner-turn identity remains usable for ordinary chat; all native
+        # action operations independently fail closed without a policy.
+        policy = None
+    try:
         post = observe_current_ingress(config, nonce=retained.nonce,
             caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
             peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
@@ -723,8 +731,7 @@ def observe_owner_turn(config: CoreGatewayConfig, *, request: dict[str, Any],
             or post["core_generation"] != retained.core_generation
             or post["config_sha256"] != retained.config_sha256
             or time.monotonic() >= deadline
-            or custody_current is not True
-            or policy is None):
+            or custody_current is not True):
         # A typed registry owns the descriptor after successful registration. Revoke the
         # record synchronously if its claimed handle is not the root-generated one.
         try:
@@ -733,6 +740,132 @@ def observe_owner_turn(config: CoreGatewayConfig, *, request: dict[str, Any],
             pass
         raise CoreInspectionDenied("owner turn registration result is invalid")
     return {"schema": 1, "nonce": request["nonce"], "owner_turn_handle": handle}
+
+
+def observe_final_effect_request(config: CoreGatewayConfig, *, request: dict[str, Any],
+                                 caller_pid: int, caller_uid: int, caller_gid: int,
+                                 peer_pid: int, peer_uid: int, peer_gid: int,
+                                 registry: Any) -> dict[str, Any]:
+    """Root-authenticate a fresh BFF request before listing or deciding one review."""
+    op = request.get("op") if isinstance(request, dict) else None
+    base = {"schema", "op", "nonce", "peer_pid", "peer_uid", "peer_gid", "access_jwt",
+            "core_generation", "ingress_nonce", "ingress_proof_sha256", "owner_turn_handle"}
+    expected = (base if op == "list-final-effects" else
+                base | {"pending_id", "review_sha256", "decision", "idempotency_key"}
+                if op == "decide-final-effect" else set())
+    if (not expected or type(request) is not dict or set(request) != expected
+            or type(request.get("schema")) is not int or request["schema"] != 1
+            or type(request.get("nonce")) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", request["nonce"]) is None
+            or (request.get("peer_pid"), request.get("peer_uid"), request.get("peer_gid"))
+                != (peer_pid, peer_uid, peer_gid)
+            or not all(type(value) is int for value in (peer_pid, peer_uid, peer_gid))
+            or not isinstance(request.get("access_jwt"), str)
+            or not 1 <= len(request["access_jwt"]) <= 16_384
+            or not request["access_jwt"].isascii()
+            or not _is_hash(request.get("core_generation"))
+            or not isinstance(request.get("ingress_nonce"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", request["ingress_nonce"]) is None
+            or not _is_hash(request.get("ingress_proof_sha256"))
+            or not isinstance(request.get("owner_turn_handle"), str)
+            or re.fullmatch(r"[A-Za-z0-9_-]{32,128}", request["owner_turn_handle"]) is None):
+        raise CoreInspectionDenied("final-effect review request is invalid")
+    if (registry is None or registry is not _CORE_NATIVE_REGISTRY
+            or _CORE_NATIVE_REGISTRY_TYPE is None or type(registry) is not _CORE_NATIVE_REGISTRY_TYPE):
+        raise CoreInspectionDenied("root final-effect observer is unavailable")
+    deadline = time.monotonic() + MAX_PROOF_SECONDS
+    caller_start = _proc_start_ticks(caller_pid)
+    retained = _consume_ingress_issue(caller_pid=caller_pid, caller_start_ticks=caller_start,
+        nonce=request["ingress_nonce"], proof_sha256=request["ingress_proof_sha256"],
+        peer=(peer_pid, peer_uid, peer_gid), core_generation=request["core_generation"], config=config)
+    deadline = min(deadline, retained.expires_monotonic)
+    current = observe_current_ingress(config, nonce=retained.nonce,
+        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+        peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+        _issued=retained.issued_monotonic, _deadline=deadline, _retain_issuance=False)
+    gateway_pidfd, gateway_start, _gateway_invocation = _check_unit_process(
+        config, unit=CORE_GATEWAY_UNIT, pid=caller_pid, deadline=deadline)
+    try:
+        if (gateway_start != retained.caller_start_ticks
+                or current["proof_sha256"] != retained.proof_sha256
+                or current["core_generation"] != retained.core_generation
+                or time.monotonic() >= deadline):
+            raise CoreInspectionDenied("final-effect review ingress changed")
+    finally:
+        os.close(gateway_pidfd)
+    from .gateway import validate_access_jwt
+    principal = validate_access_jwt(request["access_jwt"],
+        policy=config.policy(_learning_jwks(config, deadline=deadline)), deadline_monotonic=deadline)
+    subject_sha256 = hashlib.sha256(principal.subject.encode("utf-8", errors="strict")).hexdigest()
+    if (principal.email.casefold() not in config.allowed_emails
+            or not secrets.compare_digest(
+                hashlib.sha256(request["access_jwt"].encode("ascii")).hexdigest(),
+                principal.token_fingerprint)
+            or time.monotonic() >= min(deadline, principal.expires_at - time.time() + time.monotonic())):
+        raise CoreInspectionDenied("final-effect review owner is unavailable")
+    gateway_peer = (caller_pid, caller_uid, caller_gid)
+    if op == "list-final-effects":
+        reviews = registry.list_final_effects_for_owner(
+            request["owner_turn_handle"], subject_sha256, gateway_peer)
+        body = [{"pending_id": item.pending_id, "review_sha256": item.review_sha256,
+                 "tool_name": item.tool_name, "preview_json": item.preview_json,
+                 "status": item.status, "expires_monotonic": item.expires_monotonic}
+                for item in reviews]
+        result = {"schema": 1, "nonce": request["nonce"], "ok": True, "reviews": body}
+    else:
+        status = registry.decide_final_effect_for_owner(
+            request["owner_turn_handle"], subject_sha256, gateway_peer,
+            pending_id=request["pending_id"], review_sha256=request["review_sha256"],
+            decision=request["decision"], idempotency_key=request["idempotency_key"])
+        if status not in {"approved", "denied"}:
+            raise CoreInspectionDenied("final-effect review decision is unavailable")
+        result = {"schema": 1, "nonce": request["nonce"], "ok": True, "status": status}
+    if time.monotonic() >= deadline:
+        raise CoreInspectionDenied("final-effect review expired")
+    return result
+
+
+def observe_native_mission_preflight(config: CoreGatewayConfig, *, request: dict[str, Any],
+                                     caller_pid: int, caller_uid: int, caller_gid: int,
+                                     registry: Any) -> dict[str, Any]:
+    """Re-read one exact spent mission row from the fixed gateway process."""
+    fields = {"schema", "op", "nonce", "gateway_turn_id", "owner_subject_sha256", "mission_binding"}
+    if (type(request) is not dict or set(request) != fields
+            or type(request.get("schema")) is not int or request["schema"] != 1
+            or request.get("op") != "preflight-native-mission"
+            or not isinstance(request.get("nonce"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", request["nonce"]) is None
+            or not isinstance(request.get("gateway_turn_id"), str)
+            or re.fullmatch(r"[A-Za-z0-9_-]{24,64}", request["gateway_turn_id"]) is None
+            or not _is_hash(request.get("owner_subject_sha256"))):
+        raise CoreInspectionDenied("mission preflight request is invalid")
+    if (registry is None or registry is not _CORE_NATIVE_REGISTRY
+            or _CORE_NATIVE_REGISTRY_TYPE is None or type(registry) is not _CORE_NATIVE_REGISTRY_TYPE):
+        raise CoreInspectionDenied("root mission observer is unavailable")
+    deadline = time.monotonic() + MAX_PROOF_SECONDS
+    gateway_pidfd, gateway_start, _invocation = _check_unit_process(
+        config, unit=CORE_GATEWAY_UNIT, pid=caller_pid, deadline=deadline)
+    custody = None
+    try:
+        if caller_uid != config.gateway_uid or time.monotonic() >= deadline:
+            raise CoreInspectionDenied("mission preflight caller is not the current gateway")
+        custody = capture_current_core_native_custody(config)
+        if (custody.core_generation != _CORE_NATIVE_CUSTODY.core_generation
+                or custody.core_source_generation != _CORE_NATIVE_CUSTODY.core_source_generation
+                or custody.core_pid != _CORE_NATIVE_CUSTODY.core_pid
+                or custody.core_start_ticks != _CORE_NATIVE_CUSTODY.core_start_ticks):
+            raise CoreInspectionDenied("mission preflight core custody changed")
+        result = registry.preflight_native_mission(
+            _mission_binding_from_wire(request["mission_binding"]),
+            owner_subject_sha256=request["owner_subject_sha256"],
+            gateway_turn_id=request["gateway_turn_id"])
+        if result is not True or time.monotonic() >= deadline:
+            raise CoreInspectionDenied("spent mission preflight is unavailable")
+    finally:
+        os.close(gateway_pidfd)
+        if custody is not None:
+            os.close(custody._core_pidfd)
+    return {"schema": 1, "nonce": request["nonce"], "ok": True}
 
 
 def _overview_digest(values: dict[str, Any]) -> str:
@@ -1358,15 +1491,20 @@ def _start_optional_core_native_observer(config: CoreGatewayConfig,
     try:
         if stop.is_set():
             return False
-        from ..components.resources_active_profile_source import RootSelectedActiveProfileSource
+        from ..components.resources_active_profile_source import RootVerifiedJarvisMasterSource
         from .core_native_observer import RootCoreNativeObservationRegistry, serve_core_native_observer
         custody = capture_current_core_native_custody(config)
         if stop.is_set():
             raise CoreInspectionDenied("optional native observer startup was cancelled")
-        source = RootSelectedActiveProfileSource.resolve_current(custody)
-        if (type(source) is not RootSelectedActiveProfileSource
-                or source.is_current_sealed(custody=custody, now=time.monotonic()) is not True):
-            raise CoreInspectionDenied("active Resources source is unavailable")
+        try:
+            source = RootVerifiedJarvisMasterSource.current_master_source(custody, config=config)
+        except Exception:
+            source = None
+        if (source is not None and (type(source) is not RootVerifiedJarvisMasterSource
+                or source.profile_id != "hermes" or source.native_profile_key != "default"
+                or source.display_name != "Jarvis"
+                or source.is_current_sealed(custody=custody, now=time.monotonic()) is not True)):
+            source = None
         registry = RootCoreNativeObservationRegistry.from_current_core_custody(
             custody, selected_profile_source=source, config=config)
         if type(registry) is not RootCoreNativeObservationRegistry:
@@ -1389,8 +1527,9 @@ def _start_optional_core_native_observer(config: CoreGatewayConfig,
                         and stat.S_IMODE(parent.st_mode) == 0o750
                         and stat.S_ISSOCK(listener.st_mode) and listener.st_uid == 0
                         and listener.st_gid == 1000 and stat.S_IMODE(listener.st_mode) == 0o660):
-                    if source.is_current_sealed(custody=custody, now=time.monotonic()) is not True:
-                        raise CoreInspectionDenied("active Resources source changed at observer startup")
+                    if (source is not None and source.is_current_sealed(
+                            custody=custody, now=time.monotonic()) is not True):
+                        source = None
                     if stop.is_set():
                         raise CoreInspectionDenied("optional native observer startup was cancelled")
                     _CORE_NATIVE_CUSTODY = custody
@@ -2514,6 +2653,17 @@ def _serve_connection(conn: socket.socket, config: CoreGatewayConfig) -> None:
                 peer_uid=request.get("peer_uid"), peer_gid=request.get("peer_gid"),
                 registry=_CORE_NATIVE_REGISTRY)
             maximum = MAX_RESPONSE
+        elif request.get("op") in {"list-final-effects", "decide-final-effect"}:
+            result = observe_final_effect_request(config, request=request, caller_pid=caller_pid,
+                caller_uid=caller_uid, caller_gid=caller_gid, peer_pid=request.get("peer_pid"),
+                peer_uid=request.get("peer_uid"), peer_gid=request.get("peer_gid"),
+                registry=_CORE_NATIVE_REGISTRY)
+            maximum = MAX_FINAL_EFFECT_RESPONSE
+        elif request.get("op") == "preflight-native-mission":
+            result = observe_native_mission_preflight(config, request=request,
+                caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+                registry=_CORE_NATIVE_REGISTRY)
+            maximum = MAX_RESPONSE
         else:
             if set(request) != {"op", "nonce", "peer_pid", "peer_uid", "peer_gid"}:
                 return
@@ -2886,6 +3036,156 @@ def verify_current_owner_turn(config: CoreGatewayConfig, *, access_jwt: str,
         _log_ingress_denial("root_owner_turn_currentness", error)
         raise CoreGatewayDenied("root owner-turn proof is stale") from None
     return result["owner_turn_handle"]
+
+
+class CoreGatewayInspector:
+    """Fixed BFF-side facade for root-verified mission and final-effect IPC."""
+
+    def __init__(self, config: CoreGatewayConfig):
+        if type(config) is not CoreGatewayConfig:
+            raise CoreGatewayDenied("fixed current core gateway configuration is required")
+        self._config = config
+
+    def preflight_native_mission(self, binding: Any, *, owner_subject_sha256: str,
+                                 gateway_turn_id: str) -> bool:
+        """Ask root to re-read a just-spent owner mission before native submit."""
+        from .jarvis_mission_executor import MissionBinding
+        from .core_gateway import _read_config_current
+        if (type(binding) is not MissionBinding or binding.schema != MISSION_BINDING_SCHEMA
+                or binding.source_profile_id != "hermes"
+                or not _is_hash(owner_subject_sha256)
+                or not isinstance(gateway_turn_id, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{24,64}", gateway_turn_id) is None):
+            raise CoreGatewayDenied("typed owner mission and generated turn are required")
+        _read_config_current(self._config)
+        nonce = os.urandom(32).hex()
+        body = {"schema": 1, "op": "preflight-native-mission", "nonce": nonce,
+                "gateway_turn_id": gateway_turn_id,
+                "owner_subject_sha256": owner_subject_sha256,
+                "mission_binding": _mission_binding_wire(binding)}
+        raw = json.dumps(body, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("ascii")
+        deadline = time.monotonic() + MAX_PROOF_SECONDS
+        info = os.lstat(CORE_INSPECTOR_SOCKET)
+        if (len(raw) > MAX_OWNER_TURN_REQUEST_BYTES or not stat.S_ISSOCK(info.st_mode)
+                or info.st_uid != 0 or info.st_gid != self._config.gateway_gid
+                or stat.S_IMODE(info.st_mode) != 0o660):
+            raise CoreGatewayDenied("root mission preflight is unavailable")
+        conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            conn.settimeout(MAX_PROOF_SECONDS)
+            conn.connect(str(CORE_INSPECTOR_SOCKET))
+            if not hasattr(socket, "SO_PEERCRED"):
+                raise ValueError
+            pid, uid, _gid = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            if uid != 0 or pid <= 1:
+                raise ValueError
+            conn.sendall(struct.pack("!I", len(raw)) + raw)
+            result = _read_frame(conn, deadline, MAX_RESPONSE)
+        except Exception:
+            raise CoreGatewayDenied("root mission preflight is unavailable") from None
+        finally:
+            conn.close()
+        _read_config_current(self._config)
+        if (set(result) != {"schema", "nonce", "ok"} or result.get("schema") != 1
+                or result.get("nonce") != nonce or result.get("ok") is not True
+                or time.monotonic() >= deadline):
+            raise CoreGatewayDenied("spent mission preflight was denied")
+        return True
+
+    def _owner_effect_rpc(self, operation: str, *, access_jwt: str,
+                          accepted_ingress: Any, owner_turn_handle: str,
+                          fields: dict[str, Any] | None = None) -> dict[str, Any]:
+        from .core_gateway import CoreAcceptedIngressObservation, _read_config_current
+        if (operation not in {"list-final-effects", "decide-final-effect"}
+                or type(accepted_ingress) is not CoreAcceptedIngressObservation
+                or not isinstance(access_jwt, str) or not 1 <= len(access_jwt) <= 16_384
+                or not access_jwt.isascii()
+                or hashlib.sha256(access_jwt.encode("ascii")).hexdigest()
+                    != accepted_ingress.principal.token_fingerprint
+                or not isinstance(owner_turn_handle, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{32,128}", owner_turn_handle) is None):
+            raise CoreGatewayDenied("current authenticated owner request is required")
+        _read_config_current(self._config)
+        if accepted_ingress.verify_current(self._config) is not True:
+            raise CoreGatewayDenied("current authenticated owner request is required")
+        root_proof = accepted_ingress.root_observation
+        nonce = os.urandom(32).hex()
+        deadline = min(time.monotonic() + MAX_PROOF_SECONDS, accepted_ingress.expires_monotonic)
+        info = os.lstat(CORE_INSPECTOR_SOCKET)
+        if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != 0
+                or info.st_gid != self._config.gateway_gid or stat.S_IMODE(info.st_mode) != 0o660):
+            raise CoreGatewayDenied("root final-effect inspector is unavailable")
+        body = {"schema": 1, "op": operation, "nonce": nonce,
+            "peer_pid": accepted_ingress.peer_pid, "peer_uid": accepted_ingress.peer_uid,
+            "peer_gid": accepted_ingress.peer_gid, "access_jwt": access_jwt,
+            "core_generation": accepted_ingress.core_generation,
+            "ingress_nonce": root_proof.nonce,
+            "ingress_proof_sha256": root_proof.proof_sha256,
+            "owner_turn_handle": owner_turn_handle}
+        if fields:
+            if set(fields) & set(body):
+                raise CoreGatewayDenied("final-effect request contains reserved fields")
+            body.update(fields)
+        raw = json.dumps(body, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("ascii")
+        if len(raw) > MAX_OWNER_TURN_REQUEST_BYTES or time.monotonic() >= deadline:
+            raise CoreGatewayDenied("final-effect request exceeded its bound")
+        conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            conn.settimeout(max(0.05, deadline - time.monotonic()))
+            conn.connect(str(CORE_INSPECTOR_SOCKET))
+            if not hasattr(socket, "SO_PEERCRED"):
+                raise ValueError
+            inspector_pid, inspector_uid, _inspector_gid = struct.unpack(
+                "3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            if inspector_uid != 0 or inspector_pid <= 1:
+                raise ValueError
+            conn.sendall(struct.pack("!I", len(raw)) + raw)
+            result = _read_frame(conn, deadline, MAX_FINAL_EFFECT_RESPONSE)
+        except Exception:
+            raise CoreGatewayDenied("root final-effect inspector is unavailable") from None
+        finally:
+            conn.close()
+        if (type(result.get("schema")) is not int or result["schema"] != 1
+                or result.get("nonce") != nonce or result.get("ok") is not True
+                or time.monotonic() >= deadline):
+            raise CoreGatewayDenied("root final-effect response is unavailable")
+        _read_config_current(self._config)
+        if accepted_ingress.verify_current(self._config) is not True:
+            raise CoreGatewayDenied("owner ingress changed during final-effect request")
+        return result
+
+    def list_final_effects(self, *, access_jwt: str, accepted_ingress: Any,
+                           owner_turn_handle: str) -> tuple[Any, ...]:
+        from .jarvis_final_effects import FinalEffectReview
+        row = self._owner_effect_rpc("list-final-effects", access_jwt=access_jwt,
+            accepted_ingress=accepted_ingress, owner_turn_handle=owner_turn_handle)
+        reviews = row.get("reviews")
+        if not isinstance(reviews, list) or len(reviews) > 32:
+            raise CoreGatewayDenied("root final-effect review list is malformed")
+        result = []
+        fields = {"pending_id", "review_sha256", "tool_name", "preview_json", "status",
+                  "expires_monotonic"}
+        try:
+            for item in reviews:
+                if not isinstance(item, dict) or set(item) != fields:
+                    raise ValueError
+                result.append(FinalEffectReview(**item))
+        except Exception:
+            raise CoreGatewayDenied("root final-effect review list is malformed") from None
+        return tuple(result)
+
+    def decide_final_effect(self, *, access_jwt: str, accepted_ingress: Any,
+                            owner_turn_handle: str, pending_id: str,
+                            review_sha256: str, decision: str,
+                            idempotency_key: str) -> str:
+        row = self._owner_effect_rpc("decide-final-effect", access_jwt=access_jwt,
+            accepted_ingress=accepted_ingress, owner_turn_handle=owner_turn_handle,
+            fields={"pending_id": pending_id, "review_sha256": review_sha256,
+                    "decision": decision, "idempotency_key": idempotency_key})
+        status = row.get("status")
+        if status not in {"approved", "denied"}:
+            raise CoreGatewayDenied("root final-effect decision is malformed")
+        return status
 
 
 def main() -> None:

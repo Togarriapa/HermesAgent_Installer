@@ -21,12 +21,12 @@ class NativeChildMode(str, Enum):
 _CLOSURES = {
     NativeChildMode.PLANNER: frozenset(),
     NativeChildMode.EXPERT_READ_RESEARCH: frozenset({
-        "web_search", "web_extract", "todo_list", "skills_list", "skill_view",
+        "web_search", "web_extract", "skills_list", "skill_view",
     }),
 }
 _TOOLSETS = {
     NativeChildMode.PLANNER: (),
-    NativeChildMode.EXPERT_READ_RESEARCH: ("web", "todo", "skills"),
+    NativeChildMode.EXPERT_READ_RESEARCH: ("web", "skills"),
 }
 
 

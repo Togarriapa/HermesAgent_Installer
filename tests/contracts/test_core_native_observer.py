@@ -12,6 +12,9 @@ import pytest
 from hermes_installer.remote.core_native_observer import (
     CoreNativeObservationClient,
     CoreNativeObservationUnavailable,
+    ObservedNativeToolCall,
+    RootVerifiedMasterReadCall,
+    _MASTER_READ_CALL_SEAL,
     _codex_account_fingerprint,
     _mission_binding_from_wire,
     install_native_codex_process_observer,
@@ -106,9 +109,11 @@ def test_owner_turn_registration_is_not_available_from_core_worker_socket(tmp_pa
 
 def test_mission_binding_roundtrips_only_the_root_sealed_typed_wire_shape():
     binding = MissionBinding(
-        schema=1, mission_id="m" * 24, revision=3,
+        schema=2, mission_id="m" * 24, revision=3,
         plan_sha256="a" * 64, task_sha256="b" * 64,
-        source_profile_id="orchestrator",
+        source_profile_id="hermes", execution_mode="oneshot",
+        autonomy_mode="approval_required", selected_source_ids=("orchestrator",),
+        scope_sha256="c" * 64, authorization_sha256=None,
     )
     assert _mission_binding_from_wire(None) is None
     assert _mission_binding_from_wire(binding.to_wire()) == binding
@@ -116,3 +121,24 @@ def test_mission_binding_roundtrips_only_the_root_sealed_typed_wire_shape():
         _mission_binding_from_wire({**binding.to_wire(), "owner_subject_sha256": "c" * 64})
     with pytest.raises(CoreNativeObservationUnavailable):
         _mission_binding_from_wire({**binding.to_wire(), "mission_id": "mission-17"})
+
+
+def test_root_caller_receipt_binds_exact_observed_tool_effect_and_expiry():
+    now = __import__("time").monotonic()
+    call = ObservedNativeToolCall(
+        handle="h" * 32, attempt_handle="a" * 32, owner_turn_handle="o" * 32,
+        tool_call_id="call-1", tool_name="web_search", arguments_sha256="b" * 64,
+        expires_monotonic=now + 10,
+    )
+    receipt = RootVerifiedMasterReadCall(
+        observed_call_handle=call.handle, owner_turn_handle=call.owner_turn_handle,
+        tool_call_id=call.tool_call_id, tool_name=call.tool_name,
+        arguments_sha256=call.arguments_sha256, source_generation_sha256="c" * 64,
+        mode="expert_read", expires_monotonic=now + 5, _seal=_MASTER_READ_CALL_SEAL,
+    )
+
+    assert receipt.matches_call(call, tool_name="web_search", arguments_sha256="b" * 64, now=now)
+    assert not receipt.matches_call(call, tool_name="terminal", arguments_sha256="b" * 64, now=now)
+    assert not receipt.matches_call(call, tool_name="web_search", arguments_sha256="d" * 64, now=now)
+    assert not receipt.matches_call(call, tool_name="web_search", arguments_sha256="b" * 64,
+                                    now=receipt.expires_monotonic)

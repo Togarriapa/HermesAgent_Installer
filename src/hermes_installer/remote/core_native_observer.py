@@ -20,6 +20,7 @@ import weakref
 import base64
 import time
 import os
+import sqlite3
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,6 +47,7 @@ _RESOURCES_DELEGATE_SCHEMA_SHA256 = "9325cea421e122395475b0ba0d0517cb4aa4c16c3d4
 _MISSION_AUTHORIZATION_SEAL = object()
 _NATIVE_CHILD_AUTHORIZATION_SEAL = object()
 _MASTER_PLANNING_COMPLETION_SEAL = object()
+_SELECTED_SOURCE_DELIVERY_SEAL = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,6 +226,50 @@ class ObservedNativeToolCall:
             raise CoreNativeObservationUnavailable("root observed-tool handle is malformed")
 
 
+_MASTER_READ_CALL_SEAL = object()
+_MASTER_READ_TOOL_NAMES = frozenset({"web_search", "web_extract", "skills_list", "skill_view"})
+
+
+@dataclass(frozen=True, slots=True)
+class RootVerifiedMasterReadCall:
+    """Root classification of one exact current master/selected-child call."""
+
+    observed_call_handle: str
+    owner_turn_handle: str
+    tool_call_id: str
+    tool_name: str
+    arguments_sha256: str
+    source_generation_sha256: str
+    mode: str
+    expires_monotonic: float
+    _seal: object
+
+    def __post_init__(self) -> None:
+        if (not _OPAQUE.fullmatch(self.observed_call_handle or "")
+                or not _OPAQUE.fullmatch(self.owner_turn_handle or "")
+                or not _ID.fullmatch(self.tool_call_id or "")
+                or not _ID.fullmatch(self.tool_name or "")
+                or not _HASH.fullmatch(self.arguments_sha256 or "")
+                or not _HASH.fullmatch(self.source_generation_sha256 or "")
+                or self.mode not in {"master_read", "master_effect", "expert_read"}
+                or type(self.expires_monotonic) not in (int, float)
+                or not time.monotonic() < self.expires_monotonic <= time.monotonic() + 30.0
+                or self._seal is not _MASTER_READ_CALL_SEAL):
+            raise CoreNativeObservationUnavailable("root native caller classification is malformed")
+
+    def matches_call(self, observed_call: Any, *, tool_name: str,
+                     arguments_sha256: str, now: float | None = None) -> bool:
+        now = time.monotonic() if now is None else now
+        return (type(observed_call) is ObservedNativeToolCall
+                and self._seal is _MASTER_READ_CALL_SEAL
+                and now < self.expires_monotonic
+                and self.observed_call_handle == observed_call.handle
+                and self.owner_turn_handle == observed_call.owner_turn_handle
+                and self.tool_call_id == observed_call.tool_call_id
+                and self.tool_name == tool_name == observed_call.tool_name
+                and self.arguments_sha256 == arguments_sha256 == observed_call.arguments_sha256)
+
+
 @dataclass(frozen=True, slots=True)
 class NativeSourceMember:
     """One exact source member in a root-selected Resources profile."""
@@ -280,7 +326,7 @@ class RootSelectedOrchestratorDelegationPolicy:
                 or not _HASH.fullmatch(self.core_generation or "")
                 or not _HASH.fullmatch(self.core_source_generation or "")
                 or not _HASH.fullmatch(self.owner_subject_sha256 or "")
-                or self.profile_id != "orchestrator"
+                or self.profile_id != "hermes"
                 or self.mode != "native-parent-inheritance"
                 or not _HASH.fullmatch(self.parent_tool_configuration_sha256 or "")
                 or self.resources_delegate_schema_sha256 != _RESOURCES_DELEGATE_SCHEMA_SHA256
@@ -481,7 +527,7 @@ class RootVerifiedMissionDispatchAuthorization:
             and self.owner_subject_sha256 == claim.owner_subject_sha256
             and self.core_generation == claim.core_generation
             and self.core_source_generation == claim.core_source_generation
-            and self.source_profile_id == claim.mission_binding.source_profile_id == "orchestrator"
+            and self.source_profile_id == claim.mission_binding.source_profile_id == "hermes"
             and self.canonical_arguments_sha256 == canonical_arguments_sha256
             and self.canonical_arguments_sha256 == claim.arguments_sha256
             and _HASH.fullmatch(self.mission_binding_sha256 or "") is not None
@@ -489,6 +535,39 @@ class RootVerifiedMissionDispatchAuthorization:
             and math.isfinite(float(self.expires_monotonic))
             and now < self.expires_monotonic <= min(claim.expires_monotonic, now + 30.0)
         )
+
+
+@dataclass(frozen=True, slots=True)
+class RootNativeSelectedSourceDelivery:
+    """Exact selected source bytes delivered from root for a single child build."""
+
+    source_handle: str
+    profile_id: str
+    source_revision: str
+    generation_sha256: str
+    source_manifest_sha256: str
+    profile_manifest_sha256: str
+    effective_prompt: bytes
+    effective_prompt_sha256: str
+    _seal: object
+
+    @property
+    def source_member_manifest_sha256(self) -> str:
+        """Compatibility name used by native child authorization matching."""
+        return self.source_manifest_sha256
+
+    def __post_init__(self) -> None:
+        if (not _OPAQUE.fullmatch(self.source_handle or "")
+                or not _ID.fullmatch(self.profile_id or "")
+                or not isinstance(self.source_revision, str) or not self.source_revision
+                or not all(_HASH.fullmatch(item or "") for item in (
+                    self.generation_sha256, self.source_manifest_sha256,
+                    self.profile_manifest_sha256, self.effective_prompt_sha256))
+                or not isinstance(self.effective_prompt, bytes) or not self.effective_prompt
+                or len(self.effective_prompt) > 128 * 1024
+                or hashlib.sha256(self.effective_prompt).hexdigest() != self.effective_prompt_sha256
+                or self._seal is not _SELECTED_SOURCE_DELIVERY_SEAL):
+            raise CoreNativeObservationUnavailable("root selected source delivery is malformed")
 
 
 @dataclass(frozen=True, slots=True)
@@ -539,7 +618,7 @@ class RootVerifiedNativeChildAuthorization:
         except (TypeError, AttributeError):
             return False
         fixed_names = frozenset(
-            {"web_search", "web_extract", "todo_list", "skills_list", "skill_view"}
+            {"web_search", "web_extract", "skills_list", "skill_view"}
             if getattr(mode, "value", None) == "expert-read-research" else set()
         )
         expected_names = tuple(self.allowed_tool_names)
@@ -629,6 +708,8 @@ class CoreNativeObservationClient:
             "authorize-mission-dispatch", "admit-native-child",
             "admit-master-planner-child",
             "complete-native-child", "verify-planning-completion",
+            "request-final-effect", "poll-final-effect", "authorize-master-read-call",
+            "read-selected-expert-source", "admit-selected-expert-child",
         }:
             raise CoreNativeObservationUnavailable("observer operation is not supported")
         nonce = secrets.token_urlsafe(32)
@@ -1071,6 +1152,113 @@ class CoreNativeObservationClient:
             _seal=_NATIVE_CHILD_AUTHORIZATION_SEAL,
         )
 
+    def read_selected_expert_source(self, *, native_claim: RootSelectedInternalProfileDispatchClaim,
+                                    source_id: str) -> RootNativeSelectedSourceDelivery:
+        if (type(native_claim) is not RootSelectedInternalProfileDispatchClaim
+                or native_claim.profile_id != "hermes"
+                or not _ID.fullmatch(source_id or "")):
+            raise CoreNativeObservationUnavailable("root Resources claim and selected source ID are required")
+        row = self._rpc("read-selected-expert-source", {
+            "claim_handle": native_claim.claim_handle,
+            "owner_turn_handle": native_claim.owner_turn_handle,
+            "source_id": source_id,
+        })
+        required = {"schema", "nonce", "ok", "source_handle", "profile_id", "source_revision",
+                    "generation_sha256", "source_manifest_sha256", "profile_manifest_sha256",
+                    "prompt_b64", "prompt_sha256", "expires_monotonic"}
+        if (set(row) != required or type(row.get("schema")) is not int or row["schema"] != 1
+                or row["profile_id"] != source_id or not _OPAQUE.fullmatch(row["source_handle"] or "")):
+            raise CoreNativeObservationUnavailable("root selected source response is malformed")
+        try:
+            prompt = base64.b64decode(row["prompt_b64"], validate=True)
+            delivery = RootNativeSelectedSourceDelivery(
+                source_handle=row["source_handle"], profile_id=row["profile_id"],
+                source_revision=row["source_revision"], generation_sha256=row["generation_sha256"],
+                source_manifest_sha256=row["source_manifest_sha256"],
+                profile_manifest_sha256=row["profile_manifest_sha256"],
+                effective_prompt=prompt, effective_prompt_sha256=row["prompt_sha256"],
+                _seal=_SELECTED_SOURCE_DELIVERY_SEAL,
+            )
+            if not time.monotonic() < float(row["expires_monotonic"]) <= min(
+                    native_claim.expires_monotonic, time.monotonic() + 30.0):
+                raise ValueError
+            return delivery
+        except Exception:
+            raise CoreNativeObservationUnavailable("root selected source is stale or malformed") from None
+
+    def admit_selected_expert_child(self, *, native_claim: RootSelectedInternalProfileDispatchClaim,
+                                    child: Any, source: RootNativeSelectedSourceDelivery,
+                                    goal: str) -> RootVerifiedNativeChildAuthorization:
+        from hermes_installer.remote.native_child_adapter import NativeChildMode
+        if (type(native_claim) is not RootSelectedInternalProfileDispatchClaim
+                or type(source) is not RootNativeSelectedSourceDelivery
+                or source._seal is not _SELECTED_SOURCE_DELIVERY_SEAL
+                or not isinstance(goal, str) or not goal or len(goal.encode("utf-8", "strict")) > 32 * 1024):
+            raise CoreNativeObservationUnavailable("typed Resources claim/source and bounded goal are required")
+        try:
+            child_session = _require_id(getattr(child, "session_id"), "child session ID")
+            child_turn = getattr(child, "_current_turn_id", None)
+            child_turn = _require_id(child_turn, "child turn ID") if child_turn else ""
+            tool_names = tuple(sorted(getattr(child, "valid_tool_names")))
+            provider, api_mode, base_url, model = tuple(
+                getattr(child, key, None) for key in ("provider", "api_mode", "base_url", "model"))
+        except (AttributeError, TypeError, ValueError):
+            raise CoreNativeObservationUnavailable("constructed expert child lineage is incomplete") from None
+        if (provider != _CODEX_PROVIDER or api_mode != _CODEX_MODE or base_url != _CODEX_ENDPOINT
+                or not isinstance(model, str) or not model
+                or tuple(sorted(set(tool_names))) != tool_names
+                or not set(tool_names).issubset({"web_search", "web_extract", "skills_list", "skill_view"}))):
+            raise CoreNativeObservationUnavailable("expert child route or finite tool closure differs")
+        row = self._rpc("admit-selected-expert-child", {
+            "claim_handle": native_claim.claim_handle,
+            "owner_turn_handle": native_claim.owner_turn_handle,
+            "source_handle": source.source_handle, "source_id": source.profile_id,
+            "child_session_id": child_session, "child_turn_id": child_turn,
+            "goal_sha256": hashlib.sha256(goal.encode("utf-8", "strict")).hexdigest(),
+            "tool_names": list(tool_names), "tool_closure_sha256": _hash(list(tool_names)),
+            "provider": provider, "api_mode": api_mode, "base_url": base_url, "model": model,
+        })
+        required = {"schema", "nonce", "ok", "admission_handle", "owner_turn_handle",
+                    "gateway_turn_id", "owner_subject_sha256", "core_generation", "core_source_generation",
+                    "parent_session_id", "parent_turn_id", "child_session_id", "profile_id",
+                    "source_generation_sha256", "source_manifest_sha256", "prompt_sha256", "goal_sha256",
+                    "account_fingerprint", "mode", "tool_names", "tool_closure_sha256",
+                    "additional_metered_budget", "expires_monotonic"}
+        if (set(row) != required or type(row.get("schema")) is not int or row["schema"] != 1
+                or row["owner_turn_handle"] != native_claim.owner_turn_handle
+                or row["gateway_turn_id"] != native_claim.gateway_turn_id
+                or row["owner_subject_sha256"] != native_claim.owner_subject_sha256
+                or row["core_generation"] != native_claim.core_generation
+                or row["core_source_generation"] != native_claim.core_source_generation
+                or row["parent_session_id"] != native_claim.session_id
+                or row["child_session_id"] != child_session or row["profile_id"] != source.profile_id
+                or row["source_generation_sha256"] != source.generation_sha256
+                or row["source_manifest_sha256"] != source.source_manifest_sha256
+                or row["prompt_sha256"] != source.effective_prompt_sha256
+                or row["goal_sha256"] != hashlib.sha256(goal.encode("utf-8", "strict")).hexdigest()
+                or row["mode"] != NativeChildMode.EXPERT_READ_RESEARCH.value
+                or row["tool_names"] != list(tool_names) or row["tool_closure_sha256"] != _hash(list(tool_names))
+                or row["additional_metered_budget"] != 0 or not _OPAQUE.fullmatch(row["admission_handle"] or "")):
+            raise CoreNativeObservationUnavailable("root expert admission does not match this child")
+        expiry = float(row["expires_monotonic"])
+        if not time.monotonic() < expiry <= min(native_claim.expires_monotonic, time.monotonic() + 30.0):
+            raise CoreNativeObservationUnavailable("root expert admission expired")
+        return RootVerifiedNativeChildAuthorization(
+            owner_turn_handle=row["owner_turn_handle"], gateway_turn_id=row["gateway_turn_id"],
+            owner_subject_sha256=row["owner_subject_sha256"], core_generation=row["core_generation"],
+            core_source_generation=row["core_source_generation"], parent_session_id=row["parent_session_id"],
+            parent_turn_id=row["parent_turn_id"], child_session_id=row["child_session_id"],
+            profile_id=row["profile_id"], source_generation_sha256=row["source_generation_sha256"],
+            source_manifest_sha256=row["source_manifest_sha256"], prompt_sha256=row["prompt_sha256"],
+            goal_sha256=row["goal_sha256"], account_fingerprint=row["account_fingerprint"],
+            mode=row["mode"], allowed_tool_names=tuple(row["tool_names"]),
+            tool_closure_sha256=row["tool_closure_sha256"],
+            additional_metered_budget=row["additional_metered_budget"],
+            admission_handle=row["admission_handle"], expires_monotonic=expiry,
+            _parent_agent=native_claim.parent_agent, _child_agent=child, _source=source,
+            _seal=_NATIVE_CHILD_AUTHORIZATION_SEAL,
+        )
+
     def complete_native_child(self, *, authorization: RootVerifiedNativeChildAuthorization,
                               result: Mapping[str, Any]) -> CoreVerifiedJarvisMasterPlanningCompletion | None:
         if (type(authorization) is not RootVerifiedNativeChildAuthorization
@@ -1138,6 +1326,106 @@ class CoreNativeObservationClient:
         except Exception:
             return False
 
+    def request_final_effect(self, *, observed_call_handle: str, review_sha256: str):
+        """Request owner approval for one exact observed normal-master tool call."""
+        from hermes_installer.remote.jarvis_final_effects import FinalEffectPending, review_digest
+        if (not isinstance(observed_call_handle, str) or not _OPAQUE.fullmatch(observed_call_handle)
+                or not isinstance(review_sha256, str) or not _HASH.fullmatch(review_sha256)):
+            raise CoreNativeObservationUnavailable("observed effect identity is malformed")
+        row = self._rpc("request-final-effect", {
+            "observed_call_handle": observed_call_handle, "review_sha256": review_sha256,
+        })
+        required = {"schema", "nonce", "ok", "pending_id", "review_sha256", "expires_monotonic"}
+        if (set(row) != required or type(row.get("schema")) is not int or row["schema"] != 1
+                or row["review_sha256"] != review_sha256
+                or not _OPAQUE.fullmatch(row["pending_id"] or "")):
+            raise CoreNativeObservationUnavailable("root final-effect pending receipt is malformed")
+        try:
+            return FinalEffectPending(row["pending_id"], row["review_sha256"], row["expires_monotonic"])
+        except Exception:
+            raise CoreNativeObservationUnavailable("root final-effect pending receipt is stale") from None
+
+    def poll_final_effect(self, *, pending: Any, observed_call: ObservedNativeToolCall):
+        """Return one exact root-consumed approval; None means still pending only."""
+        from hermes_installer.remote.jarvis_final_effects import FinalEffectPending, FinalEffectPermit
+        if (type(pending) is not FinalEffectPending or type(observed_call) is not ObservedNativeToolCall
+                or pending.expires_monotonic > observed_call.expires_monotonic):
+            raise CoreNativeObservationUnavailable("typed live final-effect request is required")
+        row = self._rpc("poll-final-effect", {
+            "observed_call_handle": observed_call.handle,
+            "pending_id": pending.pending_id, "review_sha256": pending.review_sha256,
+        })
+        if set(row) == {"schema", "nonce", "ok", "state"}:
+            if type(row.get("schema")) is int and row["schema"] == 1 and row["state"] == "pending":
+                return None
+            raise CoreNativeObservationUnavailable("owner did not approve this final effect")
+        fields = {"schema", "nonce", "ok", "state", "permit"}
+        permit_fields = {"pending_id", "owner_turn_handle", "gateway_turn_id", "owner_subject_sha256",
+                         "core_generation", "core_source_generation", "source_generation_sha256",
+                         "source_profile_id", "tool_call_id", "tool_name", "arguments_sha256",
+                         "review_sha256", "expires_monotonic"}
+        payload = row.get("permit") if isinstance(row, dict) else None
+        if (set(row) != fields or type(row.get("schema")) is not int or row["schema"] != 1
+                or row.get("state") != "permit" or not isinstance(payload, dict)
+                or set(payload) != permit_fields):
+            raise CoreNativeObservationUnavailable("root final-effect permit is malformed")
+        try:
+            permit = FinalEffectPermit(**payload)
+        except Exception:
+            raise CoreNativeObservationUnavailable("root final-effect permit is stale") from None
+        if not permit.matches_call(observed_call, tool_name=observed_call.tool_name,
+                                  arguments_sha256=observed_call.arguments_sha256,
+                                  review_sha256=pending.review_sha256):
+            raise CoreNativeObservationUnavailable("root final-effect permit does not match this call")
+        return permit
+
+    def authorize_current_tool_call(self, *, observed_call: ObservedNativeToolCall
+                                    ) -> RootVerifiedMasterReadCall:
+        """Classify this exact call as master read/effect or admitted expert read.
+
+        A name alone never grants the bypass: the root joins the handle to the
+        live owner turn, consumed provider response, current Jarvis source or
+        admitted expert child, and its immutable tool closure.
+        """
+        if type(observed_call) is not ObservedNativeToolCall:
+            raise CoreNativeObservationUnavailable("root observed native call is required")
+        row = self._rpc("authorize-master-read-call", {
+            "observed_call_handle": observed_call.handle,
+        })
+        fields = {"schema", "nonce", "ok", "observed_call_handle", "owner_turn_handle",
+                  "tool_call_id", "tool_name", "arguments_sha256", "source_generation_sha256",
+                  "mode", "expires_monotonic"}
+        if (set(row) != fields or type(row.get("schema")) is not int or row["schema"] != 1
+                or row["observed_call_handle"] != observed_call.handle
+                or row["owner_turn_handle"] != observed_call.owner_turn_handle
+                or row["tool_call_id"] != observed_call.tool_call_id
+                or row["tool_name"] != observed_call.tool_name
+                or row["arguments_sha256"] != observed_call.arguments_sha256):
+            raise CoreNativeObservationUnavailable("root caller classification is malformed")
+        try:
+            receipt = RootVerifiedMasterReadCall(
+                observed_call_handle=row["observed_call_handle"],
+                owner_turn_handle=row["owner_turn_handle"], tool_call_id=row["tool_call_id"],
+                tool_name=row["tool_name"], arguments_sha256=row["arguments_sha256"],
+                source_generation_sha256=row["source_generation_sha256"], mode=row["mode"],
+                expires_monotonic=row["expires_monotonic"], _seal=_MASTER_READ_CALL_SEAL)
+        except Exception:
+            raise CoreNativeObservationUnavailable("root caller classification is stale") from None
+        if not receipt.matches_call(observed_call, tool_name=observed_call.tool_name,
+                                   arguments_sha256=observed_call.arguments_sha256):
+            raise CoreNativeObservationUnavailable("root caller classification changed")
+        if (observed_call.tool_name in _MASTER_READ_TOOL_NAMES
+                and receipt.mode not in {"master_read", "expert_read"}
+                or observed_call.tool_name not in _MASTER_READ_TOOL_NAMES
+                and receipt.mode != "master_effect"):
+            raise CoreNativeObservationUnavailable("root caller classification has the wrong effect mode")
+        return receipt
+
+    def authorize_master_read_call(self, *, observed_call: ObservedNativeToolCall
+                                   ) -> RootVerifiedMasterReadCall:
+        """Compatibility spelling for the root current-caller classifier."""
+        return self.authorize_current_tool_call(observed_call=observed_call)
+
 
 class RootCoreNativeObservationRegistry:
     """Root-memory issuer joining real owner turns to protected native observations.
@@ -1150,12 +1438,17 @@ class RootCoreNativeObservationRegistry:
 
     def __init__(self, custody: Any, selected_profile_source: Any, *, config: Any):
         from hermes_installer.remote.core_gateway_inspector import CoreNativeObserverCustody
-        from hermes_installer.components.resources_active_profile_source import RootSelectedActiveProfileSource
+        from hermes_installer.components.resources_active_profile_source import RootVerifiedJarvisMasterSource
         if type(custody) is not CoreNativeObserverCustody:
             raise CoreNativeObservationUnavailable("sealed current-core observer custody is required")
-        if type(selected_profile_source) is not RootSelectedActiveProfileSource:
-            raise CoreNativeObservationUnavailable("sealed active Resources source is required")
-        if not callable(getattr(selected_profile_source, "is_current_sealed", None)):
+        if (selected_profile_source is not None
+                and (type(selected_profile_source) is not RootVerifiedJarvisMasterSource
+                     or selected_profile_source.profile_id != "hermes"
+                     or selected_profile_source.native_profile_key != "default"
+                     or selected_profile_source.display_name != "Jarvis")):
+            raise CoreNativeObservationUnavailable("sealed current Jarvis master source is required")
+        if (selected_profile_source is not None
+                and not callable(getattr(selected_profile_source, "is_current_sealed", None))):
             raise CoreNativeObservationUnavailable("current active Resources source verifier is unavailable")
         self._custody = custody
         self._source = selected_profile_source
@@ -1169,11 +1462,14 @@ class RootCoreNativeObservationRegistry:
         self._calls: dict[str, dict[str, Any]] = {}
         self._claims: dict[str, dict[str, Any]] = {}
         self._mission_pending: dict[str, dict[str, Any]] = {}
+        self._mission_authorized_claims: set[str] = set()
         self._consumed_dispatches: dict[str, dict[str, Any]] = {}
         self._child_sessions: dict[str, dict[str, Any]] = {}
         self._planning_completions: dict[str, dict[str, Any]] = {}
         self._master_selections: dict[str, dict[str, Any]] = {}
+        self._selected_source_deliveries: dict[str, dict[str, Any]] = {}
         self._master_source: Any = None
+        self._final_effect_store: Any = None
         try:
             from hermes_installer.components.resources_active_profile_source import (
                 RootVerifiedJarvisMasterSource,
@@ -1187,7 +1483,7 @@ class RootCoreNativeObservationRegistry:
         self._closed = False
 
     @classmethod
-    def from_current_core_custody(cls, custody: Any, *, selected_profile_source: Any,
+    def from_current_core_custody(cls, custody: Any, *, selected_profile_source: Any = None,
                                   config: Any = None) -> "RootCoreNativeObservationRegistry":
         if config is None:
             raise CoreNativeObservationUnavailable("fixed inspector configuration is required")
@@ -1243,8 +1539,10 @@ class RootCoreNativeObservationRegistry:
                        for item in sources)):
             raise CoreNativeObservationUnavailable("selected Resources sources are not current")
         enrollment_handle = secrets.token_urlsafe(32)
-        expiry = min([float(decision.expires_monotonic),
-                      *(float(item.expires_monotonic) for item in sources)])
+        # The source's short monotonic expiry is a readback freshness window,
+        # not a child-authority lease. Every use re-reads that source; the
+        # retained decision remains the authority deadline.
+        expiry = float(decision.expires_monotonic)
         with self._lock:
             self._ensure_open()
             self._master_selections[enrollment_handle] = {
@@ -1275,7 +1573,9 @@ class RootCoreNativeObservationRegistry:
             raise CoreNativeObservationUnavailable("sealed owner and native tool configuration are required")
         now = time.monotonic()
         handle = owner_turn_observation.owner_turn_handle
-        if (current_tool_configuration.is_current_sealed(
+        master_source = self._current_master_source()
+        if (master_source is None
+                or current_tool_configuration.is_current_sealed(
                     custody=self._custody, owner_turn=owner_turn_observation, now=now) is not True
                 or not _configuration_has_fixed_resources_delegate(current_tool_configuration)
                 or owner_turn_observation.is_current_sealed(
@@ -1300,7 +1600,7 @@ class RootCoreNativeObservationRegistry:
             "core_generation": owner_turn_observation.core_generation,
             "core_source_generation": owner_turn_observation.core_source_generation,
             "owner_subject_sha256": owner_turn_observation.owner_subject_sha256,
-            "profile_id": "orchestrator", "mode": "native-parent-inheritance",
+            "profile_id": "hermes", "mode": "native-parent-inheritance",
             "parent_tool_configuration_sha256": current_tool_configuration.tool_configuration_sha256,
             "configured_parent_tool_names": list(names),
             "resources_delegate_schema_sha256": _RESOURCES_DELEGATE_SCHEMA_SHA256,
@@ -1318,7 +1618,7 @@ class RootCoreNativeObservationRegistry:
             core_generation=owner_turn_observation.core_generation,
             core_source_generation=owner_turn_observation.core_source_generation,
             owner_subject_sha256=owner_turn_observation.owner_subject_sha256,
-            profile_id="orchestrator", mode="native-parent-inheritance",
+            profile_id="hermes", mode="native-parent-inheritance",
             parent_tool_configuration_sha256=current_tool_configuration.tool_configuration_sha256,
             configured_parent_tool_names=names,
             resources_delegate_schema_sha256=_RESOURCES_DELEGATE_SCHEMA_SHA256,
@@ -1358,6 +1658,204 @@ class RootCoreNativeObservationRegistry:
         if self._closed:
             raise CoreNativeObservationUnavailable("root observer registry is closed")
 
+    def _current_master_source(self) -> Any | None:
+        """Re-read the sole Jarvis master source from protected current custody."""
+        try:
+            from hermes_installer.components.resources_active_profile_source import (
+                RootVerifiedJarvisMasterSource,
+            )
+            source = RootVerifiedJarvisMasterSource.current_master_source(
+                self._custody, config=self._config)
+            if (type(source) is RootVerifiedJarvisMasterSource
+                    and source.profile_id == "hermes"
+                    and source.native_profile_key == "default"
+                    and source.display_name == "Jarvis"
+                    and source.is_current_sealed(self._custody, now=time.monotonic()) is True):
+                self._master_source = source
+                return source
+        except Exception:
+            pass
+        self._master_source = None
+        return None
+
+    def _final_effect_ledger(self) -> Any:
+        """Open the fixed root-owned chat ledger without following mutable paths."""
+        if self._final_effect_store is not None:
+            return self._final_effect_store
+        from hermes_installer.remote.jarvis_chat import CHAT_STORE_PATH
+        expected = Path("/var/lib/hermes-jarvis-chat/chat.sqlite3")
+        if CHAT_STORE_PATH != expected:
+            raise CoreNativeObservationUnavailable("fixed root final-effect ledger path differs")
+        parent = os.lstat(expected.parent)
+        target = os.lstat(expected)
+        if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0
+                or parent.st_mode & 0o022
+                or not stat.S_ISREG(target.st_mode) or target.st_uid != 0
+                or target.st_nlink != 1 or target.st_mode & 0o022):
+            raise CoreNativeObservationUnavailable("fixed root final-effect ledger custody differs")
+
+        def connect():
+            db = sqlite3.connect(expected, timeout=2, isolation_level=None)
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA busy_timeout=2000")
+            return db
+
+        from hermes_installer.remote.jarvis_final_effects import RootFinalEffectLedger
+        self._final_effect_store = RootFinalEffectLedger(connect)
+        return self._final_effect_store
+
+    def _classify_current_call(self, handle: str, peer: tuple[int, int, int], *,
+                               now: float) -> tuple[dict[str, Any], Any, Any, str]:
+        """Join a root call to either the current Jarvis master or admitted expert."""
+        call = self._calls.get(handle)
+        if (call is None or call["peer"] != peer or call["expiry"] <= now
+                or call.get("claim") is not None):
+            raise ValueError("observed call is not a live unclaimed native dispatch")
+        owner = call.get("owner")
+        attempt = self._attempts.get(call.get("attempt"))
+        if (owner is None or attempt is None or attempt.get("response") is None
+                or attempt.get("owner") is not owner
+                or owner.is_current_sealed(self._config, custody=self._custody, now=now) is not True
+                or self._policy_for_owner(owner, now) is None
+                or attempt.get("account") is None or not _HASH.fullmatch(attempt["account"])):
+            raise ValueError("observed call owner or provider attempt is not current")
+        if (not isinstance(attempt.get("provider"), str)
+                or (attempt.get("provider"), attempt.get("api_mode"), attempt.get("base_url"))
+                    != (_CODEX_PROVIDER, _CODEX_MODE, _CODEX_ENDPOINT)):
+            raise ValueError("observed call did not use the enrolled Codex subscription route")
+        returned = attempt["response"][1].get(call["tool_call_id"])
+        if (returned is None or returned.get("name") != call["tool_name"]
+                or returned.get("arguments_sha256") != call["arguments_sha256"]):
+            raise ValueError("observed call differs from the completed provider response")
+        child = self._child_sessions.get(call.get("attempt_session_id"))
+        if child is not None:
+            source = child.get("source")
+            if (child.get("mode") != "expert-read-research"
+                    or child.get("owner") is not owner or child.get("peer") != peer
+                    or child.get("expiry", 0) <= now or child.get("complete")
+                    or attempt.get("child_admission_handle") != child.get("admission_handle")
+                    or not callable(getattr(source, "is_current_sealed", None))
+                    or source.is_current_sealed(self._custody, now=now) is not True
+                    or source.profile_id in {"hermes"}
+                    or call["tool_name"] not in child.get("tool_names", ())
+                    or call["tool_name"] not in _MASTER_READ_TOOL_NAMES):
+                raise ValueError("expert child call is outside its admitted read closure")
+            return call, owner, child, "expert_read"
+        source = self._current_master_source()
+        if (call.get("attempt_session_id") != owner.session_id or source is None
+                or source.is_current_sealed(custody=self._custody, now=now) is not True
+                or source.profile_id != "hermes"
+                or call["tool_name"] not in attempt.get("parent_tool_names", ())):
+            raise ValueError("normal call is not from the current Jarvis master")
+        mode = "master_read" if call["tool_name"] in _MASTER_READ_TOOL_NAMES else "master_effect"
+        return call, owner, source, mode
+
+    def _owner_for_review(self, owner_turn_handle: str, owner_subject_sha256: str,
+                          gateway_peer: tuple[int, int, int], *, now: float) -> Any:
+        if (not _OPAQUE.fullmatch(owner_turn_handle or "")
+                or not _HASH.fullmatch(owner_subject_sha256 or "")):
+            raise CoreNativeObservationUnavailable("current owner turn is unavailable")
+        owner = self._owners.get(owner_turn_handle)
+        if (owner is None or owner.owner_subject_sha256 != owner_subject_sha256
+                or (owner.peer_gateway_pid, owner.peer_gateway_uid, owner.peer_gateway_gid) != gateway_peer
+                or owner.is_current_sealed(self._config, custody=self._custody, now=now) is not True
+                or self._policy_for_owner(owner, now) is None):
+            raise CoreNativeObservationUnavailable("current owner turn is unavailable")
+        source = self._current_master_source()
+        if (source is None or source.profile_id != "hermes"
+                or source.is_current_sealed(self._custody, now=now) is not True):
+            raise CoreNativeObservationUnavailable("current Jarvis master source is unavailable")
+        return owner
+
+    def list_final_effects_for_owner(self, owner_turn_handle: str, owner_subject_sha256: str,
+                                     gateway_peer: tuple[int, int, int]) -> tuple[Any, ...]:
+        from hermes_installer.remote.jarvis_final_effects import FinalEffectReview
+        now = time.monotonic()
+        with self._lock:
+            self._ensure_open()
+            owner = self._owner_for_review(owner_turn_handle, owner_subject_sha256, gateway_peer, now=now)
+            rows = self._final_effect_ledger().pending_for_owner(
+                owner_subject_sha256=owner.owner_subject_sha256,
+                gateway_turn_id=owner.gateway_turn_id,
+                owner_turn_handle=owner.owner_turn_handle,
+                core_generation=owner.core_generation)
+            reviews = []
+            for row in rows:
+                if (not isinstance(row, dict)
+                        or set(row) != {"pendingId", "turnId", "toolName", "reviewSha256",
+                                        "preview", "status", "expiresInMs"}
+                        or row["turnId"] != owner.gateway_turn_id):
+                    raise CoreNativeObservationUnavailable("root review row shape is unavailable")
+                preview = _canonical(row["preview"]).decode("utf-8", errors="strict")
+                expiry = time.monotonic() + max(0, min(30_000, int(row["expiresInMs"]))) / 1000.0
+                reviews.append(FinalEffectReview(
+                    pending_id=row["pendingId"], review_sha256=row["reviewSha256"],
+                    tool_name=row["toolName"], preview_json=preview,
+                    status=row["status"], expires_monotonic=expiry))
+            if self._owner_for_review(owner_turn_handle, owner_subject_sha256,
+                                      gateway_peer, now=time.monotonic()) is not owner:
+                raise CoreNativeObservationUnavailable("owner turn changed during effect listing")
+            return tuple(reviews)
+
+    def decide_final_effect_for_owner(self, owner_turn_handle: str, owner_subject_sha256: str,
+                                      gateway_peer: tuple[int, int, int], *, pending_id: str,
+                                      review_sha256: str, decision: str,
+                                      idempotency_key: str) -> str:
+        now = time.monotonic()
+        with self._lock:
+            self._ensure_open()
+            owner = self._owner_for_review(owner_turn_handle, owner_subject_sha256,
+                                           gateway_peer, now=now)
+            status = self._final_effect_ledger().decide(
+                owner_subject_sha256=owner.owner_subject_sha256,
+                gateway_turn_id=owner.gateway_turn_id,
+                owner_turn_handle=owner.owner_turn_handle,
+                core_generation=owner.core_generation,
+                pending_id=pending_id, review_sha256=review_sha256,
+                decision=decision, idempotency_key=idempotency_key)
+            if self._owner_for_review(owner_turn_handle, owner_subject_sha256,
+                                      gateway_peer, now=time.monotonic()) is not owner:
+                raise CoreNativeObservationUnavailable("owner turn changed during effect decision")
+            return status
+
+    def preflight_native_mission(self, binding: Any, *, owner_subject_sha256: str,
+                                 gateway_turn_id: str) -> bool:
+        """Check a just-spent launch row before the BFF queues its native prompt."""
+        from hermes_installer.remote.core_gateway_inspector import _mission_binding_wire
+        if (type(binding) is not MissionBinding or binding.schema != 2
+                or binding.source_profile_id != "hermes"
+                or binding.execution_mode not in {"oneshot", "kanban"}
+                or not isinstance(owner_subject_sha256, str) or not _HASH.fullmatch(owner_subject_sha256)
+                or not isinstance(gateway_turn_id, str) or not _ID.fullmatch(gateway_turn_id)):
+            raise CoreNativeObservationUnavailable("typed current mission binding is required")
+        try:
+            wire = _mission_binding_wire(binding)
+            if wire != binding.to_wire():
+                raise ValueError
+            from hermes_installer.remote.jarvis_chat import CHAT_STORE_PATH
+            from hermes_installer.remote.jarvis_mission_executor import (
+                MissionLedgerReader, resolve_spent_mission_binding,
+            )
+            if CHAT_STORE_PATH != Path("/var/lib/hermes-jarvis-chat/chat.sqlite3"):
+                raise ValueError
+            with self._lock:
+                self._ensure_open()
+                now = time.monotonic()
+                source = self._current_master_source()
+                if (source is None or source.profile_id != "hermes"
+                        or source.is_current_sealed(self._custody, now=now) is not True
+                        or self._custody.core_generation == ""
+                        or resolve_spent_mission_binding(
+                            MissionLedgerReader(path=CHAT_STORE_PATH), binding,
+                            gateway_turn_id=gateway_turn_id,
+                            owner_subject_sha256=owner_subject_sha256,
+                            core_generation=self._custody.core_generation,
+                            core_source_generation=self._custody.core_source_generation) is not True):
+                    raise ValueError
+                return True
+        except Exception:
+            raise CoreNativeObservationUnavailable("spent mission preflight is unavailable") from None
+
     def _prune(self, now: float) -> None:
         for handle, row in list(self._policies.items()):
             policy = row.get("policy")
@@ -1390,6 +1888,9 @@ class RootCoreNativeObservationRegistry:
         for handle, row in list(self._master_selections.items()):
             if row["expiry"] <= now:
                 self._master_selections.pop(handle, None)
+        for handle, row in list(self._selected_source_deliveries.items()):
+            if row["expiry"] <= now:
+                self._selected_source_deliveries.pop(handle, None)
 
     def _owner_for(self, session_id: str, turn_id: str) -> Any:
         now = time.monotonic()
@@ -1451,6 +1952,35 @@ class RootCoreNativeObservationRegistry:
             return None
         return policy
 
+    def _selection_for_mission(self, owner: Any, source_id: str, now: float) -> tuple[Any, Any] | None:
+        """Join a spent schema-2 mission binding to one live sealed master decision."""
+        from hermes_installer.components.resources_active_profile_source import RootSelectedActiveProfileSource
+        binding = getattr(owner, "mission_binding", None)
+        if type(binding) is not MissionBinding or binding.schema != 2:
+            return None
+        matches = []
+        for row in self._master_selections.values():
+            decision = row.get("decision")
+            source = row.get("sources", {}).get(source_id)
+            if (row["expiry"] <= now or source is None
+                    or decision.is_current_sealed(self._config, custody=self._custody, now=now) is not True
+                    or decision.owner_subject_sha256 != owner.owner_subject_sha256
+                    or decision.core_generation != owner.core_generation
+                    or decision.core_source_generation != owner.core_source_generation
+                    or row.get("owner") is None
+                    or row["owner"].owner_subject_sha256 != owner.owner_subject_sha256
+                    or decision.mission_id != binding.mission_id
+                    or decision.revision != binding.revision
+                    or decision.plan_sha256 != binding.plan_sha256
+                    or decision.execution_mode != binding.execution_mode
+                    or tuple(decision.selected_source_ids) != tuple(binding.selected_source_ids)
+                    or source_id not in binding.selected_source_ids
+                    or type(source) is not RootSelectedActiveProfileSource
+                    or source.is_current_sealed(self._custody, now=now) is not True):
+                continue
+            matches.append((row, source))
+        return matches[0] if len(matches) == 1 else None
+
     def is_current_orchestrator_policy(self, policy: Any, owner_turn_observation: Any) -> bool:
         """Verify the exact root-retained policy before the gateway op returns."""
         if type(policy) is not RootSelectedOrchestratorDelegationPolicy:
@@ -1472,6 +2002,231 @@ class RootCoreNativeObservationRegistry:
         with self._lock:
             self._ensure_open()
             self._prune(time.monotonic())
+            if op == "authorize-master-read-call":
+                if set(request) != {"schema", "op", "nonce", "observed_call_handle"}:
+                    raise ValueError("caller classification schema mismatch")
+                call, owner, source, mode = self._classify_current_call(
+                    request["observed_call_handle"], peer, now=time.monotonic())
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                    "observed_call_handle": call["handle"],
+                    "owner_turn_handle": owner.owner_turn_handle,
+                    "tool_call_id": call["tool_call_id"], "tool_name": call["tool_name"],
+                    "arguments_sha256": call["arguments_sha256"],
+                    "source_generation_sha256": source.generation_sha256,
+                    "mode": mode, "expires_monotonic": min(
+                        call["expiry"], owner.expires_monotonic, time.monotonic() + 30.0)}
+            if op == "request-final-effect":
+                if set(request) != {"schema", "op", "nonce", "observed_call_handle", "review_sha256"}:
+                    raise ValueError("final-effect request schema mismatch")
+                call, owner, source, mode = self._classify_current_call(
+                    request["observed_call_handle"], peer, now=time.monotonic())
+                from hermes_installer.remote.jarvis_final_effects import review_digest
+                if (mode != "master_effect" or source.profile_id != "hermes"
+                        or call["tool_name"] in _MASTER_READ_TOOL_NAMES
+                        or review_digest(call["tool_name"], call["arguments_sha256"])
+                            != request["review_sha256"]):
+                    raise ValueError("only a current Jarvis master effect can request approval")
+                pending = self._final_effect_ledger().issue_pending(
+                    owner_subject_sha256=owner.owner_subject_sha256,
+                    gateway_turn_id=owner.gateway_turn_id,
+                    owner_turn_handle=owner.owner_turn_handle,
+                    core_generation=owner.core_generation,
+                    core_source_generation=owner.core_source_generation,
+                    source_generation_sha256=source.generation_sha256,
+                    tool_call_id=call["tool_call_id"], tool_name=call["tool_name"],
+                    arguments_sha256=call["arguments_sha256"],
+                    review_sha256=request["review_sha256"],
+                    expires_monotonic=min(call["expiry"], owner.expires_monotonic,
+                                          time.monotonic() + 30.0),
+                    canonical_arguments=call["arguments"])
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                    "pending_id": pending.pending_id,
+                    "review_sha256": pending.review_sha256,
+                    "expires_monotonic": pending.expires_monotonic}
+            if op == "poll-final-effect":
+                if set(request) != {"schema", "op", "nonce", "observed_call_handle",
+                                    "pending_id", "review_sha256"}:
+                    raise ValueError("final-effect poll schema mismatch")
+                call, owner, source, mode = self._classify_current_call(
+                    request["observed_call_handle"], peer, now=time.monotonic())
+                if mode != "master_effect" or source.profile_id != "hermes":
+                    raise ValueError("experts and non-master callers cannot consume final effects")
+                ledger = self._final_effect_ledger()
+                expected = {
+                    "owner_turn_handle": owner.owner_turn_handle,
+                    "gateway_turn_id": owner.gateway_turn_id,
+                    "owner_subject_sha256": owner.owner_subject_sha256,
+                    "core_generation": owner.core_generation,
+                    "core_source_generation": owner.core_source_generation,
+                    "source_generation_sha256": source.generation_sha256,
+                    "source_profile_id": "hermes", "tool_call_id": call["tool_call_id"],
+                    "tool_name": call["tool_name"],
+                    "arguments_sha256": call["arguments_sha256"],
+                    "review_sha256": request["review_sha256"],
+                }
+                state = ledger.poll(request["pending_id"], request["review_sha256"], expected=expected)
+                if state != "approved" or not ledger.consume_approval(
+                        request["pending_id"], request["review_sha256"], expected=expected):
+                    if state == "pending":
+                        return {"schema": 1, "nonce": nonce, "ok": True, "state": "pending"}
+                    raise ValueError("final-effect approval is denied, stale, or already spent")
+                permit = {
+                    "pending_id": request["pending_id"],
+                    "owner_turn_handle": owner.owner_turn_handle,
+                    "gateway_turn_id": owner.gateway_turn_id,
+                    "owner_subject_sha256": owner.owner_subject_sha256,
+                    "core_generation": owner.core_generation,
+                    "core_source_generation": owner.core_source_generation,
+                    "source_generation_sha256": source.generation_sha256,
+                    "source_profile_id": "hermes", "tool_call_id": call["tool_call_id"],
+                    "tool_name": call["tool_name"], "arguments_sha256": call["arguments_sha256"],
+                    "review_sha256": request["review_sha256"],
+                    "expires_monotonic": min(call["expiry"], owner.expires_monotonic,
+                                              time.monotonic() + 30.0),
+                }
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                    "state": "permit", "permit": permit}
+            if op == "read-selected-expert-source":
+                required = {"schema", "op", "nonce", "claim_handle", "owner_turn_handle", "source_id"}
+                if set(request) != required:
+                    raise ValueError("selected source request schema mismatch")
+                now = time.monotonic()
+                claim = self._consumed_dispatches.get(request["claim_handle"])
+                owner = claim.get("owner") if claim is not None else None
+                call = claim.get("call") if claim is not None else None
+                if (claim is None or owner is None or call is None
+                        or claim["expiry"] <= now or call["peer"] != peer
+                        or owner.owner_turn_handle != request["owner_turn_handle"]
+                        or owner.is_current_sealed(self._config, custody=self._custody, now=now) is not True
+                        or type(owner.mission_binding) is not MissionBinding
+                        or owner.mission_binding.execution_mode not in {"oneshot", "kanban"}
+                        or request["source_id"] not in owner.mission_binding.selected_source_ids
+                        or call["tool_name"] != "resources_delegate"):
+                    raise ValueError("selected source is not bound to this live mission claim")
+                try:
+                    args = json.loads(call["arguments"].decode("utf-8", errors="strict"))
+                except Exception:
+                    raise ValueError("selected source arguments are malformed") from None
+                if (not isinstance(args, dict) or set(args) != {"goal"}
+                        or not isinstance(args["goal"], str)
+                        or _hash({"goal": args["goal"]}) != owner.mission_binding.task_sha256
+                        or call["arguments_sha256"] != owner.mission_binding.task_sha256):
+                    raise ValueError("selected source goal differs from the spent mission task")
+                selected = self._selection_for_mission(owner, request["source_id"], now)
+                if selected is None:
+                    raise ValueError("current master decision does not select this source")
+                selection, source = selected
+                if (selection.get("owner") is None
+                        or selection["owner"].owner_subject_sha256 != owner.owner_subject_sha256
+                        or selection["owner"].core_generation != owner.core_generation
+                        or selection["owner"].core_source_generation != owner.core_source_generation
+                        or source.is_current_sealed(self._custody, now=now) is not True):
+                    raise ValueError("selected source or owner decision is stale")
+                handle = secrets.token_urlsafe(32)
+                expiry = min(float(claim["expiry"]), float(owner.expires_monotonic), now + 30.0)
+                self._selected_source_deliveries[handle] = {
+                    "source": source, "selection": selection, "claim": claim,
+                    "owner": owner, "peer": peer, "expiry": expiry, "consumed": False,
+                }
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                    "source_handle": handle, "profile_id": source.profile_id,
+                    "source_revision": source.source_revision,
+                    "generation_sha256": source.generation_sha256,
+                    "source_manifest_sha256": source.source_member_manifest_sha256,
+                    "profile_manifest_sha256": source.profile_manifest_sha256,
+                    "prompt_b64": base64.b64encode(source.effective_prompt).decode("ascii"),
+                    "prompt_sha256": source.effective_prompt_sha256,
+                    "expires_monotonic": expiry}
+            if op == "admit-selected-expert-child":
+                required = {"schema", "op", "nonce", "claim_handle", "owner_turn_handle",
+                            "source_handle", "source_id", "child_session_id", "child_turn_id",
+                            "goal_sha256", "tool_names", "tool_closure_sha256", "provider",
+                            "api_mode", "base_url", "model"}
+                if set(request) != required:
+                    raise ValueError("selected child admission schema mismatch")
+                now = time.monotonic()
+                delivered = self._selected_source_deliveries.get(request["source_handle"])
+                claim = self._consumed_dispatches.get(request["claim_handle"])
+                owner = claim.get("owner") if claim is not None else None
+                call = claim.get("call") if claim is not None else None
+                source = delivered.get("source") if delivered is not None else None
+                if (delivered is None or delivered["consumed"] or delivered["expiry"] <= now
+                        or delivered["peer"] != peer or claim is None or owner is None or call is None
+                        or delivered["claim"] is not claim or delivered["owner"] is not owner
+                        or owner.owner_turn_handle != request["owner_turn_handle"]
+                        or call["peer"] != peer or call["tool_name"] != "resources_delegate"
+                        or type(owner.mission_binding) is not MissionBinding
+                        or request["source_id"] != source.profile_id
+                        or source.profile_id not in owner.mission_binding.selected_source_ids
+                        or source.is_current_sealed(self._custody, now=now) is not True
+                        or owner.is_current_sealed(self._config, custody=self._custody, now=now) is not True
+                        or self._policy_for_owner(owner, now) is not claim["policy"]):
+                    raise ValueError("selected child is not bound to current owner/source authority")
+                try:
+                    args = json.loads(call["arguments"].decode("utf-8", errors="strict"))
+                except Exception:
+                    raise ValueError("selected child arguments are malformed") from None
+                if (not isinstance(args, dict) or set(args) != {"goal"}
+                        or not isinstance(args["goal"], str)
+                        or _hash({"goal": args["goal"]}) != owner.mission_binding.task_sha256
+                        or call["arguments_sha256"] != owner.mission_binding.task_sha256
+                        or request["goal_sha256"] != hashlib.sha256(args["goal"].encode("utf-8", "strict")).hexdigest()):
+                    raise ValueError("selected child goal does not match the approved task")
+                allowed = {"web_search", "web_extract", "skills_list", "skill_view"}
+                names = request["tool_names"]
+                if (not isinstance(names, list) or len(names) > len(allowed)
+                        or any(not isinstance(name, str) or name not in allowed for name in names)
+                        or len(set(names)) != len(names) or names != sorted(names)
+                        or request["tool_closure_sha256"] != _hash(names)
+                        or request["provider"] != _CODEX_PROVIDER
+                        or request["api_mode"] != _CODEX_MODE or request["base_url"] != _CODEX_ENDPOINT):
+                    raise ValueError("selected child route or fixed safe tool closure is invalid")
+                attempt = self._attempts.get(call["attempt"])
+                if (attempt is None or attempt["response"] is None
+                        or attempt["owner"] is not owner or attempt["session_id"] != owner.session_id
+                        or request["model"] != attempt["model"]
+                        or not _HASH.fullmatch(attempt["account"] or "")):
+                    raise ValueError("selected child has no current observed parent route")
+                child_session = _require_id(request["child_session_id"], "child session ID")
+                if child_session in self._child_sessions or child_session == owner.session_id:
+                    raise ValueError("selected child session is already bound")
+                child_turn = request["child_turn_id"]
+                if child_turn and not _ID.fullmatch(child_turn):
+                    raise ValueError("selected child turn ID is malformed")
+                delivered["consumed"] = True
+                admission = secrets.token_urlsafe(32)
+                expiry = min(float(delivered["expiry"]), float(owner.expires_monotonic),
+                             float(claim["policy"].expires_monotonic), now + 30.0)
+                child = {"admission_handle": admission, "owner_turn_handle": owner.owner_turn_handle,
+                    "owner": owner, "policy": claim["policy"], "parent_session_id": owner.session_id,
+                    "parent_turn_id": call["attempt_turn_id"], "session_id": child_session,
+                    "turn_id": child_turn or None, "profile_id": source.profile_id,
+                    "source_generation_sha256": source.generation_sha256,
+                    "source_manifest_sha256": source.source_member_manifest_sha256,
+                    "prompt_sha256": source.effective_prompt_sha256,
+                    "goal_sha256": request["goal_sha256"], "account": attempt["account"],
+                    "mode": "expert-read-research", "tool_names": tuple(names),
+                    "tool_closure_sha256": _hash(names), "provider": _CODEX_PROVIDER,
+                    "api_mode": _CODEX_MODE, "base_url": _CODEX_ENDPOINT, "model": attempt["model"],
+                    "source": source, "attempts": [], "peer": peer, "expiry": expiry,
+                    "complete": False, "response_text_sha256": None}
+                self._child_sessions[child_session] = child
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                    "admission_handle": admission, "owner_turn_handle": owner.owner_turn_handle,
+                    "gateway_turn_id": owner.gateway_turn_id,
+                    "owner_subject_sha256": owner.owner_subject_sha256,
+                    "core_generation": owner.core_generation,
+                    "core_source_generation": owner.core_source_generation,
+                    "parent_session_id": owner.session_id,
+                    "parent_turn_id": child["parent_turn_id"], "child_session_id": child_session,
+                    "profile_id": source.profile_id,
+                    "source_generation_sha256": source.generation_sha256,
+                    "source_manifest_sha256": source.source_member_manifest_sha256,
+                    "prompt_sha256": source.effective_prompt_sha256,
+                    "goal_sha256": request["goal_sha256"], "account_fingerprint": attempt["account"],
+                    "mode": "expert-read-research", "tool_names": names,
+                    "tool_closure_sha256": _hash(names), "additional_metered_budget": 0,
+                    "expires_monotonic": expiry}
             if op == "admit-master-planner-child":
                 from hermes_installer.components.resources_active_profile_source import (
                     RootVerifiedJarvisMasterSource,
@@ -1519,7 +2274,9 @@ class RootCoreNativeObservationRegistry:
                     raise ValueError("planner child turn ID is malformed")
                 policy = self._policy_for_owner(owner, now)
                 admission = secrets.token_urlsafe(32)
-                expiry = min(float(owner.expires_monotonic), float(source.expires_monotonic),
+                # Source freshness is checked again before every dispatch and
+                # completion; it must not shorten the owner/decision lease.
+                expiry = min(float(owner.expires_monotonic),
                              float(policy.expires_monotonic), now + 30.0)
                 child = {"admission_handle": admission, "owner_turn_handle": owner.owner_turn_handle,
                     "owner": owner, "policy": policy, "parent_session_id": owner.session_id,
@@ -1650,6 +2407,9 @@ class RootCoreNativeObservationRegistry:
                         or (is_child_attempt and (
                             child["owner"] is not owner or child["expiry"] <= time.monotonic()
                             or child["peer"] != peer
+                            or not callable(getattr(child.get("source"), "is_current_sealed", None))
+                            or child["source"].is_current_sealed(
+                                self._custody, now=time.monotonic()) is not True
                             or child["turn_id"] not in (None, request["turn_id"])
                             or request["account_fingerprint"] != child["account"]
                             or tuple(request["parent_tool_names"]) != child_tools
@@ -1673,6 +2433,8 @@ class RootCoreNativeObservationRegistry:
                     "turn_id": request["turn_id"], "api_request_id": request["api_request_id"],
                     "account": request["account_fingerprint"], "expiry": expiry, "response": None,
                     "parent_tool_names": tuple(request["parent_tool_names"]),
+                    "provider": request["provider"], "api_mode": request["api_mode"],
+                    "base_url": request["base_url"],
                     "policy_handle": policy.policy_handle, "model": request["model"],
                     "child_admission_handle": child["admission_handle"] if is_child_attempt else None,
                     "response_text_sha256": None}
@@ -1747,7 +2509,7 @@ class RootCoreNativeObservationRegistry:
                 if set(request) != {"schema", "op", "nonce", "observed_call_handle"}:
                     raise ValueError("prepare schema mismatch")
                 call = self._calls.get(request["observed_call_handle"])
-                source = self._source.resolve_current(self._custody)
+                source = self._current_master_source()
                 policy_row = self._policies.get(call["policy_handle"]) if call is not None else None
                 policy = policy_row.get("policy") if policy_row is not None else None
                 try:
@@ -1765,9 +2527,9 @@ class RootCoreNativeObservationRegistry:
                         or (not policy.allow_inherited_mcp
                             and any(name.startswith("mcp__") for name in parent_tools))
                         or policy.additional_metered_budget != 0
+                        or source is None
                         or source.is_current_sealed(custody=self._custody, now=time.monotonic()) is not True
-                        or source.profile_id != "orchestrator"
-                        or source.profile_privacy_requirements
+                        or source.profile_id != "hermes"
                         or not isinstance(call_args, dict) or set(call_args) != {"goal"}
                         or not isinstance(call_args.get("goal"), str)
                         or not call_args["goal"].strip() or len(call_args["goal"]) > 1200
@@ -1779,8 +2541,11 @@ class RootCoreNativeObservationRegistry:
                 call["claim"] = claim_handle
                 self._claims[claim_handle] = {"call": call,
                     "owner": call["owner"], "policy": policy,
-                    "expiry": min(call["expiry"], float(source.expires_monotonic),
-                                  policy.expires_monotonic)}
+                    # The profile object's short TTL is readback freshness, not
+                    # the authority deadline. Its exact currentness is re-read
+                    # at consume and immediately before native child admission.
+                    "expiry": min(call["expiry"], policy.expires_monotonic,
+                                  time.monotonic() + 30.0)}
                 return {"schema": 1, "nonce": nonce, "ok": True, "claim_handle": claim_handle}
             if op == "consume-dispatch":
                 if set(request) != {"schema", "op", "nonce", "claim_handle"}:
@@ -1790,8 +2555,9 @@ class RootCoreNativeObservationRegistry:
                     raise ValueError("dispatch claim expired or was already consumed")
                 call, owner = claim["call"], claim["owner"]
                 policy = claim["policy"]
-                source = self._source.resolve_current(self._custody)
-                if (call["peer"] != peer or source.is_current_sealed(custody=self._custody, now=time.monotonic()) is not True
+                source = self._current_master_source()
+                if (call["peer"] != peer or source is None
+                        or source.is_current_sealed(custody=self._custody, now=time.monotonic()) is not True
                         or owner.is_current_sealed(self._config, custody=self._custody, now=time.monotonic()) is not True
                         or self._policy_for_owner(owner, time.monotonic()) is not policy
                         or not set(call["parent_tool_names"]).issubset(policy.configured_parent_tool_names)
@@ -1820,8 +2586,8 @@ class RootCoreNativeObservationRegistry:
                     "account_fingerprint": self._attempts[call["attempt"]]["account"],
                     "profile_id": source.profile_id, "source_revision": source.source_revision,
                     "profile_manifest_sha256": source.profile_manifest_sha256,
-                    "profile_tool_names": sorted(source.profile_tool_names),
-                    "profile_privacy_requirements": sorted(source.profile_privacy_requirements),
+                    "profile_tool_names": [],
+                    "profile_privacy_requirements": [],
                     "source_manifest": manifest, "source_manifest_sha256": _hash(manifest),
                     "prompt_b64": base64.b64encode(source.effective_prompt).decode("ascii"),
                     "prompt_sha256": source.effective_prompt_sha256, "prompt_revision": source.source_revision,
@@ -1850,9 +2616,10 @@ class RootCoreNativeObservationRegistry:
                     raise ValueError("mission authorization is expired or already consumed")
                 call, owner = pending["call"], pending["owner"]
                 policy = pending["policy"]
-                source = self._source.resolve_current(self._custody)
+                source = self._current_master_source()
                 if (call["peer"] != peer
                         or call.get("claim") != request["claim_handle"]
+                        or source is None
                         or source.is_current_sealed(custody=self._custody, now=time.monotonic()) is not True
                         or owner.is_current_sealed(self._config, custody=self._custody, now=time.monotonic()) is not True
                         or self._policy_for_owner(owner, time.monotonic()) is not policy
@@ -1861,7 +2628,7 @@ class RootCoreNativeObservationRegistry:
                         or (not policy.allow_inherited_mcp
                             and any(name.startswith("mcp__") for name in call["parent_tool_names"]))
                         or type(owner.mission_binding) is not MissionBinding
-                        or source.profile_id != "orchestrator"
+                        or source.profile_id != "hermes"
                         or call["tool_name"] != "resources_delegate"):
                     raise ValueError("mission dispatch lineage is no longer current")
                 from hermes_installer.remote.jarvis_chat import CHAT_STORE_PATH
@@ -1929,6 +2696,7 @@ class RootCoreNativeObservationRegistry:
             self._child_sessions.clear()
             self._planning_completions.clear()
             self._master_selections.clear()
+            self._selected_source_deliveries.clear()
 
 
 def serve_core_native_observer(registry: RootCoreNativeObservationRegistry, *,
@@ -2275,6 +3043,41 @@ class RootInternalProfileClaimSource:
         self._client = client
         self._lock = threading.RLock()
         self._mission_claims: OrderedDict[str, tuple[object, RootSelectedInternalProfileDispatchClaim]] = OrderedDict()
+        self._authorized_mission_claims: set[str] = set()
+
+    def read_selected_expert_source(
+            self, *, resources_claim: object, source_id: str) -> RootNativeSelectedSourceDelivery:
+        """Resolve only a source selected by this root-sealed mission claim."""
+        from hermes_installer.components.resources_internal_dispatch import (
+            RootSelectedInternalProfileDispatchClaim as ResourcesDispatchClaim,
+        )
+        with self._lock:
+            retained = self._mission_claims.get(getattr(resources_claim, "claim_id", ""))
+        if (type(resources_claim) is not ResourcesDispatchClaim or retained is None
+                or retained[0] is not resources_claim
+                or resources_claim.claim_id not in self._authorized_mission_claims
+                or resources_claim.mission_binding is None
+                or source_id not in resources_claim.mission_binding.selected_source_ids):
+            raise CoreNativeObservationUnavailable("source is not selected by the sealed owner intent")
+        return self._client.read_selected_expert_source(
+            native_claim=retained[1], source_id=source_id)
+
+    def admit_selected_expert_child(
+            self, *, resources_claim: object, child: Any,
+            source: RootNativeSelectedSourceDelivery, goal: str
+            ) -> RootVerifiedNativeChildAuthorization:
+        """Forward the exact consumed claim/source to root admission."""
+        from hermes_installer.components.resources_internal_dispatch import (
+            RootSelectedInternalProfileDispatchClaim as ResourcesDispatchClaim,
+        )
+        with self._lock:
+            retained = self._mission_claims.get(getattr(resources_claim, "claim_id", ""))
+        if (type(resources_claim) is not ResourcesDispatchClaim or retained is None
+                or retained[0] is not resources_claim
+                or resources_claim.claim_id not in self._authorized_mission_claims):
+            raise CoreNativeObservationUnavailable("typed consumed Resources claim is required")
+        return self._client.admit_selected_expert_child(
+            native_claim=retained[1], child=child, source=source, goal=goal)
 
     def consume_current_claim(self, profile_id: str, parent_agent: object, *,
                               tool_call_id: str, tool_name: str,
@@ -2282,8 +3085,8 @@ class RootInternalProfileClaimSource:
         from hermes_installer.components.resources_internal_dispatch import (
             RootSelectedInternalProfileDispatchClaim as ResourcesDispatchClaim,
         )
-        if profile_id != "orchestrator" or tool_name != "resources_delegate":
-            raise CoreNativeObservationUnavailable("only the fixed orchestrator tool may be claimed")
+        if profile_id != "hermes" or tool_name != "resources_delegate":
+            raise CoreNativeObservationUnavailable("only the fixed Jarvis master tool may be claimed")
         observed_turn = _require_id(getattr(parent_agent, "_current_turn_id", None), "native turn ID")
         if turn_id != observed_turn:
             raise CoreNativeObservationUnavailable("handler turn differs from the current parent turn")
@@ -2364,7 +3167,9 @@ class RootInternalProfileClaimSource:
                 or not _HASH.fullmatch(task_sha256 or "")):
             raise CoreNativeObservationUnavailable("typed bound mission claim is required")
         with self._lock:
-            row = self._mission_claims.pop(resources_claim.claim_id, None)
+            row = self._mission_claims.get(resources_claim.claim_id)
+            if resources_claim.claim_id in self._authorized_mission_claims:
+                raise CoreNativeObservationUnavailable("mission claim authorization was already consumed")
         if row is None or row[0] is not resources_claim or row[1].mission_binding != resources_claim.mission_binding:
             raise CoreNativeObservationUnavailable("mission claim was not issued by this root client")
         native_claim = row[1]
@@ -2378,6 +3183,8 @@ class RootInternalProfileClaimSource:
         authorization = self._client.authorize_mission_dispatch(claim=native_claim)
         if not authorization.matches_claim(native_claim, task_sha256, now=time.monotonic()):
             raise CoreNativeObservationUnavailable("root mission authorization is not current")
+        with self._lock:
+            self._authorized_mission_claims.add(resources_claim.claim_id)
         return authorization
 
 
@@ -2412,7 +3219,8 @@ __all__ = [
     "CoreNativeResourcesDelegateRegistration", "current_resources_delegate_registration",
     "NativeSourceMember", "ObservedProviderAttempt", "OwnerTurnHandle",
     "RootSelectedInternalProfileDispatchClaim", "RootVerifiedMissionDispatchAuthorization",
-    "RootVerifiedNativeChildAuthorization", "CoreVerifiedJarvisMasterPlanningCompletion",
+    "RootVerifiedNativeChildAuthorization", "RootVerifiedMasterReadCall",
+    "CoreVerifiedJarvisMasterPlanningCompletion",
     "RootCoreNativeObservationRegistry", "_native_delegate_execution_gate",
     "RootInternalProfileClaimSource", "serve_core_native_observer",
     "install_native_codex_process_observer", "register_native_resources_observer",
