@@ -47,3 +47,5 @@ Implement the next useful ports proportionately: owner-approved pause-only sched
 Mission owner consent can be persisted independently of execution readiness through a finite approve endpoint. Its bounded intent nonce does not authorize native dispatch and cannot trigger later unattended execution.
 
 The first real mission is a single source-selected Orchestrator task bound exactly to owner-approved text and plan. It cannot treat model-generated paraphrase or copied parent inventory as mission/source authorization.
+
+The first specialization deliberately uses supported native parent-tool inheritance under an independently root-enrolled policy. This replaces the unavailable prompt-grant equality interpretation while preserving exact source custody and native restrictions; it makes no sandbox or text-only-child claim.

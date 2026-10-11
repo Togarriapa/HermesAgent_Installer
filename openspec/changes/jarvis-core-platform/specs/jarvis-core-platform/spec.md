@@ -1845,3 +1845,10 @@ The first native mission SHALL bind the approved unchanged brief and Orchestrato
 #### Scenario: Changed task or absent source grants
 - **WHEN** the model changes the approved task or source grants cannot be verified
 - **THEN** no mission delegation occurs.
+
+### Requirement: Separately enrolled inherited-tool policy
+The first Orchestrator specialization SHALL use a separately root-enrolled current parent delegation policy and supported native inheritance. Prompt declarations SHALL NOT be treated as effect grants, and native tool/privacy/budget restrictions SHALL remain authoritative.
+
+#### Scenario: Inherited capability unavailable
+- **WHEN** the effective native child closure includes a capability not authorized by the selected parent policy
+- **THEN** dispatch denies without changing source prompts or widening permissions.
