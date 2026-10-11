@@ -12,8 +12,11 @@ import pytest
 from hermes_installer.remote.core_native_observer import (
     CoreNativeObservationClient,
     CoreNativeObservationUnavailable,
+    ObservedProviderAttempt,
     ObservedNativeToolCall,
+    RootVerifiedNativeChildAuthorization,
     RootVerifiedMasterReadCall,
+    _NATIVE_CHILD_AUTHORIZATION_SEAL,
     _MASTER_READ_CALL_SEAL,
     _codex_account_fingerprint,
     _mission_binding_from_wire,
@@ -96,6 +99,67 @@ def test_credential_pool_or_api_bearer_never_counts_as_selected_subscription():
             "api_key": "not-a-real-token", "source": "credential_pool",
             "auth_mode": "api_key",
         })
+
+
+def test_provider_attempt_receipt_can_cover_original_owner_turn_deadline():
+    import time
+
+    now = time.monotonic()
+    attempt = ObservedProviderAttempt(
+        handle="a" * 32, owner_turn_handle="o" * 32, expires_monotonic=now + 300,
+    )
+    assert attempt.expires_monotonic > now + 30
+    with pytest.raises(CoreNativeObservationUnavailable):
+        ObservedProviderAttempt(
+            handle="b" * 32, owner_turn_handle="o" * 32, expires_monotonic=now + 601,
+        )
+
+
+def test_initial_planner_admission_accepts_no_parent_turn_but_rejects_tool_drift():
+    from types import SimpleNamespace
+    from hermes_installer.remote.native_child_adapter import NativeChildMode
+
+    parent = SimpleNamespace(
+        session_id="owner-session", _current_turn_id=None,
+        provider="openai-codex", api_mode="codex_responses",
+        base_url="https://chatgpt.com/backend-api/codex", model="gpt-6-luna",
+    )
+    child = SimpleNamespace(
+        session_id="planner-session", _current_turn_id=None, valid_tool_names=set(),
+        provider="openai-codex", api_mode="codex_responses",
+        base_url="https://chatgpt.com/backend-api/codex", model="gpt-6-luna",
+    )
+    source = SimpleNamespace(
+        profile_id="hermes", generation_sha256="a" * 64,
+        source_member_manifest_sha256="b" * 64, effective_prompt_sha256="c" * 64,
+    )
+    now = __import__("time").monotonic()
+    authorization = RootVerifiedNativeChildAuthorization(
+        owner_turn_handle="o" * 32, gateway_turn_id="gateway-turn",
+        owner_subject_sha256="d" * 64, core_generation="e" * 64,
+        core_source_generation="f" * 64, parent_session_id=parent.session_id,
+        parent_turn_id="", child_session_id=child.session_id, profile_id="hermes",
+        source_generation_sha256=source.generation_sha256,
+        source_manifest_sha256=source.source_member_manifest_sha256,
+        prompt_sha256=source.effective_prompt_sha256,
+        goal_sha256=__import__("hashlib").sha256(b"bounded plan").hexdigest(),
+        account_fingerprint="1" * 64, mode=NativeChildMode.PLANNER.value,
+        allowed_tool_names=(), tool_closure_sha256=__import__("hashlib").sha256(b"[]").hexdigest(),
+        additional_metered_budget=0, admission_handle="h" * 32,
+        expires_monotonic=now + 20, initial_owner_turn=True,
+        _parent_agent=parent, _child_agent=child, _source=source,
+        _seal=_NATIVE_CHILD_AUTHORIZATION_SEAL,
+    )
+
+    assert authorization.matches_child(
+        parent_agent=parent, child=child, source=source,
+        mode=NativeChildMode.PLANNER, goal="bounded plan", now=now,
+    )
+    child.valid_tool_names.add("delegate_task")
+    assert not authorization.matches_child(
+        parent_agent=parent, child=child, source=source,
+        mode=NativeChildMode.PLANNER, goal="bounded plan", now=now,
+    )
 
 
 def test_owner_turn_registration_is_not_available_from_core_worker_socket(tmp_path: Path):

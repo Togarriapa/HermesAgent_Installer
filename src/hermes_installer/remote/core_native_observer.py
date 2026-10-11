@@ -195,7 +195,7 @@ class ObservedProviderAttempt:
                 or not isinstance(self.expires_monotonic, (int, float))
                 or not math.isfinite(self.expires_monotonic)
                 or self.expires_monotonic <= time.monotonic()
-                or self.expires_monotonic > time.monotonic() + 30.0):
+                or self.expires_monotonic > time.monotonic() + 600.0):
             raise CoreNativeObservationUnavailable("root provider-attempt handle is malformed")
 
 
@@ -549,6 +549,7 @@ class RootNativeSelectedSourceDelivery:
     profile_manifest_sha256: str
     effective_prompt: bytes
     effective_prompt_sha256: str
+    expires_monotonic: float
     _seal: object
 
     @property
@@ -566,6 +567,8 @@ class RootNativeSelectedSourceDelivery:
                 or not isinstance(self.effective_prompt, bytes) or not self.effective_prompt
                 or len(self.effective_prompt) > 128 * 1024
                 or hashlib.sha256(self.effective_prompt).hexdigest() != self.effective_prompt_sha256
+                or type(self.expires_monotonic) not in (int, float)
+                or not time.monotonic() < self.expires_monotonic <= time.monotonic() + 30.0
                 or self._seal is not _SELECTED_SOURCE_DELIVERY_SEAL):
             raise CoreNativeObservationUnavailable("root selected source delivery is malformed")
 
@@ -594,6 +597,7 @@ class RootVerifiedNativeChildAuthorization:
     additional_metered_budget: int
     admission_handle: str
     expires_monotonic: float
+    initial_owner_turn: bool
     _parent_agent: Any
     _child_agent: Any
     _source: Any
@@ -632,7 +636,9 @@ class RootVerifiedNativeChildAuthorization:
             and _HASH.fullmatch(self.core_generation or "")
             and _HASH.fullmatch(self.core_source_generation or "")
             and self.parent_session_id == getattr(parent_agent, "session_id", None)
-            and self.parent_turn_id == getattr(parent_agent, "_current_turn_id", None)
+            and ((self.initial_owner_turn and self.parent_turn_id == "")
+                 or (not self.initial_owner_turn
+                     and self.parent_turn_id == getattr(parent_agent, "_current_turn_id", None)))
             and self.child_session_id == getattr(child, "session_id", None)
             and hashlib.sha256(goal.encode("utf-8", errors="strict")).hexdigest() == self.goal_sha256
             and actual_source == (self.profile_id, self.source_generation_sha256,
@@ -640,6 +646,8 @@ class RootVerifiedNativeChildAuthorization:
             and tuple(sorted(expected_names)) == expected_names
             and set(expected_names).issubset(fixed_names)
             and actual_names == expected_names
+            and type(self.initial_owner_turn) is bool
+            and (not self.initial_owner_turn or (self.mode == "planner" and self.parent_turn_id == ""))
             and type(self.additional_metered_budget) is int
             and self.additional_metered_budget == 0
             and _hash(list(actual_names)) == self.tool_closure_sha256
@@ -667,6 +675,7 @@ class CoreVerifiedJarvisMasterPlanningCompletion:
     response_sha256: str
     completion_handle: str
     expires_monotonic: float
+    owner_turn_expires_monotonic: float
     _client: Any
     _seal: object
 
@@ -683,7 +692,10 @@ class CoreVerifiedJarvisMasterPlanningCompletion:
                 or not isinstance(self.owner_turn_handle, str)
                 or not isinstance(self.gateway_turn_id, str)
                 or not _OPAQUE.fullmatch(self.completion_handle or "")
-                or not current < self.expires_monotonic <= current + 30.0):
+                or not current < self.expires_monotonic <= current + 30.0
+                or type(self.owner_turn_expires_monotonic) not in (int, float)
+                or not current < self.owner_turn_expires_monotonic <= current + 600.0
+                or self.expires_monotonic > self.owner_turn_expires_monotonic):
             return False
         verifier = getattr(self._client, "verify_planning_completion", None)
         return bool(callable(verifier) and verifier(self, config=config, custody=custody) is True)
@@ -707,6 +719,7 @@ class CoreNativeObservationClient:
             "register-tool-call", "prepare-dispatch", "consume-dispatch",
             "authorize-mission-dispatch", "admit-native-child",
             "admit-master-planner-child",
+            "read-current-master-source", "admit-initial-master-plan",
             "complete-native-child", "verify-planning-completion",
             "request-final-effect", "poll-final-effect", "authorize-master-read-call",
             "read-selected-expert-source", "admit-selected-expert-child",
@@ -1059,8 +1072,136 @@ class CoreNativeObservationClient:
             tool_closure_sha256=row["tool_closure_sha256"],
             additional_metered_budget=row["additional_metered_budget"],
             admission_handle=row["admission_handle"], expires_monotonic=expiry,
+            initial_owner_turn=False,
             _parent_agent=parent, _child_agent=child, _source=source,
             _seal=_NATIVE_CHILD_AUTHORIZATION_SEAL,
+        )
+
+    def read_current_master_source(self, *, owner_turn_handle: str
+                                   ) -> RootNativeSelectedSourceDelivery:
+        """Fetch exact current Jarvis prompt bytes from the root-retained source."""
+        if not isinstance(owner_turn_handle, str) or not _OPAQUE.fullmatch(owner_turn_handle):
+            raise CoreNativeObservationUnavailable("current owner turn is required")
+        row = self._rpc("read-current-master-source", {"owner_turn_handle": owner_turn_handle})
+        required = {"schema", "nonce", "ok", "source_handle", "profile_id", "source_revision",
+                    "generation_sha256", "source_manifest_sha256", "profile_manifest_sha256",
+                    "prompt_b64", "prompt_sha256", "expires_monotonic"}
+        if (set(row) != required or type(row.get("schema")) is not int or row["schema"] != 1
+                or row["profile_id"] != "hermes" or not _OPAQUE.fullmatch(row["source_handle"] or "")):
+            raise CoreNativeObservationUnavailable("root master source response is malformed")
+        try:
+            prompt = base64.b64decode(row["prompt_b64"], validate=True)
+            source = RootNativeSelectedSourceDelivery(
+                source_handle=row["source_handle"], profile_id=row["profile_id"],
+                source_revision=row["source_revision"], generation_sha256=row["generation_sha256"],
+                source_manifest_sha256=row["source_manifest_sha256"],
+                profile_manifest_sha256=row["profile_manifest_sha256"],
+                effective_prompt=prompt, effective_prompt_sha256=row["prompt_sha256"],
+                expires_monotonic=float(row["expires_monotonic"]),
+                _seal=_SELECTED_SOURCE_DELIVERY_SEAL,
+            )
+            if source.expires_monotonic > time.monotonic() + 5.1:
+                raise ValueError
+            return source
+        except Exception:
+            raise CoreNativeObservationUnavailable("root master source is stale or malformed") from None
+
+    def admit_initial_master_plan_child(
+            self, *, owner_turn_handle: str, parent_agent: Any, child: Any,
+            source: RootNativeSelectedSourceDelivery, goal: str
+    ) -> RootVerifiedNativeChildAuthorization:
+        """Admit the first no-tools planning child from a registered owner turn.
+
+        Unlike the follow-on planner operation, this root op requires no prior
+        completed parent provider response or predicted native turn ID. The first
+        actual child attempt binds its emitted turn ID in the root observer.
+        """
+        from hermes_installer.remote.native_child_adapter import NativeChildMode
+        if (not isinstance(owner_turn_handle, str) or not _OPAQUE.fullmatch(owner_turn_handle)
+                or type(source) is not RootNativeSelectedSourceDelivery
+                or source.profile_id != "hermes"
+                or not time.monotonic() < source.expires_monotonic
+                or not isinstance(goal, str) or not goal
+                or len(goal.encode("utf-8", errors="strict")) > 32 * 1024):
+            raise CoreNativeObservationUnavailable("current owner, master source, and bounded plan prompt are required")
+        try:
+            parent_session = _require_id(getattr(parent_agent, "session_id"), "owner session ID")
+            child_session = _require_id(getattr(child, "session_id"), "planner child session ID")
+            child_turn_value = getattr(child, "_current_turn_id", None)
+            if child_turn_value not in (None, ""):
+                raise ValueError
+            tool_names = tuple(sorted(getattr(child, "valid_tool_names")))
+            parent_route = tuple(getattr(parent_agent, key, None)
+                                 for key in ("provider", "api_mode", "base_url", "model"))
+            child_route = tuple(getattr(child, key, None)
+                                for key in ("provider", "api_mode", "base_url", "model"))
+            account = _codex_account_fingerprint(
+                lambda: __import__("hermes_cli.auth_codex", fromlist=[
+                    "resolve_codex_runtime_credentials"]).resolve_codex_runtime_credentials(read_only=True))
+        except Exception:
+            raise CoreNativeObservationUnavailable("initial planner child lineage is incomplete") from None
+        if (parent_route != child_route
+                or parent_route[:3] != (_CODEX_PROVIDER, _CODEX_MODE, _CODEX_ENDPOINT)
+                or not isinstance(parent_route[3], str) or not parent_route[3]
+                or tool_names):
+            raise CoreNativeObservationUnavailable("initial planner must be no-tools on the current Codex route")
+        goal_sha256 = hashlib.sha256(goal.encode("utf-8", errors="strict")).hexdigest()
+        row = self._rpc("admit-initial-master-plan", {
+            "owner_turn_handle": owner_turn_handle,
+            "parent_session_id": parent_session,
+            "child_session_id": child_session,
+            "child_turn_id": "",
+            "source_handle": source.source_handle,
+            "source_generation_sha256": source.generation_sha256,
+            "source_manifest_sha256": source.source_manifest_sha256,
+            "profile_manifest_sha256": source.profile_manifest_sha256,
+            "prompt_sha256": source.effective_prompt_sha256,
+            "goal_sha256": goal_sha256,
+            "provider": parent_route[0], "api_mode": parent_route[1],
+            "base_url": parent_route[2], "model": parent_route[3],
+            "account_fingerprint": account,
+            "tool_names": [], "tool_closure_sha256": _hash([]),
+        })
+        required = {"schema", "nonce", "ok", "admission_handle", "owner_turn_handle",
+                    "gateway_turn_id", "owner_subject_sha256", "core_generation",
+                    "core_source_generation", "parent_session_id", "parent_turn_id",
+                    "child_session_id", "profile_id", "source_generation_sha256",
+                    "source_manifest_sha256", "prompt_sha256", "goal_sha256",
+                    "account_fingerprint", "mode", "tool_names", "tool_closure_sha256",
+                    "additional_metered_budget", "expires_monotonic", "owner_turn_expires_monotonic"}
+        if (set(row) != required or type(row.get("schema")) is not int or row["schema"] != 1
+                or row["owner_turn_handle"] != owner_turn_handle
+                or row["parent_session_id"] != parent_session or row["parent_turn_id"] != ""
+                or row["child_session_id"] != child_session or row["profile_id"] != "hermes"
+                or row["source_generation_sha256"] != source.generation_sha256
+                or row["source_manifest_sha256"] != source.source_manifest_sha256
+                or row["prompt_sha256"] != source.effective_prompt_sha256
+                or row["goal_sha256"] != goal_sha256
+                or row["account_fingerprint"] != account
+                or row["mode"] != NativeChildMode.PLANNER.value or row["tool_names"] != []
+                or row["tool_closure_sha256"] != _hash([])
+                or row["additional_metered_budget"] != 0
+                or not _OPAQUE.fullmatch(row["admission_handle"] or "")):
+            raise CoreNativeObservationUnavailable("root initial plan admission does not match its request")
+        expiry = float(row["expires_monotonic"])
+        owner_expiry = float(row["owner_turn_expires_monotonic"])
+        now = time.monotonic()
+        if (not now < expiry <= min(owner_expiry, now + 30.0)
+                or not now < owner_expiry <= now + 600.0):
+            raise CoreNativeObservationUnavailable("root initial plan admission has an invalid lease")
+        return RootVerifiedNativeChildAuthorization(
+            owner_turn_handle=owner_turn_handle, gateway_turn_id=row["gateway_turn_id"],
+            owner_subject_sha256=row["owner_subject_sha256"], core_generation=row["core_generation"],
+            core_source_generation=row["core_source_generation"], parent_session_id=parent_session,
+            parent_turn_id="", child_session_id=child_session, profile_id="hermes",
+            source_generation_sha256=source.generation_sha256,
+            source_manifest_sha256=source.source_manifest_sha256,
+            prompt_sha256=source.effective_prompt_sha256, goal_sha256=goal_sha256,
+            account_fingerprint=account, mode=NativeChildMode.PLANNER.value,
+            allowed_tool_names=(), tool_closure_sha256=_hash([]), additional_metered_budget=0,
+            admission_handle=row["admission_handle"], expires_monotonic=expiry,
+            initial_owner_turn=True, _parent_agent=parent_agent, _child_agent=child,
+            _source=source, _seal=_NATIVE_CHILD_AUTHORIZATION_SEAL,
         )
 
     def admit_master_planner_child(self, *, owner_turn_handle: str, parent_agent: Any,
@@ -1073,7 +1214,6 @@ class CoreNativeObservationClient:
         Codex account are all rejoined by the root registry.
         """
         from hermes_installer.remote.native_child_adapter import NativeChildMode
-        from hermes_installer.components.resources_active_profile_source import RootVerifiedJarvisMasterSource
         if (not isinstance(owner_turn_handle, str) or not _OPAQUE.fullmatch(owner_turn_handle)
                 or type(child) is type(None) or not isinstance(goal, str) or not goal
                 or len(goal.encode("utf-8", errors="strict")) > 32 * 1024):
@@ -1087,16 +1227,16 @@ class CoreNativeObservationClient:
             tool_names = tuple(sorted(getattr(child, "valid_tool_names")))
             provider, api_mode, base_url, model = tuple(
                 getattr(child, key, None) for key in ("provider", "api_mode", "base_url", "model"))
-            source = self._master_source
+            source = self.read_current_master_source(owner_turn_handle=owner_turn_handle)
             source_generation = getattr(source, "generation_sha256", getattr(source, "artifact_sha256", None))
             source_manifest = getattr(source, "source_member_manifest_sha256",
                                       getattr(source, "profile_member_manifest_sha256", None))
             prompt_sha256 = getattr(source, "effective_prompt_sha256", getattr(source, "profile_prompt_sha256", None))
         except (AttributeError, TypeError, ValueError):
             raise CoreNativeObservationUnavailable("planner child lineage is incomplete") from None
-        if (type(source) is not RootVerifiedJarvisMasterSource
+        if (type(source) is not RootNativeSelectedSourceDelivery
                 or getattr(source, "profile_id", None) != "hermes"
-                or source.is_current_sealed(self._custody, now=time.monotonic()) is not True
+                or not time.monotonic() < source.expires_monotonic
                 or provider != _CODEX_PROVIDER or api_mode != _CODEX_MODE
                 or base_url != _CODEX_ENDPOINT or not isinstance(model, str)
                 or tuple(sorted(set(tool_names))) != tool_names or tool_names):
@@ -1148,6 +1288,7 @@ class CoreNativeObservationClient:
             account_fingerprint=row["account_fingerprint"], mode=NativeChildMode.PLANNER.value,
             allowed_tool_names=(), tool_closure_sha256=_hash([]), additional_metered_budget=0,
             admission_handle=row["admission_handle"], expires_monotonic=expiry,
+            initial_owner_turn=False,
             _parent_agent=parent_agent, _child_agent=child, _source=source,
             _seal=_NATIVE_CHILD_AUTHORIZATION_SEAL,
         )
@@ -1177,6 +1318,7 @@ class CoreNativeObservationClient:
                 source_manifest_sha256=row["source_manifest_sha256"],
                 profile_manifest_sha256=row["profile_manifest_sha256"],
                 effective_prompt=prompt, effective_prompt_sha256=row["prompt_sha256"],
+                expires_monotonic=float(row["expires_monotonic"]),
                 _seal=_SELECTED_SOURCE_DELIVERY_SEAL,
             )
             if not time.monotonic() < float(row["expires_monotonic"]) <= min(
@@ -1255,6 +1397,7 @@ class CoreNativeObservationClient:
             tool_closure_sha256=row["tool_closure_sha256"],
             additional_metered_budget=row["additional_metered_budget"],
             admission_handle=row["admission_handle"], expires_monotonic=expiry,
+            initial_owner_turn=False,
             _parent_agent=native_claim.parent_agent, _child_agent=child, _source=source,
             _seal=_NATIVE_CHILD_AUTHORIZATION_SEAL,
         )
@@ -1280,7 +1423,7 @@ class CoreNativeObservationClient:
         required = {"schema", "nonce", "ok", "completion_handle", "owner_subject_sha256",
                     "owner_turn_handle", "gateway_turn_id", "core_generation",
                     "core_source_generation", "prompt_sha256", "response_sha256",
-                    "expires_monotonic"}
+                    "expires_monotonic", "owner_turn_expires_monotonic"}
         if (set(row) != required or type(row.get("schema")) is not int or row["schema"] != 1
                 or row["completion_handle"] == ""
                 or row["owner_subject_sha256"] != authorization.owner_subject_sha256
@@ -1293,7 +1436,9 @@ class CoreNativeObservationClient:
                 or not _OPAQUE.fullmatch(row["completion_handle"] or "")):
             raise CoreNativeObservationUnavailable("root planning completion receipt is malformed")
         expiry = float(row["expires_monotonic"])
-        if not time.monotonic() < expiry <= authorization.expires_monotonic:
+        owner_expiry = float(row["owner_turn_expires_monotonic"])
+        if (not time.monotonic() < expiry <= time.monotonic() + 30.0
+                or not expiry <= owner_expiry <= time.monotonic() + 600.0):
             raise CoreNativeObservationUnavailable("root planning completion expired")
         return CoreVerifiedJarvisMasterPlanningCompletion(
             owner_subject_sha256=row["owner_subject_sha256"],
@@ -1301,6 +1446,7 @@ class CoreNativeObservationClient:
             core_generation=row["core_generation"], core_source_generation=row["core_source_generation"],
             prompt_sha256=row["prompt_sha256"], response_sha256=row["response_sha256"],
             completion_handle=row["completion_handle"], expires_monotonic=expiry,
+            owner_turn_expires_monotonic=owner_expiry,
             _client=self, _seal=_MASTER_PLANNING_COMPLETION_SEAL,
         )
 
@@ -1319,6 +1465,7 @@ class CoreNativeObservationClient:
                 "core_source_generation": completion.core_source_generation,
                 "prompt_sha256": completion.prompt_sha256,
                 "response_sha256": completion.response_sha256,
+                "owner_turn_expires_monotonic": completion.owner_turn_expires_monotonic,
             })
             return (set(row) == {"schema", "nonce", "ok"}
                     and type(row["schema"]) is int and row["schema"] == 1
@@ -1468,6 +1615,7 @@ class RootCoreNativeObservationRegistry:
         self._planning_completions: dict[str, dict[str, Any]] = {}
         self._master_selections: dict[str, dict[str, Any]] = {}
         self._selected_source_deliveries: dict[str, dict[str, Any]] = {}
+        self._master_source_deliveries: dict[str, dict[str, Any]] = {}
         self._master_source: Any = None
         self._final_effect_store: Any = None
         try:
@@ -1880,7 +2028,9 @@ class RootCoreNativeObservationRegistry:
             if row["expiry"] <= now:
                 self._consumed_dispatches.pop(handle, None)
         for session_id, row in list(self._child_sessions.items()):
-            if row["expiry"] <= now:
+            if (row["expiry"] <= now
+                    or (row["mode"] == "planner" and row.get("turn_id") is None
+                        and row.get("start_expires", row["expiry"]) <= now)):
                 self._child_sessions.pop(session_id, None)
         for handle, row in list(self._planning_completions.items()):
             if row["expiry"] <= now:
@@ -1891,6 +2041,9 @@ class RootCoreNativeObservationRegistry:
         for handle, row in list(self._selected_source_deliveries.items()):
             if row["expiry"] <= now:
                 self._selected_source_deliveries.pop(handle, None)
+        for handle, row in list(self._master_source_deliveries.items()):
+            if row["expiry"] <= now or row.get("consumed"):
+                self._master_source_deliveries.pop(handle, None)
 
     def _owner_for(self, session_id: str, turn_id: str) -> Any:
         now = time.monotonic()
@@ -1901,7 +2054,8 @@ class RootCoreNativeObservationRegistry:
                     and owner.is_current_sealed(self._config, custody=self._custody, now=now) is True):
                 bound = child_row.get("turn_id")
                 if bound is None:
-                    child_row["turn_id"] = turn_id
+                    if now >= child_row.get("start_expires", child_row["expiry"]):
+                        return None
                     return owner
                 if bound == turn_id:
                     return owner
@@ -2307,6 +2461,113 @@ class RootCoreNativeObservationRegistry:
                     "goal_sha256": request["goal_sha256"], "account_fingerprint": attempt["account"],
                     "mode": "planner", "tool_names": [], "tool_closure_sha256": _hash([]),
                     "additional_metered_budget": 0, "expires_monotonic": expiry}
+            if op == "read-current-master-source":
+                if set(request) != {"schema", "op", "nonce", "owner_turn_handle"}:
+                    raise ValueError("current master source request schema mismatch")
+                now = time.monotonic()
+                owner = self._owners.get(request["owner_turn_handle"])
+                source = self._current_master_source()
+                if (owner is None or owner.expires_monotonic <= now
+                        or owner.is_current_sealed(self._config, custody=self._custody, now=now) is not True
+                        or self._policy_for_owner(owner, now) is None
+                        or source is None or source.profile_id != "hermes"
+                        or source.native_profile_key != "default" or source.display_name != "Jarvis"
+                        or source.is_current_sealed(self._custody, now=now) is not True):
+                    raise ValueError("registered owner and current Jarvis source are unavailable")
+                handle = secrets.token_urlsafe(32)
+                expiry = min(float(source.expires_monotonic), float(owner.expires_monotonic), now + 5.0)
+                if expiry <= now:
+                    raise ValueError("current Jarvis source readback expired")
+                self._master_source_deliveries[handle] = {
+                    "source": source, "owner": owner, "peer": peer,
+                    "expiry": expiry, "consumed": False,
+                }
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                    "source_handle": handle, "profile_id": "hermes",
+                    "source_revision": source.source_revision,
+                    "generation_sha256": source.generation_sha256,
+                    "source_manifest_sha256": source.source_member_manifest_sha256,
+                    "profile_manifest_sha256": source.profile_manifest_sha256,
+                    "prompt_b64": base64.b64encode(source.effective_prompt).decode("ascii"),
+                    "prompt_sha256": source.effective_prompt_sha256,
+                    "expires_monotonic": expiry}
+            if op == "admit-initial-master-plan":
+                required = {"schema", "op", "nonce", "owner_turn_handle", "parent_session_id",
+                    "child_session_id", "child_turn_id", "source_handle", "source_generation_sha256",
+                    "source_manifest_sha256", "profile_manifest_sha256", "prompt_sha256", "goal_sha256",
+                    "provider", "api_mode", "base_url", "model", "account_fingerprint",
+                    "tool_names", "tool_closure_sha256"}
+                if set(request) != required:
+                    raise ValueError("initial master plan admission schema mismatch")
+                now = time.monotonic()
+                owner = self._owners.get(request["owner_turn_handle"])
+                delivered = self._master_source_deliveries.get(request["source_handle"])
+                source = delivered.get("source") if delivered is not None else None
+                policy = self._policy_for_owner(owner, now) if owner is not None else None
+                if (owner is None or owner.expires_monotonic <= now
+                        or owner.is_current_sealed(self._config, custody=self._custody, now=now) is not True
+                        or owner.session_id != request["parent_session_id"]
+                        or self._owner_turn_bindings.get(owner.owner_turn_handle) is not None
+                        or any(row.get("owner") is owner and row.get("mode") == "planner"
+                               for row in self._child_sessions.values())
+                        or delivered is None or delivered["consumed"] or delivered["expiry"] <= now
+                        or delivered["peer"] != peer or delivered["owner"] is not owner
+                        or source is None or source.is_current_sealed(self._custody, now=now) is not True
+                        or source.profile_id != "hermes" or source.native_profile_key != "default"
+                        or source.display_name != "Jarvis"
+                        or request["source_generation_sha256"] != source.generation_sha256
+                        or request["source_manifest_sha256"] != source.source_member_manifest_sha256
+                        or request["profile_manifest_sha256"] != source.profile_manifest_sha256
+                        or request["prompt_sha256"] != source.effective_prompt_sha256
+                        or request["provider"] != _CODEX_PROVIDER or request["api_mode"] != _CODEX_MODE
+                        or request["base_url"] != _CODEX_ENDPOINT
+                        or not isinstance(request["model"], str) or not _ID.fullmatch(request["model"])
+                        or not _HASH.fullmatch(request["account_fingerprint"] or "")
+                        or request["child_turn_id"] != ""
+                        or request["tool_names"] != [] or request["tool_closure_sha256"] != _hash([])
+                        or not _HASH.fullmatch(request["goal_sha256"] or "")
+                        or policy is None or policy.additional_metered_budget != 0):
+                    raise ValueError("initial master plan is not bound to current owner and source")
+                child_session = _require_id(request["child_session_id"], "planner child session ID")
+                if child_session == owner.session_id or child_session in self._child_sessions:
+                    raise ValueError("planner child session is already bound")
+                delivered["consumed"] = True
+                start_expiry = min(float(owner.expires_monotonic), float(policy.expires_monotonic), now + 30.0)
+                run_expiry = min(float(owner.expires_monotonic), float(policy.expires_monotonic))
+                if not now < start_expiry <= run_expiry <= now + 600.0:
+                    raise ValueError("initial planner owner lease is unavailable")
+                admission = secrets.token_urlsafe(32)
+                child = {"admission_handle": admission, "owner_turn_handle": owner.owner_turn_handle,
+                    "owner": owner, "policy": policy, "parent_session_id": owner.session_id,
+                    "parent_turn_id": "", "session_id": child_session,
+                    "turn_id": None, "start_expires": start_expiry,
+                    "profile_id": "hermes", "source_generation_sha256": source.generation_sha256,
+                    "source_manifest_sha256": source.source_member_manifest_sha256,
+                    "prompt_sha256": source.effective_prompt_sha256,
+                    "goal_sha256": request["goal_sha256"],
+                    "account": request["account_fingerprint"], "mode": "planner",
+                    "tool_names": (), "tool_closure_sha256": _hash([]),
+                    "provider": _CODEX_PROVIDER, "api_mode": _CODEX_MODE,
+                    "base_url": _CODEX_ENDPOINT, "model": request["model"],
+                    "source": source, "attempts": [], "peer": peer,
+                    "expiry": run_expiry, "complete": False, "response_text_sha256": None}
+                self._child_sessions[child_session] = child
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                    "admission_handle": admission, "owner_turn_handle": owner.owner_turn_handle,
+                    "gateway_turn_id": owner.gateway_turn_id,
+                    "owner_subject_sha256": owner.owner_subject_sha256,
+                    "core_generation": owner.core_generation,
+                    "core_source_generation": owner.core_source_generation,
+                    "parent_session_id": owner.session_id, "parent_turn_id": "",
+                    "child_session_id": child_session, "profile_id": "hermes",
+                    "source_generation_sha256": source.generation_sha256,
+                    "source_manifest_sha256": source.source_member_manifest_sha256,
+                    "prompt_sha256": source.effective_prompt_sha256,
+                    "goal_sha256": request["goal_sha256"],
+                    "account_fingerprint": request["account_fingerprint"],
+                    "mode": "planner", "tool_names": [], "tool_closure_sha256": _hash([]),
+                    "additional_metered_budget": 0, "expires_monotonic": start_expiry,
+                    "owner_turn_expires_monotonic": owner.expires_monotonic}
             if op == "admit-native-child":
                 raise ValueError("legacy Resources-parent child admission is disabled")
             if op == "complete-native-child":
@@ -2353,11 +2614,13 @@ class RootCoreNativeObservationRegistry:
                     "core_source_generation": owner.core_source_generation,
                     "prompt_sha256": child["goal_sha256"],
                     "response_sha256": request["response_sha256"],
-                    "expires_monotonic": expiry}
+                    "expires_monotonic": expiry,
+                    "owner_turn_expires_monotonic": owner.expires_monotonic}
             if op == "verify-planning-completion":
                 fields = {"schema", "op", "nonce", "completion_handle", "owner_turn_handle",
                           "gateway_turn_id", "owner_subject_sha256", "core_generation",
-                          "core_source_generation", "prompt_sha256", "response_sha256"}
+                          "core_source_generation", "prompt_sha256", "response_sha256",
+                          "owner_turn_expires_monotonic"}
                 if set(request) != fields:
                     raise ValueError("planning completion schema mismatch")
                 record = self._planning_completions.get(request["completion_handle"])
@@ -2376,7 +2639,8 @@ class RootCoreNativeObservationRegistry:
                         or request["core_generation"] != owner.core_generation
                         or request["core_source_generation"] != owner.core_source_generation
                         or request["prompt_sha256"] != child["goal_sha256"]
-                        or request["response_sha256"] != record["response_sha256"]):
+                        or request["response_sha256"] != record["response_sha256"]
+                        or request["owner_turn_expires_monotonic"] != owner.expires_monotonic):
                     raise ValueError("planning completion is stale or mismatched")
                 return {"schema": 1, "nonce": nonce, "ok": True}
             if op == "register-attempt":
@@ -2428,7 +2692,15 @@ class RootCoreNativeObservationRegistry:
                 handle = secrets.token_urlsafe(32)
                 if len(self._attempts) >= 2048:
                     raise ValueError("native attempt registry is full")
-                expiry = min(float(owner.expires_monotonic), time.monotonic() + 30.0)
+                if is_child_attempt and child["mode"] == "planner":
+                    # The start receipt only authorizes beginning within 30s.
+                    # Once the first real child turn is observed, the work stays
+                    # bounded by the original owner/policy lease, not an arbitrary
+                    # 30-second model-response timeout.
+                    expiry = min(float(owner.expires_monotonic), float(policy.expires_monotonic))
+                    child["expiry"] = expiry
+                else:
+                    expiry = min(float(owner.expires_monotonic), time.monotonic() + 30.0)
                 self._attempts[handle] = {"owner": owner, "session_id": request["session_id"],
                     "turn_id": request["turn_id"], "api_request_id": request["api_request_id"],
                     "account": request["account_fingerprint"], "expiry": expiry, "response": None,
@@ -2439,6 +2711,10 @@ class RootCoreNativeObservationRegistry:
                     "child_admission_handle": child["admission_handle"] if is_child_attempt else None,
                     "response_text_sha256": None}
                 if is_child_attempt:
+                    if child["turn_id"] is None:
+                        # Bind only after every attempt field/source/route check
+                        # succeeds; an invalid first frame cannot reserve a turn.
+                        child["turn_id"] = request["turn_id"]
                     child["attempts"].append(handle)
                 return {"schema": 1, "nonce": nonce, "ok": True, "attempt_handle": handle,
                         "owner_turn_handle": owner.owner_turn_handle, "expires_monotonic": expiry}

@@ -186,14 +186,16 @@ def run_native_child(*, child: Any, parent_agent: Any, goal: str,
         expected_names = _CLOSURES[mode]
         child_session_id = getattr(child, "session_id")
         parent_session_id = getattr(parent_agent, "session_id")
-        parent_turn_id = getattr(parent_agent, "_current_turn_id")
+        parent_turn_id = getattr(parent_agent, "_current_turn_id", "") or ""
     except (AttributeError, TypeError, ValueError):
         raise NativeChildDenied("native child lineage is incomplete") from None
+    initial_owner_turn = getattr(authorization, "initial_owner_turn", False) is True
     if (child is None or not names.issubset(expected_names)
             or names != frozenset(getattr(child, "_jarvis_native_child_tool_names", ()))
             or not isinstance(child_session_id, str) or not child_session_id
             or not isinstance(parent_session_id, str) or not parent_session_id
-            or not isinstance(parent_turn_id, str) or not parent_turn_id
+            or not isinstance(parent_turn_id, str)
+            or (not initial_owner_turn and not parent_turn_id)
             or authorization.matches_child(
                 parent_agent=parent_agent, child=child, source=source,
                 mode=mode, goal=goal, now=now) is not True):
