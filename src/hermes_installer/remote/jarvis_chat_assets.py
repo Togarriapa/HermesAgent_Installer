@@ -5,7 +5,12 @@ paths are exposed. The bundle contains no provider credentials or user data.
 """
 from __future__ import annotations
 
+from html import escape
+import json
 from types import MappingProxyType
+
+from .jarvis_feature_contract import validate_feature_assets
+from .jarvis_feature_registry import FEATURE_ASSETS
 
 
 _HTML = '''<!doctype html>
@@ -34,6 +39,7 @@ _HTML = '''<!doctype html>
         <button type="button" class="nav-item" data-view="overview">Overview</button>
         <button type="button" class="nav-item" data-view="capabilities">Capabilities</button>
         <button type="button" class="nav-item" data-view="settings">Settings</button>
+        <!-- JARVIS_FEATURE_NAV -->
       </nav>
       <span class="connection" id="connection-state" role="status" aria-live="polite">
         <span class="connection-dot" aria-hidden="true"></span><span>Checking access…</span>
@@ -96,12 +102,22 @@ _HTML = '''<!doctype html>
           <section class="data-card status-card"><h2>Core service</h2><p class="large-value" id="core-status">Loading…</p><p id="core-readiness" class="muted">Checking verified status</p><p id="core-observed" class="muted"></p></section>
           <section class="data-card"><h2>Conversations</h2><p class="large-value" id="conversation-count">—</p><p class="muted">Available in your private history</p></section>
           <section class="data-card"><h2>Assistant turns</h2><p class="large-value" id="turn-total">—</p><p class="muted" id="turn-breakdown">Activity totals</p></section>
-          <section class="data-card chart-card"><h2>Turns over the last 7 days</h2><p class="muted" id="chart-caption">Loading recorded activity…</p><div id="turn-chart" role="img" aria-label="Assistant turns in the last seven days"></div></section>
+          <section class="data-card"><h2>Active turns</h2><p class="large-value" id="turn-active">—</p><p class="muted" id="last-turn">Last turn not available</p></section>
+          <section class="data-card chart-card"><h2>Turns over the last 7 days</h2><p class="muted" id="chart-caption">Loading recorded activity…</p><div id="turn-chart" role="list" aria-label="Assistant turns in the last seven days"></div></section>
         </div>
       </section>
       <section class="data-main" id="capabilities-view" aria-label="Capabilities" data-view-panel="capabilities" hidden>
-        <div class="page-heading"><span class="eyebrow">AVAILABLE TO JARVIS</span><h1>Capabilities</h1><p>Verified local inventory and current readiness.</p></div>
+        <div class="page-heading"><span class="eyebrow">BUNDLED INVENTORY</span><h1>Capabilities</h1><p>Search the fixed offline catalog. Bundled items are declarations, not proof that a resource is enabled or working.</p></div>
         <div id="capability-readiness" class="readiness-banner" role="status">Loading verified capability inventory…</div>
+        <div class="capability-filters">
+          <label for="capability-search">Search inventory</label>
+          <input id="capability-search" type="search" autocomplete="off" placeholder="Search names, IDs, and descriptions">
+          <label for="capability-kind">Type</label>
+          <select id="capability-kind"><option value="">All types</option></select>
+          <p id="capability-count" role="status" aria-live="polite">Waiting for inventory…</p>
+        </div>
+        <p id="capability-source" class="muted capability-source"></p>
+        <div id="capability-discovery" class="readiness-banner" role="status"></div>
         <div id="capability-list" class="capability-list" aria-live="polite"></div>
       </section>
       <section class="data-main" id="settings-view" aria-label="Settings" data-view-panel="settings" hidden>
@@ -117,6 +133,7 @@ _HTML = '''<!doctype html>
           <p class="voice-unavailable" id="voice-settings-status" role="status" aria-live="polite" hidden></p>
         </section>
       </section>
+      <!-- JARVIS_FEATURE_PANELS -->
     </div>
   </div>
   <div class="scrim" id="panel-scrim" hidden></div>
@@ -132,8 +149,8 @@ _CSS = '''@charset "UTF-8";
 @media(max-width:390px){.topbar{gap:6px;padding-inline:10px}.brand{gap:7px}.brand-copy strong{font-size:12px}.connection{gap:5px;font-size:9px}.chat-main{padding-inline:13px}.composer-hint{max-width:170px;line-height:1.3}.send-button{gap:7px;padding-inline:10px}.chat-heading h1{font-size:20px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 @media(forced-colors:active){.brand-mark,.welcome-orbit,.composer,.new-chat-button,.send-button,.stop-button{border:1px solid CanvasText}.connection-dot{background:Highlight}}
-.primary-nav{display:flex;align-items:center;gap:4px;margin-left:24px}.nav-item{min-height:36px;padding:0 12px;border:1px solid transparent;border-radius:9px;background:transparent;color:#9ab1b5;font:inherit;font-size:12px;cursor:pointer}.nav-item:hover,.nav-item[aria-current="page"]{border-color:var(--line);background:rgba(88,228,235,.08);color:#ddfbfd}.workspace>.data-main{grid-column:2;grid-row:1}.data-main{min-width:0;overflow:auto;padding:40px clamp(20px,5vw,76px)}.data-main[hidden],.chat-main[hidden]{display:none}.page-heading{max-width:1080px;margin:0 auto 26px}.page-heading h1{margin:0;font-size:clamp(25px,3vw,34px);font-weight:550;letter-spacing:-.03em}.page-heading p,.muted{color:#8ba5aa;font-size:13px;line-height:1.6}.page-heading p{margin:8px 0}.dashboard-grid{max-width:1080px;margin:0 auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.data-card{min-width:0;padding:21px;border:1px solid var(--line);border-radius:15px;background:rgba(12,31,38,.78)}.data-card h2{margin:0;color:#acc2c6;font-size:13px;font-weight:600}.large-value{margin:14px 0 3px;color:#e6fbfc;font-size:29px;font-weight:550;letter-spacing:-.03em}.data-card .muted{margin:5px 0}.chart-card{grid-column:1/-1}.chart-bars{height:175px;display:grid;grid-template-columns:repeat(7,minmax(24px,1fr));align-items:end;gap:10px;margin:22px 4px 0;border-bottom:1px solid var(--line-strong)}.chart-day{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:7px;color:#88a2a7;font-size:10px}.chart-bar-track{height:124px;width:100%;display:flex;align-items:flex-end;justify-content:center}.chart-bar{width:min(35px,72%);min-height:2px;border-radius:5px 5px 1px 1px;background:linear-gradient(0deg,#137c88,#56dbe2)}.readiness-banner{max-width:1080px;margin:0 auto 16px;padding:14px 17px;border:1px solid rgba(245,194,117,.25);border-radius:12px;background:rgba(106,76,31,.12);color:#e7cca0;font-size:13px;line-height:1.6}.capability-list{max-width:1080px;margin:auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.capability-row{padding:16px;border:1px solid var(--line);border-radius:12px;background:rgba(12,31,38,.66)}.capability-row h2{margin:0 0 6px;font-size:14px;font-weight:600}.capability-row p{margin:0;color:#8ba5aa;font-size:12px;line-height:1.6}.state-pill{display:inline-block;margin-top:11px;padding:4px 8px;border:1px solid var(--line);border-radius:999px;color:#abc2c5;font-size:10px;text-transform:capitalize}.settings-card{max-width:720px;margin:0 auto}.voice-settings-card{max-width:720px;margin:16px auto 0}.voice-choice{display:flex;align-items:flex-start;gap:12px;padding:15px 0;border-bottom:1px solid var(--line);cursor:pointer}.voice-choice input{width:18px;height:18px;margin:1px 0 0;accent-color:#42c6d0}.voice-choice span{display:grid;gap:5px}.voice-choice strong{font-size:13px;font-weight:600}.voice-choice small{max-width:560px;color:#8ba5aa;font-size:12px;line-height:1.55}.voice-select-row select{min-height:38px;min-width:min(280px,75vw);padding:7px 10px;border:1px solid var(--line-strong);border-radius:8px;background:#0c1f26;color:var(--text);font:inherit}.voice-unavailable,.voice-status{color:#95b1b5;font-size:11px;line-height:1.5}.voice-status{margin:5px 3px}.voice-button{min-height:34px;padding:0 11px;border:1px solid var(--line-strong);border-radius:9px;background:rgba(105,169,180,.08);color:#c9e5e8;font:inherit;font-size:11px;cursor:pointer}.voice-button:hover{border-color:var(--cyan);background:rgba(29,139,150,.22)}.voice-button:disabled{opacity:.55;cursor:wait}.voice-button[hidden]{display:none}.voice-button[data-listening="true"]{border-color:#83d7bd;color:#b9f5e1}.settings-list{margin:18px 0;display:grid;gap:0}.settings-list>div{display:flex;justify-content:space-between;gap:20px;padding:14px 0;border-bottom:1px solid var(--line)}.settings-list dt{color:#8ba5aa;font-size:13px}.settings-list dd{margin:0;text-align:right;color:#e1f4f5;font-size:13px;overflow-wrap:anywhere}
-@media(max-width:760px){.topbar{height:auto;min-height:64px;flex-wrap:wrap;padding-block:8px}.primary-nav{order:3;width:100%;margin:0;justify-content:space-around}.nav-item{flex:1;padding-inline:6px}.connection{margin-left:auto}.conversation-panel{top:calc(112px + env(safe-area-inset-top))}.scrim:not([hidden]){inset:calc(104px + env(safe-area-inset-top)) 0 0}.workspace{min-height:0}.workspace>.data-main{grid-column:1;grid-row:1}.data-main{padding:26px 16px calc(20px + env(safe-area-inset-bottom))}.dashboard-grid,.capability-list{grid-template-columns:1fr}.chart-card{grid-column:auto}.data-card{padding:17px}.chart-bars{gap:5px}.settings-list>div{gap:12px}}
+.primary-nav{display:flex;align-items:center;gap:4px;margin-left:24px}.nav-item{min-height:36px;padding:0 12px;border:1px solid transparent;border-radius:9px;background:transparent;color:#9ab1b5;font:inherit;font-size:12px;cursor:pointer}.nav-item:hover,.nav-item[aria-current="page"]{border-color:var(--line);background:rgba(88,228,235,.08);color:#ddfbfd}.workspace>.data-main{grid-column:2;grid-row:1}.data-main{min-width:0;overflow:auto;padding:40px clamp(20px,5vw,76px)}.data-main[hidden],.chat-main[hidden]{display:none}.page-heading{max-width:1080px;margin:0 auto 26px}.page-heading h1{margin:0;font-size:clamp(25px,3vw,34px);font-weight:550;letter-spacing:-.03em}.page-heading p,.muted{color:#8ba5aa;font-size:13px;line-height:1.6}.page-heading p{margin:8px 0}.dashboard-grid{max-width:1080px;margin:0 auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.data-card{min-width:0;padding:21px;border:1px solid var(--line);border-radius:15px;background:rgba(12,31,38,.78)}.data-card h2{margin:0;color:#acc2c6;font-size:13px;font-weight:600}.large-value{margin:14px 0 3px;color:#e6fbfc;font-size:29px;font-weight:550;letter-spacing:-.03em}.data-card .muted{margin:5px 0}.chart-card{grid-column:1/-1}.chart-bars{height:175px;display:grid;grid-template-columns:repeat(7,minmax(24px,1fr));align-items:end;gap:10px;margin:22px 4px 0;border-bottom:1px solid var(--line-strong)}.chart-day{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:7px;color:#88a2a7;font-size:10px}.chart-bar-track{height:124px;width:100%;display:flex;align-items:flex-end;justify-content:center}.chart-bar{width:min(35px,72%);min-height:2px;border-radius:5px 5px 1px 1px;background:linear-gradient(0deg,#137c88,#56dbe2)}.readiness-banner{max-width:1080px;margin:0 auto 16px;padding:14px 17px;border:1px solid rgba(245,194,117,.25);border-radius:12px;background:rgba(106,76,31,.12);color:#e7cca0;font-size:13px;line-height:1.6}.capability-filters{max-width:1080px;margin:0 auto 12px;display:grid;grid-template-columns:auto minmax(180px,1fr) auto minmax(150px,.35fr);align-items:center;gap:8px 12px}.capability-filters label{color:#9eb5b9;font-size:12px}.capability-filters input,.capability-filters select{min-width:0;min-height:40px;padding:8px 11px;border:1px solid var(--line-strong);border-radius:9px;background:#0c1f26;color:var(--text);font:inherit;font-size:13px}.capability-filters input:focus-visible,.capability-filters select:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}.capability-filters p{grid-column:1/-1;margin:0;color:#8ba5aa;font-size:12px}.capability-source{max-width:1080px;margin:0 auto 12px;overflow-wrap:anywhere}.capability-row summary{cursor:pointer;color:#d7edef;font-weight:600}.capability-meta{margin-top:10px;color:#8ba5aa;font-size:11px;overflow-wrap:anywhere}.feature-view{max-width:1120px;margin:0 auto}.capability-list{max-width:1080px;margin:auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.capability-row{padding:16px;border:1px solid var(--line);border-radius:12px;background:rgba(12,31,38,.66)}.capability-row h2{margin:0 0 6px;font-size:14px;font-weight:600}.capability-row p{margin:0;color:#8ba5aa;font-size:12px;line-height:1.6}.state-pill{display:inline-block;margin-top:11px;padding:4px 8px;border:1px solid var(--line);border-radius:999px;color:#abc2c5;font-size:10px;text-transform:capitalize}.settings-card{max-width:720px;margin:0 auto}.voice-settings-card{max-width:720px;margin:16px auto 0}.voice-choice{display:flex;align-items:flex-start;gap:12px;padding:15px 0;border-bottom:1px solid var(--line);cursor:pointer}.voice-choice input{width:18px;height:18px;margin:1px 0 0;accent-color:#42c6d0}.voice-choice span{display:grid;gap:5px}.voice-choice strong{font-size:13px;font-weight:600}.voice-choice small{max-width:560px;color:#8ba5aa;font-size:12px;line-height:1.55}.voice-select-row select{min-height:38px;min-width:min(280px,75vw);padding:7px 10px;border:1px solid var(--line-strong);border-radius:8px;background:#0c1f26;color:var(--text);font:inherit}.voice-unavailable,.voice-status{color:#95b1b5;font-size:11px;line-height:1.5}.voice-status{margin:5px 3px}.voice-button{min-height:34px;padding:0 11px;border:1px solid var(--line-strong);border-radius:9px;background:rgba(105,169,180,.08);color:#c9e5e8;font:inherit;font-size:11px;cursor:pointer}.voice-button:hover{border-color:var(--cyan);background:rgba(29,139,150,.22)}.voice-button:disabled{opacity:.55;cursor:wait}.voice-button[hidden]{display:none}.voice-button[data-listening="true"]{border-color:#83d7bd;color:#b9f5e1}.settings-list{margin:18px 0;display:grid;gap:0}.settings-list>div{display:flex;justify-content:space-between;gap:20px;padding:14px 0;border-bottom:1px solid var(--line)}.settings-list dt{color:#8ba5aa;font-size:13px}.settings-list dd{margin:0;text-align:right;color:#e1f4f5;font-size:13px;overflow-wrap:anywhere}
+@media(max-width:760px){.topbar{height:auto;min-height:64px;flex-wrap:wrap;padding-block:8px}.primary-nav{order:3;width:100%;margin:0;justify-content:space-around}.nav-item{flex:1;padding-inline:6px}.connection{margin-left:auto}.conversation-panel{top:calc(112px + env(safe-area-inset-top))}.scrim:not([hidden]){inset:calc(104px + env(safe-area-inset-top)) 0 0}.workspace{min-height:0}.workspace>.data-main{grid-column:1;grid-row:1}.data-main{padding:26px 16px calc(20px + env(safe-area-inset-bottom))}.dashboard-grid,.capability-list{grid-template-columns:1fr}.capability-filters{grid-template-columns:1fr 1fr}.capability-filters label:nth-of-type(2){grid-column:1}.capability-filters select{grid-column:2;grid-row:2}.chart-card{grid-column:auto}.data-card{padding:17px}.chart-bars{gap:5px}.settings-list>div{gap:12px}}
 @media(prefers-reduced-motion:reduce){.nav-item{transition:none}}
 '''.encode("utf-8")
 
@@ -165,6 +182,52 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   let voiceSupported = false;
   let synthesisSupported = false;
   const API = "/chat/api";
+  const FEATURE_ASSETS = __JARVIS_FEATURE_ASSETS__;
+  const featuresById = new Map(FEATURE_ASSETS.map((feature) => [feature.id, feature]));
+  let mountedFeature = null;
+  let mountedFeatureCleanup = null;
+  let currentView = "chat";
+
+  function featurePathMatches(template, path) {
+    if (typeof path !== "string" || path.includes("?") || path.includes("#")) return false;
+    const expected = template.split("/");
+    const actual = path.split("/");
+    return expected.length === actual.length && expected.every((part, index) =>
+      /^\{[a-z][a-z0-9_]*\}$/.test(part)
+        ? /^[A-Za-z0-9._~-]+$/.test(actual[index]) && actual[index] !== "." && actual[index] !== ".."
+        : part === actual[index]);
+  }
+  function featureApi(feature) {
+    const requestFeature = (method, path, body) => {
+      if (!feature.routes.some((route) => route.method === method && featurePathMatches(route.path, path))) {
+        return Promise.reject(new Error("This dashboard view is not allowed to call that service route."));
+      }
+      return request(path, method === "GET" ? {method} : {method, body});
+    };
+    return Object.freeze({get: (path) => requestFeature("GET", path), post: (path, body) => requestFeature("POST", path, body)});
+  }
+  function unmountFeature() {
+    if (!mountedFeature) return;
+    try { if (typeof mountedFeature.unmount === "function") mountedFeature.unmount(); } catch (_) { /* keep navigation available */ }
+    try { if (typeof mountedFeatureCleanup === "function") mountedFeatureCleanup(); } catch (_) { /* keep navigation available */ }
+    mountedFeature = null;
+    mountedFeatureCleanup = null;
+  }
+  function mountFeature(feature) {
+    if (mountedFeature === feature) return;
+    unmountFeature();
+    const root = byId(`${feature.id}-view`);
+    if (!root || typeof feature.mount !== "function") return;
+    mountedFeature = feature;
+    try {
+      const cleanup = feature.mount(root, featureApi(feature), Object.freeze({}));
+      mountedFeatureCleanup = typeof cleanup === "function" ? cleanup : null;
+    } catch (_) {
+      mountedFeature = null;
+      const status = root.querySelector('[role="status"]');
+      if (status) status.textContent = "This dashboard view could not be loaded.";
+    }
+  }
 
   function renderTurnControls(active, stopping = false) {
     ui.input.disabled = active;
@@ -607,6 +670,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     for (const day of days) {
       const cell = document.createElement("div");
       cell.className = "chart-day";
+      cell.setAttribute("role", "listitem");
       const value = Math.max(0, day.total);
       const track = document.createElement("div");
       track.className = "chart-bar-track";
@@ -617,7 +681,9 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       track.append(bar);
       const label = document.createElement("span");
       const parsed = new Date(`${day.date}T00:00:00Z`);
-      label.textContent = Number.isNaN(parsed.valueOf()) ? day.date : parsed.toLocaleDateString(undefined, { weekday: "short", timeZone: "UTC" });
+      const weekday = Number.isNaN(parsed.valueOf()) ? day.date : parsed.toLocaleDateString(undefined, { weekday: "short", timeZone: "UTC" });
+      label.textContent = `${weekday}: ${value}`;
+      cell.setAttribute("aria-label", `${day.date}: ${value} turns`);
       cell.append(track, label);
       bars.append(cell);
     }
@@ -627,42 +693,101 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     const data = await request(`${API}/overview`);
     const core = data.core || {};
     const chat = data.chat || {};
-    byId("core-status").textContent = typeof core.status === "string" ? core.status : "Unavailable";
-    byId("core-readiness").textContent = typeof core.readiness === "string" ? core.readiness : "Readiness has not been verified.";
-    byId("core-observed").textContent = typeof core.observedAt === "string" ? `Observed ${core.observedAt}` : "No verified observation time";
+    const serviceLabels = {"process-observed": "Service process observed", unavailable: "Unavailable"};
+    byId("core-status").textContent = serviceLabels[core.status] || "Not verified";
+    const readinessLabels = {
+      "current-core-witness": "A current process and listener were observed; functional readiness has not been verified.",
+      pending: "Functional readiness has not been verified.", stale: "The last observation is stale; refresh verification."
+    };
+    byId("core-readiness").textContent = readinessLabels[core.readiness] || "Functional readiness has not been verified.";
+    const observed = typeof core.observedAt === "string" ? new Date(core.observedAt) : null;
+    byId("core-observed").textContent = observed && !Number.isNaN(observed.valueOf())
+      ? `Checked ${observed.toLocaleString()}` : "No verified observation time";
     byId("conversation-count").textContent = Number.isFinite(chat.conversationCount) ? String(chat.conversationCount) : "Unavailable";
     const counts = chat.turnCounts || {};
     byId("turn-total").textContent = Number.isFinite(counts.total) ? String(counts.total) : "Unavailable";
     byId("turn-breakdown").textContent = ["completed", "failed", "cancelled"].map((key) => `${key}: ${Number.isFinite(counts[key]) ? counts[key] : "—"}`).join(" · ");
+    byId("turn-active").textContent = Number.isFinite(counts.active) ? String(counts.active) : "Unavailable";
+    const lastTurn = typeof chat.lastTurnAt === "string" ? new Date(chat.lastTurnAt) : null;
+    byId("last-turn").textContent = lastTurn && !Number.isNaN(lastTurn.valueOf()) ? `Last turn ${lastTurn.toLocaleString()}` : "No recorded turns yet";
     renderTurnChart(chat.turnCountsByDay);
   }
-  async function loadCapabilities() {
-    const data = await request(`${API}/capabilities`);
+  let capabilityItems = [];
+  function renderCapabilities() {
     const list = byId("capability-list");
     list.replaceChildren();
-    byId("capability-readiness").textContent = typeof data.readiness === "string" ? data.readiness : "Some capabilities are still being verified.";
-    if (!Array.isArray(data.items) || !data.items.length) {
+    const query = byId("capability-search").value.trim().toLocaleLowerCase();
+    const kind = byId("capability-kind").value;
+    const filtered = capabilityItems.filter((item) => {
+      if (kind && item.kind !== kind) return false;
+      const text = [item.id, item.name, item.summary, item.kind].filter((part) => typeof part === "string").join(" ").toLocaleLowerCase();
+      return !query || text.includes(query);
+    });
+    byId("capability-count").textContent = `${filtered.length} of ${capabilityItems.length} catalog entries`;
+    if (!filtered.length) {
       const empty = document.createElement("p");
       empty.className = "readiness-banner";
-      empty.textContent = "No capability inventory is available yet.";
+      empty.textContent = capabilityItems.length ? "No catalog entries match these filters." : "No capability inventory is available yet.";
       list.append(empty);
       return;
     }
-    for (const item of data.items) {
-      if (!item || typeof item.name !== "string") continue;
+    for (const item of filtered) {
       const card = document.createElement("article");
       card.className = "capability-row";
-      const name = document.createElement("h2");
-      name.textContent = item.name;
-      const detail = document.createElement("p");
-      detail.textContent = typeof item.summary === "string" ? item.summary : "Details are not available.";
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      const isProfile = item.kind === "profiles";
+      const canonical = isProfile && item.id === "hermes";
+      summary.textContent = canonical ? "Jarvis · primary assistant" : item.name;
+      const description = document.createElement("p");
+      description.className = "capability-meta";
+      description.textContent = typeof item.summary === "string" ? item.summary : "No source description is available.";
+      const identity = document.createElement("p");
+      identity.className = "capability-meta";
+      identity.textContent = isProfile
+        ? (canonical ? "Public identity · canonical source ID: hermes" : "Internal profile · catalog only; not selectable")
+        : `Catalog ID: ${item.id}`;
       const state = document.createElement("span");
       state.className = "state-pill";
-      const knownState = ["bundled", "pending", "unavailable", "ready"].includes(item.state) ? item.state : "pending";
-      state.textContent = knownState === "ready" ? "verified ready" : knownState;
-      card.append(name, detail, state);
+      state.textContent = item.state === "bundled" ? "In offline bundle" : "Catalog status pending";
+      const readiness = document.createElement("p");
+      readiness.className = "capability-meta";
+      readiness.textContent = "Runtime readiness pending; this inventory does not indicate that it is enabled or working.";
+      details.append(summary, description, identity, state, readiness);
+      card.append(details);
       list.append(card);
     }
+  }
+  async function loadCapabilities() {
+    const data = await request(`${API}/capabilities`);
+    capabilityItems = Array.isArray(data.items) ? data.items.filter((item) => item && typeof item.id === "string" && typeof item.name === "string") : [];
+    byId("capability-readiness").textContent = data.readiness === "pending"
+      ? "Catalog declarations are loaded from the verified offline bundle. Functional readiness remains pending."
+      : "Capability readiness has not been verified.";
+    const kinds = [...new Set(capabilityItems.map((item) => item.kind).filter((kind) => typeof kind === "string"))].sort();
+    const selector = byId("capability-kind");
+    selector.replaceChildren(new Option("All types", ""));
+    for (const value of kinds) selector.add(new Option(value, value));
+    const source = data.source || {};
+    byId("capability-source").textContent = source.kind === "offline-bundle"
+      ? `Source: verified offline bundle · catalog ${source.catalogVersion || "unknown"} · revision ${source.revision || "unknown"}`
+      : "Catalog provenance is unavailable.";
+    const discovery = data.nativeDiscovery || {};
+    const discoveryLabels = {
+      pending: "Runtime discovery is pending; bundled declarations do not mean loaded capabilities.",
+      stale: "Runtime discovery is stale; capability activation is unverified.",
+      discovered: "A source-bound runtime inventory was observed; capability operation is still unverified."
+    };
+    const counts = discovery.resourceCounts;
+    const resourceSummary = counts && typeof counts === "object"
+      ? Object.entries(counts).filter(([, value]) => Number.isFinite(value)).map(([key, value]) => `${key}: ${value}`).join(" · ")
+      : "";
+    const discoveryObserved = typeof discovery.observedAt === "string" ? new Date(discovery.observedAt) : null;
+    const observedLabel = discoveryObserved && !Number.isNaN(discoveryObserved.valueOf()) ? ` Checked ${discoveryObserved.toLocaleString()}.` : "";
+    byId("capability-discovery").textContent = `${discoveryLabels[discovery.state] || "Runtime discovery is pending."}${resourceSummary ? ` Inventory: ${resourceSummary}.` : ""}${observedLabel}`;
+    byId("capability-search").value = "";
+    selector.value = "";
+    renderCapabilities();
   }
   async function loadSettings() {
     const data = await request(`${API}/settings`);
@@ -680,7 +805,9 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     }
   }
   async function showView(view) {
-    const selected = ["chat", "overview", "capabilities", "settings"].includes(view) ? view : "chat";
+    const selected = ["chat", "overview", "capabilities", "settings"].includes(view) || featuresById.has(view) ? view : "chat";
+    if (selected !== currentView && mountedFeature) unmountFeature();
+    currentView = selected;
     for (const panel of document.querySelectorAll("[data-view-panel]")) panel.hidden = panel.dataset.viewPanel !== selected;
     for (const button of document.querySelectorAll(".nav-item")) {
       if (button.dataset.view === selected) button.setAttribute("aria-current", "page");
@@ -690,6 +817,11 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       stopRecognition("Push-to-talk stopped when leaving chat.");
       stopSpeech("Reply audio stopped when leaving chat.");
     }
+    const feature = featuresById.get(selected);
+    if (feature) {
+      mountFeature(feature);
+      return;
+    }
     if (selected === "overview") {
       try { await loadOverview(); } catch (error) { byId("chart-caption").textContent = error.message; }
     } else if (selected === "capabilities") {
@@ -698,6 +830,8 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       try { await loadSettings(); } catch (error) { byId("settings-list").replaceChildren(); const row = document.createElement("div"); const term = document.createElement("dt"); const value = document.createElement("dd"); term.textContent = "Status"; value.textContent = error.message; row.append(term, value); byId("settings-list").append(row); }
     }
   }
+  byId("capability-search").addEventListener("input", renderCapabilities);
+  byId("capability-kind").addEventListener("change", renderCapabilities);
   ui.form.addEventListener("submit", (event) => {
     event.preventDefault();
     const text = ui.input.value;
@@ -736,7 +870,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   ui.close.addEventListener("click", () => setPanel(false));
   ui.scrim.addEventListener("click", () => setPanel(false));
   for (const button of document.querySelectorAll(".nav-item")) button.addEventListener("click", () => showView(button.dataset.view));
-  window.addEventListener("pagehide", () => { closeStream(); stopRecognition(); stopSpeech(); });
+  window.addEventListener("pagehide", () => { closeStream(); stopRecognition(); stopSpeech(); unmountFeature(); });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState !== "visible") {
       stopRecognition("Push-to-talk stopped when this page went into the background.");
@@ -757,6 +891,57 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
 })();
 '''.encode("utf-8")
 
+
+def _compose_feature_assets() -> None:
+    """Embed the literal reviewed feature registry in the three fixed assets."""
+    global _HTML, _CSS, _JS
+    validate_feature_assets(FEATURE_ASSETS)
+    nav: list[str] = []
+    panels: list[str] = []
+    css_fragments: list[bytes] = []
+    javascript: list[str] = []
+    for feature in FEATURE_ASSETS:
+        feature_id = escape(feature.feature_id, quote=True)
+        nav_label = escape(feature.nav_label)
+        title = escape(feature.title, quote=True)
+        nav.append(
+            f'<button type="button" class="nav-item" data-view="{feature_id}">'
+            f'{nav_label}</button>'
+        )
+        panels.append(
+            f'<section class="data-main" id="{feature_id}-view" '
+            f'aria-label="{title}" data-view-panel="{feature_id}" hidden>'
+            f'<div class="feature-view" data-feature-root="{feature_id}">'
+            f'{feature.view_html}</div></section>'
+        )
+        if feature.css:
+            css_fragments.append(feature.css.encode("utf-8"))
+        routes = json.dumps(
+            [{"method": method, "path": path} for method, path in feature.api_routes],
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
+        javascript.append(
+            "{id:" + json.dumps(feature_id) + ",routes:" + routes
+            + ",mount:(" + feature.mount_js + "),unmount:(" + feature.unmount_js + ")}"
+        )
+
+    html = _HTML.decode("utf-8")
+    html = html.replace("<!-- JARVIS_FEATURE_NAV -->", "".join(nav))
+    html = html.replace("<!-- JARVIS_FEATURE_PANELS -->", "".join(panels))
+    if "JARVIS_FEATURE_" in html:
+        raise ValueError("Jarvis feature asset template markers were not fully replaced")
+    script = _JS.decode("utf-8").replace(
+        "__JARVIS_FEATURE_ASSETS__", "[" + ",".join(javascript) + "]"
+    )
+    if "__JARVIS_FEATURE_ASSETS__" in script:
+        raise ValueError("Jarvis feature registry marker was not fully replaced")
+    _HTML = html.encode("utf-8")
+    _CSS += ("\n".encode("utf-8") + b"\n".join(css_fragments)) if css_fragments else b""
+    _JS = script.encode("utf-8")
+
+
+_compose_feature_assets()
 
 _ASSETS = MappingProxyType({
     "/chat": ("text/html; charset=utf-8", _HTML),

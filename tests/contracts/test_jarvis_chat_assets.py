@@ -27,6 +27,10 @@ class JarvisChatAssetTests(unittest.TestCase):
                 self.assertIn(f">{label}</button>", source)
         self.assertIn('id="turn-chart"', source)
         self.assertIn('id="capability-list"', source)
+        self.assertIn('id="capability-search" type="search"', source)
+        self.assertIn('id="capability-kind"', source)
+        self.assertIn('id="capability-discovery"', source)
+        self.assertIn('id="turn-active"', source)
         self.assertIn("read-only here", source)
 
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
@@ -35,6 +39,21 @@ class JarvisChatAssetTests(unittest.TestCase):
             with self.subTest(endpoint=endpoint):
                 self.assertIn(f"${{API}}{endpoint}", client)
         self.assertIn("turnCountsByDay", client)
+        self.assertIn("function featurePathMatches(template, path)", client)
+        self.assertIn("feature.mount(root, featureApi(feature)", client)
+        self.assertIn("unmountFeature();", client)
+        self.assertIn("Runtime readiness pending", client)
+        self.assertIn("Internal profile · catalog only; not selectable", client)
+        self.assertIn('"current-core-witness": "A current process and listener were observed; functional readiness has not been verified."', client)
+
+    def test_capability_inventory_filter_and_details_are_data_backed(self):
+        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
+        client = script.decode("utf-8")
+        self.assertIn("const filtered = capabilityItems.filter((item)", client)
+        self.assertIn("item.id, item.name, item.summary, item.kind", client)
+        self.assertIn('item.kind === "profiles" && item.id === "hermes"', client)
+        self.assertIn("Catalog ID: ${item.id}", client)
+        self.assertIn("source.catalogVersion", client)
 
     def test_only_exact_reviewed_asset_routes_are_available(self):
         expected = {
