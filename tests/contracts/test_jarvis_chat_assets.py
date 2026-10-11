@@ -575,11 +575,12 @@ function $(selector) {
 }
 const document = {createElement() { return {className: "", textContent: ""}; }};
 const routes = FEATURE_ROUTES;
+let api;
 FEATURE_API
 SENDER
 SUBMIT
 (async () => {
-  const api = featureApi({id: "overview", routes}, {});
+  api = featureApi({id: "overview", routes}, {});
   const originalDraft = commandInput.value;
   await submitCommand({preventDefault() {}});
   assert.equal(commandInput.value, originalDraft);
