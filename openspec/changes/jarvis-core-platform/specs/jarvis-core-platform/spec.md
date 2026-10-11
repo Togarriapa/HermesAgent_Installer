@@ -1787,3 +1787,14 @@ The installer SHALL satisfy: Fresh protected Access membership and process capab
 - **WHEN** Jarvis selects an internal resource identity or integrates its primary prompt
 - **THEN** actual execution MUST load the exact source identity, inheritance and grants; primary integration is additive, ownership-journaled and preserves user prompt/auth.
 - **AND** a generic role label, ephemeral override or stored prompt alone MUST NOT establish delegated capability.
+
+### Requirement: Source-owned native delegation claim
+The system SHALL derive internal Orchestrator specialization from root-held verified source prompt custody and an actual provider-observed parent invocation. A one-use claim SHALL bind owner, core/source generation, exact arguments, inherited policy and current zero-additional-metered route evidence before native delegation.
+
+#### Scenario: Missing route issuer
+- **WHEN** only configuration, gateway identity or a callback assertion is available
+- **THEN** dispatch remains unavailable and no child invocation occurs.
+
+#### Scenario: Current selected specialization
+- **WHEN** root consumes a current exact claim for the real injected parent
+- **THEN** the native delegation path preserves parent tool/privacy/budget and pause/depth/concurrency gates without claiming sandboxing or full bundle activation.
