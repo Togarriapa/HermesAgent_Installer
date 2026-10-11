@@ -38,6 +38,40 @@ _CODEX_PROVIDER = "openai-codex"
 _CODEX_MODE = "codex_responses"
 _OBSERVER_RUNTIME_DIR = Path("/run/hermes-jarvis-native-observer")
 _NATIVE_INHERITANCE_POLICY_SEAL = object()
+_RESOURCES_DELEGATE_REGISTRATION_SEAL = object()
+_RESOURCES_DELEGATE_SOURCE_SHA256 = "4111e1244887f5bcb5f92cf449a0e55888f9b2637c78ebe43232fa1db968e2f2"
+_RESOURCES_DELEGATE_SCHEMA_SHA256 = "9325cea421e122395475b0ba0d0517cb4aa4c16c3d4a14c5145f9fcc3f957f33"
+
+
+@dataclass(frozen=True, slots=True)
+class CoreNativeResourcesDelegateRegistration:
+    """Fixed registration descriptor consumed by the inspector's source verifier.
+
+    This is an expected-value descriptor, not runtime evidence by itself. The
+    inspector must independently verify the package-relative bytes and the
+    Hermes process must expose the tool in the observed provider request.
+    """
+
+    schema: int
+    name: str
+    toolset: str
+    package_relative_path: str
+    schema_sha256: str
+    source_sha256: str
+    _seal: object
+
+
+def current_resources_delegate_registration() -> CoreNativeResourcesDelegateRegistration:
+    """Return the fixed Resources tool identity and expected source digests."""
+    return CoreNativeResourcesDelegateRegistration(
+        schema=1,
+        name="resources_delegate",
+        toolset="resources_internal",
+        package_relative_path="components/resources_internal_dispatch.py",
+        schema_sha256=_RESOURCES_DELEGATE_SCHEMA_SHA256,
+        source_sha256=_RESOURCES_DELEGATE_SOURCE_SHA256,
+        _seal=_RESOURCES_DELEGATE_REGISTRATION_SEAL,
+    )
 
 
 class CoreNativeObservationUnavailable(PermissionError):
@@ -213,6 +247,8 @@ class RootSelectedOrchestratorDelegationPolicy:
     mode: str
     parent_tool_configuration_sha256: str
     configured_parent_tool_names: tuple[str, ...]
+    resources_delegate_schema_sha256: str
+    resources_delegate_source_sha256: str
     allow_inherited_mcp: bool
     allow_native_orchestrator_delegation: bool
     additional_metered_budget: int
@@ -230,6 +266,8 @@ class RootSelectedOrchestratorDelegationPolicy:
                 or self.profile_id != "orchestrator"
                 or self.mode != "native-parent-inheritance"
                 or not _HASH.fullmatch(self.parent_tool_configuration_sha256 or "")
+                or self.resources_delegate_schema_sha256 != _RESOURCES_DELEGATE_SCHEMA_SHA256
+                or self.resources_delegate_source_sha256 != _RESOURCES_DELEGATE_SOURCE_SHA256
                 or not isinstance(self.configured_parent_tool_names, tuple)
                 or not self.configured_parent_tool_names or len(self.configured_parent_tool_names) > 256
                 or any(not _ID.fullmatch(item or "") for item in self.configured_parent_tool_names)
@@ -239,6 +277,7 @@ class RootSelectedOrchestratorDelegationPolicy:
                 or type(self.allow_native_orchestrator_delegation) is not bool
                 or not self.allow_native_orchestrator_delegation
                 or "delegate_task" not in self.configured_parent_tool_names
+                or "resources_delegate" not in self.configured_parent_tool_names
                 or type(self.additional_metered_budget) is not int
                 or self.additional_metered_budget != 0
                 or type(self.issued_monotonic) not in (float, int)
@@ -263,12 +302,26 @@ def _native_policy_digest_fields(policy: RootSelectedOrchestratorDelegationPolic
         "mode": policy.mode,
         "parent_tool_configuration_sha256": policy.parent_tool_configuration_sha256,
         "configured_parent_tool_names": list(policy.configured_parent_tool_names),
+        "resources_delegate_schema_sha256": policy.resources_delegate_schema_sha256,
+        "resources_delegate_source_sha256": policy.resources_delegate_source_sha256,
         "allow_inherited_mcp": policy.allow_inherited_mcp,
         "allow_native_orchestrator_delegation": policy.allow_native_orchestrator_delegation,
         "additional_metered_budget": policy.additional_metered_budget,
         "issued_monotonic": policy.issued_monotonic,
         "expires_monotonic": policy.expires_monotonic,
     }
+
+
+def _configuration_has_fixed_resources_delegate(configuration: Any) -> bool:
+    registration = current_resources_delegate_registration()
+    return (
+        type(registration) is CoreNativeResourcesDelegateRegistration
+        and registration._seal is _RESOURCES_DELEGATE_REGISTRATION_SEAL
+        and getattr(configuration, "resources_delegate_name", None) == registration.name
+        and getattr(configuration, "resources_delegate_toolset", None) == registration.toolset
+        and getattr(configuration, "resources_delegate_schema_sha256", None) == registration.schema_sha256
+        and getattr(configuration, "resources_delegate_source_sha256", None) == registration.source_sha256
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -688,6 +741,7 @@ class RootCoreNativeObservationRegistry:
         handle = owner_turn_observation.owner_turn_handle
         if (current_tool_configuration.is_current_sealed(
                     custody=self._custody, owner_turn=owner_turn_observation, now=now) is not True
+                or not _configuration_has_fixed_resources_delegate(current_tool_configuration)
                 or owner_turn_observation.is_current_sealed(
                     self._config, custody=self._custody, now=now) is not True
                 or current_tool_configuration.core_generation != owner_turn_observation.core_generation
@@ -713,6 +767,8 @@ class RootCoreNativeObservationRegistry:
             "profile_id": "orchestrator", "mode": "native-parent-inheritance",
             "parent_tool_configuration_sha256": current_tool_configuration.tool_configuration_sha256,
             "configured_parent_tool_names": list(names),
+            "resources_delegate_schema_sha256": _RESOURCES_DELEGATE_SCHEMA_SHA256,
+            "resources_delegate_source_sha256": _RESOURCES_DELEGATE_SOURCE_SHA256,
             # Fixed root-enrolled owner-only policy bits; neither selected by the
             # Hermes user config nor inferred from provider tools.list metadata.
             "allow_inherited_mcp": True,
@@ -729,6 +785,8 @@ class RootCoreNativeObservationRegistry:
             profile_id="orchestrator", mode="native-parent-inheritance",
             parent_tool_configuration_sha256=current_tool_configuration.tool_configuration_sha256,
             configured_parent_tool_names=names,
+            resources_delegate_schema_sha256=_RESOURCES_DELEGATE_SCHEMA_SHA256,
+            resources_delegate_source_sha256=_RESOURCES_DELEGATE_SOURCE_SHA256,
             allow_inherited_mcp=True,
             allow_native_orchestrator_delegation=True,
             additional_metered_budget=0, issued_monotonic=issued,
@@ -824,7 +882,8 @@ class RootCoreNativeObservationRegistry:
                 or policy.owner_subject_sha256 != owner.owner_subject_sha256
                 or _hash(_native_policy_digest_fields(policy)) != policy.policy_sha256
                 or configuration.is_current_sealed(
-                    custody=self._custody, owner_turn=owner, now=now) is not True):
+                    custody=self._custody, owner_turn=owner, now=now) is not True
+                or not _configuration_has_fixed_resources_delegate(configuration)):
             self._policies.pop(handle, None)
             self._owner_policy_handles.pop(owner.owner_turn_handle, None)
             return None
@@ -1472,6 +1531,7 @@ register_tool_call_from_current_parent._lock = threading.RLock()
 __all__ = [
     "CORE_NATIVE_OBSERVER_SOCKET", "CoreNativeObservationClient",
     "CoreNativeObservationUnavailable", "ObservedNativeToolCall",
+    "CoreNativeResourcesDelegateRegistration", "current_resources_delegate_registration",
     "NativeSourceMember", "ObservedProviderAttempt", "OwnerTurnHandle",
     "RootSelectedInternalProfileDispatchClaim", "RootCoreNativeObservationRegistry",
     "RootInternalProfileClaimSource", "serve_core_native_observer",
