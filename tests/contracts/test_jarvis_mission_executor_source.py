@@ -222,3 +222,124 @@ def test_mission_stays_pending_until_root_seals_master_plan_decision(tmp_path, m
             await client.close()
 
     asyncio.run(scenario())
+
+
+def test_master_planner_prompt_is_bounded_and_treats_owner_sources_as_hints():
+    row = {
+        "id": "m" * 24,
+        "revision": 3,
+        "title": "Review the local release",
+        "brief": "Compare the verified release notes and flag discrepancies.",
+        "team_ids": '["reviewer"]',
+    }
+    catalog = {
+        "profiles": {"reviewer": "Internal reviewer"},
+        "sources": {"reviewer": {"label": "Internal reviewer", "kind": "profiles"}},
+        "source": {"revision": "rev-a", "package_sha256": "a" * 64},
+    }
+    prompt = jarvis_missions.build_jarvis_mission_master_plan_prompt(row, catalog)
+    assert len(prompt) <= 8_000
+    assert '"owner_source_preferences":["reviewer"]' in prompt
+    assert "preferences are hints" in prompt
+    assert "Choose zero or more internal expert profile IDs" in prompt
+    assert "do not use tools, launch work, or perform any external effect" in prompt
+    assert '"goal_sha256":"' in prompt and '"catalog_sha256":"' in prompt
+
+
+def test_master_plan_turn_reserves_exact_owned_turn_once_before_scheduling(tmp_path, monkeypatch):
+    from multidict import CIMultiDict
+    from types import SimpleNamespace
+    from hermes_installer.remote.core_gateway_inspector import PlanningContext
+
+    class Request(dict):
+        def __init__(self, ingress):
+            super().__init__(core_ingress=ingress)
+            self.headers = CIMultiDict({"Cf-Access-Jwt-Assertion": "fixture-owner-token"})
+
+    class Backend:
+        sessions_created = 0
+
+        async def create_session(self):
+            self.sessions_created += 1
+            return ("backend-session-fixed", "stored-session-fixed")
+
+    async def scenario():
+        monkeypatch.setattr(jarvis_missions, "_verified_team_catalog", lambda: {
+            "profiles": {"reviewer": "Internal reviewer"},
+            "sources": {"reviewer": {"label": "Internal reviewer", "kind": "profiles"}},
+            "source": {"revision": "rev-a", "package_sha256": "a" * 64},
+        })
+        store = JarvisChatStore(tmp_path / "planning.sqlite3")
+        jarvis_missions._initialize(store)
+        owner = store._owner("owner-a")
+        mission_id = "m" * 24
+        now = time.time()
+        with store._connect() as db:
+            db.execute(
+                "INSERT INTO jarvis_missions "
+                "(id,owner,revision,title,brief,team_ids,execution_mode,status,create_key_hash,"
+                "create_request_hash,created,updated) VALUES(?,?,?,?,?,?,?,'draft',?,?,?,?)",
+                (mission_id, owner, 1, "Local review", "Review the approved local source.",
+                 '["reviewer"]', "pending", "create-key", "request-hash", now, now),
+            )
+        ingress = SimpleNamespace(root_observation=SimpleNamespace(
+            core_generation="generation-a", core_source_generation="source-a"))
+        request = Request(ingress)
+        backend = Backend()
+        service = JarvisChatService(store, backend, principal_from_request=_principal)
+        service.inspector = SimpleNamespace(prepare_master_planning_context=None)
+
+        def prepare(_jwt, accepted, got_id, revision, prompt_sha256):
+            assert accepted is ingress and got_id == mission_id and revision == 1
+            assert len(prompt_sha256) == 64
+            return PlanningContext(
+                schema=1, mission_id=mission_id, revision=1,
+                goal_sha256=jarvis_missions._hash({"goal": "Review the approved local source."}),
+                catalog_sha256=jarvis_missions.mission_catalog_sha256(
+                    jarvis_missions._verified_team_catalog()),
+                planner_prompt_sha256=prompt_sha256,
+                master_source_generation_sha256="b" * 64,
+                master_source_manifest_sha256="c" * 64,
+                master_prompt_sha256="d" * 64, source_profile_id="hermes",
+            )
+
+        service.inspector.prepare_master_planning_context = prepare
+        observed = []
+
+        async def start_server_turn(_request, *, conversation_id, text, idempotency_key,
+                                    before_schedule, on_schedule_failure, planning_context,
+                                    require_planning_context):
+            with store._connect() as db:
+                saved_mission = db.execute("SELECT * FROM jarvis_missions WHERE id=?",
+                                           (mission_id,)).fetchone()
+            assert text == jarvis_missions.build_jarvis_mission_master_plan_prompt(
+                saved_mission, jarvis_missions._verified_team_catalog())
+            assert idempotency_key.startswith("jarvis-master-plan-")
+            assert require_planning_context is True and planning_context == context
+            before_schedule("t" * 24)
+            observed.append((conversation_id, idempotency_key))
+            return {"status": "queued", "turn_id": "t" * 24}
+
+        context = prepare("", ingress, mission_id, 1, "e" * 64)
+        service.start_server_turn = start_server_turn
+        first = await jarvis_missions.start_master_plan_turn(
+            service, request, mission_id=mission_id, revision=1,
+            idempotency_key="create-idempotency-key-0001")
+        second = await jarvis_missions.start_master_plan_turn(
+            service, request, mission_id=mission_id, revision=1,
+            idempotency_key="create-idempotency-key-0001")
+        assert first["status"] == second["status"] == "queued"
+        assert len(observed) == 1
+        assert backend.sessions_created == 1
+        with store._connect() as db:
+            row = db.execute("SELECT * FROM jarvis_mission_planning_turns WHERE mission_id=?",
+                             (mission_id,)).fetchone()
+        assert row["status"] == "queued"
+        assert row["gateway_turn_id"] == "t" * 24
+        assert row["conversation_id"] == first["conversation_id"]
+        assert row["task_sha256"] == jarvis_missions._hash(
+            {"goal": "Review the approved local source."})
+        assert row["source_binding"] == '{"core_generation":"generation-a","core_source_generation":"source-a"}'
+        assert row["master_prompt_sha256"] == "d" * 64
+
+    asyncio.run(scenario())

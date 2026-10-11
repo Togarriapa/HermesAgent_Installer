@@ -53,13 +53,17 @@ def test_owner_draft_preview_is_persisted_but_never_fabricates_execution(tmp_pat
             }
             created_response = await client.post("/chat/api/missions", json=body)
             assert created_response.status == 201
-            mission = (await created_response.json())["mission"]
+            created_payload = await created_response.json()
+            assert created_payload["planning"]["status"] == "unavailable"
+            mission = created_payload["mission"]
             assert mission["status"] == "draft"
             mission_id = mission["mission_id"]
 
             replay = await client.post("/chat/api/missions", json=body)
             assert replay.status == 201
-            assert (await replay.json())["mission"]["mission_id"] == mission_id
+            replay_payload = await replay.json()
+            assert replay_payload["mission"]["mission_id"] == mission_id
+            assert replay_payload["planning"]["status"] == "unavailable"
             conflict = await client.post("/chat/api/missions", json={**body, "brief": "different"})
             assert conflict.status == 409
 
