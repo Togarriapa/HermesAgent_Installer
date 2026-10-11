@@ -233,9 +233,12 @@ def test_root_discards_admin_discovery_booleans_and_uses_separate_readback(tmp_p
 
 
 def test_discovery_refresh_requires_current_owned_listener_and_never_changes_service(monkeypatch):
-    monkeypatch.setattr(core.os, "geteuid", lambda: 0)
-    monkeypatch.setattr(core, "_identity", lambda: {"commit": core.COMMIT})
-    monkeypatch.setattr(core, "_journal", lambda: {"state": "installed", "source_commit": core.COMMIT})
+ monkeypatch.setattr(core.os, "geteuid", lambda: 0)
+ monkeypatch.setattr(core, "_identity", lambda **_kwargs: {"commit": core.COMMIT})
+ monkeypatch.setattr(core, "_journal", lambda: {"state": "installed", "source_commit": core.COMMIT})
+ repairs=[]
+ monkeypatch.setattr(core, "_repair_pinned_pm_directory_modes",
+                     lambda identity, record: repairs.append((identity,record)))
     writes = []
     monkeypatch.setattr(core, "_write_resources_discovery", lambda **kwargs: writes.append(kwargs) or {
         "resource_counts": {"native_skills": 396}})
@@ -247,7 +250,39 @@ def test_discovery_refresh_requires_current_owned_listener_and_never_changes_ser
     result = core.refresh_resources_discovery()
 
     assert writes == [{"repair_umask_dirs": True}]
+    assert repairs == [({"commit": core.COMMIT}, {"state": "installed", "source_commit": core.COMMIT})]
     assert "service lifecycle unchanged" in result
+
+
+def test_pm_directory_repair_changes_only_exact_0775_held_directory(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "ROOT_UID", os.getuid())
+    monkeypatch.setattr(core.os, "geteuid", lambda: 0)
+    target = tmp_path / "pm-bin"
+    target.mkdir(mode=0o775)
+    target.chmod(0o775)
+    parent_fd = os.open(tmp_path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    target_fd = os.open(target, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        core._repair_verified_pm_directory_fds(
+            {target: target_fd}, {target: parent_fd}, {target: (os.getuid(), os.getgid(), 0o775)})
+        assert target.stat().st_mode & 0o777 == 0o755
+    finally:
+        os.close(target_fd)
+        os.close(parent_fd)
+
+    unsafe = tmp_path / "unknown-mode"
+    unsafe.mkdir(mode=0o777)
+    unsafe.chmod(0o777)
+    parent_fd = os.open(tmp_path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    target_fd = os.open(unsafe, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        with pytest.raises(core.CoreRuntimeError, match="changed during metadata repair"):
+            core._repair_verified_pm_directory_fds(
+                {unsafe: target_fd}, {unsafe: parent_fd}, {unsafe: (os.getuid(), os.getgid(), 0o775)})
+        assert unsafe.stat().st_mode & 0o777 == 0o777
+    finally:
+        os.close(target_fd)
+        os.close(parent_fd)
 
 
 def test_legacy_resources_refresh_requires_pinned_archive_and_identical_materialized_members(

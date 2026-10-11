@@ -20,6 +20,22 @@ RESOURCES_CAS=Path("/var/lib/hermes-installer/core-runtime/resources-cas")
 # hardened. Its only difference from the current package is that helper member;
 # the helper itself is not installed into the owner's Hermes tree.
 LEGACY_MATERIALIZED_RESOURCES_ARTIFACT_SHA256="f73463c641ac3744007ee8395b663802d5c916f59256fa8184ad2b4f5594b274"
+# Exact PM paths observed with the original 002 umask. Only these admin-owned
+# directories may be normalized by the explicit root Resources refresh.
+PM_DIRECTORY_MODE_CONTRACT={
+ Path("/home"):(0,0,0o755), Path("/home/admin"):(1000,1000,0o700),
+ Path("/home/admin/HermesInstaller"):(1000,1000,0o775),
+ Path("/home/admin/HermesInstaller/data"):(1000,1000,0o700),
+ Path("/home/admin/HermesInstaller/data/installs"):(1000,1000,0o775),
+ Path("/home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac"):(1000,1000,0o775),
+ Path("/home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments"):(1000,1000,0o775),
+ Path("/home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0"):(1000,1000,0o775),
+ Path("/home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0/venv"):(1000,1000,0o775),
+ Path("/home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0/venv/bin"):(1000,1000,0o775),
+ Path("/home/admin/HermesInstaller/data/tools"):(1000,1000,0o775),
+ Path("/home/admin/HermesInstaller/data/tools/python-3.14.7+20260901-linux-arm64"):(1000,1000,0o775),
+ Path("/home/admin/HermesInstaller/data/tools/python-3.14.7+20260901-linux-arm64/bin"):(1000,1000,0o775),
+}
 ETC_INSTALLER=Path("/etc/hermes-installer")
 VAR_LIB_INSTALLER=Path("/var/lib/hermes-installer")
 SYSTEMD_UNIT_DIR=Path("/etc/systemd/system")
@@ -678,7 +694,7 @@ def _owned_file(path,body,mode,uid,gid,expected,repair):
   path.unlink()
   _sync_directory(path.parent)
  _atomic(path,body,mode,uid,gid)
-def _identity():
+def _identity(*,verify_python_version=True):
  if not SOURCE.is_dir() or SOURCE.is_symlink(): raise CoreRuntimeError("pinned source unavailable")
  # The reviewed generation lives beneath admin's private installer tree. Reject
  # symlinked or differently-owned path components before asking Git to inspect it.
@@ -705,14 +721,126 @@ def _identity():
  lock=SOURCE/"pm"/"lock.json"
  if rev!=COMMIT or dirty or not lock.is_file() or _digest(lock)!=LOCK_SHA256: raise CoreRuntimeError("source or PM lock differs from pin")
  if not PYTHON.is_symlink() or os.readlink(PYTHON)!=PYTHON_LINK_TARGET or PYTHON.resolve(strict=True)!=PYTHON_REAL or not PYTHON_REAL.is_file() or PYTHON_REAL.is_symlink(): raise CoreRuntimeError("PM Python link or realpath differs from reviewed pin")
- if _run([str(PYTHON),"--version"]).stdout.strip()!="Python 3.14.7": raise CoreRuntimeError("pinned PM Python version mismatch")
  st=PYTHON_REAL.stat()
  cfg=PYTHON.parent.parent/"pyvenv.cfg"
  if (st.st_uid!=1000 or st.st_gid!=1000 or stat.S_IMODE(st.st_mode)!=0o755 or st.st_nlink!=1
      or _digest(PYTHON_REAL)!=PYTHON_SHA256 or not cfg.is_file() or _digest(cfg)!=PYVENV_CFG_SHA256):
   raise CoreRuntimeError("PM Python executable or venv provenance differs from reviewed pin")
+ if verify_python_version:
+  _validated_executable(PYTHON,{1000})
+  if _run([str(PYTHON),"--version"]).stdout.strip()!="Python 3.14.7": raise CoreRuntimeError("pinned PM Python version mismatch")
  return {"commit":rev,"lock_sha256":LOCK_SHA256,"python_sha256":_digest(PYTHON_REAL),
          "python_link":os.readlink(PYTHON),"python_uid":st.st_uid,"python_gid":st.st_gid,"python_mode":stat.S_IMODE(st.st_mode)}
+
+def _repair_pinned_pm_directory_modes(identity,record):
+ """Normalize only the enumerated PM ancestors after proving their payloads."""
+ if os.geteuid()!=ROOT_UID or type(identity) is not dict or type(record) is not dict:
+  raise CoreRuntimeError("PM directory repair requires the explicit root refresh")
+ expected_identity={"commit":COMMIT,"lock_sha256":LOCK_SHA256,"python_sha256":PYTHON_SHA256,
+  "python_link":PYTHON_LINK_TARGET,"python_uid":1000,"python_gid":1000,"python_mode":0o755}
+ if identity!=expected_identity:
+  raise CoreRuntimeError("PM runtime identity differs before directory repair")
+ if (_journal()!=record or record.get("state") not in {"installed","active"}
+     or any(record.get(field)!=identity[key] for field,key in (
+      ("source_commit","commit"),("lock_sha256","lock_sha256"),
+      ("python_sha256","python_sha256"),("python_link","python_link"),
+      ("python_uid","python_uid"),("python_gid","python_gid"),("python_mode","python_mode")))):
+  raise CoreRuntimeError("core ownership journal differs before PM directory repair")
+ if (PYTHON!=Path("/home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0/venv/bin/python")
+     or PYTHON_REAL!=Path("/home/admin/HermesInstaller/data/tools/python-3.14.7+20260901-linux-arm64/bin/python3.14")
+     or PYTHON_LINK_TARGET!="/home/admin/HermesInstaller/data/tools/python-3.14.7+20260901-linux-arm64/bin/python3"):
+  raise CoreRuntimeError("fixed PM directory repair paths differ")
+ flags=os.O_RDONLY|getattr(os,"O_DIRECTORY",0)|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_CLOEXEC",0)
+ rootfd=os.open("/",flags); opened={Path("/"):rootfd}; parents={}
+ try:
+  for path in sorted(PM_DIRECTORY_MODE_CONTRACT,key=lambda item:len(item.parts)):
+   if not path.is_absolute() or path==Path("/"):
+    raise CoreRuntimeError("PM directory repair contract is malformed")
+   parent=path.parent
+   if parent not in opened: raise CoreRuntimeError("PM directory repair parent is not pinned")
+   fd=os.open(path.name,flags,dir_fd=opened[parent]); info=os.fstat(fd)
+   uid,gid,expected_mode=PM_DIRECTORY_MODE_CONTRACT[path]
+   mode=stat.S_IMODE(info.st_mode)
+   allowed_modes={expected_mode}
+   if expected_mode==0o775: allowed_modes.add(0o755)
+   if (not stat.S_ISDIR(info.st_mode) or info.st_uid!=uid or info.st_gid!=gid
+       or info.st_nlink<2 or mode not in allowed_modes):
+    os.close(fd); raise CoreRuntimeError("pinned PM directory custody differs")
+   opened[path]=fd; parents[path]=opened[parent]
+
+  # Re-prove the exact venv link, real executable, and pyvenv.cfg through the
+  # held directory descriptors before changing any ancestor metadata.
+  link_parent=Path("/home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0/venv/bin")
+  link_info=os.stat(PYTHON.name,dir_fd=opened[link_parent],follow_symlinks=False)
+  if (not stat.S_ISLNK(link_info.st_mode) or link_info.st_uid!=1000 or link_info.st_gid!=1000
+      or os.readlink(PYTHON.name,dir_fd=opened[link_parent])!=PYTHON_LINK_TARGET):
+   raise CoreRuntimeError("PM Python link differs before directory repair")
+  target_parent=Path("/home/admin/HermesInstaller/data/tools/python-3.14.7+20260901-linux-arm64/bin")
+  binary=os.open(PYTHON_REAL.name,os.O_RDONLY|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_CLOEXEC",0),dir_fd=opened[target_parent])
+  try:
+   before=os.fstat(binary)
+   if (not stat.S_ISREG(before.st_mode) or (before.st_uid,before.st_gid,stat.S_IMODE(before.st_mode),before.st_nlink)
+       !=(1000,1000,0o755,1)):
+    raise CoreRuntimeError("PM Python executable metadata differs before directory repair")
+   digest=hashlib.sha256()
+   while True:
+    block=os.read(binary,1024*1024)
+    if not block: break
+    digest.update(block)
+   after=os.fstat(binary)
+   named=os.stat(PYTHON_REAL.name,dir_fd=opened[target_parent],follow_symlinks=False)
+   signature=lambda item:(item.st_dev,item.st_ino,item.st_mode,item.st_uid,item.st_gid,item.st_nlink,item.st_size,item.st_mtime_ns,item.st_ctime_ns)
+   if signature(before)!=signature(after) or signature(before)!=signature(named) or digest.hexdigest()!=PYTHON_SHA256:
+    raise CoreRuntimeError("PM Python bytes changed before directory repair")
+  finally: os.close(binary)
+  venv=Path("/home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0/venv")
+  cfg=os.open("pyvenv.cfg",os.O_RDONLY|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_CLOEXEC",0),dir_fd=opened[venv])
+  try:
+   before=os.fstat(cfg)
+   if not stat.S_ISREG(before.st_mode) or before.st_uid!=1000 or before.st_nlink!=1 or before.st_size>65536:
+    raise CoreRuntimeError("PM venv provenance metadata differs before directory repair")
+   body=bytearray()
+   while len(body)<=65536:
+    block=os.read(cfg,65537-len(body))
+    if not block: break
+    body.extend(block)
+   after=os.fstat(cfg); named=os.stat("pyvenv.cfg",dir_fd=opened[venv],follow_symlinks=False)
+   if (len(body)!=before.st_size or hashlib.sha256(body).hexdigest()!=PYVENV_CFG_SHA256
+       or (before.st_dev,before.st_ino,before.st_mode,before.st_size,before.st_mtime_ns,before.st_ctime_ns)
+        !=(after.st_dev,after.st_ino,after.st_mode,after.st_size,after.st_mtime_ns,after.st_ctime_ns)
+       or (before.st_dev,before.st_ino,before.st_mode,before.st_size)
+        !=(named.st_dev,named.st_ino,named.st_mode,named.st_size)):
+    raise CoreRuntimeError("PM venv provenance changed before directory repair")
+  finally: os.close(cfg)
+
+  _repair_verified_pm_directory_fds(opened,parents,PM_DIRECTORY_MODE_CONTRACT)
+ finally:
+  for fd in reversed(list(opened.values())):
+   try: os.close(fd)
+   except OSError: pass
+ # Strictly recheck the original source/runtime identity and executable chain.
+ if _identity()!=identity: raise CoreRuntimeError("PM identity changed after directory repair")
+ _validated_executable(PYTHON,{1000})
+
+def _repair_verified_pm_directory_fds(opened,parents,contract):
+ """Apply the exact 0775-to-0755 normalization to preverified held directory FDs."""
+ if os.geteuid()!=ROOT_UID or type(contract) is not dict:
+  raise CoreRuntimeError("PM directory metadata repair is not authorized")
+ pending=[]
+ for path,(_uid,_gid,expected_mode) in contract.items():
+  if expected_mode!=0o775: continue
+  fd=opened[path]; info=os.fstat(fd); mode=stat.S_IMODE(info.st_mode)
+  if mode==0o755: continue
+  parent=parents[path]
+  named=os.stat(path.name,dir_fd=parent,follow_symlinks=False)
+  if (mode!=0o775 or (named.st_dev,named.st_ino,named.st_uid,named.st_gid,named.st_mode)
+      !=(info.st_dev,info.st_ino,info.st_uid,info.st_gid,info.st_mode)):
+   raise CoreRuntimeError("PM directory changed during metadata repair")
+  pending.append(fd)
+ for fd in pending:
+  os.fchmod(fd,0o755)
+  if stat.S_IMODE(os.fstat(fd).st_mode)!=0o755:
+   raise CoreRuntimeError("PM directory metadata repair failed")
 def _launcher():
  return b"""#!/bin/sh
 set -eu
@@ -898,11 +1026,15 @@ def refresh_resources_discovery():
  """Refresh only the root discovery receipt for an already-running owned core."""
  if os.geteuid()!=ROOT_UID or not Path("/proc").is_dir():
   raise CoreRuntimeError("requires installed Linux root actor")
- identity=_identity()
+ # Do not execute the PM interpreter until the known umask-created writable
+ # ancestors have been proven and normalized below. This first identity pass
+ # checks only the pinned source, link, executable bytes, and venv provenance.
+ identity=_identity(verify_python_version=False)
  record=_journal()
  if (record.get("state") not in {"installed","active"}
      or record.get("source_commit")!=identity["commit"]):
   raise CoreRuntimeError("journal-owned core is not in a refreshable installed state")
+ _repair_pinned_pm_directory_modes(identity,record)
  if not status().startswith("owned isolated service and process-bound loopback listener verified at 127.0.0.1:8766;"):
   raise CoreRuntimeError("owned core must already be active before receipt refresh")
  # This explicit root operator action is the only path allowed to repair the
