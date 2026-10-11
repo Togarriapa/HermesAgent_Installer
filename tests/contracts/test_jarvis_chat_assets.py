@@ -79,7 +79,9 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn("feature.mount(root, featureApi(feature, root)", client)
         self.assertIn('feature.id === "overview" && method === "GET" && path === "/chat/api/overview"', client)
         self.assertIn("unmountFeature();", client)
-        navigation = client.split("async function showView(view, navSelection = view) {", 1)[1].split("if (selected !== \"chat\")", 1)[0]
+        navigation = client.split(
+            "async function showView(view, navSelection = view, featureContext = {}) {", 1
+        )[1].split("if (selected !== \"chat\")", 1)[0]
         self.assertIn('button.setAttribute("aria-current", "page")', navigation)
         self.assertIn('group.dataset.current = String(active)', navigation)
         self.assertIn('summary.setAttribute("aria-current", "location")', navigation)
@@ -87,9 +89,11 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('navSelection === "sessions" && selected === "chat" ? "sessions" : selected', navigation)
         self.assertIn('if (selectedNavigation === "sessions") setPanel(true);', navigation)
         self.assertIn(
-            'showView(button.dataset.view, button.dataset.openSessions === "true" ? "sessions" : button.dataset.view)',
+            'showView(button.dataset.view, button.dataset.openSessions === "true" ? "sessions" : button.dataset.view, featureContext);',
             client,
         )
+        self.assertIn('button.classList.contains("chat-model-link") && conversationId', client)
+        self.assertIn("Object.freeze({initialConversationId: context.initialConversationId})", client)
         self.assertIn('showView("overview");', client)
         self.assertIn('data-view="chat">Chats</button>', page.decode("utf-8"))
         _content_type, stylesheet = reviewed_chat_asset("/chat/assets/app.css")
