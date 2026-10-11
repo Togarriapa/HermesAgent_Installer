@@ -1,0 +1,109 @@
+"""Owner and effect-boundary contracts for durable Jarvis mission planning.
+
+Root's Pi environment runs these integration tests; source-level tests here do not establish
+deployment or native Hermes dispatch readiness.
+"""
+from __future__ import annotations
+
+import asyncio
+import time
+
+from aiohttp.test_utils import TestClient, TestServer
+
+from hermes_installer.remote.jarvis_chat import ChatPrincipal, JarvisChatService, JarvisChatStore
+from hermes_installer.remote import jarvis_missions
+
+
+class Backend:
+    async def create_session(self):
+        raise AssertionError("mission planning must not create a Hermes session")
+
+
+def _principal(request):
+    subject = request.headers.get("X-Test-Subject", "owner-a")
+    expires = time.monotonic() + 60
+    return ChatPrincipal(subject, expires, expires, "generation-a")
+
+
+def test_owner_draft_preview_is_persisted_but_never_fabricates_execution(tmp_path, monkeypatch):
+    async def scenario():
+        monkeypatch.setattr(jarvis_missions, "_verified_team_catalog", lambda: {
+            "profiles": {"reviewer": "Internal reviewer"},
+            "source": {"revision": "rev-a", "tree": "tree-a", "content_digest": "digest-a",
+                       "catalog_version": "1"},
+        })
+        from aiohttp import web
+        store = JarvisChatStore(tmp_path / "chat.sqlite3")
+        service = JarvisChatService(store, Backend(), principal_from_request=_principal)
+        app = web.Application(client_max_size=16 * 1024)
+        jarvis_missions.install_jarvis_missions_routes(app, service)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            body = {
+                "title": "Review the release notes",
+                "brief": "Summarize changes using only the approved local source.",
+                "team_ids": ["reviewer"],
+                "idempotency_key": "mission-create-idempotency-key-001",
+            }
+            created_response = await client.post("/chat/api/missions", json=body)
+            assert created_response.status == 201
+            mission = (await created_response.json())["mission"]
+            assert mission["status"] == "draft"
+            mission_id = mission["mission_id"]
+
+            replay = await client.post("/chat/api/missions", json=body)
+            assert replay.status == 201
+            assert (await replay.json())["mission"]["mission_id"] == mission_id
+            conflict = await client.post("/chat/api/missions", json={**body, "brief": "different"})
+            assert conflict.status == 409
+
+            preview_response = await client.post(
+                f"/chat/api/missions/{mission_id}/preview", json={"revision": 1})
+            assert preview_response.status == 200
+            preview = await preview_response.json()
+            assert preview["status"] == "preview_pending"
+            assert preview["team"] == [{
+                "id": "reviewer", "label": "Internal reviewer", "readiness": "pending",
+                "reason": "Bundled source identity is verified; current native dispatch and per-task authority are not.",
+            }]
+            assert preview["native_execution_available"] is False
+            assert preview["approval_nonce"] is None and preview["expires_at"] is None
+            assert len(preview["plan_sha256"]) == 64
+
+            detail = await client.get(f"/chat/api/missions/{mission_id}")
+            assert detail.status == 200
+            assert (await detail.json())["preview"]["plan_sha256"] == preview["plan_sha256"]
+
+            launch = await client.post(f"/chat/api/missions/{mission_id}/launch", json={
+                "revision": 1,
+                "plan_sha256": preview["plan_sha256"],
+                "approval_nonce": None,
+                "idempotency_key": "mission-launch-idempotency-key-001",
+            })
+            assert launch.status == 409
+            assert "unavailable" in await launch.text()
+
+            foreign = await client.get(f"/chat/api/missions/{mission_id}", headers={"X-Test-Subject": "owner-b"})
+            assert foreign.status == 404
+            listing = await client.get("/chat/api/missions")
+            assert len((await listing.json())["missions"]) == 1
+            with store._connect() as db:
+                row = db.execute("SELECT status, plan_sha256 FROM jarvis_missions WHERE id=?", (mission_id,)).fetchone()
+            assert row["status"] == "preview_pending"
+            assert row["plan_sha256"] == preview["plan_sha256"]
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_mission_routes_and_feature_assets_are_literal_and_finite():
+    assert {path for _method, path in jarvis_missions.FEATURE_ROUTES} == {
+        "/chat/api/missions",
+        "/chat/api/missions/{mission_id}",
+        "/chat/api/missions/{mission_id}/preview",
+        "/chat/api/missions/{mission_id}/launch",
+        "/chat/api/missions/{mission_id}/stop",
+        "/chat/api/missions/{mission_id}/review",
+    }
