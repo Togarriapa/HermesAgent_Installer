@@ -1141,6 +1141,141 @@ class ManualStageGatewayTests(unittest.TestCase):
                     connector.open(admission.handle)
             create.assert_not_called()
 
+    def test_websocket_open_reinspects_after_native_assets_expire_same_session_only(self):
+        from hermes_installer.remote.manual_stage import StageFixedXpraConnector
+        principal = Principal("owner@example.net", "subject", time.time() + 120, "f" * 64)
+        clock = [100.0]
+        sessions = StageGatewayPolicySessionAdapter(self.config, self.verifier)
+        sessions.monotonic = lambda: clock[0]
+        connector = StageFixedXpraConnector(self.config, sessions)
+        fake_connector = object()
+        with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
+                mock.patch.object(self.verifier, "verify", return_value=(principal, 130.0, 140.0)), \
+                mock.patch.object(sessions, "_verify_xpra_current", side_effect=[
+                    self.native_observation(issued=100.0, expires=104.9),
+                    self.native_observation(issued=106.1, expires=110.9)]) as inspect, \
+                mock.patch("hermes_installer.remote.manual_stage._StageWebSocketConnector",
+                           return_value=fake_connector) as create:
+            initial = _CURRENT_INGRESS.set(self.fixture_ingress(
+                "same-token", principal, started=100.0, expires=104.9))
+            try:
+                admission = sessions.admit(access_jwt="same-token", action="websocket-attach",
+                                           route_id="xpra-websocket")
+            finally:
+                _CURRENT_INGRESS.reset(initial)
+            self.assertEqual(sessions._records[admission.handle].native_observation.expires_monotonic, 104.9)
+
+            # The protected asset document's browser heartbeats kept the
+            # session alive, while its original /session native observation
+            # aged out during asset loading.
+            session_id, nonce = sessions.heartbeat_material(admission.handle)
+            for started in (100.9, 102.4, 103.9, 105.4):
+                clock[0] = started + 0.1
+                ingress_heartbeat = self.fixture_ingress(
+                    "same-token", principal, started=started, expires=started + 4.8)
+                nonce, _ = sessions.heartbeat(session_id=session_id, nonce=nonce,
+                                              accepted_ingress=ingress_heartbeat)
+            # The actual WebSocket request brings a fresh same-JWT ingress and
+            # triggers a new root scan, without extending its own deadline.
+            clock[0] = 106.2
+            ingress = self.fixture_ingress("same-token", principal,
+                                           started=105.9, expires=110.8)
+            request_context = _CURRENT_INGRESS.set(ingress)
+            try:
+                self.assertIs(connector.open(admission.handle), fake_connector)
+            finally:
+                _CURRENT_INGRESS.reset(request_context)
+            record = sessions._records[admission.handle]
+            self.assertEqual(record.last_ingress, ingress)
+            self.assertEqual(record.native_observation.issued_monotonic, 106.1)
+            self.assertEqual(record.last_edge_check, 105.9)
+            self.assertEqual(inspect.call_count, 2)
+            create.assert_called_once()
+
+    def test_websocket_open_rejects_changed_token_and_scan_past_ingress_deadline(self):
+        from hermes_installer.remote.manual_stage import StageFixedXpraConnector
+        principal = Principal("owner@example.net", "subject", time.time() + 120, "f" * 64)
+        clock = [100.0]
+        sessions = StageGatewayPolicySessionAdapter(self.config, self.verifier)
+        sessions.monotonic = lambda: clock[0]
+        connector = StageFixedXpraConnector(self.config, sessions)
+        with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
+                mock.patch.object(self.verifier, "verify", return_value=(principal, 130.0, 140.0)), \
+                mock.patch.object(sessions, "_verify_xpra_current", return_value=self.native_observation(
+                    issued=100.0, expires=104.9)) as inspect, \
+                mock.patch("hermes_installer.remote.manual_stage._StageWebSocketConnector") as create:
+            initial = _CURRENT_INGRESS.set(self.fixture_ingress(
+                "same-token", principal, started=100.0, expires=104.9))
+            try:
+                admission = sessions.admit(access_jwt="same-token", action="websocket-attach",
+                                           route_id="xpra-websocket")
+            finally:
+                _CURRENT_INGRESS.reset(initial)
+
+            clock[0] = 101.0
+            changed = self.fixture_ingress("different-token", principal, started=100.9, expires=105.8)
+            context = _CURRENT_INGRESS.set(changed)
+            try:
+                with self.assertRaises(ManualStageDenied):
+                    connector.open(admission.handle)
+            finally:
+                _CURRENT_INGRESS.reset(context)
+            inspect.assert_called_once()
+            create.assert_not_called()
+
+        # A fresh root scan cannot extend a request whose own ingress expires
+        # while it waits for that scan.
+        clock[0] = 200.0
+        sessions = StageGatewayPolicySessionAdapter(self.config, self.verifier)
+        sessions.monotonic = lambda: clock[0]
+        connector = StageFixedXpraConnector(self.config, sessions)
+        with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
+                mock.patch.object(self.verifier, "verify", return_value=(principal, 230.0, 240.0)), \
+                mock.patch.object(sessions, "_verify_xpra_current", side_effect=[
+                    self.native_observation(issued=200.0, expires=204.9),
+                    lambda **_kwargs: None]):
+            initial = _CURRENT_INGRESS.set(self.fixture_ingress(
+                "same-token", principal, started=200.0, expires=204.9))
+            try:
+                admission = sessions.admit(access_jwt="same-token", action="websocket-attach",
+                                           route_id="xpra-websocket")
+            finally:
+                _CURRENT_INGRESS.reset(initial)
+            clock[0] = 203.0
+            ingress = self.fixture_ingress("same-token", principal, started=202.9, expires=204.0)
+            context = _CURRENT_INGRESS.set(ingress)
+            def late_scan(**_kwargs):
+                clock[0] = 204.01
+                return self.native_observation(issued=203.0, expires=207.9)
+            with mock.patch.object(sessions, "_verify_xpra_current", side_effect=late_scan), \
+                    mock.patch("hermes_installer.remote.manual_stage._StageWebSocketConnector") as create:
+                try:
+                    with self.assertRaises(ManualStageDenied):
+                        connector.open(admission.handle)
+                finally:
+                    _CURRENT_INGRESS.reset(context)
+                create.assert_not_called()
+            self.assertNotIn(admission.handle, sessions._records)
+
+    def test_websocket_connector_diagnostic_is_phase_only(self):
+        from types import SimpleNamespace
+        from hermes_installer.remote.manual_stage import _log_stage_denial, StageGatewayPolicySessionAdapter
+        from hermes_installer.remote.server import _log_manual_stage_phase
+        secret = "private-token-query-owner@example.net"
+        try:
+            raise ManualStageDenied(secret)
+        except ManualStageDenied as exc:
+            with self.assertLogs("hermes_installer.remote.manual_stage", level="WARNING") as captured:
+                _log_stage_denial("connector-native", exc)
+                runtime = SimpleNamespace(root_sessions=StageGatewayPolicySessionAdapter(
+                    self.config, self.verifier))
+                _log_manual_stage_phase(runtime, "stream-connector", exc)
+        diagnostic = "\n".join(captured.output)
+        self.assertIn("phase=connector-native exception=ManualStageDenied", diagnostic)
+        self.assertIn("phase=stream-connector exception=ManualStageDenied", diagnostic)
+        self.assertNotIn(secret, diagnostic)
+        self.assertNotIn("owner@example.net", diagnostic)
+
     def test_admission_denies_if_queued_inspection_outlives_edge_or_root_witness(self):
         principal = Principal("owner@example.net", "subject", time.time() + 120, "f" * 64)
         clock = [100.0]

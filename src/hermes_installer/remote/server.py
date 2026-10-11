@@ -37,6 +37,16 @@ _ORIGIN_PROBE_MAX_ASSET = 1024 * 1024
 _ORIGIN_PROBE_MAX_WS_SAMPLE = 64 * 1024
 
 
+def _log_manual_stage_phase(runtime: Any, phase: str, error: BaseException) -> None:
+    """Log only a fixed phase and exception class for the separately owned MVP stage."""
+    try:
+        from .manual_stage import StageGatewayPolicySessionAdapter, _log_stage_denial
+        if type(getattr(runtime, "root_sessions", None)) is StageGatewayPolicySessionAdapter:
+            _log_stage_denial(phase, error)
+    except Exception:
+        pass
+
+
 class PrivateOriginProbeDenied(PermissionError):
     """The root-private origin probe could not be safely completed."""
 
@@ -580,7 +590,11 @@ def create_app(runtime: GatewayRuntime):
         raise web.HTTPFound("/client/bootstrap.html")
 
     async def create(request):
-        runtime.validate_request_origin(request, require_origin=True)
+        try:
+            runtime.validate_request_origin(request, require_origin=True)
+        except Exception as exc:
+            _log_manual_stage_phase(runtime, "session-admission", exc)
+            raise
         if request.can_read_body:
             raise GatewayDenied("session request body is forbidden")
         token = _token(request)
@@ -591,15 +605,23 @@ def create_app(runtime: GatewayRuntime):
                 await close_root(old.admission.handle, old.admission.session_id)
         if len(runtime.sessions) >= runtime.max_active_sockets:
             raise GatewayDenied("Desktop session limit reached")
-        root_client = runtime.require_root()
+        try:
+            root_client = runtime.require_root()
+        except Exception as exc:
+            _log_manual_stage_phase(runtime, "session-admission", exc)
+            raise
         try:
             admission = await asyncio.wait_for(asyncio.to_thread(
                 root_client.admit, access_jwt=token, action="websocket-attach", route_id="xpra-websocket"), timeout=9)
-            challenge = await asyncio.wait_for(asyncio.to_thread(root_client.challenge, admission.handle), timeout=5)
-        except Exception:
-            if "admission" in locals():
-                await close_root(admission.handle, admission.session_id)
+        except Exception as exc:
+            _log_manual_stage_phase(runtime, "session-admission", exc)
             raise GatewayDenied("root Access/session admission failed") from None
+        try:
+            challenge = await asyncio.wait_for(asyncio.to_thread(root_client.challenge, admission.handle), timeout=5)
+        except Exception as exc:
+            _log_manual_stage_phase(runtime, "session-challenge", exc)
+            await close_root(admission.handle, admission.session_id)
+            raise GatewayDenied("root WebSocket challenge failed") from None
         if (admission.admission_kind != "leased-websocket" or
                 challenge.session_id != admission.session_id or
                 admission.lease_expires_monotonic <= runtime.monotonic()):
@@ -755,25 +777,38 @@ def create_app(runtime: GatewayRuntime):
                 await close_root(admission.handle, admission.session_id)
 
     async def stream(request):
-        runtime.validate_request_origin(request, require_origin=True)
+        try:
+            runtime.validate_request_origin(request, require_origin=True)
+        except Exception as exc:
+            _log_manual_stage_phase(runtime, "stream-origin", exc)
+            raise
         if request.headers.get("Sec-WebSocket-Protocol") != "binary":
+            _log_manual_stage_phase(runtime, "stream-protocol", GatewayDenied("protocol"))
             raise GatewayDenied("unexpected Xpra WebSocket protocol")
         if set(request.query) != {"lease", "profile", "nonce"} or request.query["profile"] != "hermes-desktop":
+            _log_manual_stage_phase(runtime, "stream-query", GatewayDenied("query"))
             raise GatewayDenied("socket profile/lease binding required")
         key = request.query["lease"]
         session = runtime.sessions.get(key)
         if (session is None or session.socket_claimed or session.expires <= runtime.monotonic() or
                 not secrets.compare_digest(session.socket_nonce, request.query["nonce"])):
+            _log_manual_stage_phase(runtime, "stream-session", GatewayDenied("session"))
             raise GatewayDenied("socket lease/nonce is invalid or already consumed")
         session.socket_claimed = True
         connector = None
         downstream = web.WebSocketResponse(protocols=("binary",), max_msg_size=1_048_576,
                                            autoping=False, autoclose=False, compress=False)
         try:
-            connector = await asyncio.wait_for(asyncio.to_thread(runtime.connector, session.admission.handle), timeout=5)
+            try:
+                connector = await asyncio.wait_for(asyncio.to_thread(
+                    runtime.connector, session.admission.handle), timeout=5)
+            except Exception as exc:
+                _log_manual_stage_phase(runtime, "stream-connector", exc)
+                raise
             if (getattr(connector, "session_id", None) != session.admission.session_id or
                     getattr(connector, "route_id", None) != "xpra-websocket" or
                     getattr(connector, "expires_monotonic", session.expires) > session.expires):
+                _log_manual_stage_phase(runtime, "stream-connector", GatewayDenied("binding"))
                 raise GatewayDenied("root connector is not bound to the admitted WebSocket session")
             await downstream.prepare(request)
             session.socket = downstream

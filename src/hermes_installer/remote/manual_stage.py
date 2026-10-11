@@ -41,7 +41,10 @@ MAX_PROBE_SECONDS = 5
 _STAGE_DIAGNOSTIC = logging.getLogger("hermes_installer.remote.manual_stage")
 _STAGE_PHASES = frozenset({"headers", "jwt", "unix-peer", "root-inspector", "listener-join",
                            "ingress-proof-join", "middleware-ingress", "handler", "heartbeat-handler", "route-response",
-                           "response-currentness", "session-response", "index-injection"})
+                           "response-currentness", "session-response", "index-injection",
+                           "connector-ingress", "connector-native", "session-admission",
+                           "session-challenge", "stream-origin", "stream-protocol",
+                           "stream-query", "stream-session", "stream-connector"})
 _INGRESS_CURRENTNESS_PHASES = frozenset({"shape", "request-age", "root-proof", "listener-path"})
 
 
@@ -397,15 +400,27 @@ class StageGatewayPolicySessionAdapter:
         ingress.verify_current(self.config, now=self.monotonic())
         _read_config_current(self.config)
         sid = secrets.token_urlsafe(24)
-        principal, expiry, jwt_deadline = self.verifier.verify(access_jwt, action=action,
-            session_id=sid, accepted_ingress=ingress)
-        native_observation = self._verify_xpra_current()
+        try:
+            principal, expiry, jwt_deadline = self.verifier.verify(access_jwt, action=action,
+                session_id=sid, accepted_ingress=ingress)
+        except Exception as exc:
+            _log_stage_denial("jwt", exc)
+            raise
+        try:
+            native_observation = self._verify_xpra_current()
+        except Exception as exc:
+            _log_stage_denial("root-inspector", exc)
+            raise
         now = self.monotonic()
-        ingress.verify_current(self.config, now=now)
-        _verify_native_observation_current(self.config, native_observation, now=now)
-        if (now - ingress.request_started_monotonic > MAX_PROBE_SECONDS
-                or now >= min(expiry, jwt_deadline)):
-            raise ManualStageDenied("manual-stage request witness expired while checking Xpra state")
+        try:
+            ingress.verify_current(self.config, now=now)
+            _verify_native_observation_current(self.config, native_observation, now=now)
+            if (now - ingress.request_started_monotonic > MAX_PROBE_SECONDS
+                    or now >= min(expiry, jwt_deadline)):
+                raise ManualStageDenied("manual-stage request witness expired while checking Xpra state")
+        except Exception as exc:
+            _log_stage_denial("ingress-proof-join", exc)
+            raise
         with self._lock:
             self._purge(now)
             if expected_kind == "leased-websocket" and sum(
@@ -589,6 +604,7 @@ class StageGatewayPolicySessionAdapter:
                 record.last_edge_check + MAX_PROBE_SECONDS,
                 ingress.witness_expires_monotonic,
                 observation.expires_monotonic,
+                record.heartbeat_expiry,
                 record.admission.lease_expires_monotonic,
                 record.admission.jwt_expires_monotonic,
             )
@@ -619,6 +635,63 @@ class StageGatewayPolicySessionAdapter:
             if current is not record:
                 raise ManualStageDenied("active Xpra stage changed during root inspection")
             current.native_observation = native_observation
+
+    def refresh_websocket_open_proofs(self, handle: Any,
+                                     ingress: StageAcceptedIngressObservation | None) -> None:
+        """Bind connector opening to this request's same-session ingress and fresh native proof."""
+        if ingress is None:
+            raise ManualStageDenied("current protected ingress is required to open the Xpra socket")
+        with self._lock:
+            record = self._current(handle)
+            if (record.admission.admission_kind != "leased-websocket"
+                    or record.admission.route_id != "xpra-websocket"):
+                raise ManualStageDenied("current stage session is not the fixed Xpra WebSocket")
+            session_id = record.admission.session_id
+            original_fingerprint = hashlib.sha256(record.access_jwt.encode("ascii", "strict")).hexdigest()
+            original_principal = record.principal
+            admission = record.admission
+            heartbeat_expiry = record.heartbeat_expiry
+        try:
+            ingress.verify_current(self.config, now=self.monotonic())
+            if (not secrets.compare_digest(ingress.token_sha256, original_fingerprint)
+                    or ingress.principal.subject != original_principal.subject
+                    or ingress.principal.email != original_principal.email
+                    or self.monotonic() - ingress.request_started_monotonic > MAX_PROBE_SECONDS
+                    or self.monotonic() >= heartbeat_expiry):
+                raise ManualStageDenied("connector ingress changed the active Access session")
+            _read_config_current(self.config)
+        except Exception as exc:
+            _log_stage_denial("connector-ingress", exc)
+            self.close(handle, session_id=session_id)
+            raise ManualStageDenied("fresh same-session connector ingress was denied") from None
+        try:
+            native_observation = self._verify_xpra_current(queue_timeout_seconds=0.5)
+            checked_at = self.monotonic()
+            ingress.verify_current(self.config, now=checked_at)
+            _verify_native_observation_current(self.config, native_observation, now=checked_at)
+            if (checked_at - ingress.request_started_monotonic > MAX_PROBE_SECONDS
+                    or checked_at >= min(admission.lease_expires_monotonic,
+                                         admission.jwt_expires_monotonic,
+                                         ingress.jwt_expires_monotonic, heartbeat_expiry)):
+                raise ManualStageDenied("connector proof expired during current-state checks")
+        except Exception as exc:
+            _log_stage_denial("connector-native", exc)
+            self.close(handle, session_id=session_id)
+            raise ManualStageDenied("fresh same-session connector proof was denied") from None
+        with self._lock:
+            current = self._current(handle)
+            if (current is not record or current.admission.session_id != session_id
+                    or not secrets.compare_digest(
+                        hashlib.sha256(current.access_jwt.encode("ascii", "strict")).hexdigest(),
+                        ingress.token_sha256)):
+                self._records.pop(handle, None)
+                raise ManualStageDenied("stage session changed during connector proof refresh")
+            current.last_edge_check = ingress.request_started_monotonic
+            current.last_ingress = ingress
+            current.native_observation = native_observation
+            capture = _CURRENT_NATIVE_OBSERVATION.get()
+            if capture is not None:
+                capture.observation = native_observation
 
     def _current(self, handle: Any) -> _StageRecord:
         record = self._records.get(handle)
@@ -709,11 +782,15 @@ class StageFixedXpraConnector:
 
     def open(self, handle: Any):
         _read_config_current(self.config)
-        # Admission already performed a fresh nonce-bound full root inspection.
-        # Reuse only that exact session witness while assert_current_proofs
-        # confirms it remains inside its five-second validity window.
-        self.sessions.assert_current_proofs(handle)
         admission = self.sessions.current(handle)
+        # Native assets may take longer than one proof window to load. The
+        # browser's actual protected WebSocket request carries a fresh ingress;
+        # bind a new root snapshot to that exact same-session request before
+        # connecting, without extending either prior proof.
+        if admission.route_id == "xpra-websocket":
+            self.sessions.refresh_websocket_open_proofs(handle, _CURRENT_INGRESS.get())
+        else:
+            self.sessions.assert_current_proofs(handle)
         if admission.route_id == "xpra-http":
             return _StageHTTPConnector(self, admission)
         if admission.route_id == "xpra-websocket":
