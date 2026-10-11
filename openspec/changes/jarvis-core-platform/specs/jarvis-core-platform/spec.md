@@ -2086,3 +2086,31 @@ Only Jarvis master promotion SHALL use the existing exact owner-approved one-use
 #### Scenario: Expert promotion or stale write boundary
 - **WHEN** an Expert promotes or current scope/permit/base ownership cannot be verified at the actual write
 - **THEN** final mutation denies and prior notes/private drafts/recovery data remain intact.
+
+### Requirement: Living service presence and simplified actual workspaces
+Overview SHALL present a clearly distinct original cinematic Jarvis reactor with continuous restrained motion only while current evidence verifies running service, plus separate actual operation/event states. Chat/Sessions SHALL become one Chats workspace, and mission workflows SHALL have plain Projects/tasks presentation while retaining actual contracts and every requested capability.
+
+#### Scenario: Running but no work or stale service
+- **WHEN** service is verified running with no task, or its observation becomes stale/offline
+- **THEN** the UI distinguishes running presence from idle work and settles stale/offline motion into a labeled static state, preserving reduced motion and immediate navigation.
+
+### Requirement: Truthful foreground voice and per-message settings
+The composer SHALL provide actual voice controls and per-message model/effort settings distinct from conversation defaults through verified finite native effects. Continuous-listening/wake-word mode SHALL be explicit opt-in only when an actual foreground adapter works, with stop/privacy/permission/error behavior and no browser background guarantee.
+
+#### Scenario: Per-turn backend or browser unsupported
+- **WHEN** per-message configuration or foreground recognition/detection lacks a verified adapter
+- **THEN** the control reports its precise limitation/pending state, text/default conversation use remains possible and no global model mutation or fictitious listening is claimed.
+
+### Requirement: Actual owner Project context and editable source generations
+Projects SHALL persist owned chat/task membership and explicitly selected Obsidian/context sharing applied to actual native turns. Owner Profile/SOUL/instruction/file and Skill editing SHALL use reviewed bounded source-generation/version CAS and effective readback, preserving source pins and Jarvis as sole public assistant.
+
+#### Scenario: Changed Project or edited source
+- **WHEN** membership/context or source revision changes after preparation
+- **THEN** stale native context/mission/source eligibility invalidates, historical data stays intact and project/note/text metadata cannot supply execution or final-effect authority.
+
+### Requirement: Connected Calendar and actual proactive controls
+Calendar SHALL show authentic owned account events with actual source/timezone/window/currentness, and proactive task/schedule controls SHALL reflect real reviewed effects and existing background/approval policy rather than sample data or readiness-only labels.
+
+#### Scenario: Account unavailable or final effect unapproved
+- **WHEN** calendar has no verified read source or proactive output lacks current final-effect authorization
+- **THEN** the UI states unavailable/review-needed and never fabricates events, sends or infers account/owner permission.
