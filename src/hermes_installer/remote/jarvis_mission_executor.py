@@ -348,6 +348,7 @@ def _initialize_execution_store(store: Any) -> None:
           jarvis_review_state TEXT NOT NULL DEFAULT 'pending' CHECK(jarvis_review_state IN ('pending','approved','rejected')),
           jarvis_review_result_sha256 TEXT,
           jarvis_review_turn_id TEXT,
+          jarvis_review_owner_turn_handle TEXT,
           created REAL NOT NULL,
           updated REAL NOT NULL,
           UNIQUE(owner, launch_idempotency_hash),
@@ -360,6 +361,8 @@ def _initialize_execution_store(store: Any) -> None:
             db.execute("ALTER TABLE jarvis_mission_runs ADD COLUMN jarvis_review_result_sha256 TEXT")
         if "jarvis_review_turn_id" not in run_columns:
             db.execute("ALTER TABLE jarvis_mission_runs ADD COLUMN jarvis_review_turn_id TEXT")
+        if "jarvis_review_owner_turn_handle" not in run_columns:
+            db.execute("ALTER TABLE jarvis_mission_runs ADD COLUMN jarvis_review_owner_turn_handle TEXT")
         db.execute("CREATE INDEX IF NOT EXISTS jarvis_mission_runs_owner ON jarvis_mission_runs(owner,updated DESC)")
         db.execute("""CREATE TABLE IF NOT EXISTS jarvis_mission_actions (
           owner TEXT NOT NULL,
@@ -678,7 +681,8 @@ class MissionExecutionAdapter:
             if run["jarvis_review_state"] in {"approved", "rejected"}:
                 same = (run["jarvis_review_state"] == decision.decision
                         and run["jarvis_review_result_sha256"] == decision.result_sha256
-                        and run["jarvis_review_turn_id"] == decision.gateway_turn_id)
+                        and run["jarvis_review_turn_id"] == decision.gateway_turn_id
+                        and run["jarvis_review_owner_turn_handle"] == decision.owner_turn_handle)
                 db.rollback()
                 return same
             try:
@@ -718,7 +722,8 @@ class MissionExecutionAdapter:
                     or review_turn["core_generation"] != decision.core_generation
                     or not decision.matches(
                         owner_subject_sha256=run["owner"], mission_id=run["mission_id"],
-                        revision=int(run["revision"]), run_id=run["id"],
+                        revision=int(run["revision"]), gateway_turn_id=decision.gateway_turn_id,
+                        owner_turn_handle=decision.owner_turn_handle, run_id=run["id"],
                         result_sha256=result_sha256,
                         core_generation=source["core_generation"],
                         core_source_generation=source["core_source_generation"])
@@ -727,10 +732,12 @@ class MissionExecutionAdapter:
                 return False
             changed = db.execute(
                 "UPDATE jarvis_mission_runs SET jarvis_review_state=?,"
-                "jarvis_review_result_sha256=?,jarvis_review_turn_id=?,updated=? "
+                "jarvis_review_result_sha256=?,jarvis_review_turn_id=?,"
+                "jarvis_review_owner_turn_handle=?,updated=? "
                 "WHERE id=? AND owner=? AND jarvis_review_state='pending'",
                 (decision.decision, decision.result_sha256, decision.gateway_turn_id,
-                 time.time(), run["id"], decision.owner_subject_sha256),
+                 decision.owner_turn_handle, time.time(), run["id"],
+                 decision.owner_subject_sha256),
             ).rowcount
             if changed != 1:
                 db.rollback()

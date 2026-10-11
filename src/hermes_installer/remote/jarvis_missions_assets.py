@@ -198,9 +198,10 @@ FEATURE_ASSETS = JarvisFeatureAssets(
     box.append(reasons);
     const approval = document.createElement('div');
     approval.className = 'jm-approval';
-    const planningReady = ['oneshot', 'kanban'].includes(preview.execution_mode)
-      && Array.isArray(preview.selected_source_ids) && preview.selected_source_ids.length > 0;
-    if (!planningReady) addText(approval, 'p', 'jm-card-meta', 'Owner approval and task start remain unavailable until Jarvis completes a protected plan decision.');
+    const planningReady = preview.execution_mode === 'oneshot'
+      && Array.isArray(preview.selected_source_ids)
+      && JSON.stringify(preview.selected_source_ids) === '["orchestrator"]';
+    if (!planningReady) addText(approval, 'p', 'jm-card-meta', 'Owner authorization and task start remain unavailable until Jarvis selects the enrolled Orchestrator one-shot route.');
     const autonomyLabel = document.createElement('label');
     autonomyLabel.textContent = 'Task authorization';
     const autonomyMode = document.createElement('select');

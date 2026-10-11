@@ -112,6 +112,7 @@ def _initialize(store: Any) -> None:
           master_plan_sha256 TEXT,
           master_plan_response_sha256 TEXT,
           master_plan_gateway_turn_id TEXT,
+          master_plan_owner_turn_handle TEXT,
           master_plan_core_generation TEXT,
           master_plan_core_source_generation TEXT,
           status TEXT NOT NULL CHECK(status IN ('draft','preview_pending')),
@@ -165,7 +166,8 @@ def _initialize(store: Any) -> None:
             db.execute("ALTER TABLE jarvis_missions ADD COLUMN autonomy_mode TEXT NOT NULL DEFAULT 'approval_required'")
         for column in ("selected_source_ids", "master_plan_json", "master_plan_sha256",
                        "master_plan_response_sha256",
-                       "master_plan_gateway_turn_id", "master_plan_core_generation",
+                       "master_plan_gateway_turn_id", "master_plan_owner_turn_handle",
+                       "master_plan_core_generation",
                        "master_plan_core_source_generation"):
             if column not in mission_columns:
                 db.execute(f"ALTER TABLE jarvis_missions ADD COLUMN {column} TEXT")
@@ -471,7 +473,8 @@ def record_jarvis_master_plan(store: Any, decision: Any, *, config: Any,
             or not decision.is_current_sealed(config, custody=custody)):
         return False
     selected = decision.selected_source_ids
-    if (type(selected) is not tuple or not 1 <= len(selected) <= _TEAM_LIMIT
+    if (type(selected) is not tuple or len(selected) > _TEAM_LIMIT
+            or (not selected and decision.execution_mode != "oneshot")
             or len(set(selected)) != len(selected)):
         return False
     catalog = _verified_team_catalog()
@@ -503,13 +506,20 @@ def record_jarvis_master_plan(store: Any, decision: Any, *, config: Any,
             except (TypeError, ValueError):
                 current_source = None
             task_sha256 = mission_goal_arguments_sha256(mission["brief"])
+            planning_turn = db.execute(
+                "SELECT status,core_generation FROM turns WHERE id=? AND owner=?",
+                (decision.gateway_turn_id, owner),
+            ).fetchone()
             if (not decision.matches(
                     owner_subject_sha256=owner, mission_id=mission["id"],
-                    revision=int(mission["revision"]), goal_sha256=task_sha256,
+                    revision=int(mission["revision"]), gateway_turn_id=decision.gateway_turn_id,
+                    owner_turn_handle=decision.owner_turn_handle, goal_sha256=task_sha256,
                     core_generation=(current_source.get("core_generation")
                                      if isinstance(current_source, dict) else None),
                     core_source_generation=(current_source.get("core_source_generation")
                                             if isinstance(current_source, dict) else None))
+                    or planning_turn is None or planning_turn["status"] != "completed"
+                    or planning_turn["core_generation"] != decision.core_generation
                     or type(current_source) is not dict
                     or set(current_source) != {"core_generation", "core_source_generation"}
                     or decision.plan_sha256 != plan_digest):
@@ -519,6 +529,7 @@ def record_jarvis_master_plan(store: Any, decision: Any, *, config: Any,
                 same = (mission["master_plan_sha256"] == plan_digest
                         and mission["master_plan_response_sha256"] == decision.response_sha256
                         and mission["master_plan_gateway_turn_id"] == decision.gateway_turn_id
+                        and mission["master_plan_owner_turn_handle"] == decision.owner_turn_handle
                         and mission["master_plan_json"] == plan_bytes.decode("utf-8"))
                 db.rollback()
                 return same
@@ -536,11 +547,13 @@ def record_jarvis_master_plan(store: Any, decision: Any, *, config: Any,
                 return False
             changed = db.execute(
                 "UPDATE jarvis_missions SET execution_mode=?,selected_source_ids=?,master_plan_json=?,"
-                "master_plan_sha256=?,master_plan_response_sha256=?,master_plan_gateway_turn_id=?,master_plan_core_generation=?,"
+                "master_plan_sha256=?,master_plan_response_sha256=?,master_plan_gateway_turn_id=?,"
+                "master_plan_owner_turn_handle=?,master_plan_core_generation=?,"
                 "master_plan_core_source_generation=?,plan_sha256=NULL,source_binding=NULL,status='draft',updated=? "
                 "WHERE id=? AND owner=? AND revision=? AND execution_mode='pending'",
                 (decision.execution_mode, _canonical(list(selected)).decode("utf-8"),
                  plan_bytes.decode("utf-8"), plan_digest, decision.response_sha256, decision.gateway_turn_id,
+                 decision.owner_turn_handle,
                  decision.core_generation, decision.core_source_generation, time.time(),
                  mission["id"], owner, decision.revision),
             ).rowcount
@@ -771,10 +784,13 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                                        catalog=catalog, persist=False)
             if current_preview is None or current_preview["plan_sha256"] != plan_sha256:
                 raise web.HTTPConflict(text="mission preview is stale", headers=_secure_headers())
-            if (mission["execution_mode"] not in {"oneshot", "kanban"}
-                    or not mission["master_plan_sha256"]
-                    or not mission["selected_source_ids"]):
+            selected_sources = json.loads(mission["selected_source_ids"] or "null")
+            if not mission["master_plan_sha256"] or mission["execution_mode"] == "pending":
                 raise web.HTTPConflict(text="Jarvis master planning decision is pending",
+                                       headers=_secure_headers())
+            if (mission["execution_mode"] != "oneshot"
+                    or selected_sources != ["orchestrator"]):
+                raise web.HTTPConflict(text="the selected Jarvis route is not enrolled for task start",
                                        headers=_secure_headers())
 
             idem_hash = hashlib.sha256(key.encode("ascii")).hexdigest()
