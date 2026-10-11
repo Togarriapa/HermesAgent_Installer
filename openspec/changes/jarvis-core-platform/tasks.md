@@ -64,3 +64,5 @@ Within RT-T266.3/HI-T266.2, prioritize native Models/config CAS, authentic Logs/
 RT-T266.3 Models first effect: fixed conversation-scoped Codex --session selection with source-known IDs, current route/owner/revision approval and native post-read; prove no global persistence or metered fallback on Pi. Durable default config CAS remains later; acceptance stays open.
 
 Next parallel RT-T266.3/HI-T266.2/RB-T266.4 increments: A browser voice plus non-secret personal UI settings; B source-labeled activity/statistics from real bounded events; C catalog details plus owner-only native learning diffs. Owners supply separate static feature fragments to the UI integrator. VD-T266.5 checks each actual Pi/browser function and failure before readiness; full feature obligations remain open.
+
+Next HI-T266.2/RT-T266.3/RB-T266.4 packages D/E/F: qualify existing pause/status UI; complete owned attachment picker/metadata/upload-byte preview; wire first persisted approved mission to actual root/native claim and child events. Respect design file ownership and existing adapters. VD-T266.5 checks effect/replay/stale/cross-owner/restart on Pi; no new task IDs or acceptance closure.

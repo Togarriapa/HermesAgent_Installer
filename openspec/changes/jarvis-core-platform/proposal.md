@@ -55,3 +55,5 @@ Align the verified resources_delegate {goal} schema and configured-maximum inven
 Provide a useful first Models effect through the native session-only selector and fixed source-known Codex IDs, preserving owner conversation and subscription route boundaries. Persistent global configuration and dynamic catalogs remain separate.
 
 Prioritize three independent visible increments on existing backend support: browser voice/personal settings, truthful activity/statistics and capability/native-learning detail. These improve useful daily interaction without introducing another architecture or claiming full parity.
+
+Complete three current backend slices in parallel: existing schedule pause/status, owned staged-file visibility and the first genuine approved mission execution. Avoid duplicate endpoints or inventing artifact reads/mission authority absent from the native runtime.

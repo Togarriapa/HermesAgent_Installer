@@ -1873,3 +1873,10 @@ The system SHALL deliver voice/settings, authentic activity statistics and capab
 #### Scenario: Missing source or browser feature
 - **WHEN** voice, usage or a management adapter is unavailable
 - **THEN** text and read-only views remain usable and the missing capability is stated explicitly.
+
+### Requirement: Existing backend slices before new surface area
+The system SHALL complete schedule pause/status, owned attachment visibility and the first genuine mission handoff using their existing finite adapters. UI state SHALL distinguish actual effects, correlation and unavailable native capabilities.
+
+#### Scenario: Uncertain native effect
+- **WHEN** attachment or mission completion cannot be established
+- **THEN** the system reports uncertainty and does not automatically repeat the effect or infer readiness.
