@@ -278,6 +278,7 @@ class ManualStageGatewayTests(unittest.TestCase):
     def test_heartbeat_is_one_use_and_bound_to_original_token_and_principal(self):
         token = self.token()
         ingress = self.make_ingress(token)
+        ingress.verify_current(self.config)
         sessions = StageGatewayPolicySessionAdapter(self.config, self.verifier)
         ctx = _CURRENT_INGRESS.set(ingress)
         try:
@@ -828,6 +829,53 @@ class ManualStageGatewayTests(unittest.TestCase):
         self.assertIn("/client/{tail}", paths)
         self.assertIsNone(runtime.private_origin_probe)
         self.assertEqual(runtime.max_lease_seconds, 30)
+
+    @unittest.skipUnless(HAS_AIOHTTP, "install the isolated gateway runtime dependencies")
+    def test_authenticated_session_busy_is_specific_but_unproved_request_cannot_probe_slot(self):
+        import asyncio
+        from types import SimpleNamespace
+        from aiohttp.test_utils import TestClient, TestServer
+        from hermes_installer.remote.manual_stage import (
+            StageFixedXpraConnector, StageGatewayLaunch, create_stage_gateway_app,
+        )
+        sessions = StageGatewayPolicySessionAdapter(self.config, self.verifier)
+        launch = StageGatewayLaunch(self.verifier.policy, sessions,
+            StageFixedXpraConnector(self.config, sessions))
+        app = create_stage_gateway_app(launch)
+        app["stage_listener_identity"] = self.listener_identity
+        runtime = app["gateway_runtime"]
+        runtime.sessions["already-in-use"] = SimpleNamespace(
+            expires=time.monotonic() + 30,
+            admission=SimpleNamespace(handle="opaque", session_id="opaque"))
+        token = self.token()
+        ingress = self.make_ingress(token)
+
+        async def exercise():
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            try:
+                headers = {"Host": self.config.hostname,
+                           "Origin": "https://" + self.config.hostname,
+                           "Cf-Access-Jwt-Assertion": token}
+                accept = mock.AsyncMock(return_value=ingress)
+                with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
+                     mock.patch("hermes_installer.remote.manual_stage._accept_stage_ingress", new=accept), \
+                     self.assertLogs("hermes_installer.remote.manual_stage", level="WARNING") as captured:
+                    response = await client.post("/session", headers=headers)
+                self.assertEqual(response.status, 409, (captured.output, accept.await_args_list))
+                self.assertEqual(await response.json(), {"code": "desktop_session_busy"})
+                self.assertEqual(response.headers.get("Cache-Control"), "no-store")
+                self.assertEqual(len(runtime.sessions), 1)
+
+                with mock.patch("hermes_installer.remote.manual_stage._accept_stage_ingress",
+                                new=mock.AsyncMock(side_effect=ManualStageDenied("not authenticated"))):
+                    denied = await client.post("/session", headers=headers)
+                self.assertEqual(denied.status, 403)
+                self.assertNotIn("desktop_session_busy", await denied.text())
+                self.assertEqual(len(runtime.sessions), 1)
+            finally:
+                await client.close()
+        asyncio.run(exercise())
 
     @unittest.skipUnless(HAS_AIOHTTP, "install the isolated gateway runtime dependencies")
     def test_stage_middleware_denies_before_redirect_and_injects_heartbeat_before_assets(self):

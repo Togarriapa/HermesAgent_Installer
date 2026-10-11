@@ -268,6 +268,35 @@ class RemoteGatewayRootBridgeTests(unittest.IsolatedAsyncioTestCase):
                                               "challenge": session["renewal_challenge"]})
         self.assertEqual(replay.status, 403)
 
+    async def test_bootstrap_has_bounded_busy_and_explicit_retry_messages(self):
+        response = await self.client.get("/client/bootstrap.html", headers=self.headers)
+        self.assertEqual(response.status, 200)
+        body = await response.text()
+        self.assertIn("desktop_session_busy", body)
+        self.assertIn("Desktop is already in use. End that session before retrying.", body)
+        self.assertIn("Access authorization required.", body)
+        self.assertIn("Desktop service is temporarily unavailable.", body)
+        self.assertIn("retry.addEventListener('click',start)", body)
+
+    async def test_end_session_is_explicit_and_does_not_auto_reacquire(self):
+        created = await self.client.post("/session", headers=self.headers)
+        session = await created.json()
+        path = "/client/index.html?path=" + __import__("urllib.parse").parse.quote(
+            "/client/?lease=" + session["lease_id"] + "&profile=hermes-desktop&nonce=" + session["socket_nonce"])
+        response = await self.client.get(path, headers=self.headers)
+        self.assertEqual(response.status, 200)
+        body = await response.text()
+        script = body[body.index("(()=>{let busy=false,ending=false"):]
+        self.assertIn("if(r.status!==204)throw Error()", script)
+        self.assertIn("Desktop session ended.", script)
+        self.assertIn("textContent='Reconnect'", script)
+        self.assertIn("reconnect.addEventListener('click',()=>location.replace('/client/bootstrap.html'))", script)
+        self.assertIn("if(!ending)sessionStorage.setItem('hd-challenge'", script)
+        end_flow = script[script.index("async function end()") : script.index("const addButton")]
+        reconnect = end_flow.index("reconnect.addEventListener")
+        self.assertNotIn("location.replace('/client/bootstrap.html')", end_flow[:reconnect])
+        self.assertEqual(end_flow.count("location.replace('/client/bootstrap.html')"), 1)
+
     async def test_binary_websocket_uses_opaque_root_connector_and_closes_on_logout(self):
         created = await self.client.post("/session", headers=self.headers)
         self.assertEqual(created.status, 200)
@@ -280,6 +309,15 @@ class RemoteGatewayRootBridgeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.opened[-1].writes[0] == b"allowed-screen-input")
         await socket.close()
         self.assertTrue(self.opened[-1].closed)
+
+    async def test_confirmed_logout_closes_the_owned_session_and_releases_slot(self):
+        created = await self.client.post("/session", headers=self.headers)
+        session = await created.json()
+        self.assertEqual(len(self.authority.records), 1)
+        ended = await self.client.post("/logout", headers=self.headers,
+            json={"lease_id": session["lease_id"], "challenge": session["renewal_challenge"]})
+        self.assertEqual(ended.status, 204)
+        self.assertEqual(self.authority.records, {})
 
     async def test_access_denial_on_fresh_renewal_removes_session(self):
         created = await self.client.post("/session", headers=self.headers)
