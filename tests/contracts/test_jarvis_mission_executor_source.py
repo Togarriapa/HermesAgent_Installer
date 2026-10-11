@@ -9,6 +9,7 @@ import asyncio
 import time
 from types import SimpleNamespace
 
+import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -151,6 +152,7 @@ def test_mission_stays_pending_until_root_seals_master_plan_decision(tmp_path, m
     async def scenario():
         monkeypatch.setattr(jarvis_missions, "_verified_team_catalog", lambda: {
             "profiles": {"orchestrator": "Orchestrator"},
+            "sources": {"orchestrator": {"label": "Orchestrator", "kind": "profiles"}},
             "source": {"revision": "fixture", "catalog_version": "1", "package_sha256": "c" * 64},
         })
 

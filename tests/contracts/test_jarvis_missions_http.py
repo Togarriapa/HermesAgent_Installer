@@ -33,6 +33,7 @@ def test_owner_draft_preview_is_persisted_but_never_fabricates_execution(tmp_pat
     async def scenario():
         monkeypatch.setattr(jarvis_missions, "_verified_team_catalog", lambda: {
             "profiles": {"reviewer": "Internal reviewer"},
+            "sources": {"reviewer": {"label": "Internal reviewer", "kind": "profiles"}},
             "source": {"revision": "rev-a", "tree": "tree-a", "content_digest": "digest-a",
                        "catalog_version": "1"},
         })
@@ -80,6 +81,18 @@ def test_owner_draft_preview_is_persisted_but_never_fabricates_execution(tmp_pat
                 (await second.json())["mission"]["mission_id"],
             }
             assert len(concurrent_ids) == 1
+
+            zero_preference = await client.post("/chat/api/missions", json={
+                "title": "Let Jarvis choose the team",
+                "brief": "Review the approved local source and choose an appropriate team.",
+                "team_ids": [],
+                "idempotency_key": "mission-create-zero-preference-001",
+            })
+            assert zero_preference.status == 201
+            zero_mission = (await zero_preference.json())["mission"]
+            assert zero_mission["team_ids"] == []
+            assert zero_mission["execution_mode"] == "pending"
+            assert zero_mission["status"] == "draft"
 
             preview_response = await client.post(
                 f"/chat/api/missions/{mission_id}/preview", json={"revision": 1})
@@ -148,7 +161,7 @@ def test_owner_draft_preview_is_persisted_but_never_fabricates_execution(tmp_pat
                 headers={"X-Test-Subject": "owner-b"})
             assert foreign_approval.status == 404
             listing = await client.get("/chat/api/missions")
-            assert len((await listing.json())["missions"]) == 2
+            assert len((await listing.json())["missions"]) == 3
             with store._connect() as db:
                 row = db.execute("SELECT status, plan_sha256 FROM jarvis_missions WHERE id=?", (mission_id,)).fetchone()
             assert row["status"] == "preview_pending"

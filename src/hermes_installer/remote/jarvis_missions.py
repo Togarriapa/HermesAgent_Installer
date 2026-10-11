@@ -645,7 +645,7 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
             if (not title or len(body["title"]) > _TITLE_LIMIT or not brief
                     or len(body["brief"]) > _BRIEF_LIMIT
                     or not isinstance(key, str) or not IDEMPOTENCY_RE.fullmatch(key)
-                    or not isinstance(team_ids, list) or not 1 <= len(team_ids) <= _TEAM_LIMIT
+                    or not isinstance(team_ids, list) or not 0 <= len(team_ids) <= _TEAM_LIMIT
                     or any(not isinstance(item, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,95}", item) for item in team_ids)
                     or len(set(team_ids)) != len(team_ids)):
                 raise web.HTTPBadRequest(text="invalid request", headers=_secure_headers())
