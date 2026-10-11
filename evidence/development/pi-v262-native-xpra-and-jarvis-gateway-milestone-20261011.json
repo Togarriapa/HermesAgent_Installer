@@ -2,12 +2,13 @@
   "schema_version": 1,
   "record_kind": "operator_reported_pi_native_desktop_and_jarvis_gateway_milestone_partial",
   "state": "partial_implementation_and_live_observations; acceptance_pending",
-  "authenticated_acceptance_result": false,
+  "authenticated_acceptance_result": null,
+  "accepted_target_result": null,
   "acceptance_record_emitted": false,
   "candidate": {
     "commit": "2b13664b0bdeb6fe45ea863e82b17396dc49fff3",
     "xpra_package": "xpra-server 6.5.4-r0-1+jarvis3",
-    "xpra_source_commit_reported": "5e46390...4 (signed original source; abbreviated revision as supplied)",
+    "xpra_original_signed_deb_sha256": "5e46390ee30241e4c5fdcd0ac29218c5c21990ce4a8cce3dd80306c704424b31",
     "xpra_deb_sha256": "f9f84060610b343a2c5b3ef2b1ef5a3675edfb0dafbd570ac9dd7ad3e9c9b09b"
   },
   "target": {
@@ -49,11 +50,23 @@
     "package_installed": true,
     "native_hermes_and_backend_child_present": true,
     "private_x11_window_title": "Hermes",
-    "chromium_clipboard_hidden": true,
     "parallel_fresh_root_ipc_checks": {
       "passed": 6,
       "elapsed_seconds": [0.372, 0.74, 1.13, 1.493, 1.858, 2.222],
       "note": "Actual Pi root IPC checks; not a full desktop acceptance result."
+    },
+    "owned_unit_restart_and_startup": {
+      "four_owned_units_stop_start_tested": true,
+      "active_process_ids_after_restart": {
+        "native_hermes": 2443152,
+        "inspector": 2443153,
+        "gateway": 2443161,
+        "tunnel_connector": 2443162
+      },
+      "bootstrap_and_four_owned_units_enabled": true,
+      "unrelated_services_restarted": false,
+      "physical_host_reboot": null,
+      "browser_reconnect_after_physical_reboot": null
     },
     "gateway": {
       "no_jwt": 403,
@@ -69,14 +82,15 @@
       "healthy_registered_connections": 4,
       "ingress": "jarvis.togarriapahome.uk to http://127.0.0.1:8765 with Access required; unmatched hosts return 404",
       "browser": "Cloudflare Access Enter Your Code page reached; OTP code is awaiting the human",
-      "note": "Connector probe/service was stopped after observation; do not infer a durable adopted connector."
+      "connector_reported_running": true,
+      "installer_managed_adoption_observed": null
     }
   },
   "mvp_milestones": {
     "BD-T259.1": "partial: native package and Hermes/backend processes/window title observed; full user-visible selected-window and harmless-input proof pending",
     "PR-T259.2": "pending: no authenticated Codex sign-in or real chat response observed",
     "RT-T259.3": "partial: owned Access/tunnel/DNS routing and unauthenticated/bad-JWT denial observed; OTP authentication, rendered desktop through domain, active-session revocation remain pending",
-    "LC-T259.4": "pending: temporary connector observation is not durable owned restart/reconnect proof",
+    "LC-T259.4": "partial: four owned units were stop/start tested and active as root-enabled startup; physical reboot, browser reconnect, and post-reboot chat remain unobserved",
     "VD-T259.5": "open: milestones have not been correlated end to end"
   },
   "acceptance_assertions": {
