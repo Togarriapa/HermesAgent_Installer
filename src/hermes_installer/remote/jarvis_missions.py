@@ -21,6 +21,11 @@ from .jarvis_chat import (
     _read_body,
     _secure_headers,
 )
+from .jarvis_master_planning import (
+    _TEAM_LIMIT,
+    build_jarvis_mission_master_plan_prompt,
+    mission_catalog_sha256,
+)
 
 FEATURE_ROUTES = (
     ("GET", "/chat/api/missions"),
@@ -36,7 +41,6 @@ FEATURE_ROUTES = (
 _ID_RE = ID_RE
 _TITLE_LIMIT = 120
 _BRIEF_LIMIT = 8_000
-_TEAM_LIMIT = 12
 _PENDING = (
     "The current protected core source has no verified mission-specific Resources dispatcher.",
     "Hermes delegate_task requires a live parent turn; no parent-bound mission plugin or owned task-event stream is installed.",

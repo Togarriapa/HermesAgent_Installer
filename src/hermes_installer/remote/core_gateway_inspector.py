@@ -77,7 +77,7 @@ CORE_NATIVE_ADAPTER_SOURCE_FILES = {
     "hermes_installer/remote/__init__.py": "bf7dbd677d6dd4384a02211039002f760821748b33f3f66ee425d9633b5005a4",
     "hermes_installer/remote/core_native_observer.py": "63b622055417ff541ffe3356d87a9422b290264f43190ceab7b25c91e86fb62b",
     "hermes_installer/remote/native_child_adapter.py": "5bf912a83bb011a0af55f0157204dd8a7ea7f00834bf4635de0de530e84ea365",
-    "hermes_installer/remote/jarvis_master_planning.py": "67a5dca5404a1b7f1087416107f63257e812531190bdc89bb19674f9976797bd",
+    "hermes_installer/remote/jarvis_master_planning.py": "88a1192fbf6a55b680a80192ed312428346484054df324270626bd8bb927b239",
     "hermes_installer/remote/native_plugin_bootstrap.py": "e39c230582bb1e99e67986001c5fe2d3c7baa581266786e264ee0da508d1fe66",
     "hermes_installer/remote/jarvis_mission_executor.py": "80c1b89e5dbd93fb54d7ec04cde5818a1ed89a187746d40621cfb040e55beee1",
     "hermes_installer/components/__init__.py": "eb02d685a1fb560210c2915296f7553e279e100b511d6b63892d3e877ccd7e7b",
@@ -660,7 +660,7 @@ def _verify_planning_context(context: Any, *, owner_subject_sha256: str,
         from hermes_installer.remote.jarvis_mission_executor import (
             MissionLedgerReader, mission_goal_arguments_sha256,
         )
-        from hermes_installer.remote.jarvis_missions import (
+        from hermes_installer.remote.jarvis_master_planning import (
             build_jarvis_mission_master_plan_prompt, mission_catalog_sha256,
         )
         from hermes_installer.components.resources_active_profile_source import (
@@ -788,7 +788,7 @@ def _prepare_planning_context(*, owner_subject_sha256: str, mission_id: str,
         from hermes_installer.remote.jarvis_mission_executor import (
             MissionLedgerReader, mission_goal_arguments_sha256,
         )
-        from hermes_installer.remote.jarvis_missions import (
+        from hermes_installer.remote.jarvis_master_planning import (
             build_jarvis_mission_master_plan_prompt, mission_catalog_sha256,
         )
         from hermes_installer.components.resources_active_profile_source import RootVerifiedJarvisMasterSource
