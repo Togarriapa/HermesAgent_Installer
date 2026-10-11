@@ -150,6 +150,15 @@ def _accepted_observation(config, *, now, lease_seconds=4.0, peer_uid=996, peer_
         core_gateway._accepted_claim_digest(**claims), core_gateway._ACCEPTED_INGRESS_SEAL)
 
 
+def _jarvis_service(launch, store_path):
+    from hermes_installer.remote.jarvis_chat import JarvisChatService, JarvisChatStore
+
+    return JarvisChatService(
+        JarvisChatStore(Path(store_path)), object(),
+        principal_from_request=launch.principal_from_request,
+    )
+
+
 class CoreGatewayProofTests(unittest.TestCase):
     def test_dynamic_tunnel_peer_is_accepted_only_when_bound_to_root_proof(self):
         config = _config()
@@ -553,46 +562,54 @@ class CoreGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
         def lstat(path, *args, **kwargs):
             return listener if Path(path) == config.ingress_socket else real_lstat(path, *args, **kwargs)
 
-        with patch.object(jarvis_chat, "build_jarvis_chat_service", return_value=object()), \
-             patch.object(jarvis_chat, "install_jarvis_chat_routes"), \
-             patch.object(core_gateway_inspector, "_boot_id", return_value=config.boot_id), \
-             patch.object(core_gateway.os, "lstat", side_effect=lstat), \
-             patch.object(core_gateway, "_read_config_current"), \
-             patch.object(core_gateway, "accept_core_ingress", return_value=accepted):
-            app = core_gateway.create_core_gateway_app(launch)
-            app["core_listener_identity"] = (1, 2)
-            client = TestClient(TestServer(app))
-            await client.start_server()
-            try:
-                headers = {"Host": config.hostname}
-                home = await client.get("/", headers=headers, allow_redirects=False)
-                self.assertEqual(home.status, 302)
-                self.assertEqual(home.headers["Location"], "/chat")
-                self.assertEqual(home.headers["Cache-Control"], "no-store")
+        with tempfile.TemporaryDirectory(prefix="jarvis-dashboard-gateway-") as temporary:
+            service = _jarvis_service(launch, Path(temporary) / "chat.sqlite3")
+            with patch.object(jarvis_chat, "build_jarvis_chat_service", return_value=service), \
+                 patch.object(core_gateway_inspector, "_boot_id", return_value=config.boot_id), \
+                 patch.object(core_gateway.os, "lstat", side_effect=lstat), \
+                 patch.object(core_gateway, "_read_config_current"), \
+                 patch.object(core_gateway, "accept_core_ingress", return_value=accepted):
+                app = core_gateway.create_core_gateway_app(launch)
+                app["core_listener_identity"] = (1, 2)
+                client = TestClient(TestServer(app))
+                await client.start_server()
+                try:
+                    headers = {"Host": config.hostname}
+                    home = await client.get("/", headers=headers, allow_redirects=False)
+                    self.assertEqual(home.status, 302)
+                    self.assertEqual(home.headers["Location"], "/chat")
+                    self.assertEqual(home.headers["Cache-Control"], "no-store")
 
-                for path in ("/chat", "/chat/", "/chat/assets/app.css", "/chat/assets/app.js"):
-                    with self.subTest(path=path):
-                        expected_type, expected_body = reviewed_chat_asset(path)
-                        response = await client.get(path, headers=headers)
-                        self.assertEqual(response.status, 200)
-                        self.assertEqual(response.headers["Content-Type"], expected_type)
-                        self.assertEqual(await response.read(), expected_body)
-                        self.assertEqual(response.headers["Cache-Control"], "no-store")
-                        if path in {"/chat", "/chat/"}:
-                            csp = response.headers["Content-Security-Policy"]
-                            self.assertIn("script-src 'self'", csp)
-                            self.assertIn("style-src 'self'", csp)
-                            self.assertNotIn("unsafe-inline", csp)
-                            self.assertNotIn("unsafe-eval", csp)
-                for path in ("/chat/assets/not-reviewed.js", "/chat/assets/app.js?x=1",
-                             "/chat/assets/%61pp.js"):
-                    with self.subTest(path=path):
-                        target = URL(path, encoded=True) if "%" in path else path
-                        response = await client.get(target, headers=headers)
-                        self.assertEqual(response.status, 404)
-                        self.assertNotIn(b"JARVIS", await response.read())
-            finally:
-                await client.close()
+                    overview_response = await client.get("/chat/api/overview", headers=headers)
+                    self.assertEqual(overview_response.status, 200)
+                    overview = await overview_response.json()
+                    self.assertEqual(overview["core"]["status"], "process-observed")
+                    self.assertEqual(overview["chat"]["turnCounts"]["total"], 0)
+                    self.assertEqual(len(overview["chat"]["turnCountsByDay"]), 7)
+
+                    for path in ("/chat", "/chat/", "/chat/assets/app.css", "/chat/assets/app.js"):
+                        with self.subTest(path=path):
+                            expected_type, expected_body = reviewed_chat_asset(path)
+                            response = await client.get(path, headers=headers)
+                            self.assertEqual(response.status, 200)
+                            self.assertEqual(response.headers["Content-Type"], expected_type)
+                            self.assertEqual(await response.read(), expected_body)
+                            self.assertEqual(response.headers["Cache-Control"], "no-store")
+                            if path in {"/chat", "/chat/"}:
+                                csp = response.headers["Content-Security-Policy"]
+                                self.assertIn("script-src 'self'", csp)
+                                self.assertIn("style-src 'self'", csp)
+                                self.assertNotIn("unsafe-inline", csp)
+                                self.assertNotIn("unsafe-eval", csp)
+                    for path in ("/chat/assets/not-reviewed.js", "/chat/assets/app.js?x=1",
+                                 "/chat/assets/%61pp.js"):
+                        with self.subTest(path=path):
+                            target = URL(path, encoded=True) if "%" in path else path
+                            response = await client.get(target, headers=headers)
+                            self.assertEqual(response.status, 404)
+                            self.assertNotIn(b"JARVIS", await response.read())
+                finally:
+                    await client.close()
 
     async def test_chat_asset_route_does_not_reveal_page_before_ingress(self):
         import hermes_installer.remote.jarvis_chat as jarvis_chat
@@ -600,18 +617,21 @@ class CoreGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
         config = _config()
         launch = core_gateway.CoreGatewayLaunch(config, RemotePolicy(
             config.hostname, config.issuer, config.audience, config.allowed_emails, {}))
-        with patch.object(jarvis_chat, "build_jarvis_chat_service", return_value=object()), \
-             patch.object(jarvis_chat, "install_jarvis_chat_routes"), \
-             patch.object(core_gateway, "_read_config_current"), \
-             patch.object(core_gateway, "accept_core_ingress",
-                          side_effect=core_gateway.CoreGatewayDenied("denied")):
-            app = core_gateway.create_core_gateway_app(launch)
-            app["core_listener_identity"] = (1, 2)
-            client = TestClient(TestServer(app))
-            await client.start_server()
-            try:
-                response = await client.get("/chat", headers={"Host": config.hostname})
-                self.assertEqual(response.status, 403)
-                self.assertEqual(await response.text(), "Forbidden")
-            finally:
-                await client.close()
+        with tempfile.TemporaryDirectory(prefix="jarvis-dashboard-denied-") as temporary:
+            service = _jarvis_service(launch, Path(temporary) / "chat.sqlite3")
+            with patch.object(jarvis_chat, "build_jarvis_chat_service", return_value=service), \
+                 patch.object(core_gateway, "_read_config_current"), \
+                 patch.object(core_gateway, "accept_core_ingress",
+                              side_effect=core_gateway.CoreGatewayDenied("denied")):
+                app = core_gateway.create_core_gateway_app(launch)
+                app["core_listener_identity"] = (1, 2)
+                client = TestClient(TestServer(app))
+                await client.start_server()
+                try:
+                    for path in ("/chat", "/chat/api/overview"):
+                        with self.subTest(path=path):
+                            response = await client.get(path, headers={"Host": config.hostname})
+                            self.assertEqual(response.status, 403)
+                            self.assertEqual(await response.text(), "Forbidden")
+                finally:
+                    await client.close()
