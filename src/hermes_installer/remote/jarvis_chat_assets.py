@@ -457,7 +457,7 @@ html[data-jarvis-motion="reduce"] *,html[data-jarvis-motion="reduce"] *::before,
 /* Keep every mobile section reachable without clipping its popup or shrinking its target. */
 @media(max-width:760px){
   /* A filtered header traps fixed descendants inside its short box. */
-  .topbar{backdrop-filter:none;-webkit-backdrop-filter:none}
+  .topbar{background:rgba(5,17,22,.96);backdrop-filter:none;-webkit-backdrop-filter:none}
   .primary-nav{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));grid-template-rows:1fr;align-items:stretch;justify-content:stretch;overflow:visible;overflow-x:visible;overflow-y:visible;overscroll-behavior-inline:auto;scroll-snap-type:none}
   .nav-group{position:static;min-width:0;flex:none}
   .nav-group>summary{width:100%;min-width:0;height:100%;min-height:46px;justify-content:center;gap:3px;padding-inline:3px;font-size:clamp(8px,2.1vw,8.5px);line-height:1.05;letter-spacing:-.025em;text-align:center;white-space:normal;overflow-wrap:anywhere}
