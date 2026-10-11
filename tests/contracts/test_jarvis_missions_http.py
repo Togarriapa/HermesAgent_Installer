@@ -264,6 +264,10 @@ def test_features_may_share_only_the_same_read_only_route():
     jarvis_feature_registry._validate_feature_asset_routes((
         feature("one", (shared_read,)), feature("two", (shared_read,)),
     ))
+    jarvis_feature_registry._validate_feature_asset_routes((
+        feature("one", (("GET", "/chat/api/channels"),
+                        ("POST", "/chat/api/channels"))),
+    ))
     for first, second in (
         (("GET", "/chat/api/channels"), ("POST", "/chat/api/channels")),
         (("GET", "/chat/api/items/{id}"), ("GET", "/chat/api/items/{item_id}")),
@@ -276,4 +280,9 @@ def test_features_may_share_only_the_same_read_only_route():
         jarvis_feature_registry._validate_feature_asset_routes((
             feature("one", (("POST", "/chat/api/approve"),)),
             feature("two", (("POST", "/chat/api/approve"),)),
+        ))
+    with pytest.raises(ValueError):
+        jarvis_feature_registry._validate_feature_asset_routes((
+            feature("one", (("GET", "/chat/api/items/{id}"),)),
+            feature("two", (("GET", "/chat/api/items/{item_id}"),)),
         ))

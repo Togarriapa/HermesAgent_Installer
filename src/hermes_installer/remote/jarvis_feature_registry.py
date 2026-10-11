@@ -69,18 +69,25 @@ def _route_shape(route: tuple[str, str]) -> tuple[str, str]:
 
 
 def _validate_feature_asset_routes(assets: tuple[JarvisFeatureAssets, ...]) -> None:
-    """Allow one exact shared GET declaration, while rejecting route aliases."""
-    all_routes: dict[tuple[str, str], tuple[str, str]] = {}
+    """Allow GET/POST pairs inside a feature; only identical GETs may cross features."""
+    all_routes: dict[tuple[str, str], list[tuple[str, str, str]]] = {}
     for asset in assets:
-        declared = {_route_shape(route) for route in asset.api_routes}
-        if len(declared) != len(asset.api_routes):
-            raise ValueError("dashboard feature API routes are ambiguous")
+        local_paths: dict[str, str] = {}
+        local_routes: set[tuple[str, str]] = set()
         for route in asset.api_routes:
-            shape = _route_shape(route)
-            previous = all_routes.get(shape)
-            if previous is not None and (route[0] != "GET" or route != previous):
+            method, path = route
+            shape = _route_shape(route)[1]
+            if (route in local_routes
+                    or (shape in local_paths and local_paths[shape] != path)):
                 raise ValueError("dashboard feature API routes are ambiguous")
-            all_routes[shape] = route
+            local_routes.add(route)
+            local_paths[shape] = path
+            for feature_id, previous_method, previous_path in all_routes.get(shape, ()):
+                if feature_id == asset.feature_id:
+                    continue
+                if (path != previous_path or method != "GET" or previous_method != "GET"):
+                    raise ValueError("dashboard feature API routes are ambiguous")
+            all_routes.setdefault(shape, []).append((asset.feature_id, method, path))
 
 
 def install_jarvis_feature_routes(app, service) -> None:
