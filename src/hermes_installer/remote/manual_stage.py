@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -71,6 +72,8 @@ class ManualStageDenied(PermissionError):
 _INGRESS_SEAL = object()
 _CURRENT_INGRESS: contextvars.ContextVar["StageAcceptedIngressObservation | None"] = contextvars.ContextVar(
     "hermes_manual_stage_ingress", default=None)
+_CURRENT_NATIVE_OBSERVATION: contextvars.ContextVar[Any | None] = contextvars.ContextVar(
+    "hermes_manual_stage_native_observation", default=None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -355,12 +358,12 @@ class _StageRecord:
     principal: Principal
     access_jwt: str = field(repr=False)
     last_edge_check: float = 0.0
-    last_inspection_check: float = 0.0
     challenge: str = field(default_factory=lambda: secrets.token_urlsafe(32), repr=False)
     challenge_expiry: float = 0.0
     heartbeat_nonce: str = field(default_factory=lambda: secrets.token_hex(32), repr=False)
     heartbeat_expiry: float = 0.0
     last_ingress: StageAcceptedIngressObservation | None = field(default=None, repr=False)
+    native_observation: Any = field(default=None, repr=False)
 
 
 class StageGatewayPolicySessionAdapter:
@@ -390,10 +393,10 @@ class StageGatewayPolicySessionAdapter:
         sid = secrets.token_urlsafe(24)
         principal, expiry, jwt_deadline = self.verifier.verify(access_jwt, action=action,
             session_id=sid, accepted_ingress=ingress)
-        inspection_started = ingress.request_started_monotonic
-        self._verify_xpra_current()
+        native_observation = self._verify_xpra_current()
         now = self.monotonic()
         ingress.verify_current(self.config, now=now)
+        _verify_native_observation_current(self.config, native_observation, now=now)
         if (now - ingress.request_started_monotonic > MAX_PROBE_SECONDS
                 or now >= min(expiry, jwt_deadline)):
             raise ManualStageDenied("manual-stage request witness expired while checking Xpra state")
@@ -408,11 +411,13 @@ class StageGatewayPolicySessionAdapter:
                 PROFILE, "manual-stage", "manual-stage-xpra", route_id, now, expiry,
                 jwt_deadline, ingress.request_started_monotonic, "manual-unix-ingress-v263",
                 self.config.config_sha256)
-            record = _StageRecord(admission, principal, access_jwt, ingress.request_started_monotonic,
-                                  inspection_started, challenge_expiry=min(expiry, now + 29),
+            record = _StageRecord(admission, principal, access_jwt,
+                                  last_edge_check=ingress.request_started_monotonic,
+                                  challenge_expiry=min(expiry, now + 29),
                                   heartbeat_expiry=min(expiry, ingress.witness_expires_monotonic),
-                                  last_ingress=ingress)
+                                  last_ingress=ingress, native_observation=native_observation)
             self._records[handle] = record
+            _CURRENT_NATIVE_OBSERVATION.set(native_observation)
             return admission
 
     def heartbeat_material(self, handle: Any) -> tuple[str, str]:
@@ -500,9 +505,9 @@ class StageGatewayPolicySessionAdapter:
                     or expiry <= self.monotonic()):
                 raise ManualStageDenied("protected Access renewal changed principal or expired")
             jwt_deadline = min(original_jwt_deadline, jwt_deadline)
-            inspection_started = ingress.request_started_monotonic
-            self._verify_xpra_current()
+            native_observation = self._verify_xpra_current()
             ingress.verify_current(self.config, now=self.monotonic())
+            _verify_native_observation_current(self.config, native_observation, now=self.monotonic())
             if (self.monotonic() - ingress.request_started_monotonic > MAX_PROBE_SECONDS
                     or self.monotonic() >= min(expiry, jwt_deadline)):
                 raise ManualStageDenied("manual-stage renewal witness expired during current-state checks")
@@ -515,7 +520,8 @@ class StageGatewayPolicySessionAdapter:
             current.principal = principal
             current.access_jwt = access_jwt
             current.last_edge_check = ingress.request_started_monotonic
-            current.last_inspection_check = inspection_started
+            current.native_observation = native_observation
+            _CURRENT_NATIVE_OBSERVATION.set(native_observation)
             current.challenge = secrets.token_urlsafe(32)
             current.challenge_expiry = min(expiry, jwt_deadline, now + 29)
             current.admission = StageGatewayAdmission(
@@ -545,8 +551,7 @@ class StageGatewayPolicySessionAdapter:
         with self._lock:
             record = self._current(handle)
             now = self.monotonic()
-            if (now - record.last_edge_check > MAX_PROBE_SECONDS
-                    or now - record.last_inspection_check > MAX_PROBE_SECONDS):
+            if now - record.last_edge_check > MAX_PROBE_SECONDS:
                 self._records.pop(handle, None)
                 raise ManualStageDenied("active edge or root observation proof is stale")
             if record.last_ingress is None:
@@ -557,6 +562,11 @@ class StageGatewayPolicySessionAdapter:
             except Exception:
                 self._records.pop(handle, None)
                 raise ManualStageDenied("active protected ingress receipt is stale") from None
+            try:
+                _verify_native_observation_current(self.config, record.native_observation, now=now)
+            except Exception:
+                self._records.pop(handle, None)
+                raise ManualStageDenied("active native Xpra observation is stale") from None
 
     def refresh_active_edge(self, handle: Any) -> None:
         """Check the browser's fresh protected heartbeat; never replay a token."""
@@ -568,17 +578,18 @@ class StageGatewayPolicySessionAdapter:
         # The WebSocket watchdog has a three-second overall budget.  Keep its
         # wait behind concurrent admissions bounded well below that budget.
         from .manual_stage_inspector import WATCHDOG_INSPECTION_QUEUE_WAIT_SECONDS
-        inspection_started = self.monotonic()
-        self._verify_xpra_current(queue_timeout_seconds=WATCHDOG_INSPECTION_QUEUE_WAIT_SECONDS)
+        native_observation = self._verify_xpra_current(queue_timeout_seconds=WATCHDOG_INSPECTION_QUEUE_WAIT_SECONDS)
         inspected_at = self.monotonic()
-        if inspected_at - inspection_started > MAX_PROBE_SECONDS:
+        try:
+            _verify_native_observation_current(self.config, native_observation, now=inspected_at)
+        except Exception:
             self.close(handle, session_id=record.admission.session_id)
             raise ManualStageDenied("fresh root Xpra inspection exceeded its proof lifetime")
         with self._lock:
             current = self._current(handle)
             if current is not record:
                 raise ManualStageDenied("active Xpra stage changed during root inspection")
-            current.last_inspection_check = inspection_started
+            current.native_observation = native_observation
 
     def _current(self, handle: Any) -> _StageRecord:
         record = self._records.get(handle)
@@ -588,8 +599,8 @@ class StageGatewayPolicySessionAdapter:
             raise ManualStageDenied("manual-stage session is absent, stale, or configuration-changed")
         return record
 
-    def _verify_xpra_current(self, *, queue_timeout_seconds: float | None = None) -> None:
-        StageXpraUnitReadback(self.config).verify(queue_timeout_seconds=queue_timeout_seconds)
+    def _verify_xpra_current(self, *, queue_timeout_seconds: float | None = None):
+        return StageXpraUnitReadback(self.config).verify(queue_timeout_seconds=queue_timeout_seconds)
 
 
     def _purge(self, now: float) -> None:
@@ -602,17 +613,35 @@ class StageXpraUnitReadback:
     def __init__(self, config: ManualGatewayStageConfig):
         self.config = config
 
-    def verify(self, *, queue_timeout_seconds: float | None = None) -> None:
+    def verify(self, *, queue_timeout_seconds: float | None = None):
         if os.geteuid() != self.config.gateway_uid:
             raise ManualStageDenied("manual gateway process does not match its dedicated configured UID")
         try:
             from .manual_stage_inspector import verify_current_inspection
             if queue_timeout_seconds is None:
-                verify_current_inspection(self.config)
+                observation = verify_current_inspection(self.config)
             else:
-                verify_current_inspection(self.config, queue_timeout_seconds=queue_timeout_seconds)
+                observation = verify_current_inspection(self.config, queue_timeout_seconds=queue_timeout_seconds)
+            _verify_native_observation_current(self.config, observation, now=time.monotonic())
+            return observation
         except Exception:
             raise ManualStageDenied("root current firewall, Xpra unit, or app readback is unavailable") from None
+
+
+def _verify_native_observation_current(config: ManualGatewayStageConfig, observation: Any, *, now: float) -> None:
+    """Require the exact root-minted native snapshot and its original live lease."""
+    from .manual_stage_inspector import StageNativeInspectionObservation
+    if (type(observation) is not StageNativeInspectionObservation
+            or type(observation.issued_monotonic) not in (int, float)
+            or type(observation.expires_monotonic) not in (int, float)
+            or not math.isfinite(observation.issued_monotonic)
+            or not math.isfinite(observation.expires_monotonic)
+            or observation.issued_monotonic > now
+            or not observation.issued_monotonic < observation.expires_monotonic <=
+                observation.issued_monotonic + MAX_PROBE_SECONDS
+            or observation.expires_monotonic <= now
+            or observation.verify_current(config, now=now) is not True):
+        raise ManualStageDenied("root native Xpra observation is stale or mismatched")
 
 
 def _read_config_current(config: ManualGatewayStageConfig) -> None:
@@ -717,7 +746,11 @@ class _StageHTTPConnector:
         self.owner.verify_current(self.admission)
         if not 1 <= maximum_bytes <= 65_536:
             raise ManualStageDenied("Xpra asset response read exceeds bound")
-        return self.sock.recv(maximum_bytes)
+        data = self.sock.recv(maximum_bytes)
+        # A read may block until the native observation expires. Do not hand
+        # newly received app bytes to the HTTP response after that deadline.
+        self.owner.verify_current(self.admission)
+        return data
 
     def close(self) -> None:
         try:
@@ -831,6 +864,7 @@ class _StageWebSocketConnector:
             data = self._run(receive(), timeout=5)
             if data is None:
                 return None
+            self.owner.verify_current(self.admission)
             if len(data) > maximum_bytes:
                 with self._rx_lock:
                     self._rx_buffer.extend(data[maximum_bytes:])
@@ -1027,12 +1061,16 @@ async def _stage_ingress_middleware(request, handler):
         return web.Response(status=403, text="Forbidden", headers={"Cache-Control": "no-store"})
     request["stage_ingress"] = accepted
     context_token = _CURRENT_INGRESS.set(accepted)
+    native_context_token = _CURRENT_NATIVE_OBSERVATION.set(None)
+    native_observation = None
     try:
         response = await handler(request)
     except Exception as exc:
         _log_stage_denial("handler", exc)
         raise
     finally:
+        native_observation = _CURRENT_NATIVE_OBSERVATION.get()
+        _CURRENT_NATIVE_OBSERVATION.reset(native_context_token)
         _CURRENT_INGRESS.reset(context_token)
     if response.status >= 400:
         _log_stage_denial("route-response", "HTTPException")
@@ -1040,6 +1078,9 @@ async def _stage_ingress_middleware(request, handler):
         try:
             _read_config_current(launch.stage_sessions.config)
             accepted.verify_current(launch.stage_sessions.config)
+            if native_observation is not None:
+                _verify_native_observation_current(
+                    launch.stage_sessions.config, native_observation, now=time.monotonic())
         except Exception as exc:
             _log_stage_denial("response-currentness", exc)
             return web.Response(status=403, text="Forbidden", headers={"Cache-Control": "no-store"})

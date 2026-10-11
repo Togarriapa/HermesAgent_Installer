@@ -126,7 +126,18 @@ class ManualStageGatewayTests(unittest.TestCase):
         return StageAcceptedIngressObservation(started, expires or started + 4.9,
             hashlib.sha256(token.encode("ascii")).hexdigest(), principal, started + 120,
             77, 981, 981, self.config.config_sha256, root, self.listener_identity[0], self.listener_identity[1], __import__(
-                "hermes_installer.remote.manual_stage", fromlist=["_INGRESS_SEAL"])._INGRESS_SEAL)
+            "hermes_installer.remote.manual_stage", fromlist=["_INGRESS_SEAL"])._INGRESS_SEAL)
+
+    def native_observation(self, *, issued=None, expires=None):
+        # Unit-test issuer fixture: production observations are minted only by
+        # the nonce-bound root inspector IPC verifier.
+        from hermes_installer.remote import manual_stage_inspector as inspector
+        issued = time.monotonic() if issued is None else issued
+        return inspector.StageNativeInspectionObservation(
+            config_sha256=self.config.config_sha256, boot_id=self.config.boot_id,
+            native_observation_sha256="a" * 64, nonce=secrets.token_hex(32),
+            issued_monotonic=issued, expires_monotonic=expires or issued + 4.9,
+            _seal=inspector._NATIVE_OBSERVATION_SEAL)
 
     def test_authorization_requires_exact_fresh_protected_ingress(self):
         token = self.token()
@@ -271,7 +282,7 @@ class ManualStageGatewayTests(unittest.TestCase):
         ctx = _CURRENT_INGRESS.set(ingress)
         try:
             with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
-                    mock.patch.object(sessions, "_verify_xpra_current"):
+                    mock.patch.object(sessions, "_verify_xpra_current", return_value=self.native_observation(issued=sessions.monotonic())):
                 admission = sessions.admit(access_jwt=token, action="websocket-attach", route_id="xpra-websocket")
         finally:
             _CURRENT_INGRESS.reset(ctx)
@@ -289,7 +300,7 @@ class ManualStageGatewayTests(unittest.TestCase):
         context = _CURRENT_INGRESS.set(ingress)
         try:
             with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
-                    mock.patch.object(sessions, "_verify_xpra_current"):
+                    mock.patch.object(sessions, "_verify_xpra_current", return_value=self.native_observation(issued=sessions.monotonic())):
                 admission = sessions.admit(access_jwt=token, action="websocket-attach", route_id="xpra-websocket")
         finally:
             _CURRENT_INGRESS.reset(context)
@@ -757,6 +768,22 @@ class ManualStageGatewayTests(unittest.TestCase):
                 connector.write(build_asset_request("GET", path, canonicalize=lambda x: x))
         connector.sock.sendall.assert_not_called()
 
+    def test_stage_http_read_does_not_release_bytes_if_native_proof_expires_while_blocked(self):
+        from types import SimpleNamespace
+        from hermes_installer.remote.manual_stage import _StageHTTPConnector
+        calls = []
+        def current(_admission):
+            calls.append(True)
+            if len(calls) == 2:
+                raise ManualStageDenied("proof expired during read")
+        connector = object.__new__(_StageHTTPConnector)
+        connector.owner = SimpleNamespace(verify_current=current)
+        connector.admission = object()
+        connector.sock = SimpleNamespace(recv=lambda _size: b"private app bytes")
+        with self.assertRaises(ManualStageDenied):
+            connector.read(128)
+        self.assertEqual(len(calls), 2)
+
     @unittest.skipUnless(HAS_AIOHTTP, "install the isolated gateway runtime dependencies")
     def test_upstream_websocket_large_frame_splits_and_idle_is_not_eof(self):
         from types import SimpleNamespace
@@ -933,6 +960,50 @@ class ManualStageGatewayTests(unittest.TestCase):
                 inspector._authenticate_gateway_inspector_peer(self.config,
                     pid=expected[0], uid=expected[1] + 1, gid=expected[2], deadline=99.0)
         check.assert_not_called()
+    def test_native_observation_consumer_accepts_only_original_live_root_lease(self):
+        from hermes_installer.remote import manual_stage_inspector as inspector
+        from hermes_installer.remote.manual_stage import _verify_native_observation_current
+        now = time.monotonic()
+        proof = inspector.StageNativeInspectionObservation(
+            config_sha256=self.config.config_sha256, boot_id=self.config.boot_id,
+            native_observation_sha256="a" * 64, nonce="b" * 64,
+            issued_monotonic=now, expires_monotonic=now + 4.9,
+            _seal=inspector._NATIVE_OBSERVATION_SEAL)
+        _verify_native_observation_current(self.config, proof, now=now + 1.0)
+        with self.assertRaises(ManualStageDenied):
+            _verify_native_observation_current(self.config, proof, now=now + 5.0)
+        mismatched = inspector.StageNativeInspectionObservation(
+            config_sha256="e" * 64, boot_id=self.config.boot_id,
+            native_observation_sha256="a" * 64, nonce="d" * 64,
+            issued_monotonic=now, expires_monotonic=now + 4.9,
+            _seal=inspector._NATIVE_OBSERVATION_SEAL)
+        with self.assertRaises(ManualStageDenied):
+            _verify_native_observation_current(self.config, mismatched, now=now + 1.0)
+
+    def test_asset_burst_reuses_one_root_snapshot_without_reissuing_its_deadline(self):
+        principal = Principal("owner@example.net", "subject", time.time() + 120, "f" * 64)
+        now = time.monotonic()
+        proof = self.native_observation(issued=now, expires=now + 4.9)
+        sessions = StageGatewayPolicySessionAdapter(self.config, self.verifier)
+        def admit_asset(index):
+            token = f"asset-token-{index}"
+            ingress = self.fixture_ingress(token, principal, started=now, expires=now + 4.9)
+            context = _CURRENT_INGRESS.set(ingress)
+            try:
+                return sessions.admit(access_jwt=token, action="asset-read", route_id="xpra-http")
+            finally:
+                _CURRENT_INGRESS.reset(context)
+        with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
+                mock.patch.object(self.verifier, "verify", return_value=(principal, now + 30, now + 120)), \
+                mock.patch.object(sessions, "_verify_xpra_current", return_value=proof):
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                admissions = list(pool.map(admit_asset, range(6)))
+        self.assertEqual(len(admissions), 6)
+        records = [sessions._records[item.handle] for item in admissions]
+        self.assertTrue(all(record.native_observation is proof for record in records))
+        self.assertTrue(all(record.native_observation.expires_monotonic == now + 4.9 for record in records))
+        for item in admissions:
+            sessions.assert_current_proofs(item.handle)
 
     def test_connector_uses_only_fresh_admission_inspection_and_denies_stale_or_changed(self):
         from hermes_installer.remote.manual_stage import StageFixedXpraConnector
@@ -944,7 +1015,7 @@ class ManualStageGatewayTests(unittest.TestCase):
         fake_connector = object()
         with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
                 mock.patch.object(self.verifier, "verify", return_value=(principal, 130.0, 140.0)), \
-                mock.patch.object(sessions, "_verify_xpra_current") as inspect, \
+                mock.patch.object(sessions, "_verify_xpra_current", return_value=self.native_observation(issued=sessions.monotonic())) as inspect, \
                 mock.patch("hermes_installer.remote.manual_stage._StageHTTPConnector", return_value=fake_connector) as create:
             token = _CURRENT_INGRESS.set(self.fixture_ingress("fixture-token", principal, started=100.0))
             try:
@@ -953,7 +1024,7 @@ class ManualStageGatewayTests(unittest.TestCase):
                 _CURRENT_INGRESS.reset(token)
             record = sessions._records[admission.handle]
             self.assertEqual(record.last_edge_check, 100.0)
-            self.assertEqual(record.last_inspection_check, 100.0)
+            self.assertEqual(record.native_observation.issued_monotonic, 100.0)
             inspect.assert_called_once()
             self.assertIs(connector.open(admission.handle), fake_connector)
             # Opening the connector relies on the exact admission witness; it
@@ -974,7 +1045,7 @@ class ManualStageGatewayTests(unittest.TestCase):
         connector = StageFixedXpraConnector(self.config, sessions)
         with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
                 mock.patch.object(self.verifier, "verify", return_value=(principal, 230.0, 240.0)), \
-                mock.patch.object(sessions, "_verify_xpra_current"), \
+                mock.patch.object(sessions, "_verify_xpra_current", return_value=self.native_observation(issued=sessions.monotonic())), \
                 mock.patch("hermes_installer.remote.manual_stage._StageHTTPConnector") as create:
             token = _CURRENT_INGRESS.set(self.fixture_ingress("fixture-token", principal, started=200.0))
             try:
@@ -994,10 +1065,10 @@ class ManualStageGatewayTests(unittest.TestCase):
         sessions.monotonic = lambda: clock[0]
 
         def slow_inspection(**_kwargs):
-            # Simulate time spent waiting for the global inspector queue. The
-            # edge witness was completed before this wait and must not be
-            # restamped when the queued inspection returns.
+            # The root scan lease retains its original start and expires while
+            # this request is queued; the consumer must not restamp it.
             clock[0] = 105.01
+            return self.native_observation(issued=100.0, expires=104.9)
 
         with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
                 mock.patch.object(self.verifier, "verify", return_value=(principal, 130.0, 140.0)), \
@@ -1017,7 +1088,7 @@ class ManualStageGatewayTests(unittest.TestCase):
         sessions.monotonic = lambda: clock[0]
         with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
                 mock.patch.object(self.verifier, "verify", return_value=(principal, 130.0, 140.0)), \
-                mock.patch.object(sessions, "_verify_xpra_current"):
+                mock.patch.object(sessions, "_verify_xpra_current", return_value=self.native_observation(issued=sessions.monotonic())):
             token = _CURRENT_INGRESS.set(self.fixture_ingress("fixture-token", principal, started=100.0))
             try:
                 admission = sessions.admit(access_jwt="fixture-token", action="websocket-attach",
@@ -1025,12 +1096,12 @@ class ManualStageGatewayTests(unittest.TestCase):
             finally:
                 _CURRENT_INGRESS.reset(token)
         clock[0] = 102.0
-        with mock.patch.object(sessions, "_verify_xpra_current", side_effect=lambda **_kw: clock.__setitem__(0, 102.25)):
+        with mock.patch.object(sessions, "_verify_xpra_current", side_effect=lambda **_kw: (clock.__setitem__(0, 102.25), self.native_observation(issued=102.0))[1]):
             sessions.refresh_active_inspection(admission.handle)
-        self.assertEqual(sessions._records[admission.handle].last_inspection_check, 102.0)
+        self.assertEqual(sessions._records[admission.handle].native_observation.issued_monotonic, 102.0)
 
         clock[0] = 103.0
-        with mock.patch.object(sessions, "_verify_xpra_current", side_effect=lambda **_kw: clock.__setitem__(0, 108.01)):
+        with mock.patch.object(sessions, "_verify_xpra_current", side_effect=lambda **_kw: (clock.__setitem__(0, 108.01), self.native_observation(issued=102.0, expires=107.0))[1]):
             with self.assertRaises(ManualStageDenied):
                 sessions.refresh_active_inspection(admission.handle)
         with self.assertRaises(ManualStageDenied):
@@ -1043,7 +1114,7 @@ class ManualStageGatewayTests(unittest.TestCase):
         sessions.monotonic = lambda: clock[0]
         with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
                 mock.patch.object(self.verifier, "verify", return_value=(principal, 230.0, 240.0)), \
-                mock.patch.object(sessions, "_verify_xpra_current"):
+                mock.patch.object(sessions, "_verify_xpra_current", return_value=self.native_observation(issued=sessions.monotonic())):
             token = _CURRENT_INGRESS.set(self.fixture_ingress("fixture-token", principal, started=200.0))
             try:
                 admission = sessions.admit(access_jwt="fixture-token", action="websocket-attach",
@@ -1054,7 +1125,7 @@ class ManualStageGatewayTests(unittest.TestCase):
         challenge = sessions.challenge(admission.handle)
         token = _CURRENT_INGRESS.set(self.fixture_ingress("fixture-token", principal, started=201.0))
         with mock.patch.object(self.verifier, "verify", return_value=(principal, 230.0, 240.0)), \
-                mock.patch.object(sessions, "_verify_xpra_current", side_effect=lambda **_kw: clock.__setitem__(0, 201.25)):
+                mock.patch.object(sessions, "_verify_xpra_current", side_effect=lambda **_kw: (clock.__setitem__(0, 201.25), self.native_observation(issued=201.0))[1]):
             try:
                 sessions.renew(handle=admission.handle, session_id=admission.session_id,
                                access_jwt="fixture-token", renewal_nonce=challenge.renewal_nonce)
@@ -1062,14 +1133,14 @@ class ManualStageGatewayTests(unittest.TestCase):
                 _CURRENT_INGRESS.reset(token)
         record = sessions._records[admission.handle]
         self.assertEqual(record.last_edge_check, 201.0)
-        self.assertEqual(record.last_inspection_check, 201.0)
+        self.assertEqual(record.native_observation.issued_monotonic, 201.0)
         self.assertEqual(record.admission.policy_verified_monotonic, 201.0)
 
         clock[0] = 202.0
         challenge = sessions.challenge(admission.handle)
         token = _CURRENT_INGRESS.set(self.fixture_ingress("fixture-token", principal, started=202.0))
         with mock.patch.object(self.verifier, "verify", return_value=(principal, 230.0, 240.0)), \
-                mock.patch.object(sessions, "_verify_xpra_current", side_effect=lambda **_kw: clock.__setitem__(0, 207.01)):
+                mock.patch.object(sessions, "_verify_xpra_current", side_effect=lambda **_kw: (clock.__setitem__(0, 207.01), self.native_observation(issued=201.0, expires=206.0))[1]):
             with self.assertRaises(ManualStageDenied):
                 try:
                     sessions.renew(handle=admission.handle, session_id=admission.session_id,
@@ -1085,7 +1156,7 @@ class ManualStageGatewayTests(unittest.TestCase):
         principal = validate_access_jwt(self.token(), policy=self.verifier.policy)
         clock = [100.0]
         sessions.monotonic = lambda: clock[0]
-        sessions._verify_xpra_current = lambda: None
+        sessions._verify_xpra_current = lambda: self.native_observation(issued=sessions.monotonic())
         with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
                 mock.patch.object(self.verifier, "verify", return_value=(principal, 130.0, 140.0)) as verify:
             token = self.token()
@@ -1116,7 +1187,7 @@ class ManualStageGatewayTests(unittest.TestCase):
                 return Principal("owner@example.net", "subject", time.time() + 120, "f" * 64), now + 30, now + 120
         edge = FixtureEdge(self.config)
         sessions = StageGatewayPolicySessionAdapter(self.config, edge)
-        with mock.patch.object(sessions, "_verify_xpra_current"), \
+        with mock.patch.object(sessions, "_verify_xpra_current", return_value=self.native_observation(issued=sessions.monotonic())), \
              mock.patch("hermes_installer.remote.manual_stage._read_config_current"):
             context = _CURRENT_INGRESS.set(self.fixture_ingress("fixture-token"))
             try:
