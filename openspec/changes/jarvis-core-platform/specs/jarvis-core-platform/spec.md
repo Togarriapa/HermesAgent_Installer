@@ -2018,3 +2018,14 @@ Top-Expert/workload views SHALL use a labeled real count or measured duration ba
 #### Scenario: Quiet or partial observation
 - **WHEN** an authorized snapshot contains no observed activity or incomplete source coverage
 - **THEN** the UI distinguishes verified quiet from missing telemetry, ranks only known observations with an explicit basis and retains partial/stale/unknown status without treating it as zero or failure.
+
+### Requirement: Real workload heatmap and genuine handoff motion
+The living dashboard SHALL keep a central original Jarvis reactor with truthful telemetry flanks and secondary real-instance roster/heatmap/entity inspection. Heatmap cells SHALL use actual deduplicated observations with visible bucket/window/timezone/coverage and accessible numerical equivalent. Only an authentic observed communication/request/response/handoff event SHALL drive a moving edge; declared relations SHALL be separately labeled static data.
+
+#### Scenario: Unknown bucket or declared-only relation
+- **WHEN** a heatmap bucket lacks observation coverage or a relationship exists only in a Team/catalog/plan declaration
+- **THEN** the bucket remains unknown rather than zero, and the relation is static with its actual basis rather than an animated claim of communication.
+
+#### Scenario: Narrow screen or reduced motion
+- **WHEN** the user opens phone/tablet layout or requests reduced motion
+- **THEN** telemetry flanks reflow into ordered panels, entity/heatmap details remain accessible through list/table alternatives and actual state/events remain understandable without continuous movement.
