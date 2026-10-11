@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import math
 import os
 import re
@@ -41,6 +42,12 @@ MAX_REQUEST_BYTES = 1_024
 MAX_RESPONSE_BYTES = 4_096
 MAX_PROBE_SECONDS = 5.0
 _ACCEPTED_INGRESS_SEAL = object()
+_LOGGER = logging.getLogger(__name__)
+_INGRESS_DIAGNOSTIC_STAGES = frozenset({
+    "headers", "origin", "jwt", "unix_peer", "root_inspection", "accepted_proof",
+    "config_before_ingress", "accept_ingress", "proof_before_handler", "route_handler",
+    "proof_after_handler", "config_before_response", "proof_before_response",
+})
 _CHAT_CONTENT_SECURITY_POLICY = (
     "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; "
     "form-action 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; "
@@ -71,6 +78,23 @@ def _accepted_claim_digest(*, principal: Principal, jwt_expiry: float, root_proo
 
 class CoreGatewayDenied(PermissionError):
     """Protected core ingress failed closed."""
+
+
+def _diagnostic_exception_kind(error: BaseException) -> str:
+    """Collapse failures to a finite type label; never log exception text or data."""
+    known = (CoreGatewayDenied, GatewayDenied, TimeoutError, ValueError, TypeError,
+             OSError, PermissionError)
+    if type(error) in known:
+        return type(error).__name__
+    return "OtherError"
+
+
+def _log_ingress_denial(stage: str, error: BaseException) -> None:
+    # Only fixed labels and exact known exception types are emitted, never request material.
+    if stage not in _INGRESS_DIAGNOSTIC_STAGES:
+        stage = "headers"
+    _LOGGER.warning("core_gateway_denied stage=%s exception=%s",
+                    stage, _diagnostic_exception_kind(error))
 
 
 def _unique_pairs(pairs):
@@ -327,6 +351,7 @@ async def _validate_jwt(token: str, policy: RemotePolicy, *, deadline: float) ->
 async def accept_core_ingress(request: Any, config: CoreGatewayConfig,
                               policy: RemotePolicy) -> CoreAcceptedIngressObservation:
     started = time.monotonic()
+    stage = "headers"
     try:
         hosts = request.headers.getall("Host", [])
         assertions = request.headers.getall("Cf-Access-Jwt-Assertion", [])
@@ -334,6 +359,7 @@ async def accept_core_ingress(request: Any, config: CoreGatewayConfig,
         if (len(hosts) != 1 or hosts[0].casefold() != config.hostname.casefold()
                 or len(assertions) != 1 or len(origins) > 1):
             raise ValueError
+        stage = "origin"
         origin = origins[0] if origins else None
         is_mutation = request.method not in {"GET", "HEAD", "OPTIONS"}
         is_websocket = request.headers.get("Upgrade", "").casefold() == "websocket"
@@ -343,12 +369,16 @@ async def accept_core_ingress(request: Any, config: CoreGatewayConfig,
         token = assertions[0]
         if not isinstance(token, str) or not 1 <= len(token) <= 16_384:
             raise ValueError
+        stage = "jwt"
         principal = await _validate_jwt(token, policy, deadline=started + MAX_PROBE_SECONDS)
+        stage = "unix_peer"
         listener_identity = request.app.get("core_listener_identity")
         peer_pid, peer_uid, peer_gid, listener = _request_peer(request, config, listener_identity)
+        stage = "root_inspection"
         from .core_gateway_inspector import verify_current_ingress
         proof = await asyncio.wait_for(asyncio.to_thread(verify_current_ingress, config,
             peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid), timeout=MAX_PROBE_SECONDS)
+        stage = "accepted_proof"
         jwt_deadline = started + max(0.0, principal.expires_at - time.time())
         expiry = min(started + MAX_PROBE_SECONDS, jwt_deadline, proof.expires_monotonic)
         accepted = CoreAcceptedIngressObservation(principal, jwt_deadline, proof,
@@ -363,7 +393,8 @@ async def accept_core_ingress(request: Any, config: CoreGatewayConfig,
         return accepted
     except asyncio.CancelledError:
         raise
-    except Exception:
+    except Exception as error:
+        _log_ingress_denial(stage, error)
         raise CoreGatewayDenied("protected core ingress is unavailable or stale") from None
 
 
@@ -448,16 +479,23 @@ async def _verify_ingress_before_response_bytes(request: Any, response: Any) -> 
 async def _core_ingress_middleware(request: Any, handler):
     from aiohttp import web
     launch: CoreGatewayLaunch = request.app["core_gateway_launch"]
+    stage = "config_before_ingress"
     try:
         _read_config_current(launch.config)
+        stage = "accept_ingress"
         proof = await accept_core_ingress(request, launch.config, launch.policy)
         request["core_ingress"] = proof
+        stage = "proof_before_handler"
         if not proof.verify_current(launch.config):
             raise CoreGatewayDenied("core ingress expired before handler dispatch")
+        stage = "route_handler"
         response = await handler(request)
+        stage = "proof_after_handler"
         if time.monotonic() >= proof.expires_monotonic:
             raise CoreGatewayDenied("core ingress expired before response")
+        stage = "config_before_response"
         _read_config_current(launch.config)
+        stage = "proof_before_response"
         if not proof.verify_current(launch.config):
             raise CoreGatewayDenied("core ingress changed before response")
         response.headers["Cache-Control"] = "no-store"
@@ -467,6 +505,7 @@ async def _core_ingress_middleware(request: Any, handler):
     except asyncio.CancelledError:
         raise
     except web.HTTPException as response:
+        _log_ingress_denial(stage, response)
         proof = request.get("core_ingress")
         if (type(proof) is CoreAcceptedIngressObservation
                 and proof.verify_current(launch.config)):
@@ -477,7 +516,8 @@ async def _core_ingress_middleware(request: Any, handler):
         return web.Response(status=403, text="Forbidden", headers={
             "Cache-Control": "no-store", "Pragma": "no-cache",
             "X-Content-Type-Options": "nosniff"})
-    except Exception:
+    except Exception as error:
+        _log_ingress_denial(stage, error)
         return web.Response(status=403, text="Forbidden", headers={
             "Cache-Control": "no-store", "Pragma": "no-cache", "X-Content-Type-Options": "nosniff"})
 

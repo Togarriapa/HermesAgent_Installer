@@ -298,6 +298,55 @@ class CoreGatewayProofTests(unittest.TestCase):
 
 
 class CoreGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
+    async def test_denial_diagnostics_keep_only_fixed_stage_and_exception_type(self):
+        config = _config()
+        policy = RemotePolicy(config.hostname, config.issuer, config.audience,
+                              config.allowed_emails, {})
+        token_secret = "jwt-value-never-log-91af"
+        identity_secret = "private-owner@example.test"
+        values = {
+            "Host": [config.hostname], "Cf-Access-Jwt-Assertion": [token_secret], "Origin": [],
+        }
+        headers = SimpleNamespace(getall=lambda name, default=(): values.get(name, default),
+                                  get=lambda *_args, **_kwargs: "")
+        request = SimpleNamespace(headers=headers, method="GET", app={})
+
+        async def reject_jwt(*_args, **_kwargs):
+            raise core_gateway.GatewayDenied(f"{token_secret} {identity_secret}")
+
+        with patch.object(core_gateway, "_validate_jwt", side_effect=reject_jwt):
+            with self.assertLogs("hermes_installer.remote.core_gateway", level="WARNING") as captured:
+                with self.assertRaises(core_gateway.CoreGatewayDenied):
+                    await core_gateway.accept_core_ingress(request, config, policy)
+        jwt_log = "\n".join(captured.output)
+        self.assertIn("stage=jwt", jwt_log)
+        self.assertIn("exception=GatewayDenied", jwt_log)
+        self.assertNotIn(token_secret, jwt_log)
+        self.assertNotIn(identity_secret, jwt_log)
+
+        launch = core_gateway.CoreGatewayLaunch(config, policy)
+        app = web.Application(middlewares=[web.middleware(core_gateway._core_ingress_middleware)])
+        app["core_gateway_launch"] = launch
+        app.router.add_get("/private", lambda _request: web.Response(text="private"))
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            with patch.object(core_gateway, "_read_config_current"), \
+                 patch.object(core_gateway, "accept_core_ingress",
+                              side_effect=core_gateway.CoreGatewayDenied(
+                                  f"{token_secret} {identity_secret}")):
+                with self.assertLogs("hermes_installer.remote.core_gateway",
+                                     level="WARNING") as middleware_capture:
+                    response = await client.get("/private", headers={"Host": config.hostname})
+            self.assertEqual(response.status, 403)
+            middleware_log = "\n".join(middleware_capture.output)
+            self.assertIn("stage=accept_ingress", middleware_log)
+            self.assertIn("exception=CoreGatewayDenied", middleware_log)
+            self.assertNotIn(token_secret, middleware_log)
+            self.assertNotIn(identity_secret, middleware_log)
+        finally:
+            await client.close()
+
     async def test_wrong_host_is_denied_before_jwt_or_root_observation(self):
         config = _config()
         policy = RemotePolicy(config.hostname, config.issuer, config.audience,
