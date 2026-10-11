@@ -1,0 +1,158 @@
+# This file is part of Xpra.
+# Copyright (C) 2018 Antoine Martin <antoine@xpra.org>
+# Xpra is released under the terms of the GNU GPL v2, or, at your option, any
+# later version. See the file COPYING for details.
+
+import os
+import shlex
+from typing import Any
+from collections.abc import Callable
+
+from xpra.net.constants import ConnectionMessage
+from xpra.util.env import envbool
+from xpra.os_util import getuid, getgid
+from xpra.util.objects import typedict
+from xpra.common import noop
+from xpra.os_util import WIN32
+
+# when running the unit tests,
+# we inject the signal emitter into the signal hierarchy,
+# whereas regular server classes inherit the signal methods from GLibScheduler
+if envbool("XPRA_UNIT_TEST"):
+    from xpra.util.signal_emitter import SignalEmitter
+    superclass = SignalEmitter
+else:
+    superclass = object
+
+ENV_BLOCKLIST = ("LS_COLORS", )
+
+
+class StubServerMixin(superclass):
+    """
+    Base class for server subsystem.
+    Defines the default interface methods that each mixin may override.
+    """
+    __signals__: dict[str, int] = {}
+    uid = getuid()
+    gid = getgid()
+    hello_request_handlers: dict[str, Callable[[Any, typedict], bool]] = {}
+
+    def init(self, opts) -> None:
+        """
+        Initialize this instance with the options given.
+        Options are usually obtained by parsing the command line,
+        or using a default configuration object.
+        """
+        self.uid = opts.uid
+        self.gid = opts.gid
+
+    def init_state(self) -> None:
+        """
+        Initialize state attributes.
+        """
+
+    def setup(self) -> None:
+        """
+        After initialization, prepare to run.
+        """
+
+    def cleanup(self) -> None:
+        """
+        Free up any resources.
+        """
+
+    def last_client_exited(self) -> None:
+        """
+        Called when the last client has exited,
+        so we can reset things to their original state.
+        """
+
+    def late_cleanup(self, stop=True) -> None:
+        """
+        Free up any resources, after main cleanup.
+        `stop` is set to True when we are meant to stop all subprocesses we are responsible for.
+        (ie: `Xvfb` and such)
+        """
+
+    def get_caps(self, _source) -> dict[str, Any]:
+        """
+        Capabilities provided by this mixin.
+        """
+        return {}
+
+    def get_server_features(self, _source) -> dict[str, Any]:
+        """
+        Features provided by this mixin.
+        (the difference with capabilities is that those will only
+        be returned if the client requests 'features')
+        """
+        return {}
+
+    def get_info(self, _proto) -> dict[str, Any]:
+        """
+        Runtime information on this mixin, includes state and settings.
+        Somewhat overlaps with the capabilities and features,
+        but the data is returned in a structured format. (ie: nested dictionaries)
+        """
+        return {}
+
+    def get_ui_info(self, _proto, **kwargs) -> dict[str, Any]:
+        """
+        Runtime information on this mixin,
+        unlike get_info() this method will be called
+        from the UI thread.
+        """
+        return {}
+
+    def init_packet_handlers(self) -> None:
+        """
+        Register the packet types that this mixin can handle.
+        """
+
+    def parse_hello(self, ss, caps: typedict) -> str | ConnectionMessage:
+        """
+        Parse capabilities from a new connection.
+        """
+        return ""
+
+    def add_new_client(self, ss, c: typedict) -> None:
+        """
+        A new client is being handled, take any action needed.
+        """
+
+    def send_initial_data(self, ss) -> None:
+        """
+        A new connection has been accepted, send initial data.
+        """
+
+    def cleanup_protocol(self, protocol) -> None:
+        """
+        Cleanup method for a specific connection.
+        (to clean up / free up resources associated with a specific client or connection)
+        """
+
+    def get_child_env(self) -> dict[str, str]:
+        return dict((k, v) for k,v in os.environ.items() if k not in ENV_BLOCKLIST)
+
+    def get_full_child_command(self, cmd, _use_wrapper: bool = True) -> list[str]:
+        # make sure we have it as a list:
+        if isinstance(cmd, (list, tuple)):
+            return list(cmd)
+        if WIN32:  # pragma: no cover
+            return [cmd]
+        return shlex.split(str(cmd))
+
+    @staticmethod
+    def get_server_source(_proto):
+        """ returns the client connection source object for the given protocol """
+        return None
+
+    def args_control(self, name: str, descr: str, **kwargs) -> None:
+        from xpra.net.control.common import add_args_control_command
+        run = getattr(self, "control_command_%s" % name.replace("-", "_"), noop)
+        if run == noop:
+            from xpra.log import Logger
+            Logger("util").warn("Warning: control command %r not found on %s", name, self)
+            return
+        kwargs["run"] = run
+        add_args_control_command(self, name, descr, **kwargs)

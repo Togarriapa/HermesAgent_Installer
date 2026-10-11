@@ -1,0 +1,9 @@
+--- a/usr/lib/python3/dist-packages/xpra/server/subsystem/stub.py
++++ b/usr/lib/python3/dist-packages/xpra/server/subsystem/stub.py
+@@
+     def args_control(self, name: str, descr: str, **kwargs) -> None:
++        from xpra.server import features
++        if not features.control:
++            return
+         from xpra.net.control.common import add_args_control_command
+         run = getattr(self, "control_command_%s" % name.replace("-", "_"), noop)
