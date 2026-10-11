@@ -36,6 +36,7 @@ _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}\Z", re.ASCII)
 _CODEX_ENDPOINT = "https://chatgpt.com/backend-api/codex"
 _CODEX_PROVIDER = "openai-codex"
 _CODEX_MODE = "codex_responses"
+_OBSERVER_RUNTIME_DIR = Path("/run/hermes-jarvis-native-observer")
 
 
 class CoreNativeObservationUnavailable(PermissionError):
@@ -205,6 +206,7 @@ class RootSelectedInternalProfileDispatchClaim:
     owner_subject_sha256: str
     observed_call_handle: str
     core_generation: str
+    generation_sha256: str
     session_id: str
     turn_id: str
     tool_call_id: str
@@ -213,6 +215,7 @@ class RootSelectedInternalProfileDispatchClaim:
     account_fingerprint: str
     profile_id: str
     source_revision: str
+    profile_manifest_sha256: str
     source_manifest: tuple[NativeSourceMember, ...]
     source_manifest_sha256: str
     prompt_bytes: bytes
@@ -224,7 +227,9 @@ class RootSelectedInternalProfileDispatchClaim:
     base_url: str
     additional_metered_budget: int
     parent_tool_names: tuple[str, ...]
+    profile_tool_names: tuple[str, ...]
     parent_privacy_grants: tuple[str, ...]
+    profile_privacy_requirements: tuple[str, ...]
     expires_monotonic: float
 
     def __post_init__(self) -> None:
@@ -233,12 +238,15 @@ class RootSelectedInternalProfileDispatchClaim:
                 or not _ID.fullmatch(self.gateway_turn_id or "")
                 or not _HASH.fullmatch(self.owner_subject_sha256 or "")
                 or not _HASH.fullmatch(self.core_generation or "")
+                or not _HASH.fullmatch(self.generation_sha256 or "")
                 or not _ID.fullmatch(self.session_id or "") or not _ID.fullmatch(self.turn_id or "")
                 or not _ID.fullmatch(self.tool_call_id or "") or not _ID.fullmatch(self.tool_name or "")
                 or not _HASH.fullmatch(self.arguments_sha256 or "")
                 or not _HASH.fullmatch(self.account_fingerprint or "")
                 or not _ID.fullmatch(self.profile_id or "")
-                or re.fullmatch(r"[0-9a-f]{40,64}", self.source_revision or "") is None
+                or not _HASH.fullmatch(self.profile_manifest_sha256 or "")
+                or not isinstance(self.source_revision, str) or not 1 <= len(self.source_revision) <= 128
+                or any(ord(char) < 0x21 or ord(char) > 0x7e for char in self.source_revision)
                 or not isinstance(self.source_manifest, tuple) or not self.source_manifest
                 or len(self.source_manifest) > 512
                 or any(type(row) is not NativeSourceMember for row in self.source_manifest)
@@ -257,9 +265,14 @@ class RootSelectedInternalProfileDispatchClaim:
                 or not isinstance(self.parent_tool_names, tuple)
                 or not self.parent_tool_names or len(self.parent_tool_names) > 256
                 or any(not _ID.fullmatch(item or "") for item in self.parent_tool_names)
+                or not isinstance(self.profile_tool_names, tuple)
+                or not self.profile_tool_names or len(self.profile_tool_names) > 256
+                or any(not _ID.fullmatch(item or "") for item in self.profile_tool_names)
                 or not isinstance(self.parent_privacy_grants, tuple)
                 or len(self.parent_privacy_grants) > 128
                 or any(not _ID.fullmatch(item or "") for item in self.parent_privacy_grants)
+                or not isinstance(self.profile_privacy_requirements, tuple)
+                or self.profile_privacy_requirements
                 or type(self.expires_monotonic) not in (float, int)
                 or not math.isfinite(self.expires_monotonic)
                 or self.expires_monotonic <= time.monotonic()
@@ -329,11 +342,17 @@ class CoreNativeObservationClient:
     def register_attempt(self, *, session_id: str, turn_id: str, api_request_id: str,
                          provider: str, model: str, base_url: str, api_mode: str,
                          account_fingerprint: str, request_sha256: str,
+                         parent_tool_names: tuple[str, ...],
+                         prompt_sha256: str,
                          retry_count: int) -> ObservedProviderAttempt:
         """Register one exact native logical attempt; route uncertainty is denied."""
         if (provider != _CODEX_PROVIDER or api_mode != _CODEX_MODE
                 or base_url.rstrip("/") != _CODEX_ENDPOINT or type(retry_count) is not int
-                or retry_count != 0):
+                or retry_count != 0 or not isinstance(parent_tool_names, tuple)
+                or not parent_tool_names or len(parent_tool_names) > 512
+                or any(not isinstance(name, str) or not _ID.fullmatch(name) for name in parent_tool_names)
+                or len(set(parent_tool_names)) != len(parent_tool_names)
+                or "delegate_task" not in parent_tool_names):
             raise CoreNativeObservationUnavailable("attempt is outside the selected Codex subscription route")
         payload = {
             "session_id": _require_id(session_id, "session ID"),
@@ -343,6 +362,8 @@ class CoreNativeObservationClient:
             "base_url": _CODEX_ENDPOINT, "api_mode": _CODEX_MODE,
             "account_fingerprint": _require_hash(account_fingerprint, "account fingerprint"),
             "request_sha256": _require_hash(request_sha256, "request digest"),
+            "prompt_sha256": _require_hash(prompt_sha256, "prompt digest"),
+            "parent_tool_names": list(parent_tool_names),
             "retry_count": retry_count,
         }
         row = self._rpc("register-attempt", payload)
@@ -415,7 +436,9 @@ class CoreNativeObservationClient:
             "schema", "claim_handle", "owner_turn_handle", "gateway_turn_id",
             "owner_subject_sha256", "observed_call_handle",
             "core_generation", "session_id", "turn_id", "tool_call_id", "tool_name",
+            "generation_sha256",
             "arguments_sha256", "account_fingerprint", "profile_id", "source_revision",
+            "profile_manifest_sha256", "profile_tool_names", "profile_privacy_requirements",
             "source_manifest", "source_manifest_sha256", "prompt_b64", "prompt_sha256",
             "prompt_revision", "parent_tool_names", "parent_privacy_grants", "expires_monotonic",
             "evidence_class", "provider", "api_mode", "base_url", "additional_metered_budget",
@@ -439,8 +462,10 @@ class CoreNativeObservationClient:
                     raise ValueError
                 manifest.append(NativeSourceMember(item["path"], item["sha256"], item["size"]))
             names, grants = claim["parent_tool_names"], claim["parent_privacy_grants"]
+            profile_tools, privacy_requirements = claim["profile_tool_names"], claim["profile_privacy_requirements"]
             if (not isinstance(names, list) or not isinstance(grants, list)
-                    or any(not isinstance(value, str) for value in (*names, *grants))):
+                    or not isinstance(profile_tools, list) or not isinstance(privacy_requirements, list)
+                    or any(not isinstance(value, str) for value in (*names, *grants, *profile_tools, *privacy_requirements))):
                 raise ValueError
             if claim["claim_handle"] != claim_handle:
                 raise ValueError
@@ -450,20 +475,329 @@ class CoreNativeObservationClient:
                 owner_subject_sha256=claim["owner_subject_sha256"],
                 observed_call_handle=claim["observed_call_handle"],
                 core_generation=claim["core_generation"], session_id=claim["session_id"],
+                generation_sha256=claim["generation_sha256"],
                 turn_id=claim["turn_id"], tool_call_id=claim["tool_call_id"],
                 tool_name=claim["tool_name"], arguments_sha256=claim["arguments_sha256"],
                 account_fingerprint=claim["account_fingerprint"], profile_id=claim["profile_id"],
-                source_revision=claim["source_revision"], source_manifest=tuple(manifest),
+                source_revision=claim["source_revision"],
+                profile_manifest_sha256=claim["profile_manifest_sha256"],
+                source_manifest=tuple(manifest),
                 source_manifest_sha256=claim["source_manifest_sha256"],
                 prompt_bytes=prompt_bytes, prompt_sha256=claim["prompt_sha256"],
                 prompt_revision=claim["prompt_revision"], parent_tool_names=tuple(names),
-                parent_privacy_grants=tuple(grants), expires_monotonic=claim["expires_monotonic"],
+                profile_tool_names=tuple(profile_tools), parent_privacy_grants=tuple(grants),
+                profile_privacy_requirements=tuple(privacy_requirements),
+                expires_monotonic=claim["expires_monotonic"],
                 evidence_class=claim["evidence_class"], provider=claim["provider"],
                 api_mode=claim["api_mode"], base_url=claim["base_url"],
                 additional_metered_budget=claim["additional_metered_budget"],
             )
         except Exception:
             raise CoreNativeObservationUnavailable("root dispatch claim payload is malformed") from None
+
+
+class RootCoreNativeObservationRegistry:
+    """Root-memory issuer joining real owner turns to protected native observations.
+
+    This registry is composed inside the existing inspector process. It accepts
+    owner turns only from that process's independently validated gateway op;
+    core worker frames are accepted only after a fresh current-process custody
+    check on their Unix peer credentials.
+    """
+
+    def __init__(self, custody: Any, selected_profile_source: Any, *, config: Any):
+        from hermes_installer.remote.core_gateway_inspector import CoreNativeObserverCustody
+        from hermes_installer.components.resources_active_profile_source import RootSelectedActiveProfileSource
+        if type(custody) is not CoreNativeObserverCustody:
+            raise CoreNativeObservationUnavailable("sealed current-core observer custody is required")
+        if type(selected_profile_source) is not RootSelectedActiveProfileSource:
+            raise CoreNativeObservationUnavailable("sealed active Resources source is required")
+        if not callable(getattr(selected_profile_source, "is_current_sealed", None)):
+            raise CoreNativeObservationUnavailable("current active Resources source verifier is unavailable")
+        self._custody = custody
+        self._source = selected_profile_source
+        self._config = config
+        self._lock = threading.RLock()
+        self._owners: dict[str, Any] = {}
+        self._owner_turn_bindings: dict[str, str] = {}
+        self._attempts: dict[str, dict[str, Any]] = {}
+        self._calls: dict[str, dict[str, Any]] = {}
+        self._claims: dict[str, dict[str, Any]] = {}
+        self._closed = False
+
+    @classmethod
+    def from_current_core_custody(cls, custody: Any, *, selected_profile_source: Any,
+                                  config: Any = None) -> "RootCoreNativeObservationRegistry":
+        if config is None:
+            raise CoreNativeObservationUnavailable("fixed inspector configuration is required")
+        return cls(custody, selected_profile_source, config=config)
+
+    def register_owner_turn(self, observation: Any) -> str:
+        """Accept only the inspector's exact sealed, independently JWT-checked record."""
+        from hermes_installer.remote.core_gateway_inspector import CoreVerifiedOwnerTurnObservation
+        if type(observation) is not CoreVerifiedOwnerTurnObservation:
+            raise CoreNativeObservationUnavailable("sealed root owner-turn observation is required")
+        now = time.monotonic()
+        if observation.is_current_sealed(self._config, custody=self._custody, now=now) is not True:
+            self._close_fd(getattr(observation, "_core_pidfd", None))
+            raise CoreNativeObservationUnavailable("owner-turn observation is stale or not current")
+        handle = observation.owner_turn_handle
+        with self._lock:
+            self._ensure_open()
+            if handle in self._owners:
+                self._close_fd(getattr(observation, "_core_pidfd", None))
+                raise CoreNativeObservationUnavailable("owner-turn observation was already registered")
+            self._owners[handle] = observation
+            while len(self._owners) > 256:
+                expired_handle, expired = self._owners.popitem()
+                self._owner_turn_bindings.pop(expired_handle, None)
+                self._close_fd(getattr(expired, "_core_pidfd", None))
+        return handle
+
+    @staticmethod
+    def _close_fd(fd: Any) -> None:
+        if type(fd) is int and fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    def _ensure_open(self) -> None:
+        if self._closed:
+            raise CoreNativeObservationUnavailable("root observer registry is closed")
+
+    def _owner_for(self, session_id: str, turn_id: str) -> Any:
+        now = time.monotonic()
+        for handle, owner in list(self._owners.items()):
+            if owner.expires_monotonic <= now:
+                self._owners.pop(handle, None)
+                self._owner_turn_bindings.pop(handle, None)
+                self._close_fd(getattr(owner, "_core_pidfd", None))
+                continue
+            if (owner.session_id == session_id
+                    and owner.core_generation == self._custody.core_generation
+                    and owner.is_current_sealed(self._config, custody=self._custody, now=now) is True):
+                # The first middleware attempt binds the actual native turn ID;
+                # subsequent attempts must retain that same ID.
+                bound = self._owner_turn_bindings.get(handle)
+                if bound is None:
+                    self._owner_turn_bindings[handle] = turn_id
+                    return owner
+                if bound == turn_id:
+                    return owner
+        return None
+
+    def _handle(self, peer: tuple[int, int, int], request: dict[str, Any]) -> dict[str, Any]:
+        op = request.get("op")
+        nonce = request.get("nonce")
+        if type(request.get("schema")) is not int or request["schema"] != 1 or not isinstance(nonce, str):
+            raise ValueError("invalid observer request")
+        with self._lock:
+            self._ensure_open()
+            if op == "register-attempt":
+                required = {"schema", "op", "nonce", "session_id", "turn_id", "api_request_id",
+                            "provider", "model", "base_url", "api_mode", "account_fingerprint",
+                            "request_sha256", "prompt_sha256", "parent_tool_names", "retry_count"}
+                if set(request) != required:
+                    raise ValueError("attempt schema mismatch")
+                owner = self._owner_for(request["session_id"], request["turn_id"])
+                if (owner is None or request["provider"] != _CODEX_PROVIDER
+                        or request["api_mode"] != _CODEX_MODE or request["base_url"] != _CODEX_ENDPOINT
+                        or type(request["retry_count"]) is not int or request["retry_count"] != 0
+                        or not _HASH.fullmatch(request["account_fingerprint"])
+                        or not _HASH.fullmatch(request["request_sha256"])
+                        or not _HASH.fullmatch(request["prompt_sha256"])
+                        or request["prompt_sha256"] != owner.prompt_sha256
+                        or not isinstance(request["parent_tool_names"], list)
+                        or not 1 <= len(request["parent_tool_names"]) <= 512
+                        or any(not isinstance(name, str) or not _ID.fullmatch(name)
+                               for name in request["parent_tool_names"])
+                        or len(set(request["parent_tool_names"])) != len(request["parent_tool_names"])
+                        or "delegate_task" not in request["parent_tool_names"]):
+                    raise ValueError("attempt is not an enrolled current subscription turn")
+                handle = secrets.token_urlsafe(32)
+                expiry = min(float(owner.expires_monotonic), time.monotonic() + 30.0)
+                self._attempts[handle] = {"owner": owner, "session_id": request["session_id"],
+                    "turn_id": request["turn_id"], "api_request_id": request["api_request_id"],
+                    "account": request["account_fingerprint"], "expiry": expiry, "response": None,
+                    "parent_tool_names": tuple(request["parent_tool_names"])}
+                return {"schema": 1, "nonce": nonce, "ok": True, "attempt_handle": handle,
+                        "owner_turn_handle": owner.owner_turn_handle, "expires_monotonic": expiry}
+            if op == "register-response":
+                if set(request) != {"schema", "op", "nonce", "attempt_handle", "response_sha256", "tool_calls", "completed"}:
+                    raise ValueError("response schema mismatch")
+                row = self._attempts.get(request["attempt_handle"])
+                if (row is None or row["expiry"] <= time.monotonic() or row["response"] is not None
+                        or type(request["completed"]) is not bool or not _HASH.fullmatch(request["response_sha256"])
+                        or not isinstance(request["tool_calls"], list) or len(request["tool_calls"]) > 128):
+                    raise ValueError("response is not a live unique attempt result")
+                calls = {}
+                for item in request["tool_calls"]:
+                    if (not isinstance(item, dict) or set(item) != {"id", "name", "arguments_sha256"}
+                            or not _ID.fullmatch(item["id"]) or not _ID.fullmatch(item["name"])
+                            or not _HASH.fullmatch(item["arguments_sha256"]) or item["id"] in calls):
+                        raise ValueError("provider call inventory is malformed")
+                    calls[item["id"]] = item
+                row["response"] = (request["response_sha256"], calls) if request["completed"] else (None, {})
+                return {"schema": 1, "nonce": nonce, "ok": True}
+            if op == "register-tool-call":
+                if set(request) != {"schema", "op", "nonce", "attempt_handle", "tool_call_id", "canonical_arguments_b64"}:
+                    raise ValueError("tool-call schema mismatch")
+                row = self._attempts.get(request["attempt_handle"])
+                if row is None or row["expiry"] <= time.monotonic() or row["response"] is None:
+                    raise ValueError("tool call has no completed live response")
+                returned = row["response"][1].get(request["tool_call_id"])
+                args = base64.b64decode(request["canonical_arguments_b64"], validate=True)
+                if (returned is None or hashlib.sha256(args).hexdigest() != returned["arguments_sha256"]
+                        or not _ID.fullmatch(returned["name"])):
+                    raise ValueError("tool call differs from consumed provider output")
+                call_handle = secrets.token_urlsafe(32)
+                self._calls[call_handle] = {"owner": row["owner"], "attempt": request["attempt_handle"],
+                    "handle": call_handle, "attempt_session_id": row["session_id"],
+                    "attempt_turn_id": row["turn_id"],
+                    "parent_tool_names": row["parent_tool_names"],
+                    "tool_call_id": request["tool_call_id"], "tool_name": returned["name"],
+                    "arguments": args, "arguments_sha256": returned["arguments_sha256"],
+                    "expiry": row["expiry"], "peer": peer, "claim": None}
+                return {"schema": 1, "nonce": nonce, "ok": True, "observed_call_handle": call_handle,
+                        "attempt_handle": request["attempt_handle"],
+                        "owner_turn_handle": row["owner"].owner_turn_handle,
+                        "tool_call_id": request["tool_call_id"], "tool_name": returned["name"],
+                        "arguments_sha256": returned["arguments_sha256"], "expires_monotonic": row["expiry"]}
+            if op == "prepare-dispatch":
+                if set(request) != {"schema", "op", "nonce", "observed_call_handle"}:
+                    raise ValueError("prepare schema mismatch")
+                call = self._calls.get(request["observed_call_handle"])
+                source = self._source.resolve_current(self._custody)
+                if (call is None or call["expiry"] <= time.monotonic() or call["claim"] is not None
+                        or call["tool_name"] != "resources_delegate"
+                        or call["peer"] != peer
+                        or source.is_current_sealed(custody=self._custody, now=time.monotonic()) is not True
+                        or source.profile_id != "orchestrator"
+                        or source.profile_privacy_requirements):
+                    raise ValueError("selected profile or native call is unavailable")
+                claim_handle = secrets.token_urlsafe(32)
+                call["claim"] = claim_handle
+                self._claims[claim_handle] = {"call": call,
+                    "owner": call["owner"], "expiry": min(call["expiry"], float(source.expires_monotonic))}
+                return {"schema": 1, "nonce": nonce, "ok": True, "claim_handle": claim_handle}
+            if op == "consume-dispatch":
+                if set(request) != {"schema", "op", "nonce", "claim_handle"}:
+                    raise ValueError("consume schema mismatch")
+                claim = self._claims.pop(request["claim_handle"], None)
+                if claim is None or claim["expiry"] <= time.monotonic():
+                    raise ValueError("dispatch claim expired or was already consumed")
+                call, owner = claim["call"], claim["owner"]
+                source = self._source.resolve_current(self._custody)
+                if (call["peer"] != peer or source.is_current_sealed(custody=self._custody, now=time.monotonic()) is not True
+                        or owner.is_current_sealed(self._config, custody=self._custody, now=time.monotonic()) is not True):
+                    raise ValueError("dispatch lineage is no longer current")
+                if source.profile_privacy_requirements:
+                    raise ValueError("selected source requires an unverified privacy grant")
+                # Source/tool/privacy intersection is completed by the consumer against
+                # the exact locally injected parent Agent; no Agent crosses this socket.
+                manifest = [{"path": item.path, "sha256": item.sha256, "size": item.size}
+                            for item in source.source_member_manifest]
+                body = {"schema": 1, "claim_handle": request["claim_handle"],
+                    "owner_turn_handle": owner.owner_turn_handle, "gateway_turn_id": owner.gateway_turn_id,
+                    "owner_subject_sha256": owner.owner_subject_sha256,
+                    "observed_call_handle": call["handle"],
+                    "core_generation": owner.core_generation, "session_id": call["attempt_session_id"],
+                    "generation_sha256": source.generation_sha256,
+                    "turn_id": call["attempt_turn_id"], "tool_call_id": call["tool_call_id"],
+                    "tool_name": call["tool_name"], "arguments_sha256": call["arguments_sha256"],
+                    "account_fingerprint": self._attempts[call["attempt"]]["account"],
+                    "profile_id": source.profile_id, "source_revision": source.source_revision,
+                    "profile_manifest_sha256": source.profile_manifest_sha256,
+                    "profile_tool_names": list(call["parent_tool_names"]),
+                    "profile_privacy_requirements": sorted(source.profile_privacy_requirements),
+                    "source_manifest": manifest, "source_manifest_sha256": _hash(manifest),
+                    "prompt_b64": base64.b64encode(source.effective_prompt).decode("ascii"),
+                    "prompt_sha256": source.effective_prompt_sha256, "prompt_revision": source.source_revision,
+                    "parent_tool_names": list(call["parent_tool_names"]), "parent_privacy_grants": [],
+                    "expires_monotonic": claim["expiry"], "evidence_class": "protected-core-process-observation",
+                    "provider": _CODEX_PROVIDER, "api_mode": _CODEX_MODE, "base_url": _CODEX_ENDPOINT,
+                    "additional_metered_budget": 0}
+                return {"schema": 1, "nonce": nonce, "ok": True, "dispatch_claim": body}
+        raise ValueError("unsupported observer operation")
+
+    def serve_connection(self, connection: socket.socket) -> None:
+        peer_pid, peer_uid, peer_gid = struct.unpack(
+            "3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+        request = _read_frame(connection)
+        nonce = request.get("nonce") if isinstance(request, dict) else None
+        try:
+            if self._custody.verify_peer(self._config, self._owner_for_peer(request), connection) is not True:
+                raise PermissionError("core peer custody did not verify")
+            result = self._handle((peer_pid, peer_uid, peer_gid), request)
+        except Exception:
+            result = {"schema": 1, "nonce": nonce, "ok": False}
+        raw = _canonical(result)
+        connection.sendall(struct.pack("!I", len(raw)) + raw)
+
+    def _owner_for_peer(self, request: dict[str, Any]) -> Any:
+        with self._lock:
+            for owner in self._owners.values():
+                if owner.core_pid == self._custody.core_pid and owner.core_start_ticks == self._custody.core_start_ticks:
+                    return owner
+        raise CoreNativeObservationUnavailable("current authenticated core owner turn is unavailable")
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            for owner in self._owners.values():
+                self._close_fd(getattr(owner, "_core_pidfd", None))
+            self._owners.clear()
+            self._owner_turn_bindings.clear()
+            self._attempts.clear()
+            self._calls.clear()
+            self._claims.clear()
+
+
+def serve_core_native_observer(registry: RootCoreNativeObservationRegistry, *,
+                               socket_path: Path = CORE_NATIVE_OBSERVER_SOCKET,
+                               admin_gid: int = _CORE_NATIVE_OBSERVER_GROUP,
+                               stop_event: threading.Event | None = None) -> None:
+    """Serve fixed bounded IPC in the already-running inspector process."""
+    if type(registry) is not RootCoreNativeObservationRegistry or socket_path != CORE_NATIVE_OBSERVER_SOCKET:
+        raise CoreNativeObservationUnavailable("fixed root observer registry and socket are required")
+    runtime = _OBSERVER_RUNTIME_DIR
+    info = runtime.lstat()
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_gid != admin_gid
+            or stat.S_IMODE(info.st_mode) != 0o750):
+        raise CoreNativeObservationUnavailable("root observer runtime directory custody differs")
+    try:
+        old = socket_path.lstat()
+    except FileNotFoundError:
+        old = None
+    if old is not None:
+        if not stat.S_ISSOCK(old.st_mode) or old.st_uid != 0 or old.st_gid != admin_gid:
+            raise CoreNativeObservationUnavailable("existing observer socket is not root-owned")
+        socket_path.unlink()
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+        listener.bind(str(socket_path))
+        os.chown(socket_path, 0, admin_gid)
+        os.chmod(socket_path, 0o660)
+        listener.listen(16)
+        listener.settimeout(0.5)
+        while stop_event is None or not stop_event.is_set():
+            try:
+                connection, _ = listener.accept()
+            except TimeoutError:
+                continue
+            with connection:
+                connection.settimeout(2.0)
+                try:
+                    registry.serve_connection(connection)
+                except Exception:
+                    # Malformed peers cannot stop the root inspector's worker listener.
+                    continue
+    try:
+        socket_path.unlink()
+    except FileNotFoundError:
+        pass
 
 
 def _codex_account_fingerprint(credential_resolver: Callable[[], Mapping[str, Any]]) -> str:
@@ -514,6 +848,47 @@ def _response_tool_calls(response: Any) -> list[tuple[str, str, bytes]]:
             raise CoreNativeObservationUnavailable("Codex function-call arguments are malformed") from None
         calls.append((call_id, name, canonical))
     return calls
+
+
+def _request_tool_names(request: Mapping[str, Any]) -> tuple[str, ...]:
+    """Read the exact function-tool inventory sent to the provider."""
+    tools = request.get("tools")
+    if not isinstance(tools, list) or not 1 <= len(tools) <= 512:
+        raise CoreNativeObservationUnavailable("native parent tool inventory is unavailable")
+    names: list[str] = []
+    for item in tools:
+        if not isinstance(item, Mapping):
+            raise CoreNativeObservationUnavailable("native parent tool inventory is malformed")
+        name = item.get("name")
+        if name is None and isinstance(item.get("function"), Mapping):
+            name = item["function"].get("name")
+        if not isinstance(name, str) or not _ID.fullmatch(name):
+            raise CoreNativeObservationUnavailable("native parent tool inventory is malformed")
+        names.append(name)
+    if len(set(names)) != len(names):
+        raise CoreNativeObservationUnavailable("native parent tool inventory is ambiguous")
+    return tuple(sorted(names))
+
+
+def _native_prompt_sha256(request: Mapping[str, Any]) -> str:
+    """Hash the exact final user text in the Codex Responses request.
+
+    Multimodal or transformed prompts that cannot be proven byte-identical to
+    the accepted ingress prompt do not produce an owner-turn attempt receipt.
+    """
+    items = request.get("input")
+    if not isinstance(items, list):
+        raise CoreNativeObservationUnavailable("native user prompt is unavailable")
+    users = [item for item in items if isinstance(item, Mapping)
+             and item.get("type") == "message" and item.get("role") == "user"]
+    if not users:
+        raise CoreNativeObservationUnavailable("native user prompt is unavailable")
+    content = users[-1].get("content")
+    if (not isinstance(content, list) or len(content) != 1
+            or not isinstance(content[0], Mapping) or content[0].get("type") != "input_text"
+            or not isinstance(content[0].get("text"), str)):
+        raise CoreNativeObservationUnavailable("native user prompt cannot be bound byte-for-byte")
+    return hashlib.sha256(content[0]["text"].encode("utf-8", errors="strict")).hexdigest()
 
 
 def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObservationClient,
@@ -575,7 +950,9 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
                 session_id=session_id, turn_id=turn_id, api_request_id=api_request_id,
                 provider=event.get("provider"), model=event.get("model"),
                 base_url=event.get("base_url"), api_mode=event.get("api_mode"),
-                account_fingerprint=account, request_sha256=_hash(request), retry_count=0,
+                account_fingerprint=account, request_sha256=_hash(request),
+                parent_tool_names=_request_tool_names(request),
+                prompt_sha256=_native_prompt_sha256(request), retry_count=0,
             )
         except CoreNativeObservationUnavailable:
             return next_call(request)
@@ -689,6 +1066,90 @@ def register_tool_call_from_current_parent(*, client: CoreNativeObservationClien
                                      canonical_arguments=canonical)
 
 
+class RootInternalProfileClaimSource:
+    """Resources-side adapter joining exact live handler metadata to root claims."""
+
+    def __init__(self, client: CoreNativeObservationClient):
+        if type(client) is not CoreNativeObservationClient:
+            raise CoreNativeObservationUnavailable("fixed native observation client is required")
+        self._client = client
+
+    def consume_current_claim(self, profile_id: str, parent_agent: object, *,
+                              tool_call_id: str, tool_name: str,
+                              arguments: Mapping[str, Any], turn_id: str):
+        from hermes_installer.components.resources_internal_dispatch import (
+            RootSelectedInternalProfileDispatchClaim as ResourcesDispatchClaim,
+        )
+        if profile_id != "orchestrator" or tool_name != "resources_delegate":
+            raise CoreNativeObservationUnavailable("only the fixed orchestrator tool may be claimed")
+        observed_turn = _require_id(getattr(parent_agent, "_current_turn_id", None), "native turn ID")
+        if turn_id != observed_turn:
+            raise CoreNativeObservationUnavailable("handler turn differs from the current parent turn")
+        observed_call = register_tool_call_from_current_parent(
+            client=self._client, parent_agent=parent_agent, tool_call_id=tool_call_id,
+            tool_name=tool_name, arguments=arguments)
+        claim_handle = self._client.prepare_dispatch(observed_call=observed_call)
+        claim = self._client.consume_dispatch(claim_handle=claim_handle)
+        try:
+            parent_tools = frozenset(getattr(parent_agent, "valid_tool_names"))
+            if (type(claim) is not RootSelectedInternalProfileDispatchClaim
+                    or claim.profile_id != profile_id or claim.tool_name != tool_name
+                    or claim.tool_call_id != tool_call_id or claim.turn_id != observed_turn
+                    or claim.session_id != getattr(parent_agent, "session_id")
+                    or claim.arguments_sha256 != hashlib.sha256(_canonical(dict(arguments))).hexdigest()
+                    or set(claim.parent_tool_names) != set(parent_tools)
+                    or claim.profile_privacy_requirements or claim.parent_privacy_grants):
+                raise ValueError
+            route_receipt = _hash({
+                "evidence_class": claim.evidence_class, "provider": claim.provider,
+                "api_mode": claim.api_mode, "base_url": claim.base_url,
+                "account_fingerprint": claim.account_fingerprint,
+                "owner_turn_handle": claim.owner_turn_handle,
+                "gateway_turn_id": claim.gateway_turn_id,
+                "tool_call_id": claim.tool_call_id,
+            })
+            return ResourcesDispatchClaim(
+                claim_id=claim.claim_handle, profile_id=claim.profile_id,
+                source_revision=claim.source_revision,
+                generation_sha256=claim.generation_sha256,
+                profile_manifest_sha256=claim.profile_manifest_sha256,
+                effective_prompt=claim.prompt_bytes,
+                effective_prompt_sha256=claim.prompt_sha256,
+                parent_agent=parent_agent, parent_session_id=claim.session_id,
+                owner_subject_sha256=claim.owner_subject_sha256,
+                parent_tool_names=parent_tools,
+                profile_tool_names=frozenset(claim.profile_tool_names),
+                inherited_child_tool_names=frozenset(claim.profile_tool_names),
+                parent_privacy_grants=frozenset(),
+                profile_privacy_requirements=frozenset(),
+                route_class="existing-owner-codex-zero-additional-metered",
+                route_receipt_sha256=route_receipt,
+                max_additional_metered_microusd=0,
+                expires_monotonic=claim.expires_monotonic,
+            )
+        except Exception:
+            raise CoreNativeObservationUnavailable("root claim does not match the live native parent") from None
+
+
+def register_native_resources_observer(ctx: Any, runtime_context: Any, *,
+                                       credential_resolver: Callable[[], Mapping[str, Any]] | None = None) -> tuple[Any, ...]:
+    """Register the fixed Resources handler and additive Codex middleware together.
+
+    The plugin runtime may inject only the exact fixed socket client; it cannot
+    replace route evidence, select a profile, or mint claims.
+    """
+    client = getattr(runtime_context, "core_native_observation_client", None)
+    if client is None:
+        client = CoreNativeObservationClient()
+    if type(client) is not CoreNativeObservationClient:
+        raise CoreNativeObservationUnavailable("fixed root observer client is unavailable")
+    from hermes_installer.components.resources_internal_dispatch import register_resources_delegate
+    middleware = install_native_codex_process_observer(
+        ctx, client=client, credential_resolver=credential_resolver)
+    tool = register_resources_delegate(ctx, RootInternalProfileClaimSource(client))
+    return (*middleware, tool)
+
+
 # Function attributes keep the local parent/call join private to this imported
 # source module and avoid a process-global registry object exposed to plugins.
 register_tool_call_from_current_parent._lineage = OrderedDict()
@@ -699,6 +1160,8 @@ __all__ = [
     "CORE_NATIVE_OBSERVER_SOCKET", "CoreNativeObservationClient",
     "CoreNativeObservationUnavailable", "ObservedNativeToolCall",
     "NativeSourceMember", "ObservedProviderAttempt", "OwnerTurnHandle",
-    "RootSelectedInternalProfileDispatchClaim",
-    "install_native_codex_process_observer", "register_tool_call_from_current_parent",
+    "RootSelectedInternalProfileDispatchClaim", "RootCoreNativeObservationRegistry",
+    "RootInternalProfileClaimSource", "serve_core_native_observer",
+    "install_native_codex_process_observer", "register_native_resources_observer",
+    "register_tool_call_from_current_parent",
 ]

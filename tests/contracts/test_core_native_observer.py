@@ -52,7 +52,8 @@ def test_codex_attempt_rejects_unknown_or_retry_count_before_ipc(tmp_path: Path,
             provider="openai-codex", model="gpt-6-luna",
             base_url="https://chatgpt.com/backend-api/codex",
             api_mode="codex_responses", account_fingerprint="a" * 64,
-            request_sha256="b" * 64, retry_count=retry_count,
+            request_sha256="b" * 64, parent_tool_names=("delegate_task",),
+            prompt_sha256="c" * 64, retry_count=retry_count,
         )
 
 
