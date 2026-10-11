@@ -685,12 +685,25 @@ class RootCoreNativeObservationRegistry:
                     raise ValueError("prepare schema mismatch")
                 call = self._calls.get(request["observed_call_handle"])
                 source = self._source.resolve_current(self._custody)
+                try:
+                    call_args = json.loads(call["arguments"].decode("utf-8", errors="strict")) if call else None
+                    source_tools = frozenset(source.profile_tool_names)
+                    parent_tools = frozenset(call["parent_tool_names"]) if call else frozenset()
+                except Exception:
+                    call_args, source_tools, parent_tools = None, frozenset(), frozenset()
                 if (call is None or call["expiry"] <= time.monotonic() or call["claim"] is not None
                         or call["tool_name"] != "resources_delegate"
                         or call["peer"] != peer
                         or source.is_current_sealed(custody=self._custody, now=time.monotonic()) is not True
                         or source.profile_id != "orchestrator"
-                        or source.profile_privacy_requirements):
+                        or source.profile_privacy_requirements
+                        # Hermes' native delegate inherits the actual parent inventory;
+                        # without an exact source policy grant for that whole set, deny.
+                        or not source_tools or source_tools != parent_tools
+                        or not isinstance(call_args, dict) or set(call_args) != {"goal"}
+                        or not isinstance(call_args.get("goal"), str)
+                        or not call_args["goal"].strip() or len(call_args["goal"]) > 1200
+                        or any(ord(char) < 0x20 and char not in "\n\t" for char in call_args["goal"])):
                     raise ValueError("selected profile or native call is unavailable")
                 claim_handle = secrets.token_urlsafe(32)
                 if len(self._claims) >= 2048:
@@ -727,7 +740,7 @@ class RootCoreNativeObservationRegistry:
                     "account_fingerprint": self._attempts[call["attempt"]]["account"],
                     "profile_id": source.profile_id, "source_revision": source.source_revision,
                     "profile_manifest_sha256": source.profile_manifest_sha256,
-                    "profile_tool_names": list(call["parent_tool_names"]),
+                    "profile_tool_names": sorted(source.profile_tool_names),
                     "profile_privacy_requirements": sorted(source.profile_privacy_requirements),
                     "source_manifest": manifest, "source_manifest_sha256": _hash(manifest),
                     "prompt_b64": base64.b64encode(source.effective_prompt).decode("ascii"),
