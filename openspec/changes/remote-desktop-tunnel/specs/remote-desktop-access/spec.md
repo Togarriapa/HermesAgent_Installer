@@ -592,3 +592,17 @@ The manual MVP SHALL use the finite v259b stage adapter without fabricated manag
 #### Scenario: Existing token is revoked while socket is active
 - **WHEN** the actual protected edge denies the original token or its bounded proof expires
 - **THEN** the stage closes the exact session/socket and denies further app bytes/input, preserving managed authority checks and full AC OPEN
+
+
+## ADDED Requirements
+
+### Requirement: Binding-preserving manual stage ingress
+The manual MVP SHALL use the exact v263 owned Unix cloudflared peer and JWT checks before application bytes/input, with browser one-use heartbeat witnesses expiring within five seconds. Binding cookies remain browser-managed; original JWT/session deadlines and managed authority remain unchanged.
+
+#### Scenario: Binding cookie is unavailable at origin
+- **WHEN** Cloudflare strips its binding cookie and the server self-probe is redirected
+- **THEN** retain binding enforcement and use only verified accepted Unix ingress plus fresh protected browser requests
+
+#### Scenario: Browser witness stops or peer changes
+- **WHEN** the witness expires or current peer/unit/config/JWT verification fails
+- **THEN** deny bytes/input and close the exact socket by its freshness deadline without renewing old authority

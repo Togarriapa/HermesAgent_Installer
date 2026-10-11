@@ -270,3 +270,8 @@ Confirmed jarvis.togarriapahome.uk. `planning/jarvis-visible-desktop-mvp-stage-v
 ## Fixed native child/no client commands v262
 
 `planning/xpra-fixed-app-child-no-client-command-repair-v262.json`; BD262.1/VD262.2 withinBD259.1. commands=yes is gated on exact fourth-member denies, +jarvis3, retainedguards and actual fixed child/flags/inspector readback. Exact member/13 regressions reviewed; package/readback/native launch pending, all AC OPEN.
+
+
+## Binding-preserving manual MVP v263
+
+`planning/jarvis-binding-cookie-unix-heartbeat-v263.json`; RT-T263.1/VD-T263.2 OPEN. Actual binding-enabled302 requires Unix peer/root proof plus protected browser heartbeat; security and all original AC unchanged.

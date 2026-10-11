@@ -1,0 +1,99 @@
+{
+  "schema": 1,
+  "id": "jarvis-binding-cookie-unix-heartbeat-v263",
+  "status": "implementation and actual target verification OPEN",
+  "extends": [
+    "planning/jarvis-manual-stage-gateway-seam-v259b.json",
+    "planning/jarvis-visible-desktop-mvp-stage-v259.json"
+  ],
+  "tasks": [
+    "RT-T263.1",
+    "VD-T263.2"
+  ],
+  "reason": "Actual owned Access response302 with binding cookie enabled proves server self-probe incompatible: CF_Binding is stripped before origin. Preserve binding and use genuine accepted cloudflared transport plus protected browser requests.",
+  "scope": "Only distinct manual MVP stage. Managed authority, original full obligations and all AC remain OPEN. No credential copying, additional budget, runtime source pins or implementation claim.",
+  "origin": {
+    "api": "aiohttp.web.UnixSite; each request.transport.get_extra_info(socket) must be AF_UNIX and getsockopt(SOL_SOCKET,SO_PEERCRED,12) supplies PID/UID/GID. No TCP listener/fallback or forwarded-header peer authority.",
+    "ownership": "Fixed socket path comes only from protected stage deployment config. Gateway UID996/GID981, parent0750 and socket0660; cloudflared gets group981 only. Retain exact socket device/inode and nofollow parent custody; refuse unowned collision.",
+    "tunnel": "Exact hermes-jarvis-mvp-tunnel.service, /etc/systemd/system/hermes-jarvis-mvp-tunnel.service, /usr/bin/cloudflared SHA256 aaeb2d7d0da3614634c7e03ab13487a1522c2e79165ed2929cfe23d5e95b326d. DynamicUser UID/GID are freshly observed, never hardcoded. Actual root-owned stage config pins post-change unit/config/argv and fixed unix ingress path; computed at deployment, not caller trust.",
+    "startup": "Gateway may bind/listen before tunnel exists. Every application request remains denied until actual current peer proof succeeds; no circular startup requirement.",
+    "socket_path": "/run/hermes-jarvis-mvp-gateway/origin.sock"
+  },
+  "inspector": {
+    "request_fields": [
+      "op",
+      "nonce",
+      "peer_pid",
+      "peer_uid",
+      "peer_gid"
+    ],
+    "op": "observe-ingress",
+    "response_fields": [
+      "schema",
+      "nonce",
+      "boot_id",
+      "issued_monotonic",
+      "expires_monotonic",
+      "peer_pid",
+      "peer_uid",
+      "peer_gid",
+      "peer_start_ticks",
+      "tunnel_unit_sha256",
+      "tunnel_config_sha256",
+      "tunnel_executable_sha256",
+      "origin_socket_device",
+      "origin_socket_inode",
+      "config_sha256",
+      "proof_sha256"
+    ],
+    "semantics": "Authenticate inspector IPC caller SO_PEERCRED against actual current fixed gateway unit MainPID/UID/GID/executable/start/boot, not UID alone. Independently resolve fixed tunnel unit MainPID, live PIDFD/start/boot/cgroup, executable hash and exact owned deployment unit/config/argv; compare request kernel peer tuple. Recheck before return. Canonical response digest excludes proof_sha256; response <=5s and same nonce/config/socket. No caller unit/path/hash or arbitrary operation. Peer fields are evidence, never authority. Failure denies.",
+    "bounded": "Separate small current ingress readback from expensive native app tree inspection; retain existing native inspection guards at their existing admission/currentness points. No hash-walk bypass or completion timestamp reset."
+  },
+  "sessions": {
+    "api": "StageGatewayPolicySessionAdapter receives a private StageAcceptedIngressObservation created only from this request socket and authenticated inspector result. admit/renew/heartbeat consume this exact observation; no bool/callback/raw mapping can authorize. Existing managed RootRemoteSessionClient unchanged.",
+    "jwt": "Before all application bytes/input validate forwarded Access JWT with existing RS256/JWKS issuer/audience/email/expiry checks; reject ambiguous assertions and bind token fingerprint/principal/config. Accepted exact owned cloudflared peer plus this current request proves traversal through owned Access ingress, not continuous policy state.",
+    "heartbeat": "POST /__stage_access_heartbeat, exact same host/origin, credentials included by browser, existing CSRF guards, bounded JSON <=2048 bytes with exact {session_id,nonce}. Server-issued cryptographic one-use nonce binds original stage record/JWT fingerprint/principal/config and deadline. Consume atomically before effect; successful accepted ingress+JWT returns only next nonce and bounded expiry. Browser schedules <=2s. Initial protected admission is first witness; no unauthenticated bootstrap or self-HTTPS probe.",
+    "lifetime": "Record request-start time, never completion-restamp. Edge witness hard deadline <=5s and min original JWT/session deadline; every forwarding/input boundary checks it, watchdog closes exact WS no later than deadline. WS frames/pings cannot refresh. Session leases remain <=30s and original JWT expiry; explicit renewal through fresh protected HTTP cannot revive expired lease or change principal. Queue delay over freshness denies. Background timer throttling fails closed and requires fresh reconnect.",
+    "binding": "Never parse, copy, store or log CF_Binding; browser sends HttpOnly cookie to Access automatically and Cloudflare strips it. Never disable binding, HTTPOnly, Access, TLS or sandbox."
+  },
+  "evidence": {
+    "observed": "Root diagnostic GWDIAG_RESPONSE:302:1:1:0:1:1 after local JWT/native/IPC positives. This is incompatibility evidence only.",
+    "required": "Production stage fixtures: AF_UNIX credentials/PID reuse/wrong unit/config/socket, unauthenticated routes, nonce replay/CSRF/wrong principal, fake-clock 5s forwarding and close, delayed inspector, missing heartbeat, original JWT expiry. Actual browser OTP binding-enabled admission, pixels/input, pre-expiry logout/revocation/allowlist denial, tunnel replacement/outage and owned restart remain required. Record observed Access propagation separately; never claim instant global revocation.",
+    "acceptance": "RT259.3/LC259.4/VD259.5 remain OPEN, full installer AC unchanged."
+  },
+  "primary_sources": [
+    "https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/",
+    "https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/routing-to-tunnel/protocols/",
+    "https://docs.aiohttp.org/en/stable/web_reference.html",
+    "https://docs.python.org/3/library/asyncio-protocol.html"
+  ],
+  "protected_configuration": {
+    "path": "/etc/hermes-installer/gateway-stage.json",
+    "schema": 2,
+    "ownership": "root UID0/group981 mode0440, nofollow regular; atomically publish only after exact reviewed rendered units/config readback",
+    "added_fields": [
+      "gateway_unit_sha256",
+      "tunnel_unit_sha256",
+      "cloudflared_binary_sha256",
+      "ingress_socket"
+    ],
+    "fixed_ingress_socket": "/run/hermes-jarvis-mvp-gateway/origin.sock",
+    "gateway_unit": "/etc/systemd/system/hermes-jarvis-mvp-gateway.service",
+    "gateway_argv": [
+      "/opt/hermes-jarvis-mvp-20261011/gateway-venv/bin/python",
+      "-m",
+      "hermes_installer.remote.manual_stage"
+    ],
+    "gateway_resolved_executable": "/usr/bin/python3.13",
+    "gateway_executable_sha256": "bd241b38381974ae27d7d5098a6d0e6dda0a744b5e9fdd6fe3a1ae632588961e",
+    "tunnel_argv": [
+      "/usr/bin/cloudflared",
+      "--no-autoupdate",
+      "tunnel",
+      "run",
+      "--token-file",
+      "/run/credentials/hermes-jarvis-mvp-tunnel.service/tunnel-token"
+    ],
+    "semantics": "Existing protected stage config extended, no extra manifest authority. Unit hashes computed from reviewed deployed unit bytes, then independently reread by inspector. Preserve all existing config fields and native Xpra/app readbacks. Secret credential content never read for evidence/logging."
+  }
+}

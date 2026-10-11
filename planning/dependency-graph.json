@@ -3861,5 +3861,18 @@
       ]
     },
     "acceptance": "exact fixedapp startup separate from deniedclient effects, all AC OPEN"
+  },
+  "jarvis_binding_cookie_unix_heartbeat_v263": {
+    "contract": "planning/jarvis-binding-cookie-unix-heartbeat-v263.json",
+    "amendment": "plans/amendments/2026-10-11-jarvis-binding-cookie-unix-heartbeat-v263.md",
+    "tasks": {
+      "RT-T263.1": [
+        "RT-T259.3"
+      ],
+      "VD-T263.2": [
+        "RT-T263.1"
+      ]
+    },
+    "acceptance": "manual MVP only; all AC OPEN"
   }
 }

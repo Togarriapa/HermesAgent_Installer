@@ -237,3 +237,9 @@ Exact contract: `planning/xpra-sysroot-html5-v245.json`.
 ### v259b implementation detail under existing MVP tasks
 
 RT-T259.3/LC-T259.4/VD-T259.5 additionally require the separate stage adapter, production-path JWT/one-use edge probe/current unit connector tests and actual bounded revocation/restart evidence. Existing checkboxes remain OPEN.
+
+
+## Binding-preserving manual MVP v263
+
+- [ ] `RT-T263.1` Implement the exact v263 Unix ingress/root peer proof and browser nonce heartbeat in the distinct stage adapter; preserve all JWT/origin/lease/native checks. Depends RT-T259.3.
+- [ ] `VD-T263.2` Verify production failure/expiry effects and actual binding-enabled OTP/revocation/restart; all original AC remain OPEN. Depends RT-T263.1.

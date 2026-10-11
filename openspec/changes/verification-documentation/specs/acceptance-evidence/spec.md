@@ -1405,3 +1405,17 @@ The MVP SHALL permit commands=yes only with exact v262 patched member and server
 #### Scenario: Client requests a command while fixed app is enabled
 - **WHEN** a hello run or command-signal arrives with start_new_commands false
 - **THEN** registration and direct handlers deny without Popen/signalling, while configured native child startup remains unchanged
+
+
+## ADDED Requirements
+
+### Requirement: Binding-preserving manual stage ingress
+The manual MVP SHALL use the exact v263 owned Unix cloudflared peer and JWT checks before application bytes/input, with browser one-use heartbeat witnesses expiring within five seconds. Binding cookies remain browser-managed; original JWT/session deadlines and managed authority remain unchanged.
+
+#### Scenario: Binding cookie is unavailable at origin
+- **WHEN** Cloudflare strips its binding cookie and the server self-probe is redirected
+- **THEN** retain binding enforcement and use only verified accepted Unix ingress plus fresh protected browser requests
+
+#### Scenario: Browser witness stops or peer changes
+- **WHEN** the witness expires or current peer/unit/config/JWT verification fails
+- **THEN** deny bytes/input and close the exact socket by its freshness deadline without renewing old authority

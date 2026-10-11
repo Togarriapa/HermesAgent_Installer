@@ -284,3 +284,9 @@ RT-T259.3/LC-T259.4/VD-T259.5 additionally require the separate stage adapter, p
 
 - [ ] BD-T262.1: Implement reviewed client-command/signalling denies, retained guards/local+jarvis3 and exact owned native child configuration/inspector.
 - [ ] VD-T262.2: Verify zero denied client Popen/signal effects, direct-handler failures, enabled semantics/fixed child effect/package graph and actual native launch separately.
+
+
+## Binding-preserving manual MVP v263
+
+- [ ] `RT-T263.1` Implement the exact v263 Unix ingress/root peer proof and browser nonce heartbeat in the distinct stage adapter; preserve all JWT/origin/lease/native checks. Depends RT-T259.3.
+- [ ] `VD-T263.2` Verify production failure/expiry effects and actual binding-enabled OTP/revocation/restart; all original AC remain OPEN. Depends RT-T263.1.
