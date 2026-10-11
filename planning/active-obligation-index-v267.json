@@ -14,7 +14,9 @@
     "all_Resources_source_IDs_native_core_enrichment": "RB-T266.4",
     "end_to_end_acceptance_restart_rollback_privacy": "VD-T266.5"
   },
-  "historical_task_ids": [
+  "acceptance": "No historical acceptance relabeled passed; all retained functional acceptance OPEN.",
+  "coverage_semantics": "Original retained task prefixes may refer to archived mixed proposals, exact structured cross-change historical entries, or retained active functional task bodies. The generated core reference list cannot establish its own source. Coverage is not active Desktop authorization or completion; current core task plan remains required.",
+  "retained_task_id_prefixes": [
     "BD-T203",
     "BD-T208",
     "BD-T218",
@@ -98,7 +100,5 @@
     "VD-T260",
     "VD-T261",
     "VD-T262"
-  ],
-  "acceptance": "No historical acceptance relabeled passed; all retained functional acceptance OPEN.",
-  "coverage_semantics": "Coverage checker reads only the exact indexed superseded task files to retain original task IDs; this does not activate Desktop tasks or establish completion. Active core task plan is mandatory and historical IDs must exist in retained source."
+  ]
 }

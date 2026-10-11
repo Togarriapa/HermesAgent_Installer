@@ -26,9 +26,20 @@ def check_coverage(base):
   expected_history={name:'openspec/superseded/v267/'+name for name in ('installer-bootstrap-desktop','remote-desktop-tunnel')}
   assert index['historical_changes']==expected_history,'Unexpected historical task source'
   historical_text='\n'.join((base/path/'tasks.md').read_text() for path in expected_history.values())
-  for tid in index['historical_task_ids']:
-   assert tid in historical_text,'Historical task redirect lacks source '+tid
-  tasktext+='\n'+historical_text
+  # Mixed source obligations can remain active in another functional change.
+  # Exclude the generated core reference list so it cannot prove itself.
+  retained_active_text='\n'.join(p.read_text() for p in (base/'openspec/changes').rglob('tasks.md') if 'jarvis-core-platform' not in p.parts)
+  cross_history=[]
+  for name in ('cross-change-desktop-task-references.json','root-integration-desktop-task-references.json'):
+   path=base/'openspec/superseded/v267'/name
+   if path.exists():
+    rows=load(path)
+    assert rows['schema']==1,'Unsupported historical task reference schema'
+    cross_history.extend(row['text'] for row in rows['entries'])
+  retained_source_text='\n'.join((historical_text,retained_active_text,*cross_history))
+  for tid in index['retained_task_id_prefixes']:
+   assert tid in retained_source_text,'Task redirect lacks retained source '+tid
+  tasktext+='\n'+historical_text+'\n'+'\n'.join(cross_history)
  for rid,r in req.items():
   assert 'Requirement: '+rid+' ' in specs,'Missing OpenSpec requirement '+rid
   assert r['task_id'] in tasks and r['test_id'] in ev,'Missing task/evidence '+rid
