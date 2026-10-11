@@ -129,7 +129,7 @@ def write_example(path: Path) -> None:
         "schema_version": 1,
         "timezone": "Europe/Lisbon",
         "paths": {"data_root": "~/HermesInstaller/data", "state_root": "~/HermesInstaller/state"},
-        "components": {"hermes_agent": True, "hermes_desktop": True},
+        "components": {"hermes_agent": True, "hermes_desktop": False},
         "privacy": {"additional_metered_budget": 0},
         "remote_desktop": {"hostname": "", "allowed_emails": []},
     }

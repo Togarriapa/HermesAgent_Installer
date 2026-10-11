@@ -13,6 +13,20 @@ import pytest
 from hermes_installer import core_runtime as core
 
 
+def _resource_receipt(*, prompt_matches=False):
+    return {
+        "state": "discovered", "materialized": True, "discovered": True,
+        "selectable_profile_mutations": [], "functional": False,
+        "enabled": False, "target_verified": False,
+        "resource_counts": {"native_skills": 396, "source_profiles_preserved": 208},
+        "native_receipt": {
+            "hermes_revision": core.COMMIT, "python_version": "3.14.7",
+            "profile_identity_loaded": True, "loaded_skill_count": 396,
+            "active_prompt_matches_bundled_primary": prompt_matches,
+        },
+    }
+
+
 def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False):
     etc = tmp_path / "etc" / "hermes-installer"
     var = tmp_path / "var" / "lib" / "hermes-installer"
@@ -55,6 +69,7 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False):
     monkeypatch.setattr(core, "_identity", lambda: identity)
     monkeypatch.setattr(core, "_owned_listener", lambda: True)
     monkeypatch.setattr(core, "_launcher", lambda: b"test fixed core launcher")
+    monkeypatch.setattr(core, "_install_bundled_resources", lambda _account: _resource_receipt())
 
     calls = []
     enabled = {"value": False}
@@ -146,6 +161,70 @@ def test_launcher_uses_isolated_pinned_loopback_without_secret_arguments():
     assert "PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1" in launcher
     assert "unset PYTHONHOME PYTHONUSERBASE PYTHONSTARTUP VIRTUAL_ENV" in launcher
     assert "auth.json" not in launcher
+
+
+def test_bundled_resource_import_uses_exact_admin_home_source_and_pm_python(tmp_path, monkeypatch):
+    installer_python = tmp_path / "installer-python"
+    runuser = tmp_path / "runuser"
+    for executable in (installer_python, runuser):
+        executable.write_text("fixed fixture executable")
+        executable.chmod(0o755)
+    monkeypatch.setattr(core.sys, "executable", str(installer_python))
+    monkeypatch.setattr(core, "RUNUSER", runuser)
+    monkeypatch.setattr(core, "ROOT_UID", os.getuid())
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return SimpleNamespace(returncode=0, stdout=json.dumps(_resource_receipt()), stderr="")
+
+    monkeypatch.setattr(core.subprocess, "run", fake_run)
+    account = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())
+    receipt = core._install_bundled_resources(account)
+    argv, kwargs = calls[0]
+    assert argv == [str(runuser), "-u", "admin", "--", str(installer_python.resolve()), "-m",
+                    "hermes_installer.registry.manual_jarvis_skills", "import-bundled",
+                    "--home", str(core.HERMES_HOME), "--hermes-source", str(core.SOURCE),
+                    "--python", str(core.PYTHON)]
+    assert kwargs["timeout"] == 600
+    assert kwargs["env"]["HOME"] == str(core.HOME)
+    assert receipt["state"] == "discovered"
+    assert receipt["functional"] is False and receipt["target_verified"] is False
+
+
+def test_resource_import_does_not_overwrite_or_gate_on_existing_primary_prompt(tmp_path, monkeypatch):
+    installer_python = tmp_path / "installer-python"
+    runuser = tmp_path / "runuser"
+    for executable in (installer_python, runuser):
+        executable.write_text("fixed fixture executable")
+        executable.chmod(0o755)
+    monkeypatch.setattr(core.sys, "executable", str(installer_python))
+    monkeypatch.setattr(core, "RUNUSER", runuser)
+    monkeypatch.setattr(core, "ROOT_UID", os.getuid())
+    monkeypatch.setattr(core.subprocess, "run", lambda *args, **kwargs:
+                        SimpleNamespace(returncode=0, stdout=json.dumps(_resource_receipt()), stderr=""))
+
+    receipt = core._install_bundled_resources(SimpleNamespace(pw_uid=os.getuid()))
+
+    assert receipt["native_receipt"]["active_prompt_matches_bundled_primary"] is False
+
+
+def test_resource_import_rejects_a_receipt_that_claims_functional_use(tmp_path, monkeypatch):
+    installer_python = tmp_path / "installer-python"
+    runuser = tmp_path / "runuser"
+    for executable in (installer_python, runuser):
+        executable.write_text("fixed fixture executable")
+        executable.chmod(0o755)
+    monkeypatch.setattr(core.sys, "executable", str(installer_python))
+    monkeypatch.setattr(core, "RUNUSER", runuser)
+    monkeypatch.setattr(core, "ROOT_UID", os.getuid())
+    receipt = _resource_receipt()
+    receipt["functional"] = True
+    monkeypatch.setattr(core.subprocess, "run", lambda *args, **kwargs:
+                        SimpleNamespace(returncode=0, stdout=json.dumps(receipt), stderr=""))
+
+    with pytest.raises(core.CoreRuntimeError, match="receipt is invalid"):
+        core._install_bundled_resources(SimpleNamespace(pw_uid=os.getuid()))
 
 
 def test_owned_journal_detects_mutated_service_file(tmp_path, monkeypatch):

@@ -20,6 +20,8 @@ class ConfigContractTests(unittest.TestCase):
             config = load_config(path)
             self.assertEqual(config.timezone, "Europe/Lisbon")
             self.assertEqual(config.privacy["additional_metered_budget"], 0)
+            self.assertTrue(config.components["hermes_agent"])
+            self.assertFalse(config.components["hermes_desktop"])
             before = path.read_bytes()
             with self.assertRaises(FileExistsError):
                 write_example(path)

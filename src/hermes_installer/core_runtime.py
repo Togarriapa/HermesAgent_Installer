@@ -1,6 +1,6 @@
 """Fixed, journaled adoption of the pinned Hermes core service."""
 from __future__ import annotations
-import grp, hashlib, json, os, pwd, secrets, stat, subprocess, tempfile, time
+import grp, hashlib, json, os, pwd, secrets, stat, subprocess, sys, tempfile, time
 from pathlib import Path
 SOURCE=Path("/home/admin/HermesInstaller/data/generations/hermes-agent-7085fbf77532")
 PYTHON=Path("/home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0/venv/bin/python")
@@ -17,6 +17,7 @@ ETC_INSTALLER=Path("/etc/hermes-installer")
 VAR_LIB_INSTALLER=Path("/var/lib/hermes-installer")
 SYSTEMD_UNIT_DIR=Path("/etc/systemd/system")
 LIBEXEC_DIR=Path("/usr/local/libexec")
+RUNUSER=Path("/usr/sbin/runuser")
 SERVICE="hermes-jarvis-core.service"; COMMIT="7085fbf7753266fc4943c55ac04926186bc90005"
 LOCK_SHA256="49b79259220160f147255078a19af541a5f328d3871c8041cc1eb909d19eb549"
 WORKSPACE=HERMES_HOME/"workspaces"/"jarvis-core"
@@ -39,6 +40,52 @@ def _run(argv,check=True):
  except (OSError,subprocess.TimeoutExpired) as e: raise CoreRuntimeError("fixed action unavailable") from e
  if check and r.returncode: raise CoreRuntimeError("fixed service action failed")
  return r
+def _install_bundled_resources(account):
+ """Run the vendored offline importer as admin before enabling public interaction."""
+ try:
+  python=Path(sys.executable)
+  resolved=python.resolve(strict=True)
+  python_stat=resolved.stat()
+  runuser_stat=RUNUSER.lstat()
+  if (not python.is_absolute() or not stat.S_ISREG(python_stat.st_mode)
+      or python_stat.st_uid not in {ROOT_UID,account.pw_uid}
+      or stat.S_IMODE(python_stat.st_mode)&0o022
+      or stat.S_ISLNK(runuser_stat.st_mode) or not stat.S_ISREG(runuser_stat.st_mode)
+      or runuser_stat.st_uid!=ROOT_UID or stat.S_IMODE(runuser_stat.st_mode)&0o022):
+   raise CoreRuntimeError("fixed installer runtime or account-switch executable is unsafe")
+  argv=[str(RUNUSER),"-u","admin","--",str(resolved),"-m",
+        "hermes_installer.registry.manual_jarvis_skills","import-bundled",
+        "--home",str(HERMES_HOME),"--hermes-source",str(SOURCE),"--python",str(PYTHON)]
+  env={"PATH":"/usr/sbin:/usr/bin:/sbin:/bin","HOME":str(HOME),
+       "HERMES_HOME":str(HERMES_HOME),"LANG":"C.UTF-8",
+       "PYTHONPATH":str(Path(__file__).resolve().parents[1]),
+       "PYTHONNOUSERSITE":"1","PYTHONDONTWRITEBYTECODE":"1"}
+  result=subprocess.run(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,text=True,timeout=600,env=env)
+ except (OSError,subprocess.TimeoutExpired,ValueError) as exc:
+  raise CoreRuntimeError("offline Jarvis resource import is pending") from exc
+ if result.returncode:
+  raise CoreRuntimeError("offline Jarvis resource import is pending")
+ try:
+  receipt=json.loads(result.stdout)
+ except (ValueError,TypeError):
+  raise CoreRuntimeError("offline Jarvis resource receipt is invalid") from None
+ counts=receipt.get("resource_counts") if isinstance(receipt,dict) else None
+ native=receipt.get("native_receipt") if isinstance(receipt,dict) else None
+ if (not isinstance(receipt,dict) or receipt.get("state")!="discovered"
+     or receipt.get("materialized") is not True or receipt.get("discovered") is not True
+     or receipt.get("selectable_profile_mutations") != []
+     or receipt.get("functional") is not False or receipt.get("enabled") is not False
+     or receipt.get("target_verified") is not False
+     or not isinstance(counts,dict) or counts.get("native_skills")!=396
+     or counts.get("source_profiles_preserved")!=208
+     or not isinstance(native,dict) or native.get("hermes_revision")!=COMMIT
+     or native.get("python_version")!="3.14.7"
+     or native.get("profile_identity_loaded") is not True
+     or native.get("loaded_skill_count")!=396
+     or not isinstance(native.get("active_prompt_matches_bundled_primary"),bool)):
+  raise CoreRuntimeError("offline Jarvis resource receipt is invalid")
+ return receipt
 def _ensure_dir(path,uid,gid,mode):
  if path.is_symlink(): raise CoreRuntimeError("service directory may not be a symlink")
  if not path.exists():
@@ -299,13 +346,21 @@ def install_or_resume():
    record["token_sha256"]=_digest(TOKEN)
    _replace_journal(record)
  _ensure_workspace(account.pw_uid,account.pw_gid)
+ resources=_install_bundled_resources(account)
  _owned_file(LAUNCHER,launcher,0o755,ROOT_UID,ROOT_UID,record["launcher_sha256"],record["state"]=="preparing")
  _owned_file(UNIT,unit,0o644,ROOT_UID,ROOT_UID,record["unit_sha256"],record["state"]=="preparing")
  if record["state"]=="preparing":
   record["state"]="installed"
   _replace_journal(record)
  _journal()
- _run(["systemctl","daemon-reload"]); _run(["systemctl","enable","--now",SERVICE]); _wait_for_listener(); return status()
+ _run(["systemctl","daemon-reload"]); _run(["systemctl","enable","--now",SERVICE]); _wait_for_listener()
+ counts=resources["resource_counts"]
+ prompt_status=("the active Jarvis prompt matches the bundled primary prompt"
+                if resources["native_receipt"]["active_prompt_matches_bundled_primary"]
+                else "active prompt integration remains pending")
+ return (status()+f"; packaged Resources materialized and Hermes-read-back discovered "
+         f"{counts['native_skills']} skills with {counts['source_profiles_preserved']} source profiles preserved; "
+         f"{prompt_status}; functional use remains unverified")
 
 def _wait_for_listener():
  deadline=time.monotonic()+30

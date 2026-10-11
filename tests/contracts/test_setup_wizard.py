@@ -83,6 +83,31 @@ def _inputs(*, hostname="desktop.example.test", include_policy="later"):
 
 
 class WizardTests(unittest.TestCase):
+    def test_legacy_desktop_choice_is_disabled_and_not_offered_in_guided_setup(self):
+        with tempfile.TemporaryDirectory() as td:
+            config = {"schema_version": 1, "components": {
+                "hermes_agent": True, "hermes_desktop": True,
+            }, "paths": {"state_root": str(Path(td) / "state")}}
+            prompts = []
+            def answer(prompt):
+                prompts.append(prompt)
+                return _inputs()(prompt)
+            result = run_setup_wizard(config, input_fn=answer, output_fn=lambda _: None)
+            self.assertEqual(result.state, "pending")
+            self.assertFalse(result.selected_components["hermes_desktop"])
+            self.assertNotIn("hermes_desktop", result.config["components"])
+            self.assertFalse(any("Select hermes desktop" in prompt for prompt in prompts))
+            self.assertEqual(result.account_states["hermes_desktop"], "unavailable")
+
+    def test_noninteractive_legacy_config_cannot_reenable_desktop(self):
+        with tempfile.TemporaryDirectory() as td:
+            config = {"schema_version": 1, "components": {
+                "hermes_agent": True, "hermes_desktop": True,
+            }, "paths": {"state_root": str(Path(td) / "state")}}
+            result = run_setup_wizard(config, interactive=False, output_fn=lambda _: None)
+            self.assertFalse(result.selected_components["hermes_desktop"])
+            self.assertNotIn("hermes_desktop", result.config["components"])
+
     def test_private_store_writes_mode_600_resolvable_file_reference(self):
         with tempfile.TemporaryDirectory() as td:
             store = PrivateFileCredentialStore(Path(td) / "state")

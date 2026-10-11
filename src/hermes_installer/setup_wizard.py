@@ -404,6 +404,14 @@ def run_setup_wizard(config: Mapping[str, Any] | None = None, *,
     pending: list[str] = []
     failures: list[str] = []
     next_steps: list[str] = []
+    desktop_requested = selected_components.get("hermes_desktop") is True
+    # Preserve the legacy key as a false result so a saved schema-1 config does
+    # not silently reactivate Desktop. Desktop is a capability benchmark only.
+    selected_components["hermes_desktop"] = False
+    if desktop_requested:
+        states["hermes_desktop"] = "unavailable"
+        pending.append("hermes_desktop")
+        next_steps.append("Native Desktop is excluded from active installation; continue with the headless core and Jarvis interface.")
 
     if interactive:
         output_fn("Hermes Agent guided setup")
@@ -411,11 +419,9 @@ def run_setup_wizard(config: Mapping[str, Any] | None = None, *,
                                "adopt" if current.get("components") else "fresh")
         output_fn("Existing data and services will be inventoried before installation changes.")
         selected_components.setdefault("hermes_agent", True)
-        selected_components.setdefault("hermes_desktop", True)
-        component_names = tuple(sorted({*selected_components, "remote_desktop", "providers", "mcp", "memory", "registry", "colibri", "coral"}))
+        component_names = tuple(sorted({*selected_components, "remote_desktop", "providers", "mcp", "memory", "registry", "colibri", "coral"} - {"hermes_desktop"}))
         descriptions = {
-            "hermes_agent": "Official Hermes Agent backend",
-            "hermes_desktop": "Official native Hermes Desktop app",
+            "hermes_agent": "Official pinned headless Hermes core for Jarvis",
             "registry": "Bundled profiles, skills, and reviewed resource definitions",
             "providers": "Model accounts and privacy/budget-gated provider routes",
             "mcp": "Selected external MCP connections",
@@ -425,7 +431,7 @@ def run_setup_wizard(config: Mapping[str, Any] | None = None, *,
             "remote_desktop": "Access-protected remote view of the official Hermes Desktop app",
         }
         for name in component_names:
-            default = "yes" if selected_components.get(name, name in {"hermes_agent", "hermes_desktop", "registry"}) else "no"
+            default = "yes" if selected_components.get(name, name in {"hermes_agent", "registry"}) else "no"
             selected_components[name] = _choice(input_fn, output_fn, f"Select {name.replace('_', ' ')} — {descriptions.get(name, 'optional integration')}", ("yes", "no"), default) == "yes"
         data_root = current["paths"].get("data_root", "~/HermesInstaller/data")
         state_root = current["paths"].get("state_root", "~/HermesInstaller/state")
@@ -439,6 +445,8 @@ def run_setup_wizard(config: Mapping[str, Any] | None = None, *,
         if install_mode not in {"fresh", "adopt"}:
             return WizardResult("failed", selected_components, current, "setup_mode must be fresh or adopt", resume_command, exit_code=2)
         for name, value in current.get("components", {}).items():
+            if name == "hermes_desktop":
+                continue
             if name in {"remote_desktop", "providers", "mcp", "memory"} and name in selected_components:
                 # These account selections may be false in config because the
                 # last run correctly kept a pending component non-installable.

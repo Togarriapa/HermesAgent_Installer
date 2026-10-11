@@ -21,7 +21,7 @@ def root_setup_status(*, state="root-setup-required", resume_command="",
 
 def write_config(path, data_root, state_root, components=None):
     value={"schema_version":1,"paths":{"data_root":str(data_root),"state_root":str(state_root)},
-           "components":components or {"hermes_agent":True,"hermes_desktop":True}}
+           "components":components or {"hermes_agent":True,"hermes_desktop":False}}
     path.write_text(json.dumps(value))
     return path
 
@@ -36,37 +36,38 @@ class CliLifecycleTests(unittest.TestCase):
         self.assertEqual(finding.details["native_skill_root"],"HERMES_HOME/skills/<skill_id>/SKILL.md")
         self.assertEqual(finding.details["target_discovery"],"not-probed-by-this-read-only-command")
         self.assertFalse(finding.details["target_verified"])
-    def test_dry_run_does_not_create_roots_or_start_bootstrap(self):
+    def test_core_first_dry_run_does_not_create_roots_or_start_service(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td); config=write_config(root/"config.json",root/"data",root/"state")
             args=SimpleNamespace(command="install",config=config,dry_run=True)
             with patch("hermes_installer.cli.discover_host",return_value=self.host), \
                  patch("hermes_installer.cli._host_findings",return_value=()):
                 result=run(args)
-            self.assertEqual(result.state,OutcomeState.READY)
+            self.assertEqual(result.state,OutcomeState.PENDING)
+            self.assertIn("Core-first dry run",result.message)
             self.assertFalse((root/"data").exists())
             self.assertFalse((root/"state").exists())
-    def test_resume_without_user_mode_checkpoint_uses_root_launcher_status(self):
+    def test_normal_resume_hands_off_to_fixed_core_service_action(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td); config=write_config(root/"config.json",root/"data",root/"state")
             args=SimpleNamespace(command="resume",config=config)
             with patch("hermes_installer.cli.discover_host",return_value=self.host), \
-                 patch("hermes_installer.root_setup.launcher_status",return_value=root_setup_status()):
+                 patch("hermes_installer.cli.os.geteuid",return_value=1000):
                 result=run(args)
             self.assertEqual(result.state,OutcomeState.PENDING)
-            self.assertIn("not been verified",result.message)
-            self.assertEqual(result.resume_command,"hermes-installer status")
+            self.assertIn("pinned headless core",result.message)
+            self.assertEqual(result.resume_command,"sudo -- hermes-installer-root-setup core-service resume")
             self.assertFalse((root/"data").exists())
             self.assertFalse((root/"state").exists())
-    def test_install_does_not_use_user_mode_bootstrap_or_create_state_roots(self):
+    def test_normal_install_hands_off_to_fixed_core_service_without_user_side_effects(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td); config=write_config(root/"config.json",root/"data",root/"state")
             with patch("hermes_installer.cli.discover_host",return_value=self.host), \
-                 patch("hermes_installer.root_setup.launcher_status",return_value=root_setup_status()):
+                 patch("hermes_installer.cli.os.geteuid",return_value=1000):
                 first=run(SimpleNamespace(command="install",config=config,dry_run=False))
                 self.assertEqual(first.state,OutcomeState.PENDING)
-                self.assertEqual(first.resume_command,"hermes-installer status")
-                self.assertIn("not been verified",first.message)
+                self.assertEqual(first.resume_command,"sudo -- hermes-installer-root-setup core-service install")
+                self.assertIn("normal installer starts with the pinned headless core",first.message)
                 self.assertFalse((root/"data").exists())
                 self.assertFalse((root/"state").exists())
 
@@ -81,16 +82,19 @@ class CliLifecycleTests(unittest.TestCase):
             self.assertFalse((root/"state").exists())
             self.assertTrue(result.findings[0].details["effects_started"] is False)
 
-    def test_install_shows_fixed_root_command_only_after_launcher_verification(self):
+    def test_normal_root_install_invokes_core_service_manager_and_stays_truthfully_pending(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td); config=write_config(root/"config.json",root/"data",root/"state")
             with patch("hermes_installer.cli.discover_host",return_value=self.host), \
-                 patch("hermes_installer.root_setup.launcher_status",return_value=root_setup_status(
-                     state="pending",resume_command="sudo -- hermes-installer-root-setup install",
-                     blocker_code="SETUP_PENDING")):
+                 patch("hermes_installer.cli.os.geteuid",return_value=0), \
+                 patch("hermes_installer.root_setup._require_root_linux"), \
+                 patch("hermes_installer.core_runtime.install_or_resume",return_value="service stage") as install:
                 result=run(SimpleNamespace(command="install",config=config,dry_run=False))
             self.assertEqual(result.state,OutcomeState.PENDING)
-            self.assertEqual(result.resume_command,"sudo -- hermes-installer-root-setup install")
+            self.assertEqual(result.resume_command,"hermes-installer resume")
+            self.assertEqual(result.findings[0].code,"core-runtime.process")
+            self.assertEqual(result.findings[0].state,OutcomeState.PENDING)
+            install.assert_called_once_with()
             self.assertFalse((root/"data").exists())
             self.assertFalse((root/"state").exists())
 

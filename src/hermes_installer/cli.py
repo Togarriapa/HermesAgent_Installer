@@ -43,14 +43,14 @@ def build_parser() -> argparse.ArgumentParser:
     install = command("install", "Apply the supported installation plan")
     install.add_argument("--dry-run", action="store_true", help="Print the plan without changes")
     install.add_argument("--core-only", action="store_true",
-                         help="Adopt the pinned Hermes core through the fixed root service action")
+                         help="Deprecated alias; the pinned headless core is always the first install stage")
     install.add_argument("--non-interactive", action="store_true", help="Require complete validated configuration")
     setup = command("setup", "Choose components and configure accounts")
     setup.add_argument("--non-interactive", action="store_true", help="Use only explicit config and secure credential references")
     setup.add_argument("--save-config", type=Path, help="Write the secret-reference-only result to a new private config file")
     resume = command("resume", "Resume the last checkpointed operation")
     resume.add_argument("--core-only", action="store_true",
-                        help="Resume the fixed root-owned Hermes core service action")
+                        help="Deprecated alias; core service recovery is part of normal resume")
     status = command("status", "Show discovered and recorded component states")
     status.add_argument("component", nargs="?", help="Limit status to a component")
     command("doctor", "Run read-only host diagnostics")
@@ -715,14 +715,28 @@ def run(args: argparse.Namespace) -> CommandResult:
             request_path=args.request, result_path=args.result,
         )
     if args.command in {"install", "resume"}:
-        if getattr(args, "core_only", False) or (
-                args.command == "resume" and os.geteuid() == 0
-                and Path("/var/lib/hermes-installer/core-runtime/ownership.json").is_file()):
+        # The headless core is the first supported install/resume stage. Do not
+        # wait for an optional presentation component to select it; Jarvis is
+        # the product surface and Desktop remains a benchmark only.
+        if (getattr(args, "core_only", False)
+                or config.components.get("hermes_agent", True)):
+            facts = discover_host()
+            if not facts.supported_arm64_linux:
+                return CommandResult(args.command, OutcomeState.FAILED,
+                    "Installation is restricted to supported Linux ARM64 targets; this host was not changed.",
+                    findings=_host_findings(config), exit_code=3)
+            if facts.package_locks or facts.package_lock_probe_errors:
+                details = facts.package_locks or facts.package_lock_probe_errors
+                return CommandResult(args.command, OutcomeState.PENDING,
+                    "Package manager activity could not be ruled out safely; the core service stage was not started.",
+                    tuple(Finding("package.lock", str(item), OutcomeState.PENDING) for item in details),
+                    resume_command=f"hermes-installer {args.command}" + (f" --config {args.config}" if args.config else ""),
+                    exit_code=4)
             if getattr(args, "dry_run", False):
                 return CommandResult("install", OutcomeState.PENDING,
-                    "Core-only dry run is descriptive; the root service adoption remains pending.",
-                    (Finding("core-runtime.adoption", "No service, credential, or account was changed.", OutcomeState.PENDING),),
-                    resume_command="sudo -- hermes-installer-root-setup core-service install")
+                    "Core-first dry run is descriptive; no service, credential, or account was changed.",
+                    (Finding("core-runtime.adoption", "The normal install starts with the pinned headless core; this dry run made no changes.", OutcomeState.PENDING),),
+                    resume_command="hermes-installer install")
             root_command=("resume" if args.command=="resume" else "install")
             if os.geteuid()==0:
                 try:
@@ -732,16 +746,16 @@ def run(args: argparse.Namespace) -> CommandResult:
                     message=install_or_resume()
                 except Exception as exc:
                     return CommandResult(args.command, OutcomeState.PENDING,
-                        f"Core service action is pending ({type(exc).__name__}); no unrelated Desktop or Resources state was changed.",
-                        (Finding("core-runtime.adoption", "Fixed core service action requires source/runtime and owned service proof.", OutcomeState.PENDING),),
+                        f"Core service action is pending ({type(exc).__name__}); no service stage was claimed complete.",
+                        (Finding("core-runtime.adoption", "The fixed root-owned core service requires pinned source, PM runtime, credentials, and owned-process proof.", OutcomeState.PENDING),),
                         resume_command="sudo -- hermes-installer-root-setup core-service resume", exit_code=4)
                 return CommandResult(args.command, OutcomeState.PENDING,
-                    f"{message}. Core service stage is live; private authentication, chat, restart and public-route acceptance remain pending.",
-                    (Finding("core-runtime.adoption", "Owned service was started and process-bound loopback listener was verified.", OutcomeState.READY),),
-                    resume_command="sudo -- hermes-installer-root-setup core-service resume", exit_code=4)
+                    f"{message}. The headless core process and loopback listener were verified; Jarvis Resources, authenticated chat, restart and protected route are still pending.",
+                    (Finding("core-runtime.process", "The fixed core service and process-bound listener are live; functional and user-facing acceptance remains pending.", OutcomeState.PENDING),),
+                    resume_command="hermes-installer resume", exit_code=4)
             return CommandResult(args.command, OutcomeState.PENDING,
-                "Core-only adoption is delegated to the fixed root-owned service action; no desktop or resource stages are implied.",
-                (Finding("core-runtime.adoption", "Pinned PM runtime and isolated authenticated loopback service require root verification.", OutcomeState.PENDING),),
+                "The normal installer starts with the pinned headless core; root-owned service changes require the explicit fixed core-service handoff.",
+                (Finding("core-runtime.adoption", "No process, credential or account change occurred in this unprivileged invocation.", OutcomeState.PENDING),),
                 resume_command=("sudo -- hermes-installer-root-setup core-service resume"
                                 if root_command == "resume" else
                                 "sudo -- hermes-installer-root-setup core-service install"))
