@@ -149,8 +149,7 @@ class CoreRpcClient:
         if not _valid_session_id(stored_session_id):
             raise JarvisChatDenied("stored core session mapping is invalid")
         result = await self._rpc("session.resume", {
-            "session_id": stored_session_id, "source": "jarvis", "defer_history": True,
-            "omit_messages": True,
+            "session_id": stored_session_id, "source": "jarvis",
         })
         runtime_id = result.get("session_id")
         resumed_id = result.get("resumed")
@@ -159,6 +158,40 @@ class CoreRpcClient:
             raise JarvisChatDenied("official core resume did not confirm the stored session")
         return runtime_id
 
+    async def resume_history(self, stored_session_id: str) -> tuple[str, list[dict[str, Any]]]:
+        """Reattach a stored session and return its bounded transcript from that response.
+
+        Each RPC uses a short-lived WebSocket. Hermes detaches session transports when a socket
+        closes, and session-scoped ``session.history`` rejects a reaped runtime ID. Resuming the
+        durable stored ID is the official recovery path and returns both a fresh runtime ID and
+        transcript in one bounded response.
+        """
+        if not _valid_session_id(stored_session_id):
+            raise JarvisChatDenied("stored core session mapping is invalid")
+        result = await self._rpc("session.resume", {"session_id": stored_session_id, "source": "jarvis"})
+        runtime_id, resumed_id, rows = (result.get("session_id"), result.get("resumed"),
+                                        result.get("messages"))
+        if (not _valid_session_id(runtime_id) or resumed_id != stored_session_id
+                or not isinstance(rows, list) or len(rows) > 20_000):
+            raise JarvisChatDenied("official core resume history was invalid")
+        return runtime_id, self._project_history_rows(rows)
+
+    @staticmethod
+    def _project_history_rows(rows: list[Any]) -> list[dict[str, Any]]:
+        projected: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict) or row.get("role") not in {"user", "assistant"}:
+                continue
+            # session.resume uses the browser/TUI projection (content); session.history uses the
+            # internal text projection. Accept only these two pinned upstream field names.
+            text = row.get("text", row.get("content"))
+            if not isinstance(text, str):
+                continue
+            timestamp = row.get("timestamp", row.get("createdAt", 0))
+            projected.append({"role": row["role"], "content": text[:MAX_CORE_TEXT_CHARS],
+                              "createdAt": timestamp if isinstance(timestamp, (int, float)) else 0})
+        return projected[-200:]
+
     async def history(self, session_id: str) -> list[dict[str, Any]]:
         if not _valid_session_id(session_id):
             raise JarvisChatDenied("official core session mapping is invalid")
@@ -166,17 +199,7 @@ class CoreRpcClient:
         rows = result.get("messages")
         if not isinstance(rows, list) or len(rows) > 20_000:
             raise JarvisChatDenied("official core history was invalid")
-        projected: list[dict[str, Any]] = []
-        for row in rows:
-            if not isinstance(row, dict) or row.get("role") not in {"user", "assistant"}:
-                continue
-            text = row.get("text")
-            if not isinstance(text, str):
-                continue
-            text = text[:MAX_CORE_TEXT_CHARS]
-            projected.append({"role": row["role"], "content": text,
-                              "createdAt": row.get("timestamp") if isinstance(row.get("timestamp"), (int, float)) else 0})
-        return projected[-200:]
+        return self._project_history_rows(rows)
 
     async def stream(self, session_id: str, text: str) -> AsyncIterator[CoreTurnEvent]:
         if not _valid_session_id(session_id) or not isinstance(text, str):

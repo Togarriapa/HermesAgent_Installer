@@ -69,6 +69,7 @@ class ChatPrincipal:
 class OfficialChatBackend(Protocol):
     async def create_session(self) -> tuple[str, str]: ...
     async def resume_session(self, stored_session_id: str) -> str: ...
+    async def resume_history(self, stored_session_id: str) -> tuple[str, list[dict[str, Any]]]: ...
     async def history(self, session_id: str) -> list[dict[str, Any]]: ...
     def stream(self, session_id: str, text: str) -> AsyncIterator[Any]: ...
     async def stop(self, session_id: str) -> None: ...
@@ -576,12 +577,30 @@ class JarvisChatService:
             phase = "conversation_lookup"
             conversation_id = request.match_info.get("conversation_id", "")
             conversation = self.store.get_conversation(principal.subject, conversation_id)
-            phase = "runtime_resume"
-            conversation = await self._ensure_current_runtime(request, principal, conversation)
-            phase = "runtime_resume_recheck"
-            self._current(request)
-            phase = "history_rpc"
-            history = await self.backend.history(conversation["backend_id"])
+            # A per-call WebSocket disconnect detaches the Hermes session. Always resume by its
+            # durable key and obtain history from that response; calling session.history on the
+            # old runtime ID can return official error 4001 even when the core process generation
+            # has not changed.
+            async with self._resume_lock:
+                current = self.store.get_conversation(principal.subject, conversation_id)
+                if current["core_generation"] != principal.core_generation:
+                    self.store.fail_active_conversation_turns(current["id"])
+                target_generation, target_subject = principal.core_generation, principal.subject
+                phase = "runtime_resume"
+                runtime_id, history = await self.backend.resume_history(current["session_key"])
+                phase = "runtime_resume_recheck"
+                principal = self._current(request)
+                if (principal.subject != target_subject
+                        or principal.core_generation != target_generation):
+                    raise JarvisChatDenied("core generation changed during resume")
+                if (current["core_generation"] != target_generation
+                        or current["backend_id"] != runtime_id):
+                    phase = "runtime_mapping"
+                    conversation = self.store.update_runtime_session(
+                        principal.subject, current["id"], current["core_generation"], runtime_id,
+                        target_generation)
+                else:
+                    conversation = current
             phase = "history_projection"
             self._current(request)
             projected = []

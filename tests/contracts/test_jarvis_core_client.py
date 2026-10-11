@@ -30,9 +30,30 @@ def test_session_creation_and_restart_resume_use_only_server_owned_rpc_params():
     assert calls[0][1]["title"] == "Jarvis"
     assert calls[0][1]["idempotency_key"].startswith("jarvis_")
     assert calls[1] == ("session.resume", {
-        "session_id": "stored-a", "source": "jarvis", "defer_history": True,
-        "omit_messages": True,
+        "session_id": "stored-a", "source": "jarvis",
     })
+
+
+def test_resume_history_uses_official_resume_payload_for_reaped_runtime_sessions():
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
+    calls = []
+
+    async def rpc(method, params):
+        calls.append((method, params))
+        return {"session_id": "runtime-restored", "resumed": "stored-a", "messages": [
+            {"role": "user", "content": "question", "timestamp": 12},
+            {"role": "tool", "content": "private tool output"},
+            {"role": "assistant", "content": "answer", "reasoning": "private reasoning"},
+        ]}
+
+    client._rpc = rpc
+    runtime_id, history = asyncio.run(client.resume_history("stored-a"))
+    assert runtime_id == "runtime-restored"
+    assert history == [
+        {"role": "user", "content": "question", "createdAt": 12},
+        {"role": "assistant", "content": "answer", "createdAt": 0},
+    ]
+    assert calls == [("session.resume", {"session_id": "stored-a", "source": "jarvis"})]
 
 
 def test_resume_rejects_a_different_stored_session_binding():

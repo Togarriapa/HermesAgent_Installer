@@ -24,7 +24,7 @@ def test_history_failure_logs_only_fixed_phase_and_exception_class(tmp_path, cap
     conversation = new_conversation(store, "subject-a")
 
     class Backend:
-        async def history(self, _session_id):
+        async def resume_history(self, _stored_session_id):
             raise RuntimeError("private upstream response marker")
 
     request = SimpleNamespace(
@@ -38,8 +38,35 @@ def test_history_failure_logs_only_fixed_phase_and_exception_class(tmp_path, cap
 
     records = [record.getMessage() for record in caplog.records
                if record.name.endswith("jarvis_chat")]
-    assert records == ["jarvis_chat_messages_failed phase=history_rpc exception=RuntimeError"]
+    assert records == ["jarvis_chat_messages_failed phase=runtime_resume exception=RuntimeError"]
     assert "private upstream response marker" not in " ".join(records)
+
+
+def test_message_reload_resumes_stored_session_even_when_core_generation_is_unchanged(tmp_path):
+    store = JarvisChatStore(tmp_path / "chat.sqlite3")
+    conversation = new_conversation(store, "subject-a")
+    calls = []
+
+    class Backend:
+        async def resume_history(self, stored_session_id):
+            calls.append(stored_session_id)
+            return "fresh-runtime-session", [
+                {"role": "user", "content": "question", "createdAt": 10},
+                {"role": "assistant", "content": "answer", "createdAt": 11},
+            ]
+
+    request = SimpleNamespace(match_info={"conversation_id": conversation["id"]})
+    service = JarvisChatService(
+        store, Backend(), principal_from_request=lambda _request: principal("subject-a"))
+    response = asyncio.run(service.messages(request))
+
+    assert response.status == 200
+    assert '"content": "answer"' in response.text
+    updated = store.get_conversation("subject-a", conversation["id"])
+    assert calls == [conversation["session_key"]]
+    assert updated["backend_id"] == "fresh-runtime-session"
+    assert updated["session_key"] == conversation["session_key"]
+    assert updated["core_generation"] == "core-generation-a"
 
 
 def new_conversation(store: JarvisChatStore, subject: str, index: int = 1) -> dict:
