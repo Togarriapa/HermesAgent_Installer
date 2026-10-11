@@ -2114,3 +2114,28 @@ Calendar SHALL show authentic owned account events with actual source/timezone/w
 #### Scenario: Account unavailable or final effect unapproved
 - **WHEN** calendar has no verified read source or proactive output lacks current final-effect authorization
 - **THEN** the UI states unavailable/review-needed and never fabricates events, sends or infers account/owner permission.
+
+### Requirement: Actual source-distinct owner extension administration
+The UI SHALL provide owner Extensions setup for Skills/native Plugins/MCP and supported extensions through exact reviewed native add/edit/enable/disable/update/remove adapters, with revision/CAS/recovery/post-state and preserved auth/data. Verified native display labels SHALL receive “Hermes ” prefix; bundled Resources and user-added origins SHALL remain distinct without renaming stable IDs.
+
+#### Scenario: Native mutation seam or origin absent
+- **WHEN** an extension lacks a reviewed mutation mode or its origin is unknown
+- **THEN** the action/origin remains pending/unknown, read inventory is not claimed as CRUD and no name/label creates native trust or changes internal ID.
+
+#### Scenario: Direct owner admin versus Expert action
+- **WHEN** the authenticated owner requests an exact supported admin change or an Expert/model requests the same change
+- **THEN** owner administration uses its actual finite current owner/CAS effect validation while the Expert cannot inherit admin permission from text, Project membership or stored planning data.
+
+### Requirement: Recoverable record deletion without knowledge cascade
+Chat/Project delete SHALL retain recoverable owned record trash and Restore state, affect future record/context use only, and SHALL NOT delete learned Obsidian notes/links/provenance/auth/recovery or implicitly purge arbitrary native sessions. Restore SHALL revalidate ownership/revision/currentness without reviving expired execution authority.
+
+#### Scenario: Project or source chat trashed
+- **WHEN** an owner trashes then restores a Project or Chat that contributed knowledge
+- **THEN** knowledge files and graph links remain intact, record/context membership changes are explicit and no current task permission or duplicate session is manufactured.
+
+### Requirement: Genuine categorized dynamic Obsidian web
+The Second brain web SHALL show actual note category/tag membership and vault links using stable multicolor legend/filtering and accessible list alternatives. Jarvis/Expert actor/review/instance provenance SHALL appear only from genuine persisted source records; knowledge links SHALL NOT impersonate team communications.
+
+#### Scenario: Manual note or deleted source record
+- **WHEN** a note lacks verified actor provenance or its originating Chat/Project is trashed
+- **THEN** actor/retention state is truthful, learned knowledge remains visible and graph motion does not invent active agent messaging or remove retained knowledge.
