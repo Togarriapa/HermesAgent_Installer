@@ -41,6 +41,18 @@
     "warnings": "Four AppKey deprecation warnings were reported.",
     "scope": "Root-reported Pi run; not a full installer, public gateway, or acceptance run."
   },
+  "latest_focused_pi_suite": {
+    "candidate_commit": "32a84405ea848ebd8c4a0a11632d43fbc0314a50",
+    "result": "passed",
+    "passed": 44,
+    "failed": 0,
+    "warnings": 16,
+    "warning_type": "aiohttp NotAppKey warnings",
+    "elapsed_seconds": 1.43,
+    "exit_code": 0,
+    "log_path": "/var/tmp/hermes-jarvis-core-checks-20261011/core-gateway-final-tests.log",
+    "scope": "Focused core/gateway suite on Pi; this does not establish public deployment, expiry/revocation, or full acceptance."
+  },
   "remaining_gates": {
     "bd_t266_1": "partial evidence only; installation/adoption, reversible owned Desktop retirement, fresh-install path, and full lifecycle acceptance remain open",
     "hi_t266_2": "partial: actual core chat and one owned restart/resume succeeded; individual Desktop capability parity remains open",
@@ -52,7 +64,7 @@
     "fresh_installer_acceptance": "not verified",
     "full_capability_parity": "not verified",
     "phone_input_and_family_usability": "not verified",
-    "gateway_fixture_followup": "Two newer gateway fixture failures remain unresolved; do not infer a pass from the focused core suite."
+    "gateway_fixture_followup": "The two prior focused gateway fixture failures were fixed and the 32a84405 focused Pi suite passed; public deployment, expiry/revocation, and full acceptance remain unverified."
   },
   "acceptance_assertions": {
     "AC01": null, "AC02": null, "AC03": null, "AC04": null, "AC05": null,
