@@ -33,24 +33,27 @@ _HTML = '''<!doctype html>
         aria-label="Show conversations" aria-controls="conversation-panel" aria-expanded="false">
         <span aria-hidden="true">☰</span>
       </button>
-      <a class="brand" href="/chat" aria-label="Jarvis chat home">
+      <a class="brand" href="/chat" id="jarvis-home" aria-label="Jarvis command centre home">
         <span class="brand-mark" aria-hidden="true"><span></span></span>
         <span class="brand-copy"><strong>JARVIS</strong><small>PERSONAL ASSISTANT</small></span>
       </a>
       <nav class="primary-nav" aria-label="Jarvis sections">
-        <button type="button" class="nav-item" data-view="chat" aria-current="page">Chat</button>
-        <button type="button" class="nav-item" data-view="chat" data-open-sessions="true">Sessions</button>
-        <button type="button" class="nav-item" data-view="overview">Overview</button>
-        <button type="button" class="nav-item" data-view="capabilities">Capabilities</button>
-        <button type="button" class="nav-item" data-view="settings">Settings</button>
-        <!-- JARVIS_FEATURE_NAV -->
+        <details class="nav-group" data-nav-group="command-centre"><summary>Command centre</summary><div class="nav-menu"><button type="button" class="nav-item" data-view="overview">Overview</button></div></details>
+        <details class="nav-group" data-nav-group="conversations"><summary>Conversations</summary><div class="nav-menu"><button type="button" class="nav-item" data-view="chat">Chat</button><button type="button" class="nav-item" data-view="chat" data-open-sessions="true">Sessions</button></div></details>
+        <details class="nav-group" data-nav-group="work"><summary>Work</summary><div class="nav-menu"><!-- JARVIS_GROUP_WORK --></div></details>
+        <details class="nav-group" data-nav-group="resources"><summary>Resources</summary><div class="nav-menu"><button type="button" class="nav-item" data-view="capabilities">Capabilities</button><!-- JARVIS_GROUP_RESOURCES --></div></details>
+        <details class="nav-group" data-nav-group="system"><summary>System</summary><div class="nav-menu"><button type="button" class="nav-item" data-view="settings">Settings</button><!-- JARVIS_GROUP_SYSTEM --></div></details>
       </nav>
+      <div class="assistant-hud" id="assistant-hud" data-state="checking" aria-label="Jarvis status">
+        <span class="assistant-orb" aria-hidden="true"><span class="orb-core"></span><span class="orb-ring"></span><span class="orb-halo"></span></span>
+        <span class="assistant-state"><strong id="assistant-state-label">JARVIS · CHECKING</strong><span id="assistant-mode" role="status" aria-live="polite">Checking secure connection</span></span>
+      </div>
       <span class="connection" id="connection-state" role="status" aria-live="polite">
         <span class="connection-dot" aria-hidden="true"></span><span>Checking access…</span>
       </span>
     </header>
 
-    <div class="workspace">
+    <div class="workspace" data-current-view="overview">
       <aside class="conversation-panel" id="conversation-panel" aria-label="Conversations">
         <div class="panel-heading">
           <div><span class="eyebrow">YOUR SPACE</span><h2>Sessions</h2></div>
@@ -67,20 +70,16 @@ _HTML = '''<!doctype html>
         <div class="panel-footer"><span class="privacy-mark" aria-hidden="true">◈</span><span>Private conversations</span></div>
       </aside>
 
-      <main class="chat-main" id="main-content" data-view-panel="chat">
+      <main class="chat-main" id="main-content" data-view-panel="chat" hidden>
         <div class="chat-heading">
           <div>
             <span class="eyebrow">PERSONAL ASSISTANT · PRIVATE SESSION</span>
             <h1 id="conversation-title">A clear mind, at your service.</h1>
           </div>
-          <div class="assistant-hud" id="assistant-hud" data-state="checking" aria-label="Jarvis status">
-            <span class="assistant-orb" aria-hidden="true"><span class="orb-core"></span><span class="orb-ring"></span><span class="orb-halo"></span></span>
-            <span class="assistant-state"><strong id="assistant-state-label">JARVIS · CHECKING</strong><span id="assistant-mode" role="status" aria-live="polite">Checking secure connection</span></span>
-          </div>
+          <button type="button" class="nav-item conversation-model" data-view="models-settings" aria-label="Choose a model for this conversation">Conversation model · session only</button>
         </div>
         <section class="message-scroll" id="message-scroll" aria-label="Conversation" aria-live="polite" aria-relevant="additions text">
           <div class="welcome" id="welcome-panel">
-            <div class="welcome-orbit" id="welcome-orb" data-state="checking" aria-hidden="true"><span></span><i></i></div>
             <p class="eyebrow">READY WHEN YOU ARE</p>
             <h2>What can I help you with?</h2>
             <p class="welcome-note">Ask a question or pick up a thought. Your conversation stays in this private space.</p>
@@ -109,8 +108,27 @@ _HTML = '''<!doctype html>
           <p class="voice-status" id="voice-status" role="status" aria-live="polite" hidden></p>
         </div>
       </main>
-      <section class="data-main" id="overview-view" aria-label="Overview" data-view-panel="overview" hidden>
-        <div class="page-heading"><span class="eyebrow">SYSTEM STATUS</span><h1>Overview</h1><p>Your assistant activity and service readiness.</p></div>
+      <main class="data-main" id="overview-view" aria-label="Command centre" data-view-panel="overview">
+        <div class="command-centre feature-view">
+          <div class="page-heading"><span class="eyebrow">JARVIS · COMMAND CENTRE</span><h1 id="command-title">What needs your attention?</h1><p>Your assistant, conversations and tools — ready for your direction.</p></div>
+          <section class="command-panel" aria-labelledby="command-title">
+            <div class="command-intro"><span class="command-kicker">YOUR COMMAND</span><span>Private owner workspace</span></div>
+            <form id="overview-command-form" class="command-form">
+              <label class="visually-hidden" for="overview-command-input">Ask Jarvis</label>
+              <textarea id="overview-command-input" rows="1" maxlength="8000" placeholder="Ask Jarvis anything…" autocomplete="off" autocapitalize="sentences" enterkeyhint="send" aria-describedby="overview-command-hint"></textarea>
+              <button type="submit"><span>Send to Jarvis</span><span aria-hidden="true">↑</span></button>
+            </form>
+            <p id="overview-command-hint" class="command-hint">Enter to send · Shift + Enter for a new line. Suggestions fill the message and wait for you to send.</p>
+            <p id="overview-command-status" class="command-hint" role="status" aria-live="polite" hidden></p>
+            <div class="quick-actions" aria-label="Suggested commands">
+              <button type="button" id="overview-new-conversation"><span aria-hidden="true">＋</span> New conversation</button>
+              <button type="button" data-command-prompt="Review my pending missions and explain what is awaiting execution."><span aria-hidden="true">◇</span> Review pending missions</button>
+              <button type="button" data-command-prompt="Summarize my recent Jarvis activity and its available source evidence."><span aria-hidden="true">⌁</span> Summarize recent activity</button>
+              <button type="button" data-command-prompt="Help me find the right installed skill or tool for this task: "><span aria-hidden="true">⌘</span> Find a skill or tool</button>
+              <button type="button" data-command-prompt="Review the current status of my configured integrations and report anything unavailable. Do not change their configuration."><span aria-hidden="true">↗</span> Check integrations</button>
+            </div>
+          </section>
+        </div>
         <div class="dashboard-grid">
           <section class="data-card status-card"><h2>Core service</h2><p class="large-value" id="core-status">Loading…</p><p id="core-readiness" class="muted">Checking verified status</p><p id="core-observed" class="muted"></p></section>
           <section class="data-card"><h2>Conversations</h2><p class="large-value" id="conversation-count">—</p><p class="muted">Available in your private history</p></section>
@@ -118,7 +136,7 @@ _HTML = '''<!doctype html>
           <section class="data-card"><h2>Active turns</h2><p class="large-value" id="turn-active">—</p><p class="muted" id="last-turn">Last turn not available</p></section>
           <section class="data-card chart-card"><h2>Turns over the last 7 days</h2><p class="muted" id="chart-caption">Loading recorded activity…</p><div id="turn-chart" role="list" aria-label="Assistant turns in the last seven days"></div></section>
         </div>
-      </section>
+      </main>
       <section class="data-main" id="capabilities-view" aria-label="Capabilities" data-view-panel="capabilities" hidden>
         <div class="page-heading"><span class="eyebrow">BUNDLED INVENTORY</span><h1>Capabilities</h1><p>Search the fixed offline catalog. Bundled items are declarations, not proof that a resource is enabled or working.</p></div>
         <div id="capability-readiness" class="readiness-banner" role="status">Loading verified capability inventory…</div>
@@ -263,6 +281,18 @@ html[data-jarvis-density="compact"] .data-card{padding:15px}html[data-jarvis-den
 html[data-jarvis-text-size="large"] .message-content{font-size:16px}html[data-jarvis-text-size="large"] .data-main{font-size:1.08rem}html[data-jarvis-text-size="large"] .voice-choice strong,html[data-jarvis-text-size="large"] .settings-list dt,html[data-jarvis-text-size="large"] .settings-list dd{font-size:15px}
 html[data-jarvis-motion="reduce"] *,html[data-jarvis-motion="reduce"] *::before,html[data-jarvis-motion="reduce"] *::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
 @media(max-width:600px){.voice-range-row{grid-template-columns:1fr}.voice-range-row label{min-height:52px}.voice-range-row input[type="range"]{min-height:40px}}
+/* Overview is the owner home; the searchable conversation rail remains local to Chat. */
+.primary-nav{position:relative;display:flex;align-items:center;justify-content:center;gap:2px;flex:1 1 0;min-width:0;margin-left:8px;overflow:visible}
+.nav-group{position:relative;flex:0 0 auto}.nav-group>summary{min-height:44px;display:flex;align-items:center;gap:8px;padding:0 10px;border:1px solid transparent;border-radius:10px;color:#9ab1b5;font-size:11px;white-space:nowrap;list-style:none;cursor:pointer;user-select:none}.nav-group>summary::-webkit-details-marker{display:none}.nav-group>summary:after{content:"";width:6px;height:6px;border-right:1px solid currentColor;border-bottom:1px solid currentColor;transform:rotate(45deg) translateY(-2px);opacity:.7}.nav-group[open]>summary,.nav-group[data-current="true"]>summary{border-color:rgba(88,228,235,.25);background:rgba(88,228,235,.08);color:#ddfbfd}.nav-group>summary:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.nav-menu{position:absolute;z-index:30;top:calc(100% + 7px);left:0;width:max-content;min-width:220px;max-width:min(300px,90vw);max-height:min(70dvh,560px);display:grid;gap:3px;overflow:auto;padding:7px;border:1px solid rgba(91,199,211,.3);border-radius:14px;background:rgba(5,22,29,.98);box-shadow:0 18px 48px rgba(0,0,0,.5),inset 0 1px rgba(255,255,255,.04);backdrop-filter:blur(18px)}.nav-group:nth-last-child(-n+2) .nav-menu{left:auto;right:0}.nav-menu .nav-item{width:100%;min-height:44px;display:flex;align-items:center;justify-content:flex-start;padding:0 12px;border-radius:8px;text-align:left;font-size:12px;transition:none}.primary-nav .nav-item{flex:0 0 auto}.nav-item:active{transform:none}
+.workspace[data-current-view="chat"]{grid-template-columns:286px minmax(0,1fr)}.workspace[data-current-view]:not([data-current-view="chat"]){display:block}.workspace[data-current-view]:not([data-current-view="chat"])>.conversation-panel{display:none}.workspace[data-current-view]:not([data-current-view="chat"])>.chat-main{display:none}.workspace[data-current-view]:not([data-current-view="chat"])>.data-main{width:100%;height:100%;padding:clamp(20px,4vw,48px)}.assistant-hud{flex:0 0 auto;min-width:168px;padding:6px 10px 6px 6px;gap:8px;border-radius:14px}.assistant-orb{width:42px;height:42px}.orb-core{inset:11px}.orb-ring{inset:4px}.assistant-state strong{font-size:8px}.assistant-state span{max-width:122px;font-size:10px}.assistant-hud[data-state="thinking"] .orb-halo{animation:jarvis-orb-breathe 2.4s linear infinite}.assistant-hud[data-state="idle"] .assistant-state strong{color:#86cfc9}.assistant-hud[data-state="checking"] .orb-halo{opacity:.42}.assistant-hud[data-state="thinking"] .assistant-state strong{color:#91e8ec}.assistant-hud[data-state="error"] .orb-core{background:radial-gradient(circle at 38% 32%,#fff7df,#e9bd70 45%,#92703e 78%,#332717)}
+.conversation-model{align-self:center;flex:none;min-height:44px;padding-inline:11px;border-color:rgba(102,188,202,.2);font-size:10px}.command-centre .page-heading{margin-bottom:16px}.command-centre .page-heading h1{font-size:clamp(28px,4vw,42px);font-weight:560;letter-spacing:-.04em}.command-centre .page-heading p{max-width:700px}.command-panel{max-width:1080px;margin:0 auto 20px;padding:clamp(14px,2.5vw,24px);border:1px solid rgba(88,228,235,.28);border-radius:18px;background:radial-gradient(ellipse at 4% 0%,rgba(38,181,193,.15),transparent 55%),linear-gradient(140deg,rgba(13,43,52,.94),rgba(8,23,30,.96));box-shadow:inset 0 1px rgba(255,255,255,.05),0 18px 48px rgba(0,0,0,.17)}.command-intro{display:flex;align-items:center;justify-content:space-between;gap:1rem;color:#8eaaaf;font-size:.72rem}.command-kicker{color:#83d9de;font:600 .65rem/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.14em}.command-form{display:flex;align-items:flex-end;gap:.6rem;margin-top:.65rem;padding:.55rem;border:1px solid rgba(88,228,235,.34);border-radius:14px;background:rgba(3,17,23,.74)}.command-form textarea{width:100%;min-width:0;min-height:50px;max-height:144px;resize:vertical;padding:.8rem .65rem;border:0;outline:0;background:transparent;color:var(--text);font:inherit;font-size:1rem;line-height:1.5}.command-form textarea::placeholder{color:#708b91}.command-form button{display:flex;align-items:center;justify-content:center;gap:.7rem;min-width:144px;min-height:48px;padding:.65rem .85rem;border:1px solid rgba(93,228,235,.55);border-radius:10px;background:linear-gradient(135deg,#168895,#12626e);color:#efffff;font-size:.82rem;font-weight:650;cursor:pointer}.command-form button:focus-visible,.quick-actions button:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}.command-hint{margin:.6rem .2rem 0;color:#819ca1;font-size:.72rem;line-height:1.55}.quick-actions{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:1rem}.quick-actions button{display:flex;align-items:center;gap:.5rem;min-height:44px;padding:.45rem .8rem;border:1px solid rgba(112,190,199,.2);border-radius:999px;background:rgba(7,29,36,.7);color:#c4dbde;font-size:.76rem;cursor:pointer}.overview-status-strip{max-width:1080px;margin:-5px auto 16px;color:#9ab2b6;font-size:11px;line-height:1.55}.overview-status-strip strong{color:#d3e7e8;font-weight:600}
+@media(min-width:761px) and (max-width:1120px){.primary-nav{order:4;flex:1 1 100%;width:100%;justify-content:flex-start;margin:0}.assistant-hud{margin-left:auto}}
+@media(max-width:760px){.topbar{height:auto;min-height:64px;flex-wrap:wrap;gap:8px 10px;padding:8px 12px}.brand{order:1}.assistant-hud{order:2;margin-left:auto;min-width:0;padding:4px 7px 4px 4px;gap:6px}.assistant-orb{width:36px;height:36px}.orb-core{inset:10px}.orb-ring{inset:3px}.assistant-state strong{font-size:7px;letter-spacing:.11em}.assistant-state span{max-width:96px;font-size:9px}.connection{order:3;margin-left:0;font-size:10px}.primary-nav{position:fixed;z-index:12;left:50%;bottom:calc(7px + env(safe-area-inset-bottom));order:4;width:min(calc(100% - 20px),540px);height:58px;margin:0;padding:5px;justify-content:space-between;gap:2px;overflow-x:auto;overscroll-behavior-inline:contain;transform:translateX(-50%);border:1px solid rgba(111,203,214,.2);border-radius:17px;background:rgba(7,23,30,.96);box-shadow:0 12px 32px rgba(0,0,0,.4),inset 0 1px rgba(255,255,255,.05);backdrop-filter:blur(16px) saturate(125%);scrollbar-width:none}.primary-nav::-webkit-scrollbar{display:none}.nav-group{flex:1 0 auto}.nav-group>summary{min-height:46px;justify-content:center;padding-inline:7px;font-size:9px;gap:5px}.nav-group>summary:after{width:5px;height:5px}.nav-menu,.nav-group:nth-last-child(-n+2) .nav-menu{position:fixed;left:10px;right:10px;top:auto;bottom:calc(76px + env(safe-area-inset-bottom));width:auto;max-width:none;max-height:min(64dvh,520px);padding:9px;border-radius:16px}.workspace{padding-bottom:calc(68px + env(safe-area-inset-bottom))}.workspace[data-current-view="chat"]{grid-template-columns:minmax(0,1fr)}.conversation-panel{top:calc(96px + env(safe-area-inset-top));bottom:calc(66px + env(safe-area-inset-bottom))}.chat-heading{flex-wrap:wrap}.conversation-model{width:100%;justify-content:flex-start;text-align:left}.command-form{align-items:stretch;flex-direction:column}.command-form button{width:100%}.quick-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.quick-actions button{justify-content:flex-start;padding-inline:.65rem;font-size:.69rem}.workspace[data-current-view]:not([data-current-view="chat"])>.data-main{padding:20px 16px calc(85px + env(safe-area-inset-bottom))}}
+@media(max-width:390px){.brand-copy small{display:none}.assistant-state span{max-width:80px}.nav-group>summary{padding-inline:5px;font-size:8px}.command-centre .page-heading h1{font-size:26px}}
+@media(hover:hover) and (pointer:fine){.command-form button,.quick-actions button{transition:filter 140ms ease,border-color 140ms ease,background-color 140ms ease}.command-form button:hover{filter:brightness(1.13);border-color:var(--cyan)}.quick-actions button:hover{border-color:rgba(88,228,235,.48);background:rgba(18,76,85,.68);color:#f2ffff}}
+@media(prefers-reduced-motion:reduce){.assistant-hud[data-state="thinking"] .orb-halo{animation:none;opacity:.72}.nav-group>summary,.nav-menu .nav-item,.command-form button,.quick-actions button{transition:none}}
+@media(prefers-contrast:more){.nav-group>summary,.nav-menu,.command-panel{border-color:currentColor}}
 '''.encode("utf-8")
 
 
@@ -284,6 +314,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   };
   let conversations = [];
   let conversationId = null;
+  let conversationHydrated = false;
   let activeTurnId = null;
   let eventSource = null;
   let heartbeatTimer = null;
@@ -304,7 +335,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   let mountedFeature = null;
   let mountedFeatureCleanup = null;
   let capabilityDetailsCleanup = null;
-  let currentView = "chat";
+  let currentView = null;
 
   function mountCapabilitiesDetails() {
     if (capabilityDetailsCleanup) return;
@@ -357,16 +388,40 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     mountedFeature = null;
     mountedFeatureCleanup = null;
   }
+  function preselectCurrentModelConversation(root) {
+    const id = conversationId;
+    const select = root.querySelector("[data-models-conversation]");
+    if (!id || !select) return null;
+    let observer = null;
+    const chooseCurrent = () => {
+      const option = [...select.options].find((item) => item.value === id);
+      if (option) {
+        select.value = id;
+        select.dispatchEvent(new Event("change", {bubbles: true}));
+        observer.disconnect();
+      } else if (select.disabled && select.options.length > 1) {
+        observer.disconnect();
+      }
+    };
+    observer = new MutationObserver(chooseCurrent);
+    observer.observe(select, {childList: true});
+    return () => observer.disconnect();
+  }
   function mountFeature(feature) {
     if (mountedFeature === feature) return;
     unmountFeature();
     const root = byId(`${feature.id}-view`);
     if (!root || typeof feature.mount !== "function") return;
     mountedFeature = feature;
+    let contextualCleanup = null;
     try {
       const cleanup = feature.mount(root, featureApi(feature), Object.freeze({}));
-      mountedFeatureCleanup = typeof cleanup === "function" ? cleanup : null;
+      if (feature.id === "models-settings") contextualCleanup = preselectCurrentModelConversation(root);
+      mountedFeatureCleanup = () => {
+        try { if (typeof cleanup === "function") cleanup(); } finally { if (contextualCleanup) contextualCleanup(); }
+      };
     } catch (_) {
+      if (contextualCleanup) contextualCleanup();
       mountedFeature = null;
       const status = root.querySelector('[role="status"]');
       if (status) status.textContent = "This dashboard view could not be loaded.";
@@ -387,8 +442,9 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   function setAssistantState(state, label) {
     const hud = byId("assistant-hud");
     if (!hud) return;
-    hud.dataset.state = ["checking", "ready", "listening", "busy", "speaking", "error"].includes(state) ? state : "checking";
-    byId("welcome-orb").dataset.state = hud.dataset.state;
+    const semanticState = ({ready: "idle", busy: "thinking"})[state] || state;
+    hud.dataset.state = ["checking", "idle", "listening", "thinking", "speaking", "error"].includes(semanticState) ? semanticState : "checking";
+    hud.setAttribute("aria-label", `Jarvis status: ${semanticState}`);
     byId("assistant-state-label").textContent = `JARVIS · ${hud.dataset.state.toUpperCase()}`;
     byId("assistant-mode").textContent = label;
   }
@@ -902,6 +958,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       if (!data || data.status !== "queued") throw new Error("Jarvis could not safely queue this response.");
       watchTurn(data.turnId, data.heartbeatNonce, assistantBody, waiting);
       refreshConversations().catch((error) => showError(error.message));
+      return true;
     } catch (error) {
       ui.input.disabled = false;
       ui.send.disabled = false;
@@ -912,6 +969,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       status.textContent = error.message;
       assistantBody.append(status);
       showError(error.message);
+      return false;
     }
   }
   function createIdempotencyKey() {
@@ -1132,6 +1190,9 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     if (selected !== currentView && mountedFeature) unmountFeature();
     if (selected !== currentView && currentView === "capabilities") unmountCapabilitiesDetails();
     currentView = selected;
+    const workspace = document.querySelector(".workspace");
+    workspace.dataset.currentView = selected;
+    ui.toggle.hidden = selected !== "chat";
     if (selectedNavigation !== "sessions" && window.matchMedia("(max-width: 760px)").matches && ui.panel.dataset.open === "true") setPanel(false);
     for (const panel of document.querySelectorAll("[data-view-panel]")) panel.hidden = panel.dataset.viewPanel !== selected;
     for (const button of document.querySelectorAll(".nav-item")) {
@@ -1139,11 +1200,25 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       if (buttonView === selectedNavigation) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
     }
-    const activeNavItem = [...document.querySelectorAll(".nav-item")].find((button) =>
-      (button.dataset.openSessions === "true" ? "sessions" : button.dataset.view) === selectedNavigation);
-    const primaryNav = activeNavItem && activeNavItem.closest(".primary-nav");
-    if (activeNavItem && primaryNav && primaryNav.scrollWidth > primaryNav.clientWidth) {
-      const left = activeNavItem.offsetLeft - (primaryNav.clientWidth - activeNavItem.offsetWidth) / 2;
+    const groupForView = {
+      overview: "command-centre", chat: "conversations", sessions: "conversations",
+      missions: "work", bots: "work", capabilities: "resources", "resources-learning": "resources",
+      "native-inventory": "resources", files: "resources", settings: "system",
+      "models-settings": "system", activity: "system", "native-controls": "system"
+    };
+    const currentGroup = groupForView[selectedNavigation] || groupForView[selected] || "command-centre";
+    for (const group of document.querySelectorAll(".nav-group")) {
+      const active = group.dataset.navGroup === currentGroup;
+      group.dataset.current = String(active);
+      const summary = group.querySelector("summary");
+      if (active) summary.setAttribute("aria-current", "location");
+      else summary.removeAttribute("aria-current");
+    }
+    const activeGroup = [...document.querySelectorAll(".nav-group")].find((group) => group.dataset.navGroup === currentGroup);
+    const primaryNav = activeGroup && activeGroup.closest(".primary-nav");
+    if (activeGroup && primaryNav && primaryNav.scrollWidth > primaryNav.clientWidth) {
+      const summary = activeGroup.querySelector("summary");
+      const left = summary.offsetLeft - (primaryNav.clientWidth - summary.offsetWidth) / 2;
       const behavior = shouldReduceMotion() ? "auto" : "smooth";
       primaryNav.scrollTo({ left: Math.max(0, left), behavior });
     }
@@ -1240,9 +1315,111 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   ui.toggle.addEventListener("click", () => setPanel(ui.panel.dataset.open !== "true"));
   ui.close.addEventListener("click", () => setPanel(false));
   ui.scrim.addEventListener("click", () => setPanel(false));
+  for (const group of document.querySelectorAll(".nav-group")) group.querySelector("summary").addEventListener("click", () => {
+    for (const other of document.querySelectorAll(".nav-group")) if (other !== group) other.open = false;
+  });
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest(".nav-group")) for (const group of document.querySelectorAll(".nav-group")) group.open = false;
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    const open = document.querySelector(".nav-group[open]");
+    if (!open) return;
+    open.open = false;
+    open.querySelector("summary").focus({preventScroll: true});
+  });
   for (const button of document.querySelectorAll(".nav-item")) button.addEventListener("click", () => {
+    for (const group of document.querySelectorAll(".nav-group")) group.open = false;
     if (button.dataset.openSessions === "true") { openSessions().catch((error) => showError(error.message)); return; }
     showView(button.dataset.view);
+  });
+  byId("jarvis-home").addEventListener("click", (event) => {
+    event.preventDefault();
+    for (const group of document.querySelectorAll(".nav-group")) group.open = false;
+    showView("overview");
+  });
+  const overviewForm = byId("overview-command-form");
+  const overviewInput = byId("overview-command-input");
+  const overviewStatus = byId("overview-command-status");
+  const overviewSend = overviewForm.querySelector('button[type="submit"]');
+  const overviewNewConversation = byId("overview-new-conversation");
+  let overviewCommandPending = false;
+  let overviewConversationPending = false;
+  async function sendOverviewCommand(event) {
+    event.preventDefault();
+    const text = overviewInput.value.trim();
+    if (!text || overviewCommandPending) return;
+    if (ui.connection.dataset.state !== "ready" || !conversationHydrated) {
+      overviewStatus.textContent = "The secure Jarvis connection is not ready. Your command is still here; try again after it reconnects.";
+      overviewStatus.hidden = false;
+      return;
+    }
+    if (activeTurnId || ui.input.disabled || overviewConversationPending) {
+      overviewStatus.textContent = "Jarvis is already responding in this conversation. Wait for the response before sending another command.";
+      overviewStatus.hidden = false;
+      return;
+    }
+    overviewCommandPending = true;
+    overviewInput.disabled = true;
+    overviewSend.disabled = true;
+    try {
+      await showView("chat");
+      const accepted = await sendMessage(text);
+      if (accepted) {
+        overviewInput.value = "";
+        overviewStatus.hidden = true;
+      } else {
+        overviewStatus.textContent = "Jarvis did not accept this command. Your text is preserved here; see the notice in Chat for details.";
+        overviewStatus.hidden = false;
+      }
+    } catch (error) {
+      overviewStatus.textContent = "Jarvis could not queue this command. Your text is preserved here; see the notice in Chat for details.";
+      overviewStatus.hidden = false;
+      showError(error.message);
+    } finally {
+      overviewCommandPending = false;
+      overviewInput.disabled = false;
+      overviewSend.disabled = false;
+    }
+  }
+  overviewForm.addEventListener("submit", sendOverviewCommand);
+  overviewInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+      event.preventDefault(); overviewForm.requestSubmit();
+    }
+  });
+  overviewInput.addEventListener("input", () => {
+    overviewInput.style.height = "auto";
+    overviewInput.style.height = `${Math.min(overviewInput.scrollHeight, 144)}px`;
+  });
+  for (const button of document.querySelectorAll("[data-command-prompt]")) button.addEventListener("click", () => {
+    overviewInput.value = button.dataset.commandPrompt;
+    overviewInput.dispatchEvent(new Event("input", {bubbles: true}));
+    overviewInput.focus({preventScroll: true});
+    overviewInput.setSelectionRange(overviewInput.value.length, overviewInput.value.length);
+  });
+  overviewNewConversation.addEventListener("click", async () => {
+    if (overviewCommandPending || overviewConversationPending) return;
+    if (ui.connection.dataset.state !== "ready" || !conversationHydrated) {
+      overviewStatus.textContent = "Wait for the secure Jarvis connection before starting a conversation.";
+      overviewStatus.hidden = false;
+      return;
+    }
+    if (activeTurnId || ui.input.disabled) {
+      overviewStatus.textContent = "Wait for Jarvis to finish the current response before starting a new conversation.";
+      overviewStatus.hidden = false;
+      return;
+    }
+    overviewConversationPending = true;
+    overviewNewConversation.disabled = true;
+    overviewStatus.hidden = true;
+    try {
+      await showView("chat");
+      await createConversation();
+    } finally {
+      overviewConversationPending = false;
+      overviewNewConversation.disabled = false;
+    }
   });
   window.addEventListener("pagehide", () => { closeStream(); stopRecognition(); stopSpeech(); unmountFeature(); });
   document.addEventListener("visibilitychange", () => {
@@ -1253,12 +1430,14 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   });
   loadUIPreferences();
   configureVoice();
+  showView("overview");
   (async () => {
     try {
       await refreshConversations();
       setConnection("ready", "Secure connection");
       setAssistantState("ready", "Ready for your message");
       if (conversations.length) await loadConversation(conversations[0].id);
+      conversationHydrated = true;
     } catch (error) {
       setConnection("error", "Access unavailable");
       showError(error.message);
@@ -1272,7 +1451,7 @@ def _compose_feature_assets() -> None:
     """Embed the literal reviewed feature registry in the three fixed assets."""
     global _HTML, _CSS, _JS
     validate_feature_assets(FEATURE_ASSETS)
-    nav: list[str] = []
+    grouped_nav: dict[str, list[str]] = {"work": [], "resources": [], "system": []}
     panels: list[str] = []
     css_fragments: list[bytes] = []
     javascript: list[str] = []
@@ -1280,10 +1459,18 @@ def _compose_feature_assets() -> None:
         feature_id = escape(feature.feature_id, quote=True)
         nav_label = escape(feature.nav_label)
         title = escape(feature.title, quote=True)
-        nav.append(
+        nav_markup = (
             f'<button type="button" class="nav-item" data-view="{feature_id}">'
             f'{nav_label}</button>'
         )
+        group = {
+            "missions": "work", "bots": "work",
+            "resources-learning": "resources", "native-inventory": "resources", "files": "resources",
+            "activity": "system", "native-controls": "system", "models-settings": "system",
+        }.get(feature.feature_id)
+        if group is None:
+            raise ValueError(f"reviewed Jarvis feature has no navigation group: {feature.feature_id}")
+        grouped_nav[group].append(nav_markup)
         panels.append(
             f'<section class="data-main" id="{feature_id}-view" '
             f'aria-label="{title}" data-view-panel="{feature_id}" hidden>'
@@ -1303,10 +1490,12 @@ def _compose_feature_assets() -> None:
         )
 
     html = _HTML.decode("utf-8")
-    html = html.replace("<!-- JARVIS_FEATURE_NAV -->", "".join(nav))
+    html = html.replace("<!-- JARVIS_GROUP_WORK -->", "".join(grouped_nav["work"]))
+    html = html.replace("<!-- JARVIS_GROUP_RESOURCES -->", "".join(grouped_nav["resources"]))
+    html = html.replace("<!-- JARVIS_GROUP_SYSTEM -->", "".join(grouped_nav["system"]))
     html = html.replace("<!-- JARVIS_FEATURE_PANELS -->", "".join(panels))
     html = html.replace("__JARVIS_CAPABILITY_DETAILS__", _CAPABILITY_DETAILS_HTML)
-    if "JARVIS_FEATURE_" in html:
+    if "JARVIS_FEATURE_" in html or "JARVIS_GROUP_" in html:
         raise ValueError("Jarvis feature asset template markers were not fully replaced")
     script = _JS.decode("utf-8").replace(
         "__JARVIS_FEATURE_ASSETS__", "[" + ",".join(javascript) + "]"
