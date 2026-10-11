@@ -89,6 +89,50 @@ class CoreGatewayInspectorClientTests(unittest.TestCase):
             ["pending_member_invalid", "pending_member_invalid"]))
         self.assertFalse(core_gateway_inspector._valid_learning_reasons(["internal_error"]))
 
+    def test_root_native_tool_reader_uses_exact_live_session_tools_list(self):
+        from hermes_installer.remote.core_client import CoreRpcClient
+
+        rows = [
+            {"name": "web", "description": "safe public reads", "tool_count": 2,
+             "enabled": True, "tools": ["web_search", "web_fetch"]},
+            {"name": "terminal", "description": "local command tools", "tool_count": 1,
+             "enabled": False, "tools": ["terminal"]},
+        ]
+        calls = []
+
+        async def fixed_tools_rpc(_client, method, params):
+            calls.append((method, params))
+            return {"toolsets": rows}
+
+        with patch.object(CoreRpcClient, "_rpc", fixed_tools_rpc):
+            names = core_gateway_inspector._read_session_tool_configuration(
+                "jarvis-session-123", deadline=time.monotonic() + 5)
+        self.assertEqual(calls, [("tools.list", {"session_id": "jarvis-session-123"})])
+        self.assertEqual(names, ("web_fetch", "web_search"))
+
+        ambiguous = [dict(row, enabled=True) for row in rows]
+        async def ambiguous_tools_rpc(_client, method, params):
+            return {"toolsets": ambiguous}
+        with patch.object(CoreRpcClient, "_rpc", ambiguous_tools_rpc):
+            with self.assertRaises(core_gateway_inspector.CoreInspectionDenied):
+                core_gateway_inspector._read_session_tool_configuration(
+                    "jarvis-session-123", deadline=time.monotonic() + 5)
+
+    def test_native_inheritance_policy_requires_explicit_closed_booleans(self):
+        raw = (
+            b"platform_toolsets:\n  cli: [web]\n"
+            b"inherit_mcp_toolsets: false\n"
+            b"delegation:\n  orchestrator_enabled: true\n"
+        )
+        inherit_mcp, orchestrator, digest = core_gateway_inspector._parse_native_inheritance_config(raw)
+        self.assertFalse(inherit_mcp)
+        self.assertTrue(orchestrator)
+        self.assertEqual(digest, hashlib.sha256(raw).hexdigest())
+
+        ambiguous = b"platform_toolsets:\n  cli: [web]\n"
+        with self.assertRaises(core_gateway_inspector.CoreInspectionDenied):
+            core_gateway_inspector._parse_native_inheritance_config(ambiguous)
+
     def test_skill_learning_ipc_observation_validates_jwt_and_consumes_real_one_use_issue(self):
         config = _config()
         issued = time.monotonic() - 0.05
