@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import stat
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -94,6 +95,55 @@ def _accepted_observation(config, *, now, lease_seconds=4.0):
 
 
 class CoreGatewayProofTests(unittest.TestCase):
+    def test_config_load_accepts_only_actual_pinned_core_python_path(self):
+        document = {
+            "schema": 1, "hostname": "jarvis.example.test",
+            "issuer": "https://team.cloudflareaccess.com", "audience": "core-test-audience",
+            "allowed_emails": ["owner@example.test"], "gateway_uid": 996,
+            "gateway_gid": 981, "core_uid": 1000, "core_gid": 1000,
+            "boot_id": "12345678-1234-1234-1234-123456789012",
+            "gateway_unit_sha256": "a" * 64, "gateway_python_sha256": "b" * 64,
+            "tunnel_unit_sha256": "c" * 64, "cloudflared_binary_sha256": "d" * 64,
+            "core_unit_sha256": "e" * 64, "core_launcher_sha256": "f" * 64,
+            "core_python": str(core_gateway_inspector.CORE_PYTHON_LINK),
+            "core_python_sha256": core_gateway_inspector.CORE_PYTHON_SHA256,
+            "ingress_socket": str(core_gateway.CORE_INGRESS_SOCKET),
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            config_path = Path(temporary) / "gateway.json"
+            config_path.write_text(json.dumps(document), encoding="utf-8")
+            config_path.chmod(0o600)
+            parent_info = SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=0, st_gid=0)
+            real_lstat = os.lstat
+
+            def lstat(path, *args, **kwargs):
+                if Path(path) == config_path.parent:
+                    return parent_info
+                return real_lstat(path, *args, **kwargs)
+
+            with patch.object(core_gateway, "CORE_CONFIG", config_path), \
+                 patch.object(core_gateway, "CORE_CONFIG_DIR", config_path.parent), \
+                 patch.object(core_gateway.os, "lstat", side_effect=lstat):
+                loaded = core_gateway.CoreGatewayConfig.load(
+                    path=config_path, expected_owner_uid=os.getuid())
+                self.assertEqual(loaded.core_python, core_gateway_inspector.CORE_PYTHON_LINK)
+
+                document["core_python"] = (
+                    "/home/admin/HermesInstaller/data/installs/" + "0" * 24 +
+                    "/environments/" + "0" * 32 + "/venv/bin/python")
+                config_path.write_text(json.dumps(document), encoding="utf-8")
+                with self.assertRaises(core_gateway.CoreGatewayDenied):
+                    core_gateway.CoreGatewayConfig.load(
+                        path=config_path, expected_owner_uid=os.getuid())
+
+                document["core_python"] = str(core_gateway_inspector.CORE_PYTHON_LINK)
+                config_path.write_text(json.dumps(document), encoding="utf-8")
+                hardlink = Path(temporary) / "linked-config.json"
+                os.link(config_path, hardlink)
+                with self.assertRaises(core_gateway.CoreGatewayDenied):
+                    core_gateway.CoreGatewayConfig.load(
+                        path=config_path, expected_owner_uid=os.getuid())
+
     def test_root_and_accepted_proofs_bind_exact_claims_and_original_deadline(self):
         config = _config()
         fake_stat = SimpleNamespace(st_mode=stat.S_IFSOCK | 0o660, st_dev=1, st_ino=2,

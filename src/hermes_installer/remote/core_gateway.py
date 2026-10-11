@@ -167,9 +167,8 @@ class CoreGatewayConfig:
                     or result.ingress_socket != CORE_INGRESS_SOCKET
                     or result.core_python != CORE_PYTHON_LINK
                     or result.core_python != Path(value["core_python"])
-                    or not re.fullmatch(
-                        r"/home/admin/HermesInstaller/data/installs/[0-9a-f]{24}/environments/"
-                        r"[0-9a-f]{32}/venv/bin/python", str(result.core_python))
+                    or not isinstance(value["core_python"], str)
+                    or value["core_python"] != str(CORE_PYTHON_LINK)
                     or not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", result.boot_id)
                     or not all(_sha256(getattr(result, field_name)) for field_name in (
                         "gateway_unit_sha256", "gateway_python_sha256", "tunnel_unit_sha256",
