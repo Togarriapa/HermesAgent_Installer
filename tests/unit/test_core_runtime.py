@@ -29,6 +29,19 @@ def _resource_receipt(*, prompt_matches=False):
     }
 
 
+def _isolate_resource_import_paths(tmp_path, monkeypatch):
+    """Keep import-eligibility checks away from a host's real Hermes tree."""
+    home = tmp_path / "isolated-home" / "admin"
+    hermes_home = home / ".hermes"
+    cas = tmp_path / "isolated-resource-cas"
+    home.mkdir(parents=True)
+    hermes_home.mkdir()
+    cas.mkdir()
+    monkeypatch.setattr(core, "HOME", home)
+    monkeypatch.setattr(core, "HERMES_HOME", hermes_home)
+    monkeypatch.setattr(core, "RESOURCES_CAS", cas)
+
+
 def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False):
     etc = tmp_path / "etc" / "hermes-installer"
     var = tmp_path / "var" / "lib" / "hermes-installer"
@@ -336,6 +349,7 @@ def test_launcher_uses_isolated_pinned_loopback_without_secret_arguments():
 
 
 def test_bundled_resource_import_uses_exact_admin_home_source_and_pm_python(tmp_path, monkeypatch):
+    _isolate_resource_import_paths(tmp_path, monkeypatch)
     installer_python = tmp_path / "installer-python"
     interpreter_target = tmp_path / "pm-python-target"
     runuser = tmp_path / "runuser"
@@ -369,6 +383,7 @@ def test_bundled_resource_import_uses_exact_admin_home_source_and_pm_python(tmp_
 
 
 def test_admin_import_prompt_claim_is_discarded_for_independent_root_readback(tmp_path, monkeypatch):
+    _isolate_resource_import_paths(tmp_path, monkeypatch)
     installer_python = tmp_path / "installer-python"
     runuser = tmp_path / "runuser"
     for executable in (installer_python, runuser):
@@ -386,6 +401,7 @@ def test_admin_import_prompt_claim_is_discarded_for_independent_root_readback(tm
 
 
 def test_root_discards_admin_discovery_booleans_and_uses_separate_readback(tmp_path, monkeypatch):
+    _isolate_resource_import_paths(tmp_path, monkeypatch)
     runuser = tmp_path / "runuser"
     runuser.write_text("fixed fixture executable")
     runuser.chmod(0o755)
