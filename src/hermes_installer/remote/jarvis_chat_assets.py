@@ -82,8 +82,12 @@ _HTML = '''<!doctype html>
                 <span class="send-label">Send</span><span class="send-icon" aria-hidden="true">↑</span>
               </button>
               <button class="stop-button" id="stop-button" type="button" hidden>Stop response</button>
+              <button class="voice-button" id="voice-input" type="button" aria-label="Start push to talk" hidden>Speak</button>
+              <button class="voice-button" id="voice-stop" type="button" hidden>Stop listening</button>
+              <button class="voice-button" id="speech-stop" type="button" hidden>Stop audio</button>
             </div>
           </form>
+          <p class="voice-status" id="voice-status" role="status" aria-live="polite" hidden></p>
         </div>
       </main>
       <section class="data-main" id="overview-view" aria-label="Overview" data-view-panel="overview" hidden>
@@ -103,6 +107,15 @@ _HTML = '''<!doctype html>
       <section class="data-main" id="settings-view" aria-label="Settings" data-view-panel="settings" hidden>
         <div class="page-heading"><span class="eyebrow">CONFIGURATION</span><h1>Settings</h1><p>Effective runtime configuration reported by the service.</p></div>
         <section class="data-card settings-card"><h2>Assistant runtime</h2><dl id="settings-list" class="settings-list"><div><dt>Status</dt><dd>Loading verified configuration…</dd></div></dl><p class="muted">These values are read-only here until secure settings changes are available.</p></section>
+        <section class="data-card voice-settings-card"><h2>Browser voice</h2>
+          <p class="muted">Optional browser features. Text chat remains available on every device.</p>
+          <label class="voice-choice" id="speech-consent-row" hidden><input id="speech-consent" type="checkbox"><span><strong>Enable push-to-talk for this page</strong><small>Browser speech recognition may process audio through your browser or platform speech service outside Jarvis. Audio is not sent to the Jarvis chat service. Availability and processing depend on your browser.</small></span></label>
+          <p class="voice-unavailable" id="speech-unavailable" hidden></p>
+          <label class="voice-choice" id="speech-output-row" hidden><input id="speech-output" type="checkbox"><span><strong>Read completed replies aloud on this page</strong><small>Uses voices available from your browser or operating system; selected voices may use their platform speech service. No separate Jarvis TTS provider is used. Replies are spoken only after Jarvis finishes.</small></span></label>
+          <label class="voice-choice voice-select-row" id="speech-voice-row" hidden><span><strong>Speech voice</strong><select id="speech-voice" aria-label="Speech voice"></select></span></label>
+          <p class="voice-unavailable" id="speech-output-unavailable" hidden></p>
+          <p class="voice-unavailable" id="voice-settings-status" role="status" aria-live="polite" hidden></p>
+        </section>
       </section>
     </div>
   </div>
@@ -119,7 +132,7 @@ _CSS = '''@charset "UTF-8";
 @media(max-width:390px){.topbar{gap:6px;padding-inline:10px}.brand{gap:7px}.brand-copy strong{font-size:12px}.connection{gap:5px;font-size:9px}.chat-main{padding-inline:13px}.composer-hint{max-width:170px;line-height:1.3}.send-button{gap:7px;padding-inline:10px}.chat-heading h1{font-size:20px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 @media(forced-colors:active){.brand-mark,.welcome-orbit,.composer,.new-chat-button,.send-button,.stop-button{border:1px solid CanvasText}.connection-dot{background:Highlight}}
-.primary-nav{display:flex;align-items:center;gap:4px;margin-left:24px}.nav-item{min-height:36px;padding:0 12px;border:1px solid transparent;border-radius:9px;background:transparent;color:#9ab1b5;font:inherit;font-size:12px;cursor:pointer}.nav-item:hover,.nav-item[aria-current="page"]{border-color:var(--line);background:rgba(88,228,235,.08);color:#ddfbfd}.workspace>.data-main{grid-column:2;grid-row:1}.data-main{min-width:0;overflow:auto;padding:40px clamp(20px,5vw,76px)}.data-main[hidden],.chat-main[hidden]{display:none}.page-heading{max-width:1080px;margin:0 auto 26px}.page-heading h1{margin:0;font-size:clamp(25px,3vw,34px);font-weight:550;letter-spacing:-.03em}.page-heading p,.muted{color:#8ba5aa;font-size:13px;line-height:1.6}.page-heading p{margin:8px 0}.dashboard-grid{max-width:1080px;margin:0 auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.data-card{min-width:0;padding:21px;border:1px solid var(--line);border-radius:15px;background:rgba(12,31,38,.78)}.data-card h2{margin:0;color:#acc2c6;font-size:13px;font-weight:600}.large-value{margin:14px 0 3px;color:#e6fbfc;font-size:29px;font-weight:550;letter-spacing:-.03em}.data-card .muted{margin:5px 0}.chart-card{grid-column:1/-1}.chart-bars{height:175px;display:grid;grid-template-columns:repeat(7,minmax(24px,1fr));align-items:end;gap:10px;margin:22px 4px 0;border-bottom:1px solid var(--line-strong)}.chart-day{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:7px;color:#88a2a7;font-size:10px}.chart-bar-track{height:124px;width:100%;display:flex;align-items:flex-end;justify-content:center}.chart-bar{width:min(35px,72%);min-height:2px;border-radius:5px 5px 1px 1px;background:linear-gradient(0deg,#137c88,#56dbe2)}.readiness-banner{max-width:1080px;margin:0 auto 16px;padding:14px 17px;border:1px solid rgba(245,194,117,.25);border-radius:12px;background:rgba(106,76,31,.12);color:#e7cca0;font-size:13px;line-height:1.6}.capability-list{max-width:1080px;margin:auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.capability-row{padding:16px;border:1px solid var(--line);border-radius:12px;background:rgba(12,31,38,.66)}.capability-row h2{margin:0 0 6px;font-size:14px;font-weight:600}.capability-row p{margin:0;color:#8ba5aa;font-size:12px;line-height:1.6}.state-pill{display:inline-block;margin-top:11px;padding:4px 8px;border:1px solid var(--line);border-radius:999px;color:#abc2c5;font-size:10px;text-transform:capitalize}.settings-card{max-width:720px;margin:0 auto}.settings-list{margin:18px 0;display:grid;gap:0}.settings-list>div{display:flex;justify-content:space-between;gap:20px;padding:14px 0;border-bottom:1px solid var(--line)}.settings-list dt{color:#8ba5aa;font-size:13px}.settings-list dd{margin:0;text-align:right;color:#e1f4f5;font-size:13px;overflow-wrap:anywhere}
+.primary-nav{display:flex;align-items:center;gap:4px;margin-left:24px}.nav-item{min-height:36px;padding:0 12px;border:1px solid transparent;border-radius:9px;background:transparent;color:#9ab1b5;font:inherit;font-size:12px;cursor:pointer}.nav-item:hover,.nav-item[aria-current="page"]{border-color:var(--line);background:rgba(88,228,235,.08);color:#ddfbfd}.workspace>.data-main{grid-column:2;grid-row:1}.data-main{min-width:0;overflow:auto;padding:40px clamp(20px,5vw,76px)}.data-main[hidden],.chat-main[hidden]{display:none}.page-heading{max-width:1080px;margin:0 auto 26px}.page-heading h1{margin:0;font-size:clamp(25px,3vw,34px);font-weight:550;letter-spacing:-.03em}.page-heading p,.muted{color:#8ba5aa;font-size:13px;line-height:1.6}.page-heading p{margin:8px 0}.dashboard-grid{max-width:1080px;margin:0 auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.data-card{min-width:0;padding:21px;border:1px solid var(--line);border-radius:15px;background:rgba(12,31,38,.78)}.data-card h2{margin:0;color:#acc2c6;font-size:13px;font-weight:600}.large-value{margin:14px 0 3px;color:#e6fbfc;font-size:29px;font-weight:550;letter-spacing:-.03em}.data-card .muted{margin:5px 0}.chart-card{grid-column:1/-1}.chart-bars{height:175px;display:grid;grid-template-columns:repeat(7,minmax(24px,1fr));align-items:end;gap:10px;margin:22px 4px 0;border-bottom:1px solid var(--line-strong)}.chart-day{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:7px;color:#88a2a7;font-size:10px}.chart-bar-track{height:124px;width:100%;display:flex;align-items:flex-end;justify-content:center}.chart-bar{width:min(35px,72%);min-height:2px;border-radius:5px 5px 1px 1px;background:linear-gradient(0deg,#137c88,#56dbe2)}.readiness-banner{max-width:1080px;margin:0 auto 16px;padding:14px 17px;border:1px solid rgba(245,194,117,.25);border-radius:12px;background:rgba(106,76,31,.12);color:#e7cca0;font-size:13px;line-height:1.6}.capability-list{max-width:1080px;margin:auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.capability-row{padding:16px;border:1px solid var(--line);border-radius:12px;background:rgba(12,31,38,.66)}.capability-row h2{margin:0 0 6px;font-size:14px;font-weight:600}.capability-row p{margin:0;color:#8ba5aa;font-size:12px;line-height:1.6}.state-pill{display:inline-block;margin-top:11px;padding:4px 8px;border:1px solid var(--line);border-radius:999px;color:#abc2c5;font-size:10px;text-transform:capitalize}.settings-card{max-width:720px;margin:0 auto}.voice-settings-card{max-width:720px;margin:16px auto 0}.voice-choice{display:flex;align-items:flex-start;gap:12px;padding:15px 0;border-bottom:1px solid var(--line);cursor:pointer}.voice-choice input{width:18px;height:18px;margin:1px 0 0;accent-color:#42c6d0}.voice-choice span{display:grid;gap:5px}.voice-choice strong{font-size:13px;font-weight:600}.voice-choice small{max-width:560px;color:#8ba5aa;font-size:12px;line-height:1.55}.voice-select-row select{min-height:38px;min-width:min(280px,75vw);padding:7px 10px;border:1px solid var(--line-strong);border-radius:8px;background:#0c1f26;color:var(--text);font:inherit}.voice-unavailable,.voice-status{color:#95b1b5;font-size:11px;line-height:1.5}.voice-status{margin:5px 3px}.voice-button{min-height:34px;padding:0 11px;border:1px solid var(--line-strong);border-radius:9px;background:rgba(105,169,180,.08);color:#c9e5e8;font:inherit;font-size:11px;cursor:pointer}.voice-button:hover{border-color:var(--cyan);background:rgba(29,139,150,.22)}.voice-button:disabled{opacity:.55;cursor:wait}.voice-button[hidden]{display:none}.voice-button[data-listening="true"]{border-color:#83d7bd;color:#b9f5e1}.settings-list{margin:18px 0;display:grid;gap:0}.settings-list>div{display:flex;justify-content:space-between;gap:20px;padding:14px 0;border-bottom:1px solid var(--line)}.settings-list dt{color:#8ba5aa;font-size:13px}.settings-list dd{margin:0;text-align:right;color:#e1f4f5;font-size:13px;overflow-wrap:anywhere}
 @media(max-width:760px){.topbar{height:auto;min-height:64px;flex-wrap:wrap;padding-block:8px}.primary-nav{order:3;width:100%;margin:0;justify-content:space-around}.nav-item{flex:1;padding-inline:6px}.connection{margin-left:auto}.conversation-panel{top:calc(112px + env(safe-area-inset-top))}.scrim:not([hidden]){inset:calc(104px + env(safe-area-inset-top)) 0 0}.workspace{min-height:0}.workspace>.data-main{grid-column:1;grid-row:1}.data-main{padding:26px 16px calc(20px + env(safe-area-inset-bottom))}.dashboard-grid,.capability-list{grid-template-columns:1fr}.chart-card{grid-column:auto}.data-card{padding:17px}.chart-bars{gap:5px}.settings-list>div{gap:12px}}
 @media(prefers-reduced-motion:reduce){.nav-item{transition:none}}
 '''.encode("utf-8")
@@ -135,6 +148,8 @@ _JS = r'''/* Browser client is deliberately a text-only view over the finite Jar
     messages: byId("message-list"), welcome: byId("welcome-panel"),
     scroll: byId("message-scroll"), form: byId("composer"), input: byId("message-input"),
     send: byId("send-button"), stop: byId("stop-button"), notice: byId("chat-notice"),
+    voiceInput: byId("voice-input"), voiceStop: byId("voice-stop"), speechStop: byId("speech-stop"),
+    voiceStatus: byId("voice-status"),
     toggle: byId("history-toggle"), close: byId("history-close"), panel: byId("conversation-panel"),
     scrim: byId("panel-scrim"), newChat: byId("new-chat")
   };
@@ -145,6 +160,10 @@ _JS = r'''/* Browser client is deliberately a text-only view over the finite Jar
   let heartbeatTimer = null;
   let heartbeatNonce = null;
   let latestSequence = 0;
+  let recognition = null;
+  let speechUtterance = null;
+  let voiceSupported = false;
+  let synthesisSupported = false;
   const API = "/chat/api";
 
   function renderTurnControls(active, stopping = false) {
@@ -153,11 +172,160 @@ _JS = r'''/* Browser client is deliberately a text-only view over the finite Jar
     ui.send.disabled = active;
     ui.stop.hidden = !active;
     ui.stop.disabled = stopping;
+    ui.voiceInput.hidden = active || !voiceSupported || !byId("speech-consent").checked;
+    ui.voiceInput.disabled = active;
   }
 
   function showError(message) {
     ui.notice.textContent = message;
     ui.notice.hidden = false;
+  }
+  function showVoiceStatus(message) {
+    ui.voiceStatus.textContent = message;
+    ui.voiceStatus.hidden = !message;
+    byId("voice-settings-status").textContent = message;
+    byId("voice-settings-status").hidden = !message;
+  }
+  function stopRecognition(message = "") {
+    const current = recognition;
+    recognition = null;
+    ui.voiceStop.hidden = true;
+    ui.voiceInput.hidden = !voiceSupported || !byId("speech-consent").checked;
+    ui.voiceInput.dataset.listening = "false";
+    if (current) {
+      current.onresult = current.onerror = current.onend = null;
+      try { current.abort(); } catch (_) {}
+    }
+    if (message && current) showVoiceStatus(message);
+  }
+  function stopSpeech(message = "") {
+    const wasSpeaking = speechUtterance !== null;
+    if (synthesisSupported) window.speechSynthesis.cancel();
+    speechUtterance = null;
+    ui.speechStop.hidden = true;
+    if (message && wasSpeaking) showVoiceStatus(message);
+  }
+  function speakCompletedReply(text) {
+    if (!synthesisSupported || !byId("speech-output").checked || !text.trim()) return;
+    if (text.length > 12000) {
+      showVoiceStatus("This reply is too long for browser read-aloud. You can still read it here.");
+      return;
+    }
+    stopSpeech();
+    const utterance = new window.SpeechSynthesisUtterance(text);
+    const selectedVoice = byId("speech-voice").value;
+    const voice = window.speechSynthesis.getVoices().find((candidate) => candidate.voiceURI === selectedVoice);
+    if (voice) {
+      utterance.voice = voice;
+      utterance.lang = voice.lang;
+    }
+    speechUtterance = utterance;
+    ui.speechStop.hidden = false;
+    utterance.onend = () => {
+      if (speechUtterance === utterance) {
+        speechUtterance = null;
+        ui.speechStop.hidden = true;
+        showVoiceStatus("Reply audio finished.");
+      }
+    };
+    utterance.onerror = () => {
+      if (speechUtterance === utterance) {
+        speechUtterance = null;
+        ui.speechStop.hidden = true;
+        showVoiceStatus("This device could not play the reply. Text chat is still available.");
+      }
+    };
+    try { window.speechSynthesis.speak(utterance); }
+    catch (_) {
+      speechUtterance = null;
+      ui.speechStop.hidden = true;
+      showVoiceStatus("This device could not play the reply. Text chat is still available.");
+    }
+  }
+  function configureVoice() {
+    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    voiceSupported = Boolean(Recognition && window.isSecureContext);
+    synthesisSupported = "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+    const consentRow = byId("speech-consent-row");
+    const unavailable = byId("speech-unavailable");
+    consentRow.hidden = !voiceSupported;
+    if (!Recognition) {
+      unavailable.textContent = "Push-to-talk is not supported by this browser. You can still type your message.";
+      unavailable.hidden = false;
+    } else if (!window.isSecureContext) {
+      unavailable.textContent = "Push-to-talk requires a secure browser connection. You can still type your message.";
+      unavailable.hidden = false;
+    }
+    unavailable.hidden = Boolean(voiceSupported);
+    byId("speech-output-row").hidden = !synthesisSupported;
+    byId("speech-output-unavailable").hidden = synthesisSupported;
+    if (!synthesisSupported) byId("speech-output-unavailable").textContent = "Speech output is not supported by this browser. Replies remain available as text.";
+    if (synthesisSupported) {
+      const refreshVoices = () => {
+        const select = byId("speech-voice");
+        const previous = select.value;
+        select.replaceChildren();
+        for (const voice of window.speechSynthesis.getVoices()) {
+          const option = document.createElement("option");
+          option.value = voice.voiceURI;
+          option.textContent = `${voice.name} (${voice.lang})`;
+          select.append(option);
+        }
+        byId("speech-voice-row").hidden = select.options.length === 0;
+        if ([...select.options].some((option) => option.value === previous)) select.value = previous;
+      };
+      refreshVoices();
+      window.speechSynthesis.onvoiceschanged = refreshVoices;
+    }
+  }
+  function startRecognition() {
+    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!voiceSupported || !byId("speech-consent").checked || !Recognition) return;
+    if (ui.input.disabled) return;
+    stopSpeech();
+    let current;
+    try { current = new Recognition(); }
+    catch (_) { showVoiceStatus("Could not access browser speech input. Check microphone access or type your message."); return; }
+    current.continuous = false;
+    current.interimResults = false;
+    current.lang = navigator.language || "en-US";
+    let transcriptReceived = false;
+    current.onresult = (event) => {
+      const transcript = [...event.results].slice(event.resultIndex || 0).filter((result) => result.isFinal)
+        .map((result) => result[0] && result[0].transcript || "").join(" ").trim();
+      if (!transcript) return;
+      transcriptReceived = true;
+      const existing = ui.input.value.trimEnd();
+      ui.input.value = existing ? `${existing} ${transcript}` : transcript;
+      ui.input.dispatchEvent(new Event("input", { bubbles: true }));
+      ui.input.focus({ preventScroll: true });
+      showVoiceStatus("Transcript added to your message. Review it before sending.");
+    };
+    current.onerror = (event) => {
+      const messages = {
+        "not-allowed": "Microphone permission was denied. You can continue by typing.",
+        "service-not-allowed": "The browser speech service is unavailable. You can continue by typing.",
+        "audio-capture": "No microphone is available. You can continue by typing.",
+        "no-speech": "No speech was detected. You can continue by typing.",
+        network: "The browser speech service could not be reached. You can continue by typing."
+      };
+      stopRecognition(messages[event.error] || "Speech input stopped. You can continue by typing.");
+    };
+    current.onend = () => {
+      if (recognition !== current) return;
+      recognition = null;
+      ui.voiceInput.hidden = !byId("speech-consent").checked;
+      ui.voiceInput.dataset.listening = "false";
+      ui.voiceStop.hidden = true;
+      if (!transcriptReceived) showVoiceStatus("Listening ended without a transcript. You can type your message instead.");
+    };
+    recognition = current;
+    ui.voiceInput.hidden = true;
+    ui.voiceInput.dataset.listening = "true";
+    ui.voiceStop.hidden = false;
+    showVoiceStatus("Listening once. Your speech will not be sent until you review and submit the text.");
+    try { current.start(); }
+    catch (_) { stopRecognition("Could not start speech input. Check microphone access or type your message."); }
   }
   function clearError() { ui.notice.textContent = ""; ui.notice.hidden = true; }
   function setConnection(state, label) {
@@ -234,6 +402,8 @@ _JS = r'''/* Browser client is deliberately a text-only view over the finite Jar
   }
   async function loadConversation(id) {
     if (typeof id !== "string" || !id) return;
+    stopRecognition("Push-to-talk stopped when switching conversations.");
+    stopSpeech("Reply audio stopped when switching conversations.");
     closeStream();
     clearError();
     try {
@@ -252,6 +422,8 @@ _JS = r'''/* Browser client is deliberately a text-only view over the finite Jar
     } catch (error) { showError(error.message); }
   }
   async function createConversation() {
+    stopRecognition("Push-to-talk stopped for the new conversation.");
+    stopSpeech("Reply audio stopped for the new conversation.");
     closeStream();
     clearError();
     try {
@@ -308,14 +480,17 @@ _JS = r'''/* Browser client is deliberately a text-only view over the finite Jar
     });
     eventSource.addEventListener("turn.completed", () => {
       waiting.remove();
+      const finalText = assistantBody.textContent;
       closeStream();
+      speakCompletedReply(finalText);
       refreshConversations().catch((error) => showError(error.message));
     });
     eventSource.addEventListener("message.completed", () => { waiting.remove(); });
-    eventSource.addEventListener("turn.cancelled", () => { waiting.remove(); closeStream(); });
+    eventSource.addEventListener("turn.cancelled", () => { waiting.remove(); closeStream(); stopSpeech(); });
     eventSource.addEventListener("turn.failed", () => {
       waiting.remove();
       closeStream();
+      stopSpeech();
       showError("Jarvis could not finish that response. You can try again.");
     });
     eventSource.addEventListener("error", (event) => {
@@ -340,6 +515,8 @@ _JS = r'''/* Browser client is deliberately a text-only view over the finite Jar
   }
   async function sendMessage(text) {
     clearError();
+    stopRecognition();
+    stopSpeech();
     if (!conversationId) {
       const data = await request(`${API}/conversations`, { method: "POST", body: "{}" });
       if (!data.conversation || typeof data.conversation.id !== "string" || !data.conversation.id) throw new Error("Jarvis could not start a conversation.");
@@ -383,6 +560,8 @@ _JS = r'''/* Browser client is deliberately a text-only view over the finite Jar
     return window.btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
   }
   async function stopTurn() {
+    stopRecognition();
+    stopSpeech();
     if (!activeTurnId) return;
     const turnId = activeTurnId;
     renderTurnControls(true, true);
@@ -489,6 +668,10 @@ _JS = r'''/* Browser client is deliberately a text-only view over the finite Jar
       if (button.dataset.view === selected) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
     }
+    if (selected !== "chat") {
+      stopRecognition("Push-to-talk stopped when leaving chat.");
+      stopSpeech("Reply audio stopped when leaving chat.");
+    }
     if (selected === "overview") {
       try { await loadOverview(); } catch (error) { byId("chart-caption").textContent = error.message; }
     } else if (selected === "capabilities") {
@@ -517,11 +700,26 @@ _JS = r'''/* Browser client is deliberately a text-only view over the finite Jar
   });
   ui.newChat.addEventListener("click", createConversation);
   ui.stop.addEventListener("click", stopTurn);
+  ui.voiceInput.addEventListener("click", startRecognition);
+  ui.voiceStop.addEventListener("click", () => stopRecognition("Speech input stopped. Review the text before sending."));
+  ui.speechStop.addEventListener("click", () => stopSpeech("Reply audio stopped."));
+  byId("speech-consent").addEventListener("change", (event) => {
+    if (!event.currentTarget.checked) stopRecognition("Push-to-talk is off. You can continue by typing.");
+    else {
+      ui.voiceInput.hidden = !voiceSupported || Boolean(activeTurnId);
+      showVoiceStatus("Push-to-talk is enabled. Tap Speak when you are ready.");
+    }
+  });
+  byId("speech-output").addEventListener("change", (event) => {
+    if (!event.currentTarget.checked) stopSpeech("Read-aloud is off.");
+  });
+  byId("speech-voice").addEventListener("change", () => stopSpeech("Speech voice changed."));
   ui.toggle.addEventListener("click", () => setPanel(ui.panel.dataset.open !== "true"));
   ui.close.addEventListener("click", () => setPanel(false));
   ui.scrim.addEventListener("click", () => setPanel(false));
   for (const button of document.querySelectorAll(".nav-item")) button.addEventListener("click", () => showView(button.dataset.view));
-  window.addEventListener("pagehide", closeStream);
+  window.addEventListener("pagehide", () => { closeStream(); stopRecognition(); stopSpeech(); });
+  configureVoice();
   (async () => {
     try {
       await refreshConversations();

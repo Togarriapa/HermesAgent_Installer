@@ -78,6 +78,25 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn("renderTurnControls(false);", source)
         self.assertIn("if (activeTurnId === turnId) closeStream();", source)
 
+    def test_browser_voice_is_opt_in_reviewed_text_and_completed_reply_only(self):
+        _content_type, page = reviewed_chat_asset("/chat")
+        markup = page.decode("utf-8")
+        self.assertIn('id="voice-input" type="button"', markup)
+        self.assertIn('id="speech-consent" type="checkbox"', markup)
+        self.assertIn("outside Jarvis", markup)
+        self.assertIn('id="speech-output" type="checkbox"', markup)
+        self.assertIn('id="speech-voice"', markup)
+        self.assertIn('id="speech-stop" type="button"', markup)
+
+        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
+        source = script.decode("utf-8")
+        self.assertIn("window.SpeechRecognition || window.webkitSpeechRecognition", source)
+        self.assertIn("current.interimResults = false", source)
+        self.assertIn("Transcript added to your message. Review it before sending.", source)
+        self.assertIn("speakCompletedReply(finalText)", source)
+        self.assertIn("utterance.onend", source)
+        self.assertIn("stopRecognition(); stopSpeech();", source)
+
 
 if __name__ == "__main__":
     unittest.main()
