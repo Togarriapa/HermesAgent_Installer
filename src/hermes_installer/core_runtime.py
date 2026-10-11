@@ -1,6 +1,7 @@
 """Fixed, journaled adoption of the pinned Hermes core service."""
 from __future__ import annotations
 import grp, hashlib, json, os, pwd, re, secrets, stat, subprocess, sys, tempfile, time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 SOURCE=Path("/home/admin/HermesInstaller/data/generations/hermes-agent-7085fbf77532")
@@ -55,6 +56,53 @@ ROOT_UID=0; GATEWAY_GID=981
 FILE_CONTRACT=((UNIT,"unit_sha256",ROOT_UID,ROOT_UID,0o644),(LAUNCHER,"launcher_sha256",ROOT_UID,ROOT_UID,0o755),
                (TOKEN,"token_sha256",ROOT_UID,GATEWAY_GID,0o640))
 class CoreRuntimeError(RuntimeError): pass
+
+_RESOURCES_PROFILE_SOURCE_SEAL = object()
+
+@dataclass(frozen=True, slots=True)
+class VerifiedResourcesProfileSource:
+ """Short-lived root-verified bytes for the one fixed orchestrator profile."""
+ schema:int
+ core_source_generation:str
+ hermes_revision:str
+ resources_revision:str
+ resources_tree:str
+ artifact_sha256:str
+ ownership_manifest_sha256:str
+ loaded_skill_inventory_sha256:str
+ profile_id:str
+ profile_prompt:bytes
+ profile_prompt_sha256:str
+ profile_manifest:bytes
+ profile_manifest_sha256:str
+ profile_member_manifest:bytes
+ profile_member_manifest_sha256:str
+ observed_at_utc:str
+ expires_monotonic:float
+ _seal:object=field(repr=False,compare=False)
+
+ def verify_current(self, *, core_source_generation, now=None):
+  """Re-read fixed root custody and require this exact snapshot to remain current."""
+  current=time.monotonic() if now is None else now
+  try:
+   if (type(self) is not VerifiedResourcesProfileSource
+       or self._seal is not _RESOURCES_PROFILE_SOURCE_SEAL
+       or current>=self.expires_monotonic
+       or core_source_generation!=self.core_source_generation):
+    return False
+   fresh=read_current_resources_profile_source(core_source_generation=core_source_generation)
+   return bool(fresh is not None and fresh._seal is _RESOURCES_PROFILE_SOURCE_SEAL
+    and fresh.profile_prompt_sha256==self.profile_prompt_sha256
+   and fresh.profile_manifest_sha256==self.profile_manifest_sha256
+    and fresh.profile_member_manifest_sha256==self.profile_member_manifest_sha256
+    and fresh.artifact_sha256==self.artifact_sha256
+    and fresh.ownership_manifest_sha256==self.ownership_manifest_sha256
+    and fresh.resources_revision==self.resources_revision
+    and fresh.resources_tree==self.resources_tree
+    and fresh.core_source_generation==self.core_source_generation
+    and current<self.expires_monotonic)
+  except Exception:
+   return False
 def _digest(path):
  h=hashlib.sha256()
  with path.open("rb") as f:
@@ -668,6 +716,71 @@ def read_current_resources_discovery(*,core_source_generation):
   return {**pending,"resources_state":"stale"}
  except Exception:
   return {**pending,"resources_state":"stale"}
+
+def read_current_resources_profile_source(*,core_source_generation):
+ """Return the fixed packaged orchestrator prompt only from a current root receipt.
+
+ The returned bytes are an internal root-process value, never a dashboard DTO.
+ Its short expiry and verifier force callers to re-read the receipt, CAS, owner
+ manifest, and complete installed member closure around any later projection.
+ """
+ if (os.geteuid()!=ROOT_UID or not isinstance(core_source_generation,str)
+     or re.fullmatch(r"[0-9a-f]{64}",core_source_generation) is None):
+  return None
+ before=read_current_resources_discovery(core_source_generation=core_source_generation)
+ if before.get("resources_state")!="discovered": return None
+ try:
+  record_bytes=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024)
+  record=json.loads(record_bytes)
+  if (record.get("core_source_generation")!=core_source_generation
+      or record.get("artifact_sha256")!=before.get("artifact_sha256")
+      or record.get("ownership_manifest_sha256") is None
+      or record.get("loaded_skill_inventory_sha256") is None):
+   return None
+  artifact_sha=record["artifact_sha256"]
+  archive=_projection_file(RESOURCES_CAS/(artifact_sha+".zip"),owner=ROOT_UID,
+   group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
+  if hashlib.sha256(archive).hexdigest()!=artifact_sha: return None
+  from .registry import manual_jarvis_skills as native
+  manifest,files=native._read_artifact(archive,artifact_sha)
+  row=next((item for item in manifest["profile_members"]
+            if item.get("source_id")=="orchestrator"),None)
+  if not isinstance(row,dict): return None
+  prompt=files["registry/profiles/orchestrator/SOUL.md"]
+  profile_manifest=files["registry/profiles/orchestrator/profile.yaml"]
+  if (not prompt or not profile_manifest or len(prompt)>1024*1024
+      or len(profile_manifest)>1024*1024
+      or hashlib.sha256(prompt).hexdigest()!=row.get("identity_sha256")
+      or hashlib.sha256(profile_manifest).hexdigest()!=row.get("profile_yaml_sha256")):
+   return None
+  prompt.decode("utf-8")
+  profile_manifest.decode("utf-8")
+  ownership_sha=_hash_generation_tree(HERMES_HOME,manifest,files,artifact_sha)
+  if ownership_sha!=record.get("ownership_manifest_sha256"): return None
+  profile_member_manifest=native._canonical_json(row)
+  profile_row_sha=hashlib.sha256(profile_member_manifest).hexdigest()
+  # Re-read both the durable receipt and full public projection after all
+  # archive/member work; no mutable dict from an earlier observation is trusted.
+  after_record=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,
+   mode=0o600,maximum=16*1024)
+  after=read_current_resources_discovery(core_source_generation=core_source_generation)
+  if (after_record!=record_bytes or after!=before
+      or hashlib.sha256(_projection_file(RESOURCES_CAS/(artifact_sha+".zip"),
+       owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024*1024)).hexdigest()!=artifact_sha
+      or _hash_generation_tree(HERMES_HOME,manifest,files,artifact_sha)!=ownership_sha):
+   return None
+  return VerifiedResourcesProfileSource(
+   schema=1,core_source_generation=core_source_generation,hermes_revision=record["hermes_revision"],
+   resources_revision=record["resources_revision"],resources_tree=record["resources_tree"],
+   artifact_sha256=artifact_sha,ownership_manifest_sha256=ownership_sha,
+   loaded_skill_inventory_sha256=record["loaded_skill_inventory_sha256"],profile_id="orchestrator",
+   profile_prompt=bytes(prompt),profile_prompt_sha256=hashlib.sha256(prompt).hexdigest(),
+   profile_manifest=bytes(profile_manifest),profile_manifest_sha256=hashlib.sha256(profile_manifest).hexdigest(),
+   profile_member_manifest=bytes(profile_member_manifest),profile_member_manifest_sha256=profile_row_sha,
+   observed_at_utc=record["observed_at_utc"],
+   expires_monotonic=time.monotonic()+5.0,_seal=_RESOURCES_PROFILE_SOURCE_SEAL)
+ except Exception:
+  return None
 
 def _replace_journal(record):
  if not JOURNAL.is_file() or JOURNAL.is_symlink(): raise CoreRuntimeError("ownership journal disappeared")
