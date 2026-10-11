@@ -47,5 +47,21 @@ class JarvisSecondBrainAssetTests(unittest.TestCase):
         self.assertIn("aria-live=\"polite\"", FEATURE_ASSETS.view_html)
 
 
+    def test_knowledge_map_filters_actual_tags_and_uses_actual_edges(self):
+        self.assertIn("function tagCategory(node)", FEATURE_ASSETS.mount_js)
+        self.assertIn("node.tags", FEATURE_ASSETS.mount_js)
+        self.assertIn("selectedTags", FEATURE_ASSETS.mount_js)
+        self.assertIn("edge.fromNoteId", FEATURE_ASSETS.mount_js)
+        self.assertIn("edge.toNoteId", FEATURE_ASSETS.mount_js)
+        self.assertIn("<animateMotion", FEATURE_ASSETS.mount_js)
+        self.assertIn("graph.pauseAnimations()", FEATURE_ASSETS.mount_js)
+        self.assertIn("IntersectionObserver", FEATURE_ASSETS.mount_js)
+        self.assertIn("data-zoom-in", FEATURE_ASSETS.view_html)
+        self.assertIn("data-zoom-out", FEATURE_ASSETS.view_html)
+        self.assertIn("data-graph-list", FEATURE_ASSETS.view_html)
+        self.assertIn("Notes remain in your private vault when a chat or project is removed", FEATURE_ASSETS.view_html)
+        self.assertIn("Moving dots are visual guides", FEATURE_ASSETS.view_html)
+
+
 if __name__ == "__main__":
     unittest.main()
