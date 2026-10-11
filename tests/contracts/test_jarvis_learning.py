@@ -34,9 +34,8 @@ class Observation:
     readiness = "read-only-native-review"
     pending_reasons = ()
     candidates = (candidate(),)
-    expires_monotonic = time.monotonic() + 10
-
     def __init__(self, valid=True):
+        self.expires_monotonic = time.monotonic() + 10
         self.valid = valid
         self.verify_calls = []
 
