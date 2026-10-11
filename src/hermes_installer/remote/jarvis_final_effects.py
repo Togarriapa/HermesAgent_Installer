@@ -385,14 +385,27 @@ class RootFinalEffectLedger:
         return cursor.rowcount == 1
 
 
-def install_jarvis_final_effect_routes(app: Any, service: Any, *, client: Any) -> None:
-    """Install the owner-only pending review and one-use approval routes."""
+def install_jarvis_final_effect_routes(app: Any, service: Any) -> None:
+    """Install owner review routes through the gateway's root-inspector IPC client.
+
+    The protected HTTP process must never receive the core-native observer
+    client/socket. Root verifies the live ingress proof and owner-turn handle
+    again before it lists or decides a pending call.
+    """
     from aiohttp import web
-    from .core_native_observer import CoreNativeObservationClient
+    from .core_gateway_inspector import CoreGatewayInspector
+    inspector = getattr(service, "inspector", None)
     if (not callable(getattr(service, "_current", None))
             or not callable(getattr(service, "owner_turn_handle_for", None))
-            or type(client) is not CoreNativeObservationClient):
+            or type(inspector) is not CoreGatewayInspector):
         raise TypeError("protected Jarvis chat service required")
+
+    def current_owner_proof(request: Any) -> tuple[str, Any]:
+        proof = service._capture_owner_turn_context(request)
+        if (type(proof) is not tuple or len(proof) != 3
+                or type(proof[0]) is not str or proof[1] is None or proof[2] is not None):
+            raise JarvisChatDenied("current owner ingress proof is unavailable")
+        return proof[0], proof[1]
 
     async def list_pending(request: Any) -> Any:
         try:
@@ -407,7 +420,11 @@ def install_jarvis_final_effect_routes(app: Any, service: Any, *, client: Any) -
             owner_handle = service.owner_turn_handle_for(principal, turn_id)
             if not isinstance(owner_handle, str):
                 raise JarvisChatDenied("current owner-turn binding is unavailable")
-            reviews = client.list_final_effects(owner_turn_handle=owner_handle)
+            access_jwt, accepted_ingress = current_owner_proof(request)
+            reviews = inspector.list_final_effects(
+                access_jwt=access_jwt, accepted_ingress=accepted_ingress,
+                owner_turn_handle=owner_handle,
+            )
             if (type(reviews) is not tuple or len(reviews) > 32
                     or any(type(row) is not FinalEffectReview for row in reviews)):
                 raise JarvisChatDenied("root final-effect review projection is invalid")
@@ -437,8 +454,10 @@ def install_jarvis_final_effect_routes(app: Any, service: Any, *, client: Any) -
             owner_handle = service.owner_turn_handle_for(principal, turn_id)
             if not isinstance(owner_handle, str):
                 raise JarvisChatDenied("current owner-turn binding is unavailable")
+            access_jwt, accepted_ingress = current_owner_proof(request)
             body = await _read_body(request, {"pending_id", "review_sha256", "decision", "idempotency_key"})
-            status = client.decide_final_effect(
+            status = inspector.decide_final_effect(
+                access_jwt=access_jwt, accepted_ingress=accepted_ingress,
                 owner_turn_handle=owner_handle, pending_id=body["pending_id"],
                 review_sha256=body["review_sha256"], decision=body["decision"],
                 idempotency_key=body["idempotency_key"],
