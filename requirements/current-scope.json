@@ -268,9 +268,9 @@
       "text": "Use supported 64-bit Linux ARM64; graphical login, Electron, Desktop and Xpra are not core installation prerequisites.",
       "phase": 2,
       "task_id": "HI-T266.2",
-      "implementation_module": "src/hermes_installer/desktop.py",
-      "verification_method": "User-session/official-source build and fallback fixtures assert the exact obligation; native window/backend/resource/tool/cancellation proof is separately required on authorized graphical Pi",
-      "test_path": "tests/contracts/test_desktop.py",
+      "implementation_module": "src/hermes_installer/core_runtime.py",
+      "verification_method": "Verify ARM64 headless core preflight/start without graphical login; graphical packages must not become core prerequisites.",
+      "test_path": "tests/unit/test_core_runtime.py",
       "acceptance": "OPEN"
     },
     {
@@ -1395,11 +1395,11 @@
     },
     {
       "id": "R0140",
-      "text": "Match capabilities to tasks: a text-only model does not supply screenshot understanding, image generation, speech, or embeddings merely because a skill asks for them. Add explicit capability checks and supported-provider configuration for these operations. Do not mark such tasks operational until a compatible endpoint is configured and tested.",
+      "text": "Require actual supported providers for vision, images, STT, TTS and embeddings, with consent, privacy and zero-extra-spend checks. Deliver text/push-to-talk fallback and device-qualified Pixel10/HonorX5bPlus assistant/wake-word and tablet dashboard voice; never promise generic locked-device hotword support or enable audio without permission.",
       "phase": 2,
       "task_id": "HI-T266.2",
       "implementation_module": "src/hermes_installer/skills.py",
-      "verification_method": "Skill tree/host-hook or cross-session memory fixture asserts full references, scoped discovery, one-owner namespace/persistence and on-demand capability/resource controls",
+      "verification_method": "Pi-backed STT\u2192owned chat\u2192TTS and mute/cancel/error proof, permission/budget/privacy denial; real device keyboard/audio/reboot/lock/Bluetooth/call interruption and battery observations. Background wake-word remains pending until device-qualified; PWA is not always-on assistant proof.",
       "test_path": "tests/contracts/test_skills.py",
       "acceptance": "OPEN"
     },
@@ -1749,7 +1749,7 @@
       "phase": 5,
       "task_id": "VD-T266.5",
       "implementation_module": "src/hermes_installer/verification/acceptance.py",
-      "verification_method": "On authorized physical Pi graphical user session, open official native core/Jarvis/window, identify intended backend/resource catalog, get synthetic Hello, cancel/restart and execute harmless local tool fixture; headless/mock/browser fallback never passes native GUI criterion.",
+      "verification_method": "On the authorized Pi prove independent core, protected Jarvis Hello, cancellation, exact stored-session history after restart, and harmless actual tool execution; mocks, health and rendered UI alone do not pass.",
       "test_path": "tests/acceptance/test_ac07.py",
       "acceptance": "OPEN"
     },
@@ -2025,12 +2025,12 @@
     },
     {
       "id": "R0203",
-      "text": "Expose the responsive Jarvis client over protected finite core adapters. Do not publish a host desktop, shell, raw RPC or whole backend router.",
+      "text": "Expose polished responsive Jarvis through protected finite core adapters: accessible dark/cyan menus, settings, capability inventory, dashboards, graphs and statistics with real provenance. Match former Desktop workflows through individually verified ports or explicit pending alternatives; never publish host desktop, shell, raw RPC or whole backend router.",
       "phase": 2,
       "task_id": "HI-T266.2",
-      "implementation_module": "src/hermes_installer/remote/session.py",
-      "verification_method": "Only native app windows: authorized principal starts the selected remote session on a supported ARM64 Pi -> bridge SHALL launch pinned official Hermes core/Jarvis under the intended unprivileged user/session and export only its allowed application windows; no host-panel/terminal/desktop capture appears; Unsupported app-only confinement: only shadow/full-desktop mode, insecure Electron sandbox escape or unrelated application-window forwarding works -> remote core/Jarvis SHALL remain unavailable with exact supported-resolution next step; a browser dashboard or unsandboxed whole-display fallback SHALL NOT be labeled protected Hermes core/Jarvis",
-      "test_path": "tests/contracts/test_remote_session.py",
+      "implementation_module": "src/hermes_installer/remote",
+      "verification_method": "Prove responsive authenticated owner/family chat over finite routes, mobile keyboard/stream/history/stop, per-conversation ownership, CSRF/replay/revocation denial, and absence of raw RPC/backend credentials or management routes.",
+      "test_path": "tests/contracts",
       "acceptance": "OPEN"
     },
     {
@@ -2038,9 +2038,9 @@
       "text": "Deny unreviewed generic commands, backend management, host filesystem, clipboard, arbitrary URL and control proxies. Reviewed attachments/browser/voice capabilities require separate owner-bound finite adapters.",
       "phase": 2,
       "task_id": "HI-T266.2",
-      "implementation_module": "src/hermes_installer/remote/session.py",
-      "verification_method": "Host escape attempt: authenticated fixture client submits start-command,start-desktop,shell/control,file/clipboard/printing or arbitrary-display packets -> actual bridge/server policy SHALL deny without spawning processes/opening files/accessing host devices; hiding HTML controls alone SHALL not count as enforcement; Restricted client: minimal client connects to fixed admitted native app session -> only necessary screen/input operations SHALL load; retained browser/Electron sandbox and private X authority SHALL isolate the session from unowned host display/processes",
-      "test_path": "tests/contracts/test_remote_session.py",
+      "implementation_module": "src/hermes_installer/remote",
+      "verification_method": "Exercise actual server denial for caller commands/paths/URLs, cross-owner conversation/artifact access and unauthorized account/settings actions; reviewed finite browser/attachments/voice adapters retain sandbox, policy and credential boundaries.",
+      "test_path": "tests/contracts",
       "acceptance": "OPEN"
     },
     {
@@ -2129,7 +2129,7 @@
       "phase": 2,
       "task_id": "HI-T266.2",
       "implementation_module": "src/hermes_installer",
-      "verification_method": "Actual DM/group/relay effects, restart persistence and denial across owners.",
+      "verification_method": "Actual DM/group/roster/orchestration/relay with full durable server state, bounded worker jobs, restart persistence and cross-owner/account/budget denial; bounded ui_meta mirror or frontend-only scheduler cannot pass.",
       "test_path": "tests/contracts",
       "acceptance": "OPEN"
     },
@@ -2159,7 +2159,7 @@
       "phase": 4,
       "task_id": "RB-T266.4",
       "implementation_module": "src/hermes_installer",
-      "verification_method": "Complete identity inventory plus actual selected native discovery/dispatch and substantive individual integration evidence.",
+      "verification_method": "Complete208-source crosswalk and396-skill discovery; actual delegation loads selected source prompt/inheritance/tool grants, additive primary integration preserves user SOUL/auth, and all plugins/MCP/channels/crons/webhooks prove real dispatch/enrichment plus failure/privacy/budget denial. Generic delegate_task role or stored prompt files alone cannot pass.",
       "test_path": "tests/contracts",
       "acceptance": "OPEN"
     },
@@ -3862,5 +3862,12 @@
       "title": "Verified final release documentation"
     }
   ],
-  "runtime_acceptance": "OPEN; source/planning is not live qualification"
+  "runtime_acceptance": "OPEN; source/planning is not live qualification",
+  "source_review": {
+    "prompt_file": "Hermes_Pi_Installer_Agent_Prompt.md",
+    "prompt_sha256": "d7608378a9207686fd1f9ba395e36d8f472111b317bd7877cd2c3732dd548ad5",
+    "upstream_commit": "7085fbf7753266fc4943c55ac04926186bc90005",
+    "status": "source-read-only; Pi validation and full acceptance pending",
+    "scope": "All211 original obligation IDs and62 components retained; explicit user replacement of Desktop presentation; latest UI/phone/Resources details refine existing obligations."
+  }
 }

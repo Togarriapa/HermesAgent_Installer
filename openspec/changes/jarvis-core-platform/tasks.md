@@ -12,3 +12,13 @@ Implementation and live acceptance are distinct. Every task remains OPEN until i
 - [ ] VD-T268.1 Publish finished truthful user/contributor/AI documentation after actual review; dependencies: VD-T266.5. Verify linked requirements, effects, denial and recovery; document exact limitations.
 
 Complete obligation/component/AC mapping: requirements/current-scope.json. Useful increments may ship before all ports; full parity/Resources acceptance stays OPEN. UI begins after core and one useful actual capability; further ports continue incrementally.
+
+## Bounded implementation slices inside existing tasks
+
+- BD-T266.1: separate existing-target adoption from fresh-install owner/runtime/bootstrap; preserve auth/data and prove private chat/history/resume before cleanup.
+- HI-T266.2: first port one real tool/event workflow, then full durable Bots groups/relay; implement each selected settings/account/skill/plugin/MCP/browser/job/artifact/voice adapter with its denial/recovery proof. Android wake-word is device-qualified later, never a prerequisite for text MVP.
+- RT-T266.3: deliver mobile composer/stream/history/stop, then finite menus/settings/capability inventory, genuine dashboards/graphs/statistics and accessible theme; every feature reads real adapter state and enforces family permissions.
+- RB-T266.4: connect208-source crosswalk to actual dispatcher, additive primary prompt integration,207 internal prompt/inheritance/grant selection, complete skills/helpers and plugin/MCP/channel/cron/webhook enrichment; preserve user SOUL/auth.
+- VD-T266.5: review every matrix row and all62 component statuses against actual Pi/device/account effects, failures, restart and current provenance; report unknown/pending explicitly.
+
+These slices retain the eight checkbox task IDs/dependency graph; implementation progress and live qualification are separately evidenced. Video research is inspiration pending actual content evidence, never acceptance or purchasing authority.

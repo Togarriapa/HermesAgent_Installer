@@ -213,7 +213,7 @@ The installer SHALL satisfy: Use supported 64-bit Linux ARM64; graphical login, 
 
 #### Scenario: Verified capability or exact pending state
 - **WHEN** this obligation is implemented for a selected authorized target/account
-- **THEN** verification MUST exercise User-session/official-source build and fallback fixtures assert the exact obligation; native window/backend/resource/tool/cancellation proof is separately required on authorized graphical Pi
+- **THEN** verification MUST exercise Verify ARM64 headless core preflight/start without graphical login; graphical packages must not become core prerequisites.
 - **AND** missing dependency/account/hardware or failed evidence leaves acceptance OPEN with exact next action, preserving data and prior working state.
 
 ### Requirement: R0028 current functional obligation
@@ -1113,11 +1113,11 @@ The installer SHALL satisfy: Skill availability does not require every heavyweig
 - **AND** missing dependency/account/hardware or failed evidence leaves acceptance OPEN with exact next action, preserving data and prior working state.
 
 ### Requirement: R0140 current functional obligation
-The installer SHALL satisfy: Match capabilities to tasks: a text-only model does not supply screenshot understanding, image generation, speech, or embeddings merely because a skill asks for them. Add explicit capability checks and supported-provider configuration for these operations. Do not mark such tasks operational until a compatible endpoint is configured and tested.
+The installer SHALL satisfy: Require actual supported providers for vision, images, STT, TTS and embeddings, with consent, privacy and zero-extra-spend checks. Deliver text/push-to-talk fallback and device-qualified Pixel10/HonorX5bPlus assistant/wake-word and tablet dashboard voice; never promise generic locked-device hotword support or enable audio without permission.
 
 #### Scenario: Verified capability or exact pending state
 - **WHEN** this obligation is implemented for a selected authorized target/account
-- **THEN** verification MUST exercise Skill tree/host-hook or cross-session memory fixture asserts full references, scoped discovery, one-owner namespace/persistence and on-demand capability/resource controls
+- **THEN** verification MUST exercise Pi-backed STT→owned chat→TTS and mute/cancel/error proof, permission/budget/privacy denial; real device keyboard/audio/reboot/lock/Bluetooth/call interruption and battery observations. Background wake-word remains pending until device-qualified; PWA is not always-on assistant proof.
 - **AND** missing dependency/account/hardware or failed evidence leaves acceptance OPEN with exact next action, preserving data and prior working state.
 
 ### Requirement: R0141 current functional obligation
@@ -1397,7 +1397,7 @@ The installer SHALL satisfy: Prove independent official core startup, protected 
 
 #### Scenario: Verified capability or exact pending state
 - **WHEN** this obligation is implemented for a selected authorized target/account
-- **THEN** verification MUST exercise On authorized physical Pi graphical user session, open official native core/Jarvis/window, identify intended backend/resource catalog, get synthetic Hello, cancel/restart and execute harmless local tool fixture; headless/mock/browser fallback never passes native GUI criterion.
+- **THEN** verification MUST exercise On the authorized Pi prove independent core, protected Jarvis Hello, cancellation, exact stored-session history after restart, and harmless actual tool execution; mocks, health and rendered UI alone do not pass.
 - **AND** missing dependency/account/hardware or failed evidence leaves acceptance OPEN with exact next action, preserving data and prior working state.
 
 ### Requirement: R0176 current functional obligation
@@ -1617,11 +1617,11 @@ The installer SHALL satisfy: Allow only dedicated finite Jarvis assets/conversat
 - **AND** missing dependency/account/hardware or failed evidence leaves acceptance OPEN with exact next action, preserving data and prior working state.
 
 ### Requirement: R0203 current functional obligation
-The installer SHALL satisfy: Expose the responsive Jarvis client over protected finite core adapters. Do not publish a host desktop, shell, raw RPC or whole backend router.
+The installer SHALL satisfy: Expose polished responsive Jarvis through protected finite core adapters: accessible dark/cyan menus, settings, capability inventory, dashboards, graphs and statistics with real provenance. Match former Desktop workflows through individually verified ports or explicit pending alternatives; never publish host desktop, shell, raw RPC or whole backend router.
 
 #### Scenario: Verified capability or exact pending state
 - **WHEN** this obligation is implemented for a selected authorized target/account
-- **THEN** verification MUST exercise Only native app windows: authorized principal starts the selected remote session on a supported ARM64 Pi -> bridge SHALL launch pinned official Hermes core/Jarvis under the intended unprivileged user/session and export only its allowed application windows; no host-panel/terminal/desktop capture appears; Unsupported app-only confinement: only shadow/full-desktop mode, insecure Electron sandbox escape or unrelated application-window forwarding works -> remote core/Jarvis SHALL remain unavailable with exact supported-resolution next step; a browser dashboard or unsandboxed whole-display fallback SHALL NOT be labeled protected Hermes core/Jarvis
+- **THEN** verification MUST exercise Prove responsive authenticated owner/family chat over finite routes, mobile keyboard/stream/history/stop, per-conversation ownership, CSRF/replay/revocation denial, and absence of raw RPC/backend credentials or management routes.
 - **AND** missing dependency/account/hardware or failed evidence leaves acceptance OPEN with exact next action, preserving data and prior working state.
 
 ### Requirement: R0204 current functional obligation
@@ -1629,7 +1629,7 @@ The installer SHALL satisfy: Deny unreviewed generic commands, backend managemen
 
 #### Scenario: Verified capability or exact pending state
 - **WHEN** this obligation is implemented for a selected authorized target/account
-- **THEN** verification MUST exercise Host escape attempt: authenticated fixture client submits start-command,start-desktop,shell/control,file/clipboard/printing or arbitrary-display packets -> actual bridge/server policy SHALL deny without spawning processes/opening files/accessing host devices; hiding HTML controls alone SHALL not count as enforcement; Restricted client: minimal client connects to fixed admitted native app session -> only necessary screen/input operations SHALL load; retained browser/Electron sandbox and private X authority SHALL isolate the session from unowned host display/processes
+- **THEN** verification MUST exercise Exercise actual server denial for caller commands/paths/URLs, cross-owner conversation/artifact access and unauthorized account/settings actions; reviewed finite browser/attachments/voice adapters retain sandbox, policy and credential boundaries.
 - **AND** missing dependency/account/hardware or failed evidence leaves acceptance OPEN with exact next action, preserving data and prior working state.
 
 ### Requirement: R0205 current functional obligation
@@ -1701,7 +1701,7 @@ The installer SHALL satisfy: Port complete server-owned Bots room/group roster/o
 
 #### Scenario: Verified capability or exact pending state
 - **WHEN** this obligation is implemented for a selected authorized target/account
-- **THEN** verification MUST exercise Actual DM/group/relay effects, restart persistence and denial across owners.
+- **THEN** verification MUST exercise Actual DM/group/roster/orchestration/relay with full durable server state, bounded worker jobs, restart persistence and cross-owner/account/budget denial; bounded ui_meta mirror or frontend-only scheduler cannot pass.
 - **AND** missing dependency/account/hardware or failed evidence leaves acceptance OPEN with exact next action, preserving data and prior working state.
 
 ### Requirement: CORE-LEASE current functional obligation
@@ -1725,7 +1725,7 @@ The installer SHALL satisfy: Import all208 original Resources identities; Jarvis
 
 #### Scenario: Verified capability or exact pending state
 - **WHEN** this obligation is implemented for a selected authorized target/account
-- **THEN** verification MUST exercise Complete identity inventory plus actual selected native discovery/dispatch and substantive individual integration evidence.
+- **THEN** verification MUST exercise Complete208-source crosswalk and396-skill discovery; actual delegation loads selected source prompt/inheritance/tool grants, additive primary integration preserves user SOUL/auth, and all plugins/MCP/channels/crons/webhooks prove real dispatch/enrichment plus failure/privacy/budget denial. Generic delegate_task role or stored prompt files alone cannot pass.
 - **AND** missing dependency/account/hardware or failed evidence leaves acceptance OPEN with exact next action, preserving data and prior working state.
 
 ### Requirement: CORE-DOCS current functional obligation
@@ -1752,3 +1752,13 @@ The installer SHALL satisfy: Fresh protected Access membership and process capab
 - **THEN** Actual Access allow/deny/revoke/account failure and native unauthorized effect denial with authentic exact-candidate retained evidence. MUST prove the enforced boundary before acceptance.
 - **AND** absent proof keeps the capability unavailable and acceptance OPEN with precise next action.
 
+
+#### Scenario: Finite configurable capability parity
+- **WHEN** a Jarvis menu, setting, dashboard or chart advertises a capability
+- **THEN** its finite adapter MUST expose real state, permitted actions and evidence; unsupported native conveniences remain explicit alternatives or pending.
+- **AND** backend tokens, arbitrary RPC, paths and owner administration are never delegated to a family browser.
+
+#### Scenario: Source-selected Resources enrichment
+- **WHEN** Jarvis selects an internal resource identity or integrates its primary prompt
+- **THEN** actual execution MUST load the exact source identity, inheritance and grants; primary integration is additive, ownership-journaled and preserves user prompt/auth.
+- **AND** a generic role label, ephemeral override or stored prompt alone MUST NOT establish delegated capability.

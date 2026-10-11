@@ -35,3 +35,33 @@ Desktop/Xpra/native presentation is excluded from active installation. Remove on
 Zero extra metered budget/private routing applies to every dispatch, retry, fallback, background job, extraction and embedding. No secrets in source/argv/logs/evidence/browser storage or duplicated profiles; no huge download, paid action, reimage/format, unrelated replacement or outbound test messaging without applicable authorization. Prestart OpenViking sanitized; disable unreviewed lazy installs; preserve TLS and browser sandbox.
 
 Full release requires actual end-to-end Pi/account/hardware/capability/denial/recovery evidence and reconciled source/spec behavior. Tests/fixtures/previews/servers/validators run only on the identified Pi via root browser. Local source/spec editing and Git are allowed. Final usage/operations/troubleshooting/contributor/AI documentation follows genuine qualification; no stable/parity/Resources acceptance from sources, configuration, fixture, health or one chat.
+
+## Capability parity and evidence matrix
+
+All rows are desired scope with implementation and Pi acceptance OPEN. Bind each port to a pinned contract, permission and actual positive/failure/recovery evidence before enabling it. Do not interpret API existence as parity.
+
+| Workflow | Concrete port / source fact | Dependencies and acceptance | Task |
+|---|---|---|---|
+| Chat/history/stop | private tui_gateway session.create/prompt.submit/history/interrupt/resume | Current core generation, server-owned principal/conversation map; restart/history and lost-auth cancellation | BD-T266.1, RT-T266.3 |
+| Bots DM/groups/roster/relay | apps/desktop/src/plugins/hermes-bots/canonical-chat.ts; group-chat.ts full room storage and plugin.tsx startBotRelay are renderer work | Port full state/scheduler/relay to durable server worker; ui_meta48KiB/16-message mirror is insufficient; no cross-family private relay | HI-T266.2 |
+| Skills/plugins/MCP | official inventory/configuration contracts; backend Agent Plugins distinct from renderer plugins | Exact selected account/schema/helpers/assets; actual harmless call and revoke/timeout handling, owner-only configuration | HI-T266.2 |
+| Rich tool progress/approvals | pin actual tui_gateway events and action contracts | Correlate run/tool/action; server-confirmed nonce/deadline; never approve from browser text or missing events | HI-T266.2 |
+| Browser/files/artifacts | core tools plus finite session/artifact adapters | Browser sandbox, selected roots/opaque IDs/type limits; Electron OS screenshot/dialog/embedded guest needs deliberate alternative, not unchanged parity | HI-T266.2 |
+| Jobs/messaging/memory | actual core APIs plus explicit account/worker adapters | Durable jobs, cancel/restart, fresh background permissions, one memory owner and private routing | HI-T266.2 |
+| Menus/settings/models/accounts | finite owner-admin adapters, no renderer/raw-RPC bridge | Read actual settings/capability state; separately authorize each mutation; family gets explicit subset; preserve credential refs | HI-T266.2, RT-T266.3 |
+| Dashboard/graphs/statistics | owned service/run/capability telemetry projections | Genuine timestamps/units/provenance; unavailable metrics marked unknown; no invented charts or secret transcripts | RT-T266.3 |
+| Polished mobile UI | original restrained Iron-Man-inspired dark/cyan visuals, real HTML composer | Accessible contrast/focus/keyboard, reduced motion; actionable loading/error/busy, history/stop; no branded asset copying | RT-T266.3 |
+| STT/TTS | actual eligible speech endpoints/local adapters | Consent/mute/indicator, cancellation/audio limits, text fallback, privacy and zero metered default | HI-T266.2, RT-T266.3 |
+| Android/tablet | Pixel10, HonorX5bPlus; native assistant role versus foreground tablet/PWA dashboard | Device/version qualification; local wake-word permission/battery/reboot/lock/Bluetooth/call tests; no generic DSP/locked-device guarantee; no global Access token in device | HI-T266.2 |
+| Resources enrichment |208 source identities/207 internal delegates,396 skills and full registry kinds | Dispatcher loads exact private prompt/inheritance/tool scopes; additive primary prompt integration, no user-SOUL overwrite or credential copies; actual plugin/channel/cron/webhook effects | RB-T266.4 |
+| All other requested projects/model/hardware |62 components and original aliases in current-scope | Individual adapter/license/account/ARM64 proof; GLM-5.2 and delegate-used Coral unchanged, no huge download or new spend | HI-T266.2, RB-T266.4, VD-T266.5 |
+
+Family conversation ownership does not isolate shared core memory, filesystem, tools or credentials. Deny unproven private family operations; do not relabel profiles as sandboxes. HA remains architecturally a separately authenticated channel; live configuration is deferred, not removed.
+
+Android qualification uses official VoiceInteractionService/ROLE_ASSISTANT contracts and background microphone restrictions. Hardware hotword APIs have system/OEM limits; native companion work must establish supported device behavior before promising wake word. Foreground household dashboards are a different, permission-visible mode. Text/mobile keyboard is the initial practical route.
+
+Video research owner reviewed auto-generated captions for https://www.youtube.com/watch?v=RqwXffETwsc: connected-app briefings (0:09–1:56), model/provider selection (2:28–4:09), integrations (4:11–7:35), voice (9:25–11:28), command matrix (12:04–13:33) and queued/background actions support those design seeds. Captions may be imperfect; video playback was not performed. Specific card layouts/charts/statistics remain our requested design, not observed video features. Reject suggestions to paste API keys into chat or remove key restrictions, and never infer zero cost from a 'free' title. Other inaccessible videos remain unreviewed.
+
+### Current source gaps
+
+At7f7c32fd normal install invokes existing-target adoption with fixed admin1000/GID981/source/PM paths; fresh setup and configurable owner selection remain separate work. The wizard's remote_desktop display text still incorrectly names Desktop. Resources importer stores all source prompts and exposes skills but does not implement207 delegated prompts, plugin effects or additive primary prompt integration; active prompt mismatch stays pending. These are concrete implementation gaps, not acceptance exceptions.
