@@ -1,0 +1,72 @@
+{
+  "schema": 1,
+  "id": "jarvis-practical-mobile-family-stage-v265",
+  "status": "implementation and actual target acceptance OPEN",
+  "extends": [
+    "planning/jarvis-visible-desktop-mvp-stage-v259.json",
+    "planning/jarvis-sole-user-profile-contract-v205.json"
+  ],
+  "requirements": [
+    "direct-user-mobile-keyboard-family-concurrent-jarvis-ui-2026-10-11",
+    "R0045",
+    "R0048",
+    "R0049",
+    "R0196",
+    "R0197",
+    "R0198",
+    "R0199",
+    "R0200",
+    "R0201",
+    "R0202",
+    "R0203",
+    "R0204",
+    "R0205",
+    "AC13",
+    "AC14",
+    "AC15"
+  ],
+  "scope_change": "User now prioritizes practical mobile/family Jarvis conversations and custom presentation. Supersedes native-only public presentation ONLY for the finite authenticated chat surface below. Preserve full official native Desktop as owned owner-admin option, all imported original scope and full AC OPEN. Never expose dashboard/backend management/raw shell through new chat route.",
+  "source_audit": {
+    "revision": "7085fbf7753266fc4943c55ac04926186bc90005",
+    "facts": [
+      "apps/desktop/src/api/client.ts calls window.hermesDesktop.api; electron/preload.ts supplies Electron bridge. Official renderer is not verified standalone web app.",
+      "gateway/platforms/api_server.py advertises authenticated /api/sessions create/read/messages/chat/stream and /v1/runs status/events/stop, X-Hermes-Session-Key and bounded max_concurrent_runs. These are implementation reuse, not multi-user authorization by themselves.",
+      "API key shared backend can read broad sessions; private edge adapter must enforce owner mapping before any backend call. Conversation keys are not filesystem/tool/memory sandboxes.",
+      "Native Xpra canvas does not supply real browser input focus; one-viewer stream cannot establish independent family sessions."
+    ]
+  },
+  "architecture": "Small installer-owned responsive Jarvis HTML chat frontend plus finite server-side adapter to official local API, rather than publishing full Electron renderer or wildcard backend proxy. Real textarea/contenteditable input opens native phone keyboard, streamed response and stop/new/history controls; restrained dark/cyan Jarvis theme inspired by futuristic assistants, responsive accessible contrast/focus and reduced-motion opt-out; no unlicensed Iron Man assets. Reuse current verified owned native runtime/provider where supported; no additional metered spend or model download. Native owner-admin app remains independently reachable only through existing protected session path.",
+  "boundary": {
+    "public_routes": [
+      "GET /chat",
+      "GET /chat/assets/<reviewed static asset>",
+      "GET /chat/api/conversations",
+      "POST /chat/api/conversations",
+      "GET /chat/api/conversations/<opaque id>/messages",
+      "POST /chat/api/conversations/<opaque id>/turns",
+      "GET /chat/api/turns/<opaque id>/events",
+      "POST /chat/api/turns/<opaque id>/stop",
+      "POST /chat/api/heartbeat"
+    ],
+    "rules": "Exact method/path/closed body schemas only; server issues opaque IDs and maps to fixed default Jarvis backend session/run IDs. Client sends text and opaque IDs only, never profile/model/provider/system prompt/toolset/cwd/backend URL/session-key/API credential. Body/message/stream/rate bounds and CSP/safe markdown/XSS/CSRF/same-host-origin guards required. Unknown routes/fields denied, no redirects/wildcard proxy/PTY/files/config/messaging/Bots administration exposed.",
+    "authentication": "Retain Access OTP/binding cookie, fresh JWT before all bytes/input and verified owned cloudflared ingress. Browser-managed cookies, original<=30s leases and <=5s protected heartbeat/currentness for active streams; current v263/v264 native proof applies to native admin path, not invented evidence for chat API. Verify actual selected local API process/UID/executable/listener/key custody separately. API key only server-owned protected reference, never browser/argv/logs.",
+    "ownership": "Derive principal from verified issuer/audience/subject identity, not client email/header. Durable server-owned principal\u2192conversation/run map with complete ownership check before list/read/send/events/stop/reconnect. Do not forward backend global lists. Different principals cannot read, steer/stop, reuse opaque IDs/session keys or inherit another conversation. Changes/revocation deny and close exact stream. Shared old admin chats are not auto-imported into family views."
+  },
+  "family": "Independent conversations, not simultaneous control of one canvas. Initially bound total active turns to2 and one turn per conversation; observed provider/backend capacity may reduce with honest busy/queue indication, never silently merge identities or expand budget. Two authenticated user/device sessions must coexist without ending native admin stream; persistent restart readback preserves ownership. Family Access roster requires actual owner-approved identities and owned config enrollment; current single-owner allowlist is not family authorization. Conversation separation alone does not prove memory/tool/private-file isolation: deny affected tools/global memory/context for family until current per-principal isolation/grants are verified, retain owner-admin capabilities. No copied credentials into profile homes.",
+  "home_assistant": "Architecture reserves a separate optional machine ask/reply channel with dedicated protected credential and distinct principal/session ownership, never browser cookie/family-secret reuse or house-action/admin grants. Live HA configuration and implementation are DEFERRED per user priority; current answer is not wired. It can coexist conceptually with native screen via independent backend conversations, but acceptance requires future actual authenticated proof. Do not re-enable homelab work now.",
+  "feature_truth": "Official native Desktop including Bots UI remains preserved; each native capability keeps its current configured/functional/accepted state. New family chat is deliberately a conversation surface, not full Desktop/browser equivalence or Bots management. Unsupported features visibly link owner-admin option/pending state rather than disappearing from original scope or claiming parity. Custom presentation follows usable mobile chat first.",
+  "tasks": {
+    "RT-T265.1": "Implement responsive Jarvis chat composer/stream/history/stop and finite static assets using pinned source protocol; actual phone keyboard and readable narrow layout.",
+    "RT-T265.2": "Implement strict protected chat adapter and actual local official API activation/current process/key custody; per-principal durable conversation/run ownership, bounded streaming/heartbeat and all deny cases.",
+    "RT-T265.3": "Implement two-user bounded simultaneous conversations independent from native admin stream, honest busy/queue/recovery and preserve state/credentials/features. Document separate HA channel as deferred, not currently wired.",
+    "VD-T265.4": "Verify production adapter effects and negative authorization/XSS/CSRF/IDOR/replay/revocation/expiry; actual phone typing/chat+two identities+native coexistence+restart. Record truthful feature matrix, deferred HA and full AC OPEN."
+  },
+  "acceptance": "Practical stage passes only actual phone keyboard text send/stream/stop, two separately authenticated principals isolated concurrent conversations, owner native Desktop still usable, current auth denial/revocation/expiry, owned restart and zero additional budget. HA separately accepted only after actual authenticated ask/reply coexistence. Fixtures/source audit never prove deployment or full capability parity.",
+  "risks": [
+    "Electron bridge and full management frontend cannot be published unchanged.",
+    "Backend conversation keys do not authorize multi-user ownership or isolate shared tool/memory state; adapter/grants must deny unproven leakage.",
+    "Existing provider/account may not support concurrent turns; honest capacity state required, not new spend.",
+    "Streaming token/system/tool metadata may leak private state; only reviewed safe events/content reach owning principal."
+  ],
+  "deferred": "Original models/Coral/plugins/207 internal delegates/complete managed installer/Bots functional parity remain preserved OPEN, not deleted or silently accepted. No Pi/browser/Cloudflare mutation or source implementation by this amendment."
+}

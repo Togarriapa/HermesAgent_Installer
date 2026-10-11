@@ -3900,5 +3900,26 @@
       ]
     },
     "acceptance": "manual MVP only; all AC OPEN"
+  },
+  "jarvis_practical_mobile_family_stage_v265": {
+    "contract": "planning/jarvis-practical-mobile-family-stage-v265.json",
+    "amendment": "plans/amendments/2026-10-11-jarvis-practical-mobile-family-stage-v265.md",
+    "tasks": {
+      "RT-T265.1": [
+        "RT-T259.3"
+      ],
+      "RT-T265.2": [
+        "RT-T263.1"
+      ],
+      "RT-T265.3": [
+        "RT-T265.2"
+      ],
+      "VD-T265.4": [
+        "RT-T265.1",
+        "RT-T265.2",
+        "RT-T265.3"
+      ]
+    },
+    "acceptance": "new practical stage separate from full AC; all OPEN"
   }
 }

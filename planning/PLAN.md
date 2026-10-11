@@ -285,3 +285,8 @@ Confirmed jarvis.togarriapahome.uk. `planning/jarvis-visible-desktop-mvp-stage-v
 ## Native burst observation v264
 
 `planning/jarvis-native-observation-burst-sharing-v264.json`; RT-T264.1/VD-T264.2 OPEN. Share only original-expiry native root evidence, independent ingress/JWT unchanged; actual Pi burst and full AC remain OPEN.
+
+
+## Practical mobile/family Jarvis v265
+
+`planning/jarvis-practical-mobile-family-stage-v265.json`; four bounded tasks OPEN. Responsive authenticated chat+owned conversations before optimization; native owner-admin Desktop/full original scope preserved, no parity claim or live acceptance.

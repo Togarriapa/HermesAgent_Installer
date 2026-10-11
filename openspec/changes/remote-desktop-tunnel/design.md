@@ -196,3 +196,12 @@ Extends RT-F02/R0196..R0205/AC13..15 and v259/v263 under unchanged original scop
 The exact `planning/jarvis-native-observation-burst-sharing-v264.json` authorizes root-owned native single-flight sharing only during the original nonextendable five-second observation. Every nonce request retains fresh cheap custody/currentness joins, and every app request retains fresh Unix ingress/JWT checks. Fullscan is mandatory initially and after expiry/change/failure. Typed root timestamps propagate to per-byte denial; no restamp or authorization cache.
 
 RT-T264.1 implements inspector and consumer; VD-T264.2 verifies effects/negative burst behavior and actual Pi visibility/revocation/restart. No runtime source pins or acceptance; all AC OPEN.
+
+
+## Practical mobile/family Jarvis v265
+
+The direct user request expands presentation beyond the prior native-only remote surface: prioritize real phone keyboard input, independent family conversations and Jarvis styling while preserving full official native Desktop as owned admin option. This is a finite chat addition, never public backend management or a parity claim.
+
+Pinned7085 Desktop uses Electron bridge; the official authenticated API provides conversation/stream/run primitives. The exact `planning/jarvis-practical-mobile-family-stage-v265.json` defines a small responsive chat plus strict owned-session adapter, two-turn bound and optional separately authenticated HA ask/reply channel. Shared backend secrets, tools and memory are not automatically isolated by session IDs.
+
+Four tasks RT-T265.1..3/VD-T265.4 deliver and verify mobile/family usability before optimizations. Existing data/secrets, native Desktop/Bots and all original requirements are preserved. Full AC remain OPEN; actual phone/two-user/revocation/restart evidence is required. No runtime implementation or live mutation here.

@@ -255,3 +255,11 @@ RT-T259.3/LC-T259.4/VD-T259.5 additionally require the separate stage adapter, p
 
 - [ ] `RT-T264.1` Implement exact root-owned original-expiry native snapshot/single-flight and typed consumer; retain every independent ingress/JWT/currentness check. Depends RT-T263.1.
 - [ ] `VD-T264.2` Verify burst/expiry/mutation/failure effects and actual Pi scripts/CSS/pixels/input plus existing revocation/restart gates. Depends RT-T264.1; all AC OPEN.
+
+
+## Practical mobile/family Jarvis v265
+
+- [ ] `RT-T265.1` Implement responsive Jarvis chat composer/stream/history/stop and finite static assets using pinned source protocol; actual phone keyboard and readable narrow layout. See exact v265 contract; all acceptance OPEN.
+- [ ] `RT-T265.2` Implement strict protected chat adapter and actual local official API activation/current process/key custody; per-principal durable conversation/run ownership, bounded streaming/heartbeat and all deny cases. See exact v265 contract; all acceptance OPEN.
+- [ ] `RT-T265.3` Implement two-user bounded simultaneous conversations independent from native admin stream, honest busy/queue/recovery and preserve state/credentials/features. Document separate HA channel as deferred, not currently wired. See exact v265 contract; all acceptance OPEN.
+- [ ] `VD-T265.4` Verify production adapter effects and negative authorization/XSS/CSRF/IDOR/replay/revocation/expiry; actual phone typing/chat+two identities+native coexistence+restart. Record truthful feature matrix, deferred HA and full AC OPEN. See exact v265 contract; all acceptance OPEN.

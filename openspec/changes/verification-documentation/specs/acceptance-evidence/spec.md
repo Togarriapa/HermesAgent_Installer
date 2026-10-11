@@ -1447,3 +1447,21 @@ The manual stage SHALL share only inspector-owned native evidence during its ori
 #### Scenario: Shared native proof expires or changes
 - **WHEN** expiry, currentness mismatch or failed refresh occurs
 - **THEN** deny effects until a new complete bounded fullscan succeeds; never revive the old observation
+
+
+## ADDED Requirements
+
+### Requirement: Practical authenticated Jarvis conversation surface
+The installer SHALL add the finite v265 mobile/family conversation surface with native browser input, principal-owned sessions and bounded authenticated streaming while preserving official native Desktop as the owner-admin option. It SHALL deny unverified memory/tool isolation and never expose general backend management or claim Desktop parity.
+
+#### Scenario: Two family members chat while native Desktop is active
+- **WHEN** separately approved principals submit independent conversations within verified capacity
+- **THEN** isolate their transcripts/runs, preserve native admin operation and show honest busy state without shared canvas control or new spend
+
+#### Scenario: Phone enters text and identity is revoked
+- **WHEN** mobile chat receives keyboard input and later loses current authorization
+- **THEN** stream only to its verified owner and close/deny by existing bounded expiry rules
+
+#### Scenario: Home Assistant has no selected machine authentication
+- **WHEN** HA ask/reply lacks a current dedicated credential and owned integration
+- **THEN** report that channel unavailable, preserving family/native operation and original scope
