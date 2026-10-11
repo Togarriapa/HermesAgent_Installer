@@ -71,7 +71,7 @@ def check_coverage(base):
     require(set(components) == set(REQUIRED_COMPONENT_IDS), 'Requested component inventory changed')
     require(set(acceptance) == {f'AC{number:02}' for number in range(1, 19)}, 'Acceptance coverage changed')
     required_tasks = {'BD-T266.1', 'HI-T266.2', 'RT-T266.3', 'RB-T266.4', 'VD-T266.5', 'BD-T267.1', 'VD-T267.2', 'VD-T268.1'}
-    require(required_tasks <= tasks.keys(), 'Core/capability/UI/Resources/cleanup/release task omitted')
+    require(set(tasks) == required_tasks, 'Current core/capability/UI/Resources/cleanup/release task coverage changed')
     for key, row in requirements.items():
         require(isinstance(row.get('text'), str) and row['text'].strip(), f'Missing requirement text {key}')
         require(row.get('phase') in range(1, 6), f'Invalid requirement phase {key}')
