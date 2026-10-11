@@ -74,8 +74,8 @@ CORE_NATIVE_ADAPTER_SOURCE = Path(__file__).resolve(strict=True).parents[2]
 CORE_NATIVE_ADAPTER_SOURCE_FILES = {
     "hermes_installer/__init__.py": "61ac3dfa3bd8505d5296065d597b9b76c4a42c1f17c706c2d67f4fee2b193242",
     "hermes_installer/remote/__init__.py": "bf7dbd677d6dd4384a02211039002f760821748b33f3f66ee425d9633b5005a4",
-    "hermes_installer/remote/core_native_observer.py": "b059304fa21be5120960d506c3fe03155c12d21465011d2c4194203c18369664",
-    "hermes_installer/remote/native_child_adapter.py": "4d19b5230be829405067dd63cab415e48f6768e3141d882086095f664b7da610",
+    "hermes_installer/remote/core_native_observer.py": "63b622055417ff541ffe3356d87a9422b290264f43190ceab7b25c91e86fb62b",
+    "hermes_installer/remote/native_child_adapter.py": "5bf912a83bb011a0af55f0157204dd8a7ea7f00834bf4635de0de530e84ea365",
     "hermes_installer/remote/jarvis_master_planning.py": "67a5dca5404a1b7f1087416107f63257e812531190bdc89bb19674f9976797bd",
     "hermes_installer/remote/native_plugin_bootstrap.py": "e39c230582bb1e99e67986001c5fe2d3c7baa581266786e264ee0da508d1fe66",
     "hermes_installer/remote/jarvis_mission_executor.py": "80c1b89e5dbd93fb54d7ec04cde5818a1ed89a187746d40621cfb040e55beee1",
@@ -85,7 +85,7 @@ CORE_NATIVE_ADAPTER_SOURCE_FILES = {
     "hermes_installer/components/resources_native_plugin_bundle/plugin.yaml": "d0b3b422c29190826eea55d6f96bb81593956210a36c600541085612a06f27be",
     "hermes_installer/components/resources_native_plugin_bundle/__init__.py": "a3afaa7c211ddd9d2e6c7c939af5f2e64a2355bf6cd8f57909dbe29d68849e77",
     "hermes_installer/native_invocations.py": "16878d0b5416a763743ca9fa8b1714db93e5c9b063d3f71880ca429ebf16dc63",
-    "hermes_installer/remote/jarvis_final_effects.py": "26af22de893576658b22713c491978d108f94305773f72aae0ec3a1183aeae64",
+    "hermes_installer/remote/jarvis_final_effects.py": "fdfadff944797345c9f6bf6fc91b42ed05f0d2ad99ae383f86dd6553e3fc4583",
 }
 CORE_NATIVE_PLUGIN_STAGED_FILES = {
     "plugin.yaml": "d0b3b422c29190826eea55d6f96bb81593956210a36c600541085612a06f27be",
