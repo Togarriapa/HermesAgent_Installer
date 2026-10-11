@@ -17,14 +17,24 @@ import struct
 import subprocess
 import threading
 import time
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 SOCKET_PATH = Path("/run/hermes-jarvis-mvp/inspection.sock")
+INGRESS_SOCKET_PATH = Path("/run/hermes-jarvis-mvp-gateway/origin.sock")
+GATEWAY_UNIT = "hermes-jarvis-mvp-gateway.service"
+TUNNEL_UNIT = "hermes-jarvis-mvp-tunnel.service"
+GATEWAY_UNIT_PATH = Path("/etc/systemd/system/hermes-jarvis-mvp-gateway.service")
+TUNNEL_UNIT_PATH = Path("/etc/systemd/system/hermes-jarvis-mvp-tunnel.service")
+CLOUDFLARED_PATH = Path("/usr/bin/cloudflared")
+TUNNEL_ARGV = ("/usr/bin/cloudflared", "--no-autoupdate", "tunnel", "run",
+               "--token-file", "/run/credentials/hermes-jarvis-mvp-tunnel.service/tunnel-token")
 TABLE_FAMILY, TABLE_NAME, CHAIN_NAME = "inet", "hermes_jarvis_mvp", "output"
 DISPLAY_UNIT = "hermes-xpra-stage.service"
 MAX_REQUEST = 1024
 MAX_RESPONSE = 1024
+INGRESS_MAX_RESPONSE = 2048
 MAX_OUTPUT = 65_536
 OBSERVATION_SECONDS = 5.0
 INSPECTION_IPC_TIMEOUT_SECONDS = 2.0
@@ -33,6 +43,16 @@ WATCHDOG_INSPECTION_QUEUE_WAIT_SECONDS = 0.5
 MAX_APP_FILE_BYTES = 256 * 1024 * 1024
 MAX_APP_TREE_BYTES = 2 * 1024 * 1024 * 1024
 _INSPECTION_IPC_LOCK = threading.Lock()
+_INGRESS_SERVER_SLOTS = threading.BoundedSemaphore(8)
+_SERVER_CONNECTION_SLOTS = threading.BoundedSemaphore(16)
+_OBSERVATION_SERVER_SLOTS = threading.BoundedSemaphore(1)
+_INGRESS_REQUEST_DEADLINE_SECONDS = 2.0
+_INGRESS_PROOF_TTL_SECONDS = 5.0
+_OBSERVATION_SEAL = object()
+GATEWAY_EXECUTABLE = Path("/usr/bin/python3.13")
+GATEWAY_EXECUTABLE_SHA256 = "bd241b38381974ae27d7d5098a6d0e6dda0a744b5e9fdd6fe3a1ae632588961e"
+GATEWAY_ARGV = ("/opt/hermes-jarvis-mvp-20261011/gateway-venv/bin/python", "-m",
+                "hermes_installer.remote.manual_stage")
 XPRA_CONTROL_STUB_PATH = Path("/usr/lib/python3/dist-packages/xpra/server/subsystem/stub.py")
 XPRA_CONTROL_STUB_SIZE = 5071
 XPRA_CONTROL_STUB_SHA256 = "da12f27c1421dc71248b568791f186ee3d470d0969c4020da0d9d6d7a1a02279"
@@ -56,6 +76,56 @@ XPRA_PINNED_MODULES = (
 
 class StageInspectionDenied(PermissionError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class StageVerifiedIngressObservation:
+    schema: int
+    nonce: str
+    boot_id: str
+    issued_monotonic: float
+    expires_monotonic: float
+    peer_pid: int
+    peer_uid: int
+    peer_gid: int
+    peer_start_ticks: str
+    tunnel_unit_sha256: str
+    tunnel_config_sha256: str
+    tunnel_executable_sha256: str
+    origin_socket_device: int
+    origin_socket_inode: int
+    config_sha256: str
+    proof_sha256: str
+    _seal: object = field(repr=False, compare=False)
+
+    def verify_current(self, config: Any, peer_pid: int, peer_uid: int, peer_gid: int,
+                       *, now: float | None = None) -> bool:
+        """Validate provenance, exact request peer/config binding and short freshness."""
+        current = time.monotonic() if now is None else now
+        return bool(
+            self._seal is _OBSERVATION_SEAL and self.schema == 1
+            and self.nonce and re.fullmatch(r"[0-9a-f]{64}", self.nonce)
+            and self.boot_id == config.boot_id
+            and self.config_sha256 == config.config_sha256
+            and self.tunnel_unit_sha256 == config.tunnel_unit_sha256
+            and self.tunnel_config_sha256 == _tunnel_config_digest(config)
+            and self.tunnel_executable_sha256 == config.cloudflared_binary_sha256
+            and (self.peer_pid, self.peer_uid, self.peer_gid) == (peer_pid, peer_uid, peer_gid)
+            and self.peer_pid > 1 and self.peer_uid >= 0 and self.peer_gid >= 0
+            and self.peer_start_ticks.isdecimal()
+            and type(current) in (int, float) and current >= self.issued_monotonic
+            and self.issued_monotonic <= current < self.expires_monotonic
+            and 0 < self.expires_monotonic - self.issued_monotonic <= _INGRESS_PROOF_TTL_SECONDS
+            and all(_is_sha256(value) for value in (
+                self.tunnel_unit_sha256, self.tunnel_config_sha256,
+                self.tunnel_executable_sha256, self.config_sha256, self.proof_sha256))
+            and type(self.origin_socket_device) is int and self.origin_socket_device >= 0
+            and type(self.origin_socket_inode) is int and self.origin_socket_inode > 0
+        )
+
+
+def _is_sha256(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
 
 
 def _check_app_file_size(size: int) -> None:
@@ -334,6 +404,149 @@ def _process_argv(pid: int) -> tuple[str, ...]:
     return values
 
 
+def _tunnel_config_digest(config: Any) -> str:
+    """Bind the effective fixed local tunnel wiring (there is no local cloudflared config file)."""
+    payload = {
+        "argv": list(TUNNEL_ARGV), "binary_sha256": config.cloudflared_binary_sha256,
+        "ingress_socket": str(config.ingress_socket),
+        "supplementary_group": config.gateway_gid,
+        "tunnel_unit_sha256": config.tunnel_unit_sha256,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("ascii")
+    return hashlib.sha256(b"hermes-jarvis-mvp-tunnel-config-v263\0" + canonical).hexdigest()
+
+
+def _proc_identity(pid: int, *, expected_uid: int | None = None,
+                   expected_gid: int | None = None,
+                   supplementary_gid: int | None = None) -> tuple[int, int, int, str, tuple[str, ...]]:
+    """Read a process under PIDFD and return UID/GID, start ticks, and exact argv."""
+    if type(pid) is not int or pid <= 1:
+        raise _deny()
+    try:
+        pidfd = os.pidfd_open(pid, 0)
+        start_ticks = _pid_start_ticks(pid)
+        status = Path(f"/proc/{pid}/status").read_text()
+        cgroup = Path(f"/proc/{pid}/cgroup").read_text().splitlines()
+        argv = _process_argv(pid)
+        uid = next(line for line in status.splitlines() if line.startswith("Uid:")).split()
+        gid = next(line for line in status.splitlines() if line.startswith("Gid:")).split()
+        groups = next(line for line in status.splitlines() if line.startswith("Groups:")).split()[1:]
+        if (len(uid) != 5 or len(gid) != 5 or len(set(uid[1:])) != 1
+                or len(set(gid[1:])) != 1):
+            raise ValueError
+        real_uid, real_gid = int(uid[1]), int(gid[1])
+        if ((expected_uid is not None and real_uid != expected_uid)
+                or (expected_gid is not None and real_gid != expected_gid)
+                or (supplementary_gid is not None and str(supplementary_gid) not in groups)
+                or _pid_start_ticks(pid) != start_ticks or _pidfd_exited(pidfd)):
+            raise ValueError
+        return pidfd, real_uid, real_gid, start_ticks, argv
+    except Exception:
+        try:
+            os.close(pidfd)
+        except (UnboundLocalError, OSError):
+            pass
+        raise _deny() from None
+
+
+def _unit_props(unit: str, *, deadline: float) -> dict[str, str]:
+    props = _parse_props(_run_fixed(("/usr/bin/systemctl", "show", unit, "--no-pager",
+        "--property=LoadState", "--property=ActiveState", "--property=SubState",
+        "--property=MainPID", "--property=ControlGroup", "--property=FragmentPath",
+        "--property=User", "--property=Group", "--property=DynamicUser",
+        "--property=SupplementaryGroups", "--property=InvocationID"), deadline=deadline, maximum=8192))
+    if (props.get("LoadState") != "loaded" or props.get("ActiveState") != "active"
+            or props.get("SubState") != "running" or not props.get("InvocationID")):
+        raise _deny()
+    return props
+
+
+def _fixed_process(config: Any, *, unit: str, expected_pid: int | None,
+                   expected_uid: int, expected_gid: int, executable: Path,
+                   executable_sha256: str, argv_expected: tuple[str, ...],
+                   deadline: float, supplementary_gid: int | None = None,
+                   dynamic_user: bool = False) -> tuple[int, int, int, str, str, str]:
+    """Check active systemd identity and exact live kernel process identity."""
+    props = _unit_props(unit, deadline=deadline)
+    pid = int(props.get("MainPID", "0"))
+    if expected_pid is not None and pid != expected_pid:
+        raise _deny()
+    if (props.get("ControlGroup") != f"/system.slice/{unit}"
+            or props.get("FragmentPath") != str(GATEWAY_UNIT_PATH if unit == GATEWAY_UNIT else TUNNEL_UNIT_PATH)):
+        raise _deny()
+    if dynamic_user:
+        if props.get("DynamicUser") != "yes" or props.get("SupplementaryGroups") != str(config.gateway_gid):
+            raise _deny()
+    elif (props.get("User") != str(expected_uid) or props.get("Group") != str(expected_gid)):
+        raise _deny()
+    if _hash_path(GATEWAY_UNIT_PATH if unit == GATEWAY_UNIT else TUNNEL_UNIT_PATH,
+                  require_root_readonly=True) != (config.gateway_unit_sha256 if unit == GATEWAY_UNIT
+                                                   else config.tunnel_unit_sha256):
+        raise _deny()
+    pidfd, proc_uid, proc_gid, start_ticks, argv = _proc_identity(pid,
+        expected_uid=None if dynamic_user else expected_uid,
+        expected_gid=None if dynamic_user else expected_gid,
+        supplementary_gid=supplementary_gid)
+    try:
+        cgroup = Path(f"/proc/{pid}/cgroup").read_text().splitlines()
+        actual = Path(f"/proc/{pid}/exe").resolve(strict=True)
+        if (proc_uid != expected_uid or proc_gid != expected_gid
+                or argv != argv_expected or str(actual) != str(executable)
+                or f"0::{props['ControlGroup']}" not in cgroup
+                or _hash_path(actual, require_root_readonly=True) != executable_sha256
+                or _pid_start_ticks(pid) != start_ticks or _pidfd_exited(pidfd)):
+            raise _deny()
+        return pidfd, proc_uid, proc_gid, start_ticks, props["InvocationID"], hashlib.sha256(
+            b"\0".join(item.encode() for item in argv)).hexdigest()
+    except Exception:
+        os.close(pidfd)
+        raise _deny() from None
+
+
+def _verify_origin_socket(config: Any) -> tuple[int, int]:
+    """Read only the configured fixed Unix socket and its protected parent without following links."""
+    path = config.ingress_socket
+    if path != INGRESS_SOCKET_PATH:
+        raise _deny()
+    parent_fd = -1
+    try:
+        parent_fd = os.open("/", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                            | getattr(os, "O_NOFOLLOW", 0))
+        for component in path.parts[1:-1]:
+            next_fd = os.open(component, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                              | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent_fd)
+            info = os.fstat(next_fd)
+            is_target_parent = component == path.parent.name
+            if (not stat.S_ISDIR(info.st_mode)
+                    or (is_target_parent and (info.st_uid != config.gateway_uid
+                                               or info.st_gid != config.gateway_gid
+                                               or stat.S_IMODE(info.st_mode) != 0o750))
+                    or (not is_target_parent and (info.st_uid != 0
+                                                  or stat.S_IMODE(info.st_mode) & 0o022))):
+                os.close(next_fd)
+                raise ValueError
+            os.close(parent_fd)
+            parent_fd = next_fd
+        parent = os.fstat(parent_fd)
+        if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != config.gateway_uid
+                or parent.st_gid != config.gateway_gid or stat.S_IMODE(parent.st_mode) != 0o750):
+            raise ValueError
+        fd = os.open(path.name, os.O_PATH | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent_fd)
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != config.gateway_uid
+                    or info.st_gid != config.gateway_gid or stat.S_IMODE(info.st_mode) != 0o660):
+                raise ValueError
+            return info.st_dev, info.st_ino
+        finally:
+            os.close(fd)
+    except Exception:
+        raise _deny() from None
+    finally:
+        if parent_fd >= 0:
+            os.close(parent_fd)
+
+
 def _require_xpra_config_isolated_environment(pid: int) -> None:
     """Require Xpra's three config search roots to be explicitly disabled."""
     fd = -1
@@ -508,6 +721,74 @@ def observe_stage(config: Any, *, nonce: str) -> dict[str, Any]:
             "expires_monotonic": min(deadline, time.monotonic() + OBSERVATION_SECONDS)}
 
 
+def observe_current_ingress(config: Any, *, nonce: str, caller_pid: int,
+                            caller_uid: int, caller_gid: int, peer_pid: int,
+                            peer_uid: int, peer_gid: int) -> dict[str, Any]:
+    """Independently prove the current fixed Gateway caller and Cloudflared peer."""
+    issued = time.monotonic()
+    deadline = issued + _INGRESS_REQUEST_DEADLINE_SECONDS
+    pidfds: list[int] = []
+    try:
+        from .manual_stage import _read_config_current
+        if (os.geteuid() != 0 or type(nonce) is not str
+                or not re.fullmatch(r"[0-9a-f]{64}", nonce)
+                or any(type(value) is not int for value in
+                       (caller_pid, caller_uid, caller_gid, peer_pid, peer_uid, peer_gid))
+                or (caller_uid, caller_gid) != (config.gateway_uid, config.gateway_gid)
+                or config.ingress_socket != INGRESS_SOCKET_PATH):
+            raise _deny()
+        _read_config_current(config)
+        boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        if not re.fullmatch(r"[0-9a-f-]{36}", boot_id) or boot_id != config.boot_id:
+            raise _deny()
+        origin_device, origin_inode = _verify_origin_socket(config)
+        gateway = _fixed_process(config, unit=GATEWAY_UNIT, expected_pid=caller_pid,
+            expected_uid=config.gateway_uid, expected_gid=config.gateway_gid,
+            executable=GATEWAY_EXECUTABLE, executable_sha256=GATEWAY_EXECUTABLE_SHA256,
+            argv_expected=GATEWAY_ARGV, deadline=deadline)
+        pidfds.append(gateway[0])
+        tunnel = _fixed_process(config, unit=TUNNEL_UNIT, expected_pid=peer_pid,
+            expected_uid=peer_uid, expected_gid=peer_gid, executable=CLOUDFLARED_PATH,
+            executable_sha256=config.cloudflared_binary_sha256, argv_expected=TUNNEL_ARGV,
+            deadline=deadline, supplementary_gid=config.gateway_gid, dynamic_user=True)
+        pidfds.append(tunnel[0])
+        if type(peer_uid) is not int or type(peer_gid) is not int:
+            raise _deny()
+        # Re-read authority inputs after all procfs/systemd inspection.
+        _read_config_current(config)
+        if (Path("/proc/sys/kernel/random/boot_id").read_text().strip() != boot_id
+                or _verify_origin_socket(config) != (origin_device, origin_inode)
+                or _pid_start_ticks(caller_pid) != gateway[3]
+                or _pid_start_ticks(peer_pid) != tunnel[3]
+                or _pidfd_exited(gateway[0]) or _pidfd_exited(tunnel[0])
+                or time.monotonic() >= deadline):
+            raise _deny()
+        expires = issued + _INGRESS_PROOF_TTL_SECONDS
+        body: dict[str, Any] = {
+            "schema": 1, "nonce": nonce, "boot_id": boot_id,
+            "issued_monotonic": issued, "expires_monotonic": expires,
+            "peer_pid": peer_pid, "peer_uid": peer_uid, "peer_gid": peer_gid,
+            "peer_start_ticks": tunnel[3],
+            "tunnel_unit_sha256": config.tunnel_unit_sha256,
+            "tunnel_config_sha256": _tunnel_config_digest(config),
+            "tunnel_executable_sha256": config.cloudflared_binary_sha256,
+            "origin_socket_device": origin_device, "origin_socket_inode": origin_inode,
+            "config_sha256": config.config_sha256,
+        }
+        canonical = json.dumps(body, sort_keys=True, separators=(",", ":"),
+                               allow_nan=False).encode("ascii")
+        body["proof_sha256"] = hashlib.sha256(
+            b"hermes-jarvis-mvp-ingress-observation-v263\0" + canonical).hexdigest()
+        if len(json.dumps(body, separators=(",", ":")).encode("ascii")) > INGRESS_MAX_RESPONSE:
+            raise _deny()
+        return body
+    except Exception:
+        raise _deny() from None
+    finally:
+        for pidfd in pidfds:
+            os.close(pidfd)
+
+
 def _verify_pinned_xpra_modules() -> str:
     binding = []
     if (len(XPRA_PINNED_MODULES) != 4
@@ -525,7 +806,10 @@ def _hash_path(path: Path, *, expected_size: int | None = None,
                require_root_readonly: bool = False) -> str:
     parent_fd = None
     if require_root_readonly:
-        if path not in {row[0] for row in XPRA_PINNED_MODULES} or not path.is_absolute():
+        allowed = {row[0] for row in XPRA_PINNED_MODULES} | {
+            GATEWAY_UNIT_PATH, TUNNEL_UNIT_PATH, CLOUDFLARED_PATH,
+        }
+        if path not in allowed or not path.is_absolute():
             raise _deny()
         try:
             parent_fd = os.open("/", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) |
@@ -614,35 +898,76 @@ def serve_inspection_socket(config: Any) -> None:
         os.chmod(SOCKET_PATH, 0o660)
         server.listen(16)
         server.settimeout(1)
+        def serve_one(conn: socket.socket) -> None:
+            acquired: threading.BoundedSemaphore | None = None
+            try:
+                conn.settimeout(1)
+                if not hasattr(socket, "SO_PEERCRED"):
+                    return
+                caller_pid, caller_uid, caller_gid = struct.unpack(
+                    "3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+                if caller_uid != config.gateway_uid or caller_pid <= 1:
+                    return
+                frame_deadline = time.monotonic() + 1.5
+                header = _read_exact(conn, 4, deadline=frame_deadline)
+                length = struct.unpack("!I", header)[0]
+                if not 2 <= length <= MAX_REQUEST:
+                    return
+                request = json.loads(_read_exact(conn, length, deadline=frame_deadline).decode("ascii"),
+                                     object_pairs_hook=_unique_pairs)
+                if not isinstance(request, dict) or not isinstance(request.get("op"), str):
+                    return
+                if request["op"] == "observe-ingress":
+                    acquired = _INGRESS_SERVER_SLOTS
+                    expected = {"op", "nonce", "peer_pid", "peer_uid", "peer_gid"}
+                    if set(request) != expected:
+                        acquired = None
+                        return
+                    if not acquired.acquire(blocking=False):
+                        acquired = None
+                        return
+                    result = observe_current_ingress(config, nonce=request["nonce"],
+                        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+                        peer_pid=request["peer_pid"], peer_uid=request["peer_uid"],
+                        peer_gid=request["peer_gid"])
+                elif request["op"] == "observe":
+                    acquired = _OBSERVATION_SERVER_SLOTS
+                    if set(request) != {"op", "nonce"} or caller_uid != config.gateway_uid:
+                        acquired = None
+                        return
+                    if not acquired.acquire(blocking=False):
+                        acquired = None
+                        return
+                    result = observe_stage(config, nonce=request["nonce"])
+                else:
+                    return
+                raw = json.dumps(result, sort_keys=True, separators=(",", ":"),
+                                 allow_nan=False).encode("ascii")
+                limit = INGRESS_MAX_RESPONSE if request["op"] == "observe-ingress" else MAX_RESPONSE
+                if len(raw) <= limit and time.monotonic() < frame_deadline + 1.0:
+                    conn.sendall(struct.pack("!I", len(raw)) + raw)
+            except Exception:
+                return
+            finally:
+                if acquired is not None:
+                    acquired.release()
+                conn.close()
+                _SERVER_CONNECTION_SLOTS.release()
+
         while not stopped:
             try:
                 conn, _ = server.accept()
             except TimeoutError:
                 continue
-            with conn:
-                conn.settimeout(1)
-                if not hasattr(socket, "SO_PEERCRED"):
-                    continue
-                pid, uid, gid = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
-                if uid != config.gateway_uid or pid <= 1:
-                    continue
-                try:
-                    frame_deadline = time.monotonic() + 2.0
-                    header = _read_exact(conn, 4, deadline=frame_deadline)
-                    length = struct.unpack("!I", header)[0]
-                    if not 2 <= length <= MAX_REQUEST:
-                        continue
-                    request = json.loads(_read_exact(conn, length, deadline=frame_deadline).decode("ascii"),
-                                         object_pairs_hook=_unique_pairs)
-                    if (not isinstance(request, dict) or set(request) != {"op", "nonce"}
-                            or request["op"] != "observe"):
-                        continue
-                    result = observe_stage(config, nonce=request["nonce"])
-                    raw = json.dumps(result, sort_keys=True, separators=(",", ":")).encode("ascii")
-                    if len(raw) <= MAX_RESPONSE:
-                        conn.sendall(struct.pack("!I", len(raw)) + raw)
-                except Exception:
-                    continue
+            if not _SERVER_CONNECTION_SLOTS.acquire(blocking=False):
+                conn.close()
+                continue
+            worker = threading.Thread(target=serve_one, args=(conn,), daemon=True)
+            try:
+                worker.start()
+            except Exception:
+                conn.close()
+                _SERVER_CONNECTION_SLOTS.release()
     finally:
         server.close()
         signal.signal(signal.SIGTERM, previous_term)
@@ -677,6 +1002,101 @@ def _unique_pairs(pairs):
             raise ValueError("duplicate JSON field")
         result[key] = value
     return result
+
+
+def verify_current_ingress(config: Any, *, peer_pid: int, peer_uid: int,
+                           peer_gid: int) -> StageVerifiedIngressObservation:
+    """Return a sealed one-request proof that this accepted AF_UNIX peer is live Cloudflared."""
+    from .manual_stage import _read_config_current
+    nonce = os.urandom(32).hex()
+    deadline = time.monotonic() + _INGRESS_REQUEST_DEADLINE_SECONDS
+    try:
+        _read_config_current(config)
+        path = config.ingress_socket
+        if path != INGRESS_SOCKET_PATH:
+            raise ValueError
+        info = os.lstat(SOCKET_PATH)
+        if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != 0
+                or info.st_gid != config.gateway_gid or stat.S_IMODE(info.st_mode) != 0o660):
+            raise ValueError
+        conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        conn.settimeout(_INGRESS_REQUEST_DEADLINE_SECONDS)
+        conn.connect(str(SOCKET_PATH))
+        try:
+            if not hasattr(socket, "SO_PEERCRED"):
+                raise ValueError
+            inspector_pid, inspector_uid, _inspector_gid = struct.unpack(
+                "3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            if inspector_uid != 0 or inspector_pid <= 1:
+                raise ValueError
+            payload = json.dumps({"op": "observe-ingress", "nonce": nonce,
+                "peer_pid": peer_pid, "peer_uid": peer_uid, "peer_gid": peer_gid},
+                sort_keys=True, separators=(",", ":")).encode("ascii")
+            if len(payload) > MAX_REQUEST:
+                raise ValueError
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError
+            conn.settimeout(remaining)
+            conn.sendall(struct.pack("!I", len(payload)) + payload)
+            length = struct.unpack("!I", _read_exact(conn, 4, deadline=deadline))[0]
+            if not 2 <= length <= INGRESS_MAX_RESPONSE:
+                raise ValueError
+            result = json.loads(_read_exact(conn, length, deadline=deadline).decode("ascii"),
+                                object_pairs_hook=_unique_pairs)
+        finally:
+            conn.close()
+        fields = {"schema", "nonce", "boot_id", "issued_monotonic", "expires_monotonic",
+            "peer_pid", "peer_uid", "peer_gid", "peer_start_ticks", "tunnel_unit_sha256",
+            "tunnel_config_sha256", "tunnel_executable_sha256", "origin_socket_device",
+            "origin_socket_inode", "config_sha256", "proof_sha256"}
+        if not isinstance(result, dict) or set(result) != fields:
+            raise ValueError
+        now = time.monotonic()
+        local_boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        numbers = ("issued_monotonic", "expires_monotonic")
+        if any(type(result[name]) not in (int, float) or not __import__("math").isfinite(result[name])
+               for name in numbers):
+            raise ValueError
+        int_fields = ("schema", "peer_pid", "peer_uid", "peer_gid", "origin_socket_device", "origin_socket_inode")
+        if any(type(result[name]) is not int for name in int_fields):
+            raise ValueError
+        expected_fields = {
+            "schema": 1, "nonce": nonce, "boot_id": local_boot_id,
+            "peer_pid": peer_pid, "peer_uid": peer_uid, "peer_gid": peer_gid,
+            "tunnel_unit_sha256": config.tunnel_unit_sha256,
+            "tunnel_config_sha256": _tunnel_config_digest(config),
+            "tunnel_executable_sha256": config.cloudflared_binary_sha256,
+            "config_sha256": config.config_sha256,
+        }
+        if any(result[key] != value for key, value in expected_fields.items()):
+            raise ValueError
+        if (not re.fullmatch(r"[0-9a-f-]{36}", local_boot_id)
+                or not isinstance(result["peer_start_ticks"], str)
+                or not result["peer_start_ticks"].isdecimal()
+                or result["peer_pid"] <= 1 or result["peer_uid"] < 0 or result["peer_gid"] < 0
+                or result["origin_socket_device"] < 0 or result["origin_socket_inode"] <= 0
+                or result["issued_monotonic"] > now or result["expires_monotonic"] <= now
+                or result["expires_monotonic"] - result["issued_monotonic"] > _INGRESS_PROOF_TTL_SECONDS
+                or now >= deadline):
+            raise ValueError
+        for name in ("tunnel_unit_sha256", "tunnel_config_sha256", "tunnel_executable_sha256",
+                     "config_sha256", "proof_sha256"):
+            if not _is_sha256(result[name]):
+                raise ValueError
+        body = {key: value for key, value in result.items() if key != "proof_sha256"}
+        canonical = json.dumps(body, sort_keys=True, separators=(",", ":"),
+                               allow_nan=False).encode("ascii")
+        expected_proof = hashlib.sha256(
+            b"hermes-jarvis-mvp-ingress-observation-v263\0" + canonical).hexdigest()
+        if result["proof_sha256"] != expected_proof:
+            raise ValueError
+        observation = StageVerifiedIngressObservation(**result, _seal=_OBSERVATION_SEAL)
+        if not observation.verify_current(config, peer_pid, peer_uid, peer_gid, now=now):
+            raise ValueError
+        return observation
+    except Exception:
+        raise StageInspectionDenied("root current-ingress proof is unavailable or stale") from None
 
 
 def verify_current_inspection(config: Any, *, queue_timeout_seconds: float = MAX_INSPECTION_QUEUE_WAIT_SECONDS) -> str:
