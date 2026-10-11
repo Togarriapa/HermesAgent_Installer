@@ -1,0 +1,35 @@
+[Unit]
+Description=Jarvis core-first Cloudflare Access gateway
+Requires=hermes-jarvis-core-inspector.service hermes-jarvis-core.service
+After=hermes-jarvis-core-inspector.service hermes-jarvis-core.service
+
+[Service]
+Type=simple
+User=996
+Group=981
+UMask=0077
+Environment=PYTHONPATH=/opt/hermes-jarvis-mvp-20261011/gateway-source/src
+Environment=PYTHONNOUSERSITE=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+UnsetEnvironment=PYTHONHOME PYTHONUSERBASE PYTHONSTARTUP
+ExecStart=/opt/hermes-jarvis-mvp-20261011/gateway-venv/bin/python -m hermes_installer.remote.core_gateway
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=15
+RuntimeDirectory=hermes-jarvis-mvp-gateway
+RuntimeDirectoryMode=0750
+StateDirectory=hermes-jarvis-chat
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

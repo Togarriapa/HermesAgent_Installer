@@ -1,0 +1,657 @@
+"""Read-only root witness for the fixed core-mode Gateway and backend."""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import secrets
+import select
+import signal
+import socket
+import stat
+import struct
+import subprocess
+import threading
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from .core_gateway import (
+    CORE_CONFIG, CORE_GATEWAY_UNIT, CORE_GATEWAY_UNIT_PATH, CORE_HOST, CORE_INGRESS_SOCKET,
+    CORE_INSPECTOR_SOCKET, CORE_PORT, CORE_SERVICE_UNIT, CoreGatewayConfig,
+)
+
+TUNNEL_UNIT = "hermes-jarvis-mvp-tunnel.service"
+TUNNEL_UNIT_PATH = Path("/etc/systemd/system/hermes-jarvis-mvp-tunnel.service")
+TUNNEL_EXECUTABLE = Path("/usr/bin/cloudflared")
+TUNNEL_ARGV = ("/usr/bin/cloudflared", "--no-autoupdate", "tunnel", "run", "--token-file",
+               "/run/credentials/hermes-jarvis-mvp-tunnel.service/tunnel-token")
+CORE_UNIT_PATH = Path("/etc/systemd/system/hermes-jarvis-core.service")
+CORE_LAUNCHER = Path("/usr/local/libexec/hermes-jarvis-core-launcher")
+CORE_ARGV_TAIL = ("-m", "hermes_cli.main", "serve", "--isolated", "--host",
+                  CORE_HOST, "--port", str(CORE_PORT))
+CORE_TOKEN_SOURCE = Path("/etc/hermes-installer/jarvis-core/session-token")
+MAX_REQUEST = 1024
+MAX_RESPONSE = 4096
+MAX_OUTPUT = 16_384
+MAX_HASH_FILE_BYTES = 512 * 1024 * 1024
+MAX_PROOF_SECONDS = 5.0
+IPC_TIMEOUT = 2.0
+_PROOF_SEAL = object()
+_SERVER_SLOTS = threading.BoundedSemaphore(16)
+_OBSERVATION_FIELDS = (
+    "schema", "nonce", "boot_id", "issued_monotonic", "expires_monotonic",
+    "peer_pid", "peer_uid", "peer_gid", "peer_start_ticks", "tunnel_invocation_id",
+    "tunnel_unit_sha256", "tunnel_executable_sha256", "origin_socket_device",
+    "origin_socket_inode", "gateway_unit_sha256", "core_unit_sha256",
+    "core_invocation_id", "core_pid", "core_start_ticks", "core_listener_inode",
+    "core_generation", "config_sha256",
+)
+
+
+class CoreInspectionDenied(PermissionError):
+    pass
+
+
+def _observation_digest(values: dict[str, Any]) -> str:
+    canonical = json.dumps(values, sort_keys=True, separators=(",", ":"),
+                           allow_nan=False).encode("ascii")
+    return hashlib.sha256(b"hermes-jarvis-core-ingress-v1\0" + canonical).hexdigest()
+
+
+def _deny():
+    raise CoreInspectionDenied("fixed core ingress observation denied")
+
+
+def _unique_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def _is_hash(value: Any) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+def _read_exact(conn: socket.socket, size: int, deadline: float) -> bytes:
+    result = bytearray()
+    while len(result) < size:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError
+        conn.settimeout(remaining)
+        chunk = conn.recv(size - len(result))
+        if not chunk:
+            raise OSError("short IPC frame")
+        result.extend(chunk)
+    return bytes(result)
+
+
+def _run_fixed(argv: tuple[str, ...], *, deadline: float, maximum: int) -> bytes:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError
+    result = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, timeout=remaining, check=False, close_fds=True,
+        env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "LC_ALL": "C"})
+    if result.returncode != 0 or len(result.stdout) > maximum:
+        raise ValueError("fixed observation command failed")
+    return result.stdout
+
+
+def _unit_properties(unit: str, *, deadline: float) -> dict[str, str]:
+    allowed = {CORE_GATEWAY_UNIT, CORE_SERVICE_UNIT, TUNNEL_UNIT}
+    if unit not in allowed:
+        raise ValueError("unknown fixed unit")
+    raw = _run_fixed(("/usr/bin/systemctl", "show", unit, "--no-pager",
+        "--property=LoadState", "--property=ActiveState", "--property=SubState",
+        "--property=MainPID", "--property=ControlGroup", "--property=FragmentPath",
+        "--property=User", "--property=Group", "--property=DynamicUser",
+        "--property=SupplementaryGroups", "--property=DropInPaths",
+        "--property=InvocationID"), deadline=deadline, maximum=8192)
+    props = {}
+    for line in raw.decode("utf-8", "strict").splitlines():
+        if "=" not in line:
+            raise ValueError("malformed systemd output")
+        key, value = line.split("=", 1)
+        if key in props:
+            raise ValueError("duplicate systemd property")
+        props[key] = value
+    if (props.get("LoadState") != "loaded" or props.get("ActiveState") != "active"
+            or props.get("SubState") != "running" or props.get("DropInPaths") != ""
+            or not re.fullmatch(r"[0-9a-fA-F-]{32,36}", props.get("InvocationID", ""))):
+        _deny()
+    return props
+
+
+def _protected_file_sha(path: Path, *, owner_uid: int = 0, owner_gid: int | None = None,
+                        exact_mode: int | None = None) -> str:
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) |
+                 getattr(os, "O_CLOEXEC", 0))
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != owner_uid
+                or (owner_gid is not None and info.st_gid != owner_gid)
+                or stat.S_IMODE(info.st_mode) & 0o022 or info.st_nlink != 1
+                or (exact_mode is not None and stat.S_IMODE(info.st_mode) != exact_mode)
+                or info.st_size > MAX_HASH_FILE_BYTES):
+            raise ValueError("fixed file is not immutable root custody")
+        digest = hashlib.sha256()
+        while True:
+            block = os.read(fd, 8192)
+            if not block:
+                break
+            digest.update(block)
+        return digest.hexdigest()
+    finally:
+        os.close(fd)
+
+
+def _current_core_credential(pid: int, config: CoreGatewayConfig) -> None:
+    """Join the protected backend token source to the live process privately."""
+    parent = os.lstat(CORE_TOKEN_SOURCE.parent)
+    if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0
+            or parent.st_gid != config.gateway_gid or stat.S_IMODE(parent.st_mode) != 0o750):
+        _deny()
+    fd = os.open(CORE_TOKEN_SOURCE, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                 | getattr(os, "O_CLOEXEC", 0))
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                or info.st_gid != config.gateway_gid or stat.S_IMODE(info.st_mode) != 0o640
+                or info.st_nlink != 1 or not 32 <= info.st_size <= 4097):
+            _deny()
+        secret = bytearray()
+        while len(secret) <= 4097:
+            block = os.read(fd, min(1024, 4098 - len(secret)))
+            if not block:
+                break
+            secret.extend(block)
+        after = os.fstat(fd)
+        if ((info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+                != (after.st_dev, after.st_ino, after.st_size,
+                    after.st_mtime_ns, after.st_ctime_ns)):
+            _deny()
+        if secret.endswith(b"\n"):
+            secret = secret[:-1]
+        if (not 32 <= len(secret) <= 4096
+                or any(byte < 0x21 or byte > 0x7e for byte in secret)):
+            _deny()
+    finally:
+        os.close(fd)
+    # The value is neither returned, hashed into a public proof, nor logged.
+    env_fd = os.open(f"/proc/{pid}/environ", os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+    try:
+        environment = bytearray()
+        while len(environment) <= 1024 * 1024:
+            block = os.read(env_fd, min(16_384, 1024 * 1024 + 1 - len(environment)))
+            if not block:
+                break
+            environment.extend(block)
+    finally:
+        os.close(env_fd)
+    if len(environment) > 1024 * 1024:
+        _deny()
+    matches = [entry[len(b"HERMES_DASHBOARD_SESSION_TOKEN="):]
+               for entry in environment.split(b"\0")
+               if entry.startswith(b"HERMES_DASHBOARD_SESSION_TOKEN=")]
+    if len(matches) != 1 or not secrets.compare_digest(matches[0], secret):
+        _deny()
+    for index in range(len(secret)):
+        secret[index] = 0
+
+
+def _proc_start_ticks(pid: int) -> str:
+    raw = Path(f"/proc/{pid}/stat").read_text()
+    close = raw.rfind(")")
+    fields = raw[close + 2:].split()
+    if close < 0 or len(fields) <= 19 or not fields[19].isdecimal():
+        raise ValueError("invalid process stat")
+    return fields[19]
+
+
+def _process(pid: int, *, uid: int, gid: int, argv: tuple[str, ...], executable: Path,
+             executable_sha256: str, cgroup: str, deadline: float,
+             supplementary_gid: int | None = None,
+             executable_owner_uid: int = 0, executable_owner_gid: int | None = None,
+             executable_mode: int | None = None) -> tuple[int, str]:
+    if pid <= 1 or time.monotonic() >= deadline or not hasattr(os, "pidfd_open"):
+        _deny()
+    pidfd = os.pidfd_open(pid, 0)
+    try:
+        start = _proc_start_ticks(pid)
+        status = Path(f"/proc/{pid}/status").read_text()
+        fields = {}
+        for line in status.splitlines():
+            key, sep, value = line.partition(":")
+            if sep:
+                fields[key] = value.strip().split()
+        actual_uid = fields.get("Uid", [])
+        actual_gid = fields.get("Gid", [])
+        groups = fields.get("Groups", [])
+        if (len(actual_uid) < 2 or len(actual_gid) < 2 or int(actual_uid[1]) != uid
+                or int(actual_gid[1]) != gid
+                or (supplementary_gid is not None and str(supplementary_gid) not in groups)):
+            _deny()
+        raw_argv = Path(f"/proc/{pid}/cmdline").read_bytes()
+        actual_argv = tuple(item.decode("utf-8", "strict") for item in raw_argv.rstrip(b"\0").split(b"\0"))
+        actual_executable = Path(f"/proc/{pid}/exe").resolve(strict=True)
+        actual_cgroup = Path(f"/proc/{pid}/cgroup").read_text().splitlines()
+        if (actual_argv != argv or actual_executable != executable
+                or f"0::{cgroup}" not in actual_cgroup
+                or _protected_file_sha(actual_executable, owner_uid=executable_owner_uid,
+                    owner_gid=executable_owner_gid, exact_mode=executable_mode) != executable_sha256
+                or _proc_start_ticks(pid) != start):
+            _deny()
+        poll = select.poll()
+        poll.register(pidfd, select.POLLIN | select.POLLHUP | select.POLLERR)
+        if poll.poll(0):
+            _deny()
+        return pidfd, start
+    except Exception:
+        os.close(pidfd)
+        raise
+
+
+def _check_unit_process(config: CoreGatewayConfig, *, unit: str, pid: int, deadline: float,
+                        peer_uid: int | None = None, peer_gid: int | None = None):
+    props = _unit_properties(unit, deadline=deadline)
+    main_pid = int(props.get("MainPID", "0"))
+    if main_pid != pid or props.get("ControlGroup") != f"/system.slice/{unit}":
+        _deny()
+    if unit == CORE_GATEWAY_UNIT:
+        path, expected_hash = CORE_GATEWAY_UNIT_PATH, config.gateway_unit_sha256
+        exe, exe_hash, argv = GATEWAY_EXECUTABLE, config.gateway_python_sha256, (
+            GATEWAY_ARGV[0], *GATEWAY_ARGV[1:])
+        uid, gid, supplementary = config.gateway_uid, config.gateway_gid, None
+        executable_owner = (0, None, None)
+        if props.get("FragmentPath") != str(path) or props.get("User") != str(uid) or props.get("Group") != str(gid):
+            _deny()
+    elif unit == CORE_SERVICE_UNIT:
+        path, expected_hash = CORE_UNIT_PATH, config.core_unit_sha256
+        launcher_hash = _protected_file_sha(CORE_LAUNCHER)
+        if launcher_hash != config.core_launcher_sha256:
+            _deny()
+        try:
+            executable = config.core_python.resolve(strict=True)
+        except OSError:
+            _deny()
+        exe, exe_hash = executable, config.core_python_sha256
+        argv = (str(config.core_python), *CORE_ARGV_TAIL)
+        uid, gid, supplementary = config.core_uid, config.core_gid, None
+        executable_owner = (config.core_uid, config.core_gid, 0o755)
+        if (props.get("FragmentPath") != str(path) or props.get("User") != "admin"
+                or props.get("Group") != str(config.core_gid)):
+            _deny()
+    elif unit == TUNNEL_UNIT:
+        path, expected_hash = TUNNEL_UNIT_PATH, config.tunnel_unit_sha256
+        exe, exe_hash, argv = TUNNEL_EXECUTABLE, config.cloudflared_binary_sha256, TUNNEL_ARGV
+        uid, gid, supplementary = peer_uid, peer_gid, config.gateway_gid
+        executable_owner = (0, None, None)
+        if (props.get("FragmentPath") != str(path) or props.get("DynamicUser") != "yes"
+                or props.get("SupplementaryGroups") != str(config.gateway_gid)):
+            _deny()
+    else:
+        _deny()
+    if _protected_file_sha(path) != expected_hash:
+        _deny()
+    try:
+        pidfd, start = _process(main_pid, uid=uid, gid=gid, argv=argv, executable=exe,
+            executable_sha256=exe_hash, cgroup=props["ControlGroup"], deadline=deadline,
+            supplementary_gid=supplementary, executable_owner_uid=executable_owner[0],
+            executable_owner_gid=executable_owner[1], executable_mode=executable_owner[2])
+        return pidfd, start, props["InvocationID"]
+    except Exception:
+        raise
+
+
+def _socket_identity(path: Path, config: CoreGatewayConfig) -> tuple[int, int]:
+    if path != CORE_INGRESS_SOCKET:
+        _deny()
+    parent_fd = os.open("/", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                        | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        for component in path.parts[1:-1]:
+            next_fd = os.open(component, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                              | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent_fd)
+            info = os.fstat(next_fd)
+            target = component == path.parent.name
+            if (not stat.S_ISDIR(info.st_mode)
+                    or (target and (info.st_uid != config.gateway_uid or info.st_gid != config.gateway_gid
+                                    or stat.S_IMODE(info.st_mode) != 0o750))
+                    or (not target and (info.st_uid != 0 or stat.S_IMODE(info.st_mode) & 0o022))):
+                os.close(next_fd)
+                _deny()
+            os.close(parent_fd)
+            parent_fd = next_fd
+        fd = os.open(path.name, os.O_PATH | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent_fd)
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != config.gateway_uid
+                    or info.st_gid != config.gateway_gid or stat.S_IMODE(info.st_mode) != 0o660):
+                _deny()
+            return info.st_dev, info.st_ino
+        finally:
+            os.close(fd)
+    finally:
+        os.close(parent_fd)
+
+
+def _core_listener_inode(pid: int) -> int:
+    target = f"{CORE_PORT:04X}"
+    inodes = set()
+    for line in Path("/proc/net/tcp").read_text().splitlines()[1:]:
+        parts = line.split()
+        if len(parts) > 9 and parts[1] == f"0100007F:{target}" and parts[3] == "0A":
+            inodes.add(parts[9])
+    if len(inodes) != 1:
+        _deny()
+    for fd in Path(f"/proc/{pid}/fd").iterdir():
+        try:
+            link = os.readlink(fd)
+        except OSError:
+            continue
+        match = re.fullmatch(r"socket:\[(\d+)\]", link)
+        if match and match.group(1) in inodes:
+            return int(match.group(1))
+    _deny()
+
+
+def _boot_id() -> str:
+    value = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    if not re.fullmatch(r"[0-9a-f-]{36}", value):
+        _deny()
+    return value
+
+
+def _config_current(config: CoreGatewayConfig) -> CoreGatewayConfig:
+    if type(config) is not CoreGatewayConfig:
+        _deny()
+    current = CoreGatewayConfig.load(expected_owner_uid=0)
+    if current.config_sha256 != config.config_sha256 or current.boot_id != config.boot_id:
+        _deny()
+    return current
+
+
+def observe_current_ingress(config: CoreGatewayConfig, *, nonce: str, caller_pid: int,
+                            caller_uid: int, caller_gid: int, peer_pid: int,
+                            peer_uid: int, peer_gid: int) -> dict[str, Any]:
+    issued = time.monotonic()
+    deadline = issued + IPC_TIMEOUT
+    pidfds = []
+    try:
+        if (os.geteuid() != 0 or not re.fullmatch(r"[0-9a-f]{64}", nonce)
+                or (caller_uid, caller_gid) != (config.gateway_uid, config.gateway_gid)
+                or _boot_id() != config.boot_id):
+            _deny()
+        _config_current(config)
+        origin = _socket_identity(config.ingress_socket, config)
+        gateway_pidfd, gateway_start, _gw_invocation = _check_unit_process(config,
+            unit=CORE_GATEWAY_UNIT, pid=caller_pid, deadline=deadline)
+        pidfds.append(gateway_pidfd)
+        tunnel_pidfd, tunnel_start, tunnel_invocation = _check_unit_process(config,
+            unit=TUNNEL_UNIT, pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid, deadline=deadline)
+        pidfds.append(tunnel_pidfd)
+        core_props = _unit_properties(CORE_SERVICE_UNIT, deadline=deadline)
+        core_pid = int(core_props.get("MainPID", "0"))
+        core_pidfd, core_start, core_invocation = _check_unit_process(config,
+            unit=CORE_SERVICE_UNIT, pid=core_pid, deadline=deadline)
+        pidfds.append(core_pidfd)
+        _current_core_credential(core_pid, config)
+        listener_inode = _core_listener_inode(core_pid)
+        if (time.monotonic() >= deadline or _boot_id() != config.boot_id
+                or _socket_identity(config.ingress_socket, config) != origin
+                or _core_listener_inode(core_pid) != listener_inode
+                or _config_current(config).config_sha256 != config.config_sha256):
+            _deny()
+        for pidfd, pid, start_ticks in (
+                (gateway_pidfd, caller_pid, gateway_start),
+                (tunnel_pidfd, peer_pid, tunnel_start),
+                (core_pidfd, core_pid, core_start)):
+            poller = select.poll()
+            poller.register(pidfd, select.POLLIN | select.POLLHUP | select.POLLERR)
+            if poller.poll(0) or _proc_start_ticks(pid) != start_ticks:
+                _deny()
+        generation_payload = f"{core_invocation}\0{core_pid}\0{core_start}\0{listener_inode}".encode("ascii")
+        core_generation = hashlib.sha256(b"hermes-jarvis-core-generation-v1\0" + generation_payload).hexdigest()
+        body: dict[str, Any] = {
+            "schema": 1, "nonce": nonce, "boot_id": config.boot_id,
+            "issued_monotonic": issued, "expires_monotonic": issued + MAX_PROOF_SECONDS,
+            "peer_pid": peer_pid, "peer_uid": peer_uid, "peer_gid": peer_gid,
+            "peer_start_ticks": tunnel_start, "tunnel_invocation_id": tunnel_invocation,
+            "tunnel_unit_sha256": config.tunnel_unit_sha256,
+            "tunnel_executable_sha256": config.cloudflared_binary_sha256,
+            "origin_socket_device": origin[0], "origin_socket_inode": origin[1],
+            "gateway_unit_sha256": config.gateway_unit_sha256,
+            "core_unit_sha256": config.core_unit_sha256,
+            "core_invocation_id": core_invocation, "core_pid": core_pid,
+            "core_start_ticks": core_start, "core_listener_inode": listener_inode,
+            "core_generation": core_generation, "config_sha256": config.config_sha256,
+        }
+        body["proof_sha256"] = _observation_digest(body)
+        return body
+    finally:
+        for pidfd in pidfds:
+            try:
+                os.close(pidfd)
+            except OSError:
+                pass
+
+
+@dataclass(frozen=True, slots=True)
+class CoreVerifiedIngressObservation:
+    schema: int
+    nonce: str
+    boot_id: str
+    issued_monotonic: float
+    expires_monotonic: float
+    peer_pid: int
+    peer_uid: int
+    peer_gid: int
+    peer_start_ticks: str
+    tunnel_invocation_id: str
+    tunnel_unit_sha256: str
+    tunnel_executable_sha256: str
+    origin_socket_device: int
+    origin_socket_inode: int
+    gateway_unit_sha256: str
+    core_unit_sha256: str
+    core_invocation_id: str
+    core_pid: int
+    core_start_ticks: str
+    core_listener_inode: int
+    core_generation: str
+    config_sha256: str
+    proof_sha256: str
+    _seal: object = field(repr=False, compare=False)
+
+    def verify_current(self, config: CoreGatewayConfig, *, peer_pid: int, peer_uid: int,
+                       peer_gid: int, listener_identity: tuple[int, int],
+                       now: float | None = None) -> bool:
+        current = time.monotonic() if now is None else now
+        try:
+            claims = {name: getattr(self, name) for name in _OBSERVATION_FIELDS}
+            return bool(self._seal is _PROOF_SEAL and type(self.schema) is int and self.schema == 1
+                and re.fullmatch(r"[0-9a-f]{64}", self.nonce)
+                and self.boot_id == config.boot_id == _boot_id()
+                and self.config_sha256 == config.config_sha256
+                and self.gateway_unit_sha256 == config.gateway_unit_sha256
+                and self.core_unit_sha256 == config.core_unit_sha256
+                and self.tunnel_unit_sha256 == config.tunnel_unit_sha256
+                and self.tunnel_executable_sha256 == config.cloudflared_binary_sha256
+                and (self.peer_pid, self.peer_uid, self.peer_gid) == (peer_pid, peer_uid, peer_gid)
+                and (self.origin_socket_device, self.origin_socket_inode) == listener_identity
+                and type(current) in (int, float) and self.issued_monotonic <= current < self.expires_monotonic
+                and 0 < self.expires_monotonic - self.issued_monotonic <= MAX_PROOF_SECONDS
+                and self.peer_start_ticks.isdecimal() and self.core_start_ticks.isdecimal()
+                and self.core_generation == hashlib.sha256(
+                    b"hermes-jarvis-core-generation-v1\0" +
+                    f"{self.core_invocation_id}\0{self.core_pid}\0{self.core_start_ticks}\0{self.core_listener_inode}".encode("ascii")
+                ).hexdigest()
+                and _observation_digest(claims) == self.proof_sha256
+                and all(_is_hash(value) for value in (self.tunnel_unit_sha256,
+                    self.tunnel_executable_sha256, self.gateway_unit_sha256, self.core_unit_sha256,
+                    self.config_sha256, self.proof_sha256)))
+        except Exception:
+            return False
+
+
+def _read_frame(conn: socket.socket, deadline: float, maximum: int) -> dict[str, Any]:
+    size = struct.unpack("!I", _read_exact(conn, 4, deadline))[0]
+    if not 2 <= size <= maximum:
+        raise ValueError("IPC message exceeded bound")
+    value = json.loads(_read_exact(conn, size, deadline).decode("ascii"), object_pairs_hook=_unique_pairs)
+    if not isinstance(value, dict):
+        raise ValueError("IPC frame is not an object")
+    return value
+
+
+def _serve_connection(conn: socket.socket, config: CoreGatewayConfig) -> None:
+    try:
+        conn.settimeout(1.5)
+        if not hasattr(socket, "SO_PEERCRED"):
+            return
+        caller_pid, caller_uid, caller_gid = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+        if caller_uid != config.gateway_uid or caller_pid <= 1:
+            return
+        deadline = time.monotonic() + 1.5
+        request = _read_frame(conn, deadline, MAX_REQUEST)
+        if set(request) != {"op", "nonce", "peer_pid", "peer_uid", "peer_gid"} or request.get("op") != "observe-ingress":
+            return
+        result = observe_current_ingress(config, nonce=request["nonce"], caller_pid=caller_pid,
+            caller_uid=caller_uid, caller_gid=caller_gid, peer_pid=request["peer_pid"],
+            peer_uid=request["peer_uid"], peer_gid=request["peer_gid"])
+        raw = json.dumps(result, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("ascii")
+        if len(raw) > MAX_RESPONSE or time.monotonic() >= deadline + IPC_TIMEOUT:
+            return
+        conn.sendall(struct.pack("!I", len(raw)) + raw)
+    except Exception:
+        return
+    finally:
+        _SERVER_SLOTS.release()
+        conn.close()
+
+
+def serve_inspection_socket(config: CoreGatewayConfig) -> None:
+    if os.geteuid() != 0 or type(config) is not CoreGatewayConfig:
+        raise CoreInspectionDenied("core inspector must run as root")
+    if CORE_INSPECTOR_SOCKET.exists() or CORE_INSPECTOR_SOCKET.is_symlink():
+        raise CoreInspectionDenied("fixed core inspector socket is occupied")
+    parent = os.lstat(CORE_INSPECTOR_SOCKET.parent)
+    if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0 or parent.st_gid != config.gateway_gid
+            or stat.S_IMODE(parent.st_mode) != 0o750):
+        raise CoreInspectionDenied("fixed core inspector directory custody differs")
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    identity = None
+    stopping = False
+    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
+
+    def stop(_signum, _frame):
+        nonlocal stopping
+        stopping = True
+
+    try:
+        for sig in previous:
+            signal.signal(sig, stop)
+        server.bind(str(CORE_INSPECTOR_SOCKET))
+        info = os.lstat(CORE_INSPECTOR_SOCKET)
+        identity = (info.st_dev, info.st_ino)
+        os.chown(CORE_INSPECTOR_SOCKET, 0, config.gateway_gid)
+        os.chmod(CORE_INSPECTOR_SOCKET, 0o660)
+        server.listen(16)
+        server.settimeout(0.5)
+        while not stopping:
+            try:
+                conn, _ = server.accept()
+            except TimeoutError:
+                continue
+            if not _SERVER_SLOTS.acquire(blocking=False):
+                conn.close()
+                continue
+            try:
+                worker = threading.Thread(target=_serve_connection, args=(conn, config), daemon=True)
+                worker.start()
+            except Exception:
+                _SERVER_SLOTS.release()
+                conn.close()
+                raise
+    finally:
+        server.close()
+        for sig, prior in previous.items():
+            signal.signal(sig, prior)
+        try:
+            info = os.lstat(CORE_INSPECTOR_SOCKET)
+            if identity == (info.st_dev, info.st_ino) and stat.S_ISSOCK(info.st_mode):
+                CORE_INSPECTOR_SOCKET.unlink()
+        except OSError:
+            pass
+
+
+def verify_current_ingress(config: CoreGatewayConfig, *, peer_pid: int,
+                           peer_uid: int, peer_gid: int) -> CoreVerifiedIngressObservation:
+    from .core_gateway import _read_config_current
+    _read_config_current(config)
+    nonce = os.urandom(32).hex()
+    deadline = time.monotonic() + IPC_TIMEOUT
+    info = os.lstat(CORE_INSPECTOR_SOCKET)
+    if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != 0 or info.st_gid != config.gateway_gid
+            or stat.S_IMODE(info.st_mode) != 0o660):
+        raise CoreGatewayDenied("root core inspector socket is unavailable")
+    conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    conn.settimeout(IPC_TIMEOUT)
+    try:
+        conn.connect(str(CORE_INSPECTOR_SOCKET))
+        if not hasattr(socket, "SO_PEERCRED"):
+            raise ValueError
+        inspector_pid, inspector_uid, _inspector_gid = struct.unpack(
+            "3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+        if inspector_uid != 0 or inspector_pid <= 1:
+            raise ValueError
+        body = {"op": "observe-ingress", "nonce": nonce,
+                "peer_pid": peer_pid, "peer_uid": peer_uid, "peer_gid": peer_gid}
+        raw_request = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("ascii")
+        if len(raw_request) > MAX_REQUEST:
+            raise ValueError
+        conn.sendall(struct.pack("!I", len(raw_request)) + raw_request)
+        result = _read_frame(conn, deadline, MAX_RESPONSE)
+    except Exception:
+        raise CoreGatewayDenied("root core ingress proof is unavailable") from None
+    finally:
+        conn.close()
+    fields = {field.name for field in CoreVerifiedIngressObservation.__dataclass_fields__.values()
+              if not field.name.startswith("_")}
+    if set(result) != fields:
+        raise CoreGatewayDenied("root core ingress proof has an unknown schema")
+    body = dict(result)
+    proof_sha = body.pop("proof_sha256", None)
+    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("ascii")
+    if (proof_sha != hashlib.sha256(b"hermes-jarvis-core-ingress-v1\0" + canonical).hexdigest()
+            or result.get("nonce") != nonce or time.monotonic() >= deadline):
+        raise CoreGatewayDenied("root core ingress proof is mismatched or late")
+    try:
+        observation = CoreVerifiedIngressObservation(**result, _seal=_PROOF_SEAL)
+        _read_config_current(config)
+        listener = os.lstat(config.ingress_socket)
+        if observation.verify_current(config, peer_pid=peer_pid, peer_uid=peer_uid,
+            peer_gid=peer_gid, listener_identity=(listener.st_dev, listener.st_ino)) is not True:
+            raise ValueError
+        return observation
+    except Exception:
+        raise CoreGatewayDenied("root core ingress proof is invalid or stale") from None
+
+
+def main() -> None:
+    import argparse
+    argparse.ArgumentParser(description="read-only root inspector for the core Jarvis ingress").parse_args()
+    if os.geteuid() != 0:
+        raise SystemExit("core ingress inspector must run as root")
+    serve_inspection_socket(CoreGatewayConfig.load(expected_owner_uid=0))
+
+
+if __name__ == "__main__":
+    main()
