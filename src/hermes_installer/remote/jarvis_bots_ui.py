@@ -16,6 +16,7 @@ _VIEW = """<section class=\"bots-panel\" aria-labelledby=\"bots-heading\">
   </nav>
   <p class=\"bots-status\" data-bots-status aria-live=\"polite\">Loading current status…</p>
   <div class=\"bots-pending\" data-bots-pending></div>
+  <section class=\"bots-roster\" data-bots-roster hidden aria-label=\"Canonical Bot DM readiness\"></section>
   <div class=\"bots-rows\" data-bots-rows></div>
 </section>"""
 
@@ -36,6 +37,7 @@ _CSS = """[data-feature-root=\"bots\"] .bots-panel{max-width:1050px;margin:0 aut
 [data-feature-root=\"bots\"] .bots-row h3{font-size:1rem;margin:0 0 8px}
 [data-feature-root=\"bots\"] .bots-row p{color:var(--muted,#aab2bf);margin:5px 0;overflow-wrap:anywhere}
 [data-feature-root=\"bots\"] .bots-empty{padding:18px;border:1px dashed var(--line,#39404b);border-radius:12px;color:var(--muted,#aab2bf)}
+[data-feature-root=\"bots\"] .bots-roster{display:grid;gap:8px;margin:14px 0}
 @media(max-width:600px){[data-feature-root=\"bots\"] .bots-header{flex-direction:column}[data-feature-root=\"bots\"] .bots-refresh{width:100%}}"""
 
 _MOUNT = r'''function mount(container, api, state) {
@@ -99,11 +101,30 @@ _MOUNT = r'''function mount(container, api, state) {
     const render = (snapshot) => {
     const rows = container.querySelector("[data-bots-rows]");
     const pending = container.querySelector("[data-bots-pending]");
+    const roster = container.querySelector("[data-bots-roster]");
     const status = container.querySelector("[data-bots-status]");
-    rows.replaceChildren(); pending.replaceChildren();
+    rows.replaceChildren(); pending.replaceChildren(); roster.replaceChildren();
+    roster.hidden = selected !== "bots";
     pauseApprovals.clear();
     const reason = Array.isArray(snapshot.pending_reasons) ? snapshot.pending_reasons : [];
     reason.forEach((item) => pending.appendChild(node("p", item, "bots-note")));
+    if (selected === "bots" && snapshot.bot_roster) {
+      const rosterSnapshot = snapshot.bot_roster;
+      roster.appendChild(node("h3", "Canonical Bot DMs"));
+      (Array.isArray(rosterSnapshot.profiles) ? rosterSnapshot.profiles : []).forEach((profile) => {
+        const card = node("article", "", "bots-row");
+        card.appendChild(node("h4", profile.label || "Enrolled Bot"));
+        addField(card, "Enrollment", profile.enrollment_state);
+        addField(card, "Canonical DM", profile.canonical_dm_state);
+        if (profile.reason) card.appendChild(node("p", profile.reason));
+        roster.appendChild(card);
+      });
+      (Array.isArray(rosterSnapshot.pending_reasons) ? rosterSnapshot.pending_reasons : [])
+        .forEach((item) => roster.appendChild(node("p", item, "bots-note")));
+      if (!Array.isArray(rosterSnapshot.profiles) || !rosterSnapshot.profiles.length) {
+        roster.appendChild(node("p", "No owner-enrolled Bot profiles are currently available.", "bots-empty"));
+      }
+    }
     let items = [];
     if (selected === "bots") items = Array.isArray(snapshot.profiles) ? snapshot.profiles : [];
     if (selected === "channels") items = Array.isArray(snapshot.channels) ? snapshot.channels : [];
@@ -159,7 +180,17 @@ _MOUNT = r'''function mount(container, api, state) {
     try {
       const path = selected === "channels" ? "/chat/api/channels"
         : selected === "schedules" ? "/chat/api/schedules" : "/chat/api/bots";
-      const snapshot = await api.get(path);
+      let snapshot = await api.get(path);
+      if (selected === "bots") {
+        try {
+          const roster = await api.get("/chat/api/bot-rooms");
+          snapshot = { ...snapshot, bot_roster: roster };
+        } catch (_) {
+          snapshot = { ...snapshot, bot_roster: { profiles: [], pending_reasons: [
+            "Owner-enrolled Bot readiness is unavailable until its protected roster endpoint is connected."
+          ] } };
+        }
+      }
       if (active && serial === requestSerial) render(snapshot);
     } catch (_) {
       if (active && serial === requestSerial) {
@@ -183,7 +214,8 @@ FEATURE_ASSETS = JarvisFeatureAssets(
     title="Bots, channels & schedules",
     view_html=_VIEW,
     css=_CSS,
-    api_routes=(("GET", "/chat/api/bots"), ("GET", "/chat/api/channels"),
+    api_routes=(("GET", "/chat/api/bots"), ("GET", "/chat/api/bot-rooms"),
+                ("GET", "/chat/api/channels"),
                 ("GET", "/chat/api/schedules"),
                 ("POST", "/chat/api/schedules/{opaque_id}/pause")),
     mount_js=_MOUNT,
