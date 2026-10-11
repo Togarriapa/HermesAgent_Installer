@@ -70,7 +70,10 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False):
     monkeypatch.setattr(core, "_owned_listener", lambda: True)
     monkeypatch.setattr(core, "_launcher", lambda: b"test fixed core launcher")
     monkeypatch.setattr(core, "_install_bundled_resources", lambda _account: _resource_receipt())
-    monkeypatch.setattr(core, "_write_resources_discovery", lambda _receipt: None)
+    monkeypatch.setattr(core, "_write_resources_discovery", lambda: {
+        "resource_counts": {"native_skills": 396, "source_profiles_preserved": 208},
+        "active_prompt_matches_bundled_primary": False,
+    })
 
     calls = []
     enabled = {"value": False}
@@ -213,68 +216,66 @@ def test_resource_import_does_not_overwrite_or_gate_on_existing_primary_prompt(t
     assert receipt["native_receipt"]["active_prompt_matches_bundled_primary"] is False
 
 
-def test_resource_import_rejects_a_receipt_that_claims_functional_use(tmp_path, monkeypatch):
-    installer_python = tmp_path / "installer-python"
+def test_root_discards_admin_discovery_booleans_and_uses_separate_readback(tmp_path, monkeypatch):
     runuser = tmp_path / "runuser"
-    for executable in (installer_python, runuser):
-        executable.write_text("fixed fixture executable")
-        executable.chmod(0o755)
-    monkeypatch.setattr(core.sys, "executable", str(installer_python))
+    runuser.write_text("fixed fixture executable")
+    runuser.chmod(0o755)
     monkeypatch.setattr(core, "RUNUSER", runuser)
     monkeypatch.setattr(core, "ROOT_UID", os.getuid())
+    monkeypatch.setattr(core, "_validated_executable", lambda path, _owners: path)
     receipt = _resource_receipt()
     receipt["functional"] = True
     monkeypatch.setattr(core.subprocess, "run", lambda *args, **kwargs:
                         SimpleNamespace(returncode=0, stdout=json.dumps(receipt), stderr=""))
 
-    with pytest.raises(core.CoreRuntimeError, match="receipt is invalid"):
-        core._install_bundled_resources(SimpleNamespace(pw_uid=os.getuid()))
+    assert core._install_bundled_resources(SimpleNamespace(pw_uid=os.getuid())) == {}
 
 
-def test_root_discovery_projection_rejects_forged_native_inventory_readback(monkeypatch):
-    from hermes_installer.registry import manual_jarvis_skills as native
+def test_discovery_refresh_requires_current_owned_listener_and_never_changes_service(monkeypatch):
+    monkeypatch.setattr(core.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(core, "_identity", lambda: {"commit": core.COMMIT})
+    monkeypatch.setattr(core, "_journal", lambda: {"state": "installed", "source_commit": core.COMMIT})
+    writes = []
+    monkeypatch.setattr(core, "_write_resources_discovery", lambda: writes.append(True) or {
+        "resource_counts": {"native_skills": 396}})
+    monkeypatch.setattr(core, "_run", lambda *_args, **_kwargs:
+                        (_ for _ in ()).throw(AssertionError("service action is forbidden")))
+    verified = "owned isolated service and process-bound loopback listener verified at 127.0.0.1:8766;"
+    monkeypatch.setattr(core, "status", lambda: verified)
 
-    archive = b"fixed artifact bytes"
-    skill_members = [{"skill_id": f"skill-{index:03d}",
-                      "archive_path": f"skills/skill-{index:03d}/SKILL.md"}
-                     for index in range(396)]
-    files = {row["archive_path"]: f"body-{row['skill_id']}".encode() for row in skill_members}
+    result = core.refresh_resources_discovery()
+
+    assert writes == [True]
+    assert "service lifecycle unchanged" in result
+
+
+def test_root_native_readback_checks_current_loader_results_against_owned_bytes(monkeypatch, tmp_path):
+    skills = [f"skill-{index:03d}" for index in range(396)]
+    rows = [{"skill_id": name, "archive_path": f"skills/{name}/SKILL.md"} for name in skills]
+    files = {row["archive_path"]: f"body-{row['skill_id']}".encode() for row in rows}
     files["registry/profiles/hermes/SOUL.md"] = b"bundled prompt"
-    manifest = {
-        "skill_members": skill_members,
-        "profile_members": [{} for _ in range(208)],
-        "bundled_resource_inventory": ([{"kind": "skill", "id": row["skill_id"]} for row in skill_members] +
-                                        [{"kind": "profile", "id": str(index)} for index in range(208)] +
-                                        [{"kind": "other", "id": "declaration"}]),
-        "source": {"revision": "a" * 40, "git_tree": "b" * 40},
-    }
-    monkeypatch.setattr(native, "build_manual_jarvis_skills_artifact", lambda: archive)
-    monkeypatch.setattr(native, "_read_artifact", lambda *_args: (manifest, files))
-    skill_inventory = native._canonical_json([
-        {"skill_id": row["skill_id"], "sha256": hashlib.sha256(files[row["archive_path"]]).hexdigest()}
-        for row in skill_members
-    ])
-    receipt = {
-        "state": "discovered", "materialized": True, "discovered": True,
-        "artifact_sha256": hashlib.sha256(archive).hexdigest(),
-        "generation_path": str(core.HERMES_HOME / "skills" / native._GENERATION),
-        "primary_native_home": "default",
-        "selectable_profile_mutations": [], "functional": False, "enabled": False,
-        "target_verified": False, "pending": [],
-        "resource_counts": {"native_skills": 396, "internal_profiles": 207,
-            "source_profiles_preserved": 208, "other_declarations_preserved": 1},
-        "native_receipt": {
-            "hermes_revision": core.COMMIT, "python_version": "3.14.7", "profile_id": "default",
-            "profile_identity_loaded": True, "loaded_skill_count": 395,
-            "loaded_skill_inventory_sha256": hashlib.sha256(skill_inventory).hexdigest(),
-            "active_primary_prompt_sha256": "c" * 64,
-            "bundled_primary_prompt_sha256": hashlib.sha256(files["registry/profiles/hermes/SOUL.md"]).hexdigest(),
-            "active_prompt_matches_bundled_primary": False,
-        },
-    }
+    manifest = {"skill_members": rows}
+    active_prompt = b"existing active prompt"
+    expected_digests = {"profile:default": hashlib.sha256(active_prompt).hexdigest()}
+    expected_digests.update({"skill:" + row["skill_id"]: hashlib.sha256(files[row["archive_path"]]).hexdigest()
+                             for row in rows})
+    payload = {"python_version": "3.14.7", "profile": "default", "skills": skills,
+        "loaded": skills, "visible_profiles": ["default"], "profile_display_name": "Default",
+        "digests": expected_digests}
+    monkeypatch.setattr(core.pwd, "getpwnam", lambda _name: SimpleNamespace(
+        pw_uid=1000, pw_gid=1000, pw_dir="/home/admin"))
+    monkeypatch.setattr(core, "_validated_executable", lambda path, _owners: path)
+    monkeypatch.setattr(core, "SOURCE", tmp_path)
+    monkeypatch.setattr(core.subprocess, "run", lambda *_args, **_kwargs:
+        SimpleNamespace(returncode=0, stdout=json.dumps(payload).encode()))
 
-    with pytest.raises(core.CoreRuntimeError, match="read-back is pending"):
-        core._verified_resources_payload(receipt)
+    receipt = core._root_native_readback(manifest, files, active_prompt)
+    assert receipt["loaded_skill_count"] == 396
+    assert receipt["active_prompt_matches_bundled_primary"] is False
+
+    payload["loaded"] = skills[:-1]
+    with pytest.raises(core.CoreRuntimeError, match="did not match"):
+        core._root_native_readback(manifest, files, active_prompt)
 
 
 def test_missing_resources_projection_is_explicitly_pending(monkeypatch, tmp_path):

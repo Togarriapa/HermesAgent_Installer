@@ -7,8 +7,11 @@ separate from native discovery, activation, or functional readiness.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from datetime import date, datetime, time, timedelta, timezone
 from functools import lru_cache
+from importlib.resources import files as package_files
 from typing import Any
 
 UTC = timezone.utc
@@ -16,6 +19,12 @@ _ROUTES = {
     "/chat/api/overview": "overview",
     "/chat/api/capabilities": "capabilities",
     "/chat/api/settings": "settings",
+}
+_BUNDLE_INVENTORY_NAME = "jarvis_capability_inventory.json"
+_BUNDLE_INVENTORY_SHA256 = "16ba9ef9b5a5a727cbfa29a43f12862e3aca6deb1a57cab52f9d7d9b96610860"
+_BUNDLE_INVENTORY_COUNTS = {
+    "bundles": 55, "channels": 5, "crons": 4, "mcps": 3,
+    "plugins": 18, "profiles": 208, "skills": 396, "webhooks": 3,
 }
 
 
@@ -119,47 +128,42 @@ def build_overview(store: Any, subject: str, *, observed_at: datetime | None = N
     }
 
 
-def _short_text(value: Any, *, limit: int) -> str:
-    if not isinstance(value, str):
-        return ""
-    cleaned = " ".join("".join(ch for ch in value if ch >= " " and ch != "\x7f").split())
-    return cleaned[:limit]
-
-
 @lru_cache(maxsize=1)
 def _verified_bundle_inventory() -> dict[str, Any]:
-    """Read declarations only after the installer verifies its pinned offline bundle."""
-    from ..registry.native import NativeRegistry
-    from ..registry.source import load_bundled_source
-
-    registry = NativeRegistry.from_verified_source(load_bundled_source())
-    discovery = registry.discover_all()
-    items = []
-    for resolved in discovery.resources:
-        resource = resolved.resource
-        metadata = resource.body.get("metadata", {})
-        display_name = _short_text(metadata.get("name"), limit=120)
-        if not display_name:
-            display_name = resource.id.replace("-", " ").replace("_", " ").title()
-        summary = _short_text(metadata.get("description"), limit=240)
-        items.append({
-            "id": resource.id,
-            "kind": resource.kind.value,
-            "name": display_name,
-            "summary": summary,
-            "state": "bundled",
-            "readiness": "pending",
-        })
-    items.sort(key=lambda item: (item["kind"], item["id"]))
-    return {
-        "readiness": "pending",
-        "source": {
-            "kind": "offline-bundle",
-            "catalogVersion": registry.source.catalog_version,
-            "revision": registry.source.revision,
-        },
-        "items": tuple(items),
-    }
+    """Load only the reviewed packaged inventory; never parse registry YAML at request time."""
+    raw = package_files(__package__).joinpath(_BUNDLE_INVENTORY_NAME).read_bytes()
+    if hashlib.sha256(raw).hexdigest() != _BUNDLE_INVENTORY_SHA256:
+        raise ValueError("packaged capability inventory digest differs")
+    value = json.loads(raw)
+    if (not isinstance(value, dict) or set(value) != {"readiness", "source", "items"}
+            or value.get("readiness") != "pending"
+            or value.get("source") != {
+                "kind": "offline-bundle", "catalogVersion": "2.3.1",
+                "revision": "113f42d33be9e0c8f0f47f5ca998e687323dec83",
+            }
+            or not isinstance(value.get("items"), list) or len(value["items"]) != 692):
+        raise ValueError("packaged capability inventory schema differs")
+    counts = {kind: 0 for kind in _BUNDLE_INVENTORY_COUNTS}
+    previous = None
+    for item in value["items"]:
+        if (not isinstance(item, dict)
+                or set(item) not in ({"id", "kind", "name", "summary", "state", "readiness"},
+                                    {"id", "kind", "name", "summary", "state", "readiness", "displayName"})
+                or item.get("kind") not in counts
+                or item.get("state") != "bundled" or item.get("readiness") != "pending"
+                or not all(isinstance(item.get(key), str) for key in ("id", "name", "summary"))
+                or len(item["id"]) > 120 or len(item["name"]) > 120 or len(item["summary"]) > 240
+                or ("displayName" in item and (not isinstance(item["displayName"], str)
+                                               or len(item["displayName"]) > 120))):
+            raise ValueError("packaged capability item schema differs")
+        identity = (item["kind"], item["id"])
+        if previous is not None and identity <= previous:
+            raise ValueError("packaged capability inventory order or uniqueness differs")
+        previous = identity
+        counts[item["kind"]] += 1
+    if counts != _BUNDLE_INVENTORY_COUNTS:
+        raise ValueError("packaged capability inventory counts differ")
+    return value
 
 
 def build_capabilities(core_projection: dict[str, Any] | None = None) -> dict[str, Any]:

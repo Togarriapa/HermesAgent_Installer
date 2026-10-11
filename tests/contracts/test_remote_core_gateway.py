@@ -77,6 +77,37 @@ class CoreGatewayInspectorClientTests(unittest.TestCase):
         self.assertFalse(changed.verify_current(config, peer_pid=431, peer_uid=996,
             peer_gid=981, accepted_ingress=None, now=10.5))
 
+    def test_core_overview_proof_expires_before_dashboard_can_reuse_it(self):
+        config = _config()
+        accepted = _accepted_observation(config, now=10.0, lease_seconds=2.0)
+        projection = {
+            "core_version": "7085fbf77532", "provider": None, "model": None,
+            "account_state": "unknown", "resources_state": "pending",
+            "resource_counts": None, "resources_revision": None, "artifact_sha256": None,
+            "discovery_observed_at_utc": None, "active_prompt_matches_bundled_primary": None,
+        }
+        claims = {
+            "schema": 1, "nonce": "e" * 64, "boot_id": config.boot_id,
+            "issued_monotonic": 10.0, "expires_monotonic": 11.0,
+            "config_sha256": config.config_sha256, "core_generation": accepted.core_generation,
+            "core_source_generation": accepted.root_observation.core_source_generation,
+            "projection": projection,
+        }
+        observation = core_gateway_inspector.CoreVerifiedOverviewObservation(
+            **claims, proof_sha256=core_gateway_inspector._overview_digest(claims),
+            _seal=core_gateway_inspector._OVERVIEW_PROOF_SEAL)
+
+        with patch.object(core_gateway.CoreAcceptedIngressObservation,
+                          "verify_current", return_value=True), \
+             patch.object(core_gateway_inspector.time, "monotonic", return_value=10.5):
+            self.assertTrue(observation.verify_current(config, peer_pid=440, peer_uid=996,
+                peer_gid=981, accepted_ingress=accepted))
+        with patch.object(core_gateway.CoreAcceptedIngressObservation,
+                          "verify_current", return_value=True), \
+             patch.object(core_gateway_inspector.time, "monotonic", return_value=11.0):
+            self.assertFalse(observation.verify_current(config, peer_pid=440, peer_uid=996,
+                peer_gid=981, accepted_ingress=accepted))
+
     def test_real_ingress_verifier_wraps_ipc_failure_without_nameerror(self):
         config = _config()
         owned_socket = SimpleNamespace(st_mode=stat.S_IFSOCK | 0o660, st_uid=0,

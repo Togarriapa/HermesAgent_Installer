@@ -3,7 +3,12 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta, timezone
 
 from hermes_installer.remote.jarvis_chat import JarvisChatStore
-from hermes_installer.remote.jarvis_dashboard import build_capabilities, build_overview, build_settings
+from hermes_installer.remote.jarvis_dashboard import (
+    _verified_bundle_inventory,
+    build_capabilities,
+    build_overview,
+    build_settings,
+)
 
 
 UTC = timezone.utc
@@ -121,3 +126,16 @@ def test_discovery_and_verified_core_version_never_claim_functional_capability(t
     assert settings["provider"] == {"value": None, "status": "pending"}
     assert capabilities["nativeDiscovery"]["state"] == "discovered"
     assert {item["state"] for item in capabilities["items"]} == {"bundled"}
+
+
+def test_capabilities_use_fixed_packaged_inventory_and_public_jarvis_alias():
+    inventory = _verified_bundle_inventory()
+    assert inventory["source"] == {
+        "kind": "offline-bundle", "catalogVersion": "2.3.1",
+        "revision": "113f42d33be9e0c8f0f47f5ca998e687323dec83",
+    }
+    assert len(inventory["items"]) == 692
+    primary = next(item for item in inventory["items"]
+                   if item["kind"] == "profiles" and item["id"] == "hermes")
+    assert primary["displayName"] == "Jarvis"
+    assert primary["readiness"] == "pending"

@@ -117,25 +117,13 @@ def _install_bundled_resources(account):
  if result.returncode:
   raise CoreRuntimeError("offline Jarvis resource import is pending")
  try:
-  receipt=json.loads(result.stdout)
+  if len(result.stdout)>8*1024*1024: raise ValueError
+  json.loads(result.stdout)
  except (ValueError,TypeError):
   raise CoreRuntimeError("offline Jarvis resource receipt is invalid") from None
- counts=receipt.get("resource_counts") if isinstance(receipt,dict) else None
- native=receipt.get("native_receipt") if isinstance(receipt,dict) else None
- if (not isinstance(receipt,dict) or receipt.get("state")!="discovered"
-     or receipt.get("materialized") is not True or receipt.get("discovered") is not True
-     or receipt.get("selectable_profile_mutations") != []
-     or receipt.get("functional") is not False or receipt.get("enabled") is not False
-     or receipt.get("target_verified") is not False
-     or not isinstance(counts,dict) or counts.get("native_skills")!=396
-     or counts.get("source_profiles_preserved")!=208
-     or not isinstance(native,dict) or native.get("hermes_revision")!=COMMIT
-     or native.get("python_version")!="3.14.7"
-     or native.get("profile_identity_loaded") is not True
-     or native.get("loaded_skill_count")!=396
-     or not isinstance(native.get("active_prompt_matches_bundled_primary"),bool)):
-  raise CoreRuntimeError("offline Jarvis resource receipt is invalid")
- return receipt
+ # The admin response is only an import-attempt signal. Root independently
+ # rereads every owned byte and runs its own pinned native-loader query below.
+ return {}
 def _ensure_dir(path,uid,gid,mode):
  if path.is_symlink(): raise CoreRuntimeError("service directory may not be a symlink")
  if not path.exists():
@@ -347,71 +335,110 @@ def _hash_generation_tree(home,manifest,files,artifact_sha):
    try: os.close(fd)
    except OSError: pass
 
-def _verified_resources_payload(receipt):
- """Turn the admin import/read-back result into a root-derived closed receipt."""
- from .registry import manual_jarvis_skills as native
- archive=native.build_manual_jarvis_skills_artifact()
- artifact_sha=hashlib.sha256(archive).hexdigest()
- manifest,files=native._read_artifact(archive,artifact_sha)
- receipt_fields={"state","materialized","discovered","artifact_sha256","generation_path",
-  "primary_native_home","selectable_profile_mutations","resource_counts","native_receipt",
-  "functional","enabled","target_verified","pending"}
- if (not isinstance(receipt,dict) or set(receipt)!=receipt_fields
-     or receipt.get("state")!="discovered" or receipt.get("artifact_sha256")!=artifact_sha
-     or receipt.get("generation_path")!=str(HERMES_HOME/"skills"/native._GENERATION)
-     or receipt.get("primary_native_home")!="default"):
-  raise CoreRuntimeError("offline Jarvis resource read-back is pending")
- native_receipt=receipt.get("native_receipt")
- if not isinstance(native_receipt,dict) or set(native_receipt)!={
-  "hermes_revision","python_version","profile_id","profile_identity_loaded","loaded_skill_count",
-  "loaded_skill_inventory_sha256","active_primary_prompt_sha256","bundled_primary_prompt_sha256",
-  "active_prompt_matches_bundled_primary"}:
-  raise CoreRuntimeError("offline Jarvis resource read-back is pending")
- expected_inventory=native._canonical_json([
-  {"skill_id":row["skill_id"],"sha256":hashlib.sha256(files[row["archive_path"]]).hexdigest()}
-  for row in sorted(manifest["skill_members"],key=lambda row:row["skill_id"])])
- inventory_sha=hashlib.sha256(expected_inventory).hexdigest()
- counts=receipt.get("resource_counts")
- expected_other=len(manifest["bundled_resource_inventory"])-len(manifest["skill_members"])-len(manifest["profile_members"])
- if (len(manifest["skill_members"])!=396 or len(manifest["profile_members"])!=208 or expected_other!=88
-     or receipt.get("materialized") is not True or receipt.get("discovered") is not True
-     or receipt.get("selectable_profile_mutations")!=[] or receipt.get("functional") is not False
-     or receipt.get("enabled") is not False or receipt.get("target_verified") is not False
-     or not isinstance(native_receipt,dict) or native_receipt.get("hermes_revision")!=COMMIT
-     or native_receipt.get("python_version")!="3.14.7"
-     or native_receipt.get("profile_id")!="default" or native_receipt.get("profile_identity_loaded") is not True
-     or native_receipt.get("loaded_skill_count")!=396
-     or native_receipt.get("loaded_skill_inventory_sha256")!=inventory_sha
-     or not isinstance(native_receipt.get("active_prompt_matches_bundled_primary"),bool)
-     or not isinstance(counts,dict) or counts!={"native_skills":396,"internal_profiles":207,
-        "source_profiles_preserved":208,"other_declarations_preserved":expected_other}):
-  raise CoreRuntimeError("offline Jarvis resource read-back is pending")
- manifest_sha=_hash_generation_tree(HERMES_HOME,manifest,files,artifact_sha)
- # The current primary prompt is opened relative to a verified admin Hermes home.
+def _current_primary_prompt():
+ """Read the active primary identity through verified admin-home directories."""
  flags=os.O_RDONLY|getattr(os,"O_DIRECTORY",0)|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_CLOEXEC",0)
  rootfd=os.open("/",flags); fds=[rootfd]
  try:
   current=rootfd
   for component in HERMES_HOME.parts[1:]:
-   child=os.open(component,flags,dir_fd=current)
-   info=os.fstat(child)
+   child=os.open(component,flags,dir_fd=current); info=os.fstat(child)
    expected_owner=1000 if component in {"admin",".hermes"} else 0
-   if not stat.S_ISDIR(info.st_mode) or info.st_uid!=expected_owner or (component in {"admin",".hermes"} and stat.S_IMODE(info.st_mode)!=0o700):
+   if (not stat.S_ISDIR(info.st_mode) or info.st_uid!=expected_owner
+       or (component in {"admin",".hermes"} and stat.S_IMODE(info.st_mode)!=0o700)):
     os.close(child); raise CoreRuntimeError("Hermes home parent custody differs")
    fds.append(child); current=child
-  active_prompt=_projection_at(current,"SOUL.md",owner=1000,maximum=1024*1024)
+  return _projection_at(current,"SOUL.md",owner=1000,maximum=1024*1024)
  finally:
   for fd in reversed(fds): os.close(fd)
+
+def _root_native_readback(manifest,files,active_prompt):
+ """Independently ask the pinned native loader to read the root-verified files."""
+ from .registry.native_install import _PROBE
+ account=pwd.getpwnam("admin")
+ if (account.pw_uid!=1000 or account.pw_gid!=1000 or account.pw_dir!="/home/admin"
+     or _validated_executable(RUNUSER,{ROOT_UID})!=RUNUSER
+     or _validated_executable(PYTHON,{ROOT_UID,account.pw_uid})!=PYTHON):
+  raise CoreRuntimeError("pinned native read-back executables differ")
+ skill_ids=sorted(row["skill_id"] for row in manifest["skill_members"])
+ env={"PATH":"/home/admin/.hermes/bin:/home/admin/.local/bin:/usr/local/bin:/usr/bin:/bin",
+  "HOME":str(HERMES_HOME),"HERMES_HOME":str(HERMES_HOME),"TMPDIR":"/tmp",
+  "HERMES_DISABLE_LAZY_INSTALLS":"1","PYTHONPATH":str(SOURCE),
+  "PYTHONNOUSERSITE":"1","PYTHONDONTWRITEBYTECODE":"1"}
+ argv=[str(RUNUSER),"-u","admin","--",str(PYTHON),"-c",_PROBE,
+  str(SOURCE),"default",json.dumps(skill_ids,separators=(",",":"))]
+ try:
+  result=subprocess.run(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,
+   stderr=subprocess.DEVNULL,timeout=300,env=env,cwd=str(SOURCE),check=False)
+ except (OSError,subprocess.TimeoutExpired):
+  raise CoreRuntimeError("independent pinned native read-back is pending") from None
+ if result.returncode or len(result.stdout)>8*1024*1024:
+  raise CoreRuntimeError("independent pinned native read-back is pending")
+ try: value=json.loads(result.stdout)
+ except (ValueError,TypeError):
+  raise CoreRuntimeError("independent pinned native read-back is invalid") from None
+ expected_keys={"python_version","profile","skills","loaded","visible_profiles",
+  "profile_display_name","digests"}
+ expected_digests={"profile:default":hashlib.sha256(active_prompt).hexdigest()}
+ expected_digests.update({"skill:"+row["skill_id"]:hashlib.sha256(files[row["archive_path"]]).hexdigest()
+  for row in manifest["skill_members"]})
+ discovered=value.get("skills") if isinstance(value,dict) else None
+ loaded=value.get("loaded") if isinstance(value,dict) else None
+ profiles=value.get("visible_profiles") if isinstance(value,dict) else None
+ if (not isinstance(value,dict) or set(value)!=expected_keys
+     or value.get("python_version")!="3.14.7" or value.get("profile")!="default"
+     or not isinstance(discovered,list) or any(not isinstance(name,str) for name in discovered)
+     or discovered!=sorted(set(discovered)) or not set(skill_ids).issubset(set(discovered))
+     or not isinstance(loaded,list) or loaded!=skill_ids
+     or not isinstance(profiles,list) or any(not isinstance(name,str) for name in profiles)
+     or profiles!=sorted(set(profiles)) or "default" not in profiles
+     or not isinstance(value.get("profile_display_name"),str)
+     or len(value["profile_display_name"])>120
+     or value.get("digests")!=expected_digests):
+  raise CoreRuntimeError("independent pinned native read-back did not match the root-verified files")
+ bundled_sha=hashlib.sha256(files["registry/profiles/hermes/SOUL.md"]).hexdigest()
+ return {"hermes_revision":COMMIT,"python_version":value["python_version"],
+  "profile_id":"default","profile_identity_loaded":True,
+  "loaded_skill_count":len(skill_ids),
+  "loaded_skill_inventory_sha256":hashlib.sha256(native_inventory_bytes(manifest,files)).hexdigest(),
+  "active_primary_prompt_sha256":expected_digests["profile:default"],
+  "bundled_primary_prompt_sha256":bundled_sha,
+  "active_prompt_matches_bundled_primary":expected_digests["profile:default"]==bundled_sha}
+
+def native_inventory_bytes(manifest,files):
+ """Canonical digest of the IDs and bytes independently returned by Hermes."""
+ return json.dumps([{"skill_id":row["skill_id"],
+  "sha256":hashlib.sha256(files[row["archive_path"]]).hexdigest()}
+  for row in sorted(manifest["skill_members"],key=lambda item:item["skill_id"])],
+  sort_keys=True,separators=(",",":")).encode("ascii")+b"\n"
+
+def _verified_resources_payload(_admin_receipt=None):
+ """Build a root-derived receipt and initiate a fresh pinned native-loader query."""
+ from .registry import manual_jarvis_skills as native
+ archive=native.build_manual_jarvis_skills_artifact()
+ artifact_sha=hashlib.sha256(archive).hexdigest()
+ manifest,files=native._read_artifact(archive,artifact_sha)
+ expected_other=len(manifest["bundled_resource_inventory"])-len(manifest["skill_members"])-len(manifest["profile_members"])
+ if len(manifest["skill_members"])!=396 or len(manifest["profile_members"])!=208 or expected_other!=88:
+  raise CoreRuntimeError("pinned offline Resources inventory differs")
+ counts={"native_skills":396,"internal_profiles":207,
+  "source_profiles_preserved":208,"other_declarations_preserved":expected_other}
+ source_generation=_core_source_generation()
+ manifest_sha=_hash_generation_tree(HERMES_HOME,manifest,files,artifact_sha)
+ active_prompt=_current_primary_prompt()
  try: active_prompt.decode("utf-8")
  except UnicodeDecodeError: raise CoreRuntimeError("primary Jarvis prompt encoding is invalid") from None
  active_sha=hashlib.sha256(active_prompt).hexdigest()
  bundled_sha=hashlib.sha256(files["registry/profiles/hermes/SOUL.md"]).hexdigest()
- if native_receipt.get("active_primary_prompt_sha256")!=active_sha:
-  raise CoreRuntimeError("pinned Hermes prompt read-back differs from current owned prompt")
- if native_receipt.get("bundled_primary_prompt_sha256")!=bundled_sha:
-  raise CoreRuntimeError("pinned Hermes prompt read-back differs from pinned bundle")
- if native_receipt.get("active_prompt_matches_bundled_primary") is not (active_sha==bundled_sha):
-  raise CoreRuntimeError("pinned Hermes prompt comparison differs from the current prompt")
+ native_receipt=_root_native_readback(manifest,files,active_prompt)
+ if (_core_source_generation()!=source_generation
+     or _hash_generation_tree(HERMES_HOME,manifest,files,artifact_sha)!=manifest_sha
+     or hashlib.sha256(_current_primary_prompt()).hexdigest()!=active_sha):
+  raise CoreRuntimeError("pinned source or owned Resources changed during native read-back")
+ if (native_receipt["active_primary_prompt_sha256"]!=active_sha
+     or native_receipt["bundled_primary_prompt_sha256"]!=bundled_sha
+     or native_receipt["active_prompt_matches_bundled_primary"] is not (active_sha==bundled_sha)):
+  raise CoreRuntimeError("root native read-back differs from active owned prompt")
  journal=_journal()
  if journal.get("state") not in {"installed","active"}:
   raise CoreRuntimeError("core ownership journal is not installed")
@@ -419,21 +446,22 @@ def _verified_resources_payload(receipt):
  if json.loads(journal_bytes)!=journal:
   raise CoreRuntimeError("core ownership journal changed during Resources verification")
  return archive,{
-  "schema":1,"core_source_generation":_core_source_generation(),"core_ownership_sha256":hashlib.sha256(journal_bytes).hexdigest(),
+  "schema":2,"native_readback_method":"root-pinned-hermes-loader-v1",
+  "core_source_generation":source_generation,"core_ownership_sha256":hashlib.sha256(journal_bytes).hexdigest(),
   "hermes_revision":COMMIT,"python_version":"3.14.7",
   "resources_revision":manifest["source"]["revision"],"resources_tree":manifest["source"]["git_tree"],
   "artifact_sha256":artifact_sha,"ownership_manifest_sha256":manifest_sha,
-  "loaded_skill_inventory_sha256":inventory_sha,"active_primary_prompt_sha256":active_sha,
+  "loaded_skill_inventory_sha256":native_receipt["loaded_skill_inventory_sha256"],"active_primary_prompt_sha256":active_sha,
   "bundled_primary_prompt_sha256":bundled_sha,"active_prompt_matches_bundled_primary":active_sha==bundled_sha,
   "resource_counts":counts,
   "observed_at_utc":datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00","Z"),
   "state":"discovered","functional":False,"enabled":False,"target_verified":False,
  }
 
-def _write_resources_discovery(receipt):
+def _write_resources_discovery():
  """Retain the source-bound artifact and independently read-backed receipt as root."""
  _ensure_dir(RESOURCES_RECORD.parent,ROOT_UID,ROOT_UID,0o700)
- archive,record=_verified_resources_payload(receipt)
+ archive,record=_verified_resources_payload()
  _ensure_dir(RESOURCES_CAS,ROOT_UID,ROOT_UID,0o700)
  cas=RESOURCES_CAS/(record["artifact_sha256"]+".zip")
  try: os.lstat(cas); cas_present=True
@@ -444,6 +472,7 @@ def _write_resources_discovery(receipt):
  else:
   _atomic(cas,archive,0o600,ROOT_UID,ROOT_UID)
  _atomic_replace(RESOURCES_RECORD,(json.dumps(record,sort_keys=True,separators=(",",":"))+"\n").encode("ascii"),0o600,ROOT_UID,ROOT_UID)
+ return record
 
 def read_current_resources_discovery(*,core_source_generation):
  """Recheck the root receipt, held CAS, owner manifest, and every installed member."""
@@ -457,12 +486,13 @@ def read_current_resources_discovery(*,core_source_generation):
   return pending
  try:
   record=json.loads(record_bytes)
-  fields={"schema","core_source_generation","core_ownership_sha256","hermes_revision","python_version",
+  fields={"schema","native_readback_method","core_source_generation","core_ownership_sha256","hermes_revision","python_version",
    "resources_revision","resources_tree","artifact_sha256","ownership_manifest_sha256",
    "loaded_skill_inventory_sha256","active_primary_prompt_sha256","bundled_primary_prompt_sha256",
    "active_prompt_matches_bundled_primary","resource_counts","observed_at_utc","state",
    "functional","enabled","target_verified"}
-  if set(record)!=fields or type(record.get("schema")) is not int or record["schema"]!=1:
+  if (set(record)!=fields or type(record.get("schema")) is not int or record["schema"]!=2
+      or record.get("native_readback_method")!="root-pinned-hermes-loader-v1"):
    return {**pending,"resources_state":"stale"}
   hashes=("core_source_generation","core_ownership_sha256","hermes_revision","resources_tree",
           "artifact_sha256","ownership_manifest_sha256","loaded_skill_inventory_sha256",
@@ -760,18 +790,18 @@ def install_or_resume():
    record["token_sha256"]=_digest(TOKEN)
    _replace_journal(record)
  _ensure_workspace(account.pw_uid,account.pw_gid)
- resources=_install_bundled_resources(account)
+ _install_bundled_resources(account)
  _owned_file(LAUNCHER,launcher,0o755,ROOT_UID,ROOT_UID,record["launcher_sha256"],record["state"]=="preparing")
  _owned_file(UNIT,unit,0o644,ROOT_UID,ROOT_UID,record["unit_sha256"],record["state"]=="preparing")
  if record["state"]=="preparing":
   record["state"]="installed"
   _replace_journal(record)
  _journal()
- _write_resources_discovery(resources)
+ resources=_write_resources_discovery()
  _run(["systemctl","daemon-reload"]); _run(["systemctl","enable","--now",SERVICE]); _wait_for_listener()
  counts=resources["resource_counts"]
  prompt_status=("the active Jarvis prompt matches the bundled primary prompt"
-                if resources["native_receipt"]["active_prompt_matches_bundled_primary"]
+                if resources["active_prompt_matches_bundled_primary"]
                 else "active prompt integration remains pending")
  return (status()+f"; packaged Resources materialized and Hermes-read-back discovered "
          f"{counts['native_skills']} skills with {counts['source_profiles_preserved']} source profiles preserved; "
@@ -783,6 +813,24 @@ def _wait_for_listener():
   if _owned_listener(): return
   time.sleep(1)
  raise CoreRuntimeError("owned service did not prove its isolated loopback listener within 30 seconds")
+
+def refresh_resources_discovery():
+ """Refresh only the root discovery receipt for an already-running owned core."""
+ if os.geteuid()!=ROOT_UID or not Path("/proc").is_dir():
+  raise CoreRuntimeError("requires installed Linux root actor")
+ identity=_identity()
+ record=_journal()
+ if (record.get("state") not in {"installed","active"}
+     or record.get("source_commit")!=identity["commit"]):
+  raise CoreRuntimeError("journal-owned core is not in a refreshable installed state")
+ if not status().startswith("owned isolated service and process-bound loopback listener verified at 127.0.0.1:8766;"):
+  raise CoreRuntimeError("owned core must already be active before receipt refresh")
+ projection=_write_resources_discovery()
+ counts=projection["resource_counts"]
+ return (f"root native discovery refreshed for the existing owned 127.0.0.1:8766 core; "
+         f"{counts['native_skills']} skills read back; service lifecycle unchanged; "
+         "functional use remains unverified")
+
 def rollback():
  if os.geteuid()!=0 or not Path("/proc").is_dir(): raise CoreRuntimeError("requires installed Linux root actor")
  record=_journal()
@@ -828,4 +876,4 @@ def rollback():
  JOURNAL.unlink()
  _sync_directory(JOURNAL.parent)
  return "journal-owned core service files removed; Hermes home, PM runtime, and workspace preserved"
-__all__=["CoreRuntimeError","install_or_resume","rollback","status"]
+__all__=["CoreRuntimeError","install_or_resume","refresh_resources_discovery","rollback","status"]
