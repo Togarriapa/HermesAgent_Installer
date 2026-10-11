@@ -73,7 +73,7 @@ def _config_document(config: ManualGatewayStageConfig) -> tuple[dict[str, Any], 
         value = json.loads(raw, object_pairs_hook=_unique_json_pairs)
     except Exception:
         raise StageInspectionDenied("manual-stage config is malformed") from None
-    if (not isinstance(value, dict) or value.get("schema") != 1
+    if (not isinstance(value, dict) or value.get("schema") != 2
             or value.get("hostname") != "jarvis.togarriapahome.uk"
             or value.get("gateway_uid") != GATEWAY_UID
             or value.get("gateway_gid") != GATEWAY_GID
@@ -87,7 +87,8 @@ def _replace_boot_id(raw: bytes, boot_id: str) -> bytes:
         raise StageInspectionDenied("new kernel boot identity is malformed")
     try:
         value = json.loads(raw, object_pairs_hook=_unique_json_pairs)
-        if not isinstance(value, dict) or "boot_id" not in value:
+        if (not isinstance(value, dict) or value.get("schema") != 2
+                or "boot_id" not in value):
             raise ValueError
         value["boot_id"] = boot_id
         return (json.dumps(value, sort_keys=True, ensure_ascii=True,

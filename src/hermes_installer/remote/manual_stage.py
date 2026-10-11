@@ -1,8 +1,8 @@
 """Narrow manually owned Jarvis gateway stage; distinct from installer authority.
 
-The only public proof used here is a fresh round trip through the same protected
-Access edge using the user's original application token. This module does not
-construct RootRemoteSessionClient, authority rows, or installer receipts.
+Public requests arrive only over the fixed cloudflared Unix origin. Each request
+is bound to kernel peer credentials and a fresh root observation; browser
+heartbeats keep active WebSocket forwarding inside the short witness lifetime.
 """
 from __future__ import annotations
 
@@ -15,31 +15,96 @@ import re
 import secrets
 import signal
 import socket
-import ssl
 import stat
 import threading
 import time
+import contextvars
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode, urlsplit
 
 from .gateway import GatewayDenied, Principal, RemotePolicy, validate_access_jwt
-from ..network import BoundedNetwork, HTTPResult, NetworkError
 
 STAGE_CONFIG = Path("/etc/hermes-installer/gateway-stage.json")
 GATEWAY_HOST, GATEWAY_PORT = "127.0.0.1", 8765
+GATEWAY_INGRESS_SOCKET = Path("/run/hermes-jarvis-mvp-gateway/origin.sock")
+GATEWAY_UNIT = "hermes-jarvis-mvp-gateway.service"
+TUNNEL_UNIT = "hermes-jarvis-mvp-tunnel.service"
 XPRA_HOST, XPRA_PORT = "127.0.0.1", 14500
 XPRA_UNIT = "hermes-xpra-stage.service"
 HERMES_STAGE_EXECUTABLE = Path("/opt/hermes-jarvis-mvp-20261011/Hermes-Desktop.AppDir/Hermes")
 PROFILE = "hermes-desktop"
 MAX_LEASE_SECONDS = 30
 MAX_PROBE_SECONDS = 5
-MAX_PROBES = 4096
 
 
 class ManualStageDenied(PermissionError):
     """The separate manual-stage gateway is unavailable or denied."""
+
+
+_INGRESS_SEAL = object()
+_CURRENT_INGRESS: contextvars.ContextVar["StageAcceptedIngressObservation | None"] = contextvars.ContextVar(
+    "hermes_manual_stage_ingress", default=None)
+
+
+@dataclass(frozen=True, slots=True)
+class StageAcceptedIngressObservation:
+    """Private join of this request's Unix peer, local JWT and root readback."""
+    request_started_monotonic: float
+    witness_expires_monotonic: float
+    token_sha256: str = field(repr=False)
+    principal: Principal = field(repr=False)
+    jwt_expires_monotonic: float
+    peer_pid: int
+    peer_uid: int
+    peer_gid: int
+    config_sha256: str
+    _root_observation: Any = field(repr=False, compare=False)
+    listener_device: int
+    listener_inode: int
+    _seal: object = field(repr=False, compare=False)
+
+    def verify_current(self, config: "ManualGatewayStageConfig", *, now: float | None = None) -> None:
+        observed_now = time.monotonic() if now is None else now
+        if (self._seal is not _INGRESS_SEAL or self.config_sha256 != config.config_sha256
+                or not _digest(self.token_sha256) or not _digest(self.config_sha256)
+                or type(self.peer_pid) is not int or self.peer_pid <= 1
+                or type(self.peer_uid) is not int or self.peer_uid <= 0
+                or type(self.peer_gid) is not int or self.peer_gid <= 0
+                or self.witness_expires_monotonic > self.request_started_monotonic + MAX_PROBE_SECONDS
+                or not self.request_started_monotonic <= observed_now < self.witness_expires_monotonic
+                or observed_now >= self.jwt_expires_monotonic):
+            raise ManualStageDenied("protected ingress witness is stale or mismatched")
+        try:
+            self._root_observation.verify_current(config, self.peer_pid, self.peer_uid, self.peer_gid,
+                                                  now=observed_now)
+            listener = os.lstat(config.ingress_socket)
+            if (not stat.S_ISSOCK(listener.st_mode)
+                    or listener.st_uid != config.gateway_uid
+                    or listener.st_gid != config.gateway_gid
+                    or stat.S_IMODE(listener.st_mode) != 0o660
+                    or (listener.st_dev, listener.st_ino) != (self.listener_device, self.listener_inode)
+                    or (listener.st_dev, listener.st_ino) != (
+                        self._root_observation.origin_socket_device,
+                        self._root_observation.origin_socket_inode)):
+                raise ValueError
+        except Exception:
+            raise ManualStageDenied("root cloudflared ingress or listener proof is no longer current") from None
+
+
+def _mint_accepted_ingress(config: "ManualGatewayStageConfig", *, request_started: float,
+                           token: str, principal: Principal, peer_pid: int, peer_uid: int,
+                           peer_gid: int, root_observation: Any,
+                           listener_identity: tuple[int, int]) -> StageAcceptedIngressObservation:
+    fingerprint = hashlib.sha256(token.encode("ascii", "strict")).hexdigest()
+    jwt_deadline = request_started + max(0.0, principal.expires_at - time.time())
+    witness_deadline = min(root_observation.expires_monotonic,
+                           request_started + MAX_PROBE_SECONDS, jwt_deadline)
+    result = StageAcceptedIngressObservation(request_started, witness_deadline, fingerprint,
+        principal, jwt_deadline, peer_pid, peer_uid, peer_gid, config.config_sha256,
+        root_observation, listener_identity[0], listener_identity[1], _INGRESS_SEAL)
+    result.verify_current(config)
+    return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +127,10 @@ class ManualGatewayStageConfig:
     appdir: Path
     appdir_manifest_sha256: str
     boot_id: str
+    gateway_unit_sha256: str
+    tunnel_unit_sha256: str
+    cloudflared_binary_sha256: str
+    ingress_socket: Path
     config_path: Path = field(repr=False)
     config_sha256: str = field(repr=False)
 
@@ -100,8 +169,9 @@ class ManualGatewayStageConfig:
                     "listener_host", "listener_port", "xpra_host", "xpra_port", "xpra_unit",
                     "gateway_uid", "gateway_gid", "xpra_uid", "display_number", "xpra_binary", "xpra_binary_sha256",
                     "xpra_program", "xpra_program_sha256", "xpra_argv_sha256",
-                    "unit_fragment", "unit_sha256", "appdir", "appdir_manifest_sha256", "boot_id"}
-        if not isinstance(value, dict) or set(value) != expected or type(value.get("schema")) is not int or value["schema"] != 1:
+                    "unit_fragment", "unit_sha256", "appdir", "appdir_manifest_sha256", "boot_id",
+                    "gateway_unit_sha256", "tunnel_unit_sha256", "cloudflared_binary_sha256", "ingress_socket"}
+        if not isinstance(value, dict) or set(value) != expected or type(value.get("schema")) is not int or value["schema"] != 2:
             raise ManualStageDenied("manual stage config has an unknown schema")
         if ((value["listener_host"], value["listener_port"], value["xpra_host"], value["xpra_port"], value["xpra_unit"])
                 != (GATEWAY_HOST, GATEWAY_PORT, XPRA_HOST, XPRA_PORT, XPRA_UNIT)):
@@ -119,7 +189,9 @@ class ManualGatewayStageConfig:
                          value["xpra_program_sha256"],
                          value["xpra_argv_sha256"],
                          Path(value["unit_fragment"]), value["unit_sha256"],
-                         Path(value["appdir"]), value["appdir_manifest_sha256"], value["boot_id"], path,
+                         Path(value["appdir"]), value["appdir_manifest_sha256"], value["boot_id"],
+                         value["gateway_unit_sha256"], value["tunnel_unit_sha256"],
+                         value["cloudflared_binary_sha256"], Path(value["ingress_socket"]), path,
                          hashlib.sha256(raw).hexdigest())
             if (type(result.gateway_uid) is not int or result.gateway_uid <= 0
                     or type(result.gateway_gid) is not int or result.gateway_gid <= 0
@@ -131,6 +203,10 @@ class ManualGatewayStageConfig:
                     or not _digest(result.xpra_binary_sha256) or not _digest(result.xpra_program_sha256)
                     or not _digest(result.xpra_argv_sha256) or not _digest(result.unit_sha256)
                     or not _digest(result.appdir_manifest_sha256)
+                    or not _digest(result.gateway_unit_sha256)
+                    or not _digest(result.tunnel_unit_sha256)
+                    or not _digest(result.cloudflared_binary_sha256)
+                    or result.ingress_socket != GATEWAY_INGRESS_SOCKET
                     or result.appdir != HERMES_STAGE_EXECUTABLE.parent
                     or not re.fullmatch(r"[0-9a-f-]{36}", result.boot_id)
                     or (not allow_stale_boot_id and
@@ -172,28 +248,16 @@ class _FreshStageJWKS:
         return self.cache.key(kid, cancel_event=cancel_event, deadline_monotonic=deadline_monotonic)
 
 
-@dataclass(frozen=True, slots=True)
-class _PendingProbe:
-    action: str
-    session_id: str
-    token_sha256: str
-    email: str
-    subject: str
-    config_sha256: str
-    expires: float
-
-
 class StageEdgeAccessVerifier:
-    """One-use same-app Access-edge witness; no URL, proxy, or token callback."""
+    """Validate locally verified JWTs bound to this request's protected ingress."""
     def __init__(self, config: ManualGatewayStageConfig, *, monotonic=time.monotonic):
         self.config = config
         self.policy = RemotePolicy(config.hostname, config.issuer, config.audience,
                                    config.allowed_emails, _FreshStageJWKS(config.issuer))
         self.monotonic = monotonic
-        self._pending: dict[str, _PendingProbe] = {}
-        self._lock = threading.Lock()
 
     def verify(self, access_jwt: str, *, action: str, session_id: str,
+               accepted_ingress: StageAcceptedIngressObservation | None = None,
                probe_budget_seconds: float = MAX_PROBE_SECONDS) -> tuple[Principal, float, float]:
         if (action not in {"asset-read", "websocket-attach", "renew"}
                 or not isinstance(session_id, str) or not 20 <= len(session_id) <= 128
@@ -201,151 +265,24 @@ class StageEdgeAccessVerifier:
                 or type(probe_budget_seconds) not in (int, float)
                 or not 0.5 <= probe_budget_seconds <= MAX_PROBE_SECONDS):
             raise ManualStageDenied("edge verification action/session is invalid")
-        started = self.monotonic()
-        probe_deadline = started + probe_budget_seconds
-        principal = validate_access_jwt(access_jwt, policy=self.policy,
-                                        deadline_monotonic=probe_deadline)
-        now = self.monotonic()
-        nonce = secrets.token_hex(32)
+        if accepted_ingress is None:
+            accepted_ingress = _CURRENT_INGRESS.get()
+        if accepted_ingress is None:
+            raise ManualStageDenied("current protected cloudflared ingress is required")
+        accepted_ingress.verify_current(self.config, now=self.monotonic())
         fingerprint = hashlib.sha256(access_jwt.encode("ascii", "strict")).hexdigest()
-        with self._lock:
-            self._purge(now)
-            if len(self._pending) >= MAX_PROBES:
-                raise ManualStageDenied("Access edge-probe capacity is exhausted")
-            self._pending[nonce] = _PendingProbe(action, session_id, fingerprint, principal.email, principal.subject,
-                                                  self.config.config_sha256, now + MAX_PROBE_SECONDS)
-        try:
-            path = "/__stage_access_probe?" + urlencode({"nonce": nonce})
-            remaining = probe_deadline - self.monotonic()
-            if remaining < 0.1:
-                raise ManualStageDenied("Access edge verification exceeded its hard deadline")
-            response = BoundedNetwork(deadline_seconds=remaining, socket_timeout=min(3.0, remaining),
-                                      max_response_bytes=4096, requester=_stage_edge_https_request).request(
-                f"https://{self.config.hostname}{path}", method="GET", headers={
-                    "Host": self.config.hostname,
-                    "Cookie": "CF_Authorization=" + access_jwt,
-                    "Cache-Control": "no-cache, no-store, max-age=0",
-                    "Pragma": "no-cache", "Accept": "application/json",
-                    "Accept-Encoding": "identity", "Connection": "close",
-                })
-            cache_control = {part.strip().casefold() for part in response.headers.get("cache-control", "").split(",")}
-            if (response.status != 200 or response.headers.get("location") is not None
-                    or response.headers.get("content-encoding") not in (None, "identity")
-                    or response.headers.get("content-type", "").split(";", 1)[0].casefold() != "application/json"
-                    or not {"no-store", "no-cache"}.issubset(cache_control)):
-                raise ManualStageDenied("Access edge did not return a fresh protected probe")
-            length = response.headers.get("content-length")
-            if length is not None and (not length.isdecimal() or int(length) > 4096):
-                raise ManualStageDenied("Access edge probe response exceeds its bound")
-            body = response.body
-            if not body or len(body) > 4096 or (length is not None and int(length) != len(body)):
-                raise ManualStageDenied("Access edge probe response exceeds its bound")
-            answer = json.loads(body)
-            expected = {"schema", "nonce", "token_sha256", "email", "subject", "config_sha256"}
-            if (not isinstance(answer, dict) or set(answer) != expected or answer.get("schema") != 1
-                    or not secrets.compare_digest(str(answer.get("nonce", "")), nonce)
-                    or not secrets.compare_digest(str(answer.get("token_sha256", "")), fingerprint)
-                    or answer.get("email") != principal.email or answer.get("subject") != principal.subject
-                    or answer.get("config_sha256") != self.config.config_sha256):
-                raise ManualStageDenied("Access edge witness does not bind the submitted identity")
-            now_mono = self.monotonic()
-            jwt_deadline = now_mono + max(0.0, principal.expires_at - time.time())
-            grant_until = min(jwt_deadline, now_mono + MAX_LEASE_SECONDS)
-            if grant_until <= self.monotonic():
-                raise ManualStageDenied("Access edge authorization expired")
-            return principal, grant_until, jwt_deadline
-        except ManualStageDenied:
-            raise
-        except Exception:
-            raise ManualStageDenied("fresh protected Access edge verification failed") from None
-        finally:
-            with self._lock:
-                self._pending.pop(nonce, None)
-
-
-    def consume_probe(self, *, nonce: str, cookie_jwt: str, forwarded_jwt: str) -> bytes:
-        # Consume first, even when the presented assertion is wrong, so the
-        # nonce cannot be retried with a different identity or header set.
-        with self._lock:
-            record = self._pending.pop(nonce, None)
-        if (not isinstance(nonce, str) or not re.fullmatch(r"[0-9a-f]{64}", nonce)
-                or not isinstance(cookie_jwt, str) or not isinstance(forwarded_jwt, str)
-                or not cookie_jwt or not forwarded_jwt):
-            raise ManualStageDenied("probe assertion or nonce is invalid")
-        try:
-            submitted = cookie_jwt.encode("ascii", "strict")
-            forwarded = forwarded_jwt.encode("ascii", "strict")
-            fingerprint = hashlib.sha256(submitted).hexdigest()
-        except (UnicodeError, ValueError):
-            raise ManualStageDenied("probe assertion is not valid ASCII") from None
-        if (record is None or self.monotonic() >= record.expires
-                or not secrets.compare_digest(submitted, forwarded)
-                or not secrets.compare_digest(record.token_sha256, fingerprint)
-                or record.config_sha256 != self.config.config_sha256):
-            raise ManualStageDenied("probe nonce is unknown, stale, replayed, or configuration-stale")
-        principal = validate_access_jwt(cookie_jwt, policy=self.policy,
-                                        deadline_monotonic=record.expires)
-        if principal.email != record.email or principal.subject != record.subject:
-            raise ManualStageDenied("probe principal differs from its registered token")
-        return json.dumps({"schema": 1, "nonce": nonce, "token_sha256": fingerprint,
-                           "email": principal.email, "subject": principal.subject,
-                           "config_sha256": record.config_sha256},
-                          sort_keys=True, separators=(",", ":")).encode("ascii")
-
-    def _purge(self, now: float) -> None:
-        self._pending = {n: p for n, p in self._pending.items() if p.expires > now}
-
-
-def _stage_edge_https_request(url: str, method: str, headers: dict[str, str], body: bytes | None,
-                              socket_timeout: float, maximum: int) -> HTTPResult:
-    """BoundedNetwork child requester; fixed origin, no proxy or redirect."""
-    import http.client
-    parsed = urlsplit(url)
-    if (parsed.scheme != "https" or parsed.hostname != "jarvis.togarriapahome.uk"
-            or parsed.port not in {None, 443} or parsed.username or parsed.password
-            or parsed.fragment or parsed.path != "/__stage_access_probe"
-            or method != "GET" or body is not None):
-        raise NetworkError("manual edge probe origin or route differs")
-    expected_headers = {"host", "cookie", "cache-control", "pragma", "accept",
-                        "accept-encoding", "connection"}
-    if (not isinstance(headers, dict) or {key.casefold() for key in headers} != expected_headers
-            or headers.get("Host") != "jarvis.togarriapahome.uk"
-            or headers.get("Cache-Control") != "no-cache, no-store, max-age=0"
-            or headers.get("Pragma") != "no-cache"
-            or headers.get("Accept") != "application/json"
-            or headers.get("Accept-Encoding") != "identity"
-            or headers.get("Connection") != "close"
-            or not isinstance(headers.get("Cookie"), str)
-            or not headers["Cookie"].startswith("CF_Authorization=")):
-        raise NetworkError("manual edge probe headers differ")
-    token = headers["Cookie"][len("CF_Authorization="):]
-    if (not token or len(token) > 16_384 or any(c in token for c in "\r\n; ")):
-        raise NetworkError("manual edge probe cookie is invalid")
-    from urllib.parse import parse_qsl
-    try:
-        params = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
-    except ValueError:
-        raise NetworkError("manual edge probe query differs") from None
-    if (len(params) != 1 or params[0][0] != "nonce"
-            or not re.fullmatch(r"[0-9a-f]{64}", params[0][1])):
-        raise NetworkError("manual edge probe query differs")
-    connection = http.client.HTTPSConnection(parsed.hostname, 443, timeout=socket_timeout,
-                                             context=ssl.create_default_context())
-    try:
-        connection.request("GET", parsed.path + "?" + parsed.query, headers=headers)
-        response = connection.getresponse()
-        data = response.read(maximum + 1)
-        if len(data) > maximum:
-            raise NetworkError("manual edge response exceeds bound")
-        rows: dict[str, str] = {}
-        for key, value in response.getheaders():
-            folded = key.casefold()
-            if folded in rows:
-                raise NetworkError("duplicate manual edge response header")
-            rows[folded] = value
-        return HTTPResult(response.status, rows, data)
-    finally:
-        connection.close()
+        if not secrets.compare_digest(fingerprint, accepted_ingress.token_sha256):
+            raise ManualStageDenied("Access assertion differs from the current protected request")
+        principal = accepted_ingress.principal
+        if (action not in {"asset-read", "websocket-attach", "renew"}
+                or not isinstance(session_id, str) or not 20 <= len(session_id) <= 128):
+            raise ManualStageDenied("stage authorization action is invalid")
+        now_mono = accepted_ingress.request_started_monotonic
+        jwt_deadline = accepted_ingress.jwt_expires_monotonic
+        grant_until = min(jwt_deadline, now_mono + MAX_LEASE_SECONDS)
+        if grant_until <= self.monotonic():
+            raise ManualStageDenied("Access authorization expired")
+        return principal, grant_until, jwt_deadline
 
 
 
@@ -384,10 +321,13 @@ class _StageRecord:
     last_inspection_check: float = 0.0
     challenge: str = field(default_factory=lambda: secrets.token_urlsafe(32), repr=False)
     challenge_expiry: float = 0.0
+    heartbeat_nonce: str = field(default_factory=lambda: secrets.token_hex(32), repr=False)
+    heartbeat_expiry: float = 0.0
+    last_ingress: StageAcceptedIngressObservation | None = field(default=None, repr=False)
 
 
 class StageGatewayPolicySessionAdapter:
-    """Issuer-retained manual-stage sessions backed by fresh Access-edge proofs."""
+    """Issuer-retained stage sessions backed by each protected Unix ingress."""
     def __init__(self, config: ManualGatewayStageConfig, verifier: StageEdgeAccessVerifier):
         if verifier.config is not config:
             raise ValueError("stage session and edge verifier must share the exact config object")
@@ -405,16 +345,21 @@ class StageGatewayPolicySessionAdapter:
                          else None)
         if expected_kind is None:
             raise ManualStageDenied("manual-stage route is outside the fixed Xpra surface")
+        ingress = _CURRENT_INGRESS.get()
+        if ingress is None:
+            raise ManualStageDenied("a current protected cloudflared ingress is required")
+        ingress.verify_current(self.config, now=self.monotonic())
         _read_config_current(self.config)
         sid = secrets.token_urlsafe(24)
-        principal, expiry, jwt_deadline = self.verifier.verify(access_jwt, action=action, session_id=sid)
-        edge_finished = self.monotonic()
-        inspection_started = self.monotonic()
+        principal, expiry, jwt_deadline = self.verifier.verify(access_jwt, action=action,
+            session_id=sid, accepted_ingress=ingress)
+        inspection_started = ingress.request_started_monotonic
         self._verify_xpra_current()
         now = self.monotonic()
-        if (now - edge_finished > MAX_PROBE_SECONDS
-                or now - inspection_started > MAX_PROBE_SECONDS):
-            raise ManualStageDenied("manual-stage admission proof expired while waiting for current-state checks")
+        ingress.verify_current(self.config, now=now)
+        if (now - ingress.request_started_monotonic > MAX_PROBE_SECONDS
+                or now >= min(expiry, jwt_deadline)):
+            raise ManualStageDenied("manual-stage request witness expired while checking Xpra state")
         with self._lock:
             self._purge(now)
             if expected_kind == "leased-websocket" and sum(
@@ -424,13 +369,63 @@ class StageGatewayPolicySessionAdapter:
             admission = StageGatewayAdmission(
                 handle, sid, expected_kind, hashlib.sha256((principal.email + "\0" + principal.subject).encode()).hexdigest(),
                 PROFILE, "manual-stage", "manual-stage-xpra", route_id, now, expiry,
-                jwt_deadline, edge_finished, "manual-edge-probe-v1", self.config.config_sha256)
-            # Existing browser code renews every 25 seconds; leave a small
-            # scheduling margin while keeping the grant itself at <=30s.
-            record = _StageRecord(admission, principal, access_jwt, edge_finished, inspection_started,
-                                  challenge_expiry=min(expiry, now + 29))
+                jwt_deadline, ingress.request_started_monotonic, "manual-unix-ingress-v263",
+                self.config.config_sha256)
+            record = _StageRecord(admission, principal, access_jwt, ingress.request_started_monotonic,
+                                  inspection_started, challenge_expiry=min(expiry, now + 29),
+                                  heartbeat_expiry=min(expiry, ingress.witness_expires_monotonic),
+                                  last_ingress=ingress)
             self._records[handle] = record
             return admission
+
+    def heartbeat_material(self, handle: Any) -> tuple[str, str]:
+        with self._lock:
+            record = self._current(handle)
+            if record.admission.admission_kind != "leased-websocket":
+                raise ManualStageDenied("heartbeat requires the active WebSocket session")
+            return record.admission.session_id, record.heartbeat_nonce
+
+    def heartbeat(self, *, session_id: str, nonce: str,
+                  accepted_ingress: StageAcceptedIngressObservation) -> tuple[str, float]:
+        with self._lock:
+            record = next((item for item in self._records.values()
+                           if item.admission.session_id == session_id), None)
+            now = self.monotonic()
+            if (record is None or record.admission.admission_kind != "leased-websocket"
+                    or record.admission.lease_expires_monotonic <= now
+                    or record.admission.jwt_expires_monotonic <= now
+                    or record.heartbeat_expiry <= now
+                    or not secrets.compare_digest(record.heartbeat_nonce, nonce)):
+                if record is not None:
+                    self._records.pop(record.admission.handle, None)
+                raise ManualStageDenied("stage heartbeat nonce is absent, stale, or replayed")
+            record.heartbeat_nonce = ""  # consume before any proof or state lookup
+            handle = record.admission.handle
+            original_principal = record.principal
+            original_fingerprint = hashlib.sha256(record.access_jwt.encode("ascii", "strict")).hexdigest()
+        try:
+            accepted_ingress.verify_current(self.config, now=self.monotonic())
+            if (accepted_ingress.request_started_monotonic > accepted_ingress.witness_expires_monotonic
+                    or self.monotonic() - accepted_ingress.request_started_monotonic > MAX_PROBE_SECONDS
+                    or not secrets.compare_digest(accepted_ingress.token_sha256, original_fingerprint)
+                    or accepted_ingress.principal.subject != original_principal.subject
+                    or accepted_ingress.principal.email != original_principal.email):
+                raise ManualStageDenied("stage heartbeat binding mismatch")
+        except Exception:
+            self.close(handle, session_id=session_id)
+            raise ManualStageDenied("stage heartbeat is not bound to the original Access session")
+        with self._lock:
+            current = self._current(handle)
+            if current is not record:
+                raise ManualStageDenied("stage session changed during heartbeat verification")
+            current.last_edge_check = accepted_ingress.request_started_monotonic
+            current.last_ingress = accepted_ingress
+            current.heartbeat_nonce = secrets.token_hex(32)
+            current.heartbeat_expiry = min(current.admission.lease_expires_monotonic,
+                                           current.admission.jwt_expires_monotonic,
+                                           accepted_ingress.witness_expires_monotonic,
+                                           accepted_ingress.request_started_monotonic + MAX_PROBE_SECONDS)
+            return current.heartbeat_nonce, current.heartbeat_expiry
 
     def challenge(self, handle: Any) -> StageGatewayChallenge:
         with self._lock:
@@ -448,18 +443,32 @@ class StageGatewayPolicySessionAdapter:
                     or not secrets.compare_digest(record.challenge, renewal_nonce)):
                 self._records.pop(handle, None)
                 raise ManualStageDenied("manual-stage renewal challenge is stale or mismatched")
-            record.challenge = ""  # consume before the edge roundtrip
+            record.challenge = ""  # consume before proof validation or renewal
+            original_fingerprint = hashlib.sha256(record.access_jwt.encode("ascii", "strict")).hexdigest()
+            original_jwt_deadline = record.admission.jwt_expires_monotonic
+        ingress = _CURRENT_INGRESS.get()
+        if ingress is None:
+            self.close(handle, session_id=session_id)
+            raise ManualStageDenied("a fresh protected ingress is required for renewal")
+        ingress.verify_current(self.config, now=self.monotonic())
+        if not secrets.compare_digest(ingress.token_sha256,
+                                      hashlib.sha256(access_jwt.encode("ascii", "strict")).hexdigest()):
+            self.close(handle, session_id=session_id)
+            raise ManualStageDenied("renewal Access assertion differs from protected request")
         try:
-            principal, expiry, jwt_deadline = self.verifier.verify(access_jwt, action="renew", session_id=session_id)
+            principal, expiry, jwt_deadline = self.verifier.verify(access_jwt, action="renew",
+                session_id=session_id, accepted_ingress=ingress)
             if (principal.subject != record.principal.subject or principal.email != record.principal.email
+                    or not secrets.compare_digest(original_fingerprint, ingress.token_sha256)
                     or expiry <= self.monotonic()):
-                raise ManualStageDenied("fresh Access edge renewal changed principal or expired")
-            edge_finished = self.monotonic()
-            inspection_started = self.monotonic()
+                raise ManualStageDenied("protected Access renewal changed principal or expired")
+            jwt_deadline = min(original_jwt_deadline, jwt_deadline)
+            inspection_started = ingress.request_started_monotonic
             self._verify_xpra_current()
-            if (self.monotonic() - edge_finished > MAX_PROBE_SECONDS
-                    or self.monotonic() - inspection_started > MAX_PROBE_SECONDS):
-                raise ManualStageDenied("manual-stage renewal proof expired while waiting for current-state checks")
+            ingress.verify_current(self.config, now=self.monotonic())
+            if (self.monotonic() - ingress.request_started_monotonic > MAX_PROBE_SECONDS
+                    or self.monotonic() >= min(expiry, jwt_deadline)):
+                raise ManualStageDenied("manual-stage renewal witness expired during current-state checks")
         except Exception:
             self.close(handle, session_id=session_id)
             raise ManualStageDenied("fresh Access edge renewal was denied") from None
@@ -468,17 +477,20 @@ class StageGatewayPolicySessionAdapter:
             now = self.monotonic()
             current.principal = principal
             current.access_jwt = access_jwt
-            current.last_edge_check = edge_finished
+            current.last_edge_check = ingress.request_started_monotonic
             current.last_inspection_check = inspection_started
             current.challenge = secrets.token_urlsafe(32)
-            current.challenge_expiry = min(expiry, now + 29)
+            current.challenge_expiry = min(expiry, jwt_deadline, now + 29)
             current.admission = StageGatewayAdmission(
                 current.admission.handle, current.admission.session_id, current.admission.admission_kind,
                 current.admission.principal_binding_id, current.admission.profile_id,
                 current.admission.gateway_generation, current.admission.desktop_generation,
                 current.admission.route_id, current.admission.issued_monotonic,
-                min(expiry, now + MAX_LEASE_SECONDS), jwt_deadline, edge_finished,
-                "manual-edge-probe-v1", self.config.config_sha256)
+                min(expiry, jwt_deadline, now + MAX_LEASE_SECONDS), jwt_deadline,
+                ingress.request_started_monotonic, "manual-unix-ingress-v263", self.config.config_sha256)
+            current.heartbeat_expiry = min(current.admission.lease_expires_monotonic,
+                                           ingress.request_started_monotonic + MAX_PROBE_SECONDS)
+            current.last_ingress = ingress
             return current.admission.lease_expires_monotonic
 
     def close(self, handle: Any, *, session_id: str | None = None) -> None:
@@ -500,28 +512,18 @@ class StageGatewayPolicySessionAdapter:
                     or now - record.last_inspection_check > MAX_PROBE_SECONDS):
                 self._records.pop(handle, None)
                 raise ManualStageDenied("active edge or root observation proof is stale")
+            if record.last_ingress is None:
+                self._records.pop(handle, None)
+                raise ManualStageDenied("active protected ingress receipt is absent")
+            try:
+                record.last_ingress.verify_current(self.config, now=now)
+            except Exception:
+                self._records.pop(handle, None)
+                raise ManualStageDenied("active protected ingress receipt is stale") from None
 
     def refresh_active_edge(self, handle: Any) -> None:
-        """Refresh the retained token's protected-edge proof for the WS watchdog."""
-        with self._lock:
-            record = self._current(handle)
-            token = record.access_jwt
-            session_id = record.admission.session_id
-            principal_before = record.principal
-        try:
-            principal, _lease, _jwt_deadline = self.verifier.verify(
-                token, action="renew", session_id=session_id, probe_budget_seconds=2.5)
-            edge_finished = self.monotonic()
-            if principal.subject != principal_before.subject or principal.email != principal_before.email:
-                raise ManualStageDenied("fresh Access edge check changed the active principal")
-        except Exception:
-            self.close(handle, session_id=session_id)
-            raise ManualStageDenied("active Access edge authorization is no longer current") from None
-        with self._lock:
-            current = self._current(handle)
-            if current is not record:
-                raise ManualStageDenied("active Access session changed during edge check")
-            current.last_edge_check = edge_finished
+        """Check the browser's fresh protected heartbeat; never replay a token."""
+        self.assert_current_proofs(handle)
 
     def refresh_active_inspection(self, handle: Any) -> None:
         with self._lock:
@@ -574,49 +576,6 @@ class StageXpraUnitReadback:
                 verify_current_inspection(self.config, queue_timeout_seconds=queue_timeout_seconds)
         except Exception:
             raise ManualStageDenied("root current firewall, Xpra unit, or app readback is unavailable") from None
-
-
-class StageEdgeProbeHandler:
-    def __init__(self, verifier: StageEdgeAccessVerifier):
-        self.verifier = verifier
-
-    async def __call__(self, request):
-        from aiohttp import web
-        try:
-            hosts = request.headers.getall("Host", [])
-            cookie_headers = request.headers.getall("Cookie", [])
-            forwarded_headers = request.headers.getall("Cf-Access-Jwt-Assertion", [])
-            if (request.method != "GET" or len(hosts) != 1
-                    or hosts[0].casefold() != self.verifier.config.hostname.casefold()
-                    or len(request.query) != 1 or set(request.query) != {"nonce"}
-                    or request.can_read_body or request.content_length not in (None, 0)
-                    or request.headers.get("Transfer-Encoding") is not None
-                    or len(cookie_headers) != 1 or len(forwarded_headers) != 1):
-                raise ManualStageDenied("invalid probe request")
-            forwarded = forwarded_headers[0]
-            cookie = cookie_headers[0]
-            token = _cookie_value(cookie, "CF_Authorization")
-            body = await asyncio.to_thread(self.verifier.consume_probe, nonce=request.query["nonce"],
-                                           cookie_jwt=token, forwarded_jwt=forwarded)
-            return web.Response(body=body, content_type="application/json", headers={
-                "Cache-Control": "no-store, no-cache, max-age=0", "Pragma": "no-cache",
-                "X-Content-Type-Options": "nosniff"})
-        except Exception:
-            return web.Response(status=403, text="Forbidden", headers={"Cache-Control": "no-store"})
-
-
-def _cookie_value(header: str, name: str) -> str:
-    if not isinstance(header, str) or len(header) > 20_000:
-        raise ManualStageDenied("cookie header exceeds bound")
-    values: dict[str, str] = {}
-    for item in header.split(";"):
-        key, separator, value = item.strip().partition("=")
-        if not separator or not key or key in values:
-            raise ManualStageDenied("cookie header is ambiguous")
-        values[key] = value.strip()
-    if name not in values or not values[name] or values[name].count("="):
-        raise ManualStageDenied("original Access cookie is absent")
-    return values[name]
 
 
 def _read_config_current(config: ManualGatewayStageConfig) -> None:
@@ -870,6 +829,169 @@ class StageGatewayLaunch:
         self.policy, self.stage_sessions, self.fixed_connector = policy, stage_sessions, fixed_connector
 
 
+_STAGE_HEARTBEAT_SCRIPT = r"""<script>(()=>{
+const sid=sessionStorage.getItem('hd-stage-sid');let nonce=sessionStorage.getItem('hd-stage-heartbeat');
+if(!sid||!nonce)return;let busy=false,stopped=false;
+async function beat(){if(busy||stopped)return;busy=true;const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),1500);
+try{const r=await fetch('/__stage_access_heartbeat',{method:'POST',cache:'no-store',credentials:'same-origin',signal:controller.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:sid,nonce})});
+if(!r.ok)throw Error();const x=await r.json();if(!x||Object.keys(x).sort().join(',')!=='nonce,session_id'||x.session_id!==sid||typeof x.nonce!=='string'||!/^[0-9a-f]{64}$/.test(x.nonce))throw Error();nonce=x.nonce;sessionStorage.setItem('hd-stage-heartbeat',nonce);
+}catch(_){stopped=true;sessionStorage.removeItem('hd-lease');sessionStorage.removeItem('hd-challenge');sessionStorage.removeItem('hd-stage-sid');sessionStorage.removeItem('hd-stage-heartbeat');location.replace('/client/bootstrap.html')}
+finally{clearTimeout(timer);busy=false}}
+beat();setInterval(beat,1500);
+})();</script>"""
+
+
+def _request_peer_credentials(request, config: ManualGatewayStageConfig) -> tuple[int, int, int]:
+    try:
+        transport = request.transport
+        peer = transport.get_extra_info("socket") if transport is not None else None
+        if (peer is None or peer.family != socket.AF_UNIX or not hasattr(socket, "SO_PEERCRED")
+                or peer.getsockname() != str(config.ingress_socket)):
+            raise ValueError
+        pid, uid, gid = __import__("struct").unpack(
+            "3i", peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+        if pid <= 1 or uid <= 0 or gid <= 0:
+            raise ValueError
+        listener = os.lstat(config.ingress_socket)
+        if (not stat.S_ISSOCK(listener.st_mode) or listener.st_uid != config.gateway_uid
+                or listener.st_gid != config.gateway_gid or stat.S_IMODE(listener.st_mode) != 0o660):
+            raise ValueError
+        return pid, uid, gid
+    except Exception:
+        raise ManualStageDenied("request did not arrive over the protected Unix ingress") from None
+
+
+async def _accept_stage_ingress(request, config: ManualGatewayStageConfig,
+                                policy: RemotePolicy, *,
+                                listener_identity: tuple[int, int] | None = None) -> StageAcceptedIngressObservation:
+    request_started = time.monotonic()
+    try:
+        host_rows = request.headers.getall("Host", [])
+        assertion_rows = request.headers.getall("Cf-Access-Jwt-Assertion", [])
+        if (len(host_rows) != 1 or host_rows[0].casefold() != config.hostname.casefold()
+                or len(assertion_rows) != 1):
+            raise ValueError
+        origin = request.headers.get("Origin")
+        if origin is not None and origin != f"https://{config.hostname}":
+            raise ValueError
+        if request.path == "/__stage_access_heartbeat" and (
+                request.method != "POST" or origin != f"https://{config.hostname}"
+                or request.headers.get("Sec-Fetch-Site") not in (None, "same-origin")):
+            raise ValueError
+        token = assertion_rows[0]
+        if not isinstance(token, str) or not 1 <= len(token) <= 16_384:
+            raise ValueError
+        principal = validate_access_jwt(token, policy=policy,
+                                        deadline_monotonic=request_started + MAX_PROBE_SECONDS)
+        peer_pid, peer_uid, peer_gid = _request_peer_credentials(request, config)
+        listener = os.lstat(config.ingress_socket)
+        current_identity = (listener.st_dev, listener.st_ino)
+        if (listener_identity is not None and current_identity != listener_identity):
+            raise ValueError
+        from .manual_stage_inspector import verify_current_ingress
+        observation = await asyncio.wait_for(asyncio.to_thread(
+            verify_current_ingress, config, peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid),
+            timeout=MAX_PROBE_SECONDS)
+        if (observation.origin_socket_device != listener.st_dev
+                or observation.origin_socket_inode != listener.st_ino
+                or os.lstat(config.ingress_socket).st_ino != listener.st_ino
+                or os.lstat(config.ingress_socket).st_dev != listener.st_dev):
+            raise ValueError
+        accepted = _mint_accepted_ingress(config, request_started=request_started,
+            token=token, principal=principal, peer_pid=peer_pid, peer_uid=peer_uid,
+            peer_gid=peer_gid, root_observation=observation,
+            listener_identity=current_identity)
+        if time.monotonic() - request_started > MAX_PROBE_SECONDS:
+            raise ValueError
+        return accepted
+    except Exception:
+        raise ManualStageDenied("protected Access ingress is unavailable or stale") from None
+
+
+async def _stage_heartbeat(request):
+    from aiohttp import web
+    launch: StageGatewayLaunch = request.app["manual_stage_launch"]
+    try:
+        if (request.content_type != "application/json" or request.content_length is None
+                or not 1 <= request.content_length <= 2048
+                or request.headers.get("Transfer-Encoding") is not None):
+            raise ValueError
+        raw = await asyncio.wait_for(request.read(), timeout=1.5)
+        if len(raw) > 2048:
+            raise ValueError
+        body = json.loads(raw, object_pairs_hook=_unique_json_pairs)
+        if (not isinstance(body, dict) or set(body) != {"session_id", "nonce"}
+                or not isinstance(body["session_id"], str) or not 20 <= len(body["session_id"]) <= 64
+                or not re.fullmatch(r"[A-Za-z0-9_-]+", body["session_id"])
+                or not isinstance(body["nonce"], str) or not re.fullmatch(r"[0-9a-f]{64}", body["nonce"])):
+            raise ValueError
+        accepted = request.get("stage_ingress")
+        if not isinstance(accepted, StageAcceptedIngressObservation):
+            raise ValueError
+        next_nonce, _expiry = launch.stage_sessions.heartbeat(
+            session_id=body["session_id"], nonce=body["nonce"], accepted_ingress=accepted)
+        return web.json_response({"session_id": body["session_id"], "nonce": next_nonce},
+            headers={"Cache-Control": "no-store", "Pragma": "no-cache", "X-Content-Type-Options": "nosniff"})
+    except Exception:
+        raise ManualStageDenied("stage heartbeat was denied") from None
+
+
+async def _stage_ingress_middleware(request, handler):
+    from aiohttp import web
+    launch: StageGatewayLaunch = request.app["manual_stage_launch"]
+    try:
+        listener_identity = request.app.get("stage_listener_identity")
+        if (not isinstance(listener_identity, tuple) or len(listener_identity) != 2
+                or any(type(item) is not int or item < 0 for item in listener_identity)):
+            raise ManualStageDenied("fixed stage listener identity is unavailable")
+        accepted = await _accept_stage_ingress(request, launch.stage_sessions.config, launch.policy,
+                                               listener_identity=listener_identity)
+    except Exception:
+        return web.Response(status=403, text="Forbidden", headers={"Cache-Control": "no-store"})
+    request["stage_ingress"] = accepted
+    context_token = _CURRENT_INGRESS.set(accepted)
+    try:
+        response = await handler(request)
+    finally:
+        _CURRENT_INGRESS.reset(context_token)
+    if request.headers.get("Upgrade", "").casefold() != "websocket":
+        try:
+            _read_config_current(launch.stage_sessions.config)
+            accepted.verify_current(launch.stage_sessions.config)
+        except Exception:
+            return web.Response(status=403, text="Forbidden", headers={"Cache-Control": "no-store"})
+    if request.path == "/session" and 200 <= response.status < 300:
+        try:
+            body = json.loads(response.body)
+            key = body["lease_id"]
+            session = request.app["gateway_runtime"].sessions[key]
+            if session.admission.admission_kind == "leased-websocket":
+                session_id, nonce = launch.stage_sessions.heartbeat_material(session.admission.handle)
+                body["stage_session_id"] = session_id
+                body["stage_heartbeat_nonce"] = nonce
+                headers = {key: value for key, value in response.headers.items()
+                           if key.casefold() not in {"content-length", "content-type"}}
+                response = web.json_response(body, status=response.status, headers=headers)
+        except Exception:
+            return web.Response(status=403, text="Forbidden", headers={"Cache-Control": "no-store"})
+    if (request.path == "/client/index.html" and 200 <= response.status < 300
+            and "text/html" in response.headers.get("Content-Type", "")):
+        try:
+            data = response.body
+            text = data.decode("utf-8", "strict")
+            head = re.search(r"<head(?:\s[^>]*)?>", text, flags=re.IGNORECASE)
+            if head is None:
+                raise ValueError
+            text = text[:head.end()] + _STAGE_HEARTBEAT_SCRIPT + text[head.end():]
+            headers = {key: value for key, value in response.headers.items()
+                       if key.casefold() != "content-length"}
+            response = web.Response(status=response.status, body=text.encode("utf-8"),
+                headers={**headers, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+        except Exception:
+            return web.Response(status=403, text="Forbidden", headers={"Cache-Control": "no-store"})
+    return response
+
+
 async def serve_stage_gateway(launch: StageGatewayLaunch, stop: asyncio.Event) -> None:
     """Serve the typed manual stage through existing route/framing/session guards."""
     from aiohttp import web
@@ -880,19 +1002,43 @@ async def serve_stage_gateway(launch: StageGatewayLaunch, stop: asyncio.Event) -
     app = create_stage_gateway_app(launch)
     runner = web.AppRunner(app, access_log=None, handle_signals=False)
     await runner.setup()
-    site = web.TCPSite(runner, host=GATEWAY_HOST, port=GATEWAY_PORT, reuse_address=False)
+    socket_path = launch.stage_sessions.config.ingress_socket
+    try:
+        parent_info = os.lstat(socket_path.parent)
+        if (not stat.S_ISDIR(parent_info.st_mode) or parent_info.st_uid != launch.stage_sessions.config.gateway_uid
+                or parent_info.st_gid != launch.stage_sessions.config.gateway_gid
+                or stat.S_IMODE(parent_info.st_mode) != 0o750
+                or socket_path.exists() or socket_path.is_symlink()):
+            raise ValueError
+    except Exception:
+        await runner.cleanup()
+        raise ManualStageDenied("fixed Unix ingress directory is unavailable or occupied") from None
+    site = web.UnixSite(runner, str(socket_path))
+    socket_identity = None
     try:
         await site.start()
-        sockets = tuple(getattr(getattr(site, "_server", None), "sockets", ()) or ())
-        if not sockets or any(sock.getsockname()[:2] != (GATEWAY_HOST, GATEWAY_PORT) for sock in sockets):
-            raise ManualStageDenied("manual gateway did not bind its exact loopback socket")
+        socket_info = os.lstat(socket_path)
+        if (not stat.S_ISSOCK(socket_info.st_mode) or socket_info.st_uid != launch.stage_sessions.config.gateway_uid
+                or socket_info.st_gid != launch.stage_sessions.config.gateway_gid):
+            raise ManualStageDenied("manual gateway Unix listener has unexpected custody")
+        socket_identity = (socket_info.st_dev, socket_info.st_ino)
+        os.chmod(socket_path, 0o660)
+        app["stage_listener_identity"] = socket_identity
         await stop.wait()
     finally:
         await runner.cleanup()
+        if socket_identity is not None:
+            try:
+                current = os.lstat(socket_path)
+                if socket_identity == (current.st_dev, current.st_ino) and stat.S_ISSOCK(current.st_mode):
+                    socket_path.unlink()
+            except OSError:
+                pass
 
 
 def create_stage_gateway_app(launch: StageGatewayLaunch):
-    """Compose the reviewed existing route handlers with the sole edge probe."""
+    """Compose existing fixed routes behind protected cloudflared Unix ingress."""
+    from aiohttp import web
     from .server import GatewayRuntime, create_app
     if not isinstance(launch, StageGatewayLaunch):
         raise ManualStageDenied("typed manual stage launch is required")
@@ -908,7 +1054,10 @@ def create_stage_gateway_app(launch: StageGatewayLaunch):
                              max_lease_seconds=MAX_LEASE_SECONDS, max_active_sockets=1,
                              watchdog_seconds=5)
     app = create_app(runtime)
-    app.router.add_get("/__stage_access_probe", StageEdgeProbeHandler(launch.stage_sessions.verifier))
+    app["gateway_runtime"] = runtime
+    app["manual_stage_launch"] = launch
+    app.middlewares.insert(0, web.middleware(_stage_ingress_middleware))
+    app.router.add_post("/__stage_access_heartbeat", _stage_heartbeat)
     return app
 
 

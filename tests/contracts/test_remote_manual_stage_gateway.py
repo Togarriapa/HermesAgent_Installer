@@ -2,19 +2,19 @@
 import base64
 import hashlib
 import json
+import os
+import socket
+import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 import unittest
 from unittest import mock
-from urllib.parse import urlsplit, parse_qs
-
-from hermes_installer.network import HTTPResult
 from hermes_installer.remote.gateway import RemotePolicy
 from hermes_installer.remote.manual_stage import (
-    ManualGatewayStageConfig, ManualStageDenied, StageEdgeAccessVerifier,
-    StageGatewayPolicySessionAdapter,
-    _PendingProbe, _cookie_value, _stage_edge_https_request,
+    ManualGatewayStageConfig, ManualStageDenied, StageAcceptedIngressObservation,
+    StageEdgeAccessVerifier, StageGatewayPolicySessionAdapter, _CURRENT_INGRESS,
+    _mint_accepted_ingress,
 )
 from hermes_installer.remote.gateway import Principal
 from hermes_installer.remote.manual_stage_inspector import (
@@ -34,6 +34,12 @@ try:
 except ImportError:
     HAS_CRYPTO = False
 
+try:
+    import aiohttp  # noqa: F401
+    HAS_AIOHTTP = True
+except ImportError:
+    HAS_AIOHTTP = False
+
 
 @unittest.skipUnless(HAS_CRYPTO, "install the pinned remote component dependencies")
 class ManualStageGatewayTests(unittest.TestCase):
@@ -48,10 +54,18 @@ class ManualStageGatewayTests(unittest.TestCase):
 
     def setUp(self):
         from pathlib import Path
+        self.ingress_tmp = tempfile.TemporaryDirectory(prefix="hermes-stage-ingress-")
+        self.addCleanup(self.ingress_tmp.cleanup)
+        self.ingress_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(self.ingress_socket.close)
+        ingress_path = Path(self.ingress_tmp.name) / "origin.sock"
+        self.ingress_socket.bind(str(ingress_path))
+        os.chmod(ingress_path, 0o660)
+        ingress_stat = os.lstat(ingress_path)
         self.config = ManualGatewayStageConfig(
             hostname="jarvis.togarriapahome.uk", issuer="https://team.cloudflareaccess.com",
             audience="stage-app-aud", allowed_emails=frozenset({"owner@example.net"}),
-            gateway_uid=18000, gateway_gid=1800, xpra_uid=18001, display_number=118,
+            gateway_uid=os.getuid(), gateway_gid=os.getgid(), xpra_uid=18001, display_number=118,
             xpra_binary=Path("/usr/bin/python3.13"), xpra_binary_sha256="a" * 64,
             xpra_program=Path("/usr/bin/xpra"), xpra_program_sha256="b" * 64,
             xpra_argv_sha256="e" * 64,
@@ -59,7 +73,11 @@ class ManualStageGatewayTests(unittest.TestCase):
             appdir=Path("/opt/hermes-jarvis-mvp-20261011/Hermes-Desktop.AppDir"),
             appdir_manifest_sha256="d" * 64,
             boot_id="00000000-0000-0000-0000-000000000000",
+            gateway_unit_sha256="1" * 64, tunnel_unit_sha256="2" * 64,
+            cloudflared_binary_sha256="3" * 64,
+            ingress_socket=ingress_path,
             config_path=Path("/etc/hermes-installer/gateway-stage.json"), config_sha256="c" * 64)
+        self.listener_identity = (ingress_stat.st_dev, ingress_stat.st_ino)
         self.verifier = StageEdgeAccessVerifier(self.config)
         self.verifier.policy = RemotePolicy(self.config.hostname, self.config.issuer, self.config.audience,
                                             self.config.allowed_emails, self.jwks)
@@ -72,70 +90,159 @@ class ManualStageGatewayTests(unittest.TestCase):
         claims.update(changes)
         return jwt.encode(claims, self.key, algorithm="RS256", headers={"kid": "stage-kid"})
 
-    def test_one_use_probe_binds_forwarded_assertion_and_consumes_before_denial(self):
-        token = self.token()
-        principal = __import__("hermes_installer.remote.gateway", fromlist=["validate_access_jwt"]).validate_access_jwt(
-            token, policy=self.verifier.policy)
-        nonce = "a" * 64
-        self.verifier._pending[nonce] = _PendingProbe(
-            "websocket-attach", "session-bound-id-123456", hashlib.sha256(token.encode()).hexdigest(),
-            principal.email, principal.subject, self.config.config_sha256, time.monotonic() + 5)
-        with self.assertRaises(ManualStageDenied):
-            self.verifier.consume_probe(nonce=nonce, cookie_jwt=token, forwarded_jwt="different")
-        self.assertNotIn(nonce, self.verifier._pending)
-        with self.assertRaises(ManualStageDenied):
-            self.verifier.consume_probe(nonce=nonce, cookie_jwt=token, forwarded_jwt=token)
+    def make_ingress(self, token):
+        from types import SimpleNamespace
+        from hermes_installer.remote.gateway import validate_access_jwt
+        start = time.monotonic()
+        principal = validate_access_jwt(token, policy=self.verifier.policy)
+        root = SimpleNamespace(expires_monotonic=start + 4.9,
+            origin_socket_device=self.listener_identity[0], origin_socket_inode=self.listener_identity[1],
+            verify_current=lambda config, pid, uid, gid, now=None: None)
+        return _mint_accepted_ingress(self.config, request_started=start, token=token,
+            principal=principal, peer_pid=77, peer_uid=981, peer_gid=981, root_observation=root,
+            listener_identity=self.listener_identity)
 
-    def test_expired_and_wrong_config_probe_are_denied(self):
-        token = self.token()
-        principal = __import__("hermes_installer.remote.gateway", fromlist=["validate_access_jwt"]).validate_access_jwt(
-            token, policy=self.verifier.policy)
-        digest = hashlib.sha256(token.encode()).hexdigest()
-        for nonce, expiry, config_digest in (("b" * 64, time.monotonic() - 1, self.config.config_sha256),
-                                             ("c" * 64, time.monotonic() + 5, "d" * 64)):
-            self.verifier._pending[nonce] = _PendingProbe("renew", "session-bound-id-123456", digest,
-                principal.email, principal.subject, config_digest, expiry)
-            with self.subTest(nonce=nonce), self.assertRaises(ManualStageDenied):
-                self.verifier.consume_probe(nonce=nonce, cookie_jwt=token, forwarded_jwt=token)
-            self.assertNotIn(nonce, self.verifier._pending)
+    def fixture_ingress(self, token, principal=None, *, started=None, expires=None):
+        from types import SimpleNamespace
+        principal = principal or Principal("owner@example.net", "subject", time.time() + 120, "f" * 64)
+        started = time.monotonic() if started is None else started
+        root = SimpleNamespace(expires_monotonic=expires or started + 4.9,
+            origin_socket_device=self.listener_identity[0], origin_socket_inode=self.listener_identity[1],
+            verify_current=lambda config, pid, uid, gid, now=None: None)
+        return StageAcceptedIngressObservation(started, expires or started + 4.9,
+            hashlib.sha256(token.encode("ascii")).hexdigest(), principal, started + 120,
+            77, 981, 981, self.config.config_sha256, root, self.listener_identity[0], self.listener_identity[1], __import__(
+                "hermes_installer.remote.manual_stage", fromlist=["_INGRESS_SEAL"])._INGRESS_SEAL)
 
-    def test_verify_requires_fresh_exact_same_edge_witness_and_caps_lease(self):
+    def test_authorization_requires_exact_fresh_protected_ingress(self):
         token = self.token()
-        verifier = self.verifier
-        class FakeBoundedNetwork:
-            def __init__(self, **kwargs):
-                self.requester = kwargs["requester"]
-            def request(self, url, *, method, headers):
-                nonce = parse_qs(urlsplit(url).query, strict_parsing=True)["nonce"][0]
-                body = verifier.consume_probe(nonce=nonce,
-                    cookie_jwt=headers["Cookie"].split("=", 1)[1],
-                    forwarded_jwt=headers["Cookie"].split("=", 1)[1])
-                return HTTPResult(200, {"cache-control": "no-store, no-cache", "content-type": "application/json", "content-length": str(len(body))}, body)
-        with mock.patch("hermes_installer.remote.manual_stage.BoundedNetwork", FakeBoundedNetwork):
-            principal, lease, jwt_deadline = verifier.verify(
-                token, action="websocket-attach", session_id="session-bound-id-123456")
+        with self.assertRaises(ManualStageDenied):
+            self.verifier.verify(token, action="websocket-attach", session_id="session-bound-id-123456")
+        ingress = self.make_ingress(token)
+        principal, lease, jwt_deadline = self.verifier.verify(token, action="websocket-attach",
+            session_id="session-bound-id-123456", accepted_ingress=ingress)
         self.assertEqual(principal.email, "owner@example.net")
-        self.assertLessEqual(lease - time.monotonic(), 30.05)
+        self.assertLessEqual(lease - ingress.request_started_monotonic, 30.01)
         self.assertGreater(jwt_deadline, lease)
-        self.assertFalse(verifier._pending)
+        with self.assertRaises(ManualStageDenied):
+            self.verifier.verify(self.token(sub="other"), action="renew",
+                session_id="session-bound-id-123456", accepted_ingress=ingress)
+        with self.assertRaises(ManualStageDenied):
+            ingress.verify_current(self.config, now=ingress.witness_expires_monotonic)
 
-    def test_edge_requester_rejects_alias_hosts_routes_and_query_forms(self):
-        for url in (
-            "https://example.net/__stage_access_probe?nonce=a",
-            "https://jarvis.togarriapahome.uk/other?nonce=a",
-            "https://jarvis.togarriapahome.uk/__stage_access_probe?nonce=a&nonce=b",
-            "https://jarvis.togarriapahome.uk/__stage_access_probe?nonce=",
-        ):
-            with self.subTest(url=url), self.assertRaises(Exception):
-                _stage_edge_https_request(url, "GET", {}, None, 1.0, 4096)
+    def test_heartbeat_is_one_use_and_bound_to_original_token_and_principal(self):
+        token = self.token()
+        ingress = self.make_ingress(token)
+        sessions = StageGatewayPolicySessionAdapter(self.config, self.verifier)
+        ctx = _CURRENT_INGRESS.set(ingress)
+        try:
+            with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
+                    mock.patch.object(sessions, "_verify_xpra_current"):
+                admission = sessions.admit(access_jwt=token, action="websocket-attach", route_id="xpra-websocket")
+        finally:
+            _CURRENT_INGRESS.reset(ctx)
+        session_id, nonce = sessions.heartbeat_material(admission.handle)
+        next_nonce, deadline = sessions.heartbeat(session_id=session_id, nonce=nonce, accepted_ingress=ingress)
+        self.assertRegex(next_nonce, r"^[0-9a-f]{64}$")
+        self.assertLessEqual(deadline - time.monotonic(), 5.01)
+        with self.assertRaises(ManualStageDenied):
+            sessions.heartbeat(session_id=session_id, nonce=nonce, accepted_ingress=ingress)
 
-    def test_probe_cookie_parser_rejects_duplicate_and_noncanonical_access_token(self):
-        self.assertEqual(_cookie_value("other=x; CF_Authorization=eyJabc.def.ghi", "CF_Authorization"),
-                         "eyJabc.def.ghi")
-        for header in ("CF_Authorization=one; CF_Authorization=two", "CF_Authorization=bad=padding",
-                       "CF_Authorization", ""):
-            with self.subTest(header=header), self.assertRaises(ManualStageDenied):
-                _cookie_value(header, "CF_Authorization")
+    def test_config_changed_or_expired_heartbeat_closes_session(self):
+        token = self.token()
+        ingress = self.make_ingress(token)
+        sessions = StageGatewayPolicySessionAdapter(self.config, self.verifier)
+        context = _CURRENT_INGRESS.set(ingress)
+        try:
+            with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
+                    mock.patch.object(sessions, "_verify_xpra_current"):
+                admission = sessions.admit(access_jwt=token, action="websocket-attach", route_id="xpra-websocket")
+        finally:
+            _CURRENT_INGRESS.reset(context)
+        sid, nonce = sessions.heartbeat_material(admission.handle)
+        bad = __import__("dataclasses").replace(ingress, config_sha256="e" * 64)
+        with self.assertRaises(ManualStageDenied):
+            sessions.heartbeat(session_id=sid, nonce=nonce, accepted_ingress=bad)
+        with self.assertRaises(ManualStageDenied):
+            sessions.current(admission.handle)
+
+    def test_request_ingress_joins_unix_peer_jwt_and_fresh_root_proof(self):
+        import asyncio
+        from types import SimpleNamespace
+        from hermes_installer.remote import manual_stage
+
+        token = self.token()
+        class PeerSocket:
+            family = __import__("socket").AF_UNIX
+            def getsockname(self):
+                return str(self.config.ingress_socket)
+            def getsockopt(self, _level, _option, _size):
+                return __import__("struct").pack("3i", 77, 981, 981)
+        peer = PeerSocket()
+        peer.config = self.config
+        root = SimpleNamespace(expires_monotonic=time.monotonic() + 4.8,
+            origin_socket_device=self.listener_identity[0], origin_socket_inode=self.listener_identity[1],
+            verify_current=lambda config, pid, uid, gid, now=None: None)
+        listener = SimpleNamespace(st_mode=__import__("stat").S_IFSOCK | 0o660,
+            st_uid=self.config.gateway_uid, st_gid=self.config.gateway_gid,
+            st_dev=self.listener_identity[0], st_ino=self.listener_identity[1])
+        class Headers(dict):
+            def getall(self, key, default=()):
+                value = self.get(key, default)
+                return value if isinstance(value, list) else [value] if value != default else []
+        request = SimpleNamespace(
+            headers=Headers({"Host": self.config.hostname, "Cf-Access-Jwt-Assertion": token,
+                             "X-Forwarded-For": "203.0.113.77", "Forwarded": "for=attacker.invalid"}),
+            path="/client/bootstrap.html", method="GET",
+            transport=SimpleNamespace(get_extra_info=lambda name: peer if name == "socket" else None))
+        with mock.patch("hermes_installer.remote.manual_stage.os.lstat", return_value=listener), \
+                mock.patch.object(manual_stage.socket, "SO_PEERCRED", 17, create=True), \
+                mock.patch("hermes_installer.remote.manual_stage_inspector.verify_current_ingress",
+                           return_value=root, create=True) as inspect:
+            accepted = asyncio.run(manual_stage._accept_stage_ingress(request, self.config, self.verifier.policy))
+        self.assertEqual(accepted.peer_pid, 77)
+        self.assertEqual(accepted.peer_uid, 981)
+        self.assertEqual(accepted.principal.email, "owner@example.net")
+        inspect.assert_called_once_with(self.config, peer_pid=77, peer_uid=981, peer_gid=981)
+
+    def test_accepted_ingress_rejects_replaced_socket_path(self):
+        ingress = self.make_ingress(self.token())
+        from types import SimpleNamespace
+        replacement = SimpleNamespace(st_mode=__import__("stat").S_IFSOCK | 0o660,
+            st_uid=self.config.gateway_uid, st_gid=self.config.gateway_gid,
+            st_dev=self.listener_identity[0], st_ino=self.listener_identity[1] + 1)
+        with mock.patch("hermes_installer.remote.manual_stage.os.lstat", return_value=replacement):
+            with self.assertRaises(ManualStageDenied):
+                ingress.verify_current(self.config)
+
+    def test_request_ingress_rejects_tcp_duplicate_assertion_and_origin_spoof(self):
+        import asyncio
+        from types import SimpleNamespace
+        from hermes_installer.remote import manual_stage
+        token = self.token()
+        class Headers(dict):
+            def getall(self, key, default=()):
+                value = self.get(key, default)
+                return value if isinstance(value, list) else [value] if value != default else []
+        class Peer:
+            family = __import__("socket").AF_INET
+        request = SimpleNamespace(headers=Headers({
+            "Host": self.config.hostname, "Cf-Access-Jwt-Assertion": token}),
+            path="/", method="GET",
+            transport=SimpleNamespace(get_extra_info=lambda name: Peer() if name == "socket" else None))
+        from hermes_installer.remote import manual_stage_inspector
+        with mock.patch.object(manual_stage_inspector, "verify_current_ingress", create=True) as inspect:
+            with self.assertRaises(ManualStageDenied):
+                asyncio.run(manual_stage._accept_stage_ingress(request, self.config, self.verifier.policy))
+            inspect.assert_not_called()
+        request.transport = SimpleNamespace(get_extra_info=lambda name: None)
+        request.headers["Cf-Access-Jwt-Assertion"] = [token, token]
+        with self.assertRaises(ManualStageDenied):
+            asyncio.run(manual_stage._accept_stage_ingress(request, self.config, self.verifier.policy))
+        request.headers["Cf-Access-Jwt-Assertion"] = token
+        request.headers["Origin"] = "https://evil.invalid"
+        with self.assertRaises(ManualStageDenied):
+            asyncio.run(manual_stage._accept_stage_ingress(request, self.config, self.verifier.policy))
 
     def test_root_inspector_accepts_only_exact_gateway_uid_output_rule(self):
         rows = {"nftables": [
@@ -158,14 +265,19 @@ class ManualStageGatewayTests(unittest.TestCase):
 
     def test_boot_refresh_changes_only_the_boot_id_field(self):
         from hermes_installer.remote.manual_stage_bootstrap import _replace_boot_id
-        original = {"schema": 1, "hostname": self.config.hostname, "gateway_uid": 996,
+        original = {"schema": 2, "hostname": self.config.hostname, "gateway_uid": 996,
                     "gateway_gid": 981, "xpra_uid": 1000, "boot_id": "0" * 36,
-                    "allowed_emails": ["owner@example.net"], "audience": "aud"}
+                    "allowed_emails": ["owner@example.net"], "audience": "aud",
+                    "gateway_unit_sha256": "1" * 64, "tunnel_unit_sha256": "2" * 64,
+                    "cloudflared_binary_sha256": "3" * 64,
+                    "ingress_socket": "/run/hermes-jarvis-mvp-gateway/origin.sock"}
         updated = json.loads(_replace_boot_id(json.dumps(original).encode(), "1" * 36))
         self.assertEqual(updated["boot_id"], "1" * 36)
         original.pop("boot_id")
         updated.pop("boot_id")
         self.assertEqual(updated, original)
+        with self.assertRaises(StageInspectionDenied):
+            _replace_boot_id(json.dumps({**original, "schema": 1}).encode(), "1" * 36)
 
     def test_boot_refresh_nft_effect_is_additive_and_rejects_foreign_owned_table(self):
         from hermes_installer.remote.manual_stage_bootstrap import ensure_owned_nft_rule
@@ -481,6 +593,7 @@ class ManualStageGatewayTests(unittest.TestCase):
                 connector.write(build_asset_request("GET", path, canonicalize=lambda x: x))
         connector.sock.sendall.assert_not_called()
 
+    @unittest.skipUnless(HAS_AIOHTTP, "install the isolated gateway runtime dependencies")
     def test_upstream_websocket_large_frame_splits_and_idle_is_not_eof(self):
         from types import SimpleNamespace
         from hermes_installer.remote.manual_stage import _StageWebSocketConnector
@@ -500,6 +613,7 @@ class ManualStageGatewayTests(unittest.TestCase):
         self.assertEqual(b"".join(chunks), payload)
         self.assertIsNone(connector.read())
 
+    @unittest.skipUnless(HAS_AIOHTTP, "install the isolated gateway runtime dependencies")
     def test_manual_stage_composes_existing_server_without_managed_authority(self):
         from hermes_installer.remote.manual_stage import (
             StageFixedXpraConnector, StageGatewayLaunch, create_stage_gateway_app,
@@ -513,10 +627,56 @@ class ManualStageGatewayTests(unittest.TestCase):
                                  max_active_sockets=1, watchdog_seconds=5)
         app = create_stage_gateway_app(launch)
         paths = {route.resource.canonical for route in app.router.routes()}
-        self.assertIn("/__stage_access_probe", paths)
+        self.assertIn("/__stage_access_heartbeat", paths)
         self.assertIn("/client/{tail}", paths)
         self.assertIsNone(runtime.private_origin_probe)
         self.assertEqual(runtime.max_lease_seconds, 30)
+
+    @unittest.skipUnless(HAS_AIOHTTP, "install the isolated gateway runtime dependencies")
+    def test_stage_middleware_denies_before_redirect_and_injects_heartbeat_before_assets(self):
+        import asyncio
+        from types import SimpleNamespace
+        from aiohttp import web
+        from aiohttp.test_utils import TestClient, TestServer
+        from hermes_installer.remote.manual_stage import (
+            StageFixedXpraConnector, StageGatewayLaunch, _STAGE_HEARTBEAT_SCRIPT,
+            _stage_ingress_middleware,
+        )
+        sessions = StageGatewayPolicySessionAdapter(self.config, self.verifier)
+        connector = StageFixedXpraConnector(self.config, sessions)
+        launch = StageGatewayLaunch(self.verifier.policy, sessions, connector)
+        ingress = self.make_ingress(self.token())
+        app = web.Application(middlewares=[web.middleware(_stage_ingress_middleware)])
+        app["manual_stage_launch"] = launch
+        app["gateway_runtime"] = SimpleNamespace(sessions={})
+        app["stage_listener_identity"] = self.listener_identity
+        async def redirect(_request):
+            raise web.HTTPFound("/client/bootstrap.html")
+        async def index(_request):
+            return web.Response(text="<html><head><script src='/client/js/Client.js'></script></head><body></body></html>",
+                                content_type="text/html")
+        app.router.add_get("/", redirect)
+        app.router.add_get("/client/index.html", index)
+
+        async def exercise():
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            try:
+                with mock.patch("hermes_installer.remote.manual_stage._accept_stage_ingress",
+                                new=mock.AsyncMock(side_effect=ManualStageDenied("no proof"))):
+                    denied = await client.get("/", allow_redirects=False)
+                self.assertEqual(denied.status, 403)
+                with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
+                        mock.patch("hermes_installer.remote.manual_stage._accept_stage_ingress",
+                                   new=mock.AsyncMock(return_value=ingress)):
+                    delivered = await client.get("/client/index.html")
+                body = await delivered.text()
+                self.assertEqual(delivered.status, 200)
+                self.assertIn(_STAGE_HEARTBEAT_SCRIPT, body)
+                self.assertLess(body.index(_STAGE_HEARTBEAT_SCRIPT), body.index("/client/js/Client.js"))
+            finally:
+                await client.close()
+        asyncio.run(exercise())
 
     def test_inspector_serializes_fresh_proofs_without_caching_and_bounds_queue(self):
         from hermes_installer.remote import manual_stage_inspector as inspector
@@ -567,7 +727,11 @@ class ManualStageGatewayTests(unittest.TestCase):
                 mock.patch.object(self.verifier, "verify", return_value=(principal, 130.0, 140.0)), \
                 mock.patch.object(sessions, "_verify_xpra_current") as inspect, \
                 mock.patch("hermes_installer.remote.manual_stage._StageHTTPConnector", return_value=fake_connector) as create:
-            admission = sessions.admit(access_jwt="fixture-token", action="asset-read", route_id="xpra-http")
+            token = _CURRENT_INGRESS.set(self.fixture_ingress("fixture-token", principal, started=100.0))
+            try:
+                admission = sessions.admit(access_jwt="fixture-token", action="asset-read", route_id="xpra-http")
+            finally:
+                _CURRENT_INGRESS.reset(token)
             record = sessions._records[admission.handle]
             self.assertEqual(record.last_edge_check, 100.0)
             self.assertEqual(record.last_inspection_check, 100.0)
@@ -593,7 +757,11 @@ class ManualStageGatewayTests(unittest.TestCase):
                 mock.patch.object(self.verifier, "verify", return_value=(principal, 230.0, 240.0)), \
                 mock.patch.object(sessions, "_verify_xpra_current"), \
                 mock.patch("hermes_installer.remote.manual_stage._StageHTTPConnector") as create:
-            admission = sessions.admit(access_jwt="fixture-token", action="asset-read", route_id="xpra-http")
+            token = _CURRENT_INGRESS.set(self.fixture_ingress("fixture-token", principal, started=200.0))
+            try:
+                admission = sessions.admit(access_jwt="fixture-token", action="asset-read", route_id="xpra-http")
+            finally:
+                _CURRENT_INGRESS.reset(token)
             with mock.patch("hermes_installer.remote.manual_stage._read_config_current",
                             side_effect=ManualStageDenied("config changed")):
                 with self.assertRaises(ManualStageDenied):
@@ -615,8 +783,12 @@ class ManualStageGatewayTests(unittest.TestCase):
         with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
                 mock.patch.object(self.verifier, "verify", return_value=(principal, 130.0, 140.0)), \
                 mock.patch.object(sessions, "_verify_xpra_current", side_effect=slow_inspection):
+            token = _CURRENT_INGRESS.set(self.fixture_ingress("fixture-token", principal, started=100.0))
             with self.assertRaises(ManualStageDenied):
-                sessions.admit(access_jwt="fixture-token", action="asset-read", route_id="xpra-http")
+                try:
+                    sessions.admit(access_jwt="fixture-token", action="asset-read", route_id="xpra-http")
+                finally:
+                    _CURRENT_INGRESS.reset(token)
         self.assertEqual(sessions._records, {})
 
     def test_watchdog_inspection_timestamp_is_conservative_and_slow_check_closes(self):
@@ -627,8 +799,12 @@ class ManualStageGatewayTests(unittest.TestCase):
         with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
                 mock.patch.object(self.verifier, "verify", return_value=(principal, 130.0, 140.0)), \
                 mock.patch.object(sessions, "_verify_xpra_current"):
-            admission = sessions.admit(access_jwt="fixture-token", action="websocket-attach",
-                                       route_id="xpra-websocket")
+            token = _CURRENT_INGRESS.set(self.fixture_ingress("fixture-token", principal, started=100.0))
+            try:
+                admission = sessions.admit(access_jwt="fixture-token", action="websocket-attach",
+                                           route_id="xpra-websocket")
+            finally:
+                _CURRENT_INGRESS.reset(token)
         clock[0] = 102.0
         with mock.patch.object(sessions, "_verify_xpra_current", side_effect=lambda **_kw: clock.__setitem__(0, 102.25)):
             sessions.refresh_active_inspection(admission.handle)
@@ -649,14 +825,22 @@ class ManualStageGatewayTests(unittest.TestCase):
         with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
                 mock.patch.object(self.verifier, "verify", return_value=(principal, 230.0, 240.0)), \
                 mock.patch.object(sessions, "_verify_xpra_current"):
-            admission = sessions.admit(access_jwt="fixture-token", action="websocket-attach",
-                                       route_id="xpra-websocket")
+            token = _CURRENT_INGRESS.set(self.fixture_ingress("fixture-token", principal, started=200.0))
+            try:
+                admission = sessions.admit(access_jwt="fixture-token", action="websocket-attach",
+                                           route_id="xpra-websocket")
+            finally:
+                _CURRENT_INGRESS.reset(token)
         clock[0] = 201.0
         challenge = sessions.challenge(admission.handle)
+        token = _CURRENT_INGRESS.set(self.fixture_ingress("fixture-token", principal, started=201.0))
         with mock.patch.object(self.verifier, "verify", return_value=(principal, 230.0, 240.0)), \
                 mock.patch.object(sessions, "_verify_xpra_current", side_effect=lambda **_kw: clock.__setitem__(0, 201.25)):
-            sessions.renew(handle=admission.handle, session_id=admission.session_id,
-                           access_jwt="fixture-token", renewal_nonce=challenge.renewal_nonce)
+            try:
+                sessions.renew(handle=admission.handle, session_id=admission.session_id,
+                               access_jwt="fixture-token", renewal_nonce=challenge.renewal_nonce)
+            finally:
+                _CURRENT_INGRESS.reset(token)
         record = sessions._records[admission.handle]
         self.assertEqual(record.last_edge_check, 201.0)
         self.assertEqual(record.last_inspection_check, 201.0)
@@ -664,11 +848,15 @@ class ManualStageGatewayTests(unittest.TestCase):
 
         clock[0] = 202.0
         challenge = sessions.challenge(admission.handle)
+        token = _CURRENT_INGRESS.set(self.fixture_ingress("fixture-token", principal, started=202.0))
         with mock.patch.object(self.verifier, "verify", return_value=(principal, 230.0, 240.0)), \
                 mock.patch.object(sessions, "_verify_xpra_current", side_effect=lambda **_kw: clock.__setitem__(0, 207.01)):
             with self.assertRaises(ManualStageDenied):
-                sessions.renew(handle=admission.handle, session_id=admission.session_id,
-                               access_jwt="fixture-token", renewal_nonce=challenge.renewal_nonce)
+                try:
+                    sessions.renew(handle=admission.handle, session_id=admission.session_id,
+                                   access_jwt="fixture-token", renewal_nonce=challenge.renewal_nonce)
+                finally:
+                    _CURRENT_INGRESS.reset(token)
         with self.assertRaises(ManualStageDenied):
             sessions.current(admission.handle)
 
@@ -681,16 +869,18 @@ class ManualStageGatewayTests(unittest.TestCase):
         sessions._verify_xpra_current = lambda: None
         with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
                 mock.patch.object(self.verifier, "verify", return_value=(principal, 130.0, 140.0)) as verify:
-            admission = sessions.admit(access_jwt=self.token(), action="websocket-attach",
-                                       route_id="xpra-websocket")
+            token = self.token()
+            context = _CURRENT_INGRESS.set(self.fixture_ingress(token, principal, started=100.0))
+            try:
+                admission = sessions.admit(access_jwt=token, action="websocket-attach",
+                                           route_id="xpra-websocket")
+            finally:
+                _CURRENT_INGRESS.reset(context)
             clock[0] = 103.9
             sessions.assert_current_proofs(admission.handle)
             verify.assert_called_once()
-            verify.reset_mock()
             clock[0] = 104.0
             sessions.refresh_active_edge(admission.handle)
-            verify.assert_called_once()
-            verify.side_effect = ManualStageDenied("edge now denies token")
             clock[0] = 108.0
             with self.assertRaises(ManualStageDenied):
                 sessions.refresh_active_edge(admission.handle)
@@ -701,7 +891,7 @@ class ManualStageGatewayTests(unittest.TestCase):
         class FixtureEdge:
             def __init__(self, config):
                 self.config = config
-            def verify(self, _token, *, action, session_id):
+            def verify(self, _token, *, action, session_id, accepted_ingress=None):
                 self.assertions = (action, session_id)
                 now = time.monotonic()
                 return Principal("owner@example.net", "subject", time.time() + 120, "f" * 64), now + 30, now + 120
@@ -709,8 +899,12 @@ class ManualStageGatewayTests(unittest.TestCase):
         sessions = StageGatewayPolicySessionAdapter(self.config, edge)
         with mock.patch.object(sessions, "_verify_xpra_current"), \
              mock.patch("hermes_installer.remote.manual_stage._read_config_current"):
-            admission = sessions.admit(access_jwt="fixture-token", action="websocket-attach",
-                                       route_id="xpra-websocket")
+            context = _CURRENT_INGRESS.set(self.fixture_ingress("fixture-token"))
+            try:
+                admission = sessions.admit(access_jwt="fixture-token", action="websocket-attach",
+                                           route_id="xpra-websocket")
+            finally:
+                _CURRENT_INGRESS.reset(context)
             self.assertLessEqual(admission.lease_expires_monotonic - admission.issued_monotonic, 30.01)
             challenge = sessions.challenge(admission.handle)
             self.assertGreater(challenge.expires_monotonic - admission.issued_monotonic, 25)
