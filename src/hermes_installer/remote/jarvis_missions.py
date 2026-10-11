@@ -1,12 +1,8 @@
-"""Durable owner-only Jarvis mission drafts and truthful native-readiness previews.
-
-Mission execution is intentionally unavailable until the protected gateway has a verified,
-parent-bound Hermes Resources dispatcher and captures its real task events. This module provides
-the useful planning step without manufacturing queued/running work or approval authority.
-"""
+"""Durable owner-only Jarvis mission planning and the first bounded native handoff."""
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import re
 import secrets
@@ -169,7 +165,7 @@ def _approval_response(row: sqlite3.Row) -> dict[str, Any]:
         "revision": int(row["revision"]),
         "plan_sha256": row["plan_sha256"],
         "status": ("approved-pending-execution" if status == "approved" else status),
-        "intent_nonce": row["intent_nonce"],
+        "intent_nonce": row["intent_nonce"] if status == "approved" else None,
         "expires_at": _timestamp(float(row["expires"])),
         "native_execution_available": False,
         "pending_reasons": list(_PENDING),
@@ -281,6 +277,17 @@ def _recheck_principal(service: JarvisChatService, request: Any, expected: Any) 
         raise JarvisChatDenied("owner or core generation changed during mission request")
 
 
+def _mission_binding_route_ready(service: JarvisChatService) -> bool:
+    """Require the Activity-owned fail-closed typed binding seam before reserving a run."""
+    try:
+        parameters = inspect.signature(service.start_server_turn).parameters
+    except (TypeError, ValueError):
+        return False
+    return ("require_mission_binding" in parameters
+            and "before_schedule" in parameters
+            and callable(getattr(service, "_owner_turn_register", None)))
+
+
 def _preview(store: Any, owner: str, row: sqlite3.Row, binding: dict[str, str | None],
              *, catalog: dict[str, Any], persist: bool = True,
              before_commit: Any = None) -> dict[str, Any] | None:
@@ -350,12 +357,14 @@ def _preview(store: Any, owner: str, row: sqlite3.Row, binding: dict[str, str | 
 
 
 def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None:
-    """Install only owner-bound draft and preview routes on the protected gateway."""
+    """Install owner-bound mission planning and the single approved Orchestrator launch."""
     from aiohttp import web
 
     if not isinstance(service, JarvisChatService):
         raise TypeError("verified Jarvis chat service required")
     _initialize(service.store)
+    from .jarvis_mission_executor import MissionExecutionAdapter
+    executor = MissionExecutionAdapter(service.store, service)
 
     async def list_missions(request: Any) -> Any:
         try:
@@ -450,10 +459,17 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                             "status": ("expired" if approval["expires"] <= time.time()
                                        else approval["status"]),
                             "expires_at": _timestamp(float(approval["expires"])),
+                            "intent_nonce": (approval["intent_nonce"]
+                                             if approval["status"] == "approved"
+                                             and approval["expires"] > time.time() else None),
                             "native_execution_available": False,
                         }
                 except ValueError:
                     raise web.HTTPConflict(text="mission changed", headers=_secure_headers()) from None
+            run = executor.latest_run(service.store._owner(principal.subject), row["id"],
+                                      int(row["revision"]))
+            if run is not None:
+                result["run"] = executor.project(principal.subject, run)
             _recheck_principal(service, request, principal)
             return web.json_response(result, headers=_secure_headers())
         except web.HTTPException:
@@ -554,6 +570,12 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                         or current_mission["source_binding"] != _canonical(binding).decode("utf-8")):
                     db.rollback()
                     raise web.HTTPConflict(text="mission preview changed", headers=_secure_headers())
+                if db.execute(
+                        "SELECT 1 FROM jarvis_mission_runs WHERE owner=? AND mission_id=? AND revision=?",
+                        (owner, mission_id, revision)).fetchone() is not None:
+                    db.rollback()
+                    raise web.HTTPConflict(text="mission revision already has a launch reservation",
+                                           headers=_secure_headers())
                 existing = db.execute(
                     "SELECT * FROM jarvis_mission_approvals WHERE owner=? AND idempotency_hash=?",
                     (owner, idem_hash),
@@ -591,8 +613,8 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
         except Exception:
             raise web.HTTPServiceUnavailable(text="mission approval unavailable", headers=_secure_headers()) from None
 
-    async def unavailable_action(request: Any) -> Any:
-        """Accept closed action shapes but never invent a run, cancellation or result review."""
+    async def mission_action(request: Any) -> Any:
+        """Launch only the first fixed team; stop/review only the persisted owned native run."""
         try:
             if request.raw_path != request.path:
                 raise web.HTTPNotFound(text="not found", headers=_secure_headers())
@@ -612,9 +634,8 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                 raise web.HTTPBadRequest(text="invalid request", headers=_secure_headers())
             if action == "launch" and (not isinstance(body["plan_sha256"], str)
                     or not re.fullmatch(r"[a-f0-9]{64}", body["plan_sha256"])
-                    or (body["approval_nonce"] is not None and
-                        (not isinstance(body["approval_nonce"], str)
-                         or not re.fullmatch(r"[a-f0-9]{64}", body["approval_nonce"])) )):
+                    or not isinstance(body["approval_nonce"], str)
+                    or not re.fullmatch(r"[a-f0-9]{64}", body["approval_nonce"])):
                 raise web.HTTPBadRequest(text="invalid request", headers=_secure_headers())
             if action == "review" and (not isinstance(body["decision"], str)
                     or body["decision"] not in {"accept", "reject"}):
@@ -628,24 +649,112 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
             _recheck_principal(service, request, principal)
             if action == "launch":
                 nonce = body["approval_nonce"]
-                if isinstance(nonce, str):
-                    approval = _current_approval(service.store, owner, row["id"], revision)
-                    binding = _core_source_binding(request)
-                    catalog = _verified_team_catalog()
-                    current_preview = _preview(service.store, owner, row, binding,
-                                               catalog=catalog, persist=False)
+                idem_hash = hashlib.sha256(body["idempotency_key"].encode("ascii")).hexdigest()
+                launch_hash = _hash({"mission_id": row["id"], "revision": revision,
+                                     "plan_sha256": body["plan_sha256"]})
+                from .jarvis_mission_executor import _run_by_key
+                prior_run = _run_by_key(service.store, owner, idem_hash)
+                if prior_run is not None:
+                    if (prior_run["mission_id"] != row["id"]
+                            or int(prior_run["revision"]) != revision
+                            or prior_run["launch_request_hash"] != launch_hash
+                            or prior_run["plan_sha256"] != body["plan_sha256"]):
+                        raise web.HTTPConflict(text="mission launch idempotency conflict",
+                                               headers=_secure_headers())
+                    projected = executor.project(principal.subject, prior_run)
+                    return web.json_response({"run": projected}, status=202, headers=_secure_headers())
+                approval = _current_approval(service.store, owner, row["id"], revision)
+                binding = _core_source_binding(request)
+                catalog = _verified_team_catalog()
+                current_preview = _preview(service.store, owner, row, binding,
+                                           catalog=catalog, persist=False)
+                _recheck_principal(service, request, principal)
+                if (approval is None or approval["status"] != "approved"
+                        or approval["expires"] <= time.time()
+                        or approval["intent_nonce"] != nonce
+                        or approval["plan_sha256"] != body["plan_sha256"]
+                        or approval["source_binding"] != _canonical(binding).decode("utf-8")
+                        or current_preview is None
+                        or current_preview["plan_sha256"] != body["plan_sha256"]):
+                    raise web.HTTPConflict(text="mission approval is stale or expired", headers=_secure_headers())
+                if (json.loads(row["team_ids"]) != ["orchestrator"]
+                        or binding["core_generation"] != principal.core_generation
+                        or not re.fullmatch(r"[a-f0-9]{64}", binding["core_generation"] or "")
+                        or not re.fullmatch(r"[a-f0-9]{64}", binding["core_source_generation"] or "")
+                        or not _mission_binding_route_ready(service)):
+                    raise web.HTTPConflict(text="first native mission route is unavailable", headers=_secure_headers())
+                try:
+                    run, replay = executor.reserve(
+                        owner=owner, mission_id=row["id"], revision=revision,
+                        plan_sha256=body["plan_sha256"], task_sha256=_hash({"goal": row["brief"]}),
+                        source_binding=_canonical(binding).decode("utf-8"),
+                        idempotency_hash=idem_hash, request_hash=launch_hash,
+                        approval_nonce=nonce)
+                except ValueError as error:
+                    raise web.HTTPConflict(text=str(error), headers=_secure_headers()) from None
+                if replay:
+                    projected = executor.project(principal.subject, run)
+                    return web.json_response({"run": projected}, status=202, headers=_secure_headers())
+                try:
+                    # The durable provisioning reservation exists before this external native
+                    # session creation. If its outcome is ambiguous, this approval is burned.
+                    backend_id, session_key = await service.backend.create_session()
                     _recheck_principal(service, request, principal)
-                    if (approval is None or approval["expires"] <= time.time()
-                            or approval["intent_nonce"] != nonce
-                            or approval["plan_sha256"] != body["plan_sha256"]
-                            or approval["source_binding"] != _canonical(binding).decode("utf-8")
-                            or current_preview is None
-                            or current_preview["plan_sha256"] != body["plan_sha256"]):
-                        raise web.HTTPConflict(text="mission approval is stale or expired", headers=_secure_headers())
-                raise web.HTTPConflict(text="native mission execution unavailable", headers=_secure_headers())
+                    conversation = service.store.create_conversation(
+                        principal.subject, backend_id, session_key, principal.core_generation)
+                    executor.mark(run["id"], status="conversation_ready",
+                                  conversation_id=conversation["id"])
+                    def before_schedule(turn_id: str):
+                        return executor.binding_after_spend(
+                            run_id=run["id"], owner=owner, mission_id=row["id"],
+                            revision=revision, plan_sha256=body["plan_sha256"],
+                            task_sha256=_hash({"goal": row["brief"]}), intent_nonce=nonce,
+                            idempotency_key=body["idempotency_key"], source_binding=binding,
+                            gateway_turn_id=turn_id)
+                    def on_schedule_failure(turn_id: str):
+                        executor.fail_schedule(run_id=run["id"], owner=owner,
+                                               gateway_turn_id=turn_id)
+                    queued = await service.start_server_turn(
+                        request, conversation_id=conversation["id"], text=row["brief"],
+                        idempotency_key=body["idempotency_key"], before_schedule=before_schedule,
+                        require_mission_binding=True, on_schedule_failure=on_schedule_failure)
+                    executor.mark(run["id"], status="queued",
+                                  gateway_turn_id=queued["turn_id"])
+                    _recheck_principal(service, request, principal)
+                    projected = executor.project(principal.subject, executor.latest_run(owner, row["id"], revision))
+                    return web.json_response({"run": projected}, status=202, headers=_secure_headers())
+                except Exception:
+                    executor.mark_unknown(run["id"])
+                    latest = executor.latest_run(owner, row["id"], revision)
+                    if latest is not None and latest["status"] == "not_scheduled":
+                        raise web.HTTPConflict(
+                            text="mission turn was not scheduled; its approval was invalidated",
+                            headers=_secure_headers()) from None
+                    raise web.HTTPServiceUnavailable(text="mission launch outcome is unknown; do not retry",
+                                                     headers=_secure_headers()) from None
             if action == "stop":
-                raise web.HTTPConflict(text="mission has no owned native run to stop", headers=_secure_headers())
-            raise web.HTTPConflict(text="mission has no native result awaiting review", headers=_secure_headers())
+                request_hash = _hash({"mission_id": row["id"], "revision": revision, "action": "stop"})
+                try:
+                    result = await executor.stop(
+                        subject=principal.subject, owner=owner, mission_id=row["id"], revision=revision,
+                        idempotency_hash=hashlib.sha256(body["idempotency_key"].encode("ascii")).hexdigest(),
+                        request_hash=request_hash)
+                except ValueError as error:
+                    raise web.HTTPConflict(text=str(error), headers=_secure_headers()) from None
+                _recheck_principal(service, request, principal)
+                return web.json_response({"run": result}, headers=_secure_headers())
+            request_hash = _hash({"mission_id": row["id"], "revision": revision,
+                                  "action": "review", "decision": body["decision"]})
+            try:
+                result = executor.review(
+                    subject=principal.subject, owner=owner, mission_id=row["id"], revision=revision,
+                    decision=body["decision"],
+                    idempotency_hash=hashlib.sha256(body["idempotency_key"].encode("ascii")).hexdigest(),
+                    request_hash=request_hash)
+            except ValueError as error:
+                raise web.HTTPConflict(text=str(error), headers=_secure_headers()) from None
+            _recheck_principal(service, request, principal)
+            return web.json_response({"run": result}, headers=_secure_headers())
         except web.HTTPException:
             raise
         except JarvisChatDenied:
@@ -659,4 +768,4 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
     app.router.add_post("/chat/api/missions/{mission_id}/preview", preview)
     app.router.add_post("/chat/api/missions/{mission_id}/approve", approve)
     for action in ("launch", "stop", "review"):
-        app.router.add_post(f"/chat/api/missions/{{mission_id}}/{action}", unavailable_action)
+        app.router.add_post(f"/chat/api/missions/{{mission_id}}/{action}", mission_action)

@@ -117,7 +117,7 @@ def test_owner_draft_preview_is_persisted_but_never_fabricates_execution(tmp_pat
             assert (await detail.json())["preview"]["plan_sha256"] == preview["plan_sha256"]
             detail_payload = await detail.json()
             assert detail_payload["approval"]["status"] == "approved"
-            assert "intent_nonce" not in detail_payload["approval"]
+            assert detail_payload["approval"]["intent_nonce"] == approved["intent_nonce"]
 
             launch = await client.post(f"/chat/api/missions/{mission_id}/launch", json={
                 "revision": 1,

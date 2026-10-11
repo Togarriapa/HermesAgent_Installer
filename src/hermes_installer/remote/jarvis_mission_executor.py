@@ -10,7 +10,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import secrets
 import sqlite3
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -186,3 +188,357 @@ __all__ = [
     "MissionBinding", "MissionLedgerReader", "resolve_spent_mission_binding",
     "resolve_spent_mission_claim",
 ]
+
+
+_RUN_STATUSES = frozenset({
+    "provisioning", "outcome_unknown", "conversation_ready", "turn_reserved",
+    "queued", "not_scheduled", "accepted", "rejected",
+})
+
+
+def _initialize_execution_store(store: Any) -> None:
+    """Create the bounded run/action ledger and close interrupted provisioning as unknown."""
+    with store._connect() as db:
+        db.execute("""CREATE TABLE IF NOT EXISTS jarvis_mission_runs (
+          id TEXT PRIMARY KEY,
+          owner TEXT NOT NULL,
+          mission_id TEXT NOT NULL,
+          revision INTEGER NOT NULL CHECK(revision >= 1),
+          plan_sha256 TEXT NOT NULL,
+          task_sha256 TEXT NOT NULL,
+          source_binding TEXT NOT NULL,
+          launch_idempotency_hash TEXT NOT NULL,
+          launch_request_hash TEXT NOT NULL,
+          conversation_id TEXT,
+          gateway_turn_id TEXT UNIQUE,
+          status TEXT NOT NULL CHECK(status IN (
+            'provisioning','outcome_unknown','conversation_ready','turn_reserved',
+            'queued','not_scheduled','accepted','rejected')),
+          result_decision TEXT,
+          created REAL NOT NULL,
+          updated REAL NOT NULL,
+          UNIQUE(owner, launch_idempotency_hash),
+          UNIQUE(owner, mission_id, revision)
+        )""")
+        db.execute("CREATE INDEX IF NOT EXISTS jarvis_mission_runs_owner ON jarvis_mission_runs(owner,updated DESC)")
+        db.execute("""CREATE TABLE IF NOT EXISTS jarvis_mission_actions (
+          owner TEXT NOT NULL,
+          mission_id TEXT NOT NULL,
+          revision INTEGER NOT NULL,
+          action TEXT NOT NULL CHECK(action IN ('stop','review')),
+          idempotency_hash TEXT NOT NULL,
+          request_hash TEXT NOT NULL,
+          created REAL NOT NULL,
+          PRIMARY KEY(owner,idempotency_hash)
+        )""")
+        db.execute("""UPDATE jarvis_mission_runs SET status='outcome_unknown',updated=?
+                      WHERE status IN ('provisioning','conversation_ready')""", (time.time(),))
+        db.execute("""UPDATE jarvis_mission_approvals SET status='invalidated'
+                      WHERE status='approved' AND EXISTS (
+                        SELECT 1 FROM jarvis_mission_runs r WHERE r.owner=jarvis_mission_approvals.owner
+                        AND r.mission_id=jarvis_mission_approvals.mission_id
+                        AND r.revision=jarvis_mission_approvals.revision
+                        AND r.status='outcome_unknown')""")
+
+
+def _run_by_key(store: Any, owner: str, idempotency_hash: str) -> sqlite3.Row | None:
+    with store._connect() as db:
+        return db.execute(
+            "SELECT * FROM jarvis_mission_runs WHERE owner=? AND launch_idempotency_hash=?",
+            (owner, idempotency_hash),
+        ).fetchone()
+
+
+class MissionExecutionAdapter:
+    """Launch one approved Orchestrator goal through the existing owned-turn service."""
+
+    def __init__(self, store: Any, service: Any):
+        if (not callable(getattr(store, "_connect", None))
+                or not callable(getattr(service, "start_server_turn", None))
+                or not callable(getattr(service, "_current", None))):
+            raise TypeError("protected Jarvis chat service and store are required")
+        self.store = store
+        self.service = service
+        _initialize_execution_store(store)
+
+    def reserve(self, *, owner: str, mission_id: str, revision: int,
+                plan_sha256: str, task_sha256: str, source_binding: str,
+                idempotency_hash: str, request_hash: str,
+                approval_nonce: str) -> tuple[sqlite3.Row, bool]:
+        """Durably reserve before creating a Hermes session; return (run, is_replay)."""
+        now = time.time()
+        run_id = secrets.token_urlsafe(24)
+        with self.store._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT * FROM jarvis_mission_runs WHERE owner=? AND launch_idempotency_hash=?",
+                (owner, idempotency_hash),
+            ).fetchone()
+            if existing is not None:
+                if (existing["mission_id"] != mission_id
+                        or existing["launch_request_hash"] != request_hash):
+                    db.rollback()
+                    raise ValueError("mission launch idempotency conflict")
+                db.commit()
+                return existing, True
+            attempted = db.execute(
+                "SELECT id FROM jarvis_mission_runs WHERE owner=? AND mission_id=? AND revision=?",
+                (owner, mission_id, revision),
+            ).fetchone()
+            approval = db.execute(
+                "SELECT * FROM jarvis_mission_approvals WHERE owner=? AND mission_id=? "
+                "AND revision=? AND status='approved' ORDER BY created DESC LIMIT 1",
+                (owner, mission_id, revision),
+            ).fetchone()
+            mission = db.execute(
+                "SELECT * FROM jarvis_missions WHERE id=? AND owner=?", (mission_id, owner)
+            ).fetchone()
+            if attempted is not None:
+                db.rollback()
+                raise ValueError("mission launch already reserved for this revision")
+            if (approval is None or mission is None or approval["expires"] <= now
+                    or approval["intent_nonce"] != approval_nonce
+                    or approval["plan_sha256"] != plan_sha256
+                    or mission["status"] != "preview_pending"
+                    or int(mission["revision"]) != revision
+                    or mission["plan_sha256"] != plan_sha256
+                    or mission["source_binding"] != source_binding
+                    or json.loads(mission["team_ids"]) != ["orchestrator"]):
+                db.rollback()
+                raise ValueError("current approved Orchestrator mission required")
+            db.execute(
+                "INSERT INTO jarvis_mission_runs "
+                "(id,owner,mission_id,revision,plan_sha256,task_sha256,source_binding,"
+                "launch_idempotency_hash,launch_request_hash,status,created,updated) "
+                "VALUES(?,?,?,?,?,?,?,?,?,'provisioning',?,?)",
+                (run_id, owner, mission_id, revision, plan_sha256, task_sha256, source_binding,
+                 idempotency_hash, request_hash, now, now),
+            )
+            db.commit()
+            created = db.execute("SELECT * FROM jarvis_mission_runs WHERE id=?", (run_id,)).fetchone()
+        return created, False
+
+    def mark(self, run_id: str, *, status: str, conversation_id: str | None = None,
+             gateway_turn_id: str | None = None) -> None:
+        if status not in _RUN_STATUSES:
+            raise ValueError("unsupported mission run state")
+        with self.store._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            current = db.execute("SELECT * FROM jarvis_mission_runs WHERE id=?", (run_id,)).fetchone()
+            if current is None:
+                db.rollback()
+                raise ValueError("mission run disappeared")
+            allowed = {
+                "provisioning": {"outcome_unknown", "conversation_ready", "not_scheduled"},
+                "conversation_ready": {"outcome_unknown", "turn_reserved", "not_scheduled"},
+                "turn_reserved": {"queued", "not_scheduled", "outcome_unknown"},
+                "queued": {"accepted", "rejected", "outcome_unknown"},
+                "outcome_unknown": set(), "not_scheduled": set(),
+                "accepted": set(), "rejected": set(),
+            }
+            if status != current["status"] and status not in allowed[current["status"]]:
+                db.rollback()
+                raise ValueError("mission run state transition is invalid")
+            db.execute(
+                "UPDATE jarvis_mission_runs SET conversation_id=COALESCE(?,conversation_id),"
+                "gateway_turn_id=COALESCE(?,gateway_turn_id),status=?,updated=? WHERE id=?",
+                (conversation_id, gateway_turn_id, status, time.time(), run_id),
+            )
+            db.commit()
+
+    def mark_unknown(self, run_id: str) -> None:
+        """Close ambiguous session creation without making that approval reusable."""
+        with self.store._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT owner,mission_id,revision,status FROM jarvis_mission_runs WHERE id=?",
+                             (run_id,)).fetchone()
+            if row is None:
+                db.rollback()
+                return
+            if row["status"] in {"provisioning", "conversation_ready"}:
+                db.execute("UPDATE jarvis_mission_runs SET status='outcome_unknown',updated=? WHERE id=?",
+                           (time.time(), run_id))
+                db.execute("UPDATE jarvis_mission_approvals SET status='invalidated' "
+                           "WHERE owner=? AND mission_id=? AND revision=? AND status='approved'",
+                           (row["owner"], row["mission_id"], row["revision"]))
+            db.commit()
+
+    def binding_after_spend(self, *, run_id: str, owner: str, mission_id: str,
+                            revision: int, plan_sha256: str, task_sha256: str,
+                            intent_nonce: str, idempotency_key: str,
+                            source_binding: Mapping[str, str | None],
+                            gateway_turn_id: str) -> MissionBinding:
+        """Persist consent-to-turn correlation before returning binding to root registration."""
+        from .jarvis_missions import _bind_approved_intent_to_turn
+        _bind_approved_intent_to_turn(
+            self.store, owner=owner, mission_id=mission_id, revision=revision,
+            plan_sha256=plan_sha256, intent_nonce=intent_nonce,
+            idempotency_key=idempotency_key, gateway_turn_id=gateway_turn_id,
+            source_binding=dict(source_binding),
+        )
+        self.mark(run_id, status="turn_reserved", gateway_turn_id=gateway_turn_id)
+        with self.store._connect() as db:
+            row = db.execute(
+                "SELECT task_sha256,status FROM jarvis_mission_runs WHERE id=? AND owner=? "
+                "AND mission_id=? AND revision=? AND plan_sha256=? AND gateway_turn_id=?",
+                (run_id, owner, mission_id, revision, plan_sha256, gateway_turn_id),
+            ).fetchone()
+        if row is None or row["status"] != "turn_reserved" or row["task_sha256"] != task_sha256:
+            raise ValueError("spent mission turn binding could not be persisted")
+        binding = MissionBinding(1, mission_id, revision, plan_sha256, task_sha256, "orchestrator")
+        if not resolve_spent_mission_binding(
+                self.store, binding, gateway_turn_id=gateway_turn_id,
+                owner_subject_sha256=owner,
+                core_generation=source_binding.get("core_generation") or "",
+                core_source_generation=source_binding.get("core_source_generation") or ""):
+            raise ValueError("spent mission binding did not resolve")
+        return binding
+
+    def fail_schedule(self, *, run_id: str, owner: str, gateway_turn_id: str) -> None:
+        from .jarvis_missions import _invalidate_unscheduled_mission_turn
+        _invalidate_unscheduled_mission_turn(self.store, owner=owner, gateway_turn_id=gateway_turn_id)
+        self.mark(run_id, status="not_scheduled", gateway_turn_id=gateway_turn_id)
+
+    def reserve_action(self, *, owner: str, mission_id: str, revision: int,
+                       action: str, idempotency_hash: str,
+                       request_hash: str) -> bool:
+        if action not in {"stop", "review"}:
+            raise ValueError("unsupported mission action")
+        with self.store._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT * FROM jarvis_mission_actions WHERE owner=? AND idempotency_hash=?",
+                (owner, idempotency_hash),
+            ).fetchone()
+            if existing is not None:
+                same = (existing["mission_id"] == mission_id and existing["revision"] == revision
+                        and existing["action"] == action and existing["request_hash"] == request_hash)
+                db.rollback()
+                if not same:
+                    raise ValueError("mission action idempotency conflict")
+                return False
+            db.execute(
+                "INSERT INTO jarvis_mission_actions VALUES(?,?,?,?,?,?,?)",
+                (owner, mission_id, revision, action, idempotency_hash, request_hash, time.time()),
+            )
+            db.commit()
+        return True
+
+    def latest_run(self, owner: str, mission_id: str, revision: int) -> sqlite3.Row | None:
+        with self.store._connect() as db:
+            return db.execute(
+                "SELECT * FROM jarvis_mission_runs WHERE owner=? AND mission_id=? AND revision=?",
+                (owner, mission_id, revision),
+            ).fetchone()
+
+    async def stop(self, *, subject: str, owner: str, mission_id: str, revision: int,
+                   idempotency_hash: str, request_hash: str) -> dict[str, Any]:
+        run = self.latest_run(owner, mission_id, revision)
+        if run is None or not isinstance(run["gateway_turn_id"], str):
+            raise ValueError("mission has no owned native run to stop")
+        prior = self._action(owner, idempotency_hash)
+        if prior is not None:
+            if (prior["mission_id"] != mission_id or int(prior["revision"]) != revision
+                    or prior["action"] != "stop" or prior["request_hash"] != request_hash):
+                raise ValueError("mission action idempotency conflict")
+            return self.project(subject, run)
+        projected = self.project(subject, run)
+        if projected["status"] not in {"queued", "running"}:
+            raise ValueError("mission has no active owned native run")
+        self.reserve_action(owner=owner, mission_id=mission_id, revision=revision,
+                            action="stop", idempotency_hash=idempotency_hash,
+                            request_hash=request_hash)
+        turn_id = run["gateway_turn_id"]
+        turn = self.store.owned_turn(subject, turn_id)
+        worker = self.service._workers.get(turn_id)
+        if worker is not None:
+            worker.cancel()
+            await __import__("asyncio").gather(worker, return_exceptions=True)
+        elif turn["status"] in {"queued", "running"}:
+            await self.service.backend.stop(turn["runtime_session_id"])
+        self.store.cancel_turn(subject, turn_id)
+        return self.project(subject, run)
+
+    def review(self, *, subject: str, owner: str, mission_id: str, revision: int,
+               decision: str, idempotency_hash: str, request_hash: str) -> dict[str, Any]:
+        run = self.latest_run(owner, mission_id, revision)
+        if run is None:
+            raise ValueError("mission has no observed result awaiting review")
+        projected = self.project(subject, run)
+        current = projected["status"]
+        if current in {"accepted", "rejected"}:
+            if current != ("accepted" if decision == "accept" else "rejected"):
+                raise ValueError("mission result review conflicts with its saved decision")
+            prior = self._action(owner, idempotency_hash)
+            if prior is None or (prior["mission_id"] != mission_id
+                    or int(prior["revision"]) != revision or prior["action"] != "review"
+                    or prior["request_hash"] != request_hash):
+                raise ValueError("mission action was already reviewed")
+            return projected
+        elif current != "review_pending":
+            raise ValueError("mission has no observed result awaiting review")
+        self.reserve_action(owner=owner, mission_id=mission_id, revision=revision,
+                            action="review", idempotency_hash=idempotency_hash,
+                            request_hash=request_hash)
+        saved = "accepted" if decision == "accept" else "rejected"
+        with self.store._connect() as db:
+            db.execute("UPDATE jarvis_mission_runs SET status=?,result_decision=?,updated=? "
+                       "WHERE id=? AND owner=? AND status IN ('queued','accepted','rejected')",
+                       (saved, decision, time.time(), run["id"], owner))
+        return self.project(subject, self.latest_run(owner, mission_id, revision))
+
+    def _action(self, owner: str, idempotency_hash: str) -> sqlite3.Row | None:
+        with self.store._connect() as db:
+            return db.execute(
+                "SELECT * FROM jarvis_mission_actions WHERE owner=? AND idempotency_hash=?",
+                (owner, idempotency_hash),
+            ).fetchone()
+
+    def project(self, subject: str, row: sqlite3.Row) -> dict[str, Any]:
+        """Project only state from the owned Jarvis turn and its native event stream."""
+        run = dict(row)
+        result: dict[str, Any] = {
+            "run_id": run["id"], "status": run["status"],
+            "created_at": run["created"], "updated_at": run["updated"],
+            "turn_id": run["gateway_turn_id"], "result": None,
+        }
+        turn_id = run["gateway_turn_id"]
+        if not isinstance(turn_id, str):
+            return result
+        try:
+            turn = self.store.owned_turn(subject, turn_id)
+            activity, _cursor = self.service.activity_store.for_turn(subject, turn_id, limit=100)
+        except Exception:
+            result["status"] = "outcome_unknown"
+            return result
+        kinds = {item.get("type") for item in activity}
+        child_started = bool(kinds & {"subagent.start", "subagent.progress", "subagent.thinking", "subagent.tool"})
+        child_completed = any(
+            item.get("type") == "subagent.complete" and item.get("status") in {"complete", "completed"}
+            for item in activity
+        )
+        if turn["status"] == "queued":
+            status = "queued"
+        elif turn["status"] == "running":
+            status = "running" if child_started else "queued"
+        elif turn["status"] == "cancelled":
+            status = "cancelled"
+        elif turn["status"] == "failed":
+            status = "failed"
+        elif turn["status"] == "completed" and child_completed:
+            status = "review_pending"
+            result["result"] = turn["partial"]
+        elif turn["status"] == "completed":
+            status = "completed_without_native_result"
+        else:
+            status = "outcome_unknown"
+        if run["status"] in {"accepted", "rejected"} and status == "review_pending":
+            status = run["status"]
+        result["status"] = status
+        result["updated_at"] = turn["updated"]
+        result["native_child_started"] = child_started
+        result["native_child_completed"] = child_completed
+        return result
+
+
+__all__ += ["MissionExecutionAdapter"]
