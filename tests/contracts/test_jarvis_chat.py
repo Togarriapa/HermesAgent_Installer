@@ -322,9 +322,9 @@ def test_sse_transport_reconnects_with_cursor_after_request_witness_expires(tmp_
         store, object(), principal_from_request=lambda request: request["principal"])
     app = web.Application(middlewares=[fresh_request_witness])
     app.router.add_get("/events/{turn_id}", service.events)
-    client = TestClient(TestServer(app))
 
     async def exercise():
+        client = TestClient(TestServer(app))
         await client.start_server()
         try:
             first = await client.get(f"/events/{turn_id}")
@@ -367,9 +367,9 @@ def test_sse_turn_lease_expiry_cancels_owned_turn_and_emits_terminal_event(tmp_p
         store, object(), principal_from_request=lambda request: request["principal"])
     app = web.Application(middlewares=[accepted_request])
     app.router.add_get("/events/{turn_id}", service.events)
-    client = TestClient(TestServer(app))
 
     async def exercise():
+        client = TestClient(TestServer(app))
         await client.start_server()
         try:
             response = await client.get(f"/events/{turn_id}")
