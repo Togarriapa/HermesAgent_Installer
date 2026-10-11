@@ -1289,10 +1289,13 @@ def _owned_unit_loaded():
  dropins=_run(["systemctl","show","--property=DropInPaths","--value",SERVICE],False).stdout.strip()
  return fragment==str(UNIT) and not dropins
 
-def _save_adapter_migration_backup(raw_journal,files):
+def _save_adapter_migration_backup(raw_journal,files,plugin_selection_json):
  """Keep immutable rollback bytes under root-only custody before any mutation."""
  _ensure_dir(ADAPTER_MIGRATION_BACKUP,ROOT_UID,ROOT_UID,0o700)
- names={"journal.json":raw_journal,"unit":files[UNIT],"launcher":files[LAUNCHER]}
+ if not isinstance(plugin_selection_json,bytes) or not 1<=len(plugin_selection_json)<=32*1024:
+  raise CoreRuntimeError("prior plugin selection snapshot is unavailable")
+ names={"journal.json":raw_journal,"unit":files[UNIT],"launcher":files[LAUNCHER],
+        "plugin-selection.json":plugin_selection_json}
  manifest={name:hashlib.sha256(content).hexdigest() for name,content in names.items()}
  manifest_bytes=(json.dumps(manifest,sort_keys=True,separators=(",",":"))+"\n").encode("ascii")
  allowed=set(names)|{"manifest.json"}
@@ -1317,15 +1320,16 @@ def _restore_adapter_migration_backup():
  if (not stat.S_ISDIR(directory.st_mode) or directory.st_uid!=ROOT_UID
      or directory.st_gid!=ROOT_UID or stat.S_IMODE(directory.st_mode)!=0o700):
   raise CoreRuntimeError("adapter migration backup custody differs")
- if set(os.listdir(ADAPTER_MIGRATION_BACKUP))!={"journal.json","unit","launcher","manifest.json"}:
+ if set(os.listdir(ADAPTER_MIGRATION_BACKUP))!={"journal.json","unit","launcher","plugin-selection.json","manifest.json"}:
   raise CoreRuntimeError("adapter migration backup is incomplete")
  manifest_raw=_projection_file(ADAPTER_MIGRATION_BACKUP/"manifest.json",owner=ROOT_UID,
                                group=ROOT_UID,mode=0o600,maximum=4096)
  try: manifest=json.loads(manifest_raw)
  except (ValueError,TypeError): raise CoreRuntimeError("adapter migration backup manifest invalid") from None
- if type(manifest) is not dict or set(manifest)!={"journal.json","unit","launcher"}:
+ if type(manifest) is not dict or set(manifest)!={"journal.json","unit","launcher","plugin-selection.json"}:
   raise CoreRuntimeError("adapter migration backup manifest invalid")
- paths={"journal.json":JOURNAL,"unit":UNIT,"launcher":LAUNCHER}
+ paths={"journal.json":JOURNAL,"unit":UNIT,"launcher":LAUNCHER,
+        "plugin-selection.json":ADAPTER_MIGRATION_BACKUP/"plugin-selection.json"}
  contents={}
  for name,path in paths.items():
   data=_projection_file(ADAPTER_MIGRATION_BACKUP/name,owner=ROOT_UID,group=ROOT_UID,
@@ -1339,6 +1343,37 @@ def _restore_adapter_migration_backup():
  _atomic_replace(JOURNAL,contents["journal.json"],0o600,ROOT_UID,ROOT_UID)
  return contents["journal.json"]
 
+def _restore_migration_plugin_selection(record):
+ try:
+  directory=ADAPTER_MIGRATION_BACKUP.lstat()
+  if (not stat.S_ISDIR(directory.st_mode) or directory.st_uid!=ROOT_UID
+      or directory.st_gid!=ROOT_UID or stat.S_IMODE(directory.st_mode)!=0o700):
+   raise CoreRuntimeError("adapter migration backup custody differs")
+  if set(os.listdir(ADAPTER_MIGRATION_BACKUP))!={"journal.json","unit","launcher","plugin-selection.json","manifest.json"}:
+   raise CoreRuntimeError("adapter migration backup has unexpected entries")
+  manifest_raw=_projection_file(ADAPTER_MIGRATION_BACKUP/"manifest.json",owner=ROOT_UID,
+                                group=ROOT_UID,mode=0o600,maximum=4096)
+  manifest=json.loads(manifest_raw)
+  if (type(manifest) is not dict or manifest!=record.get("adapter_migration_backup")
+      or set(manifest)!={"journal.json","unit","launcher","plugin-selection.json"}):
+   raise CoreRuntimeError("adapter migration backup manifest is not journal-bound")
+  for name in manifest:
+   data=_projection_file(ADAPTER_MIGRATION_BACKUP/name,owner=ROOT_UID,group=ROOT_UID,
+                        mode=0o600,maximum=256*1024)
+   if hashlib.sha256(data).hexdigest()!=manifest[name]:
+    raise CoreRuntimeError("journaled adapter migration backup bytes changed")
+  snapshot=_projection_file(ADAPTER_MIGRATION_BACKUP/"plugin-selection.json",owner=ROOT_UID,
+                            group=ROOT_UID,mode=0o600,maximum=32*1024)
+  if hashlib.sha256(snapshot).hexdigest()!=manifest["plugin-selection.json"]:
+   raise CoreRuntimeError("journaled plugin selection bytes changed")
+  from hermes_installer.remote.native_plugin_bootstrap import restore_native_resources_plugin_selection
+  restored=restore_native_resources_plugin_selection(
+   snapshot,expected_current_sha256=record.get("plugin_selection_sha256"))
+  if not re.fullmatch(r"[0-9a-f]{64}",str(restored or "")):
+   raise CoreRuntimeError("prior plugin selection receipt is malformed")
+ except Exception:
+  raise CoreRuntimeError("journaled plugin selection could not be restored exactly") from None
+
 def _recover_interrupted_adapter_migration():
  """Undo an interrupted file switch before ordinary journal validation resumes."""
  if not JOURNAL.is_file() or JOURNAL.is_symlink(): return
@@ -1346,6 +1381,7 @@ def _recover_interrupted_adapter_migration():
  try: record=json.loads(raw)
  except (ValueError,TypeError): return
  if type(record) is not dict or record.get("adapter_migration_state")!="preparing": return
+ _restore_migration_plugin_selection(record)
  _restore_adapter_migration_backup()
  _run(["systemctl","daemon-reload"])
  if not _owned_unit_loaded(): raise CoreRuntimeError("service unit changed during interrupted migration")
@@ -1366,7 +1402,24 @@ def migrate_owned_core_to_adapter_path():
  _recover_interrupted_adapter_migration()
  current=_core_source_generation()
  record,raw_journal,files=_read_legacy_owned_runtime()
- backup_manifest=_save_adapter_migration_backup(raw_journal,files)
+ try:
+  from hermes_installer.remote.native_plugin_bootstrap import capture_native_resources_plugin_selection
+  selection_backup=capture_native_resources_plugin_selection()
+  if (getattr(selection_backup,"plugin_key",None) not in (None,"hermes-installer-resources-delegation")
+      or not re.fullmatch(r"[0-9a-f]{64}",str(getattr(selection_backup,"prior_selection_sha256", "")))
+      or not re.fullmatch(r"[0-9a-f]{64}",str(getattr(selection_backup,"migrated_selection_sha256", "")))):
+   raise CoreRuntimeError("prior plugin selection snapshot is not verified")
+  backup_manifest=_save_adapter_migration_backup(
+   raw_journal,files,selection_backup.snapshot_json)
+ except CoreRuntimeError:
+  raise
+ except Exception:
+  raise CoreRuntimeError("prior plugin selection could not be journaled; migration was not started") from None
+ marker={**record,"adapter_migration_state":"preparing",
+         "adapter_migration_backup":backup_manifest,
+         "adapter_source":str(ADAPTER_SOURCE),"core_source_generation":current,
+         "plugin_selection_sha256":selection_backup.migrated_selection_sha256}
+ _replace_journal(marker)
  # The bridge transaction stages immutable code and uses Hermes' official enable
  # API. It must succeed before this service's journaled files or process change.
  try:
@@ -1390,8 +1443,18 @@ def migrate_owned_core_to_adapter_path():
   if not adapter_generation or not staged_digest:
    raise CoreRuntimeError("native bridge activation is not current")
  except CoreRuntimeError:
+  try:
+   _restore_migration_plugin_selection(marker)
+   _restore_adapter_migration_backup()
+  except Exception:
+   raise CoreRuntimeError("adapter activation failed; protected migration backup retained") from None
   raise
  except Exception:
+  try:
+   _restore_migration_plugin_selection(marker)
+   _restore_adapter_migration_backup()
+  except Exception:
+   raise CoreRuntimeError("adapter activation failed; protected migration backup retained") from None
   raise CoreRuntimeError("native bridge activation is unavailable; existing core remains active") from None
  # Activation runs a separate fixed PM interpreter. Rejoin the complete old
  # unit, launcher, credential, journal and listener before changing any of them.
@@ -1399,9 +1462,7 @@ def migrate_owned_core_to_adapter_path():
  if (raw_rechecked!=raw_journal or rechecked!=record
      or files_rechecked!=files):
   raise CoreRuntimeError("journal-owned core changed during native bridge activation")
- marker={**record,"adapter_migration_state":"preparing",
-         "adapter_migration_backup":backup_manifest,
-         "adapter_source":str(ADAPTER_SOURCE),"adapter_generation":adapter_generation,
+ marker={**marker,"adapter_generation":adapter_generation,
          "plugin_selection_sha256":selection_digest}
  _replace_journal(marker)
  restart_attempted=False
@@ -1439,6 +1500,7 @@ def migrate_owned_core_to_adapter_path():
    if not _owned_unit_loaded(): raise CoreRuntimeError("service unit changed during migration rollback")
    if active=="active" and not (_owned_listener() or _owned_listener(legacy_launcher=True)):
     raise CoreRuntimeError("service process is no longer the journal-owned core")
+   _restore_migration_plugin_selection(marker)
    _restore_adapter_migration_backup()
    _run(["systemctl","daemon-reload"])
    if active=="active" or restart_attempted:
@@ -1449,6 +1511,117 @@ def migrate_owned_core_to_adapter_path():
    raise CoreRuntimeError("adapter migration failed; protected backup retained for fixed recovery") from None
   if isinstance(exc,CoreRuntimeError): raise
   raise CoreRuntimeError("adapter migration failed; original core service files and journal were restored") from None
+
+def recover_owned_core_from_adapter_migration():
+ """Restore the exact prior owned core cohort after a later BFF startup failure.
+
+ This is intentionally narrower than installer rollback: it only accepts the
+ exact active adapter migration and its immutable root backup, then restores
+ that prior core and plugin selection. Any identity drift leaves ingress down.
+ """
+ if os.geteuid()!=ROOT_UID or not Path("/proc").is_dir():
+  raise CoreRuntimeError("requires installed Linux root actor")
+ record=_journal()
+ if (record.get("state")!="active" or record.get("adapter_migration_state")!="active"
+     or record.get("adapter_source")!=str(ADAPTER_SOURCE)
+     or not re.fullmatch(r"[0-9a-f]{64}",str(record.get("adapter_generation","")))
+     or not re.fullmatch(r"[0-9a-f]{64}",str(record.get("core_source_generation","")))
+     or not re.fullmatch(r"[0-9a-f]{64}",str(record.get("plugin_selection_sha256","")))):
+  raise CoreRuntimeError("no exact active adapter migration is eligible for recovery")
+ if (not _owned_unit_loaded() or not _owned_listener()
+     or _core_source_generation()!=record["core_source_generation"]):
+  raise CoreRuntimeError("current migrated core identity is not verified; ingress remains stopped")
+ try:
+  from hermes_installer.remote.core_gateway_inspector import (
+   _current_native_adapter_generation,verify_staged_native_resources_plugin,
+  )
+  from hermes_installer.remote.native_plugin_bootstrap import verify_native_resources_plugin_selection
+  deadline=time.monotonic()+35.0
+  if (_current_native_adapter_generation(deadline=deadline)!=record["adapter_generation"]
+      or not verify_staged_native_resources_plugin(deadline=deadline)
+      or getattr(verify_native_resources_plugin_selection(),"selection_sha256",None)
+         !=record["plugin_selection_sha256"]):
+   raise CoreRuntimeError("current adapter generation or selected plugin changed")
+ except CoreRuntimeError:
+  raise
+ except Exception:
+  raise CoreRuntimeError("current migration custody could not be reverified") from None
+ # Validate every immutable backup byte and manifest before stopping the only
+ # owned service. No general rollback/retirement path is involved.
+ directory=ADAPTER_MIGRATION_BACKUP.lstat()
+ if (not stat.S_ISDIR(directory.st_mode) or directory.st_uid!=ROOT_UID
+     or directory.st_gid!=ROOT_UID or stat.S_IMODE(directory.st_mode)!=0o700):
+  raise CoreRuntimeError("adapter migration backup custody differs")
+ if set(os.listdir(ADAPTER_MIGRATION_BACKUP))!={"journal.json","unit","launcher","plugin-selection.json","manifest.json"}:
+  raise CoreRuntimeError("adapter migration backup has unexpected entries")
+ manifest_raw=_projection_file(ADAPTER_MIGRATION_BACKUP/"manifest.json",owner=ROOT_UID,
+                               group=ROOT_UID,mode=0o600,maximum=4096)
+ try: manifest=json.loads(manifest_raw)
+ except (ValueError,TypeError): raise CoreRuntimeError("adapter migration backup manifest invalid") from None
+ if (type(manifest) is not dict or manifest!=record.get("adapter_migration_backup")
+     or set(manifest)!={"journal.json","unit","launcher","plugin-selection.json"}):
+  raise CoreRuntimeError("active journal does not bind the exact migration backup")
+ # Validate backup files without replacing anything, including the previous
+ # journal's identity and full legacy recipe. _read_legacy_owned_runtime is
+ # intentionally called only after its old listener has restarted.
+ backup_journal=_projection_file(ADAPTER_MIGRATION_BACKUP/"journal.json",owner=ROOT_UID,
+                                  group=ROOT_UID,mode=0o600,maximum=256*1024)
+ backup_unit=_projection_file(ADAPTER_MIGRATION_BACKUP/"unit",owner=ROOT_UID,
+                               group=ROOT_UID,mode=0o600,maximum=256*1024)
+ backup_launcher=_projection_file(ADAPTER_MIGRATION_BACKUP/"launcher",owner=ROOT_UID,
+                                  group=ROOT_UID,mode=0o600,maximum=256*1024)
+ if (hashlib.sha256(backup_journal).hexdigest()!=manifest["journal.json"]
+     or hashlib.sha256(backup_unit).hexdigest()!=manifest["unit"]
+     or hashlib.sha256(backup_launcher).hexdigest()!=manifest["launcher"]
+     or backup_unit!=_unit() or backup_launcher!=_legacy_launcher()):
+  raise CoreRuntimeError("prior owned core backup is not the exact reviewed legacy cohort")
+ try:
+  previous=json.loads(backup_journal)
+ except (ValueError,TypeError): raise CoreRuntimeError("prior core journal backup is invalid") from None
+ if (type(previous) is not dict or previous.get("schema")!=1
+     or previous.get("service")!=SERVICE or previous.get("state")!="active"
+     or previous.get("launcher_sha256")!=hashlib.sha256(backup_launcher).hexdigest()
+     or previous.get("unit_sha256")!=hashlib.sha256(backup_unit).hexdigest()):
+  raise CoreRuntimeError("prior core journal does not bind the legacy cohort")
+ selection_snapshot=_projection_file(ADAPTER_MIGRATION_BACKUP/"plugin-selection.json",
+                                     owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=32*1024)
+ if hashlib.sha256(selection_snapshot).hexdigest()!=manifest["plugin-selection.json"]:
+  raise CoreRuntimeError("prior plugin selection backup bytes changed")
+ if (not _owned_unit_loaded() or not _owned_listener()
+     or _core_source_generation()!=record["core_source_generation"]):
+  raise CoreRuntimeError("migrated core changed during recovery preflight")
+ _run(["systemctl","stop",SERVICE])
+ if (_run(["systemctl","is-active",SERVICE],False).stdout.strip()=="active"
+     or _run(["systemctl","show","--property=MainPID","--value",SERVICE],False).stdout.strip() not in {"","0"}
+     or _owned_listener()):
+  raise CoreRuntimeError("owned adapter core did not stop cleanly; recovery halted")
+ try:
+  from hermes_installer.remote.native_plugin_bootstrap import restore_native_resources_plugin_selection
+  restored_selection=restore_native_resources_plugin_selection(
+   selection_snapshot,expected_current_sha256=record["plugin_selection_sha256"])
+  _restore_adapter_migration_backup()
+  _run(["systemctl","daemon-reload"])
+  if not _owned_unit_loaded():
+   raise CoreRuntimeError("restored prior service unit is not the exact owned unit")
+  _run(["systemctl","start",SERVICE])
+  restored_record,restored_raw,restored_files=_read_legacy_owned_runtime()
+  if (restored_record!=previous or restored_raw!=backup_journal
+      or restored_files[UNIT]!=backup_unit or restored_files[LAUNCHER]!=backup_launcher):
+   raise CoreRuntimeError("restored legacy core cohort differs from its retained backup")
+  selection=verify_native_resources_plugin_selection()
+  if getattr(selection,"selection_sha256",None)!=restored_selection:
+   raise CoreRuntimeError("prior Hermes plugin selection is not current after recovery")
+ except Exception:
+  # A partial recovery is deliberately left stopped; only an operator can
+  # inspect/reconcile the retained journal and backup after this point.
+  try:
+   if _owned_unit_loaded() and _run(["systemctl","is-active",SERVICE],False).stdout.strip()=="active":
+    _run(["systemctl","stop",SERVICE])
+  except Exception:
+   pass
+  raise CoreRuntimeError("bounded migration recovery failed; protected backup retained and ingress remains stopped") from None
+ return "exact prior Hermes core and plugin selection restored; gateway/BFF may be resumed"
+
 def install_or_resume():
  if os.geteuid()!=0 or not Path("/proc").is_dir(): raise CoreRuntimeError("requires installed Linux root actor")
  identity=_identity(); account=pwd.getpwnam("admin")
@@ -1598,4 +1771,4 @@ def rollback():
  _sync_directory(JOURNAL.parent)
  return "journal-owned core service files removed; Hermes home, PM runtime, and workspace preserved"
 __all__=["CoreRuntimeError","install_or_resume","migrate_owned_core_to_adapter_path",
-         "refresh_resources_discovery","rollback","status"]
+         "recover_owned_core_from_adapter_migration","refresh_resources_discovery","rollback","status"]

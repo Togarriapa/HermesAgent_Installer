@@ -98,6 +98,10 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False):
             enabled["value"] = True
         elif argv[:2] == ["systemctl", "disable"]:
             enabled["value"] = False
+        elif argv[:2] == ["systemctl", "stop"]:
+            enabled["value"] = False
+        elif argv[:2] in (["systemctl", "start"], ["systemctl", "restart"]):
+            enabled["value"] = True
         return SimpleNamespace(stdout=out, returncode=0)
 
     monkeypatch.setattr(core, "_run", fake_run)
@@ -141,6 +145,19 @@ def test_generated_core_launcher_has_valid_shell_syntax():
     assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
 
 
+def test_native_plugin_bootstrap_embedded_scripts_parse_on_target_runtime():
+    from hermes_installer.remote import native_plugin_bootstrap as bootstrap
+
+    scripts = (
+        bootstrap._OFFICIAL_ENABLE_SCRIPT,
+        bootstrap._OFFICIAL_SELECTION_READ_SCRIPT,
+        bootstrap._OFFICIAL_SELECTION_BACKUP_SCRIPT,
+        bootstrap._OFFICIAL_SELECTION_RESTORE_SCRIPT,
+    )
+    for index, source in enumerate(scripts):
+        compile(source, f"native-plugin-bootstrap-script-{index}", "exec")
+
+
 def _install_legacy_service_fixture(tmp_path, monkeypatch):
     calls, enabled = _fake_runtime(tmp_path, monkeypatch)
     # Establish a complete temporary owned install using the same fixture actor
@@ -172,8 +189,17 @@ def _install_legacy_service_fixture(tmp_path, monkeypatch):
         calls.append((("bridge", "enable"), core.UNIT.exists()))
         return SimpleNamespace(plugin_key="hermes-installer-resources-delegation")
     bootstrap.enable_native_resources_plugin = enable_plugin
+    selection = {"value": "d" * 64}
     bootstrap.verify_native_resources_plugin_selection = lambda: SimpleNamespace(
-        plugin_key="hermes-installer-resources-delegation", selection_sha256="d" * 64)
+        plugin_key="hermes-installer-resources-delegation", selection_sha256=selection["value"])
+    bootstrap.capture_native_resources_plugin_selection = lambda: SimpleNamespace(
+        plugin_key="hermes-installer-resources-delegation", snapshot_json=b'{"schema":1}',
+        prior_selection_sha256="e" * 64, migrated_selection_sha256="d" * 64)
+    def restore_selection(_snapshot, *, expected_current_sha256):
+        assert expected_current_sha256 == "d" * 64
+        selection["value"] = "e" * 64
+        return "e" * 64
+    bootstrap.restore_native_resources_plugin_selection = restore_selection
     inspector = ModuleType("hermes_installer.remote.core_gateway_inspector")
     inspector._current_native_adapter_generation = lambda *, deadline: "a" * 64
     inspector.verify_staged_native_resources_plugin = lambda *, deadline: "b" * 64
@@ -181,7 +207,7 @@ def _install_legacy_service_fixture(tmp_path, monkeypatch):
                         "hermes_installer.remote.native_plugin_bootstrap", bootstrap)
     monkeypatch.setitem(sys.modules,
                         "hermes_installer.remote.core_gateway_inspector", inspector)
-    return calls, enabled, launcher_bytes
+    return calls, enabled, launcher_bytes, selection
 
 
 _REAL_CORE_LAUNCHER = core._launcher
@@ -189,7 +215,7 @@ _REAL_CORE_LAUNCHER = core._launcher
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="legacy core migration requires the real root actor")
 def test_adapter_migration_activates_bridge_before_owned_core_restart(tmp_path, monkeypatch):
-    calls, _enabled, old_launcher = _install_legacy_service_fixture(tmp_path, monkeypatch)
+    calls, _enabled, old_launcher, _selection = _install_legacy_service_fixture(tmp_path, monkeypatch)
     token = core.TOKEN.read_bytes()
     old_unit = core.UNIT.read_bytes()
 
@@ -209,7 +235,7 @@ def test_adapter_migration_activates_bridge_before_owned_core_restart(tmp_path, 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="legacy core migration requires the real root actor")
 def test_adapter_migration_restores_exact_owned_files_after_restart_failure(tmp_path, monkeypatch):
-    calls, _enabled, old_launcher = _install_legacy_service_fixture(tmp_path, monkeypatch)
+    calls, _enabled, old_launcher, _selection = _install_legacy_service_fixture(tmp_path, monkeypatch)
     token = core.TOKEN.read_bytes()
     old_unit = core.UNIT.read_bytes()
     old_journal = core.JOURNAL.read_bytes()
@@ -224,6 +250,44 @@ def test_adapter_migration_restores_exact_owned_files_after_restart_failure(tmp_
     assert core.JOURNAL.read_bytes() == old_journal
     assert core.TOKEN.read_bytes() == token
     assert [call[0] for call in calls].count(("systemctl", "restart", core.SERVICE)) == 2
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="legacy core migration requires the real root actor")
+def test_post_migration_recovery_restores_exact_legacy_files_and_selection(tmp_path, monkeypatch):
+    calls, enabled, old_launcher, selection = _install_legacy_service_fixture(tmp_path, monkeypatch)
+    old_unit = core.UNIT.read_bytes()
+    core.migrate_owned_core_to_adapter_path()
+    assert core.LAUNCHER.read_bytes() != old_launcher
+    assert selection["value"] == "d" * 64
+
+    def current_listener(*, legacy_launcher=False):
+        return enabled["value"] and (
+            legacy_launcher == (core.LAUNCHER.read_bytes() == old_launcher))
+    monkeypatch.setattr(core, "_owned_listener", current_listener)
+    result = core.recover_owned_core_from_adapter_migration()
+
+    assert "exact prior Hermes core and plugin selection restored" in result
+    assert core.LAUNCHER.read_bytes() == old_launcher
+    assert core.UNIT.read_bytes() == old_unit
+    assert json.loads(core.JOURNAL.read_text())["state"] == "active"
+    assert selection["value"] == "e" * 64
+    ordered = [call[0] for call in calls]
+    assert ordered.index(("systemctl", "stop", core.SERVICE)) < ordered.index(
+        ("systemctl", "start", core.SERVICE))
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="legacy core migration requires the real root actor")
+def test_post_migration_recovery_refuses_changed_current_launcher_before_touching_state(tmp_path, monkeypatch):
+    calls, _enabled, _old_launcher, _selection = _install_legacy_service_fixture(tmp_path, monkeypatch)
+    core.migrate_owned_core_to_adapter_path()
+    before_journal = core.JOURNAL.read_bytes()
+    before_unit = core.UNIT.read_bytes()
+    core.LAUNCHER.write_bytes(b"unrecognized changed launcher")
+    with pytest.raises(core.CoreRuntimeError, match="owned service file changed|recipe"):
+        core.recover_owned_core_from_adapter_migration()
+    assert core.JOURNAL.read_bytes() == before_journal
+    assert core.UNIT.read_bytes() == before_unit
+    assert not any(call[0] == ("systemctl", "stop", core.SERVICE) for call in calls)
 
 
 def test_failed_start_is_resumable_without_rotating_session_credential(tmp_path, monkeypatch):

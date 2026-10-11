@@ -7,13 +7,17 @@ if that transaction changes unrelated settings.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import importlib.resources
+import json
 import os
 import pwd
+import re
 import secrets
 import stat
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,6 +52,15 @@ class NativePluginSelectionReceipt:
 
     plugin_key: str
     selection_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class NativePluginSelectionBackup:
+    """Bounded, non-secret prior selection needed to reverse core migration."""
+
+    snapshot_json: bytes
+    prior_selection_sha256: str
+    migrated_selection_sha256: str
 
 
 def _fixed_bundle_bytes() -> dict[str, bytes]:
@@ -367,6 +380,205 @@ print("native-plugin-selection:" + digest)
 '''
 
 
+_OFFICIAL_SELECTION_BACKUP_SCRIPT = r'''import base64
+import copy
+import hashlib
+import json
+from hermes_cli.config import load_config
+from hermes_cli.toolset_validation import parse_platform_toolsets_value
+
+key = "hermes-installer-resources-delegation"
+toolset = "resources_internal"
+config = load_config()
+if not isinstance(config, dict):
+    raise RuntimeError("Hermes config is unavailable")
+plugins_present = "plugins" in config
+plugins = config.get("plugins") or {}
+if not isinstance(plugins, dict):
+    raise RuntimeError("Hermes plugin selection is malformed")
+enabled_present, disabled_present = "enabled" in plugins, "disabled" in plugins
+enabled, disabled = plugins.get("enabled", []), plugins.get("disabled", [])
+if (not isinstance(enabled, list) or not isinstance(disabled, list)
+        or any(not isinstance(value, str) for value in (*enabled, *disabled))
+        or len(enabled) > 256 or len(disabled) > 256
+        or len(set(enabled)) != len(enabled) or len(set(disabled)) != len(disabled)):
+    raise RuntimeError("Hermes plugin selection is malformed")
+platform_present = "platform_toolsets" in config
+platforms = config.get("platform_toolsets") or {}
+if not isinstance(platforms, dict) or len(platforms) > 64:
+    raise RuntimeError("Hermes toolset selection is malformed")
+for name, raw in platforms.items():
+    if (not isinstance(name, str) or not name or len(name) > 128
+            or (raw is not None and not isinstance(raw, (str, list)))
+            or (isinstance(raw, list) and (len(raw) > 512
+                or any(not isinstance(item, str) for item in raw)))):
+        raise RuntimeError("Hermes toolset selection is malformed")
+    parsed = parse_platform_toolsets_value(raw)
+    if raw is not None and parsed is None:
+        raise RuntimeError("Hermes toolset selection is ambiguous")
+prior = {"schema": 1, "plugins_present": plugins_present,
+         "enabled_present": enabled_present, "disabled_present": disabled_present,
+         "enabled": enabled, "disabled": disabled,
+         "platform_present": platform_present, "platform_toolsets": platforms}
+def projection(value):
+    pl = value.get("plugins") or {}
+    selected = {}
+    for name, raw in (value.get("platform_toolsets") or {}).items():
+        parsed = parse_platform_toolsets_value(raw)
+        if raw is not None and parsed is None:
+            raise RuntimeError("Hermes toolset selection is ambiguous")
+        if parsed is not None:
+            selected[name] = sorted(set(parsed))
+    return {"enabled": sorted(set(pl.get("enabled", []))),
+            "disabled": sorted(set(pl.get("disabled", []))),
+            "platform_toolsets": selected}
+def digest(value):
+    return hashlib.sha256(json.dumps(projection(value), sort_keys=True,
+        separators=(",", ":"), ensure_ascii=True).encode("ascii")).hexdigest()
+expected = copy.deepcopy(config)
+was_enabled = key in enabled and key not in disabled
+new_plugins = expected.setdefault("plugins", {})
+new_plugins["enabled"] = sorted(set(enabled) | {key})
+new_plugins["disabled"] = sorted(set(disabled) - {key})
+new_platforms = expected.get("platform_toolsets")
+if not was_enabled and isinstance(new_platforms, dict):
+    for name, raw in list(new_platforms.items()):
+        parsed = parse_platform_toolsets_value(raw)
+        if parsed is not None and toolset not in parsed:
+            new_platforms[name] = [*parsed, toolset]
+prior_json = json.dumps(prior, sort_keys=True, separators=(",", ":"),
+                        ensure_ascii=True).encode("ascii")
+print("native-plugin-selection-backup:" + base64.b64encode(prior_json).decode("ascii")
+      + ":" + digest(config) + ":" + digest(expected))
+'''
+
+
+_OFFICIAL_SELECTION_RESTORE_SCRIPT = r'''import base64
+import copy
+import hashlib
+import json
+import sys
+from hermes_cli.config import load_config, save_config
+from hermes_cli.plugins_cmd import cmd_disable
+from hermes_cli.toolset_validation import parse_platform_toolsets_value
+
+key = "hermes-installer-resources-delegation"
+toolset = "resources_internal"
+request = json.load(sys.stdin)
+if (not isinstance(request, dict) or set(request) != {"snapshot_b64", "expected_current_sha256"}
+        or not isinstance(request["snapshot_b64"], str)
+        or (request["expected_current_sha256"] is not None
+            and (not isinstance(request["expected_current_sha256"], str)
+                 or len(request["expected_current_sha256"]) != 64))):
+    raise RuntimeError("migration selection restore request is malformed")
+prior = json.loads(base64.b64decode(request["snapshot_b64"], validate=True))
+fields = {"schema", "plugins_present", "enabled_present", "disabled_present", "enabled",
+          "disabled", "platform_present", "platform_toolsets"}
+if (not isinstance(prior, dict) or set(prior) != fields or prior.get("schema") != 1
+        or type(prior.get("plugins_present")) is not bool
+        or type(prior.get("enabled_present")) is not bool
+        or type(prior.get("disabled_present")) is not bool
+        or type(prior.get("platform_present")) is not bool
+        or not isinstance(prior.get("enabled"), list)
+        or not isinstance(prior.get("disabled"), list)
+        or not isinstance(prior.get("platform_toolsets"), dict)):
+    raise RuntimeError("migration selection backup is malformed")
+def projection(value):
+    plugins = value.get("plugins") or {}
+    selected = {}
+    for name, raw in (value.get("platform_toolsets") or {}).items():
+        parsed = parse_platform_toolsets_value(raw)
+        if raw is not None and parsed is None:
+            raise RuntimeError("Hermes toolset selection is ambiguous")
+        if parsed is not None:
+            selected[name] = sorted(set(parsed))
+    return {"enabled": sorted(set(plugins.get("enabled", []))),
+            "disabled": sorted(set(plugins.get("disabled", []))),
+            "platform_toolsets": selected}
+def digest(value):
+    return hashlib.sha256(json.dumps(projection(value), sort_keys=True,
+        separators=(",", ":"), ensure_ascii=True).encode("ascii")).hexdigest()
+config = load_config()
+if not isinstance(config, dict):
+    raise RuntimeError("Hermes config is unavailable")
+prior_projection = {"enabled": sorted(set(prior["enabled"])),
+                    "disabled": sorted(set(prior["disabled"])), "platform_toolsets": {}}
+for name, raw in prior["platform_toolsets"].items():
+    parsed = parse_platform_toolsets_value(raw)
+    if raw is not None and parsed is None:
+        raise RuntimeError("prior platform toolset selection is ambiguous")
+    if parsed is not None:
+        prior_projection["platform_toolsets"][name] = sorted(set(parsed))
+prior_digest = hashlib.sha256(json.dumps(prior_projection, sort_keys=True,
+    separators=(",", ":"), ensure_ascii=True).encode("ascii")).hexdigest()
+post_projection = copy.deepcopy(prior_projection)
+was_enabled = key in prior["enabled"] and key not in prior["disabled"]
+post_projection["enabled"] = sorted(set(prior["enabled"]) | {key})
+post_projection["disabled"] = sorted(set(prior["disabled"]) - {key})
+if not was_enabled:
+    for platform, names in post_projection["platform_toolsets"].items():
+        if toolset not in names:
+            post_projection["platform_toolsets"][platform] = sorted(set((*names, toolset)))
+post_digest = hashlib.sha256(json.dumps(post_projection, sort_keys=True,
+    separators=(",", ":"), ensure_ascii=True).encode("ascii")).hexdigest()
+current_digest = digest(config)
+if request["expected_current_sha256"] is not None and request["expected_current_sha256"] != post_digest:
+    raise RuntimeError("journal plugin selection digest differs from the fixed migration projection")
+if current_digest == prior_digest:
+    original_plugins = config.get("plugins") or {}
+    if (("plugins" in config) != prior["plugins_present"]
+            or (("enabled" in original_plugins) != prior["enabled_present"])
+            or (("disabled" in original_plugins) != prior["disabled_present"])
+            or original_plugins.get("enabled", []) != prior["enabled"]
+            or original_plugins.get("disabled", []) != prior["disabled"]
+            or (("platform_toolsets" in config) != prior["platform_present"])
+            or (config.get("platform_toolsets") or {}) != prior["platform_toolsets"]):
+        raise RuntimeError("plugin selection has same effective grants but different saved form")
+    print("native-plugin-selection-restored:" + prior_digest)
+    sys.exit(0)
+if current_digest != post_digest:
+    raise RuntimeError("current plugin selection changed since migration")
+plugins = config.get("plugins") or {}
+enabled, disabled = plugins.get("enabled", []), plugins.get("disabled", [])
+platforms = config.get("platform_toolsets") or {}
+if (key not in enabled or key in disabled or not isinstance(platforms, dict)
+        or any((parsed := parse_platform_toolsets_value(raw)) is not None and toolset not in parsed
+               for raw in platforms.values())):
+    raise RuntimeError("migrated native plugin selection is not exact")
+if not was_enabled:
+    cmd_disable(key)
+current = load_config()
+if not isinstance(current, dict):
+    raise RuntimeError("Hermes config is unavailable after plugin disable")
+restored = copy.deepcopy(current)
+restored_plugins = restored.get("plugins")
+if not isinstance(restored_plugins, dict):
+    restored_plugins = {}
+    restored["plugins"] = restored_plugins
+for name, present, value in (("enabled", prior["enabled_present"], prior["enabled"]),
+                             ("disabled", prior["disabled_present"], prior["disabled"])):
+    if present:
+        restored_plugins[name] = value
+    else:
+        restored_plugins.pop(name, None)
+if not prior["plugins_present"] and not restored_plugins:
+    restored.pop("plugins", None)
+if prior["platform_present"]:
+    restored["platform_toolsets"] = prior["platform_toolsets"]
+else:
+    restored.pop("platform_toolsets", None)
+save_config(restored)
+verified = load_config()
+if verified != restored or digest(verified) != digest({
+        **(verified if isinstance(verified, dict) else {}),
+        "plugins": {**(verified.get("plugins") or {}),
+                    "enabled": prior["enabled"], "disabled": prior["disabled"]},
+        "platform_toolsets": prior["platform_toolsets"]}):
+    raise RuntimeError("prior native plugin selection did not restore exactly")
+print("native-plugin-selection-restored:" + digest(verified))
+'''
+
+
 def verify_native_resources_plugin_selection() -> NativePluginSelectionReceipt:
     """Read current PM-owned enable/toolset selection without changing Hermes config.
 
@@ -408,8 +620,100 @@ def verify_native_resources_plugin_selection() -> NativePluginSelectionReceipt:
         raise NativePluginBootstrapUnavailable("official native plugin selection is unavailable") from None
 
 
+def _run_official_selection_script(script: str, *, input_bytes: bytes | None = None,
+                                   timeout: int = 10) -> subprocess.CompletedProcess:
+    from .core_gateway_inspector import CORE_NATIVE_ADAPTER_SOURCE, CORE_PYTHON_LINK, CORE_SOURCE
+    account = pwd.getpwnam("admin")
+    environment = {
+        "HOME": "/home/admin", "HERMES_HOME": str(HERMES_HOME),
+        "PATH": "/home/admin/.hermes/bin:/home/admin/.local/bin:/usr/local/bin:/usr/bin:/bin",
+        "HERMES_DISABLE_LAZY_INSTALLS": "1", "PYTHONNOUSERSITE": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONPATH": f"{CORE_SOURCE}:{CORE_NATIVE_ADAPTER_SOURCE}",
+    }
+    return subprocess.run(
+        [str(CORE_PYTHON_LINK), "-B", "-c", script], cwd=CORE_SOURCE,
+        env=environment, input=input_bytes, stdin=subprocess.DEVNULL if input_bytes is None else None,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False,
+        user=account.pw_uid, group=account.pw_gid, extra_groups=(),
+    )
+
+
+def capture_native_resources_plugin_selection() -> NativePluginSelectionBackup:
+    """Capture exact pre-migration selection in a small non-secret root-journal payload."""
+    from .core_gateway_inspector import _current_native_adapter_generation
+    deadline = time.monotonic() + 35.0
+    generation = _current_native_adapter_generation(deadline=deadline)
+    try:
+        result = _run_official_selection_script(_OFFICIAL_SELECTION_BACKUP_SCRIPT, timeout=10)
+        prefix = b"native-plugin-selection-backup:"
+        if result.returncode != 0 or len(result.stdout) > 64 * 1024 or len(result.stderr) > 16 * 1024:
+            raise ValueError
+        lines = result.stdout.strip().splitlines()
+        if len(lines) != 1 or not lines[0].startswith(prefix):
+            raise ValueError
+        encoded, prior_digest, migrated_digest = lines[0][len(prefix):].decode("ascii", "strict").split(":")
+        snapshot = base64.b64decode(encoded, validate=True)
+        if len(snapshot) > 32 * 1024:
+            raise ValueError
+        value = json.loads(snapshot.decode("ascii", "strict"))
+        expected = {"schema", "plugins_present", "enabled_present", "disabled_present", "enabled",
+                    "disabled", "platform_present", "platform_toolsets"}
+        if (not isinstance(value, dict) or set(value) != expected or value["schema"] != 1
+                or any(type(value[key]) is not bool for key in (
+                    "plugins_present", "enabled_present", "disabled_present", "platform_present"))
+                or not isinstance(value["enabled"], list) or not isinstance(value["disabled"], list)
+                or not isinstance(value["platform_toolsets"], dict)
+                or any(not isinstance(item, str) for item in (*value["enabled"], *value["disabled"]))
+                or json.dumps(value, sort_keys=True, separators=(",", ":"),
+                              ensure_ascii=True).encode("ascii") != snapshot
+                or not re.fullmatch(r"[0-9a-f]{64}", prior_digest)
+                or not re.fullmatch(r"[0-9a-f]{64}", migrated_digest)
+                or _current_native_adapter_generation(deadline=deadline) != generation):
+            raise ValueError
+        return NativePluginSelectionBackup(snapshot, prior_digest, migrated_digest)
+    except NativePluginBootstrapUnavailable:
+        raise
+    except Exception:
+        raise NativePluginBootstrapUnavailable("prior Hermes plugin selection could not be safely journaled") from None
+
+
+def restore_native_resources_plugin_selection(snapshot_json: bytes, *,
+                                               expected_current_sha256: str | None) -> str:
+    """Restore only the prior plugin/toolset selection through Hermes' official config API."""
+    from .core_gateway_inspector import _current_native_adapter_generation
+    if (not isinstance(snapshot_json, bytes) or not 1 <= len(snapshot_json) <= 32 * 1024
+            or (expected_current_sha256 is not None
+                and re.fullmatch(r"[0-9a-f]{64}", expected_current_sha256) is None)):
+        raise NativePluginBootstrapUnavailable("journaled plugin selection backup is malformed")
+    try:
+        generation = _current_native_adapter_generation(deadline=time.monotonic() + 35.0)
+        payload = json.dumps({
+            "snapshot_b64": base64.b64encode(snapshot_json).decode("ascii"),
+            "expected_current_sha256": expected_current_sha256,
+        }, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+        result = _run_official_selection_script(
+            _OFFICIAL_SELECTION_RESTORE_SCRIPT, input_bytes=payload, timeout=15)
+        prefix = b"native-plugin-selection-restored:"
+        if (result.returncode != 0 or len(result.stdout) > 1024 or len(result.stderr) > 16 * 1024
+                or len(result.stdout.strip().splitlines()) != 1
+                or not result.stdout.strip().startswith(prefix)):
+            raise ValueError
+        digest = result.stdout.strip()[len(prefix):].decode("ascii", "strict")
+        if (re.fullmatch(r"[0-9a-f]{64}", digest) is None
+                or _current_native_adapter_generation(deadline=time.monotonic() + 35.0) != generation):
+            raise ValueError
+        return digest
+    except NativePluginBootstrapUnavailable:
+        raise
+    except Exception:
+        raise NativePluginBootstrapUnavailable("prior Hermes plugin selection did not restore exactly") from None
+
+
 __all__ = [
     "NativePluginBootstrapUnavailable", "NativePluginSelectionReceipt", "PLUGIN_KEY",
     "StagedNativeResourcesPlugin", "stage_native_resources_plugin",
-    "enable_native_resources_plugin", "verify_native_resources_plugin_selection",
+    "NativePluginSelectionBackup", "enable_native_resources_plugin",
+    "verify_native_resources_plugin_selection", "capture_native_resources_plugin_selection",
+    "restore_native_resources_plugin_selection",
 ]
