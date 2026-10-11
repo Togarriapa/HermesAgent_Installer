@@ -56,7 +56,7 @@ _INGRESS_DIAGNOSTIC_STAGES = frozenset({
 _CHAT_CONTENT_SECURITY_POLICY = (
     "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; "
     "form-action 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; "
-    "connect-src 'self'; font-src 'self'"
+    "connect-src 'self'; font-src 'self'; manifest-src 'self'"
 )
 
 
@@ -505,7 +505,8 @@ def _install_core_chat_asset_routes(app: Any) -> None:
         return web.Response(body=body, headers=headers)
 
     app.router.add_get("/", home, allow_head=False)
-    for path in ("/chat", "/chat/", "/chat/assets/app.css", "/chat/assets/features.js", "/chat/assets/app.js"):
+    for path in ("/chat", "/chat/", "/chat/assets/app.css", "/chat/assets/features.js", "/chat/assets/app.js",
+                 "/chat/manifest.webmanifest", "/chat/assets/jarvis-app-icon.svg"):
         app.router.add_get(path, asset, allow_head=False)
 
 

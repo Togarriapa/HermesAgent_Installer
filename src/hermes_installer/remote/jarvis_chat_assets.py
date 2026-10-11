@@ -1,8 +1,7 @@
 """Finite installer-owned assets for the practical Jarvis chat surface.
 
-Only the reviewed `/chat`, `/chat/assets/app.css`, `/chat/assets/features.js`,
-and `/chat/assets/app.js` paths are exposed. The bundle contains no provider
-credentials or user data.
+Only literal reviewed chat, stylesheet, script and mobile metadata paths are
+exposed. The bundle contains no provider credentials or user data.
 """
 from __future__ import annotations
 
@@ -15,6 +14,10 @@ from .jarvis_feature_registry import FEATURE_ASSETS
 from .jarvis_capability_details_assets import CSS as _CAPABILITY_DETAILS_CSS
 from .jarvis_capability_details_assets import MOUNT_JS as _CAPABILITY_DETAILS_MOUNT_JS
 from .jarvis_capability_details_assets import VIEW_HTML as _CAPABILITY_DETAILS_HTML
+from .jarvis_mobile_assets import (
+    MOBILE_MANIFEST_LINK_HTML, SETTINGS_FRAGMENT_HTML, SETTINGS_FRAGMENT_CSS,
+    reviewed_mobile_static_asset,
+)
 
 
 _OVERVIEW_CORE_STATUS_HTML = '''<section class="overview-card" aria-labelledby="overview-core-heading">
@@ -32,6 +35,7 @@ _HTML = '''<!doctype html>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="theme-color" content="#071319">
   <title>Jarvis</title>
+  <!-- JARVIS_MOBILE_MANIFEST -->
   <link rel="stylesheet" href="/chat/assets/app.css">
   <script defer src="/chat/assets/features.js"></script>
   <script defer src="/chat/assets/app.js"></script>
@@ -161,6 +165,7 @@ _HTML = '''<!doctype html>
           <p class="voice-unavailable" id="preference-storage-status" role="status" aria-live="polite" hidden></p>
           <p class="voice-unavailable" id="voice-settings-status" role="status" aria-live="polite" hidden></p>
         </section>
+        <!-- JARVIS_MOBILE_SETTINGS -->
       </section>
       <!-- JARVIS_FEATURE_PANELS -->
     </div>
@@ -1264,6 +1269,9 @@ _FEATURES_JS = b""
 def _compose_feature_assets() -> None:
     """Compose reviewed feature markup, styles, and the separately bounded registry."""
     global _HTML, _CSS, _JS, _FEATURES_JS
+    _HTML = _HTML.replace(b"<!-- JARVIS_MOBILE_MANIFEST -->", MOBILE_MANIFEST_LINK_HTML.encode("utf-8"))
+    _HTML = _HTML.replace(b"<!-- JARVIS_MOBILE_SETTINGS -->", SETTINGS_FRAGMENT_HTML.encode("utf-8"))
+    _CSS += ("\n" + SETTINGS_FRAGMENT_CSS).encode("utf-8")
     validate_feature_assets(FEATURE_ASSETS)
     nav: list[str] = []
     overview_nav: list[str] = []
@@ -1348,6 +1356,8 @@ _ASSETS = MappingProxyType({
     "/chat/assets/app.css": ("text/css; charset=utf-8", _CSS),
     "/chat/assets/features.js": ("text/javascript; charset=utf-8", _FEATURES_JS),
     "/chat/assets/app.js": ("text/javascript; charset=utf-8", _JS),
+    "/chat/manifest.webmanifest": reviewed_mobile_static_asset("/chat/manifest.webmanifest"),
+    "/chat/assets/jarvis-app-icon.svg": reviewed_mobile_static_asset("/chat/assets/jarvis-app-icon.svg"),
 })
 
 
