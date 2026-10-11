@@ -100,7 +100,7 @@ class RootObsidianCallScope:
                     (type(self.selected_note_ids) is not frozenset
                      or len(self.selected_note_ids) > 200
                      or any(type(note_id) is not str or not _IDENT.fullmatch(note_id)
-                            for note_id in self.selected_note_ids))
+                            for note_id in self.selected_note_ids)))
                 or any(type(value) not in (int, float) or not math.isfinite(value)
                        for value in (self.issued_monotonic, self.expires_monotonic))
                 or not now < self.expires_monotonic <= min(self.issued_monotonic + 5.0, now + 5.0)

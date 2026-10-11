@@ -98,7 +98,7 @@ def test_registers_finite_tools_without_identity_or_path_arguments(tmp_path):
     names = ObsidianNativeTools(store).register(context)
 
     assert set(names) == set(context.tools)
-    assert all("additionalProperties" is False for row in context.tools.values())
+    assert all(row["schema"].get("additionalProperties") is False for row in context.tools.values())
     for row in context.tools.values():
         assert not {"owner", "owner_subject_sha256", "execution_id", "source_instance_id",
                     "note_scope", "vault_path", "permit"} & set(row["schema"]["properties"])

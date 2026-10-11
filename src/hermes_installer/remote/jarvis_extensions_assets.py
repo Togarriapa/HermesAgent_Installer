@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from .jarvis_feature_contract import JarvisFeatureAssets
+from .jarvis_extensions_admin import FEATURE_ROUTES
 
 
 _VIEW = '''<section class="extensions-page" data-feature-root="extensions" aria-labelledby="extensions-title">
