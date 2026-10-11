@@ -28,7 +28,7 @@ class CoreGatewayInspectorClientTests(unittest.TestCase):
         config = _config()
         wrong_socket = SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=0,
                                        st_gid=config.gateway_gid)
-        with patch.object(core_gateway_inspector, "_read_config_current", return_value=None), \
+        with patch.object(core_gateway, "_read_config_current", return_value=None), \
              patch.object(core_gateway_inspector.os, "lstat", return_value=wrong_socket):
             with self.assertRaises(core_gateway.CoreGatewayDenied):
                 core_gateway_inspector.verify_current_ingress(
@@ -49,7 +49,7 @@ class CoreGatewayInspectorClientTests(unittest.TestCase):
             def close(self):
                 pass
 
-        with patch.object(core_gateway_inspector, "_read_config_current", return_value=None), \
+        with patch.object(core_gateway, "_read_config_current", return_value=None), \
              patch.object(core_gateway_inspector.os, "lstat", return_value=owned_socket), \
              patch.object(core_gateway_inspector.socket, "socket", return_value=ConnectFailureSocket()):
             with self.assertRaisesRegex(core_gateway.CoreGatewayDenied,
