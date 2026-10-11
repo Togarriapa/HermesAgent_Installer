@@ -1977,8 +1977,16 @@ def observe_profile_admin(config: CoreGatewayConfig, *, request: dict[str, Any],
             raise CoreInspectionDenied("Profile is not in the current source manifest")
         elif action == "read":
             value = read_profile_file(request["profile_id"], request["file_kind"])
+            primary_projection = None
+            if request["profile_id"] == "hermes" and request["file_kind"] == "soul":
+                from ..primary_prompt_manager import owner_prefix_projection
+                primary_projection = owner_prefix_projection(value.content.encode("utf-8"),
+                    source_generation=custody.core_source_generation)
             result = {"profile_id": value.profile_id, "file_kind": value.file_kind,
-                "file_name": value.file_name, "content": value.content,
+                "file_name": value.file_name,
+                "content": (primary_projection["editable_content"] if primary_projection else value.content),
+                "protected_suffix": (primary_projection["protected_suffix"] if primary_projection else ""),
+                "managed_primary": primary_projection is not None,
                 "sha256": value.sha256, "signature": list(value.signature),
                 "source_generation": hashlib.sha256(
                     (custody.core_source_generation + "\0" + value.sha256).encode()).hexdigest(),

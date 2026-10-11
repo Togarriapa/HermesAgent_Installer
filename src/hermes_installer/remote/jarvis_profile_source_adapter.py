@@ -655,7 +655,7 @@ def write_profile_file(profile_id: str, file_kind: str, *, expected_sha256: str,
         state = result.get("state")
         return ProfileFileWrite("active" if state == "active" else state,
             "hermes", "soul", result.get("active_soul_sha256"),
-            result.get("active_soul_sha256"), result.get("recovery_id"),
+            result.get("owner_prefix_sha256"), result.get("recovery_id"),
             result.get("managed_primary_block_verified") is True)
     try:
         proposed = content.encode("utf-8", "strict")

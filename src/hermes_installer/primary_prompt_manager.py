@@ -583,7 +583,7 @@ def _write_owner_prefix_locked(content: str, *, expected_sha256: str, idempotenc
         raise PrimaryPromptAdoptionError("owner SOUL edit is not UTF-8") from None
     if not 0 < len(proposed_prefix) <= MAX_SOUL_BYTES:
         raise PrimaryPromptAdoptionError("owner SOUL edit exceeds its bound")
-    proposed_document = proposed_prefix
+    proposed_owner_prefix = proposed_prefix
     _check_root_context(core)
     _ensure_dirs(core)
     record = _read_record(core)
@@ -600,11 +600,11 @@ def _write_owner_prefix_locked(content: str, *, expected_sha256: str, idempotenc
             group=core.ROOT_UID, mode=0o600, maximum=16 * 1024)
         journal = json.loads(prior_raw)
         if (type(journal) is not dict or set(journal) != {"schema", "state", "key_sha256",
-                "source_generation", "base_sha256", "proposed_sha256", "backup_name"}
+                "source_generation", "base_sha256", "proposed_sha256", "result_sha256", "backup_name"}
                 or journal.get("schema") != 1 or journal.get("key_sha256") != key_hash
                 or journal.get("source_generation") != core_source_generation
                 or journal.get("base_sha256") != expected_sha256
-                or journal.get("proposed_sha256") != _sha(proposed_document)
+                or journal.get("proposed_sha256") != _sha(proposed_owner_prefix)
                 or journal.get("backup_name") != backup_name
                 or journal.get("state") not in {"prepared", "committed"}):
             raise PrimaryPromptAdoptionError("owner SOUL edit idempotency record differs")
@@ -626,9 +626,7 @@ def _write_owner_prefix_locked(content: str, *, expected_sha256: str, idempotenc
             owner_prefix_length=record["owner_prefix_length"],
             separator=bytes.fromhex(record["owner_separator_hex"]))
         suffix = separator + block
-        if not proposed_document.endswith(suffix):
-            raise PrimaryPromptAdoptionError("managed Jarvis overlay must remain byte-for-byte unchanged")
-        proposed_prefix = proposed_document[:-len(suffix)]
+        proposed_prefix = proposed_owner_prefix
         if not 0 < len(proposed_prefix) <= MAX_SOUL_BYTES - len(suffix):
             raise PrimaryPromptAdoptionError("owner prefix exceeds its bound")
         if (b"<!-- HERMES-INSTALLER-MANAGED-JARVIS-PRIMARY v1 BEGIN -->" in proposed_prefix
@@ -644,18 +642,19 @@ def _write_owner_prefix_locked(content: str, *, expected_sha256: str, idempotenc
                 raise PrimaryPromptAdoptionError("orphan owner SOUL edit backup differs")
         journal = {"schema": 1, "state": "prepared", "key_sha256": key_hash,
             "source_generation": core_source_generation, "base_sha256": expected_sha256,
-            "proposed_sha256": _sha(proposed_document), "backup_name": backup_name}
+            "proposed_sha256": _sha(proposed_prefix),
+            "result_sha256": _sha(proposed_prefix + suffix), "backup_name": backup_name}
         core._atomic(journal_path, (json.dumps(journal, sort_keys=True,
             separators=(",", ":")) + "\n").encode("ascii"), 0o600, core.ROOT_UID, core.ROOT_UID)
     else:
         if _sha(backup) != expected_sha256:
             raise PrimaryPromptAdoptionError("owner SOUL edit backup does not match its base digest")
-        if journal["state"] == "committed" and _sha(current) == journal["proposed_sha256"]:
+        if journal["state"] == "committed" and _sha(current) == journal["result_sha256"]:
             return _status_record(record, _record_matches_current(core, record, current,
                 *(_fixed_bundle(core)[3:5]))) | {"state": "active", "recovery_id": key_hash}
-        if _sha(current) not in {expected_sha256, journal["proposed_sha256"]}:
+        if _sha(current) not in {expected_sha256, journal["result_sha256"]}:
             raise PrimaryPromptAdoptionError("active SOUL changed during interrupted edit")
-        if _sha(current) == journal["proposed_sha256"]:
+        if _sha(current) == journal["result_sha256"]:
             # A process may have stopped after the atomic file replacement but
             # before refreshing the root receipt. Rebuild that receipt from the
             # immutable source and native loader before resolving the bundle.
@@ -664,21 +663,24 @@ def _write_owner_prefix_locked(content: str, *, expected_sha256: str, idempotenc
             core, recovery_record=record, current_prompt_sha256=_sha(current))
         if source_generation != core_source_generation or artifact_sha != record["artifact_sha256"]:
             raise PrimaryPromptAdoptionError("Core or Resources generation changed")
-        if _sha(current) == journal["proposed_sha256"]:
+        if _sha(current) == journal["result_sha256"]:
             # Replacement completed before the root receipt update; verify and resume it.
             suffix = bytes.fromhex(record["owner_separator_hex"]) + _record_managed_block(record, files)
-            if not proposed_document.endswith(suffix) or not current.endswith(suffix):
+            if not current.endswith(suffix):
                 raise PrimaryPromptAdoptionError("managed Jarvis overlay changed during edit recovery")
             proposed_prefix = current[:-len(suffix)]
+            if _sha(proposed_prefix) != journal["proposed_sha256"]:
+                raise PrimaryPromptAdoptionError("owner prefix differs from the edit journal")
         else:
             suffix = bytes.fromhex(record["owner_separator_hex"]) + _record_managed_block(record, files)
-            if not proposed_document.endswith(suffix):
-                raise PrimaryPromptAdoptionError("managed Jarvis overlay must remain byte-for-byte unchanged")
-            proposed_prefix = proposed_document[:-len(suffix)]
+            proposed_prefix = proposed_owner_prefix
+            if _sha(proposed_prefix) != journal["proposed_sha256"]:
+                raise PrimaryPromptAdoptionError("owner prefix differs from the edit journal")
+            if _sha(proposed_prefix + suffix) != journal["result_sha256"]:
+                raise PrimaryPromptAdoptionError("managed Jarvis overlay changed during edit recovery")
             current = backup
             signature = _read_soul(core)[1]
-    desired = proposed_prefix + bytes.fromhex(record["owner_separator_hex"]) + block if journal is None else (
-        proposed_prefix + bytes.fromhex(record["owner_separator_hex"]) + _record_managed_block(record, files))
+    desired = proposed_prefix + bytes.fromhex(record["owner_separator_hex"]) + _record_managed_block(record, files)
     if _sha(current) != _sha(desired):
         stage = ".SOUL.md.jarvis-" + secrets.token_hex(12) + ".stage"
         _atomic_admin_replace(core, desired, expected_signature=signature,
@@ -713,6 +715,30 @@ def _record_managed_block(record, files) -> bytes:
     if _sha(block) != record["managed_block_sha256"]:
         raise PrimaryPromptAdoptionError("managed Jarvis overlay changed")
     return block
+
+
+def owner_prefix_projection(current: bytes, *, source_generation: str) -> dict[str, Any] | None:
+    """Return editable owner bytes and separately typed protected Jarvis bytes."""
+    from . import core_runtime as core
+    record = _read_record(core)
+    if record is None or record.get("state") != "adopted":
+        return None
+    if record.get("core_source_generation") != source_generation:
+        raise PrimaryPromptAdoptionError("managed primary source generation changed")
+    active, signature = _read_soul(core)
+    if active != current or signature != record["result_soul_signature"]:
+        raise PrimaryPromptAdoptionError("active primary SOUL changed")
+    generation, _discovery, artifact_sha, _manifest, files, _prompt = _fixed_bundle(core)
+    if generation != source_generation or artifact_sha != record["artifact_sha256"]:
+        raise PrimaryPromptAdoptionError("managed primary source changed")
+    block = _record_managed_block(record, files)
+    prefix, separator, _ = split_managed_block(current,
+        owner_prefix_length=record["owner_prefix_length"],
+        separator=bytes.fromhex(record["owner_separator_hex"]))
+    _record_matches_current(core, record, current, _manifest, files)
+    return {"editable_content": prefix.decode("utf-8", "strict"),
+        "protected_suffix": (separator + block).decode("utf-8", "strict"),
+        "managed_primary": True}
 
 
 def primary_prompt_status() -> dict[str, Any]:

@@ -63,6 +63,8 @@ class ProfileAdminFile:
     content: str
     sha256: str
     effective: bool
+    protected_suffix: str = ""
+    managed_primary: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,11 +240,12 @@ class CoreGatewayProfileAdminProvider:
         row = self._call(action="read", access_jwt=access_jwt,
             accepted_ingress=accepted_ingress, profile_key=profile_key, file_kind=file_kind)
         if (type(row) is not dict or set(row) != {"profile_id", "file_kind", "file_name", "content",
-                "sha256", "signature", "source_generation", "effective"}
+                "protected_suffix", "managed_primary", "sha256", "signature", "source_generation", "effective"}
                 or type(row["signature"]) is not list or len(row["signature"]) != 9):
             raise JarvisChatDenied("current profile file is unavailable")
         return ProfileAdminFile(row["profile_id"], row["file_kind"], row["file_name"],
-            row["source_generation"], row["content"], row["sha256"], row["effective"])
+            row["source_generation"], row["content"], row["sha256"], row["effective"],
+            row["protected_suffix"], row["managed_primary"])
 
     def write_generation(self, *, subject: str, core_generation: str, profile_key: str,
                          file_kind: str, expected_sha256: str, content: str,
@@ -316,8 +319,10 @@ def _file(value: Any, *, profile_key: str, file_kind: str) -> ProfileAdminFile:
     if (value.profile_key != profile_key or value.file_kind != file_kind
             or value.file_name != FILE_NAMES[file_kind]
             or not _valid_generation(value.source_generation)
-            or not _valid_text(value.content)
-            or hashlib.sha256(value.content.encode("utf-8")).hexdigest() != value.sha256
+            or not _valid_text(value.content) or not _valid_text(value.protected_suffix)
+            or hashlib.sha256((value.content + value.protected_suffix).encode("utf-8")).hexdigest() != value.sha256
+            or type(value.managed_primary) is not bool
+            or (value.managed_primary and not value.protected_suffix)
             or type(value.effective) is not bool):
         raise JarvisChatDenied("current profile file is unavailable")
     return value
@@ -371,7 +376,7 @@ class JarvisProfileAdmin:
                 "name": row.display_name, "kind": row.kind,
                 "sourceGeneration": row.source_generation,
                 "files": [{"kind": kind, "name": FILE_NAMES[kind],
-                           "editable": not (row.kind == "jarvis" and kind == "soul")}
+                           "editable": True}
                           for kind in row.file_kinds],
             })
             with self._lock:
@@ -396,13 +401,11 @@ class JarvisProfileAdmin:
             core_generation=core_generation, profile_key=profile.profile_key,
             file_kind=file_kind, access_jwt=access_jwt,
             accepted_ingress=accepted_ingress), profile_key=profile.profile_key, file_kind=file_kind)
-        editable = not (profile.kind == "jarvis" and file_kind == "soul")
+        editable = True
         return {"profileId": profile_id, "fileKind": file_kind, "fileName": value.file_name,
                 "content": value.content, "sha256": value.sha256,
-                "sourceGeneration": value.source_generation, "effective": value.effective,
-                "editable": editable,
-                "editUnavailableReason": (None if editable else
-                    "Primary SOUL edits remain unavailable until the journal-aware effective-prompt transaction is qualified.")}
+                "protectedSuffix": value.protected_suffix, "managedPrimary": value.managed_primary,
+                "sourceGeneration": value.source_generation, "effective": value.effective, "editable": editable}
 
     def preview(self, *, subject: str, core_generation: str, profile_id: str,
                 file_kind: str, base_sha256: str, content: str, access_jwt: str,
@@ -415,8 +418,6 @@ class JarvisProfileAdmin:
                                 accepted_ingress=accepted_ingress)
         if file_kind not in profile.file_kinds:
             raise JarvisChatDenied("profile file is unavailable")
-        if profile.kind == "jarvis" and file_kind == "soul":
-            raise JarvisChatDenied("primary SOUL edits are unavailable pending the journal-aware effective-prompt transaction")
         current = _file(self._provider.read_file(subject=subject,
             core_generation=core_generation, profile_key=profile.profile_key,
             file_kind=file_kind, access_jwt=access_jwt,
@@ -459,8 +460,6 @@ class JarvisProfileAdmin:
                                 accepted_ingress=accepted_ingress)
         if file_kind not in profile.file_kinds:
             raise JarvisChatDenied("profile file is unavailable")
-        if profile.kind == "jarvis" and file_kind == "soul":
-            raise JarvisChatDenied("primary SOUL edits are unavailable pending the journal-aware effective-prompt transaction")
         content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
         subject_sha = hashlib.sha256(subject.encode()).hexdigest()
         with self._lock:
@@ -695,8 +694,13 @@ _VIEW = '''<section class="profile-admin" aria-labelledby="profile-admin-title">
     <main><div class="profile-editor-toolbar"><div><h2 data-editor-title>Select a profile file</h2>
       <p data-editor-state>Current effective text will appear here.</p></div>
       <button type="button" data-profile-review disabled>Review changes</button></div>
-      <label class="profile-editor-label" for="profile-source-editor">Profile file text</label>
+      <label class="profile-editor-label" for="profile-source-editor">Owner-editable profile text</label>
       <textarea data-profile-editor id="profile-source-editor" spellcheck="false" disabled></textarea>
+      <section data-protected-section hidden aria-label="Protected managed Jarvis overlay">
+        <h3>Protected managed Jarvis overlay</h3>
+        <p class="profile-admin-note">This managed section is verified against the pinned Jarvis source and is not editable here.</p>
+        <pre data-protected-content></pre>
+      </section>
       <section class="profile-diff" aria-labelledby="profile-diff-title"><div><h3 id="profile-diff-title">Review diff</h3>
         <button type="button" data-profile-save disabled>Save reviewed generation</button></div>
         <pre data-profile-diff aria-live="polite">Choose a file to inspect its current contents.</pre></section>
@@ -708,22 +712,26 @@ _CSS = '''.profile-admin{max-width:1180px;margin:0 auto;color:var(--text,#edf5f6
 
 _MOUNT_JS = r'''function mount(root, api) {
   let active = true, profiles = [], selected = null, file = null, baseSha = null, previewToken = null;
-  const q = (s) => root.querySelector(s), status = q("[data-profile-status]"), profileSelect = q("[data-profile-select]"), fileSelect = q("[data-file-select]"), editor = q("[data-profile-editor]"), review = q("[data-profile-review]"), save = q("[data-profile-save]"), diff = q("[data-profile-diff]");
+  const q = (s) => root.querySelector(s), status = q("[data-profile-status]"), profileSelect = q("[data-profile-select]"), fileSelect = q("[data-file-select]"), editor = q("[data-profile-editor]"), review = q("[data-profile-review]"), save = q("[data-profile-save]"), diff = q("[data-profile-diff]"), protectedSection=q("[data-protected-section]"), protectedContent=q("[data-protected-content]");
   const text = (s, v) => { const n=q(s); if(n)n.textContent=v; };
   const token = () => { const b=new Uint8Array(24);crypto.getRandomValues(b);return Array.from(b,x=>x.toString(16).padStart(2,"0")).join(""); };
   const safeId = (v) => typeof v === "string" && /^[0-9a-f]{64}$/.test(v);
   const safeHash = (v) => typeof v === "string" && /^[0-9a-f]{64}$/.test(v);
   const changed = () => { previewToken=null;save.disabled=true;review.disabled=!(file&&file.editable===true&&baseSha&&editor.value!==file.content); };
   async function loadFile() {
-    file=null;baseSha=null;previewToken=null;editor.value="";editor.disabled=true;review.disabled=true;save.disabled=true;
+    file=null;baseSha=null;previewToken=null;editor.value="";editor.disabled=true;review.disabled=true;save.disabled=true;protectedSection.hidden=true;protectedContent.textContent="";
     const row=profiles.find((item)=>item.id===profileSelect.value), kind=fileSelect.value;
     selected=row||null;if(!row||!kind)return;
     status.textContent="Reading the selected native profile file…";
     try { const value=await api.get(`/chat/api/profiles/${encodeURIComponent(row.id)}/files/${encodeURIComponent(kind)}`);
       if(!active||profileSelect.value!==row.id||fileSelect.value!==kind)return;
-      if(!value||value.profileId!==row.id||value.fileKind!==kind||typeof value.content!=="string"||!safeHash(value.sha256)||typeof value.sourceGeneration!=="string")throw Error();
-      file=value;baseSha=value.sha256;editor.value=value.content;editor.disabled=value.editable!==true;
-      text("[data-editor-title]",value.fileName);text("[data-editor-state]",value.editable!==true?(value.editUnavailableReason||"This source cannot be edited safely yet."):(value.effective?"Current effective source · read only until you review a change":"Existing source is not confirmed effective"));
+      if(!value||value.profileId!==row.id||value.fileKind!==kind||typeof value.content!=="string"||typeof value.protectedSuffix!=="string"||typeof value.managedPrimary!=="boolean"||value.editable!==true||!safeHash(value.sha256)||typeof value.sourceGeneration!=="string")throw Error();
+      const documentHash=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value.content+value.protectedSuffix));
+      const documentSha=Array.from(new Uint8Array(documentHash),b=>b.toString(16).padStart(2,"0")).join("");
+      if(documentSha!==value.sha256)throw Error();
+      file=value;baseSha=value.sha256;editor.value=value.content;editor.disabled=value.editable!==true;protectedSection.hidden=!value.managedPrimary;protectedContent.textContent=value.protectedSuffix;
+      text("[data-editor-title]",value.fileName);text("[data-editor-state]",value.managedPrimary?"Jarvis owner prefix · managed overlay stays protected":(value.effective?"Current effective source · read only until you review a change":"Existing source is not confirmed effective"));
+
       text("[data-profile-generation]",value.sourceGeneration);diff.textContent="No changes reviewed.";status.textContent="Actual file contents loaded from the current profile source.";
     } catch (_) { if(active){status.textContent="Profile source unavailable; no file was changed.";diff.textContent="Current content could not be verified.";} }
   }

@@ -118,6 +118,64 @@ def test_source_race_consumes_preview_without_repeating_the_write():
     assert provider.writes == []
 
 
+def test_primary_soul_preview_and_save_keep_the_managed_suffix_protected():
+    class _ManagedProvider(_Provider):
+        suffix = "\n<!-- managed Jarvis block -->\nPinned instructions.\n"
+
+        def read_file(self, *, subject, core_generation, profile_key, file_kind,
+                      access_jwt, accepted_ingress):
+            prefix = self.files[(profile_key, file_kind)]
+            return ProfileAdminFile(profile_key, file_kind, "SOUL.md", self.generation,
+                prefix, _sha(prefix + self.suffix), True, self.suffix, True)
+
+        def write_generation(self, *, subject, core_generation, profile_key, file_kind,
+                             expected_sha256, content, idempotency_key, access_jwt, accepted_ingress):
+            before = self.files[(profile_key, file_kind)]
+            assert expected_sha256 == _sha(before + self.suffix)
+            assert "managed Jarvis block" not in content
+            self.files[(profile_key, file_kind)] = content
+            self.writes.append((profile_key, file_kind, idempotency_key))
+            return ProfileAdminWriteResult("active", self.generation, _sha(content),
+                "prefix-edit-recovery-id", True)
+
+    provider = _ManagedProvider()
+    admin = JarvisProfileAdmin(provider)
+    auth = {"subject": "owner-a", "core_generation": "core-a",
+            "access_jwt": "jwt", "accepted_ingress": object()}
+    profile_id = admin.list_profiles(**auth)["profiles"][0]["id"]
+    initial = admin.read_file(**auth, profile_id=profile_id, file_kind="soul")
+    assert initial["content"] == "Jarvis owner prompt\n"
+    assert initial["protectedSuffix"] == provider.suffix
+    assert initial["managedPrimary"] is True
+    proposed = initial["content"] + "Use concise answers.\n"
+    preview = admin.preview(**auth, profile_id=profile_id, file_kind="soul",
+        base_sha256=initial["sha256"], content=proposed)
+    assert "Use concise answers." in preview["diff"]
+    assert "managed Jarvis block" not in preview["diff"]
+    saved = admin.save(**auth, profile_id=profile_id, file_kind="soul",
+        base_sha256=initial["sha256"], content=proposed,
+        preview_token=preview["previewToken"], idempotency_key="prefix_edit_key_1234567890")
+    assert saved["state"] == "active"
+    assert provider.files[("hermes", "soul")] == proposed
+
+
+def test_profile_file_projection_rejects_a_modified_protected_suffix():
+    class _TamperedProvider(_Provider):
+        def read_file(self, *, subject, core_generation, profile_key, file_kind,
+                      access_jwt, accepted_ingress):
+            value = self.files[(profile_key, file_kind)]
+            return ProfileAdminFile(profile_key, file_kind, "SOUL.md", self.generation,
+                value, _sha(value), True, "unverified protected suffix", True)
+
+    provider = _TamperedProvider()
+    admin = JarvisProfileAdmin(provider)
+    auth = {"subject": "owner-a", "core_generation": "core-a",
+            "access_jwt": "jwt", "accepted_ingress": object()}
+    profile_id = admin.list_profiles(**auth)["profiles"][0]["id"]
+    with pytest.raises(JarvisChatDenied):
+        admin.read_file(**auth, profile_id=profile_id, file_kind="soul")
+
+
 def test_editor_fragment_uses_fixed_routes_and_never_opens_expert_chat():
     feature = reviewed_profiles_admin_feature()
     assert ("POST", "/chat/api/profiles/{profile_id}/save") in feature.api_routes
