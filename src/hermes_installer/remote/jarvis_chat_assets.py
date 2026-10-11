@@ -29,6 +29,12 @@ _HTML = '''<!doctype html>
         <span class="brand-mark" aria-hidden="true"><span></span></span>
         <span class="brand-copy"><strong>JARVIS</strong><small>PERSONAL ASSISTANT</small></span>
       </a>
+      <nav class="primary-nav" aria-label="Jarvis sections">
+        <button type="button" class="nav-item" data-view="chat" aria-current="page">Chat</button>
+        <button type="button" class="nav-item" data-view="overview">Overview</button>
+        <button type="button" class="nav-item" data-view="capabilities">Capabilities</button>
+        <button type="button" class="nav-item" data-view="settings">Settings</button>
+      </nav>
       <span class="connection" id="connection-state" role="status" aria-live="polite">
         <span class="connection-dot" aria-hidden="true"></span><span>Checking access…</span>
       </span>
@@ -47,7 +53,7 @@ _HTML = '''<!doctype html>
         <div class="panel-footer"><span class="privacy-mark" aria-hidden="true">◈</span><span>Private conversations</span></div>
       </aside>
 
-      <main class="chat-main" id="main-content">
+      <main class="chat-main" id="main-content" data-view-panel="chat">
         <div class="chat-heading">
           <div>
             <span class="eyebrow">PERSONAL ASSISTANT</span>
@@ -80,6 +86,24 @@ _HTML = '''<!doctype html>
           </form>
         </div>
       </main>
+      <section class="data-main" id="overview-view" aria-label="Overview" data-view-panel="overview" hidden>
+        <div class="page-heading"><span class="eyebrow">SYSTEM STATUS</span><h1>Overview</h1><p>Your assistant activity and service readiness.</p></div>
+        <div class="dashboard-grid">
+          <section class="data-card status-card"><h2>Core service</h2><p class="large-value" id="core-status">Loading…</p><p id="core-readiness" class="muted">Checking verified status</p><p id="core-observed" class="muted"></p></section>
+          <section class="data-card"><h2>Conversations</h2><p class="large-value" id="conversation-count">—</p><p class="muted">Available in your private history</p></section>
+          <section class="data-card"><h2>Assistant turns</h2><p class="large-value" id="turn-total">—</p><p class="muted" id="turn-breakdown">Activity totals</p></section>
+          <section class="data-card chart-card"><h2>Turns over the last 7 days</h2><p class="muted" id="chart-caption">Loading recorded activity…</p><div id="turn-chart" role="img" aria-label="Assistant turns in the last seven days"></div></section>
+        </div>
+      </section>
+      <section class="data-main" id="capabilities-view" aria-label="Capabilities" data-view-panel="capabilities" hidden>
+        <div class="page-heading"><span class="eyebrow">AVAILABLE TO JARVIS</span><h1>Capabilities</h1><p>Verified local inventory and current readiness.</p></div>
+        <div id="capability-readiness" class="readiness-banner" role="status">Loading verified capability inventory…</div>
+        <div id="capability-list" class="capability-list" aria-live="polite"></div>
+      </section>
+      <section class="data-main" id="settings-view" aria-label="Settings" data-view-panel="settings" hidden>
+        <div class="page-heading"><span class="eyebrow">CONFIGURATION</span><h1>Settings</h1><p>Effective runtime configuration reported by the service.</p></div>
+        <section class="data-card settings-card"><h2>Assistant runtime</h2><dl id="settings-list" class="settings-list"><div><dt>Status</dt><dd>Loading verified configuration…</dd></div></dl><p class="muted">These values are read-only here until secure settings changes are available.</p></section>
+      </section>
     </div>
   </div>
   <div class="scrim" id="panel-scrim" hidden></div>
@@ -95,6 +119,9 @@ _CSS = '''@charset "UTF-8";
 @media(max-width:390px){.topbar{gap:6px;padding-inline:10px}.brand{gap:7px}.brand-copy strong{font-size:12px}.connection{gap:5px;font-size:9px}.chat-main{padding-inline:13px}.composer-hint{max-width:170px;line-height:1.3}.send-button{gap:7px;padding-inline:10px}.chat-heading h1{font-size:20px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 @media(forced-colors:active){.brand-mark,.welcome-orbit,.composer,.new-chat-button,.send-button,.stop-button{border:1px solid CanvasText}.connection-dot{background:Highlight}}
+.primary-nav{display:flex;align-items:center;gap:4px;margin-left:24px}.nav-item{min-height:36px;padding:0 12px;border:1px solid transparent;border-radius:9px;background:transparent;color:#9ab1b5;font:inherit;font-size:12px;cursor:pointer}.nav-item:hover,.nav-item[aria-current="page"]{border-color:var(--line);background:rgba(88,228,235,.08);color:#ddfbfd}.workspace>.data-main{grid-column:2;grid-row:1}.data-main{min-width:0;overflow:auto;padding:40px clamp(20px,5vw,76px)}.data-main[hidden],.chat-main[hidden]{display:none}.page-heading{max-width:1080px;margin:0 auto 26px}.page-heading h1{margin:0;font-size:clamp(25px,3vw,34px);font-weight:550;letter-spacing:-.03em}.page-heading p,.muted{color:#8ba5aa;font-size:13px;line-height:1.6}.page-heading p{margin:8px 0}.dashboard-grid{max-width:1080px;margin:0 auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.data-card{min-width:0;padding:21px;border:1px solid var(--line);border-radius:15px;background:rgba(12,31,38,.78)}.data-card h2{margin:0;color:#acc2c6;font-size:13px;font-weight:600}.large-value{margin:14px 0 3px;color:#e6fbfc;font-size:29px;font-weight:550;letter-spacing:-.03em}.data-card .muted{margin:5px 0}.chart-card{grid-column:1/-1}.chart-bars{height:175px;display:grid;grid-template-columns:repeat(7,minmax(24px,1fr));align-items:end;gap:10px;margin:22px 4px 0;border-bottom:1px solid var(--line-strong)}.chart-day{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:7px;color:#88a2a7;font-size:10px}.chart-bar-track{height:124px;width:100%;display:flex;align-items:flex-end;justify-content:center}.chart-bar{width:min(35px,72%);min-height:2px;border-radius:5px 5px 1px 1px;background:linear-gradient(0deg,#137c88,#56dbe2)}.readiness-banner{max-width:1080px;margin:0 auto 16px;padding:14px 17px;border:1px solid rgba(245,194,117,.25);border-radius:12px;background:rgba(106,76,31,.12);color:#e7cca0;font-size:13px;line-height:1.6}.capability-list{max-width:1080px;margin:auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.capability-row{padding:16px;border:1px solid var(--line);border-radius:12px;background:rgba(12,31,38,.66)}.capability-row h2{margin:0 0 6px;font-size:14px;font-weight:600}.capability-row p{margin:0;color:#8ba5aa;font-size:12px;line-height:1.6}.state-pill{display:inline-block;margin-top:11px;padding:4px 8px;border:1px solid var(--line);border-radius:999px;color:#abc2c5;font-size:10px;text-transform:capitalize}.settings-card{max-width:720px;margin:0 auto}.settings-list{margin:18px 0;display:grid;gap:0}.settings-list>div{display:flex;justify-content:space-between;gap:20px;padding:14px 0;border-bottom:1px solid var(--line)}.settings-list dt{color:#8ba5aa;font-size:13px}.settings-list dd{margin:0;text-align:right;color:#e1f4f5;font-size:13px;overflow-wrap:anywhere}
+@media(max-width:760px){.topbar{height:auto;min-height:64px;flex-wrap:wrap;padding-block:8px}.primary-nav{order:3;width:100%;margin:0;justify-content:space-around}.nav-item{flex:1;padding-inline:6px}.connection{margin-left:auto}.conversation-panel{top:calc(112px + env(safe-area-inset-top))}.scrim:not([hidden]){inset:calc(104px + env(safe-area-inset-top)) 0 0}.workspace{min-height:0}.workspace>.data-main{grid-column:1;grid-row:1}.data-main{padding:26px 16px calc(20px + env(safe-area-inset-bottom))}.dashboard-grid,.capability-list{grid-template-columns:1fr}.chart-card{grid-column:auto}.data-card{padding:17px}.chart-bars{gap:5px}.settings-list>div{gap:12px}}
+@media(prefers-reduced-motion:reduce){.nav-item{transition:none}}
 '''.encode("utf-8")
 
 
@@ -369,6 +396,107 @@ _JS = r'''/* Browser client is deliberately a text-only view over the finite Jar
       if (activeTurnId === turnId) renderTurnControls(true);
     }
   }
+  function renderTurnChart(days) {
+    const chart = byId("turn-chart");
+    chart.replaceChildren();
+    if (!Array.isArray(days) || days.length !== 7 || days.some((day) => !day || typeof day.date !== "string" || !Number.isFinite(day.total))) {
+      byId("chart-caption").textContent = "Recorded daily activity is not available yet.";
+      return;
+    }
+    byId("chart-caption").textContent = days.reduce((sum, day) => sum + Math.max(0, day.total), 0) === 0 ? "No assistant turns recorded in this period." : "Recorded turns, grouped by day.";
+    const max = Math.max(1, ...days.map((day) => Math.max(0, day.total)));
+    const bars = document.createElement("div");
+    bars.className = "chart-bars";
+    for (const day of days) {
+      const cell = document.createElement("div");
+      cell.className = "chart-day";
+      const value = Math.max(0, day.total);
+      const track = document.createElement("div");
+      track.className = "chart-bar-track";
+      const bar = document.createElement("span");
+      bar.className = "chart-bar";
+      bar.style.height = `${value ? Math.max(4, 100 * value / max) : 1}%`;
+      bar.title = `${value} turns`;
+      track.append(bar);
+      const label = document.createElement("span");
+      const parsed = new Date(`${day.date}T00:00:00Z`);
+      label.textContent = Number.isNaN(parsed.valueOf()) ? day.date : parsed.toLocaleDateString(undefined, { weekday: "short", timeZone: "UTC" });
+      cell.append(track, label);
+      bars.append(cell);
+    }
+    chart.append(bars);
+  }
+  async function loadOverview() {
+    const data = await request(`${API}/overview`);
+    const core = data.core || {};
+    const chat = data.chat || {};
+    byId("core-status").textContent = typeof core.status === "string" ? core.status : "Unavailable";
+    byId("core-readiness").textContent = typeof core.readiness === "string" ? core.readiness : "Readiness has not been verified.";
+    byId("core-observed").textContent = typeof core.observedAt === "string" ? `Observed ${core.observedAt}` : "No verified observation time";
+    byId("conversation-count").textContent = Number.isFinite(chat.conversationCount) ? String(chat.conversationCount) : "Unavailable";
+    const counts = chat.turnCounts || {};
+    byId("turn-total").textContent = Number.isFinite(counts.total) ? String(counts.total) : "Unavailable";
+    byId("turn-breakdown").textContent = ["completed", "failed", "cancelled"].map((key) => `${key}: ${Number.isFinite(counts[key]) ? counts[key] : "—"}`).join(" · ");
+    renderTurnChart(chat.turnCountsByDay);
+  }
+  async function loadCapabilities() {
+    const data = await request(`${API}/capabilities`);
+    const list = byId("capability-list");
+    list.replaceChildren();
+    byId("capability-readiness").textContent = typeof data.readiness === "string" ? data.readiness : "Some capabilities are still being verified.";
+    if (!Array.isArray(data.items) || !data.items.length) {
+      const empty = document.createElement("p");
+      empty.className = "readiness-banner";
+      empty.textContent = "No capability inventory is available yet.";
+      list.append(empty);
+      return;
+    }
+    for (const item of data.items) {
+      if (!item || typeof item.name !== "string") continue;
+      const card = document.createElement("article");
+      card.className = "capability-row";
+      const name = document.createElement("h2");
+      name.textContent = item.name;
+      const detail = document.createElement("p");
+      detail.textContent = typeof item.summary === "string" ? item.summary : "Details are not available.";
+      const state = document.createElement("span");
+      state.className = "state-pill";
+      const knownState = ["bundled", "pending", "unavailable", "ready"].includes(item.state) ? item.state : "pending";
+      state.textContent = knownState === "ready" ? "verified ready" : knownState;
+      card.append(name, detail, state);
+      list.append(card);
+    }
+  }
+  async function loadSettings() {
+    const data = await request(`${API}/settings`);
+    const list = byId("settings-list");
+    list.replaceChildren();
+    for (const [label, setting] of [["Provider", data.provider], ["Model", data.model], ["Core version", data.coreVersion]]) {
+      const row = document.createElement("div");
+      const term = document.createElement("dt");
+      term.textContent = label;
+      const definition = document.createElement("dd");
+      const value = setting && typeof setting === "object" ? setting.value : setting;
+      definition.textContent = typeof value === "string" && value.trim() ? value : "Pending verification";
+      row.append(term, definition);
+      list.append(row);
+    }
+  }
+  async function showView(view) {
+    const selected = ["chat", "overview", "capabilities", "settings"].includes(view) ? view : "chat";
+    for (const panel of document.querySelectorAll("[data-view-panel]")) panel.hidden = panel.dataset.viewPanel !== selected;
+    for (const button of document.querySelectorAll(".nav-item")) {
+      if (button.dataset.view === selected) button.setAttribute("aria-current", "page");
+      else button.removeAttribute("aria-current");
+    }
+    if (selected === "overview") {
+      try { await loadOverview(); } catch (error) { byId("chart-caption").textContent = error.message; }
+    } else if (selected === "capabilities") {
+      try { await loadCapabilities(); } catch (error) { byId("capability-readiness").textContent = error.message; }
+    } else if (selected === "settings") {
+      try { await loadSettings(); } catch (error) { byId("settings-list").replaceChildren(); const row = document.createElement("div"); const term = document.createElement("dt"); const value = document.createElement("dd"); term.textContent = "Status"; value.textContent = error.message; row.append(term, value); byId("settings-list").append(row); }
+    }
+  }
   ui.form.addEventListener("submit", (event) => {
     event.preventDefault();
     const text = ui.input.value;
@@ -392,6 +520,7 @@ _JS = r'''/* Browser client is deliberately a text-only view over the finite Jar
   ui.toggle.addEventListener("click", () => setPanel(ui.panel.dataset.open !== "true"));
   ui.close.addEventListener("click", () => setPanel(false));
   ui.scrim.addEventListener("click", () => setPanel(false));
+  for (const button of document.querySelectorAll(".nav-item")) button.addEventListener("click", () => showView(button.dataset.view));
   window.addEventListener("pagehide", closeStream);
   (async () => {
     try {

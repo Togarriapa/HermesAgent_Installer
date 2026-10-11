@@ -19,6 +19,23 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertNotIn("Owner Desktop", source)
         self.assertNotIn("owner administration", source)
 
+    def test_navigation_and_read_only_views_use_finite_account_scoped_endpoints(self):
+        _content_type, page = reviewed_chat_asset("/chat")
+        source = page.decode("utf-8")
+        for label in ("Chat", "Overview", "Capabilities", "Settings"):
+            with self.subTest(label=label):
+                self.assertIn(f">{label}</button>", source)
+        self.assertIn('id="turn-chart"', source)
+        self.assertIn('id="capability-list"', source)
+        self.assertIn("read-only here", source)
+
+        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
+        client = script.decode("utf-8")
+        for endpoint in ("/overview", "/capabilities", "/settings"):
+            with self.subTest(endpoint=endpoint):
+                self.assertIn(f"${{API}}{endpoint}", client)
+        self.assertIn("turnCountsByDay", client)
+
     def test_only_exact_reviewed_asset_routes_are_available(self):
         expected = {
             "/chat": "text/html; charset=utf-8",
