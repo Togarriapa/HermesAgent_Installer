@@ -8,6 +8,7 @@ from . import jarvis_missions as _missions
 from . import jarvis_native_inventory as _native_inventory
 from . import jarvis_files as _files
 from . import jarvis_models as _models
+from . import jarvis_context as _context
 from .jarvis_runtime_visibility_assets import FEATURE_ASSETS as _ACTIVITY_ASSETS
 from .jarvis_bots_ui import FEATURE_ASSETS as _BOTS_ASSETS
 from .jarvis_feature_contract import JarvisFeatureAssets
@@ -19,6 +20,7 @@ from .jarvis_files_assets import FEATURE_ASSETS as _FILES_ASSETS
 from .jarvis_models_assets import FEATURE_ASSETS as _MODELS_ASSETS
 from .jarvis_overview_assets import FEATURE_ASSETS as _OVERVIEW_ASSETS
 from .jarvis_integrations_assets import FEATURE_ASSETS as _INTEGRATIONS_ASSETS
+from .jarvis_context_assets import FEATURE_ASSETS as _CONTEXT_ASSETS
 
 # Runtime resources are compiled only from these explicit, reviewed modules.
 FEATURE_ASSETS: tuple[JarvisFeatureAssets, ...] = (
@@ -28,6 +30,7 @@ FEATURE_ASSETS: tuple[JarvisFeatureAssets, ...] = (
     _MODELS_ASSETS,
     _OVERVIEW_ASSETS,
     _INTEGRATIONS_ASSETS,
+    _CONTEXT_ASSETS,
 )
 
 # New endpoint installers are explicit. Activity is installed exactly once by
@@ -39,6 +42,7 @@ FEATURE_ROUTE_INSTALLERS = (
      _NATIVE_INVENTORY_ASSETS.api_routes),
     ("files", _files.install_jarvis_files_routes, _files.FEATURE_ROUTES),
     ("models-settings", _models.install_jarvis_models_routes, _models.FEATURE_ROUTES),
+    ("context", _context.install_jarvis_context_routes, _CONTEXT_ASSETS.api_routes),
 )
 FEATURE_ROUTE_OWNERS = (
     ("activity", "chat-service.install", _ACTIVITY_ASSETS.api_routes),
@@ -49,7 +53,10 @@ FEATURE_ROUTE_OWNERS = (
 )
 
 # Files may reuse only this fixed authenticated conversation selector.
-_SHARED_INSTALLER_READS = {"files": {("GET", "/chat/api/conversations")}}
+_SHARED_INSTALLER_READS = {
+    "files": {("GET", "/chat/api/conversations")},
+    "context": {("GET", "/chat/api/conversations")},
+}
 _INTEGRATIONS_SHARED_READS = (
     ("GET", "/chat/api/capabilities"),
     ("GET", "/chat/api/channels"),

@@ -1078,7 +1078,9 @@ class CoreGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(overview["chat"]["turnCounts"]["total"], 0)
                     self.assertEqual(len(overview["chat"]["turnCountsByDay"]), 7)
 
-                    for path in ("/chat", "/chat/", "/chat/assets/app.css", "/chat/assets/app.js"):
+                    for path in ("/chat", "/chat/", "/chat/assets/app.css", "/chat/assets/features.js",
+                                 "/chat/assets/app.js", "/chat/manifest.webmanifest",
+                                 "/chat/assets/jarvis-app-icon.svg"):
                         with self.subTest(path=path):
                             expected_type, expected_body = reviewed_chat_asset(path)
                             response = await client.get(path, headers=headers)
@@ -1090,9 +1092,11 @@ class CoreGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
                                 csp = response.headers["Content-Security-Policy"]
                                 self.assertIn("script-src 'self'", csp)
                                 self.assertIn("style-src 'self'", csp)
+                                self.assertIn("manifest-src 'self'", csp)
                                 self.assertNotIn("unsafe-inline", csp)
                                 self.assertNotIn("unsafe-eval", csp)
                     for path in ("/chat/assets/not-reviewed.js", "/chat/assets/app.js?x=1",
+                                 "/chat/manifest.webmanifest?x=1", "/chat/assets/jarvis-app-icon.svg?x=1",
                                  "/chat/assets/%61pp.js"):
                         with self.subTest(path=path):
                             target = URL(path, encoded=True) if "%" in path else path

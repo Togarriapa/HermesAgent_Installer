@@ -12,6 +12,7 @@ from typing import Any
 
 from .jarvis_channels import project_channel_status
 from .jarvis_schedules import project_schedules
+from .jarvis_bot_rooms import install_jarvis_bot_rooms_routes
 from .jarvis_schedule_actions import (
     ScheduleActionDenied,
     ScheduleActionLedger,
@@ -23,6 +24,7 @@ FEATURE_ROUTES = (
     ("GET", "/chat/api/channels"),
     ("GET", "/chat/api/schedules"),
     ("POST", "/chat/api/schedules/{opaque_id}/pause"),
+    ("GET", "/chat/api/bot-rooms"),
 )
 def _now() -> str:
     from datetime import datetime, timezone
@@ -240,6 +242,7 @@ def install_jarvis_bots_routes(app: Any, service: Any) -> None:
     for _method, path in FEATURE_ROUTES[:3]:
         app.router.add_get(path, route, allow_head=False)
     app.router.add_post("/chat/api/schedules/{opaque_id}/pause", pause_schedule)
+    install_jarvis_bot_rooms_routes(app, service)
 
 
 def _sole_default(rows: Any) -> dict[str, Any] | None:
