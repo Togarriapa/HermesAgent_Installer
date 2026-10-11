@@ -107,6 +107,8 @@ MAX_FINAL_EFFECT_RESPONSE = 64 * 1024
 MAX_MASTER_PLAN_RESPONSE = 32 * 1024
 MAX_NATIVE_ACTIVITY_RESPONSE = 128 * 1024
 MAX_OBSIDIAN_VAULT_RESPONSE = 2 * 1024 * 1024
+MAX_PROFILE_ADMIN_REQUEST_BYTES = 96 * 1024
+MAX_PROFILE_ADMIN_RESPONSE_BYTES = 128 * 1024
 MAX_SKILL_LEARNING_REQUEST_BYTES = 20 * 1024
 MAX_SKILL_LEARNING_RESPONSE_BYTES = 700 * 1024
 MAX_OWNER_TURN_REQUEST_BYTES = 24 * 1024
@@ -1829,6 +1831,129 @@ def observe_read_obsidian_vault(config: CoreGatewayConfig, *, request: dict[str,
             or hashlib.sha256(principal.subject.encode("utf-8", "strict")).hexdigest() != selected_owner):
         raise CoreInspectionDenied("Obsidian read ingress or owner registration changed")
     return {"schema": 1, "nonce": request["nonce"], "ok": True, "projection": projection}
+
+
+def observe_profile_admin(config: CoreGatewayConfig, *, request: dict[str, Any],
+                          caller_pid: int, caller_uid: int, caller_gid: int,
+                          peer_pid: int, peer_uid: int, peer_gid: int) -> dict[str, Any]:
+    """Perform one owner-authorized operation on an existing verified profile leaf."""
+    action = request.get("action") if type(request) is dict else None
+    base = {"schema", "op", "action", "nonce", "peer_pid", "peer_uid", "peer_gid",
+            "access_jwt", "core_generation", "ingress_nonce", "ingress_proof_sha256"}
+    fields = (set() if action == "list" else {"profile_id", "file_kind"} if action == "read" else
+              {"profile_id", "file_kind", "expected_sha256", "content", "idempotency_key"}
+              if action == "write" else None)
+    if (fields is None or type(request) is not dict or set(request) != base | fields
+            or type(request.get("schema")) is not int or request["schema"] != 1
+            or request.get("op") != "owner-profile-admin"
+            or (request.get("peer_pid"), request.get("peer_uid"), request.get("peer_gid"))
+                != (peer_pid, peer_uid, peer_gid)
+            or not all(type(value) is int for value in (peer_pid, peer_uid, peer_gid))
+            or not isinstance(request.get("nonce"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", request["nonce"]) is None
+            or not isinstance(request.get("access_jwt"), str)
+            or not 1 <= len(request["access_jwt"]) <= 16_384
+            or not request["access_jwt"].isascii()
+            or not _is_hash(request.get("core_generation"))
+            or not isinstance(request.get("ingress_nonce"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", request["ingress_nonce"]) is None
+            or not _is_hash(request.get("ingress_proof_sha256"))):
+        raise CoreInspectionDenied("Profile administration request is invalid")
+    if action != "list":
+        if (not isinstance(request["profile_id"], str)
+                or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,95}", request["profile_id"]) is None
+                or request["file_kind"] not in {"soul", "description", "instructions"}):
+            raise CoreInspectionDenied("Profile file selector is invalid")
+    if action == "write":
+        if (not _is_hash(request["expected_sha256"])
+                or not isinstance(request["content"], str)
+                or len(request["content"].encode("utf-8", "strict")) > 64 * 1024
+                or "\x00" in request["content"]
+                or not isinstance(request["idempotency_key"], str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{22,128}", request["idempotency_key"]) is None):
+            raise CoreInspectionDenied("Profile edit payload is invalid")
+
+    caller_start = _proc_start_ticks(caller_pid)
+    retained = _consume_ingress_issue(caller_pid=caller_pid, caller_start_ticks=caller_start,
+        nonce=request["ingress_nonce"], proof_sha256=request["ingress_proof_sha256"],
+        peer=(peer_pid, peer_uid, peer_gid), core_generation=request["core_generation"], config=config)
+    deadline = min(time.monotonic() + MAX_PROOF_SECONDS, retained.expires_monotonic)
+    current = observe_current_ingress(config, nonce=retained.nonce,
+        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+        peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+        _issued=retained.issued_monotonic, _deadline=deadline, _retain_issuance=False)
+    gateway_pidfd, gateway_start, _invocation = _check_unit_process(
+        config, unit=CORE_GATEWAY_UNIT, pid=caller_pid, deadline=deadline)
+    try:
+        if gateway_start != retained.caller_start_ticks or current["proof_sha256"] != retained.proof_sha256:
+            raise CoreInspectionDenied("Profile administration gateway witness changed")
+    finally:
+        os.close(gateway_pidfd)
+    from .gateway import validate_access_jwt
+    principal = validate_access_jwt(request["access_jwt"],
+        policy=config.policy(_learning_jwks(config, deadline=deadline)), deadline_monotonic=deadline)
+    owner_hash = hashlib.sha256(principal.subject.encode("utf-8", "strict")).hexdigest()
+    if (principal.email.casefold() not in config.allowed_emails
+            or hashlib.sha256(request["access_jwt"].encode("ascii")).hexdigest() != principal.token_fingerprint
+            or owner_hash != retained.owner_subject_sha256
+            or request["core_generation"] != current["core_generation"]):
+        raise CoreInspectionDenied("Profile administration owner is unavailable")
+
+    # Root verifies the pinned Resources manifest and the current Core process on
+    # every operation. Only profile IDs with actual native files are projected.
+    from ..components.resources_active_profile_source import _read_catalog
+    from .jarvis_profile_source_adapter import (
+        current_profile_files, read_profile_file, write_profile_file,
+    )
+    custody = capture_current_core_native_custody(config)
+    try:
+        if (custody.core_generation != request["core_generation"]
+                or custody.core_source_generation != current["core_source_generation"]):
+            raise CoreInspectionDenied("Profile administration Core generation changed")
+        catalog = _read_catalog(custody.core_source_generation)
+        if catalog is None:
+            raise CoreInspectionDenied("Current profile manifest is unavailable")
+        profile_ids = tuple(sorted(catalog["sources"]))
+        if action == "list":
+            result: Any = current_profile_files(profile_ids)
+        elif request["profile_id"] not in catalog["sources"]:
+            raise CoreInspectionDenied("Profile is not in the current source manifest")
+        elif action == "read":
+            value = read_profile_file(request["profile_id"], request["file_kind"])
+            result = {"profile_id": value.profile_id, "file_kind": value.file_kind,
+                "file_name": value.file_name, "content": value.content,
+                "sha256": value.sha256, "signature": list(value.signature),
+                "source_generation": hashlib.sha256(
+                    (custody.core_source_generation + "\0" + value.sha256).encode()).hexdigest(),
+                "effective": True}
+        else:
+            value = write_profile_file(request["profile_id"], request["file_kind"],
+                expected_sha256=request["expected_sha256"], content=request["content"],
+                idempotency_key=request["idempotency_key"],
+                core_source_generation=custody.core_source_generation)
+            result = {"state": value.state, "profile_id": value.profile_id,
+                "file_kind": value.file_kind,
+                "source_generation": (hashlib.sha256((custody.core_source_generation + "\0" +
+                    value.sha256).encode()).hexdigest() if value.sha256 else None),
+                "sha256": value.sha256, "recovery_id": value.recovery_id,
+                "effective_readback": value.readback}
+        final_custody = capture_current_core_native_custody(config)
+        try:
+            final_ingress = observe_current_ingress(config, nonce=retained.nonce,
+                caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+                peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+                _issued=retained.issued_monotonic, _deadline=deadline, _retain_issuance=False)
+            if (final_custody.core_generation != custody.core_generation
+                    or final_custody.core_source_generation != custody.core_source_generation
+                    or final_ingress["proof_sha256"] != retained.proof_sha256
+                    or time.monotonic() >= deadline):
+                raise CoreInspectionDenied("Profile administration authority expired during operation")
+        finally:
+            os.close(final_custody._core_pidfd)
+    finally:
+        os.close(custody._core_pidfd)
+    return {"schema": 1, "nonce": request["nonce"], "ok": True,
+            "action": action, "result": result}
 
 
 def observe_final_effect_request(config: CoreGatewayConfig, *, request: dict[str, Any],
@@ -3791,7 +3916,7 @@ def _serve_connection(conn: socket.socket, config: CoreGatewayConfig) -> None:
         caller_pid, caller_uid, caller_gid = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
         if caller_uid != config.gateway_uid or caller_pid <= 1:
             return
-        request = _read_frame(conn, deadline, MAX_OWNER_TURN_REQUEST_BYTES)
+        request = _read_frame(conn, deadline, MAX_PROFILE_ADMIN_REQUEST_BYTES)
         if request.get("op") == "observe-skill-learning":
             result = observe_skill_learning(config, request=request, caller_pid=caller_pid,
                 caller_uid=caller_uid, caller_gid=caller_gid, peer_pid=request.get("peer_pid"),
@@ -3829,6 +3954,11 @@ def _serve_connection(conn: socket.socket, config: CoreGatewayConfig) -> None:
                 peer_pid=request.get("peer_pid"), peer_uid=request.get("peer_uid"),
                 peer_gid=request.get("peer_gid"))
             maximum = MAX_OBSIDIAN_VAULT_RESPONSE
+        elif request.get("op") == "owner-profile-admin":
+            result = observe_profile_admin(config, request=request, caller_pid=caller_pid,
+                caller_uid=caller_uid, caller_gid=caller_gid, peer_pid=request.get("peer_pid"),
+                peer_uid=request.get("peer_uid"), peer_gid=request.get("peer_gid"))
+            maximum = MAX_PROFILE_ADMIN_RESPONSE_BYTES
         elif request.get("op") in {"list-final-effects", "decide-final-effect"}:
             result = observe_final_effect_request(config, request=request, caller_pid=caller_pid,
                 caller_uid=caller_uid, caller_gid=caller_gid, peer_pid=request.get("peer_pid"),
@@ -4513,6 +4643,78 @@ class CoreGatewayInspector:
                 or type(result["projection"]) is not dict or time.monotonic() >= deadline):
             raise CoreGatewayDenied("root Obsidian projection is malformed or stale")
         return result["projection"]
+
+    def owner_profile_admin(self, access_jwt: str, accepted_ingress: Any, *, action: str,
+                            profile_id: str | None = None, file_kind: str | None = None,
+                            expected_sha256: str | None = None, content: str | None = None,
+                            idempotency_key: str | None = None) -> dict[str, Any]:
+        """Use the fixed root inspector for current-manifest profile files."""
+        from .core_gateway import CoreAcceptedIngressObservation, _read_config_current
+        if (action not in {"list", "read", "write"}
+                or type(accepted_ingress) is not CoreAcceptedIngressObservation
+                or not isinstance(access_jwt, str) or not 1 <= len(access_jwt) <= 16_384
+                or not access_jwt.isascii()
+                or hashlib.sha256(access_jwt.encode("ascii")).hexdigest()
+                    != accepted_ingress.principal.token_fingerprint):
+            raise CoreGatewayDenied("current authenticated profile administration is required")
+        if action != "list":
+            if (not isinstance(profile_id, str)
+                    or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,95}", profile_id) is None
+                    or file_kind not in {"soul", "description", "instructions"}):
+                raise CoreGatewayDenied("verified profile selector is required")
+        if action == "write" and (not _is_hash(expected_sha256)
+                or not isinstance(content, str) or len(content.encode("utf-8")) > 64 * 1024
+                or "\x00" in content or not isinstance(idempotency_key, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{22,128}", idempotency_key) is None):
+            raise CoreGatewayDenied("bounded profile edit is required")
+        _read_config_current(self._config)
+        if accepted_ingress.verify_current(self._config) is not True:
+            raise CoreGatewayDenied("current authenticated profile administration is required")
+        proof = accepted_ingress.root_observation
+        nonce = os.urandom(32).hex()
+        deadline = min(time.monotonic() + MAX_PROOF_SECONDS, accepted_ingress.expires_monotonic)
+        info = os.lstat(CORE_INSPECTOR_SOCKET)
+        if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != 0
+                or info.st_gid != self._config.gateway_gid or stat.S_IMODE(info.st_mode) != 0o660):
+            raise CoreGatewayDenied("root profile inspector is unavailable")
+        body = {"schema": 1, "op": "owner-profile-admin", "action": action, "nonce": nonce,
+            "peer_pid": accepted_ingress.peer_pid, "peer_uid": accepted_ingress.peer_uid,
+            "peer_gid": accepted_ingress.peer_gid, "access_jwt": access_jwt,
+            "core_generation": accepted_ingress.core_generation,
+            "ingress_nonce": proof.nonce, "ingress_proof_sha256": proof.proof_sha256}
+        if action != "list":
+            body.update({"profile_id": profile_id, "file_kind": file_kind})
+        if action == "write":
+            body.update({"expected_sha256": expected_sha256, "content": content,
+                         "idempotency_key": idempotency_key})
+        raw = json.dumps(body, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("ascii")
+        if len(raw) > MAX_PROFILE_ADMIN_REQUEST_BYTES or time.monotonic() >= deadline:
+            raise CoreGatewayDenied("profile administration request exceeded its bound")
+        conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            conn.settimeout(max(0.05, deadline - time.monotonic()))
+            conn.connect(str(CORE_INSPECTOR_SOCKET))
+            if not hasattr(socket, "SO_PEERCRED"):
+                raise ValueError
+            pid, uid, _gid = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            if uid != 0 or pid <= 1:
+                raise ValueError
+            conn.sendall(struct.pack("!I", len(raw)) + raw)
+            result = _read_frame(conn, deadline, MAX_PROFILE_ADMIN_RESPONSE_BYTES, encoding="utf-8")
+        except Exception:
+            raise CoreGatewayDenied("root profile source is unavailable") from None
+        finally:
+            conn.close()
+        _read_config_current(self._config)
+        if accepted_ingress.verify_current(self._config) is not True:
+            raise CoreGatewayDenied("profile administration ingress changed during operation")
+        if (set(result) != {"schema", "nonce", "ok", "action", "result"}
+                or result["schema"] != 1 or result["nonce"] != nonce
+                or result["ok"] is not True or result["action"] != action
+                or type(result["result"]) not in {dict, list, tuple}
+                or time.monotonic() >= deadline):
+            raise CoreGatewayDenied("root profile source response is malformed or stale")
+        return result["result"]
 
     def preflight_native_mission(self, binding: Any, *, owner_subject_sha256: str,
                                  gateway_turn_id: str) -> bool:
