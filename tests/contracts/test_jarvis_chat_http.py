@@ -42,6 +42,10 @@ class FakeBackend:
     async def history(self, session_id):
         return [{"role": "user", "content": f"history-for-{session_id}", "createdAt": 10}]
 
+    async def resume_history(self, stored_session_id):
+        runtime_id = await self.resume_session(stored_session_id)
+        return runtime_id, await self.history(runtime_id)
+
     async def stop(self, session_id):
         self.stopped.append(session_id)
         self.release.set()
