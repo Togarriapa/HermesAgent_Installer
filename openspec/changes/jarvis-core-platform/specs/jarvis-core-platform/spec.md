@@ -2029,3 +2029,7 @@ The living dashboard SHALL keep a central original Jarvis reactor with truthful 
 #### Scenario: Narrow screen or reduced motion
 - **WHEN** the user opens phone/tablet layout or requests reduced motion
 - **THEN** telemetry flanks reflow into ordered panels, entity/heatmap details remain accessible through list/table alternatives and actual state/events remain understandable without continuous movement.
+
+#### Scenario: Accessible metadata with failed source playback
+- **WHEN** a reference page exposes title/caption but its video cannot play
+- **THEN** the intake records only those inspected metadata facts and explicit playback failure, without asserting observed motion, functionality or integration.
