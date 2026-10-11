@@ -41,6 +41,7 @@ _STAGE_DIAGNOSTIC = logging.getLogger("hermes_installer.remote.manual_stage")
 _STAGE_PHASES = frozenset({"headers", "jwt", "unix-peer", "root-inspector", "listener-join",
                            "ingress-proof-join", "middleware-ingress", "handler", "heartbeat-handler", "route-response",
                            "response-currentness", "session-response", "index-injection"})
+_INGRESS_CURRENTNESS_PHASES = frozenset({"shape", "request-age", "root-proof", "listener-path"})
 
 
 def _log_stage_denial(phase: str, exception: BaseException | str) -> None:
@@ -51,6 +52,16 @@ def _log_stage_denial(phase: str, exception: BaseException | str) -> None:
     if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,63}", name):
         name = "OtherException"
     _STAGE_DIAGNOSTIC.warning("manual-stage denial phase=%s exception=%s", phase, name)
+
+
+def _log_ingress_currentness_failure(phase: str, elapsed_ms: int) -> None:
+    """Log only a fixed subphase and bounded monotonic age, never request data."""
+    if phase not in _INGRESS_CURRENTNESS_PHASES:
+        phase = "shape"
+    if type(elapsed_ms) is not int:
+        elapsed_ms = 0
+    elapsed_ms = min(60_000, max(0, elapsed_ms))
+    _STAGE_DIAGNOSTIC.warning("manual-stage ingress-currentness phase=%s elapsed_ms=%d", phase, elapsed_ms)
 
 
 class ManualStageDenied(PermissionError):
@@ -81,21 +92,28 @@ class StageAcceptedIngressObservation:
 
     def verify_current(self, config: "ManualGatewayStageConfig", *, now: float | None = None) -> None:
         observed_now = time.monotonic() if now is None else now
+        elapsed_ms = int(min(60_000, max(0, (observed_now - self.request_started_monotonic) * 1000)))
         if (self._seal is not _INGRESS_SEAL or self.config_sha256 != config.config_sha256
                 or not _digest(self.token_sha256) or not _digest(self.config_sha256)
                 or type(self.peer_pid) is not int or self.peer_pid <= 1
                 or type(self.peer_uid) is not int or self.peer_uid <= 0
                 or type(self.peer_gid) is not int or self.peer_gid <= 0
                 or self.witness_expires_monotonic > self.request_started_monotonic + MAX_PROBE_SECONDS
-                or not self.request_started_monotonic <= observed_now < self.witness_expires_monotonic
+                or observed_now < self.request_started_monotonic
                 or observed_now >= self.jwt_expires_monotonic):
+            _log_ingress_currentness_failure("shape", elapsed_ms)
+            raise ManualStageDenied("protected ingress witness is stale or mismatched")
+        if observed_now >= self.witness_expires_monotonic:
+            _log_ingress_currentness_failure("request-age", elapsed_ms)
             raise ManualStageDenied("protected ingress witness is stale or mismatched")
         try:
             from .manual_stage_inspector import StageVerifiedIngressObservation
             if type(self._root_observation) is not StageVerifiedIngressObservation:
+                _log_ingress_currentness_failure("root-proof", elapsed_ms)
                 raise ValueError
             if self._root_observation.verify_current(
                     config, self.peer_pid, self.peer_uid, self.peer_gid, now=observed_now) is not True:
+                _log_ingress_currentness_failure("root-proof", elapsed_ms)
                 raise ValueError
             listener = os.lstat(config.ingress_socket)
             if (not stat.S_ISSOCK(listener.st_mode)
@@ -106,6 +124,7 @@ class StageAcceptedIngressObservation:
                     or (listener.st_dev, listener.st_ino) != (
                         self._root_observation.origin_socket_device,
                         self._root_observation.origin_socket_inode)):
+                _log_ingress_currentness_failure("listener-path", elapsed_ms)
                 raise ValueError
         except Exception:
             raise ManualStageDenied("root cloudflared ingress or listener proof is no longer current") from None

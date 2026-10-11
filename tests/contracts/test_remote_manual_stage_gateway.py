@@ -144,6 +144,19 @@ class ManualStageGatewayTests(unittest.TestCase):
         with self.assertRaises(ManualStageDenied):
             ingress.verify_current(self.config, now=ingress.witness_expires_monotonic)
 
+    def test_expired_ingress_diagnostic_identifies_age_without_request_data(self):
+        token = "credential-value-must-not-appear"
+        started = time.monotonic() - 5.25
+        ingress = self.fixture_ingress(token, started=started, expires=started + 4.9)
+        with self.assertLogs("hermes_installer.remote.manual_stage", level="WARNING") as captured:
+            with self.assertRaises(ManualStageDenied):
+                ingress.verify_current(self.config)
+        output = "\n".join(captured.output)
+        self.assertIn("ingress-currentness phase=request-age elapsed_ms=", output)
+        self.assertNotIn(token, output)
+        self.assertNotIn("owner@example.net", output)
+        self.assertRegex(output, r"elapsed_ms=(?:[5-9][0-9]{3}|[1-5][0-9]{4}|60000)\b")
+
     def test_heartbeat_is_one_use_and_bound_to_original_token_and_principal(self):
         token = self.token()
         ingress = self.make_ingress(token)
