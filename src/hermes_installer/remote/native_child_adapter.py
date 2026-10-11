@@ -123,7 +123,7 @@ def build_native_child(*, parent_agent: Any, mode: NativeChildMode, source: Any,
                 or hashlib.sha256(prompt_bytes).hexdigest()
                     != getattr(source, "effective_prompt_sha256")
                 or (mode is NativeChildMode.PLANNER and source_id != "hermes")
-                or (mode is NativeChildMode.EXPERT_READ_RESEARCH and source_id in {"hermes", "orchestrator"})):
+                or (mode is NativeChildMode.EXPERT_READ_RESEARCH and source_id == "hermes")):
             raise ValueError
         profile_prompt = prompt_bytes.decode("utf-8", errors="strict")
     except Exception:
