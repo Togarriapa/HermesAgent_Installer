@@ -57,3 +57,5 @@ Provide a useful first Models effect through the native session-only selector an
 Prioritize three independent visible increments on existing backend support: browser voice/personal settings, truthful activity/statistics and capability/native-learning detail. These improve useful daily interaction without introducing another architecture or claiming full parity.
 
 Complete three current backend slices in parallel: existing schedule pause/status, owned staged-file visibility and the first genuine approved mission execution. Avoid duplicate endpoints or inventing artifact reads/mission authority absent from the native runtime.
+
+Address missing actions and useful visibility after the current menu shell through measured overview data, real tool/browser timelines, actionable integration setup status and a narrowly audited native voice port. Recorded video evidence guides UX without establishing backend support or permission.

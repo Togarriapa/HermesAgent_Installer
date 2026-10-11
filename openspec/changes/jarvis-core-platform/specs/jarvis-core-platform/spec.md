@@ -1880,3 +1880,10 @@ The system SHALL complete schedule pause/status, owned attachment visibility and
 #### Scenario: Uncertain native effect
 - **WHEN** attachment or mission completion cannot be established
 - **THEN** the system reports uncertainty and does not automatically repeat the effect or infer readiness.
+
+### Requirement: Actionable dashboard coverage
+The system SHALL prioritize measured overview data, authentic tool visibility and actionable integration readiness over empty menu shells. Native voice SHALL require a verified finite backend and privacy/budget admission; reference-video behavior alone SHALL NOT establish availability.
+
+#### Scenario: Missing effect adapter
+- **WHEN** a requested configuration or voice action lacks a safe native adapter
+- **THEN** the UI identifies the exact missing prerequisite and preserves usable existing functions without claiming activation.
