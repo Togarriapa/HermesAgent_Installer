@@ -98,6 +98,10 @@ _HTML = '''<!doctype html>
             <p class="eyebrow">READY WHEN YOU ARE</p>
             <h2>What can I help you with?</h2>
             <p class="welcome-note">Ask a question or pick up a thought. Your conversation stays in this private space.</p>
+            <aside class="authority-note" aria-label="How Jarvis works with specialists">
+              <strong>Jarvis is your master assistant and sole user-facing agent.</strong>
+              <span>Expert profiles and team bundles are internal specialists, not separate accounts or direct messages. Skills are reusable tools. Missions shows each task's mode and owner-reported approval and review state.</span>
+            </aside>
           </div>
           <ol class="message-list" id="message-list" aria-label="Messages"></ol>
         </section>
@@ -127,7 +131,7 @@ _HTML = '''<!doctype html>
       <section class="data-main" id="capabilities-view" aria-label="Capabilities" data-view-panel="capabilities" hidden>
         <div class="page-heading"><span class="eyebrow">BUNDLED INVENTORY</span><h1>Capabilities</h1><p>Search the fixed offline catalog. Bundled items are declarations, not proof that a resource is enabled or working.</p></div>
         <div id="capability-readiness" class="readiness-banner" role="status">Loading verified capability inventory…</div>
-        <p class="capability-state-guide"><strong>Bundled</strong> means declared in the verified catalog. <strong>Discovered</strong> means observed in the source-bound Core inventory. Neither means <strong>ready</strong>; this view does not verify that a capability operates.</p>
+        <p class="capability-state-guide"><strong>Profiles and bundles</strong> are internal specialists for Jarvis team missions, not standalone accounts or direct messages. <strong>Skills</strong> are reusable tools. <strong>Bundled</strong> means declared in the verified catalog; <strong>discovered</strong> means observed in the source-bound Core inventory. Neither means <strong>ready</strong>; this view does not verify that a capability operates.</p>
         <div class="capability-filters">
           <label for="capability-search">Search inventory</label>
           <input id="capability-search" type="search" autocomplete="off" placeholder="Search names, IDs, and descriptions">
@@ -286,6 +290,10 @@ html[data-jarvis-motion="reduce"] *,html[data-jarvis-motion="reduce"] *::before,
 .data-main [data-feature-root] th,.data-main [data-feature-root] td{padding:.65rem .7rem;border-bottom:1px solid rgba(123,197,213,.2);text-align:left;vertical-align:top}
 .data-main [data-feature-root] thead th{color:#b9d1d4;font-size:.78rem;letter-spacing:.035em}
 .data-main [data-feature-root] tbody th{font-weight:550;color:#c9dfe1}
+.authority-note{display:grid;gap:.4rem;width:min(100%,42rem);margin:1.2rem auto 0;padding:.9rem 1rem;border:1px solid rgba(88,228,235,.2);border-inline-start:3px solid var(--cyan);border-radius:10px;background:linear-gradient(120deg,rgba(18,76,85,.3),rgba(8,24,31,.56));color:#a9c1c5;text-align:left;font-size:.8rem;line-height:1.55}
+.authority-note strong{color:#e2f8f9;font-size:.84rem}
+.capability-state-guide{padding:.8rem 1rem;border:1px solid var(--line);border-radius:10px;background:rgba(10,29,37,.72)}
+.capability-state-guide strong{color:#e2f8f9}
 @media(max-width:1120px){.primary-nav{scrollbar-width:thin}.nav-item{padding-inline:clamp(8px,1vw,12px)}}
 @media(max-width:760px){.primary-nav{flex:0 0 auto;scrollbar-width:none;scroll-padding-inline:50%}.nav-item{min-height:46px}.nav-item[aria-current="page"]{box-shadow:inset 0 -2px 0 var(--cyan),inset 0 0 0 1px rgba(88,228,235,.08)}.data-main [data-feature-root] table{font-size:.86rem}.data-main [data-feature-root] th,.data-main [data-feature-root] td{padding:.55rem .5rem}}
 @media(prefers-reduced-motion:reduce){.message-row{animation:none}}

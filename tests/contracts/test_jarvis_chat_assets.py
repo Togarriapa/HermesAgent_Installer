@@ -22,6 +22,11 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertNotIn("owner administration", source)
         self.assertIn('id="assistant-hud" data-state="checking"', source)
         self.assertIn('id="assistant-mode" role="status" aria-live="polite"', source)
+        self.assertIn("Jarvis is your master assistant and sole user-facing agent", source)
+        self.assertIn("Expert profiles and team bundles are internal specialists", source)
+        self.assertIn("not separate accounts or direct messages", source)
+        self.assertIn("Skills are reusable tools", source)
+        self.assertIn("owner-reported approval and review state", source)
 
     def test_navigation_and_read_only_views_use_finite_account_scoped_endpoints(self):
         _content_type, page = reviewed_chat_asset("/chat")
@@ -45,6 +50,7 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('id="session-count" role="status" aria-live="polite"', source)
         self.assertIn('aria-label="Owned conversation sessions"', source)
         self.assertIn('id="capability-map" class="capability-map"', source)
+        self.assertIn("Profiles and bundles</strong> are internal specialists for Jarvis team missions", source)
         self.assertIn("Speech input", source)
         self.assertIn("Speech output", source)
         self.assertIn('id="speech-stop" type="button" aria-label="Stop reply audio"', source)
