@@ -133,7 +133,8 @@ def project_native_activity_snapshot(value: Any) -> dict[str, Any]:
         status = "unknown" if item["stale"] else item["status"]
         if status == "running":
             observed_active += 1
-        completed_observed += completed_events
+        current_completed_events = completed_events if status == "completed" else 0
+        completed_observed += current_completed_events
         # The root row carries the cumulative deduplicated observed tool-call
         # count; its bounded event tail can be shorter than the full run.
         instance_tool_calls = item["tool_count"]
@@ -141,12 +142,12 @@ def project_native_activity_snapshot(value: Any) -> dict[str, Any]:
         response_duration_ms += instance_response_duration
         response_duration_count += instance_response_duration_count
         any_stale = any_stale or item["stale"]
-        if profile != "hermes" and completed_events:
+        if profile != "hermes" and current_completed_events:
             aggregate = expert_stats.setdefault((profile, revision), {
                 "profile_id": profile, "source_revision": revision, "completed_executions": 0,
                 "observed_tool_calls": 0, "instances": 0,
             })
-            aggregate["completed_executions"] += completed_events
+            aggregate["completed_executions"] += current_completed_events
             aggregate["observed_tool_calls"] += instance_tool_calls
             aggregate["instances"] += 1
         rows.append({
@@ -155,7 +156,7 @@ def project_native_activity_snapshot(value: Any) -> dict[str, Any]:
             "mission_revision": item["mission_revision"], "state": status,
             "stale": item["stale"], "created_at": created_at, "updated_at": updated_at,
             "observed_tool_calls": instance_tool_calls,
-            "completed_executions": completed_events,
+            "completed_executions": current_completed_events,
             "observed_response_duration_ms": (instance_response_duration
                                               if instance_response_duration_count else None),
             "response_duration_coverage": instance_response_duration_count,

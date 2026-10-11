@@ -93,6 +93,8 @@ def test_stale_rows_become_unknown_and_absent_measurements_stay_null():
     assert projected["summary"]["active_instances"] is None
     assert projected["summary"]["response_duration_ms"] is None
     assert projected["summary"]["response_duration_coverage"] == 0
+    assert projected["instances"][0]["completed_executions"] == 0
+    assert projected["summary"]["observed_completed_executions"] == 0
     assert projected["top_experts"] == []
 
 
