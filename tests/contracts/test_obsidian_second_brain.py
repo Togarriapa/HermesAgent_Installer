@@ -120,7 +120,7 @@ def test_symlinked_note_directory_and_traversal_are_not_read_or_written(tmp_path
     (store._root / "Notes" / "linked").symlink_to(outside, target_is_directory=True)
 
     assert store.list_notes().notes == ()
-    with pytest.raises(ObsidianVaultError, match="normalized relative"):
+    with pytest.raises(ObsidianVaultError, match="normalized and relative"):
         store._atomic_note_write("../outside.md", b"no", expected_sha256=None)
     with pytest.raises(ObsidianVaultError, match="hidden"):
         store._atomic_note_write(".hermes-private/drafts/no.md", b"no", expected_sha256=None)

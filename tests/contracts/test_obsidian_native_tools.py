@@ -62,7 +62,7 @@ def _binding(store, name, args, *, mode="master_read", execution_id="D" * 43,
         core_source_generation="2" * 64, source_generation_sha256="f" * 64,
         mode=mode, execution_id=(observed.owner_turn_handle if mode != "expert_read" else execution_id),
         source_instance_id=source, mission_binding=mission, selected_note_ids=selected,
-        issued_monotonic=issued, expires_monotonic=issued + 10, _seal=_SCOPE_SEAL,
+        issued_monotonic=issued, expires_monotonic=issued + 5, _seal=_SCOPE_SEAL,
     )
     permit = None
     if with_permit:
@@ -81,7 +81,7 @@ def _binding(store, name, args, *, mode="master_read", execution_id="D" * 43,
 
 def _mission():
     return MissionBinding(
-        schema=2, mission_id="mission_123", revision=1, plan_sha256="1" * 64,
+        schema=2, mission_id="mission_" + "1" * 24, revision=1, plan_sha256="1" * 64,
         task_sha256="2" * 64, source_profile_id="hermes", execution_mode="oneshot",
         autonomy_mode="approval_required", selected_source_ids=("expert_alpha",),
         scope_sha256="3" * 64, authorization_sha256=None,
