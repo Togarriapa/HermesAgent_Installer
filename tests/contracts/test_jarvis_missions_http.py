@@ -129,7 +129,7 @@ def test_owner_draft_preview_is_persisted_but_never_fabricates_execution(tmp_pat
             assert "unavailable" in await launch.text()
             with store._connect() as db:
                 approval_row = db.execute(
-                    "SELECT status, turn_id FROM jarvis_mission_approvals WHERE mission_id=?",
+                    "SELECT status, gateway_turn_id FROM jarvis_mission_approvals WHERE mission_id=?",
                     (mission_id,),
                 ).fetchone()
             assert approval_row["status"] == "approved"
