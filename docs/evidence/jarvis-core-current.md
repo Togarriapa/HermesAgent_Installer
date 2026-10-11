@@ -14,6 +14,14 @@ The Pi run for source `12b9e83dd246052558ba64f4299b52ad63e2b5f1` reported 199 te
 
 The later exact native Resources refresh produced receipt `15493e256…`. Root-helper/manual-skill checks reported 23 passed in 11.61 seconds. The native readback verified all 396 bundled skill digests and the 449-skill total (53 stock plus 396 bundled), the owned member tree, unchanged lifecycle state, and the preserved core PID. This resolves the earlier pending receipt-refresh readback; it does not qualify all imported operations or resource obligations. The compiled primary content differs from the raw SOUL file, and the imported primary logic has not been proven active. Managed-block implementation remains in progress.
 
+The later source candidate `5f35ccc` passed 240 admin and 2 root checks. A still newer `dfb` suite was run, but its result had not been read when this record was prepared; no pass is claimed for it. These are source-validation results, not deployment or acceptance evidence for the public 12b source.
+
+## Product semantics: implementation pending
+
+The intended user-facing model is **Jarvis as the sole master**. Experts are internal specialized workers, not separately presented user identities. Teams are sets of Experts. Skills are methods available to Jarvis and its internal workers; they are not additional agents. OneShot and Kanban are selective workflows: use OneShot for bounded tasks and Kanban only when work is deliberately tracked on a board. Neither is mandatory for every request.
+
+At task start, autonomy applies only when the user explicitly delegated it. Otherwise Jarvis pauses for owner approval before taking action. Jarvis reviews proposed final effects and is the only component that may perform them. This is the intended authority model, not a claim about current runtime behavior. The source/UI semantic correction and its acceptance remain pending. Do not interpret the native profile inventory as Bot DM accounts, or a capability named `orchestrator` as a mandatory master agent. All 219 requirements, 62 capability/component mappings, and AC01–AC18 remain open.
+
 ## Observed public UI and owner use
 
 After the fresh email-OTP login, the interface displayed Chat, Sessions, Overview, Capabilities, Models, Settings, Missions, Bots, Logs, Integrations, Learning, Tools & Skills, and Files. The 13 visible menus are not proof that every capability is complete.
@@ -23,7 +31,7 @@ After the fresh email-OTP login, the interface displayed Chat, Sessions, Overvie
 - An actual owner chat returned **“I'm Jarvis, your assistant.”** Existing conversations restored their message history. After several minutes idle, a later turn showed **“Jarvis is ready.”** The exact elapsed duration was not recorded; full idle, restart, and cold-resume boundaries remain unqualified.
 - Logs displayed a completed status bar and event timeline. Native session counters showed total 24,978, input 1,134, output 36, reasoning 25, prompt 24,942, cache hit 95, and context 272,000. Duration and cost are unknown.
 - Native inventory reported 63 toolsets and 449 skills: 53 stock plus all 396 bundled Resources skills. The offline import preserved 208 source profile records, including 207 internal records, and 88 other declarations. These inventories do not establish functional use, effective permissions, or full parity.
-- Capabilities search for `orchestrator` returned one `Bundled` match; readiness remains pending.
+- Capabilities search for `orchestrator` returned one `Bundled` match; this inventory result does not make Orchestrator a required user-facing role or establish readiness.
 - Settings displayed 180 browser voices and controls for rate, pitch, language, density, text size, reduced motion, and read-aloud. Local preferences use browser local storage; consent is not stored. Broader settings-source review and phone speech input, audio output, and wake-word behavior remain pending.
 - A harmless mission draft was saved and previewed, not executed.
 
