@@ -65,7 +65,9 @@ class RootSelectedInternalProfileDispatchClaim:
 class InternalProfileClaimSource(Protocol):
     """Root-owned one-use issuer over the active resource generation and turn."""
 
-    def consume_current_claim(self, profile_id: str, parent_agent: object
+    def consume_current_claim(self, profile_id: str, parent_agent: object, *,
+                              tool_call_id: str, tool_name: str, arguments: dict[str, Any],
+                              turn_id: str
                                ) -> RootSelectedInternalProfileDispatchClaim: ...
 
 
@@ -131,9 +133,14 @@ def make_resources_delegate_handler(ctx: HermesPluginContext,
     if claim_source is None or not callable(getattr(claim_source, "consume_current_claim", None)):
         raise ResourcesDispatchDenied("root-selected internal profile claim source is unavailable")
 
-    def handler(args: dict[str, Any], *, parent_agent: object | None = None, **_kwargs: Any) -> str:
+    def handler(args: dict[str, Any], *, parent_agent: object | None = None,
+                tool_call_id: str | None = None, turn_id: str | None = None,
+                **_kwargs: Any) -> str:
         if parent_agent is None:
             return _denied("trusted parent agent is unavailable")
+        if (not isinstance(tool_call_id, str) or not tool_call_id.strip()
+                or not isinstance(turn_id, str) or not turn_id.strip()):
+            return _denied("provider-observed tool-call identity is unavailable")
         if not isinstance(args, Mapping) or set(args) != {"goal"}:
             return _denied("request shape is outside the fixed internal dispatch")
         goal = args.get("goal")
@@ -142,7 +149,11 @@ def make_resources_delegate_handler(ctx: HermesPluginContext,
         if any(ord(ch) < 0x20 and ch not in "\n\t" for ch in goal):
             return _denied("task text contains control characters")
         try:
-            claim = claim_source.consume_current_claim(PROFILE_ID, parent_agent)
+            claim = claim_source.consume_current_claim(
+                PROFILE_ID, parent_agent,
+                tool_call_id=tool_call_id, tool_name="resources_delegate",
+                arguments={"goal": goal}, turn_id=turn_id,
+            )
         except Exception:
             return _denied("current owner/profile/cost claim is unavailable")
         if not _claim_is_current(claim, parent_agent, now=time.monotonic()):
@@ -173,6 +184,7 @@ def make_resources_delegate_handler(ctx: HermesPluginContext,
             result = ctx.dispatch_tool(
                 "delegate_task",
                 {"goal": "Complete the owner's bounded task using the selected internal identity.",
+                 "role": "orchestrator",
                  "context": context},
                 parent_agent=parent_agent,
             )

@@ -57,8 +57,8 @@ class OneShotIssuer:
         self.claim = claim
         self.calls = []
 
-    def consume_current_claim(self, profile_id, parent_agent):
-        self.calls.append((profile_id, parent_agent))
+    def consume_current_claim(self, profile_id, parent_agent, **bound_call):
+        self.calls.append((profile_id, parent_agent, bound_call))
         return self.claim
 
 
@@ -87,7 +87,7 @@ def test_registered_tool_dispatches_through_native_delegate_with_exact_parent():
     assert (name, toolset, options["override"]) == ("resources_delegate", "resources_internal", False)
     assert schema["parameters"]["additionalProperties"] is False
     assert set(schema["parameters"]["properties"]) == {"goal"}
-    result = json.loads(handler({"goal": "Use the selected profile."}, parent_agent=parent))
+    result = json.loads(handler({"goal": "Use the selected profile."}, parent_agent=parent, tool_call_id="call-17", turn_id="turn-17"))
 
     assert result["state"] == "native-dispatch-accepted"
     assert result["profile_id"] == PROFILE_ID
@@ -96,12 +96,17 @@ def test_registered_tool_dispatches_through_native_delegate_with_exact_parent():
     # caller-controlled profile, provider, toolset, route, or prompt field.
     assert [call[0] for call in issuer.calls] == [PROFILE_ID]
     assert issuer.calls[0][1] is parent
+    assert issuer.calls[0][2] == {
+        "tool_call_id": "call-17", "tool_name": "resources_delegate",
+        "arguments": {"goal": "Use the selected profile."}, "turn_id": "turn-17",
+    }
     tool_name, args, kwargs = context.dispatches[0]
     assert tool_name == "delegate_task"
-    assert set(args) == {"goal", "context"}
+    assert args["role"] == "orchestrator"
+    assert set(args) == {"goal", "role", "context"}
     assert "provider" not in args and "toolsets" not in args
     assert kwargs == {"parent_agent": parent}
-    assert "source-selected internal orchestration profile" in args["context"]
+    assert "source-selected internal profile identity" in args["context"]
     assert "Use the selected profile." in args["context"]
 
 
@@ -118,7 +123,7 @@ def test_claim_mismatch_denies_before_native_delegation(claim_change):
     parent = Parent()
     context = NativeContext()
     register_resources_delegate(context, OneShotIssuer(current_claim(parent, **claim_change)))
-    response = json.loads(context.registration[3]({"goal": "bounded task"}, parent_agent=parent))
+    response = json.loads(context.registration[3]({"goal": "bounded task"}, parent_agent=parent, tool_call_id="call-19", turn_id="turn-19"))
 
     assert response["success"] is False
     assert response["state"] == "pending"
@@ -133,7 +138,7 @@ def test_missing_parent_and_caller_authority_fields_are_denied_without_dispatch(
 
     no_parent = json.loads(handler({"goal": "bounded task"}))
     caller_selector = json.loads(handler({"goal": "bounded task", "profile_id": "orchestrator"},
-                                         parent_agent=parent))
+                                         parent_agent=parent, tool_call_id="call-18", turn_id="turn-18"))
     assert no_parent["success"] is False
     assert caller_selector["success"] is False
     assert context.dispatches == []
@@ -144,7 +149,7 @@ def test_native_delegate_failure_stays_pending_and_is_not_reported_as_completion
     context = NativeContext('{"error":"native pause gate"}')
     register_resources_delegate(context, OneShotIssuer(current_claim(parent)))
 
-    response = json.loads(context.registration[3]({"goal": "bounded task"}, parent_agent=parent))
+    response = json.loads(context.registration[3]({"goal": "bounded task"}, parent_agent=parent, tool_call_id="call-19", turn_id="turn-19"))
 
     assert response["success"] is False
     assert response["state"] == "native-delegation-denied"
@@ -156,3 +161,18 @@ def test_registration_denies_absent_root_claim_issuer():
     with pytest.raises(ResourcesDispatchDenied, match="claim source is unavailable"):
         register_resources_delegate(context, None)
     assert context.registration is None
+
+
+def test_missing_provider_call_or_turn_identity_denies_without_claim_consumption():
+    parent = Parent()
+    issuer = OneShotIssuer(current_claim(parent))
+    context = NativeContext()
+    register_resources_delegate(context, issuer)
+    handler = context.registration[3]
+
+    response = json.loads(handler({"goal": "bounded task"}, parent_agent=parent))
+
+    assert response["success"] is False
+    assert response["state"] == "pending"
+    assert issuer.calls == []
+    assert context.dispatches == []
