@@ -141,3 +141,25 @@ def test_overview_fragment_is_a_fixed_accessible_asset():
     assert FEATURE_ASSETS.api_routes == (("GET", "/chat/api/overview"),)
     assert "<table>" in FEATURE_ASSETS.view_html
     assert "data-observation role=\"status\"" in FEATURE_ASSETS.view_html
+
+
+def test_overview_reactor_uses_observed_activity_and_keeps_controls_accessible():
+    html = FEATURE_ASSETS.view_html
+    css = FEATURE_ASSETS.css
+    js = FEATURE_ASSETS.mount_js
+
+    assert 'class="overview-stage" data-activity="unknown"' in html
+    assert 'data-reactor-state role="status" aria-live="polite"' in html
+    assert 'data-core-status role="status" aria-live="polite"' in html
+    assert 'data-command-form' in html and 'data-new-conversation' in html
+    assert 'data-command-prompt=' in html
+    assert "min-height:54px" in css and "min-height:44px" in css
+    assert "@media(max-width:620px)" in css and "@media(max-width:360px)" in css
+    assert "transition-duration:0s!important;transition-delay:0s!important" in css
+    assert 'stage.dataset.activity = \'unknown\'' in js
+    assert 'stage.dataset.activity = \'active\'' in js
+    assert 'stage.dataset.activity = \'quiet\'' in js
+    assert "await api.get('/chat/api/overview')" in js
+    assert "await api.command(text)" in js
+    assert "await api.newConversation()" in js
+    assert "commandInput.value = button.dataset.commandPrompt" in js
