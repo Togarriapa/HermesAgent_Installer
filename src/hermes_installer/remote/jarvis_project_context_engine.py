@@ -1,14 +1,16 @@
-"""Per-request, root-issued Jarvis Projects context for Hermes' native ContextEngine.
+"""Per-request, root-issued Jarvis Projects context for Hermes' native provider request.
 
-The selected Hermes engine is always called first. Project context is then appended to
-the request's existing system message only; no saved transcript or user message changes.
-The provider queries the finite root observer on every provider attempt so retries cannot
-reuse stale owner, project, or core-generation context.
+The configured Hermes ContextEngine runs unchanged. Root-issued project context is
+appended to the provider's separate instructions field only; no saved transcript or
+user message changes. The provider queries the finite root observer on every attempt,
+replacing or removing its prior managed block so retries cannot reuse stale context.
 """
 from __future__ import annotations
 
 import hashlib
+import hmac
 import re
+import secrets
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -16,6 +18,53 @@ _CONTEXT_SEAL = object()
 _MAX_CONTEXT_CHARS = 24_000
 _SESSION_RE = re.compile(r"^[^\x00-\x1f\x7f]{1,512}$")
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+_MANAGED_CONTEXT_OPEN = re.compile(
+    r"<!-- jarvis-project-context:v1:([A-Za-z0-9_-]{16}):([0-9a-f]{64}):([0-9a-f]{64}) -->"
+)
+
+
+def _context_block_mac(key: bytes, nonce: str, digest: str, text: str) -> str:
+    material = nonce.encode("ascii") + b"\0" + digest.encode("ascii") + b"\0" + text.encode("utf-8", "strict")
+    return hmac.new(key, material, hashlib.sha256).hexdigest()
+
+
+def _remove_owned_context_blocks(instructions: str, key: bytes) -> str:
+    """Remove only intact blocks issued by this middleware instance.
+
+    A tag-like string in user/provider instructions is not a credential. Its block
+    is removed only if the instance-private MAC, nonce, and content digest all match.
+    """
+    spans: list[tuple[int, int]] = []
+    for opening in _MANAGED_CONTEXT_OPEN.finditer(instructions):
+        nonce, digest, signature = opening.groups()
+        closing_text = f"\n<!-- /jarvis-project-context:v1:{nonce} -->"
+        closing_at = instructions.find(closing_text, opening.end())
+        if closing_at < 0:
+            continue
+        framed = instructions[opening.end():closing_at]
+        if not framed.startswith("\n"):
+            continue
+        text = framed[1:]
+        if (hashlib.sha256(text.encode("utf-8", "strict")).hexdigest() != digest
+                or not hmac.compare_digest(signature, _context_block_mac(key, nonce, digest, text))):
+            continue
+        start = opening.start()
+        if instructions[max(0, start - 2):start] == "\n\n":
+            start -= 2
+        spans.append((start, closing_at + len(closing_text)))
+    if not spans:
+        return instructions
+    result = instructions
+    for start, end in reversed(spans):
+        result = result[:start] + result[end:]
+    return result
+
+
+def _make_owned_context_block(key: bytes, digest: str, text: str) -> str:
+    nonce = secrets.token_urlsafe(12)
+    signature = _context_block_mac(key, nonce, digest, text)
+    return (f"<!-- jarvis-project-context:v1:{nonce}:{digest}:{signature} -->\n"
+            f"{text}\n<!-- /jarvis-project-context:v1:{nonce} -->")
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,40 +240,47 @@ def install_current_project_context_middleware(ctx: Any, *,
     if not callable(register):
         raise RuntimeError("official Hermes LLM request middleware is unavailable")
     source = provider or CurrentProjectContextProvider()
+    block_key = secrets.token_bytes(32)
+
+    def rewritten(request: dict[str, Any], instructions: str) -> Any:
+        if instructions == request.get("instructions"):
+            return None
+        updated = dict(request)
+        updated["instructions"] = instructions
+        return {"request": updated, "source": "jarvis_projects",
+                "reason": "refresh root-verified owner-turn project context"}
 
     def add_project_context(*, request: Any, session_id: str = "", **_event: Any) -> Any:
-        if type(request) is not dict or not isinstance(session_id, str):
+        if type(request) is not dict:
             return None
+        original_instructions = request.get("instructions")
+        if not isinstance(original_instructions, str):
+            return None
+        # Strip this instance's prior block before looking up current state. This
+        # also removes it when the project was detached, archived, or its selected
+        # Obsidian notes disappeared between an attempt and retry.
+        base_instructions = _remove_owned_context_blocks(original_instructions, block_key)
+        if not isinstance(session_id, str):
+            return rewritten(request, base_instructions)
         # The official Codex Responses builder emits one exact ``input_text`` user
         # message. Other transports have different role/content rules and are left
         # byte-for-byte unchanged until an equivalent official adapter is reviewed.
         items = request.get("input")
         if not isinstance(items, list):
-            return None
+            return rewritten(request, base_instructions)
         try:
             from .core_native_observer import _native_prompt_sha256
             prompt_sha256 = _native_prompt_sha256(request)
             snapshot = source.read(session_id=session_id, prompt_sha256=prompt_sha256)
         except Exception:
-            # Context is optional for ordinary/non-Jarvis requests. The root API
-            # returns data only for a current owner-turn join, and errors fail closed.
-            return None
+            # Never replay a prior block after failed current-owner verification.
+            return rewritten(request, base_instructions)
         if snapshot is None or not snapshot.text:
-            return None
+            return rewritten(request, base_instructions)
         if not snapshot.is_current_shape(session_id=session_id, prompt_sha256=prompt_sha256):
-            return None
-        marker = f"[Jarvis Projects context {snapshot.context_sha256}]"
-        updated = dict(request)
-        instructions = request.get("instructions")
-        if not isinstance(instructions, str):
-            return None
-        if marker in instructions:
-            return None
-        updated["instructions"] = (
-            instructions + "\n\n" + marker + "\n" + snapshot.text
-            + "\n[/Jarvis Projects context]"
-        )
-        return {"request": updated, "source": "jarvis_projects",
-                "reason": "root-verified owner-turn project context"}
+            return rewritten(request, base_instructions)
+        block = _make_owned_context_block(block_key, snapshot.context_sha256, snapshot.text)
+        instructions = base_instructions + "\n\n" + block
+        return rewritten(request, instructions)
 
     return register("llm_request", add_project_context)

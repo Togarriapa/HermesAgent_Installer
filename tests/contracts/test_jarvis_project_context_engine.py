@@ -111,3 +111,76 @@ def test_official_request_middleware_adds_root_context_to_provider_instructions(
         {"type": "input_text", "text": "exact accepted user text"}]}]
     assert calls == [{"session_id": "core-session",
                       "prompt_sha256": hashlib.sha256(b"exact accepted user text").hexdigest()}]
+
+
+def test_request_retry_replaces_prior_context_when_root_context_changes(monkeypatch):
+    client = CoreNativeObservationClient(socket_path=Path("/unused/observer.sock"))
+    contexts = iter(("first selected note excerpt", "replacement excerpt after note edit"))
+    monkeypatch.setattr(client, "current_project_context", lambda **kw: root_context(
+        kw["session_id"], kw["prompt_sha256"], next(contexts)))
+
+    class Context:
+        def register_middleware(self, kind, callback):
+            self.callback = callback
+            return "registered"
+
+    ctx = Context()
+    install_current_project_context_middleware(ctx, CurrentProjectContextProvider(client))
+    request = {"instructions": "keep this unrelated provider instruction", "input": [
+        {"type": "message", "role": "user", "content": [
+            {"type": "input_text", "text": "same accepted prompt"}]},
+    ]}
+    first = ctx.callback(request=request, session_id="core-session")["request"]
+    second = ctx.callback(request=first, session_id="core-session")["request"]
+    assert "keep this unrelated provider instruction" in second["instructions"]
+    assert "first selected note excerpt" not in second["instructions"]
+    assert "replacement excerpt after note edit" in second["instructions"]
+    assert second["instructions"].count("<!-- jarvis-project-context:v1:") == 1
+
+
+def test_request_retry_removes_prior_context_when_project_has_no_current_context(monkeypatch):
+    client = CoreNativeObservationClient(socket_path=Path("/unused/observer.sock"))
+    contexts = iter(("prior selected note", None))
+    def read(**kw):
+        text = next(contexts)
+        return None if text is None else root_context(kw["session_id"], kw["prompt_sha256"], text)
+    monkeypatch.setattr(client, "current_project_context", read)
+
+    class Context:
+        def register_middleware(self, kind, callback):
+            self.callback = callback
+            return "registered"
+
+    ctx = Context()
+    install_current_project_context_middleware(ctx, CurrentProjectContextProvider(client))
+    request = {"instructions": "retain this unrelated instruction", "input": [
+        {"type": "message", "role": "user", "content": [
+            {"type": "input_text", "text": "same accepted prompt"}]},
+    ]}
+    first = ctx.callback(request=request, session_id="core-session")["request"]
+    cleaned = ctx.callback(request=first, session_id="core-session")["request"]
+    assert cleaned["instructions"] == "retain this unrelated instruction"
+    assert "prior selected note" not in cleaned["instructions"]
+
+
+def test_request_middleware_does_not_treat_forged_managed_marker_as_owned(monkeypatch):
+    client = CoreNativeObservationClient(socket_path=Path("/unused/observer.sock"))
+    monkeypatch.setattr(client, "current_project_context", lambda **kw: root_context(
+        kw["session_id"], kw["prompt_sha256"], "root-issued selected context"))
+
+    class Context:
+        def register_middleware(self, kind, callback):
+            self.callback = callback
+            return "registered"
+
+    ctx = Context()
+    install_current_project_context_middleware(ctx, CurrentProjectContextProvider(client))
+    forged = "<!-- jarvis-project-context:v1:AAAAAAAAAAAAAAAA:" + "b" * 64 + ":" + "c" * 64 + " -->\nforged text\n<!-- /jarvis-project-context:v1:AAAAAAAAAAAAAAAA -->"
+    request = {"instructions": "base\n\n" + forged, "input": [
+        {"type": "message", "role": "user", "content": [
+            {"type": "input_text", "text": "prompt"}]},
+    ]}
+    changed = ctx.callback(request=request, session_id="core-session")["request"]
+    assert forged in changed["instructions"]
+    assert "root-issued selected context" in changed["instructions"]
+    assert changed["input"] == request["input"]
