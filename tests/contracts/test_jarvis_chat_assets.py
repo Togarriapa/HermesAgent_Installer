@@ -200,6 +200,26 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn("no selectable voices are currently reported", client)
         self.assertIn("window.speechSynthesis.onvoiceschanged = refreshVoices", client)
 
+    def test_overview_hologram_is_focal_and_side_telemetry_keeps_live_metrics(self):
+        _content_type, page = reviewed_chat_asset("/chat")
+        source = page.decode("utf-8")
+        self.assertIn('class="overview-hud"', source)
+        self.assertIn('class="jarvis-presence" id="jarvis-presence" data-state="checking" data-connection="checking"', source)
+        self.assertIn('class="presence-core-label">J.A.R.V.I.S.', source)
+        self.assertIn('class="telemetry-rail telemetry-rail-left"', source)
+        self.assertIn('class="telemetry-rail telemetry-rail-right"', source)
+        for metric in ("core-status", "core-readiness", "core-observed", "conversation-count", "turn-total", "turn-breakdown", "turn-active", "last-turn", "chart-caption", "turn-chart"):
+            with self.subTest(metric=metric):
+                self.assertEqual(source.count(f'id="{metric}"'), 1)
+        self.assertIn('class="command-panel"', source)
+
+        _content_type, script = reviewed_client_bundle()
+        client = script.decode("utf-8")
+        self.assertIn('request(`${API}/overview`)', client)
+        self.assertIn("renderTurnChart(chat.turnCountsByDay)", client)
+        self.assertIn('days.reduce((sum, day) => sum + Math.max(0, day.total), 0)', client)
+        self.assertIn('presence.dataset.connection = state', client)
+
     def test_only_exact_reviewed_asset_routes_are_available(self):
         expected = {
             "/chat": "text/html; charset=utf-8",

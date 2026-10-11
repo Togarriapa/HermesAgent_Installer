@@ -129,26 +129,38 @@ _HTML = '''<!doctype html>
       <main class="data-main" id="overview-view" aria-label="Command centre" data-view-panel="overview">
         <div class="command-centre feature-view">
           <div class="page-heading"><h1 id="command-title">Command centre</h1><p>Your assistant, conversations and tools — ready for your direction.</p></div>
-          <section class="jarvis-presence" id="jarvis-presence" data-state="checking" aria-label="Jarvis presence">
-            <div class="presence-figure" aria-hidden="true">
-              <svg viewBox="0 0 240 240" focusable="false">
-                <circle class="presence-orbit presence-orbit-outer" cx="120" cy="120" r="103"/>
-                <circle class="presence-orbit presence-orbit-inner" cx="120" cy="120" r="81"/>
-                <path class="presence-face" d="M120 53c-31 0-52 24-52 59v29c0 30 22 54 52 54s52-24 52-54v-29c0-35-21-59-52-59Z"/>
-                <path class="presence-brow" d="m83 106 24-9 13 5 13-5 24 9M91 122l25-3M124 119l25 3M105 155c9 7 21 7 30 0"/>
-                <path class="presence-jaw" d="M91 172c8 12 18 18 29 18s21-6 29-18"/>
-                <path class="presence-axis" d="M120 29v12m0 158v12M29 120h12m158 0h12"/>
-                <circle class="presence-node" cx="120" cy="17" r="3"/>
-                <circle class="presence-node" cx="223" cy="120" r="3"/>
-              </svg>
-            </div>
-            <div class="presence-copy">
-              <p class="presence-kicker">J.A.R.V.I.S. <span>· PERSONAL ASSISTANT</span></p>
-              <h2>At your service.</h2>
-              <p id="jarvis-presence-state" role="status" aria-live="polite">Checking the secure connection</p>
-              <div class="presence-connection"><span class="presence-connection-dot" aria-hidden="true"></span><span>SECURE CHANNEL</span><strong id="jarvis-presence-connection">Checking access…</strong></div>
-            </div>
-          </section>
+          <div class="overview-hud">
+            <aside class="telemetry-rail telemetry-rail-left" aria-label="Core and conversation telemetry">
+              <section class="telemetry-readout"><h2>Core service</h2><p class="large-value" id="core-status">Loading…</p><p id="core-readiness" class="muted">Checking verified status</p><p id="core-observed" class="muted"></p></section>
+              <section class="telemetry-readout"><h2>Conversations</h2><p class="large-value" id="conversation-count">—</p><p class="muted">Available in your private history</p></section>
+              <section class="telemetry-readout"><h2>Assistant turns</h2><p class="large-value" id="turn-total">—</p><p class="muted" id="turn-breakdown">Activity totals</p></section>
+            </aside>
+            <section class="jarvis-presence" id="jarvis-presence" data-state="checking" data-connection="checking" aria-label="Jarvis presence">
+              <div class="presence-figure" aria-hidden="true">
+                <svg viewBox="0 0 240 240" focusable="false">
+                  <circle class="presence-orbit presence-orbit-outer" cx="120" cy="120" r="112"/>
+                  <circle class="presence-orbit presence-orbit-inner" cx="120" cy="120" r="94"/>
+                  <circle class="presence-orbit presence-orbit-reactor" cx="120" cy="120" r="76"/>
+                  <circle class="presence-core" cx="120" cy="120" r="57"/>
+                  <path class="presence-axis" d="M120 2v12m0 212v12M2 120h12m212 0h12"/>
+                  <circle class="presence-node" cx="120" cy="4" r="2.5"/>
+                  <circle class="presence-node" cx="236" cy="120" r="2.5"/>
+                  <circle class="presence-node" cx="120" cy="236" r="2.5"/>
+                  <circle class="presence-node" cx="4" cy="120" r="2.5"/>
+                </svg>
+                <span class="presence-core-label">J.A.R.V.I.S.<small>PERSONAL CORE</small></span>
+              </div>
+              <div class="presence-copy">
+                <h2>At your service.</h2>
+                <p id="jarvis-presence-state" role="status" aria-live="polite">Checking the secure connection</p>
+                <div class="presence-connection"><span class="presence-connection-dot" aria-hidden="true"></span><span>SECURE CHANNEL</span><strong id="jarvis-presence-connection">Checking access…</strong></div>
+              </div>
+            </section>
+            <aside class="telemetry-rail telemetry-rail-right" aria-label="Recorded activity telemetry">
+              <section class="telemetry-readout"><h2>Active turns</h2><p class="large-value" id="turn-active">—</p><p class="muted" id="last-turn">Last turn not available</p></section>
+              <section class="telemetry-readout activity-readout"><h2>Turns · last 7 days</h2><p class="muted" id="chart-caption">Loading recorded activity…</p><div id="turn-chart" role="list" aria-label="Assistant turns in the last seven days"></div></section>
+            </aside>
+          </div>
           <section class="command-panel" aria-labelledby="command-title">
             <div class="command-intro"><span class="command-kicker">YOUR COMMAND</span><span>Private owner workspace</span></div>
             <form id="overview-command-form" class="command-form">
@@ -166,13 +178,6 @@ _HTML = '''<!doctype html>
               <button type="button" data-command-prompt="Review the current status of my configured integrations and report anything unavailable. Do not change their configuration."><span aria-hidden="true">↗</span> Check integrations</button>
             </div>
           </section>
-        </div>
-        <div class="dashboard-grid">
-          <section class="data-card status-card"><h2>Core service</h2><p class="large-value" id="core-status">Loading…</p><p id="core-readiness" class="muted">Checking verified status</p><p id="core-observed" class="muted"></p></section>
-          <section class="data-card"><h2>Conversations</h2><p class="large-value" id="conversation-count">—</p><p class="muted">Available in your private history</p></section>
-          <section class="data-card"><h2>Assistant turns</h2><p class="large-value" id="turn-total">—</p><p class="muted" id="turn-breakdown">Activity totals</p></section>
-          <section class="data-card"><h2>Active turns</h2><p class="large-value" id="turn-active">—</p><p class="muted" id="last-turn">Last turn not available</p></section>
-          <section class="data-card chart-card"><h2>Turns over the last 7 days</h2><p class="muted" id="chart-caption">Loading recorded activity…</p><div id="turn-chart" role="list" aria-label="Assistant turns in the last seven days"></div></section>
         </div>
       </main>
       <section class="data-main" id="capabilities-view" aria-label="Capabilities" data-view-panel="capabilities" hidden>
@@ -338,6 +343,11 @@ html[data-jarvis-motion="reduce"] *,html[data-jarvis-motion="reduce"] *::before,
 @media(max-width:760px){.jarvis-presence{grid-template-columns:112px minmax(0,1fr);min-height:164px;gap:14px;margin-bottom:16px;padding:15px 16px;border-radius:16px}.presence-figure{width:112px;height:112px}.presence-figure:before{inset:12px}.presence-copy h2{font-size:clamp(23px,6vw,30px)}.presence-kicker{font-size:8px;letter-spacing:.1em}.presence-kicker span{display:block;margin-top:4px}.presence-copy>p:not(.presence-kicker){margin:6px 0 11px;font-size:12px}.presence-connection{grid-template-columns:8px 1fr;gap:6px;font-size:8px}.presence-connection strong{grid-column:2;margin:0;padding:4px 7px;font-size:9px}}
 @media(max-width:420px){.jarvis-presence{grid-template-columns:84px minmax(0,1fr);gap:11px;padding:13px}.presence-figure{width:84px;height:84px}.presence-copy h2{font-size:22px}.presence-copy>p:not(.presence-kicker){font-size:11px}.presence-kicker span{font-size:8px}}
 @media(prefers-reduced-motion:reduce){.presence-figure:before{transition:none}.jarvis-presence .presence-orbit-inner,.jarvis-presence .presence-orbit-outer{animation:none}}
+.overview-hud{max-width:1200px;min-height:438px;margin:0 auto 14px;display:grid;grid-template-columns:minmax(150px,.8fr) minmax(340px,1.8fr) minmax(190px,.95fr);align-items:center;gap:clamp(14px,2.3vw,30px)}.telemetry-rail{min-width:0;display:grid;align-content:center;gap:13px}.telemetry-readout{min-width:0;padding:12px 0;border-top:1px solid rgba(91,199,211,.22)}.telemetry-readout:last-child{border-bottom:1px solid rgba(91,199,211,.16)}.telemetry-readout h2{margin:0 0 8px;color:#8cb8be;font:600 9px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.13em;text-transform:uppercase}.telemetry-readout .large-value{margin:4px 0 3px;color:#e7fcfd;font-size:21px;line-height:1.2;font-weight:560;letter-spacing:-.025em;font-variant-numeric:tabular-nums}.telemetry-readout .muted{margin:4px 0 0;color:#9bb6bb;font-size:10px;line-height:1.5}.telemetry-readout #core-observed{color:#85a6ab;font-size:9px}.telemetry-readout #turn-breakdown{color:#9bb6bb}.activity-readout{align-self:stretch}.activity-readout #chart-caption{min-height:28px}.activity-readout .chart-bars{height:112px;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;margin:9px 0 0}.activity-readout .chart-day{min-width:0;gap:5px;color:#9bb6bb;font-size:8px}.activity-readout .chart-bar-track{height:72px}.activity-readout .chart-bar{width:min(13px,70%);border-radius:3px 3px 0 0}.jarvis-presence{min-width:0;min-height:420px;margin:0;display:grid;align-content:center;justify-items:center;gap:0;overflow:visible;padding:12px 0;border:0;border-radius:0;background:transparent;box-shadow:none;text-align:center}.jarvis-presence:after{display:none}.presence-figure{width:min(100%,380px);height:auto;aspect-ratio:1;margin:0 auto;filter:drop-shadow(0 16px 32px rgba(0,0,0,.27))}.presence-figure:before{inset:15%;background:radial-gradient(circle,rgba(59,217,228,.23),rgba(16,104,118,.12) 43%,transparent 72%)}.presence-figure svg{display:block;width:100%;height:100%;overflow:visible}.presence-orbit-outer{stroke:rgba(70,216,228,.72);stroke-width:1.3;stroke-dasharray:2 5}.presence-orbit-inner{stroke:rgba(95,220,231,.52);stroke-width:1.5;stroke-dasharray:35 8 5 9}.presence-orbit-reactor{fill:rgba(6,27,34,.83);stroke:rgba(104,229,236,.79);stroke-width:1.3;stroke-dasharray:98 12 12 9}.presence-core{fill:rgba(42,189,202,.09);stroke:rgba(108,234,239,.78);stroke-width:1.1;filter:drop-shadow(0 0 9px rgba(64,220,231,.22))}.presence-axis{stroke:rgba(88,211,221,.48);stroke-width:1.1}.presence-node{fill:#c8ffff;filter:drop-shadow(0 0 5px rgba(82,229,237,.86))}.presence-core-label{position:absolute;left:50%;top:50%;display:grid;gap:6px;transform:translate(-50%,-50%);color:#ddffff;font:550 clamp(13px,1.35vw,17px)/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.2em;text-shadow:0 0 18px rgba(77,230,237,.54);white-space:nowrap}.presence-core-label small{color:#89dbe0;font-size:8px;letter-spacing:.2em}.presence-copy{max-width:500px;margin-top:-17px;text-align:center}.presence-copy h2{font-size:22px;letter-spacing:-.025em}.presence-copy>p:not(.presence-kicker){margin:7px 0 12px;color:#b5d2d5;font-size:12px}.presence-connection{display:inline-grid;grid-template-columns:8px auto auto;gap:8px;padding:0 10px;color:#8db0b5;font-size:8px}.presence-connection strong{margin-left:3px;padding:5px 7px;font-size:9px}.jarvis-presence[data-state="idle"] .presence-orbit-inner{opacity:.76}.jarvis-presence[data-state="thinking"] .presence-orbit-inner{transform-box:view-box;transform-origin:120px 120px;animation:presence-turn 24s linear infinite}.jarvis-presence[data-state="listening"] .presence-orbit-outer{animation:presence-listen 1.8s ease-in-out infinite}.jarvis-presence[data-state="speaking"] .presence-orbit-reactor{stroke-dasharray:22 7;stroke-width:1.9}.jarvis-presence[data-state="error"] .presence-orbit-reactor,.jarvis-presence[data-state="error"] .presence-core{stroke:rgba(233,189,112,.86)}.command-panel{max-width:1200px;margin:10px auto 8px;padding:14px 18px;border:1px solid rgba(89,190,201,.23);border-radius:13px;background:linear-gradient(110deg,rgba(9,30,37,.88),rgba(7,22,29,.84));box-shadow:inset 0 1px rgba(255,255,255,.025)}.command-intro{font-size:10px}.command-kicker{color:#8ddce0;font-size:9px}.command-form{margin-top:9px}.quick-actions{margin-top:10px}.overview-hud+.command-panel{margin-top:8px}
+.jarvis-presence[data-connection="ready"] .presence-connection-dot{background:#66e3e6;box-shadow:0 0 9px rgba(88,228,235,.55)}.jarvis-presence[data-connection="error"] .presence-connection-dot{background:var(--amber);box-shadow:0 0 8px rgba(233,189,112,.5)}.jarvis-presence[data-connection="checking"] .presence-connection-dot{background:#83979a;box-shadow:none}
+@media(max-width:980px) and (min-width:761px){.overview-hud{grid-template-columns:minmax(125px,.75fr) minmax(300px,1.7fr) minmax(165px,.95fr);gap:13px}.jarvis-presence{min-height:380px}.presence-figure{width:min(100%,340px)}.telemetry-readout{padding-block:10px}.telemetry-readout .large-value{font-size:19px}}
+@media(max-width:760px){.overview-hud{display:flex;flex-direction:column;gap:16px;min-height:0;align-items:stretch}.jarvis-presence{order:-1;min-height:0;padding:2px 0 7px}.presence-figure{width:min(78vw,330px)}.presence-figure:before{inset:15%}.presence-copy{margin-top:-13px}.telemetry-rail{grid-template-columns:repeat(2,minmax(0,1fr));gap:0 18px;padding:0 4px}.telemetry-readout{padding:11px 0}.telemetry-readout .large-value{font-size:19px}.telemetry-readout .muted{font-size:10px}.activity-readout .chart-bars{height:116px}.activity-readout .chart-bar-track{height:74px}.command-panel{padding:12px;border-radius:12px}.command-intro{gap:8px}.command-intro>span:last-child{font-size:9px}.quick-actions{display:flex;flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px;scroll-snap-type:x proximity;overscroll-behavior-inline:contain}.quick-actions button{flex:0 0 auto;scroll-snap-align:start;min-height:44px}.command-hint{font-size:10px}}
+@media(max-width:430px){.presence-figure{width:min(82vw,290px)}.presence-copy h2{font-size:20px}.presence-connection{grid-template-columns:7px auto;gap:6px}.presence-connection strong{grid-column:2;justify-self:start;margin-left:0}.telemetry-rail{grid-template-columns:1fr 1fr;gap:0 12px}.telemetry-readout h2{font-size:8px}.activity-readout{grid-column:1/-1}.activity-readout .chart-bars{height:100px}.activity-readout .chart-bar-track{height:62px}}
 '''.encode("utf-8")
 
 
@@ -798,7 +808,10 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     const presenceLink = byId("jarvis-presence-connection");
     if (presenceLink) presenceLink.textContent = label;
     const presence = byId("jarvis-presence");
-    if (presence && state === "error" && !activeTurnId) presence.dataset.state = "error";
+    if (presence) {
+      presence.dataset.connection = state;
+      if (state === "error" && !activeTurnId) presence.dataset.state = "error";
+    }
   }
   function appendMessage(role, text, state) {
     if (role !== "user" && role !== "assistant") return null;
