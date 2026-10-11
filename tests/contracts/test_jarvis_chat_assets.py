@@ -157,6 +157,7 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('.primary-nav>.nav-item,.primary-nav>.nav-group{flex:1 1 0;min-width:0}', css)
         self.assertIn('html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-orbit-dial', css)
         self.assertIn('feature.id === "overview" && method === "GET" && path === "/chat/api/overview"', client)
+        self.assertIn('const data = await request(`/overview`);', client)
         sender = client.split("async function sendMessage(text", 1)[1].split("function createIdempotencyKey()", 1)[0]
         self.assertIn("return true;", sender)
         self.assertIn("return false;", sender)
@@ -175,6 +176,11 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('headers: {"Idempotency-Key": createIdempotencyKey()}', trash)
         self.assertIn('await refreshTrash();', trash)
         self.assertIn('result.conversation.id !== id', trash)
+        bridge = client.split("async function sendOverviewCommand(event) {", 1)[1].split("overviewForm.addEventListener", 1)[0]
+        self.assertIn("const accepted = await sendMessage(text, {modelId: null, reasoningEffort: null});", bridge)
+        self.assertIn("if (accepted)", bridge)
+        self.assertIn("Your text is preserved here", bridge)
+        self.assertIn("overviewCommandPending", bridge)
         self.assertIn('if (feature.id === "models-settings") contextualCleanup = preselectCurrentModelConversation(root);', client)
         model_context = client.split("function preselectCurrentModelConversation(root) {", 1)[1].split("function mountFeature(feature)", 1)[0]
         self.assertIn('select.value = id;', model_context)
