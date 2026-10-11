@@ -314,9 +314,23 @@ def _overview_observation(config, accepted, *, now):
 
 def _jarvis_service(launch, store_path):
     from hermes_installer.remote.jarvis_chat import JarvisChatService, JarvisChatStore
+    from hermes_installer.remote.core_client import CoreRpcClient
+
+    class FixedStatusClient(CoreRpcClient):
+        async def list_profiles(self):
+            return []
+
+        async def list_schedules(self):
+            return []
+
+        async def list_plugins(self):
+            return []
+
+        async def mcp_status(self):
+            return {"servers": [], "checked_at": None}
 
     return JarvisChatService(
-        JarvisChatStore(Path(store_path)), object(),
+        JarvisChatStore(Path(store_path)), FixedStatusClient(),
         principal_from_request=launch.principal_from_request,
     )
 
