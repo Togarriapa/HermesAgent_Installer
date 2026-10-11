@@ -42,10 +42,41 @@ _MOUNT = r'''function mount(container, api, state) {
   let active = true;
   let requestSerial = 0;
   let selected = "bots";
+  const pauseApprovals = new Map();
   const click = async (event) => {
     const sectionButton = event.target.closest("[data-bots-section]");
     const refreshButton = event.target.closest("[data-bots-refresh]");
-    if (!sectionButton && !refreshButton) return;
+    const pauseButton = event.target.closest("[data-schedule-pause]");
+    if (!sectionButton && !refreshButton && !pauseButton) return;
+    if (pauseButton) {
+      const id = pauseButton.dataset.schedulePause;
+      const approval = pauseApprovals.get(id);
+      if (!approval) return;
+      pauseButton.disabled = true;
+      container.querySelector("[data-bots-status]").textContent = "Submitting the one-use pause approval…";
+      const keyBytes = new Uint8Array(24);
+      crypto.getRandomValues(keyBytes);
+      const idempotencyKey = Array.from(keyBytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+      pauseApprovals.delete(id);
+      let result = { status: "pending" };
+      try {
+        result = await api.post("/chat/api/schedules/" + encodeURIComponent(id) + "/pause", {
+          revision: approval.revision,
+          approval_nonce: approval.nonce,
+          idempotency_key: idempotencyKey,
+        });
+      } catch (_) {
+        result = { status: "pending" };
+      }
+      if (!active) return;
+      await load();
+      if (!active) return;
+      const status = container.querySelector("[data-bots-status]");
+      status.textContent = result.status === "paused"
+        ? "Pause was confirmed by the current Hermes core."
+        : "Pause result is pending or could not be confirmed. Refresh to inspect current core status.";
+      return;
+    }
     if (sectionButton) {
       selected = sectionButton.dataset.botsSection;
       container.querySelectorAll("[data-bots-section]").forEach((button) => {
@@ -62,11 +93,12 @@ _MOUNT = r'''function mount(container, api, state) {
     return element;
   };
   const addField = (card, label, value) => card.appendChild(node("p", label + ": " + (value ?? "Unknown")));
-  const render = (snapshot) => {
+    const render = (snapshot) => {
     const rows = container.querySelector("[data-bots-rows]");
     const pending = container.querySelector("[data-bots-pending]");
     const status = container.querySelector("[data-bots-status]");
     rows.replaceChildren(); pending.replaceChildren();
+    pauseApprovals.clear();
     const reason = Array.isArray(snapshot.pending_reasons) ? snapshot.pending_reasons : [];
     reason.forEach((item) => pending.appendChild(node("p", item, "bots-note")));
     let items = [];
@@ -95,6 +127,13 @@ _MOUNT = r'''function mount(container, api, state) {
         addField(card, "Timezone", item.timezone);
         addField(card, "Next run", item.next_run_at);
         addField(card, "Last state", item.last_state);
+        if (item.enabled === true && item.opaque_id && item.revision && item.pause_approval_nonce) {
+          pauseApprovals.set(item.opaque_id, { revision: item.revision, nonce: item.pause_approval_nonce });
+          const pause = node("button", "Pause schedule", "bots-refresh");
+          pause.type = "button";
+          pause.dataset.schedulePause = item.opaque_id;
+          card.appendChild(pause);
+        }
       }
       rows.appendChild(card);
     });
@@ -102,7 +141,9 @@ _MOUNT = r'''function mount(container, api, state) {
       + " · core generation " + (snapshot.core_generation || "unknown");
   };
   const load = async () => {
+    if (!active) return;
     const serial = ++requestSerial;
+    pauseApprovals.clear();
     const status = container.querySelector("[data-bots-status]");
     status.textContent = "Loading current status…";
     try {
@@ -131,7 +172,8 @@ FEATURE_ASSETS = JarvisFeatureAssets(
     view_html=_VIEW,
     css=_CSS,
     api_routes=(("GET", "/chat/api/bots"), ("GET", "/chat/api/channels"),
-                ("GET", "/chat/api/schedules")),
+                ("GET", "/chat/api/schedules"),
+                ("POST", "/chat/api/schedules/{opaque_id}/pause")),
     mount_js=_MOUNT,
     unmount_js=_UNMOUNT,
 )

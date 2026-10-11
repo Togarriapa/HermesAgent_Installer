@@ -1,10 +1,11 @@
-"""Source contracts for the read-only Jarvis Bots/channels/schedules feature."""
+"""Source contracts for fixed Jarvis status and one-use schedule pause."""
 from __future__ import annotations
 
 import asyncio
 import time
 from pathlib import Path
 
+import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -17,6 +18,7 @@ from hermes_installer.remote.jarvis_bots import (
 from hermes_installer.remote.jarvis_channels import CHANNEL_STATUS_PENDING, project_channel_status
 from hermes_installer.remote.jarvis_chat import ChatPrincipal, JarvisChatService, JarvisChatStore
 from hermes_installer.remote.jarvis_schedules import project_schedules
+from hermes_installer.remote.jarvis_schedule_actions import ScheduleActionLedger, schedule_revision
 
 
 def test_schedule_projection_is_bounded_and_excludes_sensitive_native_fields():
@@ -90,6 +92,7 @@ def test_status_snapshot_reports_observed_profile_and_schedule_with_exact_pendin
     assert result["channels"] == []
     assert result["schedules"][0]["enabled"] is True
     assert result["schedules"][0]["timezone"] is None
+    assert "pause_approval_nonce" not in result["schedules"][0]
     assert all(isinstance(reason, str) and reason for reason in result["pending_reasons"])
     encoded = repr(result)
     assert "secret-provider" not in encoded and "private-model" not in encoded
@@ -148,9 +151,117 @@ def test_routes_use_only_fixed_default_profile_and_reject_query_selectors(tmp_pa
     asyncio.run(scenario())
 
 
-def test_routes_are_fixed_get_only_collections():
+def test_routes_are_fixed_status_reads_and_one_pause_action():
     assert FEATURE_ROUTES == (
         ("GET", "/chat/api/bots"),
         ("GET", "/chat/api/channels"),
         ("GET", "/chat/api/schedules"),
+        ("POST", "/chat/api/schedules/{opaque_id}/pause"),
     )
+
+
+def test_schedule_action_ledger_binds_owner_generation_revision_and_spends_once(tmp_path):
+    ledger = ScheduleActionLedger(tmp_path / "actions.sqlite3")
+    rows = [{"job_id": "native-1", "enabled": True, "schedule": "0 * * * *",
+             "next_run_at": "2026-10-11T12:00:00Z", "state": "scheduled"}]
+    revision = schedule_revision(rows)
+    approvals = ledger.issue_snapshot("owner", "generation-1", "default",
+                                      time.monotonic() + 60, rows)
+    approval = approvals[0]
+    assert approval is not None
+    assert ledger.resolve_approval(subject="owner", core_generation="generation-1",
+                                   profile_identity="default",
+                                   jwt_expiry=time.monotonic() + 90, opaque_id=approval.opaque_id,
+                                   revision=revision, approval_nonce=approval.approval_nonce) == "native-1"
+    key = "k" * 32
+    binding = ledger.spend(subject="owner", core_generation="generation-1",
+                           profile_identity="default",
+                           jwt_expiry=time.monotonic() + 90, opaque_id=approval.opaque_id,
+                           revision=revision, approval_nonce=approval.approval_nonce,
+                           idempotency_key=key)
+    assert binding.job_id == "native-1"
+    assert binding.action_state == "pending"
+    prior = ledger.lookup_action(subject="owner", core_generation="generation-1",
+                                 profile_identity="default",
+                                 opaque_id=approval.opaque_id, revision=revision,
+                                 approval_nonce=approval.approval_nonce, idempotency_key=key)
+    assert prior is not None and prior.action_state == "pending"
+    ledger.complete(binding, {"status": "paused"})
+    completed = ledger.lookup_action(subject="owner", core_generation="generation-1",
+                                    profile_identity="default",
+                                    opaque_id=approval.opaque_id, revision=revision,
+                                    approval_nonce=approval.approval_nonce, idempotency_key=key)
+    assert completed is not None and completed.result == {"status": "paused"}
+    with pytest.raises(PermissionError):
+        ledger.resolve_approval(subject="another-owner", core_generation="generation-1",
+                                profile_identity="default",
+                                jwt_expiry=time.monotonic() + 90, opaque_id=approval.opaque_id,
+                                revision=revision, approval_nonce=approval.approval_nonce)
+    with pytest.raises(PermissionError):
+        ledger.lookup_action(subject="owner", core_generation="generation-2",
+                             profile_identity="default",
+                             opaque_id=approval.opaque_id, revision=revision,
+                             approval_nonce=approval.approval_nonce, idempotency_key=key)
+
+
+def test_schedule_pause_route_calls_fixed_native_pause_and_confirms_state(tmp_path, monkeypatch):
+    async def scenario():
+        profile_calls = []
+        native_calls = []
+        schedules = [{"job_id": "native-job-1", "name": "private prompt title", "enabled": True,
+                      "schedule": "0 9 * * *", "next_run_at": "2026-10-11T09:00:00Z",
+                      "last_run_at": None, "last_status": None, "state": "scheduled", "paused_at": None}]
+
+        async def list_profiles(self):
+            profile_calls.append(True)
+            return [{"name": "default", "display_name": "Jarvis", "is_default": True}]
+
+        async def list_schedules(self):
+            return [dict(row) for row in schedules]
+
+        async def pause_schedule(self, job_id):
+            native_calls.append(job_id)
+            assert job_id == "native-job-1"
+            schedules[0].update(enabled=False, state="paused")
+
+        monkeypatch.setattr(CoreRpcClient, "list_profiles", list_profiles, raising=False)
+        monkeypatch.setattr(CoreRpcClient, "list_schedules", list_schedules, raising=False)
+        monkeypatch.setattr(CoreRpcClient, "pause_schedule", pause_schedule, raising=False)
+        backend = CoreRpcClient(token_file=Path(tmp_path / "unused-token"))
+
+        def principal(_request):
+            now = time.monotonic()
+            return ChatPrincipal("owner-subject", now + 60, now + 30, "generation-1")
+
+        service = JarvisChatService(JarvisChatStore(tmp_path / "chat.sqlite3"), backend,
+                                    principal_from_request=principal)
+        app = web.Application()
+        install_jarvis_bots_routes(app, service)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            response = await client.get("/chat/api/schedules")
+            payload = await response.json()
+            item = payload["schedules"][0]
+            assert response.status == 200
+            assert item["enabled"] is True
+            assert item["pause_approval_nonce"]
+            assert "native-job-1" not in repr(payload)
+            body = {"revision": item["revision"],
+                    "approval_nonce": item["pause_approval_nonce"],
+                    "idempotency_key": "z" * 32}
+            action = await client.post(
+                "/chat/api/schedules/" + item["opaque_id"] + "/pause", json=body)
+            assert action.status == 200
+            assert await action.json() == {"status": "paused"}
+            assert native_calls == ["native-job-1"]
+            replay = await client.post(
+                "/chat/api/schedules/" + item["opaque_id"] + "/pause", json=body)
+            assert replay.status == 200
+            assert await replay.json() == {"status": "paused"}
+            assert native_calls == ["native-job-1"]
+            assert len(profile_calls) == 6
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
