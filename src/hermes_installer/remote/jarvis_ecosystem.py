@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import math
 import re
 from datetime import datetime, timezone
-from typing import Any, Mapping
+from typing import Any
 
 from .jarvis_chat import JarvisChatDenied, JarvisChatService, _secure_headers
 
@@ -14,7 +13,7 @@ FEATURE_ROUTES = (("GET", "/chat/api/ecosystem"),)
 
 _ID = re.compile(r"[A-Za-z0-9_-]{24,64}\Z", re.ASCII)
 _HASH = re.compile(r"[a-f0-9]{64}\Z", re.ASCII)
-_ALIAS = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,47}\Z", re.ASCII)
+_ALIAS = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._·-]{0,47}\Z", re.ASCII)
 _STATUSES = frozenset({"admitted", "running", "responded", "completed", "unknown"})
 _EVENT_KINDS = frozenset({"admitted", "attempt", "response", "tool_call", "completed"})
 _EVENT_STATUSES = frozenset({"accepted", "started", "completed", "incomplete", "observed"})
@@ -23,11 +22,16 @@ _MAX_EVENTS = 200
 _WINDOW_SECONDS = 7 * 24 * 60 * 60
 
 
-def _timestamp(value: Any) -> str:
+def _timestamp_seconds(value: Any) -> float:
     if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
         raise ValueError("native activity timestamp is invalid")
+    return float(value)
+
+
+def _timestamp(value: Any) -> str:
+    seconds = _timestamp_seconds(value)
     try:
-        return datetime.fromtimestamp(value, timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        return datetime.fromtimestamp(seconds, timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     except (OverflowError, OSError, ValueError):
         raise ValueError("native activity timestamp is invalid") from None
 
@@ -42,7 +46,9 @@ def project_native_activity_snapshot(value: Any) -> dict[str, Any]:
             or type(value["instances"]) is not list or len(value["instances"]) > _MAX_INSTANCES
             or value["relations"] != []):
         raise ValueError("root activity snapshot schema is invalid")
-    observed_at = _timestamp(value["observed_at"])
+    observed_seconds = _timestamp_seconds(value["observed_at"])
+    window_start = observed_seconds - value["window_seconds"]
+    observed_at = _timestamp(observed_seconds)
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
     event_total = 0
@@ -86,8 +92,14 @@ def project_native_activity_snapshot(value: Any) -> dict[str, Any]:
         event_total += len(item["events"])
         if event_total > _MAX_EVENTS:
             raise ValueError("root activity event cap exceeded")
-        created_at = _timestamp(item["created_at"])
-        updated_at = _timestamp(item["updated_at"])
+        created_seconds = _timestamp_seconds(item["created_at"])
+        updated_seconds = _timestamp_seconds(item["updated_at"])
+        if (not window_start <= created_seconds <= observed_seconds
+                or not window_start <= updated_seconds <= observed_seconds
+                or created_seconds > updated_seconds):
+            raise ValueError("root activity instance time is outside the observation window")
+        created_at = _timestamp(created_seconds)
+        updated_at = _timestamp(updated_seconds)
         events: list[dict[str, Any]] = []
         completed_events = 0
         instance_tool_calls = 0
@@ -102,9 +114,12 @@ def project_native_activity_snapshot(value: Any) -> dict[str, Any]:
                     or event["duration_ms"] is not None and (
                         type(event["duration_ms"]) is not int or not 0 <= event["duration_ms"] <= 3_600_000)):
                 raise ValueError("root activity event is malformed")
+            event_seconds = _timestamp_seconds(event["at"])
+            if not window_start <= event_seconds <= observed_seconds:
+                raise ValueError("root activity event time is outside the observation window")
             events.append({
                 "kind": event["kind"], "status": event["status"],
-                "at": _timestamp(event["at"]), "duration_ms": event["duration_ms"],
+                "at": _timestamp(event_seconds), "duration_ms": event["duration_ms"],
                 "tool_count": event["tool_count"],
             })
             if event["kind"] == "completed" and event["status"] == "completed":

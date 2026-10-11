@@ -75,6 +75,15 @@ def test_projection_exposes_actual_completed_worker_and_measured_activity_only()
     assert "source_generation_sha256" not in projected["instances"][0]
 
 
+def test_persisted_collision_alias_is_preserved():
+    row = _instance()
+    row["display_alias"] = "Dev Peter ·2"
+
+    projected = project_native_activity_snapshot(_snapshot([row]))
+
+    assert projected["instances"][0]["display_name"] == "Dev Peter ·2"
+
+
 def test_stale_rows_become_unknown_and_absent_measurements_stay_null():
     row = _instance(status="running", stale=True)
     row["events"] = [item for item in row["events"] if item["kind"] != "response"]
@@ -109,6 +118,18 @@ def test_projection_rejects_oversized_instance_or_event_windows():
     too_many_events["instances"][0]["events"] *= 41
     with pytest.raises(ValueError):
         project_native_activity_snapshot(too_many_events)
+
+
+def test_projection_rejects_future_and_out_of_window_activity_timestamps():
+    future = _snapshot([_instance()])
+    future["instances"][0]["events"][0]["at"] = future["observed_at"] + 1
+    with pytest.raises(ValueError):
+        project_native_activity_snapshot(future)
+
+    old = _snapshot([_instance()])
+    old["instances"][0]["created_at"] = old["observed_at"] - old["window_seconds"] - 1
+    with pytest.raises(ValueError):
+        project_native_activity_snapshot(old)
 
 
 def test_empty_current_snapshot_is_truthfully_quiet_with_observation_window():
