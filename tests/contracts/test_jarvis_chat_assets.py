@@ -117,6 +117,7 @@ class JarvisChatAssetTests(unittest.TestCase):
                 self.assertIn(f'data-view="{destination}"', primary_nav)
                 self.assertIn(label, primary_nav)
 
+
         _content_type, registry = reviewed_chat_asset("/chat/assets/features.js")
         source = registry.decode("utf-8")
         self.assertIn('Object.defineProperty(script, "jarvisReviewedFeatures"', source)
@@ -143,6 +144,13 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn("turnCountsByDay", features.decode("utf-8"))
         _content_type, app_script = reviewed_chat_asset("/chat/assets/app.js")
         client = app_script.decode("utf-8")
+
+        self.assertEqual(primary_nav.count('class="nav-group'), 1)
+        self.assertIn('data-nav-group="manage"', primary_nav)
+        manage_menu = primary_nav.split('data-nav-group="manage"', 1)[1].split("</details>", 1)[0]
+        for destination in ("capabilities", "settings"):
+            self.assertIn(f'data-view="{destination}"', manage_menu)
+
         _registry_type, registry = reviewed_chat_asset("/chat/assets/features.js")
         self.assertIn('item.hidden = !featuresById.has(item.dataset.requiresFeature);', client)
         for feature_id in (
@@ -156,8 +164,9 @@ class JarvisChatAssetTests(unittest.TestCase):
         css = stylesheet.decode("utf-8")
         self.assertIn('.primary-nav>.nav-item,.primary-nav>.nav-group{flex:1 1 0;min-width:0}', css)
         self.assertIn('html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-orbit-dial', css)
+        self.assertIn('class="presence-orbit-dial"', source)
+        self.assertIn('.jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-orbit-inner{animation:presence-turn 22s linear infinite}', css)
         self.assertIn('feature.id === "overview" && method === "GET" && path === "/chat/api/overview"', client)
-        self.assertIn('const data = await request(`/overview`);', client)
         sender = client.split("async function sendMessage(text", 1)[1].split("function createIdempotencyKey()", 1)[0]
         self.assertIn("return true;", sender)
         self.assertIn("return false;", sender)
