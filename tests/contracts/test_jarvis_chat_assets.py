@@ -429,6 +429,39 @@ CLASSIFIER
             )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_background_history_refresh_does_not_clobber_completed_reply(self):
+        _content_type, script = reviewed_client_bundle()
+        client = script.decode("utf-8")
+        helper = "function refreshConversationsInBackground()" + client.split(
+            "function refreshConversationsInBackground()", 1)[1].split(
+                "\n  async function loadConversation(", 1)[0]
+        self.assertEqual(client.count("refreshConversationsInBackground();"), 3)
+        self.assertIn('ui.sessionCount.textContent = "Your chat list is unavailable.";', client)
+        harness = r'''const assert = require("node:assert/strict");
+let failure = new Error("Jarvis is unreachable. Check your connection and try again.");
+let notice = "", assistantReply = "Jarvis";
+function refreshConversations() { return Promise.reject(failure); }
+function showError(message) { notice = message; }
+HELPER
+(async () => {
+  await refreshConversationsInBackground();
+  assert.equal(assistantReply, "Jarvis");
+  assert.equal(notice, "");
+
+  failure = new Error("Your secure session is no longer current. Sign in again to continue.");
+  await refreshConversationsInBackground();
+  assert.equal(assistantReply, "Jarvis");
+  assert.equal(notice, failure.message);
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+'''.replace("HELPER", helper)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "background-history-harness.js"
+            path.write_text(harness, encoding="utf-8")
+            result = subprocess.run(
+                ["node", str(path)], capture_output=True, text=True, check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_accepted_queued_turn_exposes_stop_until_terminal_cleanup(self):
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
         source = script.decode("utf-8")
