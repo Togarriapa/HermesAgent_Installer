@@ -7,7 +7,7 @@ from . import jarvis_bots as _bots
 from . import jarvis_missions as _missions
 from . import jarvis_native_inventory as _native_inventory
 from . import jarvis_files as _files
-from .jarvis_activity_assets import FEATURE_ASSETS as _ACTIVITY_ASSETS
+from .jarvis_runtime_visibility_assets import FEATURE_ASSETS as _ACTIVITY_ASSETS
 from .jarvis_bots_ui import FEATURE_ASSETS as _BOTS_ASSETS
 from .jarvis_feature_contract import JarvisFeatureAssets
 from .jarvis_missions_assets import FEATURE_ASSETS as _MISSION_ASSETS
