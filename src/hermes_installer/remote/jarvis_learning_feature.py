@@ -28,6 +28,7 @@ FEATURE_ASSETS = JarvisFeatureAssets(
         "function mount(container, api, state){"
         "const root=container.querySelector('.learning');if(!root)return;"
         "const status=root.querySelector('[data-status]'),list=root.querySelector('[data-candidates]'),next=root.querySelector('[data-next]');"
+        "list.replaceChildren();next.textContent='';"
         "let stopped=false;(async ()=>{"
         "try{const result=await api.get('/chat/api/resources/learning');"
         "if(stopped)return;if(!result||result.schema!==1||!['read-only-native-review','partial','unavailable'].includes(result.state)||!Array.isArray(result.candidates))throw new Error('invalid');"
