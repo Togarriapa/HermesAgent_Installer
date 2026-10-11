@@ -342,7 +342,7 @@ class ObsidianVaultStore:
         notes, _partial, _scanned = self._scan()
         notes, _scoped = _scope_notes(notes, note_scope)
         by_id = {note.note_id: note for note in notes}
-        source = by_id.get(_opaque_id(note_id))
+        source = by_id.get(note_id) if type(note_id) is str and _ID.fullmatch(note_id) else None
         if source is None or source.note_id != note_id:
             raise ObsidianVaultError("note is not present in the selected-owner vault")
         resolved, unresolved = _build_links(notes)
@@ -1031,6 +1031,7 @@ class ObsidianVaultStore:
 
     def _atomic_note_write(self, relative: str, content: bytes,
                            *, expected_sha256: str | None) -> None:
+        relative = _note_relative_path(relative)
         if len(content) > MAX_NOTE_BYTES:
             raise ObsidianVaultError("final note exceeds the 1 MiB bound")
         parent, basename = self._open_parent(relative, create=True)

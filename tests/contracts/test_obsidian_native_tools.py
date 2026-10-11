@@ -29,6 +29,11 @@ from hermes_installer.remote.obsidian_second_brain import (
 OWNER = "a" * 64
 
 
+def _write_fixture(path, text):
+    path.write_text(text, encoding="utf-8")
+    path.chmod(0o600)
+
+
 class _PluginContext:
     def __init__(self):
         self.tools = {}
@@ -113,7 +118,7 @@ def test_lazy_registration_does_not_need_startup_observer_binding(tmp_path):
     context = _PluginContext()
     tools = ObsidianNativeTools()
 
-    with patch("hermes_installer.remote.obsidian_native_tools.ObsidianVaultStore",
+    with patch("hermes_installer.remote.obsidian_second_brain.ObsidianVaultStore",
                side_effect=lambda _config: store) as open_store:
         names = tools.register(context)
         assert set(names) == set(context.tools)
@@ -133,7 +138,7 @@ def test_master_read_uses_exact_current_call_and_fixed_owner_store(tmp_path):
     root = tmp_path / "managed"
     root.mkdir(mode=0o700)
     store = prepare_obsidian_vault(ObsidianVaultConfig(root, OWNER, owner_uid=1000))
-    (store._root / "Notes" / "Owner.md").write_text("# Owner\nCurrent owner note.\n", encoding="utf-8")
+    _write_fixture(store._root / "Notes" / "Owner.md", "# Owner\nCurrent owner note.\n")
     tool = ObsidianNativeTools(store).handler("obsidian_search_notes")
     args = {"query": "Current owner"}
     observed, scope, binding, _permit, dispatch, execution, source, mission, selected = _binding(
@@ -151,8 +156,8 @@ def test_expert_reads_are_restricted_to_root_selected_notes(tmp_path):
     root = tmp_path / "managed"
     root.mkdir(mode=0o700)
     store = prepare_obsidian_vault(ObsidianVaultConfig(root, OWNER, owner_uid=1000))
-    (store._root / "Notes" / "Granted.md").write_text("Private granted research.\n", encoding="utf-8")
-    (store._root / "Notes" / "Other.md").write_text("Other private note.\n", encoding="utf-8")
+    _write_fixture(store._root / "Notes" / "Granted.md", "Private granted research.\n")
+    _write_fixture(store._root / "Notes" / "Other.md", "Other private note.\n")
     rows = {row.title: row for row in store.list_notes().notes}
     tool = ObsidianNativeTools(store).handler("obsidian_search_notes")
     args = {"query": "private"}

@@ -112,7 +112,7 @@ def test_expert_note_scope_and_execution_private_draft_do_not_escape_owner_proje
     assert store.dashboard_projection()["draftCount"] == 1
     assert store.read_private_draft(execution_id="mission_run_123",
                                     draft_id=draft.draft_id)["state"] == "private-draft"
-    with pytest.raises(ObsidianVaultError, match="unavailable|present"):
+    with pytest.raises(ObsidianVaultError, match="unavailable|present|missing or symlinked"):
         store.read_private_draft(execution_id="mission_run_other",
                                  draft_id=draft.draft_id)
     with pytest.raises(ObsidianVaultError, match="outside the admitted"):
