@@ -30,9 +30,26 @@ TUNNEL_ARGV = ("/usr/bin/cloudflared", "--no-autoupdate", "tunnel", "run", "--to
                "/run/credentials/hermes-jarvis-mvp-tunnel.service/tunnel-token")
 CORE_UNIT_PATH = Path("/etc/systemd/system/hermes-jarvis-core.service")
 CORE_LAUNCHER = Path("/usr/local/libexec/hermes-jarvis-core-launcher")
+CORE_PYTHON_LINK = Path("/home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0/venv/bin/python")
+CORE_PYTHON_REAL = Path("/home/admin/HermesInstaller/data/tools/python-3.14.7+20260901-linux-arm64/bin/python3.14")
+CORE_PYTHON_LINK_TARGET = "/home/admin/HermesInstaller/data/tools/python-3.14.7+20260901-linux-arm64/bin/python3"
 CORE_ARGV_TAIL = ("-m", "hermes_cli.main", "serve", "--isolated", "--host",
                   CORE_HOST, "--port", str(CORE_PORT))
 CORE_TOKEN_SOURCE = Path("/etc/hermes-installer/jarvis-core/session-token")
+CORE_SOURCE = Path("/home/admin/HermesInstaller/data/generations/hermes-agent-7085fbf77532")
+CORE_SOURCE_REVISION = "7085fbf7753266fc4943c55ac04926186bc90005"
+CORE_SOURCE_FILES = {
+    "pm/lock.json": "49b79259220160f147255078a19af541a5f328d3871c8041cc1eb909d19eb549",
+    "uv.lock": "2bc4db483e9cba927cd7147f9ccbb09635f85bb3f1f36d6e9d51d06b65d1c67e",
+    "pyproject.toml": "cadde2f6a92574d292103f43abf66408b1d841cd9ea332ca7f3e3dfc5dcc87fd",
+    "hermes_cli/web_server.py": "839ee3fa8d9548c9e1875ffe1321e287eda37c3577e607dcd93288621b0403a4",
+    "tui_gateway/ws.py": "1cecdb714a0abc1edf8fc0ec2d00edc1dc042f0da37baaefb8ba20ce3edeae63",
+}
+CORE_PYVENV_CFG_SHA256 = "d982d4b71a70c99f49afef3c0b2cf683c2f053a802da8885d366657b9565f1ad"
+CORE_PYTHON_SHA256 = "566f5e480aa1adccd3214f6251f50cab08daf768158d778fd9a73d19ab1fe001"
+CORE_WORKSPACE = Path("/home/admin/.hermes/workspaces/jarvis-core")
+CORE_PATH = "/home/admin/.hermes/bin:/home/admin/.local/bin:/usr/local/bin:/usr/bin:/bin"
+CORE_CREDENTIALS_DIRECTORY = "/run/credentials/hermes-jarvis-core.service"
 MAX_REQUEST = 1024
 MAX_RESPONSE = 4096
 MAX_OUTPUT = 16_384
@@ -47,6 +64,7 @@ _OBSERVATION_FIELDS = (
     "tunnel_unit_sha256", "tunnel_executable_sha256", "origin_socket_device",
     "origin_socket_inode", "gateway_unit_sha256", "core_unit_sha256",
     "core_invocation_id", "core_pid", "core_start_ticks", "core_listener_inode",
+    "core_source_generation",
     "core_generation", "config_sha256",
 )
 
@@ -130,29 +148,87 @@ def _unit_properties(unit: str, *, deadline: float) -> dict[str, str]:
 
 
 def _protected_file_sha(path: Path, *, owner_uid: int = 0, owner_gid: int | None = None,
-                        exact_mode: int | None = None) -> str:
+                        exact_mode: int | None = None, deadline: float | None = None,
+                        allow_owner_group_write: bool = False) -> str:
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) |
                  getattr(os, "O_CLOEXEC", 0))
     try:
         info = os.fstat(fd)
         if (not stat.S_ISREG(info.st_mode) or info.st_uid != owner_uid
                 or (owner_gid is not None and info.st_gid != owner_gid)
-                or stat.S_IMODE(info.st_mode) & 0o022 or info.st_nlink != 1
+                or (stat.S_IMODE(info.st_mode) & 0o002)
+                or (not allow_owner_group_write and stat.S_IMODE(info.st_mode) & 0o020)
+                or info.st_nlink != 1
                 or (exact_mode is not None and stat.S_IMODE(info.st_mode) != exact_mode)
                 or info.st_size > MAX_HASH_FILE_BYTES):
             raise ValueError("fixed file is not immutable root custody")
         digest = hashlib.sha256()
         while True:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError("fixed file hash deadline expired")
             block = os.read(fd, 8192)
             if not block:
                 break
             digest.update(block)
+        after = os.fstat(fd)
+        named = os.stat(path, follow_symlinks=False)
+        signature = lambda item: (item.st_dev, item.st_ino, item.st_mode, item.st_uid,
+                                  item.st_gid, item.st_nlink, item.st_size,
+                                  item.st_mtime_ns, item.st_ctime_ns)
+        if (signature(after) != signature(info) or signature(named) != signature(info)
+                or (deadline is not None and time.monotonic() >= deadline)):
+            raise ValueError("fixed file changed while hashing")
         return digest.hexdigest()
     finally:
         os.close(fd)
 
 
-def _current_core_credential(pid: int, config: CoreGatewayConfig) -> None:
+def _read_proc_environment(pid: int, *, deadline: float) -> dict[bytes, bytes]:
+    env_fd = os.open(f"/proc/{pid}/environ", os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+    try:
+        environment = bytearray()
+        while len(environment) <= 1024 * 1024:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("core environment deadline expired")
+            block = os.read(env_fd, min(16_384, 1024 * 1024 + 1 - len(environment)))
+            if not block:
+                break
+            environment.extend(block)
+    finally:
+        os.close(env_fd)
+    if len(environment) > 1024 * 1024:
+        _deny()
+    result: dict[bytes, bytes] = {}
+    for entry in environment.split(b"\0"):
+        if not entry:
+            continue
+        key, sep, value = entry.partition(b"=")
+        if not sep or key in result:
+            _deny()
+        result[key] = value
+    return result
+
+
+def _validate_core_process_environment(environment: dict[bytes, bytes], secret: bytes) -> None:
+    token = environment.get(b"HERMES_DASHBOARD_SESSION_TOKEN")
+    expected = {
+        b"HOME": b"/home/admin",
+        b"HERMES_HOME": b"/home/admin/.hermes",
+        b"PATH": CORE_PATH.encode("ascii"),
+        b"HERMES_DISABLE_LAZY_INSTALLS": b"1",
+        b"PYTHONNOUSERSITE": b"1",
+        b"PYTHONDONTWRITEBYTECODE": b"1",
+        b"PYTHONPATH": str(CORE_SOURCE).encode("ascii"),
+        b"CREDENTIALS_DIRECTORY": CORE_CREDENTIALS_DIRECTORY.encode("ascii"),
+    }
+    if (any(environment.get(key) != value for key, value in expected.items())
+            or any(key in environment for key in (b"PYTHONHOME", b"PYTHONUSERBASE",
+                                                   b"PYTHONSTARTUP", b"VIRTUAL_ENV"))
+            or token is None or not secrets.compare_digest(token, secret)):
+        _deny()
+
+
+def _current_core_credential(pid: int, config: CoreGatewayConfig, *, deadline: float) -> None:
     """Join the protected backend token source to the live process privately."""
     parent = os.lstat(CORE_TOKEN_SOURCE.parent)
     if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0
@@ -168,6 +244,8 @@ def _current_core_credential(pid: int, config: CoreGatewayConfig) -> None:
             _deny()
         secret = bytearray()
         while len(secret) <= 4097:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("core credential deadline expired")
             block = os.read(fd, min(1024, 4098 - len(secret)))
             if not block:
                 break
@@ -185,25 +263,107 @@ def _current_core_credential(pid: int, config: CoreGatewayConfig) -> None:
     finally:
         os.close(fd)
     # The value is neither returned, hashed into a public proof, nor logged.
-    env_fd = os.open(f"/proc/{pid}/environ", os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+    environment: dict[bytes, bytes] = {}
     try:
-        environment = bytearray()
-        while len(environment) <= 1024 * 1024:
-            block = os.read(env_fd, min(16_384, 1024 * 1024 + 1 - len(environment)))
+        environment = _read_proc_environment(pid, deadline=deadline)
+        _validate_core_process_environment(environment, secret)
+    finally:
+        environment.clear()
+        for index in range(len(secret)):
+            secret[index] = 0
+
+
+def _run_source_git(args: tuple[str, ...], *, deadline: float, maximum: int) -> bytes:
+    argv = ("/usr/bin/git", "--no-optional-locks", "-c", f"safe.directory={CORE_SOURCE}",
+            "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false",
+            "-C", str(CORE_SOURCE), *args)
+    proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, close_fds=True,
+        env={"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "LANG": "C",
+             "LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null",
+             "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"})
+    assert proc.stdout is not None
+    output = bytearray()
+    fd = proc.stdout.fileno()
+    os.set_blocking(fd, False)
+    poller = select.poll()
+    poller.register(fd, select.POLLIN | select.POLLHUP | select.POLLERR)
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                proc.kill()
+                _deny()
+            events = poller.poll(max(1, min(50, int(remaining * 1000))))
+            if not events:
+                if proc.poll() is not None:
+                    break
+                continue
+            try:
+                block = os.read(fd, min(4096, maximum + 1 - len(output)))
+            except BlockingIOError:
+                continue
             if not block:
                 break
-            environment.extend(block)
+            output.extend(block)
+            if len(output) > maximum:
+                proc.kill()
+                _deny()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or proc.wait(timeout=remaining) != 0:
+            _deny()
+        return bytes(output)
     finally:
-        os.close(env_fd)
-    if len(environment) > 1024 * 1024:
+        if proc.poll() is None:
+            proc.kill()
+            try:
+                proc.wait(timeout=0.5)
+            except subprocess.TimeoutExpired:
+                pass
+        proc.stdout.close()
+
+
+def _current_core_source(config: CoreGatewayConfig, *, deadline: float) -> str:
+    """Validate the exact selected official source/runtime closure without exporting paths."""
+    try:
+        info = os.lstat(CORE_SOURCE)
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != config.core_uid
+                or info.st_gid != config.core_gid or stat.S_IMODE(info.st_mode) & 0o002):
+            _deny()
+        git_info = os.lstat(CORE_SOURCE / ".git")
+        if (not stat.S_ISDIR(git_info.st_mode) or git_info.st_uid != config.core_uid
+                or git_info.st_gid != config.core_gid or stat.S_IMODE(git_info.st_mode) & 0o002):
+            _deny()
+        head = _run_source_git(("rev-parse", "--verify", "HEAD"), deadline=deadline, maximum=128)
+        if head.strip().decode("ascii", "strict") != CORE_SOURCE_REVISION:
+            _deny()
+        dirty = _run_source_git(("status", "--porcelain=v1", "--untracked-files=all",
+                                 "--ignore-submodules=none"), deadline=deadline, maximum=8192)
+        if dirty:
+            _deny()
+        digests: list[str] = []
+        for relative, expected in CORE_SOURCE_FILES.items():
+            if time.monotonic() >= deadline:
+                raise TimeoutError("source file proof deadline expired")
+            actual = _protected_file_sha(CORE_SOURCE / relative, owner_uid=config.core_uid,
+                owner_gid=config.core_gid, exact_mode=0o664, deadline=deadline,
+                allow_owner_group_write=True)
+            if actual != expected:
+                _deny()
+            digests.append(actual)
+        pyvenv = config.core_python.parent.parent / "pyvenv.cfg"
+        actual_pyvenv = _protected_file_sha(pyvenv, owner_uid=config.core_uid,
+            owner_gid=config.core_gid, deadline=deadline, allow_owner_group_write=True)
+        if actual_pyvenv != CORE_PYVENV_CFG_SHA256 or config.core_python_sha256 != CORE_PYTHON_SHA256:
+            _deny()
+        closure = {"source_revision": CORE_SOURCE_REVISION,
+                   "files": dict(zip(CORE_SOURCE_FILES, digests)),
+                   "pyvenv_cfg_sha256": actual_pyvenv,
+                   "python_sha256": CORE_PYTHON_SHA256}
+        canonical = json.dumps(closure, sort_keys=True, separators=(",", ":")).encode("ascii")
+        return hashlib.sha256(b"hermes-jarvis-core-source-generation-v1\0" + canonical).hexdigest()
+    except Exception:
         _deny()
-    matches = [entry[len(b"HERMES_DASHBOARD_SESSION_TOKEN="):]
-               for entry in environment.split(b"\0")
-               if entry.startswith(b"HERMES_DASHBOARD_SESSION_TOKEN=")]
-    if len(matches) != 1 or not secrets.compare_digest(matches[0], secret):
-        _deny()
-    for index in range(len(secret)):
-        secret[index] = 0
 
 
 def _proc_start_ticks(pid: int) -> str:
@@ -245,7 +405,8 @@ def _process(pid: int, *, uid: int, gid: int, argv: tuple[str, ...], executable:
         if (actual_argv != argv or actual_executable != executable
                 or f"0::{cgroup}" not in actual_cgroup
                 or _protected_file_sha(actual_executable, owner_uid=executable_owner_uid,
-                    owner_gid=executable_owner_gid, exact_mode=executable_mode) != executable_sha256
+                    owner_gid=executable_owner_gid, exact_mode=executable_mode,
+                    deadline=deadline) != executable_sha256
                 or _proc_start_ticks(pid) != start):
             _deny()
         poll = select.poll()
@@ -274,12 +435,15 @@ def _check_unit_process(config: CoreGatewayConfig, *, unit: str, pid: int, deadl
             _deny()
     elif unit == CORE_SERVICE_UNIT:
         path, expected_hash = CORE_UNIT_PATH, config.core_unit_sha256
-        launcher_hash = _protected_file_sha(CORE_LAUNCHER)
+        launcher_hash = _protected_file_sha(CORE_LAUNCHER, deadline=deadline)
         if launcher_hash != config.core_launcher_sha256:
             _deny()
         try:
             executable = config.core_python.resolve(strict=True)
         except OSError:
+            _deny()
+        if (config.core_python != CORE_PYTHON_LINK or executable != CORE_PYTHON_REAL
+                or os.readlink(config.core_python) != CORE_PYTHON_LINK_TARGET):
             _deny()
         exe, exe_hash = executable, config.core_python_sha256
         argv = (str(config.core_python), *CORE_ARGV_TAIL)
@@ -298,7 +462,7 @@ def _check_unit_process(config: CoreGatewayConfig, *, unit: str, pid: int, deadl
             _deny()
     else:
         _deny()
-    if _protected_file_sha(path) != expected_hash:
+    if _protected_file_sha(path, deadline=deadline) != expected_hash:
         _deny()
     try:
         pidfd, start = _process(main_pid, uid=uid, gid=gid, argv=argv, executable=exe,
@@ -402,11 +566,15 @@ def observe_current_ingress(config: CoreGatewayConfig, *, nonce: str, caller_pid
         core_pidfd, core_start, core_invocation = _check_unit_process(config,
             unit=CORE_SERVICE_UNIT, pid=core_pid, deadline=deadline)
         pidfds.append(core_pidfd)
-        _current_core_credential(core_pid, config)
+        _current_core_credential(core_pid, config, deadline=deadline)
+        source_generation = _current_core_source(config, deadline=deadline)
+        if Path(f"/proc/{core_pid}/cwd").resolve(strict=True) != CORE_WORKSPACE:
+            _deny()
         listener_inode = _core_listener_inode(core_pid)
         if (time.monotonic() >= deadline or _boot_id() != config.boot_id
                 or _socket_identity(config.ingress_socket, config) != origin
                 or _core_listener_inode(core_pid) != listener_inode
+                or _current_core_source(config, deadline=deadline) != source_generation
                 or _config_current(config).config_sha256 != config.config_sha256):
             _deny()
         for pidfd, pid, start_ticks in (
@@ -417,7 +585,8 @@ def observe_current_ingress(config: CoreGatewayConfig, *, nonce: str, caller_pid
             poller.register(pidfd, select.POLLIN | select.POLLHUP | select.POLLERR)
             if poller.poll(0) or _proc_start_ticks(pid) != start_ticks:
                 _deny()
-        generation_payload = f"{core_invocation}\0{core_pid}\0{core_start}\0{listener_inode}".encode("ascii")
+        generation_payload = (f"{core_invocation}\0{core_pid}\0{core_start}\0{listener_inode}\0"
+                              f"{source_generation}").encode("ascii")
         core_generation = hashlib.sha256(b"hermes-jarvis-core-generation-v1\0" + generation_payload).hexdigest()
         body: dict[str, Any] = {
             "schema": 1, "nonce": nonce, "boot_id": config.boot_id,
@@ -431,6 +600,7 @@ def observe_current_ingress(config: CoreGatewayConfig, *, nonce: str, caller_pid
             "core_unit_sha256": config.core_unit_sha256,
             "core_invocation_id": core_invocation, "core_pid": core_pid,
             "core_start_ticks": core_start, "core_listener_inode": listener_inode,
+            "core_source_generation": source_generation,
             "core_generation": core_generation, "config_sha256": config.config_sha256,
         }
         body["proof_sha256"] = _observation_digest(body)
@@ -465,6 +635,7 @@ class CoreVerifiedIngressObservation:
     core_pid: int
     core_start_ticks: str
     core_listener_inode: int
+    core_source_generation: str
     core_generation: str
     config_sha256: str
     proof_sha256: str
@@ -489,14 +660,15 @@ class CoreVerifiedIngressObservation:
                 and type(current) in (int, float) and self.issued_monotonic <= current < self.expires_monotonic
                 and 0 < self.expires_monotonic - self.issued_monotonic <= MAX_PROOF_SECONDS
                 and self.peer_start_ticks.isdecimal() and self.core_start_ticks.isdecimal()
+                and _is_hash(self.core_source_generation)
                 and self.core_generation == hashlib.sha256(
                     b"hermes-jarvis-core-generation-v1\0" +
-                    f"{self.core_invocation_id}\0{self.core_pid}\0{self.core_start_ticks}\0{self.core_listener_inode}".encode("ascii")
+                    f"{self.core_invocation_id}\0{self.core_pid}\0{self.core_start_ticks}\0{self.core_listener_inode}\0{self.core_source_generation}".encode("ascii")
                 ).hexdigest()
                 and _observation_digest(claims) == self.proof_sha256
                 and all(_is_hash(value) for value in (self.tunnel_unit_sha256,
                     self.tunnel_executable_sha256, self.gateway_unit_sha256, self.core_unit_sha256,
-                    self.config_sha256, self.proof_sha256)))
+                    self.core_source_generation, self.config_sha256, self.proof_sha256)))
         except Exception:
             return False
 

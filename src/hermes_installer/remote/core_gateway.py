@@ -32,7 +32,7 @@ CORE_GATEWAY_UNIT_PATH = Path("/etc/systemd/system/hermes-jarvis-core-gateway.se
 CORE_SERVICE_UNIT = "hermes-jarvis-core.service"
 CORE_HOST = "127.0.0.1"
 CORE_PORT = 8766
-CORE_TOKEN_SOURCE = Path("/etc/hermes-installer/jarvis-core/session-token")
+CORE_PYTHON_LINK = Path("/home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0/venv/bin/python")
 GATEWAY_EXECUTABLE = Path("/usr/bin/python3.13")
 GATEWAY_ARGV = ("/opt/hermes-jarvis-mvp-20261011/gateway-venv/bin/python", "-m",
                 "hermes_installer.remote.core_gateway")
@@ -119,6 +119,7 @@ class CoreGatewayConfig:
                 info = os.fstat(fd)
                 mode = stat.S_IMODE(info.st_mode)
                 if (not stat.S_ISREG(info.st_mode) or info.st_uid != expected_owner_uid
+                        or info.st_nlink != 1
                         or mode not in {0o400, 0o440, 0o600}
                         or (mode == 0o440 and info.st_gid != 981)
                         or info.st_size > MAX_CONFIG_BYTES):
@@ -159,6 +160,7 @@ class CoreGatewayConfig:
             if ((result.gateway_uid, result.gateway_gid, result.core_uid, result.core_gid)
                     != (996, 981, 1000, 1000)
                     or result.ingress_socket != CORE_INGRESS_SOCKET
+                    or result.core_python != CORE_PYTHON_LINK
                     or result.core_python != Path(value["core_python"])
                     or not re.fullmatch(
                         r"/home/admin/HermesInstaller/data/installs/[0-9a-f]{24}/environments/"
