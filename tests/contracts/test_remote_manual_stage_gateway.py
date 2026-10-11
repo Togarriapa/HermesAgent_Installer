@@ -219,7 +219,7 @@ class ManualStageGatewayTests(unittest.TestCase):
         from hermes_installer.remote.manual_stage_inspector import _validate_xpra_argv
         argv = ("/usr/bin/python3.13", "/usr/bin/xpra", "start", ":118",
                 "--bind-tcp=127.0.0.1:14500,auth=http-header:property=X-Forwarded-Proto,value=https",
-                "--daemon=no", "--systemd-run=no", "--bind=none", "--html=on",
+                "--daemon=no", "--systemd-run=no", "--bind=none", "--html=on", "--remote-logging=no",
                 "--start-child=/opt/hermes-jarvis-mvp-20261011/Hermes-Desktop.AppDir/Hermes",
                 "--exit-with-children=yes", "--terminate-children=yes", "--start-new-commands=no",
                 "--commands=no", "--shell=no", "--control=no", "--audio=no", "--tray=no",
@@ -234,6 +234,11 @@ class ManualStageGatewayTests(unittest.TestCase):
             self.assertEqual(_validate_xpra_argv(config, 123), config.xpra_argv_sha256)
         bad = tuple("--start-child=/bin/sh" if x.startswith("--start-child=") else x for x in argv)
         config = replace(config, xpra_argv_sha256=hashlib.sha256(b"\0".join(x.encode() for x in bad)).hexdigest())
+        with mock.patch("hermes_installer.remote.manual_stage_inspector._process_argv", return_value=bad):
+            with self.assertRaises(StageInspectionDenied):
+                _validate_xpra_argv(config, 123)
+        bad = tuple(arg for arg in argv if arg != "--remote-logging=no")
+        config = replace(self.config, xpra_argv_sha256=hashlib.sha256(b"\0".join(x.encode() for x in bad)).hexdigest())
         with mock.patch("hermes_installer.remote.manual_stage_inspector._process_argv", return_value=bad):
             with self.assertRaises(StageInspectionDenied):
                 _validate_xpra_argv(config, 123)

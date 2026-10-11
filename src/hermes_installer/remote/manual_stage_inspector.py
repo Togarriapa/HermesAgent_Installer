@@ -333,6 +333,7 @@ def _validate_xpra_argv(config: Any, pid: int) -> str:
     # These exact disabled flags are part of the root-reviewed argv digest.
     required_disabled = {
         "--daemon=no", "--systemd-run=no", "--bind=none", "--html=on",
+        "--remote-logging=no",
         "--start-new-commands=no", "--exit-with-children=yes", "--terminate-children=yes",
         "--commands=no", "--shell=no", "--control=no", "--audio=no", "--tray=no",
         "--clipboard=no", "--speaker=off", "--microphone=off", "--webcam=no",
