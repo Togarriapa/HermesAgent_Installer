@@ -1204,7 +1204,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     }
     const groupForView = {
       overview: "command-centre", chat: "conversations", sessions: "conversations",
-      missions: "work", bots: "work", capabilities: "resources", learning: "resources",
+      missions: "work", bots: "work", capabilities: "resources", "resources-learning": "resources",
       "native-inventory": "resources", files: "resources", context: "resources",
       settings: "system", "models-settings": "system", integrations: "system",
       activity: "system", "native-controls": "system"
@@ -1364,7 +1364,7 @@ def _compose_feature_assets() -> None:
         )
         group = {
             "overview": "command-centre", "missions": "work", "bots": "work",
-            "learning": "resources", "native-inventory": "resources", "files": "resources",
+            "resources-learning": "resources", "native-inventory": "resources", "files": "resources",
             "context": "resources", "native-controls": "system", "models-settings": "system",
             "integrations": "system", "activity": "system",
         }.get(feature.feature_id)
