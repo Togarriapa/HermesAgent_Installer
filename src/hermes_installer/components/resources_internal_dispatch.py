@@ -298,7 +298,7 @@ def make_resources_delegate_handler(ctx: HermesPluginContext,
             result = ctx.dispatch_tool(
                 "delegate_task",
                 {"tasks": [{
-                    "goal": "Complete the owner's bounded task using the selected internal identity.",
+                    "goal": goal,
                     "context": context,
                 }]},
                 parent_agent=parent_agent,

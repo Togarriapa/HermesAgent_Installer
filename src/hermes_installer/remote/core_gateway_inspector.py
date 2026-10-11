@@ -67,10 +67,10 @@ CORE_NATIVE_ADAPTER_SOURCE = Path(__file__).resolve(strict=True).parents[2]
 CORE_NATIVE_ADAPTER_SOURCE_FILES = {
     "hermes_installer/__init__.py": "61ac3dfa3bd8505d5296065d597b9b76c4a42c1f17c706c2d67f4fee2b193242",
     "hermes_installer/remote/__init__.py": "bf7dbd677d6dd4384a02211039002f760821748b33f3f66ee425d9633b5005a4",
-    "hermes_installer/remote/core_native_observer.py": "eaab983caf0b01fc7bbadbea581abc4138a6868fd1366c3339c9d349fa7b6938",
-    "hermes_installer/remote/native_plugin_bootstrap.py": "23eb40a13cb09dac42e69d00c470dc85ca3391db464fe04d008b2abad78a1dd0",
+    "hermes_installer/remote/core_native_observer.py": "c544becc6f5bc80439fec25491d17aad656334009a07ec71df162ddcdb8f2fc8",
+    "hermes_installer/remote/native_plugin_bootstrap.py": "9b32c9d0b2ece976dc217ee853d08063b04cf5504eb9f91ea03c33392ad94cc8",
     "hermes_installer/components/__init__.py": "eb02d685a1fb560210c2915296f7553e279e100b511d6b63892d3e877ccd7e7b",
-    "hermes_installer/components/resources_internal_dispatch.py": "4111e1244887f5bcb5f92cf449a0e55888f9b2637c78ebe43232fa1db968e2f2",
+    "hermes_installer/components/resources_internal_dispatch.py": "050afe835279e022ba3e4ec479f597692f5bdc88f7488eb630863d08a6b8cf9c",
     "hermes_installer/components/resources_native_plugin_bundle/plugin.yaml": "c10104ad621d134685ecab018a1a0b975572cb2266d68bc1832c17730210e65b",
     "hermes_installer/components/resources_native_plugin_bundle/__init__.py": "9e70189b309a025aac9d98349b7985dc949ba43dd10bfafa1ccc51d907262fd9",
 }
@@ -108,7 +108,7 @@ _NATIVE_TOOL_CONFIGURATION_SEAL = object()
 _RESOURCES_DELEGATE_NAME = "resources_delegate"
 _RESOURCES_DELEGATE_TOOLSET = "resources_internal"
 _RESOURCES_DELEGATE_SCHEMA_SHA256 = "9325cea421e122395475b0ba0d0517cb4aa4c16c3d4a14c5145f9fcc3f957f33"
-_RESOURCES_DISPATCH_SOURCE_SHA256 = "4111e1244887f5bcb5f92cf449a0e55888f9b2637c78ebe43232fa1db968e2f2"
+_RESOURCES_DISPATCH_SOURCE_SHA256 = "050afe835279e022ba3e4ec479f597692f5bdc88f7488eb630863d08a6b8cf9c"
 _SERVER_SLOTS = threading.BoundedSemaphore(16)
 _MAX_RETAINED_INGRESS_ISSUES = 128
 _RETAINED_INGRESS_ISSUES: dict[tuple[int, str, str, str], "_RetainedIngressIssue"] = {}

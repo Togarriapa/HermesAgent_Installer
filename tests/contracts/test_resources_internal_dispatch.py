@@ -139,6 +139,7 @@ def test_registered_tool_dispatches_through_native_delegate_with_exact_parent(na
     assert tool_name == "delegate_task"
     assert set(args) == {"tasks"}
     assert len(args["tasks"]) == 1
+    assert args["tasks"][0]["goal"] == approved_goal
     assert "  Use the selected profile.  " in args["tasks"][0]["context"]
     assert "provider" not in args and "toolsets" not in args
     assert kwargs == {"parent_agent": parent}

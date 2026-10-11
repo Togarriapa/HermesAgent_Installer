@@ -204,8 +204,7 @@ def stage_native_resources_plugin() -> StagedNativeResourcesPlugin:
     )
 
 
-_OFFICIAL_ENABLE_SCRIPT = r'''\
-import copy
+_OFFICIAL_ENABLE_SCRIPT = r'''import copy
 from hermes_cli.config import load_config
 from hermes_cli.plugins_cmd import cmd_enable, cmd_disable
 from hermes_cli.plugins_cmd import _toggle_plugin_toolset
@@ -328,7 +327,7 @@ def enable_native_resources_plugin() -> StagedNativeResourcesPlugin:
     return staged
 
 
-_OFFICIAL_SELECTION_READ_SCRIPT = r'''+import hashlib
+_OFFICIAL_SELECTION_READ_SCRIPT = r'''import hashlib
 import json
 from hermes_cli.config import load_config
 from hermes_cli.toolset_validation import parse_platform_toolsets_value
