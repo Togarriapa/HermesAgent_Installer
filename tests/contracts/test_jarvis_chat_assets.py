@@ -243,6 +243,122 @@ class JarvisChatAssetTests(unittest.TestCase):
                     )
                     self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_stale_heartbeat_cannot_clobber_turn_and_completed_reply_is_recovered(self):
+        _content_type, script = reviewed_client_bundle()
+        client = script.decode("utf-8")
+        turn_handlers = client.split("function watchTurn(", 1)[1].split("async function sendMessage(text)", 1)[0]
+        self.assertIn('if (activeTurnId !== turnId) return;', turn_handlers)
+        self.assertIn('if (activeTurnId === turnId) waiting.remove();', turn_handlers)
+        renew = "async function renewHeartbeat(" + client.split(
+            "async function renewHeartbeat(", 1)[1].split(
+                "\n  async function reconcileCompletedTurn(", 1)[0]
+        reconcile = "async function reconcileCompletedTurn(" + client.split(
+            "async function reconcileCompletedTurn(", 1)[1].split(
+                "\n  function startHeartbeat(", 1)[0]
+        harness = r'''const assert = require("node:assert/strict");
+const API = "/chat/api";
+let request, activeTurnId = "old-success", conversationId = "conversation";
+let heartbeatNonce = "unchanged", closed = 0, errors = 0, connections = [], recoveredSpeech = [];
+function closeStream() { closed += 1; activeTurnId = null; }
+function showError(message) { errors += 1; }
+function setConnection(state, label) { connections.push([state, label]); }
+function speakCompletedReply(text) { recoveredSpeech.push(text); }
+function refreshConversations() { return Promise.resolve(); }
+const assistantBody = {textContent: "partial reply"};
+const waiting = {removed: false, remove() { this.removed = true; }};
+RENEW
+RECONCILE
+(async () => {
+  let resolveOld;
+  request = () => new Promise((resolve) => { resolveOld = resolve; });
+  let stale = renewHeartbeat("old-success", "old-nonce", () => activeTurnId === "old-success", async () => { throw new Error("must not reconcile stale work"); });
+  activeTurnId = "new-turn";
+  resolveOld({turnId: "old-success", nonce: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"});
+  await stale;
+  assert.equal(heartbeatNonce, "unchanged");
+  assert.equal(closed, 0);
+  assert.equal(errors, 0);
+
+  activeTurnId = "old-failure";
+  let rejectOld;
+  request = () => new Promise((_resolve, reject) => { rejectOld = reject; });
+  stale = renewHeartbeat("old-failure", "old-nonce", () => activeTurnId === "old-failure", async () => { throw new Error("must not reconcile stale work"); });
+  activeTurnId = null;
+  rejectOld(new Error("Your secure session is no longer current. Sign in again to continue."));
+  await stale;
+  assert.equal(closed, 0);
+  assert.equal(errors, 0);
+
+  activeTurnId = "current-invalid";
+  request = async () => ({turnId: "current-invalid", nonce: "malformed"});
+  await renewHeartbeat("current-invalid", "nonce", () => activeTurnId === "current-invalid", async () => false);
+  assert.equal(closed, 1);
+  assert.equal(errors, 1);
+  assert.deepEqual(connections.at(-1), ["error", "Access unavailable"]);
+
+  activeTurnId = "completed-turn";
+  conversationId = "conversation";
+  assistantBody.textContent = "partial reply";
+  waiting.removed = false;
+  request = async (path) => {
+    if (path.endsWith("/heartbeat")) throw new Error("Your secure session is no longer current. Sign in again to continue.");
+    return {messages: [
+      {role: "user", content: "show my saved reply"},
+      {role: "assistant", content: "Jarvis"}
+    ]};
+  };
+  await renewHeartbeat("completed-turn", "nonce", () => activeTurnId === "completed-turn",
+    () => reconcileCompletedTurn("completed-turn", "conversation", "show my saved reply", assistantBody, waiting));
+  assert.equal(assistantBody.textContent, "Jarvis");
+  assert.equal(waiting.removed, true);
+  assert.equal(closed, 2);
+  assert.deepEqual(connections.at(-1), ["ready", "Secure connection"]);
+  assert.deepEqual(recoveredSpeech, ["Jarvis"]);
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+'''.replace("RENEW", renew).replace("RECONCILE", reconcile)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "heartbeat-harness.js"
+            path.write_text(harness, encoding="utf-8")
+            result = subprocess.run(
+                ["node", str(path)], capture_output=True, text=True, check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_sse_retries_transient_disconnect_and_recovers_saved_completion(self):
+        _content_type, script = reviewed_client_bundle()
+        client = script.decode("utf-8")
+        classifier = "async function classifyTurnStreamError(" + client.split(
+            "async function classifyTurnStreamError(", 1)[1].split(
+                "\n  function startHeartbeat(", 1)[0]
+        harness = r'''const assert = require("node:assert/strict");
+CLASSIFIER
+(async () => {
+  let reconnects = 0, reconciliations = 0;
+  const retry = await classifyTurnStreamError({}, 0, async () => false, () => { reconnects += 1; });
+  assert.deepEqual(retry, {kind: "reconnecting", code: ""});
+  assert.equal(reconnects, 1);
+  assert.equal(reconciliations, 0);
+
+  const recovered = await classifyTurnStreamError({}, 2, async () => {
+    reconciliations += 1;
+    return true;
+  }, () => { reconnects += 1; });
+  assert.deepEqual(recovered, {kind: "recovered", code: ""});
+  assert.equal(reconciliations, 1);
+
+  const denied = await classifyTurnStreamError({data: JSON.stringify({code: "authorization"})}, 2,
+    async () => { throw new Error("authorization failures must not become success"); }, () => {});
+  assert.deepEqual(denied, {kind: "failed", code: "authorization"});
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+'''.replace("CLASSIFIER", classifier)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "sse-harness.js"
+            path.write_text(harness, encoding="utf-8")
+            result = subprocess.run(
+                ["node", str(path)], capture_output=True, text=True, check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_accepted_queued_turn_exposes_stop_until_terminal_cleanup(self):
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
         source = script.decode("utf-8")
