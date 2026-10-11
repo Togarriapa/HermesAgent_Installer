@@ -4,8 +4,9 @@
   "change_ids": ["jarvis-core-platform"],
   "task_ids": ["BD-T266.1", "HI-T266.2", "RT-T266.3", "RB-T266.4", "VD-T266.5", "BD-T267.1"],
   "current_candidate": {
-    "source_commit_prefix": "0891cd3ad139",
-    "pi_focused_suites": "five contract/native/gateway/chat suites passed",
+    "source_commit": "0891cd3adafffb072a40d4fda7f0a8f958a0af2f",
+    "pi_focused_suites": "Five contract/native suites plus gateway and chat suites",
+    "tests_passed": 139,
     "passed_suites_result": "pass",
     "warnings": 19,
     "elapsed_seconds": 6.55,
@@ -18,21 +19,21 @@
     "exit_code": 0
   },
   "gateway_and_core": {
-    "gateway_contract_candidate_prefix": "bafc16",
-    "gateway_contract_tests_passed": 15,
-    "gateway_contract_warnings": 0,
+    "gateway_contract_candidate": "bafc6578b7d37bb203c816ef486a10ff2ca4f821",
+    "gateway_contract_tests_passed": 16,
+    "gateway_contract_warnings": 15,
     "gateway_contract_elapsed_seconds": 0.74,
-    "production_gateway_candidate_prefix": "d570",
-    "private_core_candidate_prefix": "8753",
-    "owner_access_jwt_private_ingress": "passed",
-    "dynamic_peer_bug": "fixed in the private implementation",
+    "production_gateway_candidate_prefix": "d57086465",
+    "private_core_candidate_prefix": "8753c8353",
+    "owner_access_jwt_validation_before_root_inspection": "passed on the public request",
+    "dynamic_peer_bug": "fixed and deployed; public request reaches root inspection",
     "public_route": "still returns HTTP 403 with root_inspection/OtherError",
     "public_chat": "not verified"
   },
   "pending_patch_and_blocker": {
     "missing_CoreGatewayDenied_import_fix_prefixes": ["274", "bafc"],
     "fix_state": "prepared, not deployed",
-    "deployment_blocker": "Browser reconnect was lost and sudo now requires a password; no root deployment occurred."
+    "deployment_blocker": "Browser terminal disconnected and reopened as admin; sudo requires authentication. The missing-import repair has not been deployed."
   },
   "prior_private_core_evidence": {
     "record": "jarvis-core-pi.json",
@@ -46,5 +47,5 @@
     "AC16": null, "AC17": null, "AC18": null
   },
   "resource_delete_safe": false,
-  "claim_limit": "The current source has focused Pi test and planning passes, and a private owner-JWT gateway path was reported working. The public route is still 403, the missing-import fix is not deployed, and public chat, full installer, reboot/recovery, Resources, capability parity, phone usability, and full acceptance remain unverified. All AC01-AC18 and the core migration tasks remain open."
+  "claim_limit": "Focused Pi tests and planning checks passed. Owner Access JWT validation passed on the public request before root inspection. The public route is still 403, the missing-import fix is not deployed, and public chat, full installer, reboot/recovery, Resources, capability parity, phone usability, and full acceptance remain unverified. All AC01-AC18 and the core migration tasks remain open."
 }
