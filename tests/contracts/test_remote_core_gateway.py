@@ -191,6 +191,22 @@ class CoreGatewayProofTests(unittest.TestCase):
         with self.assertRaises(core_gateway_inspector.CoreInspectionDenied):
             core_gateway_inspector._validate_core_process_environment(changed, secret)
 
+    def test_proc_environment_reader_returns_hashable_bytes_and_rejects_bad_entries(self):
+        environment = core_gateway_inspector._read_proc_environment(
+            os.getpid(), deadline=time.monotonic() + 2)
+        self.assertTrue(environment)
+        self.assertTrue(all(type(key) is bytes and type(value) is bytes
+                            for key, value in environment.items()))
+
+        for raw in (b"BROKEN\0", b"DUP=one\0DUP=two\0"):
+            with self.subTest(raw=raw), \
+                 patch.object(core_gateway_inspector.os, "open", return_value=17), \
+                 patch.object(core_gateway_inspector.os, "read", side_effect=[raw, b""]), \
+                 patch.object(core_gateway_inspector.os, "close"):
+                with self.assertRaises(core_gateway_inspector.CoreInspectionDenied):
+                    core_gateway_inspector._read_proc_environment(
+                        99, deadline=time.monotonic() + 2)
+
     def test_source_proof_checks_exact_git_and_reviewed_file_closure(self):
         config = _config()
         expected = {str(core_gateway_inspector.CORE_SOURCE / relative): digest

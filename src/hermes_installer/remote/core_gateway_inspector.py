@@ -200,7 +200,9 @@ def _read_proc_environment(pid: int, *, deadline: float) -> dict[bytes, bytes]:
     if len(environment) > 1024 * 1024:
         _deny()
     result: dict[bytes, bytes] = {}
-    for entry in environment.split(b"\0"):
+    # Convert the bounded mutable read buffer before splitting: bytearray keys are
+    # unhashable and must never escape into the exact environment validator.
+    for entry in bytes(environment).split(b"\0"):
         if not entry:
             continue
         key, sep, value = entry.partition(b"=")
