@@ -1,0 +1,9 @@
+name: hermes-installer-resources-delegation
+version: "1"
+description: Root-selected Jarvis Resources delegation bridge
+kind: standalone
+manifest_version: 1
+provides_tools:
+  - resources_delegate
+provides_hooks:
+  - llm_execution
