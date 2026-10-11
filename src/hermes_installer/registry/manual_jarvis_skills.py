@@ -353,6 +353,84 @@ def _hash_regular_file(path: Path, *, max_bytes: int) -> str:
         os.close(fd)
 
 
+def _open_stage_parent(root: Path, parts: tuple[str, ...]) -> tuple[int, list[int]]:
+    """Create/verify exact 0755 parent directories below the private staging root."""
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptors: list[int] = []
+    current = os.open(root, flags | getattr(os, "O_CLOEXEC", 0))
+    descriptors.append(current)
+    try:
+        if os.fstat(current).st_uid != os.geteuid():
+            raise ManualJarvisSkillsError("staging root is not owned by the Hermes user")
+        for part in parts:
+            created = False
+            try:
+                os.mkdir(part, 0o755, dir_fd=current)
+                created = True
+            except FileExistsError:
+                pass
+            child = os.open(part, flags | getattr(os, "O_CLOEXEC", 0), dir_fd=current)
+            info = os.fstat(child)
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink < 2):
+                os.close(child)
+                raise ManualJarvisSkillsError("staging parent is not a verified owned directory")
+            if created:
+                os.fchmod(child, 0o755)
+                info = os.fstat(child)
+            if stat.S_IMODE(info.st_mode) != 0o755:
+                os.close(child)
+                raise ManualJarvisSkillsError("staging parent has unexpected directory permissions")
+            descriptors.append(child)
+            current = child
+        return current, descriptors
+    except BaseException:
+        for descriptor in reversed(descriptors):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        raise
+
+
+def _repair_owned_generation_directory_modes(target: Path, relative_dirs: set[str]) -> None:
+    """Repair only verified umask-created 0775 dirs below an exact owned generation."""
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    root_fd = os.open(target, flags | getattr(os, "O_CLOEXEC", 0))
+    try:
+        root_info = os.fstat(root_fd)
+        if (root_info.st_uid != os.geteuid() or root_info.st_nlink < 2
+                or stat.S_IMODE(root_info.st_mode) != 0o700):
+            raise ManualJarvisSkillsError("generation root custody differs")
+        # The exact file/directory sets and all file digests have already been
+        # checked by the caller. Accept only the known 0755->0775 umask drift.
+        for relative in sorted(relative_dirs, key=lambda value: (value.count("/"), value)):
+            parent = os.dup(root_fd)
+            try:
+                parts = PurePosixPath(relative).parts
+                for index, part in enumerate(parts):
+                    child = os.open(part, flags | getattr(os, "O_CLOEXEC", 0), dir_fd=parent)
+                    info = os.fstat(child)
+                    named = os.stat(part, dir_fd=parent, follow_symlinks=False)
+                    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+                            or info.st_nlink < 2 or info.st_dev != named.st_dev
+                            or info.st_ino != named.st_ino
+                            or stat.S_IMODE(info.st_mode) not in {0o755, 0o775}):
+                        os.close(child)
+                        raise ManualJarvisSkillsError("generation directory is not exactly owned")
+                    os.close(parent)
+                    parent = child
+                os.fchmod(parent, 0o755)
+                if stat.S_IMODE(os.fstat(parent).st_mode) != 0o755:
+                    raise ManualJarvisSkillsError("generation directory mode repair failed")
+            finally:
+                try:
+                    os.close(parent)
+                except OSError:
+                    pass
+    finally:
+        os.close(root_fd)
+
+
 def _rename_noreplace(source: Path, destination: Path) -> None:
     """Publish one complete directory without replacing even an empty conflict."""
     import ctypes
@@ -408,6 +486,14 @@ def install_manual_jarvis_skills(
         _regular_owned(skills_root, directory=True)
     except FileNotFoundError:
         skills_root.mkdir(mode=0o755)
+        skills_fd = os.open(skills_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                            | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+        try:
+            if os.fstat(skills_fd).st_uid != os.geteuid():
+                raise ManualJarvisSkillsError("new skills root is not owned by the Hermes user")
+            os.fchmod(skills_fd, 0o755)
+        finally:
+            os.close(skills_fd)
         _regular_owned(skills_root, directory=True)
     target = skills_root / _GENERATION
     journal_bytes = _canonical_json({
@@ -432,6 +518,8 @@ def install_manual_jarvis_skills(
         target_info = None
     if target_info is not None:
         _regular_owned(target, directory=True)
+        if (target_info.st_nlink < 2 or stat.S_IMODE(target_info.st_mode) != 0o700):
+            raise ManualJarvisSkillsError("existing skill generation root permissions differ")
         owner_path = target / _OWNER_FILE
         try:
             owner_digest = _hash_regular_file(owner_path, max_bytes=2 * 1024 * 1024)
@@ -441,15 +529,26 @@ def install_manual_jarvis_skills(
             raise ManualJarvisSkillsError("existing skill generation is unowned or its ownership journal changed")
         expected_files = set(files) | {_OWNER_FILE}
         actual_files: set[str] = set()
+        expected_directories = {
+            "/".join(PurePosixPath(name).parts[:depth])
+            for name in files for depth in range(1, len(PurePosixPath(name).parts))
+        }
+        actual_directories: set[str] = set()
         for base, dirs, names in os.walk(target, followlinks=False):
             base_path = Path(base)
             for dirname in dirs:
-                _regular_owned(base_path / dirname, directory=True)
+                directory_path = base_path / dirname
+                directory_info = _regular_owned(directory_path, directory=True)
+                relative_dir = directory_path.relative_to(target).as_posix()
+                if (directory_info.st_nlink < 2
+                        or stat.S_IMODE(directory_info.st_mode) not in {0o755, 0o775}):
+                    raise ManualJarvisSkillsError("existing generation directory permissions differ")
+                actual_directories.add(relative_dir)
             for filename in names:
                 candidate = base_path / filename
                 _regular_owned(candidate, directory=False)
                 actual_files.add(candidate.relative_to(target).as_posix())
-        if actual_files != expected_files:
+        if actual_files != expected_files or actual_directories != expected_directories:
             raise ManualJarvisSkillsError(
                 "owned Resources generation contains missing or untracked files; preserving it")
         for name, content in files.items():
@@ -458,6 +557,9 @@ def install_manual_jarvis_skills(
                             else _MEMBER_LIMIT)
             if _hash_regular_file(destination, max_bytes=member_limit) != _sha256(content):
                 raise ManualJarvisSkillsError("an owned skill changed after staging; preserving it as a user edit")
+        if any(stat.S_IMODE((target / relative).lstat().st_mode) == 0o775
+               for relative in actual_directories):
+            _repair_owned_generation_directory_modes(target, actual_directories)
         return {
             "state": "already-staged",
             "materialized": True,
@@ -481,16 +583,22 @@ def install_manual_jarvis_skills(
             if not (is_skill or is_internal_profile or is_registry_package):
                 raise ManualJarvisSkillsError("package contains an unsupported native skill path")
             out = temp.joinpath(*path.parts)
-            out.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
-            fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
+            parent_fd, descriptors = _open_stage_parent(temp, path.parts[:-1])
             try:
-                view = memoryview(content)
-                while view:
-                    written = os.write(fd, view)
-                    view = view[written:]
-                os.fsync(fd)
+                fd = os.open(path.parts[-1], os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                             | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+                             0o644, dir_fd=parent_fd)
+                try:
+                    view = memoryview(content)
+                    while view:
+                        written = os.write(fd, view)
+                        view = view[written:]
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
             finally:
-                os.close(fd)
+                for descriptor in reversed(descriptors):
+                    os.close(descriptor)
         marker = temp / _OWNER_FILE
         fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
         try:

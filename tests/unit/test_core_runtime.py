@@ -237,7 +237,7 @@ def test_discovery_refresh_requires_current_owned_listener_and_never_changes_ser
     monkeypatch.setattr(core, "_identity", lambda: {"commit": core.COMMIT})
     monkeypatch.setattr(core, "_journal", lambda: {"state": "installed", "source_commit": core.COMMIT})
     writes = []
-    monkeypatch.setattr(core, "_write_resources_discovery", lambda: writes.append(True) or {
+    monkeypatch.setattr(core, "_write_resources_discovery", lambda **kwargs: writes.append(kwargs) or {
         "resource_counts": {"native_skills": 396}})
     monkeypatch.setattr(core, "_run", lambda *_args, **_kwargs:
                         (_ for _ in ()).throw(AssertionError("service action is forbidden")))
@@ -246,7 +246,7 @@ def test_discovery_refresh_requires_current_owned_listener_and_never_changes_ser
 
     result = core.refresh_resources_discovery()
 
-    assert writes == [True]
+    assert writes == [{"repair_umask_dirs": True}]
     assert "service lifecycle unchanged" in result
 
 

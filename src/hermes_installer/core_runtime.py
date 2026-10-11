@@ -242,7 +242,7 @@ def _projection_at(parent_fd,name,*,owner,group=None,mode=None,maximum):
  finally:
   os.close(fd)
 
-def _hash_generation_tree(home,manifest,files,artifact_sha):
+def _hash_generation_tree(home,manifest,files,artifact_sha,*,repair_umask_dirs=False):
  """Independently verify the exact admin-owned materialization and journal."""
  from .registry import manual_jarvis_skills as native
  target_name=native._GENERATION
@@ -257,12 +257,14 @@ def _hash_generation_tree(home,manifest,files,artifact_sha):
               "size_bytes":len(content)} for name,content in sorted(files.items())],
  })
  flags=os.O_RDONLY|getattr(os,"O_DIRECTORY",0)|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_CLOEXEC",0)
- def directory(parent,name,owner,exact_mode=None):
+ directory_modes={}
+ def directory(parent,name,owner,exact_mode=None,allow_umask_mode=False):
   fd=os.open(name,flags,dir_fd=parent)
   info=os.fstat(fd)
   if (not stat.S_ISDIR(info.st_mode) or info.st_uid!=owner or info.st_nlink<2
       or (exact_mode is not None and stat.S_IMODE(info.st_mode)!=exact_mode)
-      or (exact_mode is None and stat.S_IMODE(info.st_mode)&0o022)):
+      or (exact_mode is None and stat.S_IMODE(info.st_mode)&0o022
+          and not (allow_umask_mode and stat.S_IMODE(info.st_mode)==0o775))):
    os.close(fd); raise CoreRuntimeError("owned Resources directory custody differs")
   return fd
  rootfd=os.open("/",flags)
@@ -293,7 +295,9 @@ def _hash_generation_tree(home,manifest,files,artifact_sha):
     info=os.stat(name,dir_fd=fd,follow_symlinks=False)
     if stat.S_ISDIR(info.st_mode):
      actual_directories.add(relative)
-     child=directory(fd,name,1000)
+     child=directory(fd,name,1000,allow_umask_mode=repair_umask_dirs)
+     child_info=os.fstat(child)
+     directory_modes[relative]=(child_info.st_dev,child_info.st_ino,stat.S_IMODE(child_info.st_mode))
      try: walk(child,relative)
      finally: os.close(child)
      continue
@@ -329,6 +333,35 @@ def _hash_generation_tree(home,manifest,files,artifact_sha):
     raise CoreRuntimeError("owned Resources member content differs from the pinned bundle")
   marker=_projection_at(genfd,native._OWNER_FILE,owner=1000,mode=0o600,maximum=2*1024*1024)
   if marker!=expected_owner: raise CoreRuntimeError("owned Resources manifest differs from the pinned bundle")
+  drifted=sorted(name for name,(_dev,_ino,mode) in directory_modes.items() if mode==0o775)
+  if drifted:
+   # This is the sole recognized umask artifact from the original importer. Do
+   # not normalize permissions until the exact journal, membership, and every
+   # member digest above have all matched the pinned CAS payload.
+   if not repair_umask_dirs or os.geteuid()!=ROOT_UID:
+    raise CoreRuntimeError("owned Resources nested directory permissions differ")
+   for relative in drifted:
+    parent=os.dup(genfd)
+    try:
+     parts=PurePosixPath(relative).parts
+     for part in parts:
+      child=os.open(part,flags,dir_fd=parent)
+      os.close(parent); parent=child
+     info=os.fstat(parent)
+     expected_dev,expected_ino,expected_mode=directory_modes[relative]
+     if (not stat.S_ISDIR(info.st_mode) or info.st_uid!=1000 or info.st_nlink<2
+         or (info.st_dev,info.st_ino,stat.S_IMODE(info.st_mode))!=(expected_dev,expected_ino,expected_mode)
+         or expected_mode!=0o775):
+      raise CoreRuntimeError("owned Resources directory changed during metadata repair")
+     os.fchmod(parent,0o755)
+     if stat.S_IMODE(os.fstat(parent).st_mode)!=0o755:
+      raise CoreRuntimeError("owned Resources directory metadata repair failed")
+    finally:
+     try: os.close(parent)
+     except OSError: pass
+   # Re-run the complete verifier with repair disabled. This also catches a
+   # concurrent content, membership, or custody change during the repair.
+   return _hash_generation_tree(home,manifest,files,artifact_sha,repair_umask_dirs=False)
   return hashlib.sha256(marker).hexdigest()
  finally:
   for fd in reversed(fds):
@@ -412,7 +445,7 @@ def native_inventory_bytes(manifest,files):
   for row in sorted(manifest["skill_members"],key=lambda item:item["skill_id"])],
   sort_keys=True,separators=(",",":")).encode("ascii")+b"\n"
 
-def _verified_resources_payload(_admin_receipt=None):
+def _verified_resources_payload(_admin_receipt=None,*,repair_umask_dirs=False):
  """Build a root-derived receipt and initiate a fresh pinned native-loader query."""
  from .registry import manual_jarvis_skills as native
  archive=native.build_manual_jarvis_skills_artifact()
@@ -424,7 +457,8 @@ def _verified_resources_payload(_admin_receipt=None):
  counts={"native_skills":396,"internal_profiles":207,
   "source_profiles_preserved":208,"other_declarations_preserved":expected_other}
  source_generation=_core_source_generation()
- manifest_sha=_hash_generation_tree(HERMES_HOME,manifest,files,artifact_sha)
+ manifest_sha=_hash_generation_tree(HERMES_HOME,manifest,files,artifact_sha,
+   repair_umask_dirs=repair_umask_dirs)
  active_prompt=_current_primary_prompt()
  try: active_prompt.decode("utf-8")
  except UnicodeDecodeError: raise CoreRuntimeError("primary Jarvis prompt encoding is invalid") from None
@@ -432,7 +466,8 @@ def _verified_resources_payload(_admin_receipt=None):
  bundled_sha=hashlib.sha256(files["registry/profiles/hermes/SOUL.md"]).hexdigest()
  native_receipt=_root_native_readback(manifest,files,active_prompt)
  if (_core_source_generation()!=source_generation
-     or _hash_generation_tree(HERMES_HOME,manifest,files,artifact_sha)!=manifest_sha
+     or _hash_generation_tree(HERMES_HOME,manifest,files,artifact_sha,
+       repair_umask_dirs=False)!=manifest_sha
      or hashlib.sha256(_current_primary_prompt()).hexdigest()!=active_sha):
   raise CoreRuntimeError("pinned source or owned Resources changed during native read-back")
  if (native_receipt["active_primary_prompt_sha256"]!=active_sha
@@ -458,10 +493,10 @@ def _verified_resources_payload(_admin_receipt=None):
   "state":"discovered","functional":False,"enabled":False,"target_verified":False,
  }
 
-def _write_resources_discovery():
+def _write_resources_discovery(*,repair_umask_dirs=False):
  """Retain the source-bound artifact and independently read-backed receipt as root."""
  _ensure_dir(RESOURCES_RECORD.parent,ROOT_UID,ROOT_UID,0o700)
- archive,record=_verified_resources_payload()
+ archive,record=_verified_resources_payload(repair_umask_dirs=repair_umask_dirs)
  _ensure_dir(RESOURCES_CAS,ROOT_UID,ROOT_UID,0o700)
  cas=RESOURCES_CAS/(record["artifact_sha256"]+".zip")
  try: os.lstat(cas); cas_present=True
@@ -825,7 +860,10 @@ def refresh_resources_discovery():
   raise CoreRuntimeError("journal-owned core is not in a refreshable installed state")
  if not status().startswith("owned isolated service and process-bound loopback listener verified at 127.0.0.1:8766;"):
   raise CoreRuntimeError("owned core must already be active before receipt refresh")
- projection=_write_resources_discovery()
+ # This explicit root operator action is the only path allowed to repair the
+ # original importer's known umask-created 0775 nested directories. Ordinary
+ # discovery/profile reads remain strict and read-only.
+ projection=_write_resources_discovery(repair_umask_dirs=True)
  counts=projection["resource_counts"]
  return (f"root native discovery refreshed for the existing owned 127.0.0.1:8766 core; "
          f"{counts['native_skills']} skills read back; service lifecycle unchanged; "

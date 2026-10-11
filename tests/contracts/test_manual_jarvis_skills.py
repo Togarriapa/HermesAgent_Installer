@@ -6,6 +6,7 @@ on a developer workstation against a real Hermes home.
 import hashlib
 import io
 import json
+import os
 import tempfile
 import unittest
 import warnings
@@ -82,6 +83,29 @@ class ManualJarvisSkillsTests(unittest.TestCase):
                 self.bundle, hermes_home=home, expected_sha256=self.digest)
             self.assertEqual(again["state"], "already-staged")
             self.assertEqual(again["generation_path"], result["generation_path"])
+
+    def test_nested_generation_permissions_ignore_umask_and_repair_only_verified_drift(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self.make_home(tmp)
+            previous = os.umask(0o002)
+            try:
+                result = install_manual_jarvis_skills(
+                    self.bundle, hermes_home=home, expected_sha256=self.digest)
+            finally:
+                os.umask(previous)
+            generation = Path(result["generation_path"])
+            nested = generation / "skills" / "conversation-gateway"
+            self.assertEqual(nested.stat().st_mode & 0o777, 0o755)
+            nested.chmod(0o775)
+            unrelated = home / "skills" / "user-owned"
+            unrelated.chmod(0o775)
+
+            repeated = install_manual_jarvis_skills(
+                self.bundle, hermes_home=home, expected_sha256=self.digest)
+
+            self.assertEqual(repeated["state"], "already-staged")
+            self.assertEqual(nested.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(unrelated.stat().st_mode & 0o777, 0o775)
 
     def test_unowned_generation_conflict_and_wrong_bundle_digest_fail_without_mutation(self):
         with tempfile.TemporaryDirectory() as tmp:
