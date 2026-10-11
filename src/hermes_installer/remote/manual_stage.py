@@ -76,8 +76,12 @@ class StageAcceptedIngressObservation:
                 or observed_now >= self.jwt_expires_monotonic):
             raise ManualStageDenied("protected ingress witness is stale or mismatched")
         try:
-            self._root_observation.verify_current(config, self.peer_pid, self.peer_uid, self.peer_gid,
-                                                  now=observed_now)
+            from .manual_stage_inspector import StageVerifiedIngressObservation
+            if type(self._root_observation) is not StageVerifiedIngressObservation:
+                raise ValueError
+            if self._root_observation.verify_current(
+                    config, self.peer_pid, self.peer_uid, self.peer_gid, now=observed_now) is not True:
+                raise ValueError
             listener = os.lstat(config.ingress_socket)
             if (not stat.S_ISSOCK(listener.st_mode)
                     or listener.st_uid != config.gateway_uid

@@ -3,6 +3,7 @@ import base64
 import hashlib
 import json
 import os
+import secrets
 import socket
 import tempfile
 import threading
@@ -90,14 +91,29 @@ class ManualStageGatewayTests(unittest.TestCase):
         claims.update(changes)
         return jwt.encode(claims, self.key, algorithm="RS256", headers={"kid": "stage-kid"})
 
+    def root_ingress_observation(self, *, issued=None, expires=None, peer=(77, 981, 981),
+                                 config_digest=None):
+        from hermes_installer.remote import manual_stage_inspector as inspector
+        from hermes_installer.remote.manual_stage_inspector import StageVerifiedIngressObservation
+        issued = time.monotonic() if issued is None else issued
+        expires = issued + 4.8 if expires is None else expires
+        return StageVerifiedIngressObservation(
+            schema=1, nonce=secrets.token_hex(32), boot_id=self.config.boot_id,
+            issued_monotonic=issued, expires_monotonic=expires,
+            peer_pid=peer[0], peer_uid=peer[1], peer_gid=peer[2], peer_start_ticks="123",
+            tunnel_unit_sha256=self.config.tunnel_unit_sha256,
+            tunnel_config_sha256=inspector._tunnel_config_digest(self.config),
+            tunnel_executable_sha256=self.config.cloudflared_binary_sha256,
+            origin_socket_device=self.listener_identity[0], origin_socket_inode=self.listener_identity[1],
+            config_sha256=config_digest or self.config.config_sha256,
+            proof_sha256="a" * 64, _seal=inspector._OBSERVATION_SEAL)
+
     def make_ingress(self, token):
         from types import SimpleNamespace
         from hermes_installer.remote.gateway import validate_access_jwt
         start = time.monotonic()
         principal = validate_access_jwt(token, policy=self.verifier.policy)
-        root = SimpleNamespace(expires_monotonic=start + 4.9,
-            origin_socket_device=self.listener_identity[0], origin_socket_inode=self.listener_identity[1],
-            verify_current=lambda config, pid, uid, gid, now=None: None)
+        root = self.root_ingress_observation(issued=start, expires=start + 4.9)
         return _mint_accepted_ingress(self.config, request_started=start, token=token,
             principal=principal, peer_pid=77, peer_uid=981, peer_gid=981, root_observation=root,
             listener_identity=self.listener_identity)
@@ -106,9 +122,7 @@ class ManualStageGatewayTests(unittest.TestCase):
         from types import SimpleNamespace
         principal = principal or Principal("owner@example.net", "subject", time.time() + 120, "f" * 64)
         started = time.monotonic() if started is None else started
-        root = SimpleNamespace(expires_monotonic=expires or started + 4.9,
-            origin_socket_device=self.listener_identity[0], origin_socket_inode=self.listener_identity[1],
-            verify_current=lambda config, pid, uid, gid, now=None: None)
+        root = self.root_ingress_observation(issued=started, expires=expires or started + 4.9)
         return StageAcceptedIngressObservation(started, expires or started + 4.9,
             hashlib.sha256(token.encode("ascii")).hexdigest(), principal, started + 120,
             77, 981, 981, self.config.config_sha256, root, self.listener_identity[0], self.listener_identity[1], __import__(
@@ -180,9 +194,7 @@ class ManualStageGatewayTests(unittest.TestCase):
                 return __import__("struct").pack("3i", 77, 981, 981)
         peer = PeerSocket()
         peer.config = self.config
-        root = SimpleNamespace(expires_monotonic=time.monotonic() + 4.8,
-            origin_socket_device=self.listener_identity[0], origin_socket_inode=self.listener_identity[1],
-            verify_current=lambda config, pid, uid, gid, now=None: None)
+        root = self.root_ingress_observation(peer=(77, 981, 981))
         listener = SimpleNamespace(st_mode=__import__("stat").S_IFSOCK | 0o660,
             st_uid=self.config.gateway_uid, st_gid=self.config.gateway_gid,
             st_dev=self.listener_identity[0], st_ino=self.listener_identity[1])
@@ -214,6 +226,16 @@ class ManualStageGatewayTests(unittest.TestCase):
         with mock.patch("hermes_installer.remote.manual_stage.os.lstat", return_value=replacement):
             with self.assertRaises(ManualStageDenied):
                 ingress.verify_current(self.config)
+
+    def test_accepted_ingress_rejects_sealed_root_proof_that_returns_false(self):
+        from dataclasses import replace
+        ingress = self.make_ingress(self.token())
+        stale = self.root_ingress_observation(config_digest="e" * 64)
+        self.assertIsNotNone(stale._seal)
+        self.assertIs(stale.verify_current(self.config, ingress.peer_pid, ingress.peer_uid,
+                                           ingress.peer_gid), False)
+        with self.assertRaises(ManualStageDenied):
+            replace(ingress, _root_observation=stale).verify_current(self.config)
 
     def test_request_ingress_rejects_tcp_duplicate_assertion_and_origin_spoof(self):
         import asyncio
