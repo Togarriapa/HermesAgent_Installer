@@ -169,6 +169,8 @@ def _install_legacy_service_fixture(tmp_path, monkeypatch):
 
 def test_adapter_migration_activates_bridge_before_owned_core_restart(tmp_path, monkeypatch):
     calls, _enabled, old_launcher = _install_legacy_service_fixture(tmp_path, monkeypatch)
+    token = core.TOKEN.read_bytes()
+    old_unit = core.UNIT.read_bytes()
 
     result = core.install_or_resume()
 
@@ -177,6 +179,8 @@ def test_adapter_migration_activates_bridge_before_owned_core_restart(tmp_path, 
     assert record["adapter_migration_state"] == "active"
     assert record["launcher_sha256"] == hashlib.sha256(core.LAUNCHER.read_bytes()).hexdigest()
     assert core.LAUNCHER.read_bytes() != old_launcher
+    assert core.UNIT.read_bytes() == old_unit
+    assert core.TOKEN.read_bytes() == token
     assert (core.ADAPTER_MIGRATION_BACKUP / "launcher").read_bytes() == old_launcher
     ordered = [call[0] for call in calls]
     assert ordered.index(("bridge", "enable")) < ordered.index(("systemctl", "restart", core.SERVICE))
@@ -184,6 +188,7 @@ def test_adapter_migration_activates_bridge_before_owned_core_restart(tmp_path, 
 
 def test_adapter_migration_restores_exact_owned_files_after_restart_failure(tmp_path, monkeypatch):
     calls, _enabled, old_launcher = _install_legacy_service_fixture(tmp_path, monkeypatch)
+    token = core.TOKEN.read_bytes()
     old_unit = core.UNIT.read_bytes()
     old_journal = core.JOURNAL.read_bytes()
     monkeypatch.setattr(core, "_wait_for_listener",
@@ -195,6 +200,7 @@ def test_adapter_migration_restores_exact_owned_files_after_restart_failure(tmp_
     assert core.LAUNCHER.read_bytes() == old_launcher
     assert core.UNIT.read_bytes() == old_unit
     assert core.JOURNAL.read_bytes() == old_journal
+    assert core.TOKEN.read_bytes() == token
     assert [call[0] for call in calls].count(("systemctl", "restart", core.SERVICE)) == 2
 
 
