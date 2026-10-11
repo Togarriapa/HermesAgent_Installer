@@ -1419,3 +1419,17 @@ The manual MVP SHALL use the exact v263 owned Unix cloudflared peer and JWT chec
 #### Scenario: Browser witness stops or peer changes
 - **WHEN** the witness expires or current peer/unit/config/JWT verification fails
 - **THEN** deny bytes/input and close the exact socket by its freshness deadline without renewing old authority
+
+
+## ADDED Requirements
+
+### Requirement: Exact local tunnel digest semantics
+The manual stage SHALL use the exact v263b local wiring digest distinct from full protected config identity, without claiming live Cloudflare API inspection. Boot refresh SHALL strictly preserve schema2 fields and invalidate prior witnesses.
+
+#### Scenario: Remote-managed tunnel has no local config file
+- **WHEN** runtime emits tunnel_config_sha256
+- **THEN** hash only the exact canonical local projection and domain; do not invent API currentness or another manifest
+
+#### Scenario: Boot identity changes
+- **WHEN** protected config boot_id is refreshed
+- **THEN** validate schema2, preserve other fields atomically and require fresh current proofs

@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "id": "jarvis-local-tunnel-wiring-digest-v263b",
+  "extends": "planning/jarvis-binding-cookie-unix-heartbeat-v263.json",
+  "status": "implementation and live acceptance OPEN",
+  "tasks": [
+    "RT-T263.1",
+    "VD-T263.2"
+  ],
+  "reason": "Clarify ambiguous tunnel_config_sha256: remote-managed tunnel has no local cloudflared configuration file or runtime management credential.",
+  "tunnel_config_sha256": {
+    "payload_keys": [
+      "argv",
+      "binary_sha256",
+      "ingress_socket",
+      "supplementary_group",
+      "tunnel_unit_sha256"
+    ],
+    "payload": {
+      "argv": [
+        "/usr/bin/cloudflared",
+        "--no-autoupdate",
+        "tunnel",
+        "run",
+        "--token-file",
+        "/run/credentials/hermes-jarvis-mvp-tunnel.service/tunnel-token"
+      ],
+      "binary_sha256": "config.cloudflared_binary_sha256",
+      "ingress_socket": "str(config.ingress_socket)",
+      "supplementary_group": "config.gateway_gid (integer)",
+      "tunnel_unit_sha256": "config.tunnel_unit_sha256"
+    },
+    "serialization": "json.dumps(payload, sort_keys=True, separators=(comma,colon), ensure_ascii=True).encode(ascii); no whitespace/newline",
+    "domain": "ASCII hermes-jarvis-mvp-tunnel-config-v263 followed by one NUL byte",
+    "algorithm": "lowercase SHA256 hex of domain bytes concatenated with canonical payload bytes",
+    "meaning": "Only independently readback-verified fixed local tunnel unit/argv/binary/group/Unix wiring selection. Distinct from config_sha256 of the complete protected stage config. No current Cloudflare API ingress/Access configuration claim; owned API deployment readback is separate evidence."
+  },
+  "configuration": "Retain strict schema2 and exactly four v263 added fields unchanged. Existing boot refresh must first strictly validate complete schema2 root-owned config, atomically replace only boot_id with actual current boot identity, preserve every other field/value and ownership/mode, then read back. It cannot silently downgrade to schema1/drop fields or preserve prior session/proof validity across boot. New config digest invalidates old witnesses; fresh process/peer/JWT checks remain required.",
+  "source_review": "Exact inspector _tunnel_config_digest read at committed 3b636e035dc4bc40e2b00b83379aa58b57eee066 owner clone; no source pins or code changes by Sol.",
+  "acceptance": "Same MVP tasks and all original AC OPEN; no extra manifest or runtime management token."
+}

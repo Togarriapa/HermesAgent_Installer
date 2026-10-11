@@ -3874,5 +3874,18 @@
       ]
     },
     "acceptance": "manual MVP only; all AC OPEN"
+  },
+  "jarvis_local_tunnel_wiring_digest_v263b": {
+    "contract": "planning/jarvis-local-tunnel-wiring-digest-v263b.json",
+    "amendment": "plans/amendments/2026-10-11-jarvis-local-tunnel-wiring-digest-v263b.md",
+    "tasks": {
+      "RT-T263.1": [
+        "RT-T259.3"
+      ],
+      "VD-T263.2": [
+        "RT-T263.1"
+      ]
+    },
+    "acceptance": "clarification only; all AC OPEN"
   }
 }

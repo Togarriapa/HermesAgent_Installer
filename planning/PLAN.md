@@ -275,3 +275,8 @@ Confirmed jarvis.togarriapahome.uk. `planning/jarvis-visible-desktop-mvp-stage-v
 ## Binding-preserving manual MVP v263
 
 `planning/jarvis-binding-cookie-unix-heartbeat-v263.json`; RT-T263.1/VD-T263.2 OPEN. Actual binding-enabled302 requires Unix peer/root proof plus protected browser heartbeat; security and all original AC unchanged.
+
+
+## Local tunnel digest clarification v263b
+
+`planning/jarvis-local-tunnel-wiring-digest-v263b.json`; exact local domain/projection, separate full config hash, strict schema2 boot refresh. Same tasks/all AC OPEN.

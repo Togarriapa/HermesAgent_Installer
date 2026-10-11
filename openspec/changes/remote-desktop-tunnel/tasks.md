@@ -243,3 +243,9 @@ RT-T259.3/LC-T259.4/VD-T259.5 additionally require the separate stage adapter, p
 
 - [ ] `RT-T263.1` Implement the exact v263 Unix ingress/root peer proof and browser nonce heartbeat in the distinct stage adapter; preserve all JWT/origin/lease/native checks. Depends RT-T259.3.
 - [ ] `VD-T263.2` Verify production failure/expiry effects and actual binding-enabled OTP/revocation/restart; all original AC remain OPEN. Depends RT-T263.1.
+
+
+## Local tunnel digest v263b
+
+- [ ] `RT-T263.1` Apply exact local wiring digest and strict schema2 boot refresh clarification; existing v263 task remains OPEN.
+- [ ] `VD-T263.2` Verify canonical field/type/domain mutations and boot refresh preserves schema2 fields while invalidating old proof; existing live gates remain OPEN.
