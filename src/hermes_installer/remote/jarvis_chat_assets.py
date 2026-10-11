@@ -40,7 +40,7 @@ _HTML = '''<!doctype html>
       </a>
       <nav class="primary-nav" aria-label="Jarvis sections">
         <details class="nav-group" data-nav-group="command-centre"><summary>Command centre</summary><div class="nav-menu"><button type="button" class="nav-item" data-view="overview">Overview</button></div></details>
-        <details class="nav-group" data-nav-group="conversations"><summary>Conversations</summary><div class="nav-menu"><button type="button" class="nav-item" data-view="chat">Chat</button><button type="button" class="nav-item" data-view="chat" data-open-sessions="true">Sessions</button></div></details>
+        <details class="nav-group" data-nav-group="conversations"><summary>Conversations</summary><div class="nav-menu"><button type="button" class="nav-item" data-view="chat">Chats</button></div></details>
         <details class="nav-group" data-nav-group="work"><summary>Work</summary><div class="nav-menu"><!-- JARVIS_GROUP_WORK --></div></details>
         <details class="nav-group" data-nav-group="resources"><summary>Resources</summary><div class="nav-menu"><button type="button" class="nav-item" data-view="capabilities">Capabilities</button><!-- JARVIS_GROUP_RESOURCES --></div></details>
         <details class="nav-group" data-nav-group="system"><summary>System</summary><div class="nav-menu"><button type="button" class="nav-item" data-view="settings">Settings</button><!-- JARVIS_GROUP_SYSTEM --></div></details>
@@ -57,17 +57,17 @@ _HTML = '''<!doctype html>
     <div class="workspace" data-current-view="overview">
       <aside class="conversation-panel" id="conversation-panel" aria-label="Conversations">
         <div class="panel-heading">
-          <div><span class="eyebrow">YOUR SPACE</span><h2>Sessions</h2></div>
+          <div><span class="eyebrow">YOUR SPACE</span><h2>Chats</h2></div>
           <button class="icon-button panel-close" id="history-close" type="button" aria-label="Close conversations">×</button>
         </div>
         <button class="new-chat-button" id="new-chat" type="button"><span aria-hidden="true">＋</span> New conversation</button>
         <p class="list-caption">YOUR CONVERSATIONS</p>
-        <label class="session-search-label" for="session-search">Find a session</label>
-        <input class="session-search" id="session-search" type="search" autocomplete="off" placeholder="Search sessions" aria-describedby="session-count">
-        <p class="session-count" id="session-count" role="status" aria-live="polite">Loading sessions…</p>
-        <nav class="conversation-list" id="conversation-list" aria-label="Owned conversation sessions"></nav>
-        <p class="history-empty" id="history-empty">No sessions yet. Start a new conversation.</p>
-        <p class="history-empty" id="history-filter-empty" hidden>No sessions match this search.</p>
+        <label class="session-search-label" for="session-search">Find a chat</label>
+        <input class="session-search" id="session-search" type="search" autocomplete="off" placeholder="Search chats" aria-describedby="session-count">
+        <p class="session-count" id="session-count" role="status" aria-live="polite">Loading chats…</p>
+        <nav class="conversation-list" id="conversation-list" aria-label="Owned private chats"></nav>
+        <p class="history-empty" id="history-empty">No chats yet. Start a new conversation.</p>
+        <p class="history-empty" id="history-filter-empty" hidden>No chats match this search.</p>
         <div class="panel-footer"><span class="privacy-mark" aria-hidden="true">◈</span><span>Private conversations</span></div>
       </aside>
 
@@ -83,7 +83,7 @@ _HTML = '''<!doctype html>
               <div class="chat-preferences-heading"><h2 id="chat-preferences-title">Chat controls</h2><span>Model · voice · display</span></div>
               <button type="button" class="chat-model-link" data-view="models-settings">Choose conversation model <span>Session only ↗</span></button>
               <p class="chat-preferences-note">Voice and display choices apply across this browser and are also available in System settings.</p>
-              <label class="chat-preference-toggle" id="chat-speech-consent-row"><input id="chat-speech-consent" type="checkbox"><span><strong>Push to talk</strong><small>Browser speech input · review transcript before sending</small></span></label>
+              <label class="chat-preference-toggle" id="chat-speech-consent-row"><input id="chat-speech-consent" type="checkbox"><span><strong>Allow browser voice input</strong><small>Push-to-talk or foreground wake phrase · review before sending</small></span></label>
               <label class="chat-preference-toggle" id="chat-speech-output-row"><input id="chat-speech-output" type="checkbox"><span><strong>Read completed replies aloud</strong><small>Uses voices provided by this browser or device</small></span></label>
               <label class="chat-preference-field"><span>Recognition language</span><select id="chat-speech-language" aria-label="Recognition language">
                 <option value="en-US">English (United States)</option><option value="en-GB">English (United Kingdom)</option><option value="pt-PT">Português (Portugal)</option><option value="pt-BR">Português (Brasil)</option><option value="es-ES">Español (España)</option><option value="fr-FR">Français</option><option value="de-DE">Deutsch</option><option value="it-IT">Italiano</option>
@@ -92,7 +92,7 @@ _HTML = '''<!doctype html>
               <div class="chat-preference-tuning" id="chat-preference-tuning"><label for="chat-speech-rate"><span>Speaking rate</span><output id="chat-speech-rate-value" for="chat-speech-rate">1.0×</output><input id="chat-speech-rate" type="range" min="0.5" max="2" step="0.1" value="1"></label><label for="chat-speech-pitch"><span>Voice pitch</span><output id="chat-speech-pitch-value" for="chat-speech-pitch">1.0</output><input id="chat-speech-pitch" type="range" min="0" max="2" step="0.1" value="1"></label></div>
               <label class="chat-preference-field"><span>Text size</span><select id="chat-text-size" aria-label="Text size"><option value="normal">Default</option><option value="large">Large</option></select></label>
               <label class="chat-preference-field"><span>Layout density</span><select id="chat-density" aria-label="Layout density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label>
-              <label class="chat-preference-field"><span>Motion</span><select id="chat-motion" aria-label="Motion preference"><option value="system">Follow device setting</option><option value="reduce">Reduce motion</option></select></label>
+              <label class="chat-preference-field"><span>Motion</span><select id="chat-motion" aria-label="Motion preference"><option value="system">Follow device setting</option><option value="reduce">Reduce motion</option><option value="full">Full motion · override device</option></select></label>
             </div>
           </details>
         </div>
@@ -120,9 +120,14 @@ _HTML = '''<!doctype html>
               <button class="stop-button" id="stop-button" type="button" hidden>Stop response</button>
               <button class="voice-button" id="voice-input" type="button" aria-label="Start push to talk" hidden>Speak</button>
               <button class="voice-button" id="voice-stop" type="button" hidden>Stop listening</button>
+              <button class="voice-button voice-wake-button" id="voice-wake-toggle" type="button" aria-pressed="false" hidden>Enable foreground wake phrase</button>
               <button class="voice-button" id="speech-stop" type="button" aria-label="Stop reply audio" hidden disabled>Stop audio</button>
             </div>
           </form>
+          <div class="voice-wake-controls" id="voice-wake-controls" hidden>
+            <label><input id="voice-handsfree-send" type="checkbox"><span>Send a command after “Jarvis” without review</span></label>
+            <p>Foreground only. Wake listening uses this browser’s speech service, may send audio outside Jarvis, and stops when this page is hidden or leaves Chat.</p>
+          </div>
           <p class="voice-status" id="voice-status" role="status" aria-live="polite" hidden></p>
         </div>
       </main>
@@ -206,7 +211,7 @@ _HTML = '''<!doctype html>
         <section class="data-card voice-settings-card"><h2>Voice preferences</h2>
           <p class="muted">Optional browser features. Text chat remains available on every device.</p>
           <h3 class="voice-group-title">Speech input</h3>
-          <label class="voice-choice" id="speech-consent-row" hidden><input id="speech-consent" type="checkbox"><span><strong>Enable push-to-talk for this page</strong><small>Browser speech recognition may process audio through your browser or platform speech service outside Jarvis. Audio is not sent to the Jarvis chat service. Availability and processing depend on your browser.</small></span></label>
+          <label class="voice-choice" id="speech-consent-row" hidden><input id="speech-consent" type="checkbox"><span><strong>Allow browser voice input on this page</strong><small>Push-to-talk or foreground wake listening may process audio through your browser or platform speech service outside Jarvis. Audio is not sent to the Jarvis chat service. Availability and processing depend on your browser.</small></span></label>
           <label class="voice-choice voice-select-row" id="speech-language-row"><span><strong>Recognition language</strong><select id="speech-language" aria-label="Speech recognition language"><option value="en-US">English (United States)</option><option value="en-GB">English (United Kingdom)</option><option value="pt-PT">Português (Portugal)</option><option value="pt-BR">Português (Brasil)</option><option value="es-ES">Español (España)</option><option value="fr-FR">Français</option><option value="de-DE">Deutsch</option><option value="it-IT">Italiano</option></select><small>Applies to the next push-to-talk capture. The browser or operating system chooses the microphone; manage the input device there.</small></span></label>
           <p class="voice-unavailable" id="speech-unavailable" hidden></p>
           <h3 class="voice-group-title">Speech output</h3>
@@ -216,8 +221,8 @@ _HTML = '''<!doctype html>
           <p class="voice-unavailable" id="speech-voice-status" role="status" aria-live="polite" hidden></p>
           <p class="voice-unavailable" id="speech-output-unavailable" hidden></p>
           <h3 class="voice-group-title">Appearance</h3>
-          <div class="voice-range-row appearance-preferences"><label for="ui-density"><strong>Layout density</strong><select id="ui-density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label><label for="ui-text-size"><strong>Text size</strong><select id="ui-text-size"><option value="normal">Default</option><option value="large">Large</option></select></label><label for="ui-motion"><strong>Motion</strong><select id="ui-motion"><option value="system">Follow device setting</option><option value="reduce">Reduce motion</option></select></label></div>
-          <p class="muted">Voice output and appearance choices are stored only in this browser on this device. Microphone permission and push-to-talk consent are never saved; push-to-talk must be enabled again each time.</p>
+          <div class="voice-range-row appearance-preferences"><label for="ui-density"><strong>Layout density</strong><select id="ui-density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label><label for="ui-text-size"><strong>Text size</strong><select id="ui-text-size"><option value="normal">Default</option><option value="large">Large</option></select></label><label for="ui-motion"><strong>Motion</strong><select id="ui-motion"><option value="system">Follow device setting</option><option value="reduce">Reduce motion</option><option value="full">Full motion · override device</option></select></label></div>
+          <p class="muted">Voice output and appearance choices are stored only in this browser on this device. Microphone permission and voice-input consent are never saved; voice input must be enabled again each time.</p>
           <p class="voice-unavailable" id="preference-storage-status" role="status" aria-live="polite" hidden></p>
           <p class="voice-unavailable" id="voice-settings-status" role="status" aria-live="polite" hidden></p>
         </section>
@@ -349,6 +354,28 @@ html[data-jarvis-motion="reduce"] *,html[data-jarvis-motion="reduce"] *::before,
 @media(max-width:760px){.overview-hud{display:flex;flex-direction:column;gap:16px;min-height:0;align-items:stretch}.jarvis-presence{grid-template-columns:minmax(0,1fr);order:-1;min-height:0;padding:2px 0 7px}.presence-figure{width:min(78vw,330px)}.presence-figure:before{inset:15%}.presence-copy{margin-top:-13px}.telemetry-rail{grid-template-columns:repeat(2,minmax(0,1fr));gap:0 18px;padding:0 4px}.telemetry-readout{padding:11px 0}.telemetry-readout .large-value{font-size:19px}.telemetry-readout .muted{font-size:10px}.activity-readout .chart-bars{height:116px}.activity-readout .chart-bar-track{height:74px}.command-panel{padding:12px;border-radius:12px}.command-intro{gap:8px}.command-intro>span:last-child{font-size:9px}.quick-actions{display:flex;flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px;scroll-snap-type:x proximity;overscroll-behavior-inline:contain}.quick-actions button{flex:0 0 auto;scroll-snap-align:start;min-height:44px}.command-hint{font-size:10px}}
 @media(max-width:430px){.presence-figure{width:min(82vw,290px)}.presence-copy h2{font-size:20px}.presence-connection{grid-template-columns:7px auto;gap:6px}.presence-connection strong{grid-column:2;justify-self:start;margin-left:0}.telemetry-rail{grid-template-columns:1fr 1fr;gap:0 12px}.telemetry-readout h2{font-size:8px}.activity-readout{grid-column:1/-1}.activity-readout .chart-bars{height:100px}.activity-readout .chart-bar-track{height:62px}}
 @media(prefers-reduced-motion:reduce){.jarvis-presence[data-state="thinking"] .presence-orbit-inner,.jarvis-presence[data-state="listening"] .presence-orbit-outer{animation:none;transform:none}}
+/* One authored reactor: continuous only while visible, with motion tied to real UI states. */
+@keyframes reactor-core-breathe{0%,100%{opacity:.72;transform:scale(.98)}50%{opacity:1;transform:scale(1.035)}}
+@keyframes reactor-listening{0%,100%{opacity:.58;stroke-width:1.2}50%{opacity:1;stroke-width:2.1}}
+@keyframes jarvis-halo-breathe{0%,100%{opacity:.35;transform:scale(.94)}50%{opacity:.78;transform:scale(1.06)}}
+.jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-orbit-inner{transform-box:view-box;transform-origin:120px 120px;animation:presence-turn 58s linear infinite}
+.jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-core{transform-box:view-box;transform-origin:120px 120px;animation:reactor-core-breathe 6s ease-in-out infinite}
+.jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="thinking"] .presence-orbit-inner{animation-duration:18s}
+.jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="thinking"] .presence-orbit-reactor{transform-box:view-box;transform-origin:120px 120px;animation:presence-turn 46s linear infinite reverse}
+.jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="listening"] .presence-orbit-outer{animation:reactor-listening 1.7s ease-in-out infinite}
+.jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="speaking"] .presence-orbit-reactor{transform-box:view-box;transform-origin:120px 120px;animation:presence-turn 34s linear infinite}
+html[data-page-visible="true"] .assistant-hud[data-state="idle"] .orb-halo{animation:jarvis-halo-breathe 7s ease-in-out infinite}
+html[data-page-visible="true"] .assistant-hud[data-state="listening"] .orb-halo{animation:jarvis-halo-breathe 1.7s ease-in-out infinite}
+html[data-page-visible="true"] .assistant-hud[data-state="speaking"] .orb-ring{animation:presence-turn 16s linear infinite}
+.voice-button,.send-button,.stop-button{min-height:44px}
+.voice-wake-controls{max-width:880px;margin:8px 3px 0;color:#9bb6bb;font-size:11px;line-height:1.5}
+.voice-wake-controls label{min-height:44px;display:flex;align-items:center;gap:10px;color:#cce2e5;cursor:pointer}
+.voice-wake-controls input{width:18px;height:18px;flex:none;accent-color:var(--cyan)}
+.voice-wake-controls p{margin:0 0 0 28px;max-width:74ch}
+.voice-wake-button[aria-pressed="true"]{border-color:#83d7bd;background:rgba(39,137,111,.2);color:#c4f7e5}
+@media(max-width:760px){.composer-actions{flex-wrap:wrap}.composer-hint{flex:1 0 100%;padding:2px 0 5px}.voice-wake-controls p{margin-left:0}}
+@media(prefers-reduced-motion:reduce){html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-orbit-inner,html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-orbit-reactor,html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-orbit-outer,html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-core,html:not([data-jarvis-motion="full"]) .assistant-hud .orb-halo,html:not([data-jarvis-motion="full"]) .assistant-hud .orb-ring{animation:none!important;transform:none!important}}
+@media(prefers-reduced-motion:reduce){html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-orbit-inner{animation:presence-turn 58s linear infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-core{animation:reactor-core-breathe 6s ease-in-out infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="thinking"] .presence-orbit-inner{animation:presence-turn 18s linear infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="thinking"] .presence-orbit-reactor{animation:presence-turn 46s linear infinite reverse!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="listening"] .presence-orbit-outer{animation:reactor-listening 1.7s ease-in-out infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="speaking"] .presence-orbit-reactor{animation:presence-turn 34s linear infinite!important}html[data-jarvis-motion="full"][data-page-visible="true"] .assistant-hud[data-state="idle"] .orb-halo{animation:jarvis-halo-breathe 7s ease-in-out infinite!important}html[data-jarvis-motion="full"][data-page-visible="true"] .assistant-hud[data-state="listening"] .orb-halo{animation:jarvis-halo-breathe 1.7s ease-in-out infinite!important}html[data-jarvis-motion="full"][data-page-visible="true"] .assistant-hud[data-state="speaking"] .orb-ring{animation:presence-turn 16s linear infinite!important}}
 '''.encode("utf-8")
 
 
@@ -363,7 +390,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     messages: byId("message-list"), welcome: byId("welcome-panel"),
     scroll: byId("message-scroll"), form: byId("composer"), input: byId("message-input"),
     send: byId("send-button"), stop: byId("stop-button"), notice: byId("chat-notice"),
-    voiceInput: byId("voice-input"), voiceStop: byId("voice-stop"), speechStop: byId("speech-stop"),
+    voiceInput: byId("voice-input"), voiceStop: byId("voice-stop"), voiceWake: byId("voice-wake-toggle"), speechStop: byId("speech-stop"),
     voiceStatus: byId("voice-status"),
     toggle: byId("history-toggle"), close: byId("history-close"), panel: byId("conversation-panel"),
     scrim: byId("panel-scrim"), newChat: byId("new-chat")
@@ -377,6 +404,9 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   let heartbeatNonce = null;
   let latestSequence = 0;
   let recognition = null;
+  let recognitionMode = "";
+  let wakePhraseHeard = false;
+  let presenceObserver = null;
   let speechUtterance = null;
   let voiceSupported = false;
   let synthesisSupported = false;
@@ -540,7 +570,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
             pitch: boundedPreferenceNumber(saved.pitch, 0, 2, 1),
             density: saved.density === "compact" ? "compact" : "comfortable",
             textSize: saved.textSize === "large" ? "large" : "normal",
-            motion: saved.motion === "reduce" ? "reduce" : "system"
+            motion: ["reduce", "full"].includes(saved.motion) ? saved.motion : "system"
           };
         }
       }
@@ -594,7 +624,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     byId("chat-speech-pitch-value").textContent = Number(uiPreferences.pitch).toFixed(1);
   }
   function shouldReduceMotion() {
-    return uiPreferences.motion === "reduce" || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    return uiPreferences.motion === "reduce" || (uiPreferences.motion !== "full" && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   }
   function pushToTalkEnabled() {
     return byId("speech-consent").checked || byId("chat-speech-consent").checked;
@@ -613,9 +643,14 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   function stopRecognition(message = "") {
     const current = recognition;
     recognition = null;
+    recognitionMode = "";
+    wakePhraseHeard = false;
     ui.voiceStop.hidden = true;
     ui.voiceInput.hidden = !voiceSupported || !pushToTalkEnabled();
     ui.voiceInput.dataset.listening = "false";
+    ui.voiceWake.setAttribute("aria-pressed", "false");
+    ui.voiceWake.textContent = "Enable foreground wake phrase";
+    ui.voiceWake.hidden = !voiceSupported || !pushToTalkEnabled();
     if (current) {
       current.onresult = current.onerror = current.onend = null;
       try { current.abort(); } catch (_) {}
@@ -686,6 +721,8 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     const unavailable = byId("speech-unavailable");
     consentRow.hidden = !voiceSupported;
     byId("chat-speech-consent-row").hidden = !voiceSupported;
+    byId("voice-wake-controls").hidden = !voiceSupported || !pushToTalkEnabled();
+    ui.voiceWake.hidden = !voiceSupported || !pushToTalkEnabled();
     if (!Recognition) {
       unavailable.textContent = "Push-to-talk is not supported by this browser. You can still type your message.";
       unavailable.hidden = false;
@@ -720,11 +757,12 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       window.speechSynthesis.onvoiceschanged = refreshVoices;
     }
   }
-  function startRecognition() {
+  function startRecognition(mode = "ptt") {
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!voiceSupported || !pushToTalkEnabled() || !Recognition
         || byId("main-content").hidden || document.visibilityState !== "visible") return;
     if (ui.input.disabled) return;
+    if (recognition) stopRecognition();
     stopSpeech();
     let current;
     try { current = new Recognition(); }
@@ -733,7 +771,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       setAssistantState("error", "Voice input unavailable");
       return;
     }
-    current.continuous = false;
+    current.continuous = mode === "wake";
     current.interimResults = false;
     current.lang = uiPreferences.language;
     let transcriptReceived = false;
@@ -747,6 +785,43 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
         .map((result) => result[0] && result[0].transcript || "").join(" ").trim();
       if (!transcript) return;
       transcriptReceived = true;
+      if (mode === "wake") {
+        let command = transcript;
+        if (!wakePhraseHeard) {
+          const wake = transcript.match(/(?:^|\b)(?:hey\s+)?jarvis\b[\s,.:;!-]*(.*)$/i);
+          if (!wake) return;
+          wakePhraseHeard = true;
+          command = (wake[1] || "").trim();
+          if (!command) {
+            showVoiceStatus("Jarvis heard you. Say one command; it will not run until you review or explicitly enable hands-free sending.");
+            return;
+          }
+        }
+        if (command) {
+          const existingDraft = ui.input.value.trim();
+          const autoSend = byId("voice-handsfree-send").checked && !existingDraft;
+          stopRecognition();
+          const separator = ui.input.value && !/\s$/.test(ui.input.value) ? " " : "";
+          const limit = ui.input.maxLength >= 0 ? ui.input.maxLength : ui.input.value.length + command.length + separator.length;
+          const accepted = command.slice(0, Math.max(0, limit - ui.input.value.length - separator.length));
+          if (!accepted) {
+            showVoiceStatus("The message is at its character limit. You can edit it or start a new message.");
+            return;
+          }
+          ui.input.value = `${ui.input.value}${separator}${accepted}`;
+          ui.input.dispatchEvent(new Event("input", { bubbles: true }));
+          if (autoSend && accepted === command) {
+            showVoiceStatus("Hands-free command submitted after the wake phrase.");
+            ui.form.requestSubmit();
+          } else {
+            ui.input.focus({ preventScroll: true });
+            showVoiceStatus(existingDraft
+              ? "Command added beside your existing draft. Review before sending."
+              : "Command added to your message. Review it before sending.");
+          }
+        }
+        return;
+      }
       const existing = ui.input.value;
       const separator = existing && !/\s$/.test(existing) ? " " : "";
       const limit = ui.input.maxLength >= 0 ? ui.input.maxLength : existing.length + transcript.length + separator.length;
@@ -780,18 +855,31 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       if (recognition !== current) return;
       if (!captureEligible()) { stopRecognition(); return; }
       recognition = null;
+      recognitionMode = "";
       ui.voiceInput.hidden = !pushToTalkEnabled();
       ui.voiceInput.dataset.listening = "false";
       ui.voiceStop.hidden = true;
+      ui.voiceWake.setAttribute("aria-pressed", "false");
+      ui.voiceWake.textContent = "Enable foreground wake phrase";
       setAssistantState("ready", "Ready for your message");
-      if (!transcriptReceived) showVoiceStatus("Listening ended without a transcript. You can type your message instead.");
+      if (mode === "wake") showVoiceStatus("Foreground wake listening ended. You can enable it again or use push-to-talk.");
+      else if (!transcriptReceived) showVoiceStatus("Listening ended without a transcript. You can type your message instead.");
     };
     recognition = current;
+    recognitionMode = mode;
     ui.voiceInput.hidden = true;
     ui.voiceInput.dataset.listening = "true";
     ui.voiceStop.hidden = false;
-    setAssistantState("listening", "Listening once · review before sending");
-    showVoiceStatus("Listening once. Your speech will not be sent until you review and submit the text.");
+    ui.voiceWake.setAttribute("aria-pressed", String(mode === "wake"));
+    ui.voiceWake.textContent = mode === "wake" ? "Stop foreground wake phrase" : "Enable foreground wake phrase";
+    if (mode === "wake") {
+      byId("voice-wake-controls").hidden = false;
+      setAssistantState("listening", "Foreground wake phrase active");
+      showVoiceStatus("Listening for “Jarvis” in this visible Chat tab. Browser speech recognition may process audio outside Jarvis.");
+    } else {
+      setAssistantState("listening", "Listening once · review before sending");
+      showVoiceStatus("Listening once. Your speech will not be sent until you review and submit the text.");
+    }
     try { current.start(); }
     catch (_) {
       stopRecognition("Could not start speech input. Check microphone access or type your message.");
@@ -843,8 +931,8 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     });
     ui.historyFilterEmpty.hidden = conversations.length === 0 || filtered.length !== 0;
     ui.sessionCount.textContent = query
-      ? `${filtered.length} matching sessions · ${conversations.length} owned in total`
-      : `${conversations.length} owned session${conversations.length === 1 ? "" : "s"}`;
+      ? `${filtered.length} matching chats · ${conversations.length} owned in total`
+      : `${conversations.length} owned chat${conversations.length === 1 ? "" : "s"}`;
     for (const entry of filtered) {
       const button = document.createElement("button");
       button.type = "button";
@@ -856,12 +944,6 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       });
       ui.history.append(button);
     }
-  }
-  async function openSessions() {
-    await showView("chat", "sessions");
-    if (window.matchMedia("(max-width: 760px)").matches) setPanel(true);
-    const active = ui.history.querySelector('[aria-current="page"]');
-    (active || ui.newChat).focus({ preventScroll: true });
   }
   function setPanel(open) {
     const value = Boolean(open);
@@ -900,7 +982,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       conversations = data.conversations.filter((item) => item && typeof item.id === "string" && typeof item.title === "string");
       renderHistory();
     } catch (error) {
-      ui.sessionCount.textContent = "Your owned session list is unavailable.";
+      ui.sessionCount.textContent = "Your chat list is unavailable.";
       throw error;
     }
   }
@@ -1336,30 +1418,28 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       list.append(row);
     }
   }
-  async function showView(view, navSelection = view) {
+  async function showView(view) {
     byId("chat-preferences").open = false;
     const selected = ["chat", "overview", "capabilities", "settings"].includes(view) || featuresById.has(view) ? view : "chat";
-    const selectedNavigation = navSelection === "sessions" && selected === "chat" ? "sessions" : selected;
     if (selected !== currentView && mountedFeature) unmountFeature();
     if (selected !== currentView && currentView === "capabilities") unmountCapabilitiesDetails();
     currentView = selected;
     const workspace = document.querySelector(".workspace");
     workspace.dataset.currentView = selected;
     ui.toggle.hidden = selected !== "chat";
-    if (selectedNavigation !== "sessions" && window.matchMedia("(max-width: 760px)").matches && ui.panel.dataset.open === "true") setPanel(false);
+    if (window.matchMedia("(max-width: 760px)").matches && ui.panel.dataset.open === "true") setPanel(false);
     for (const panel of document.querySelectorAll("[data-view-panel]")) panel.hidden = panel.dataset.viewPanel !== selected;
     for (const button of document.querySelectorAll(".nav-item")) {
-      const buttonView = button.dataset.openSessions === "true" ? "sessions" : button.dataset.view;
-      if (buttonView === selectedNavigation) button.setAttribute("aria-current", "page");
+      if (button.dataset.view === selected) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
     }
     const groupForView = {
-      overview: "command-centre", chat: "conversations", sessions: "conversations",
+      overview: "command-centre", chat: "conversations",
       missions: "work", bots: "work", capabilities: "resources", "resources-learning": "resources",
       "native-inventory": "resources", files: "resources", settings: "system",
       "models-settings": "system", activity: "system", "native-controls": "system"
     };
-    const currentGroup = groupForView[selectedNavigation] || groupForView[selected] || "command-centre";
+    const currentGroup = groupForView[selected] || "command-centre";
     for (const group of document.querySelectorAll(".nav-group")) {
       const active = group.dataset.navGroup === currentGroup;
       group.dataset.current = String(active);
@@ -1434,15 +1514,26 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   });
   ui.newChat.addEventListener("click", createConversation);
   ui.stop.addEventListener("click", stopTurn);
-  ui.voiceInput.addEventListener("click", startRecognition);
+  ui.voiceInput.addEventListener("click", () => startRecognition("ptt"));
+  ui.voiceWake.addEventListener("click", () => {
+    if (recognitionMode === "wake") stopRecognition("Foreground wake listening stopped. You can turn it on again any time.");
+    else startRecognition("wake");
+  });
   ui.voiceStop.addEventListener("click", () => stopRecognition("Speech input stopped. Review the text before sending."));
   ui.speechStop.addEventListener("click", () => stopSpeech("Reply audio stopped."));
   for (const id of ["speech-consent", "chat-speech-consent"]) byId(id).addEventListener("change", (event) => {
     const enabled = Boolean(event.currentTarget.checked);
     byId("speech-consent").checked = enabled;
     byId("chat-speech-consent").checked = enabled;
-    if (!enabled) stopRecognition("Push-to-talk is off. You can continue by typing.");
+    if (!enabled) {
+      stopRecognition("Voice input is off. You can continue by typing.");
+      byId("voice-handsfree-send").checked = false;
+      byId("voice-wake-controls").hidden = true;
+      ui.voiceWake.hidden = true;
+    }
     else {
+      byId("voice-wake-controls").hidden = !voiceSupported;
+      ui.voiceWake.hidden = !voiceSupported;
       ui.voiceInput.hidden = !voiceSupported || Boolean(activeTurnId);
       showVoiceStatus("Push-to-talk is enabled. Tap Speak when you are ready.");
     }
@@ -1461,7 +1552,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   for (const id of ["speech-language", "chat-speech-language"]) byId(id).addEventListener("change", (event) => saveUIPreferences({language: event.currentTarget.value}));
   for (const id of ["speech-rate", "chat-speech-rate"]) byId(id).addEventListener("input", (event) => saveUIPreferences({rate: boundedPreferenceNumber(event.currentTarget.value, 0.5, 2, 1)}));
   for (const id of ["speech-pitch", "chat-speech-pitch"]) byId(id).addEventListener("input", (event) => saveUIPreferences({pitch: boundedPreferenceNumber(event.currentTarget.value, 0, 2, 1)}));
-  for (const [ids, key, allowed] of [[ ["ui-density", "chat-density"], "density", ["comfortable", "compact"] ], [["ui-text-size", "chat-text-size"], "textSize", ["normal", "large"]], [["ui-motion", "chat-motion"], "motion", ["system", "reduce"]]]) {
+  for (const [ids, key, allowed] of [[ ["ui-density", "chat-density"], "density", ["comfortable", "compact"] ], [["ui-text-size", "chat-text-size"], "textSize", ["normal", "large"]], [["ui-motion", "chat-motion"], "motion", ["system", "reduce", "full"]]]) {
     for (const id of ids) byId(id).addEventListener("change", (event) => {
       const value = allowed.includes(event.currentTarget.value) ? event.currentTarget.value : allowed[0];
       saveUIPreferences({[key]: value});
@@ -1495,7 +1586,6 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   });
   for (const button of document.querySelectorAll(".nav-item")) button.addEventListener("click", () => {
     for (const group of document.querySelectorAll(".nav-group")) group.open = false;
-    if (button.dataset.openSessions === "true") { openSessions().catch((error) => showError(error.message)); return; }
     showView(button.dataset.view);
   });
   byId("chat-preferences").querySelector(".chat-model-link").addEventListener("click", () => showView("models-settings"));
@@ -1587,13 +1677,22 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       overviewNewConversation.disabled = false;
     }
   });
-  window.addEventListener("pagehide", () => { closeStream(); stopRecognition(); stopSpeech(); unmountFeature(); });
+  window.addEventListener("pagehide", () => { closeStream(); stopRecognition(); stopSpeech(); if (presenceObserver) presenceObserver.disconnect(); unmountFeature(); });
   document.addEventListener("visibilitychange", () => {
+    document.documentElement.dataset.pageVisible = String(document.visibilityState === "visible");
     if (document.visibilityState !== "visible") {
-      stopRecognition("Push-to-talk stopped when this page went into the background.");
+      stopRecognition("Voice listening stopped when this page went into the background.");
       stopSpeech("Reply audio stopped when this page went into the background.");
     }
   });
+  const presence = byId("jarvis-presence");
+  document.documentElement.dataset.pageVisible = String(document.visibilityState === "visible");
+  if (presence && "IntersectionObserver" in window) {
+    presenceObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) if (entry.target === presence) presence.dataset.inViewport = String(entry.isIntersecting);
+    }, {threshold: 0.08});
+    presenceObserver.observe(presence);
+  } else if (presence) presence.dataset.inViewport = "true";
   loadUIPreferences();
   configureVoice();
   showView("overview");
