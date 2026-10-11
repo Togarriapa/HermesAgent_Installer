@@ -1898,3 +1898,10 @@ The system SHALL adopt the verified full primary Jarvis prompt through a journal
 #### Scenario: Effective primary readback
 - **WHEN** native primary prompt rendering omits, truncates or overrides expected content
 - **THEN** the system does not claim primary activation from file presence or model identity text.
+
+### Requirement: Full Bot and practical device parity
+The system SHALL port canonical Bot DM, durable rooms/groups and relay through fixed owner-scoped native adapters, preserving their state and authorization. Mobile/tablet and visual refinements SHALL preserve authenticated data boundaries, accessible text use and truthful voice limitations.
+
+#### Scenario: Undeveloped native surface
+- **WHEN** memory editing, group relay or wake-word lacks a verified adapter
+- **THEN** the capability remains explicitly pending without exposing broad native APIs or claiming parity.

@@ -61,3 +61,5 @@ Complete three current backend slices in parallel: existing schedule pause/statu
 Address missing actions and useful visibility after the current menu shell through measured overview data, real tool/browser timelines, actionable integration setup status and a narrowly audited native voice port. Recorded video evidence guides UX without establishing backend support or permission.
 
 Close the primary prompt adoption gap: storing the compiled Jarvis SOUL in the registry does not activate it. Adopt one fully verified managed block with exact owner-context preservation, journaled recovery and native effective prompt qualification; discovery and full Resources readiness remain distinct.
+
+Prioritize full native Bot interactions, owned context/profile visibility, installable mobile/tablet usability and a polished accessible data-driven shell in parallel. Existing native contracts provide bounded starting points; unsupported memory mutation, relay and native wake-word require their own verified effects rather than menu-shell claims.
