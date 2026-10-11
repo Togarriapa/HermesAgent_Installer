@@ -53,6 +53,30 @@ class CoreGatewayInspectorClientTests(unittest.TestCase):
                 core_gateway_inspector.verify_current_ingress(
                     config, peer_pid=431, peer_uid=63324, peer_gid=63324)
 
+    def test_core_overview_projection_rejects_unreviewed_provider_strings_and_tampering(self):
+        config = _config()
+        projection = {
+            "core_version": "7085fbf77532", "provider": "https://secret.example/v1",
+            "model": None, "account_state": "unknown", "resources_state": "pending",
+            "resource_counts": None, "resources_revision": None, "artifact_sha256": None,
+            "discovery_observed_at_utc": None, "active_prompt_matches_bundled_primary": None,
+        }
+        claims = {
+            "schema": 1, "nonce": "d" * 64, "boot_id": config.boot_id,
+            "issued_monotonic": 10.0, "expires_monotonic": 11.0,
+            "config_sha256": config.config_sha256, "core_generation": "e" * 64,
+            "core_source_generation": "f" * 64, "projection": projection,
+        }
+        observation = core_gateway_inspector.CoreVerifiedOverviewObservation(
+            **claims, proof_sha256=core_gateway_inspector._overview_digest(claims),
+            _seal=core_gateway_inspector._OVERVIEW_PROOF_SEAL)
+
+        self.assertFalse(observation.verify_current(config, peer_pid=431, peer_uid=996,
+            peer_gid=981, accepted_ingress=None, now=10.5))
+        changed = dataclasses.replace(observation, core_generation="0" * 64)
+        self.assertFalse(changed.verify_current(config, peer_pid=431, peer_uid=996,
+            peer_gid=981, accepted_ingress=None, now=10.5))
+
     def test_real_ingress_verifier_wraps_ipc_failure_without_nameerror(self):
         config = _config()
         owned_socket = SimpleNamespace(st_mode=stat.S_IFSOCK | 0o660, st_uid=0,
@@ -538,6 +562,13 @@ class CoreGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
             with patch.object(core_gateway_inspector, "_boot_id", return_value=config.boot_id), \
                  patch.object(core_gateway.os, "lstat", side_effect=lstat), \
                  patch.object(core_gateway, "_read_config_current"), \
+                 patch.object(core_gateway_inspector, "verify_current_core_overview",
+                    return_value=SimpleNamespace(core_generation=accepted.core_generation,
+                        projection={"core_version":"7085fbf77532", "provider":None, "model":None,
+                            "account_state":"unknown", "resources_state":"pending", "resource_counts":None,
+                            "resources_revision":None, "artifact_sha256":None,
+                            "discovery_observed_at_utc":None,
+                            "active_prompt_matches_bundled_primary":None})), \
                  patch.object(core_gateway, "accept_core_ingress", return_value=accepted):
                 late = await client.get("/slow", headers={"Host": config.hostname})
             self.assertEqual(late.status, 403)

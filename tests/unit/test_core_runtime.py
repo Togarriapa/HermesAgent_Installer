@@ -70,6 +70,7 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False):
     monkeypatch.setattr(core, "_owned_listener", lambda: True)
     monkeypatch.setattr(core, "_launcher", lambda: b"test fixed core launcher")
     monkeypatch.setattr(core, "_install_bundled_resources", lambda _account: _resource_receipt())
+    monkeypatch.setattr(core, "_write_resources_discovery", lambda _receipt: None)
 
     calls = []
     enabled = {"value": False}
@@ -228,6 +229,64 @@ def test_resource_import_rejects_a_receipt_that_claims_functional_use(tmp_path, 
 
     with pytest.raises(core.CoreRuntimeError, match="receipt is invalid"):
         core._install_bundled_resources(SimpleNamespace(pw_uid=os.getuid()))
+
+
+def test_root_discovery_projection_rejects_forged_native_inventory_readback(monkeypatch):
+    from hermes_installer.registry import manual_jarvis_skills as native
+
+    archive = b"fixed artifact bytes"
+    skill_members = [{"skill_id": f"skill-{index:03d}",
+                      "archive_path": f"skills/skill-{index:03d}/SKILL.md"}
+                     for index in range(396)]
+    files = {row["archive_path"]: f"body-{row['skill_id']}".encode() for row in skill_members}
+    files["registry/profiles/hermes/SOUL.md"] = b"bundled prompt"
+    manifest = {
+        "skill_members": skill_members,
+        "profile_members": [{} for _ in range(208)],
+        "bundled_resource_inventory": ([{"kind": "skill", "id": row["skill_id"]} for row in skill_members] +
+                                        [{"kind": "profile", "id": str(index)} for index in range(208)] +
+                                        [{"kind": "other", "id": "declaration"}]),
+        "source": {"revision": "a" * 40, "git_tree": "b" * 40},
+    }
+    monkeypatch.setattr(native, "build_manual_jarvis_skills_artifact", lambda: archive)
+    monkeypatch.setattr(native, "_read_artifact", lambda *_args: (manifest, files))
+    skill_inventory = native._canonical_json([
+        {"skill_id": row["skill_id"], "sha256": hashlib.sha256(files[row["archive_path"]]).hexdigest()}
+        for row in skill_members
+    ])
+    receipt = {
+        "state": "discovered", "materialized": True, "discovered": True,
+        "artifact_sha256": hashlib.sha256(archive).hexdigest(),
+        "generation_path": str(core.HERMES_HOME / "skills" / native._GENERATION),
+        "primary_native_home": "default",
+        "selectable_profile_mutations": [], "functional": False, "enabled": False,
+        "target_verified": False, "pending": [],
+        "resource_counts": {"native_skills": 396, "internal_profiles": 207,
+            "source_profiles_preserved": 208, "other_declarations_preserved": 1},
+        "native_receipt": {
+            "hermes_revision": core.COMMIT, "python_version": "3.14.7", "profile_id": "default",
+            "profile_identity_loaded": True, "loaded_skill_count": 395,
+            "loaded_skill_inventory_sha256": hashlib.sha256(skill_inventory).hexdigest(),
+            "active_primary_prompt_sha256": "c" * 64,
+            "bundled_primary_prompt_sha256": hashlib.sha256(files["registry/profiles/hermes/SOUL.md"]).hexdigest(),
+            "active_prompt_matches_bundled_primary": False,
+        },
+    }
+
+    with pytest.raises(core.CoreRuntimeError, match="read-back is pending"):
+        core._verified_resources_payload(receipt)
+
+
+def test_missing_resources_projection_is_explicitly_pending(monkeypatch, tmp_path):
+    monkeypatch.setattr(core, "RESOURCES_RECORD", tmp_path / "missing.json")
+    result = core.read_current_resources_discovery(core_source_generation="d" * 64)
+
+    assert result == {
+        "core_version": None, "provider": None, "model": None, "account_state": "unknown",
+        "resources_state": "pending", "resource_counts": None, "resources_revision": None,
+        "artifact_sha256": None, "discovery_observed_at_utc": None,
+        "active_prompt_matches_bundled_primary": None,
+    }
 
 
 def test_owned_journal_detects_mutated_service_file(tmp_path, monkeypatch):

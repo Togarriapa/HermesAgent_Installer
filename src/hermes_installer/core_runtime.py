@@ -1,7 +1,8 @@
 """Fixed, journaled adoption of the pinned Hermes core service."""
 from __future__ import annotations
-import grp, hashlib, json, os, pwd, secrets, stat, subprocess, sys, tempfile, time
-from pathlib import Path
+import grp, hashlib, json, os, pwd, re, secrets, stat, subprocess, sys, tempfile, time
+from datetime import datetime, timezone
+from pathlib import Path, PurePosixPath
 SOURCE=Path("/home/admin/HermesInstaller/data/generations/hermes-agent-7085fbf77532")
 PYTHON=Path("/home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0/venv/bin/python")
 PYTHON_LINK_TARGET="/home/admin/HermesInstaller/data/tools/python-3.14.7+20260901-linux-arm64/bin/python3"
@@ -13,6 +14,8 @@ UNIT=Path("/etc/systemd/system/hermes-jarvis-core.service")
 LAUNCHER=Path("/usr/local/libexec/hermes-jarvis-core-launcher")
 TOKEN=Path("/etc/hermes-installer/jarvis-core/session-token")
 JOURNAL=Path("/var/lib/hermes-installer/core-runtime/ownership.json")
+RESOURCES_RECORD=Path("/var/lib/hermes-installer/core-runtime/resources-discovery.json")
+RESOURCES_CAS=Path("/var/lib/hermes-installer/core-runtime/resources-cas")
 ETC_INSTALLER=Path("/etc/hermes-installer")
 VAR_LIB_INSTALLER=Path("/var/lib/hermes-installer")
 SYSTEMD_UNIT_DIR=Path("/etc/systemd/system")
@@ -20,6 +23,13 @@ LIBEXEC_DIR=Path("/usr/local/libexec")
 RUNUSER=Path("/usr/sbin/runuser")
 SERVICE="hermes-jarvis-core.service"; COMMIT="7085fbf7753266fc4943c55ac04926186bc90005"
 LOCK_SHA256="49b79259220160f147255078a19af541a5f328d3871c8041cc1eb909d19eb549"
+CORE_SOURCE_FILES={
+ "pm/lock.json":"49b79259220160f147255078a19af541a5f328d3871c8041cc1eb909d19eb549",
+ "uv.lock":"2bc4db483e9cba927cd7147f9ccbb09635f85bb3f1f36d6e9d51d06b65d1c67e",
+ "pyproject.toml":"cadde2f6a92574d292103f43abf66408b1d841cd9ea332ca7f3e3dfc5dcc87fd",
+ "hermes_cli/web_server.py":"839ee3fa8d9548c9e1875ffe1321e287eda37c3577e607dcd93288621b0403a4",
+ "tui_gateway/ws.py":"1cecdb714a0abc1edf8fc0ec2d00edc1dc042f0da37baaefb8ba20ce3edeae63",
+}
 WORKSPACE=HERMES_HOME/"workspaces"/"jarvis-core"
 ROOT_UID=0; GATEWAY_GID=981
 FILE_CONTRACT=((UNIT,"unit_sha256",ROOT_UID,ROOT_UID,0o644),(LAUNCHER,"launcher_sha256",ROOT_UID,ROOT_UID,0o755),
@@ -30,6 +40,22 @@ def _digest(path):
  with path.open("rb") as f:
   for b in iter(lambda:f.read(1048576),b""): h.update(b)
  return h.hexdigest()
+
+def _core_source_generation():
+ """Match the inspector's fixed source/PM generation digest for receipt binding."""
+ digests={}
+ for relative,expected in CORE_SOURCE_FILES.items():
+  actual=_digest(SOURCE/relative)
+  if actual!=expected: raise CoreRuntimeError("pinned core source closure differs")
+  digests[relative]=actual
+ pyvenv=PYTHON.parent.parent/"pyvenv.cfg"
+ pyvenv_sha=_digest(pyvenv)
+ if pyvenv_sha!=PYVENV_CFG_SHA256 or _digest(PYTHON_REAL)!=PYTHON_SHA256:
+  raise CoreRuntimeError("pinned core Python closure differs")
+ closure={"source_revision":COMMIT,"files":digests,
+          "pyvenv_cfg_sha256":pyvenv_sha,"python_sha256":PYTHON_SHA256}
+ canonical=json.dumps(closure,sort_keys=True,separators=(",",":")).encode("ascii")
+ return hashlib.sha256(b"hermes-jarvis-core-source-generation-v1\0"+canonical).hexdigest()
 
 def _sync_directory(path):
  fd=os.open(path,os.O_RDONLY|getattr(os,"O_DIRECTORY",0))
@@ -152,6 +178,370 @@ def _atomic(path,body,mode,uid=0,gid=0):
  except BaseException:
   path.unlink(missing_ok=True)
   raise
+
+def _atomic_replace(path,body,mode,uid=0,gid=0):
+ """Atomically replace a fixed root-owned projection after fsyncing its parent."""
+ try:
+  existing=os.lstat(path)
+ except FileNotFoundError:
+  existing=None
+ if existing is not None and (not stat.S_ISREG(existing.st_mode) or existing.st_uid!=uid
+     or existing.st_gid!=gid or stat.S_IMODE(existing.st_mode)!=mode or existing.st_nlink!=1):
+  raise CoreRuntimeError("existing fixed projection custody differs")
+ fd,name=tempfile.mkstemp(prefix=".resources-projection-",dir=path.parent); tmp=Path(name)
+ try:
+  os.fchown(fd,uid,gid); os.fchmod(fd,mode)
+  with os.fdopen(fd,"wb") as stream:
+   stream.write(body); stream.flush(); os.fsync(stream.fileno())
+  os.replace(tmp,path)
+  _sync_directory(path.parent)
+ finally:
+  tmp.unlink(missing_ok=True)
+
+def _projection_file(path,*,owner,group=None,mode=None,maximum):
+ """Read one bounded no-follow file and reject replacement or metadata races."""
+ fd=os.open(path,os.O_RDONLY|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_CLOEXEC",0))
+ try:
+  before=os.fstat(fd)
+  if (not stat.S_ISREG(before.st_mode) or before.st_uid!=owner
+      or (group is not None and before.st_gid!=group)
+      or (mode is not None and stat.S_IMODE(before.st_mode)!=mode)
+      or before.st_nlink!=1 or before.st_size>maximum):
+   raise CoreRuntimeError("fixed projection file custody differs")
+  data=bytearray()
+  while len(data)<=maximum:
+   block=os.read(fd,min(65536,maximum+1-len(data)))
+   if not block: break
+   data.extend(block)
+  after=os.fstat(fd)
+  try: named=os.stat(path,follow_symlinks=False)
+  except OSError as exc: raise CoreRuntimeError("fixed projection file was replaced") from exc
+  signature=lambda item:(item.st_dev,item.st_ino,item.st_mode,item.st_uid,item.st_gid,
+                         item.st_nlink,item.st_size,item.st_mtime_ns,item.st_ctime_ns)
+  if (len(data)!=before.st_size or len(data)>maximum or signature(before)!=signature(after)
+      or signature(before)!=signature(named)):
+   raise CoreRuntimeError("fixed projection file changed while reading")
+  return bytes(data)
+ finally:
+  os.close(fd)
+
+def _projection_at(parent_fd,name,*,owner,group=None,mode=None,maximum):
+ """Read one bounded file through an already verified directory descriptor."""
+ if not isinstance(name,str) or name in {"",".",".."} or "/" in name:
+  raise CoreRuntimeError("fixed projection member name is invalid")
+ fd=os.open(name,os.O_RDONLY|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_CLOEXEC",0),dir_fd=parent_fd)
+ try:
+  before=os.fstat(fd)
+  if (not stat.S_ISREG(before.st_mode) or before.st_uid!=owner
+      or (group is not None and before.st_gid!=group)
+      or (mode is not None and stat.S_IMODE(before.st_mode)!=mode)
+      or before.st_nlink!=1 or before.st_size>maximum):
+   raise CoreRuntimeError("fixed projection file custody differs")
+  data=bytearray()
+  while len(data)<=maximum:
+   block=os.read(fd,min(65536,maximum+1-len(data)))
+   if not block: break
+   data.extend(block)
+  after=os.fstat(fd)
+  try: named=os.stat(name,dir_fd=parent_fd,follow_symlinks=False)
+  except OSError as exc: raise CoreRuntimeError("fixed projection member was replaced") from exc
+  signature=lambda item:(item.st_dev,item.st_ino,item.st_mode,item.st_uid,item.st_gid,
+                         item.st_nlink,item.st_size,item.st_mtime_ns,item.st_ctime_ns)
+  if (len(data)!=before.st_size or len(data)>maximum or signature(before)!=signature(after)
+      or signature(before)!=signature(named)):
+   raise CoreRuntimeError("fixed projection file changed while reading")
+  return bytes(data)
+ finally:
+  os.close(fd)
+
+def _hash_generation_tree(home,manifest,files,artifact_sha):
+ """Independently verify the exact admin-owned materialization and journal."""
+ from .registry import manual_jarvis_skills as native
+ target_name=native._GENERATION
+ expected_owner=native._canonical_json({
+  "schema":1,"stage":"manual-owned-bundled-resources-import",
+  "artifact_sha256":artifact_sha,"source_revision":native.PINNED_REVISION,
+  "source_tree":native.PINNED_TREE,"profile_source_id":native.PRIMARY_PROFILE,
+  "user_visible_profile":{"source_id":native.PRIMARY_PROFILE,"native_key":"default","display_name":"Jarvis"},
+  "internal_profile_count":native._BUNDLE_PROFILE_COUNT-1,
+  "target_home_role":"jarvis-primary-home",
+  "members":[{"path":f"{target_name}/{name}","sha256":hashlib.sha256(content).hexdigest(),
+              "size_bytes":len(content)} for name,content in sorted(files.items())],
+ })
+ flags=os.O_RDONLY|getattr(os,"O_DIRECTORY",0)|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_CLOEXEC",0)
+ def directory(parent,name,owner,exact_mode=None):
+  fd=os.open(name,flags,dir_fd=parent)
+  info=os.fstat(fd)
+  if (not stat.S_ISDIR(info.st_mode) or info.st_uid!=owner or info.st_nlink<2
+      or (exact_mode is not None and stat.S_IMODE(info.st_mode)!=exact_mode)
+      or (exact_mode is None and stat.S_IMODE(info.st_mode)&0o022)):
+   os.close(fd); raise CoreRuntimeError("owned Resources directory custody differs")
+  return fd
+ rootfd=os.open("/",flags)
+ fds=[rootfd]
+ try:
+  target=Path(home)
+  if not target.is_absolute(): raise CoreRuntimeError("owned Resources home is not absolute")
+  parentfd=rootfd
+  for component in target.parts[1:]:
+   owner=1000 if component in {"admin",".hermes"} else 0
+   exact=0o700 if component in {"admin",".hermes"} else None
+   child=directory(parentfd,component,owner,exact); fds.append(child); parentfd=child
+  hermesfd=parentfd
+  skillsfd=directory(hermesfd,"skills",1000); fds.append(skillsfd)
+  genfd=directory(skillsfd,target_name,1000,0o700); fds.append(genfd)
+  expected=set(files)|{native._OWNER_FILE}
+  expected_directories={
+   "/".join(PurePosixPath(name).parts[:depth])
+   for name in files for depth in range(1,len(PurePosixPath(name).parts))
+  }
+  actual={}
+  actual_directories=set()
+  def walk(fd,prefix=""):
+   for name in os.listdir(fd):
+    if not isinstance(name,str) or name in {".",".."} or "/" in name:
+     raise CoreRuntimeError("owned Resources member name is malformed")
+    relative=f"{prefix}/{name}" if prefix else name
+    info=os.stat(name,dir_fd=fd,follow_symlinks=False)
+    if stat.S_ISDIR(info.st_mode):
+     actual_directories.add(relative)
+     child=directory(fd,name,1000)
+     try: walk(child,relative)
+     finally: os.close(child)
+     continue
+    if not stat.S_ISREG(info.st_mode) or info.st_uid!=1000 or info.st_nlink!=1:
+     raise CoreRuntimeError("owned Resources member custody differs")
+    maximum=2*1024*1024 if relative==native._OWNER_FILE else (
+     native._PACKAGE_MEMBER_LIMIT if relative.startswith("registry/package/") else native._MEMBER_LIMIT)
+    filefd=os.open(name,os.O_RDONLY|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_CLOEXEC",0),dir_fd=fd)
+    try:
+     before=os.fstat(filefd)
+     if (before.st_dev!=info.st_dev or before.st_ino!=info.st_ino or before.st_uid!=1000
+         or not stat.S_ISREG(before.st_mode) or before.st_nlink!=1 or before.st_size>maximum):
+      raise CoreRuntimeError("owned Resources member changed while opening")
+     digest=hashlib.sha256(); size=0
+     while True:
+      block=os.read(filefd,65536)
+      if not block: break
+      size+=len(block)
+      if size>maximum: raise CoreRuntimeError("owned Resources member exceeded its bound")
+      digest.update(block)
+     after=os.fstat(filefd); named=os.stat(name,dir_fd=fd,follow_symlinks=False)
+     signature=lambda item:(item.st_dev,item.st_ino,item.st_mode,item.st_uid,item.st_gid,
+                            item.st_nlink,item.st_size,item.st_mtime_ns,item.st_ctime_ns)
+     if signature(before)!=signature(after) or signature(before)!=signature(named) or size!=before.st_size:
+      raise CoreRuntimeError("owned Resources member changed while reading")
+     actual[relative]=(size,digest.hexdigest())
+    finally: os.close(filefd)
+  walk(genfd)
+  if set(actual)!=expected or actual_directories!=expected_directories:
+   raise CoreRuntimeError("owned Resources generation membership differs")
+  for name,content in files.items():
+   if actual[name]!=(len(content),hashlib.sha256(content).hexdigest()):
+    raise CoreRuntimeError("owned Resources member content differs from the pinned bundle")
+  marker=_projection_at(genfd,native._OWNER_FILE,owner=1000,mode=0o600,maximum=2*1024*1024)
+  if marker!=expected_owner: raise CoreRuntimeError("owned Resources manifest differs from the pinned bundle")
+  return hashlib.sha256(marker).hexdigest()
+ finally:
+  for fd in reversed(fds):
+   try: os.close(fd)
+   except OSError: pass
+
+def _verified_resources_payload(receipt):
+ """Turn the admin import/read-back result into a root-derived closed receipt."""
+ from .registry import manual_jarvis_skills as native
+ archive=native.build_manual_jarvis_skills_artifact()
+ artifact_sha=hashlib.sha256(archive).hexdigest()
+ manifest,files=native._read_artifact(archive,artifact_sha)
+ receipt_fields={"state","materialized","discovered","artifact_sha256","generation_path",
+  "primary_native_home","selectable_profile_mutations","resource_counts","native_receipt",
+  "functional","enabled","target_verified","pending"}
+ if (not isinstance(receipt,dict) or set(receipt)!=receipt_fields
+     or receipt.get("state")!="discovered" or receipt.get("artifact_sha256")!=artifact_sha
+     or receipt.get("generation_path")!=str(HERMES_HOME/"skills"/native._GENERATION)
+     or receipt.get("primary_native_home")!="default"):
+  raise CoreRuntimeError("offline Jarvis resource read-back is pending")
+ native_receipt=receipt.get("native_receipt")
+ if not isinstance(native_receipt,dict) or set(native_receipt)!={
+  "hermes_revision","python_version","profile_id","profile_identity_loaded","loaded_skill_count",
+  "loaded_skill_inventory_sha256","active_primary_prompt_sha256","bundled_primary_prompt_sha256",
+  "active_prompt_matches_bundled_primary"}:
+  raise CoreRuntimeError("offline Jarvis resource read-back is pending")
+ expected_inventory=native._canonical_json([
+  {"skill_id":row["skill_id"],"sha256":hashlib.sha256(files[row["archive_path"]]).hexdigest()}
+  for row in sorted(manifest["skill_members"],key=lambda row:row["skill_id"])])
+ inventory_sha=hashlib.sha256(expected_inventory).hexdigest()
+ counts=receipt.get("resource_counts")
+ expected_other=len(manifest["bundled_resource_inventory"])-len(manifest["skill_members"])-len(manifest["profile_members"])
+ if (len(manifest["skill_members"])!=396 or len(manifest["profile_members"])!=208 or expected_other!=88
+     or receipt.get("materialized") is not True or receipt.get("discovered") is not True
+     or receipt.get("selectable_profile_mutations")!=[] or receipt.get("functional") is not False
+     or receipt.get("enabled") is not False or receipt.get("target_verified") is not False
+     or not isinstance(native_receipt,dict) or native_receipt.get("hermes_revision")!=COMMIT
+     or native_receipt.get("python_version")!="3.14.7"
+     or native_receipt.get("profile_id")!="default" or native_receipt.get("profile_identity_loaded") is not True
+     or native_receipt.get("loaded_skill_count")!=396
+     or native_receipt.get("loaded_skill_inventory_sha256")!=inventory_sha
+     or not isinstance(native_receipt.get("active_prompt_matches_bundled_primary"),bool)
+     or not isinstance(counts,dict) or counts!={"native_skills":396,"internal_profiles":207,
+        "source_profiles_preserved":208,"other_declarations_preserved":expected_other}):
+  raise CoreRuntimeError("offline Jarvis resource read-back is pending")
+ manifest_sha=_hash_generation_tree(HERMES_HOME,manifest,files,artifact_sha)
+ # The current primary prompt is opened relative to a verified admin Hermes home.
+ flags=os.O_RDONLY|getattr(os,"O_DIRECTORY",0)|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_CLOEXEC",0)
+ rootfd=os.open("/",flags); fds=[rootfd]
+ try:
+  current=rootfd
+  for component in HERMES_HOME.parts[1:]:
+   child=os.open(component,flags,dir_fd=current)
+   info=os.fstat(child)
+   expected_owner=1000 if component in {"admin",".hermes"} else 0
+   if not stat.S_ISDIR(info.st_mode) or info.st_uid!=expected_owner or (component in {"admin",".hermes"} and stat.S_IMODE(info.st_mode)!=0o700):
+    os.close(child); raise CoreRuntimeError("Hermes home parent custody differs")
+   fds.append(child); current=child
+  active_prompt=_projection_at(current,"SOUL.md",owner=1000,maximum=1024*1024)
+ finally:
+  for fd in reversed(fds): os.close(fd)
+ try: active_prompt.decode("utf-8")
+ except UnicodeDecodeError: raise CoreRuntimeError("primary Jarvis prompt encoding is invalid") from None
+ active_sha=hashlib.sha256(active_prompt).hexdigest()
+ bundled_sha=hashlib.sha256(files["registry/profiles/hermes/SOUL.md"]).hexdigest()
+ if native_receipt.get("active_primary_prompt_sha256")!=active_sha:
+  raise CoreRuntimeError("pinned Hermes prompt read-back differs from current owned prompt")
+ if native_receipt.get("bundled_primary_prompt_sha256")!=bundled_sha:
+  raise CoreRuntimeError("pinned Hermes prompt read-back differs from pinned bundle")
+ if native_receipt.get("active_prompt_matches_bundled_primary") is not (active_sha==bundled_sha):
+  raise CoreRuntimeError("pinned Hermes prompt comparison differs from the current prompt")
+ journal=_journal()
+ if journal.get("state") not in {"installed","active"}:
+  raise CoreRuntimeError("core ownership journal is not installed")
+ journal_bytes=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+ if json.loads(journal_bytes)!=journal:
+  raise CoreRuntimeError("core ownership journal changed during Resources verification")
+ return archive,{
+  "schema":1,"core_source_generation":_core_source_generation(),"core_ownership_sha256":hashlib.sha256(journal_bytes).hexdigest(),
+  "hermes_revision":COMMIT,"python_version":"3.14.7",
+  "resources_revision":manifest["source"]["revision"],"resources_tree":manifest["source"]["git_tree"],
+  "artifact_sha256":artifact_sha,"ownership_manifest_sha256":manifest_sha,
+  "loaded_skill_inventory_sha256":inventory_sha,"active_primary_prompt_sha256":active_sha,
+  "bundled_primary_prompt_sha256":bundled_sha,"active_prompt_matches_bundled_primary":active_sha==bundled_sha,
+  "resource_counts":counts,
+  "observed_at_utc":datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00","Z"),
+  "state":"discovered","functional":False,"enabled":False,"target_verified":False,
+ }
+
+def _write_resources_discovery(receipt):
+ """Retain the source-bound artifact and independently read-backed receipt as root."""
+ _ensure_dir(RESOURCES_RECORD.parent,ROOT_UID,ROOT_UID,0o700)
+ archive,record=_verified_resources_payload(receipt)
+ _ensure_dir(RESOURCES_CAS,ROOT_UID,ROOT_UID,0o700)
+ cas=RESOURCES_CAS/(record["artifact_sha256"]+".zip")
+ try: os.lstat(cas); cas_present=True
+ except FileNotFoundError: cas_present=False
+ if cas_present:
+  if _projection_file(cas,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024*1024)!=archive:
+   raise CoreRuntimeError("retained Resources artifact differs from its digest")
+ else:
+  _atomic(cas,archive,0o600,ROOT_UID,ROOT_UID)
+ _atomic_replace(RESOURCES_RECORD,(json.dumps(record,sort_keys=True,separators=(",",":"))+"\n").encode("ascii"),0o600,ROOT_UID,ROOT_UID)
+
+def read_current_resources_discovery(*,core_source_generation):
+ """Recheck the root receipt, held CAS, owner manifest, and every installed member."""
+ pending={"core_version":None,"provider":None,"model":None,"account_state":"unknown",
+  "resources_state":"pending","resource_counts":None,"resources_revision":None,
+  "artifact_sha256":None,"discovery_observed_at_utc":None,
+  "active_prompt_matches_bundled_primary":None}
+ try:
+  record_bytes=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024)
+ except FileNotFoundError:
+  return pending
+ try:
+  record=json.loads(record_bytes)
+  fields={"schema","core_source_generation","core_ownership_sha256","hermes_revision","python_version",
+   "resources_revision","resources_tree","artifact_sha256","ownership_manifest_sha256",
+   "loaded_skill_inventory_sha256","active_primary_prompt_sha256","bundled_primary_prompt_sha256",
+   "active_prompt_matches_bundled_primary","resource_counts","observed_at_utc","state",
+   "functional","enabled","target_verified"}
+  if set(record)!=fields or type(record.get("schema")) is not int or record["schema"]!=1:
+   return {**pending,"resources_state":"stale"}
+  hashes=("core_source_generation","core_ownership_sha256","hermes_revision","resources_tree",
+          "artifact_sha256","ownership_manifest_sha256","loaded_skill_inventory_sha256",
+          "active_primary_prompt_sha256","bundled_primary_prompt_sha256")
+  if any(not isinstance(record.get(key),str) or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}",record[key]) is None
+         for key in hashes):
+   return {**pending,"resources_state":"stale"}
+  try:
+   observed=datetime.fromisoformat(record["observed_at_utc"].replace("Z","+00:00"))
+   if (observed.tzinfo is None or observed.utcoffset()!=timezone.utc.utcoffset(observed)
+       or observed.isoformat(timespec="seconds").replace("+00:00","Z")!=record["observed_at_utc"]):
+    return {**pending,"resources_state":"stale"}
+  except (AttributeError,TypeError,ValueError):
+   return {**pending,"resources_state":"stale"}
+  journal=_journal()
+  if journal.get("state") not in {"installed","active"}:
+   return {**pending,"resources_state":"stale"}
+  current_journal=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+  if json.loads(current_journal)!=journal:
+   return {**pending,"resources_state":"stale"}
+  if (record["core_source_generation"]!=core_source_generation
+      or record["core_source_generation"]!=_core_source_generation()
+      or record["hermes_revision"]!=COMMIT
+      or record["core_ownership_sha256"]!=hashlib.sha256(current_journal).hexdigest()
+      or record["state"]!="discovered" or record["functional"] is not False
+      or record["enabled"] is not False or record["target_verified"] is not False):
+   return {**pending,"resources_state":"stale"}
+  _journal()
+  artifact_sha=record["artifact_sha256"]
+  if not isinstance(artifact_sha,str) or len(artifact_sha)!=64 or any(c not in "0123456789abcdef" for c in artifact_sha):
+   return {**pending,"resources_state":"stale"}
+  cas=RESOURCES_CAS/(artifact_sha+".zip")
+  archive=_projection_file(cas,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
+  if hashlib.sha256(archive).hexdigest()!=artifact_sha: return {**pending,"resources_state":"stale"}
+  from .registry import manual_jarvis_skills as native
+  manifest,files=native._read_artifact(archive,artifact_sha)
+  expected_inventory=native._canonical_json([
+   {"skill_id":row["skill_id"],"sha256":hashlib.sha256(files[row["archive_path"]]).hexdigest()}
+   for row in sorted(manifest["skill_members"],key=lambda row:row["skill_id"])])
+  if (hashlib.sha256(expected_inventory).hexdigest()!=record["loaded_skill_inventory_sha256"]
+      or record["python_version"]!="3.14.7"
+      or not isinstance(record["resources_revision"],str)
+      or not isinstance(record["resources_tree"],str)):
+   return {**pending,"resources_state":"stale"}
+  manifest_sha=_hash_generation_tree(HERMES_HOME,manifest,files,artifact_sha)
+  if manifest_sha!=record["ownership_manifest_sha256"]: return {**pending,"resources_state":"stale"}
+  flags=os.O_RDONLY|getattr(os,"O_DIRECTORY",0)|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_CLOEXEC",0)
+  rootfd=os.open("/",flags); fds=[rootfd]
+  try:
+   current=rootfd
+   for component in HERMES_HOME.parts[1:]:
+    child=os.open(component,flags,dir_fd=current); info=os.fstat(child)
+    expected_owner=1000 if component in {"admin",".hermes"} else 0
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid!=expected_owner or (component in {"admin",".hermes"} and stat.S_IMODE(info.st_mode)!=0o700):
+     os.close(child); raise CoreRuntimeError("Hermes home parent custody differs")
+    fds.append(child); current=child
+   active=hashlib.sha256(_projection_at(current,"SOUL.md",owner=1000,maximum=1024*1024)).hexdigest()
+  finally:
+   for fd in reversed(fds): os.close(fd)
+  bundled=hashlib.sha256(files["registry/profiles/hermes/SOUL.md"]).hexdigest()
+  if (active!=record["active_primary_prompt_sha256"] or bundled!=record["bundled_primary_prompt_sha256"]
+      or (active==bundled) is not record["active_prompt_matches_bundled_primary"]):
+   return {**pending,"resources_state":"stale"}
+  counts=record["resource_counts"]
+  expected_counts={"native_skills":396,"internal_profiles":207,"source_profiles_preserved":208,
+   "other_declarations_preserved":len(manifest["bundled_resource_inventory"])-396-208}
+  if (not isinstance(counts,dict) or counts!=expected_counts
+      or type(record["active_prompt_matches_bundled_primary"]) is not bool
+      or record["resources_revision"]!=manifest["source"]["revision"]
+      or record["resources_tree"]!=manifest["source"]["git_tree"]):
+   return {**pending,"resources_state":"stale"}
+  return {"core_version":COMMIT[:12],"provider":None,"model":None,"account_state":"unknown",
+   "resources_state":"discovered","resource_counts":counts,"resources_revision":record["resources_revision"],
+   "artifact_sha256":artifact_sha,"discovery_observed_at_utc":record["observed_at_utc"],
+   "active_prompt_matches_bundled_primary":record["active_prompt_matches_bundled_primary"]}
+ except FileNotFoundError:
+  return {**pending,"resources_state":"stale"}
+ except Exception:
+  return {**pending,"resources_state":"stale"}
 
 def _replace_journal(record):
  if not JOURNAL.is_file() or JOURNAL.is_symlink(): raise CoreRuntimeError("ownership journal disappeared")
@@ -377,6 +767,7 @@ def install_or_resume():
   record["state"]="installed"
   _replace_journal(record)
  _journal()
+ _write_resources_discovery(resources)
  _run(["systemctl","daemon-reload"]); _run(["systemctl","enable","--now",SERVICE]); _wait_for_listener()
  counts=resources["resource_counts"]
  prompt_status=("the active Jarvis prompt matches the bundled primary prompt"

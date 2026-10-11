@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -15,6 +16,7 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +60,7 @@ MAX_HASH_FILE_BYTES = 512 * 1024 * 1024
 MAX_PROOF_SECONDS = 5.0
 IPC_TIMEOUT = 2.0
 _PROOF_SEAL = object()
+_OVERVIEW_PROOF_SEAL = object()
 _SERVER_SLOTS = threading.BoundedSemaphore(16)
 _OBSERVATION_FIELDS = (
     "schema", "nonce", "boot_id", "issued_monotonic", "expires_monotonic",
@@ -78,6 +81,12 @@ def _observation_digest(values: dict[str, Any]) -> str:
     canonical = json.dumps(values, sort_keys=True, separators=(",", ":"),
                            allow_nan=False).encode("ascii")
     return hashlib.sha256(b"hermes-jarvis-core-ingress-v1\0" + canonical).hexdigest()
+
+
+def _overview_digest(values: dict[str, Any]) -> str:
+    canonical = json.dumps(values, sort_keys=True, separators=(",", ":"),
+                           allow_nan=False).encode("ascii")
+    return hashlib.sha256(b"hermes-jarvis-core-overview-v1\0" + canonical).hexdigest()
 
 
 def _deny():
@@ -547,9 +556,11 @@ def _config_current(config: CoreGatewayConfig) -> CoreGatewayConfig:
 
 def observe_current_ingress(config: CoreGatewayConfig, *, nonce: str, caller_pid: int,
                             caller_uid: int, caller_gid: int, peer_pid: int,
-                            peer_uid: int, peer_gid: int) -> dict[str, Any]:
-    issued = time.monotonic()
-    deadline = issued + IPC_TIMEOUT
+                            peer_uid: int, peer_gid: int, _issued: float | None = None,
+                            _deadline: float | None = None,
+                            _projection_factory: Any = None) -> dict[str, Any]:
+    issued = time.monotonic() if _issued is None else _issued
+    deadline = issued + IPC_TIMEOUT if _deadline is None else _deadline
     pidfds = []
     try:
         if (os.geteuid() != 0 or not re.fullmatch(r"[0-9a-f]{64}", nonce)
@@ -574,6 +585,13 @@ def observe_current_ingress(config: CoreGatewayConfig, *, nonce: str, caller_pid
         if Path(f"/proc/{core_pid}/cwd").resolve(strict=True) != CORE_WORKSPACE:
             _deny()
         listener_inode = _core_listener_inode(core_pid)
+        generation_payload = (f"{core_invocation}\0{core_pid}\0{core_start}\0{listener_inode}\0"
+                              f"{source_generation}").encode("ascii")
+        core_generation = hashlib.sha256(b"hermes-jarvis-core-generation-v1\0" + generation_payload).hexdigest()
+        if _projection_factory is not None:
+            _projection_factory(source_generation)
+            if time.monotonic() >= deadline:
+                _deny()
         if (time.monotonic() >= deadline or _boot_id() != config.boot_id
                 or _socket_identity(config.ingress_socket, config) != origin
                 or _core_listener_inode(core_pid) != listener_inode
@@ -588,9 +606,6 @@ def observe_current_ingress(config: CoreGatewayConfig, *, nonce: str, caller_pid
             poller.register(pidfd, select.POLLIN | select.POLLHUP | select.POLLERR)
             if poller.poll(0) or _proc_start_ticks(pid) != start_ticks:
                 _deny()
-        generation_payload = (f"{core_invocation}\0{core_pid}\0{core_start}\0{listener_inode}\0"
-                              f"{source_generation}").encode("ascii")
-        core_generation = hashlib.sha256(b"hermes-jarvis-core-generation-v1\0" + generation_payload).hexdigest()
         body: dict[str, Any] = {
             "schema": 1, "nonce": nonce, "boot_id": config.boot_id,
             "issued_monotonic": issued, "expires_monotonic": issued + MAX_PROOF_SECONDS,
@@ -614,6 +629,167 @@ def observe_current_ingress(config: CoreGatewayConfig, *, nonce: str, caller_pid
                 os.close(pidfd)
             except OSError:
                 pass
+
+
+_OVERVIEW_PROJECTION_FIELDS = {
+    "core_version", "provider", "model", "account_state", "resources_state",
+    "resource_counts", "resources_revision", "artifact_sha256",
+    "discovery_observed_at_utc", "active_prompt_matches_bundled_primary",
+}
+
+
+def _core_overview_projection(source_generation: str) -> dict[str, Any]:
+    from ..core_runtime import COMMIT, read_current_resources_discovery
+    projection = read_current_resources_discovery(core_source_generation=source_generation)
+    # Provider/model are deliberately unknown until a separately reviewed, bounded
+    # effective-config projection exists. A present key is not proof of auth.
+    projection.update({"core_version": COMMIT[:12], "provider": None, "model": None,
+                       "account_state": "unknown"})
+    if not _valid_overview_projection(projection):
+        _deny()
+    return projection
+
+
+def _valid_overview_projection(projection: Any) -> bool:
+    if type(projection) is not dict or set(projection) != _OVERVIEW_PROJECTION_FIELDS:
+        return False
+    if (projection.get("core_version") != CORE_SOURCE_REVISION[:12]
+            or projection.get("account_state") not in {"unknown", "configured"}
+            or projection.get("resources_state") not in {"pending", "discovered", "stale"}):
+        return False
+    for key in ("provider", "model"):
+        value = projection.get(key)
+        if value is not None and (not isinstance(value, str)
+                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,79}", value) is None):
+            return False
+    if projection["account_state"] == "unknown" and any(
+            projection[key] is not None for key in ("provider", "model")):
+        return False
+    if projection["resources_state"] != "discovered":
+        return all(projection[key] is None for key in (
+            "resource_counts", "resources_revision", "artifact_sha256",
+            "discovery_observed_at_utc", "active_prompt_matches_bundled_primary"))
+    counts = projection.get("resource_counts")
+    if (not isinstance(counts, dict) or set(counts) != {
+            "native_skills", "internal_profiles", "source_profiles_preserved",
+            "other_declarations_preserved"}
+            or any(type(value) is not int or value < 0 or value > 10000
+                   for value in counts.values())):
+        return False
+    revision = projection.get("resources_revision")
+    observed = projection.get("discovery_observed_at_utc")
+    if (not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None
+            or not _is_hash(projection.get("artifact_sha256"))
+            or type(projection.get("active_prompt_matches_bundled_primary")) is not bool
+            or not isinstance(observed, str)
+            or re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", observed) is None):
+        return False
+    try:
+        parsed = datetime.fromisoformat(observed.replace("Z", "+00:00"))
+        return parsed.tzinfo is not None and parsed.utcoffset() == timezone.utc.utcoffset(parsed)
+    except (TypeError, ValueError):
+        return False
+
+
+def observe_current_core_overview(config: CoreGatewayConfig, *, nonce: str,
+                                  caller_pid: int, caller_uid: int, caller_gid: int,
+                                  peer_pid: int, peer_uid: int, peer_gid: int,
+                                  issued: float, deadline: float) -> dict[str, Any]:
+    projection_holder: dict[str, Any] = {}
+
+    def project(source_generation: str) -> None:
+        projection_holder.update(_core_overview_projection(source_generation))
+
+    ingress = observe_current_ingress(config, nonce=nonce, caller_pid=caller_pid,
+        caller_uid=caller_uid, caller_gid=caller_gid, peer_pid=peer_pid,
+        peer_uid=peer_uid, peer_gid=peer_gid, _issued=issued, _deadline=deadline,
+        _projection_factory=project)
+    if set(projection_holder) != _OVERVIEW_PROJECTION_FIELDS:
+        _deny()
+    body = {
+        "schema": 1, "nonce": nonce, "boot_id": ingress["boot_id"],
+        "issued_monotonic": issued, "expires_monotonic": min(issued + MAX_PROOF_SECONDS, deadline),
+        "config_sha256": ingress["config_sha256"],
+        "core_generation": ingress["core_generation"],
+        "core_source_generation": ingress["core_source_generation"],
+        "projection": projection_holder,
+    }
+    if time.monotonic() >= body["expires_monotonic"]:
+        _deny()
+    body["proof_sha256"] = _overview_digest(body)
+    return body
+
+
+@dataclass(frozen=True, slots=True)
+class CoreVerifiedOverviewObservation:
+    schema: int
+    nonce: str
+    boot_id: str
+    issued_monotonic: float
+    expires_monotonic: float
+    config_sha256: str
+    core_generation: str
+    core_source_generation: str
+    projection: dict[str, Any]
+    proof_sha256: str
+    _seal: object = field(repr=False, compare=False)
+
+    def verify_current(self, config: CoreGatewayConfig, *, peer_pid: int,
+                       peer_uid: int, peer_gid: int,
+                       accepted_ingress: Any,
+                       now: float | None = None) -> bool:
+        current = time.monotonic() if now is None else now
+        try:
+            claims = {name: getattr(self, name) for name in (
+                "schema", "nonce", "boot_id", "issued_monotonic", "expires_monotonic",
+                "config_sha256", "core_generation", "core_source_generation", "projection")}
+            projection = self.projection
+            if (self._seal is not _OVERVIEW_PROOF_SEAL or not _valid_overview_projection(projection)
+                    or type(self.schema) is not int or self.schema != 1
+                    or not re.fullmatch(r"[0-9a-f]{64}", self.nonce)
+                    or self.boot_id != config.boot_id or self.config_sha256 != config.config_sha256
+                    or type(projection) is not dict or set(projection) != _OVERVIEW_PROJECTION_FIELDS
+                    or projection.get("account_state") not in {"unknown", "configured"}
+                    or projection.get("resources_state") not in {"pending", "discovered", "stale"}
+                    or any(value is not None and (not isinstance(value, str)
+                        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,79}", value) is None)
+                        for value in (projection.get("core_version"), projection.get("provider"),
+                                      projection.get("model"), projection.get("resources_revision")))
+                    or (projection.get("artifact_sha256") is not None
+                        and not _is_hash(projection.get("artifact_sha256")))
+                    or (projection.get("active_prompt_matches_bundled_primary") is not None
+                        and type(projection.get("active_prompt_matches_bundled_primary")) is not bool)
+                    or (projection.get("discovery_observed_at_utc") is not None
+                        and (not isinstance(projection.get("discovery_observed_at_utc"), str)
+                             or re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z",
+                                             projection["discovery_observed_at_utc"]) is None))
+                    or (projection.get("resource_counts") is not None and
+                        (not isinstance(projection.get("resource_counts"), dict)
+                         or set(projection["resource_counts"]) != {
+                             "native_skills", "internal_profiles", "source_profiles_preserved",
+                             "other_declarations_preserved"}
+                         or any(type(value) is not int or value < 0 or value > 10000
+                                for value in projection["resource_counts"].values())))
+                    or any(isinstance(value, bool) or not isinstance(value, (int, float))
+                           or not math.isfinite(value) for value in
+                           (self.issued_monotonic, self.expires_monotonic, current))
+                    or not self.issued_monotonic <= current < self.expires_monotonic
+                    or not self.issued_monotonic < self.expires_monotonic <= self.issued_monotonic + MAX_PROOF_SECONDS
+                    or not _is_hash(self.config_sha256) or not _is_hash(self.core_generation)
+                    or not _is_hash(self.core_source_generation) or _overview_digest(claims) != self.proof_sha256):
+                return False
+            from .core_gateway import CoreAcceptedIngressObservation
+            return bool(type(accepted_ingress) is CoreAcceptedIngressObservation
+                        and accepted_ingress.verify_current(config, now=current)
+                        and (accepted_ingress.peer_pid, accepted_ingress.peer_uid, accepted_ingress.peer_gid)
+                            == (peer_pid, peer_uid, peer_gid)
+                        and accepted_ingress.core_generation == self.core_generation
+                        and accepted_ingress.root_observation.core_source_generation == self.core_source_generation
+                        and accepted_ingress.root_observation.boot_id == self.boot_id
+                        and accepted_ingress._config_sha256 == self.config_sha256
+                        and time.monotonic() < min(accepted_ingress.expires_monotonic, self.expires_monotonic))
+        except Exception:
+            return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -689,21 +865,28 @@ def _read_frame(conn: socket.socket, deadline: float, maximum: int) -> dict[str,
 
 def _serve_connection(conn: socket.socket, config: CoreGatewayConfig) -> None:
     try:
+        issued = time.monotonic()
+        deadline = issued + 1.5
         conn.settimeout(1.5)
         if not hasattr(socket, "SO_PEERCRED"):
             return
         caller_pid, caller_uid, caller_gid = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
         if caller_uid != config.gateway_uid or caller_pid <= 1:
             return
-        deadline = time.monotonic() + 1.5
         request = _read_frame(conn, deadline, MAX_REQUEST)
-        if set(request) != {"op", "nonce", "peer_pid", "peer_uid", "peer_gid"} or request.get("op") != "observe-ingress":
+        if set(request) != {"op", "nonce", "peer_pid", "peer_uid", "peer_gid"}:
             return
-        result = observe_current_ingress(config, nonce=request["nonce"], caller_pid=caller_pid,
-            caller_uid=caller_uid, caller_gid=caller_gid, peer_pid=request["peer_pid"],
-            peer_uid=request["peer_uid"], peer_gid=request["peer_gid"])
+        arguments = {"nonce": request["nonce"], "caller_pid": caller_pid,
+            "caller_uid": caller_uid, "caller_gid": caller_gid, "peer_pid": request["peer_pid"],
+            "peer_uid": request["peer_uid"], "peer_gid": request["peer_gid"]}
+        if request.get("op") == "observe-ingress":
+            result = observe_current_ingress(config, **arguments)
+        elif request.get("op") == "observe-core-overview":
+            result = observe_current_core_overview(config, **arguments, issued=issued, deadline=deadline)
+        else:
+            return
         raw = json.dumps(result, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("ascii")
-        if len(raw) > MAX_RESPONSE or time.monotonic() >= deadline + IPC_TIMEOUT:
+        if len(raw) > MAX_RESPONSE or time.monotonic() >= deadline:
             return
         conn.sendall(struct.pack("!I", len(raw)) + raw)
     except Exception:
@@ -824,6 +1007,64 @@ def verify_current_ingress(config: CoreGatewayConfig, *, peer_pid: int,
     except Exception as error:
         _log_ingress_denial("root_ipc_currentness", error)
         raise CoreGatewayDenied("root core ingress proof is invalid or stale") from None
+
+
+def verify_current_core_overview(config: CoreGatewayConfig, *, peer_pid: int,
+                                 peer_uid: int, peer_gid: int,
+                                 accepted_ingress: Any) -> CoreVerifiedOverviewObservation:
+    from .core_gateway import _log_ingress_denial, _read_config_current
+    _read_config_current(config)
+    nonce = os.urandom(32).hex()
+    deadline = time.monotonic() + IPC_TIMEOUT
+    info = os.lstat(CORE_INSPECTOR_SOCKET)
+    if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != 0 or info.st_gid != config.gateway_gid
+            or stat.S_IMODE(info.st_mode) != 0o660):
+        raise CoreGatewayDenied("root core overview inspector is unavailable")
+    conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    conn.settimeout(IPC_TIMEOUT)
+    try:
+        conn.connect(str(CORE_INSPECTOR_SOCKET))
+        if not hasattr(socket, "SO_PEERCRED"):
+            raise ValueError
+        inspector_pid, inspector_uid, _inspector_gid = struct.unpack(
+            "3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+        if inspector_uid != 0 or inspector_pid <= 1:
+            raise ValueError
+        body = {"op": "observe-core-overview", "nonce": nonce,
+                "peer_pid": peer_pid, "peer_uid": peer_uid, "peer_gid": peer_gid}
+        raw = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("ascii")
+        if len(raw) > MAX_REQUEST:
+            raise ValueError
+        conn.sendall(struct.pack("!I", len(raw)) + raw)
+        result = _read_frame(conn, deadline, MAX_RESPONSE)
+    except Exception as error:
+        _log_ingress_denial("root_core_overview_exchange", error)
+        raise CoreGatewayDenied("root core overview proof is unavailable") from None
+    finally:
+        conn.close()
+    fields = {"schema", "nonce", "boot_id", "issued_monotonic", "expires_monotonic",
+              "config_sha256", "core_generation", "core_source_generation", "projection", "proof_sha256"}
+    if set(result) != fields:
+        raise CoreGatewayDenied("root core overview proof has an unknown schema")
+    claims = dict(result)
+    proof = claims.pop("proof_sha256", None)
+    try:
+        expected_proof = _overview_digest(claims)
+    except Exception:
+        raise CoreGatewayDenied("root core overview proof is malformed") from None
+    if (proof != expected_proof or result.get("nonce") != nonce
+            or time.monotonic() >= deadline):
+        raise CoreGatewayDenied("root core overview proof is mismatched or late")
+    try:
+        observation = CoreVerifiedOverviewObservation(**result, _seal=_OVERVIEW_PROOF_SEAL)
+        _read_config_current(config)
+        if observation.verify_current(config, peer_pid=peer_pid, peer_uid=peer_uid,
+                                      peer_gid=peer_gid, accepted_ingress=accepted_ingress) is not True:
+            raise ValueError
+        return observation
+    except Exception as error:
+        _log_ingress_denial("root_core_overview_currentness", error)
+        raise CoreGatewayDenied("root core overview proof is invalid or stale") from None
 
 
 def main() -> None:

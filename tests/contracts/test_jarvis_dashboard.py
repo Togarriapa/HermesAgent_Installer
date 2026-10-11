@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta, timezone
 
 from hermes_installer.remote.jarvis_chat import JarvisChatStore
-from hermes_installer.remote.jarvis_dashboard import build_overview, build_settings
+from hermes_installer.remote.jarvis_dashboard import build_capabilities, build_overview, build_settings
 
 
 UTC = timezone.utc
@@ -54,6 +54,12 @@ def test_overview_has_seven_zero_filled_utc_days_and_filters_other_principals(tm
         "status": "process-observed",
         "readiness": "current-core-witness",
         "observedAt": "2026-10-11T12:00:00Z",
+        "version": None,
+        "resourcesState": "pending",
+        "resourceCounts": None,
+        "resourcesRevision": None,
+        "discoveryObservedAt": None,
+        "activePromptMatchesBundledPrimary": None,
     }
     assert result["chat"]["conversationCount"] == 1
     assert result["chat"]["turnCounts"] == {
@@ -89,3 +95,29 @@ def test_empty_overview_reports_zero_real_counts_and_pending_settings(tmp_path):
         "model": {"value": None, "status": "pending"},
         "coreVersion": {"value": None, "status": "pending"},
     }
+
+
+def test_discovery_and_verified_core_version_never_claim_functional_capability(tmp_path):
+    store = JarvisChatStore(tmp_path / "chat.sqlite3")
+    projection = {
+        "core_version": "7085fbf77532", "provider": None, "model": None,
+        "account_state": "unknown", "resources_state": "discovered",
+        "resource_counts": {"native_skills": 396, "internal_profiles": 207,
+            "source_profiles_preserved": 208, "other_declarations_preserved": 88},
+        "resources_revision": "a" * 40, "artifact_sha256": "b" * 64,
+        "discovery_observed_at_utc": "2026-10-11T12:00:00Z",
+        "active_prompt_matches_bundled_primary": False,
+    }
+
+    overview = build_overview(store, "owner@example.test",
+        observed_at=datetime(2026, 10, 11, 12, tzinfo=UTC), core_projection=projection)
+    settings = build_settings(projection)
+    capabilities = build_capabilities(projection)
+
+    assert overview["core"]["resourcesState"] == "discovered"
+    assert overview["capabilities"]["readiness"] == "pending"
+    assert overview["capabilities"]["discoveredResourceCounts"] == projection["resource_counts"]
+    assert settings["coreVersion"] == {"value": "7085fbf77532", "status": "verified"}
+    assert settings["provider"] == {"value": None, "status": "pending"}
+    assert capabilities["nativeDiscovery"]["state"] == "discovered"
+    assert {item["state"] for item in capabilities["items"]} == {"bundled"}

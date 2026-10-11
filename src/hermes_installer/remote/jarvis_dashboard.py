@@ -6,6 +6,7 @@ separate from native discovery, activation, or functional readiness.
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, time, timedelta, timezone
 from functools import lru_cache
 from typing import Any
@@ -76,7 +77,8 @@ def _aggregate(store: Any, subject: str, *, today: date) -> dict[str, Any]:
     }
 
 
-def build_overview(store: Any, subject: str, *, observed_at: datetime | None = None) -> dict[str, Any]:
+def build_overview(store: Any, subject: str, *, observed_at: datetime | None = None,
+                   core_projection: dict[str, Any] | None = None) -> dict[str, Any]:
     """Project a verified principal's actual chat statistics and current core witness."""
     moment = observed_at or datetime.now(UTC)
     if moment.tzinfo is None:
@@ -88,11 +90,19 @@ def build_overview(store: Any, subject: str, *, observed_at: datetime | None = N
         conversations = db.execute(
             "SELECT COUNT(*) FROM conversations WHERE owner=?", (owner,)
         ).fetchone()[0]
+    projection = core_projection or {}
+    counts = projection.get("resource_counts")
     return {
         "core": {
             "status": "process-observed",
             "readiness": "current-core-witness",
             "observedAt": moment.isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "version": projection.get("core_version"),
+            "resourcesState": projection.get("resources_state", "pending"),
+            "resourceCounts": counts,
+            "resourcesRevision": projection.get("resources_revision"),
+            "discoveryObservedAt": projection.get("discovery_observed_at_utc"),
+            "activePromptMatchesBundledPrimary": projection.get("active_prompt_matches_bundled_primary"),
         },
         "chat": {
             "conversationCount": int(conversations),
@@ -103,6 +113,8 @@ def build_overview(store: Any, subject: str, *, observed_at: datetime | None = N
             "bundledSkills": 396,
             "bundledProfiles": 208,
             "bundledInternalProfiles": 207,
+            "discoveryState": projection.get("resources_state", "pending"),
+            "discoveredResourceCounts": counts,
         },
     }
 
@@ -150,19 +162,31 @@ def _verified_bundle_inventory() -> dict[str, Any]:
     }
 
 
-def build_capabilities() -> dict[str, Any]:
+def build_capabilities(core_projection: dict[str, Any] | None = None) -> dict[str, Any]:
     inventory = _verified_bundle_inventory()
-    return {**inventory, "items": [dict(item) for item in inventory["items"]]}
+    projection = core_projection or {}
+    return {**inventory, "items": [dict(item) for item in inventory["items"]],
+        "nativeDiscovery": {
+            "state": projection.get("resources_state", "pending"),
+            "resourceCounts": projection.get("resource_counts"),
+            "resourcesRevision": projection.get("resources_revision"),
+            "observedAt": projection.get("discovery_observed_at_utc"),
+            "activePromptMatchesBundledPrimary": projection.get("active_prompt_matches_bundled_primary"),
+        }}
 
 
-def build_settings() -> dict[str, Any]:
-    """No trusted sanitized effective provider projection exists in this runtime yet."""
+def build_settings(core_projection: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Return only values present in the fixed root-signed sanitized projection."""
+    projection = core_projection or {}
     pending = {"value": None, "status": "pending"}
+    version = projection.get("core_version")
     return {
-        "readiness": "pending",
-        "provider": dict(pending),
-        "model": dict(pending),
-        "coreVersion": dict(pending),
+        "readiness": "pending" if not projection.get("provider") or not projection.get("model") else "configured",
+        "provider": ({"value": projection["provider"], "status": "configured"}
+                     if projection.get("provider") else dict(pending)),
+        "model": ({"value": projection["model"], "status": "configured"}
+                  if projection.get("model") else dict(pending)),
+        "coreVersion": ({"value": version, "status": "verified"} if version else dict(pending)),
     }
 
 
@@ -178,14 +202,34 @@ def install_jarvis_dashboard_routes(app: Any, service: Any) -> None:
         if request.path not in _ROUTES or request.raw_path != request.path:
             raise web.HTTPNotFound(text="not found")
         principal = service._current(request)
+        accepted = request.get("core_ingress")
+        launch = request.app.get("core_gateway_launch")
+        if accepted is None or launch is None:
+            raise web.HTTPServiceUnavailable(text="current core projection unavailable")
+        try:
+            from .core_gateway import CoreAcceptedIngressObservation
+            from .core_gateway_inspector import verify_current_core_overview
+            if type(accepted) is not CoreAcceptedIngressObservation:
+                raise ValueError
+            observation = await asyncio.wait_for(
+                asyncio.to_thread(verify_current_core_overview, launch.config,
+                    peer_pid=accepted.peer_pid, peer_uid=accepted.peer_uid, peer_gid=accepted.peer_gid,
+                    accepted_ingress=accepted),
+                timeout=5.0)
+            if observation.core_generation != accepted.core_generation:
+                raise ValueError
+            core_projection = observation.projection
+        except Exception:
+            raise web.HTTPServiceUnavailable(text="current core projection unavailable") from None
         if request.path == "/chat/api/overview":
-            return web.json_response(build_overview(service.store, principal.subject))
+            return web.json_response(build_overview(service.store, principal.subject,
+                core_projection=core_projection))
         if request.path == "/chat/api/capabilities":
             try:
-                return web.json_response(build_capabilities())
+                return web.json_response(build_capabilities(core_projection))
             except Exception:
                 raise web.HTTPServiceUnavailable(text="capability inventory unavailable") from None
-        return web.json_response(build_settings())
+        return web.json_response(build_settings(core_projection))
 
     for path in _ROUTES:
         app.router.add_get(path, route, allow_head=False)
