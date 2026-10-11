@@ -476,7 +476,9 @@ def install_jarvis_final_effect_routes(app: Any, service: Any) -> None:
                                              headers=_secure_headers()) from None
 
     app.router.add_get("/chat/api/turns/{turn_id}/final-effects", list_pending, allow_head=False)
-    app.router.add_post("/chat/api/turns/{turn_id}/final-effects/decision", decide, allow_head=False)
+    # aiohttp's add_post() has no allow_head argument (only add_get exposes it).
+    # Keep the fixed route method-specific through this dedicated POST helper.
+    app.router.add_post("/chat/api/turns/{turn_id}/final-effects/decision", decide)
 
 
 def install_jarvis_final_effect_middleware(ctx: Any, client: Any) -> tuple[Any, ...]:

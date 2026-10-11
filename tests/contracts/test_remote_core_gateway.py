@@ -1064,6 +1064,13 @@ class CoreGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
                  patch.object(core_gateway, "accept_core_ingress", return_value=accepted):
                 app = core_gateway.create_core_gateway_app(launch)
                 app["core_listener_identity"] = (1, 2)
+                decision_routes = [
+                    route for route in app.router.routes()
+                    if getattr(route.resource, "canonical", None)
+                    == "/chat/api/turns/{turn_id}/final-effects/decision"
+                ]
+                self.assertEqual(len(decision_routes), 1)
+                self.assertEqual(decision_routes[0].method, "POST")
                 client = TestClient(TestServer(app))
                 await client.start_server()
                 try:
