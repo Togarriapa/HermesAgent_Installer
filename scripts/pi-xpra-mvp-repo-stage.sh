@@ -87,6 +87,7 @@ apt_opts=(
   -o 'Acquire::https::Verify-Host=true'
 )
 mkdir -p "$tmp/archives/partial"
+chmod 0755 "$tmp/lists" "$tmp/archives"
 if getent passwd _apt >/dev/null; then
   chown _apt "$tmp/lists/partial" "$tmp/archives/partial"
   chmod 0700 "$tmp/lists/partial" "$tmp/archives/partial"
