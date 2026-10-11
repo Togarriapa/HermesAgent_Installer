@@ -86,13 +86,15 @@ CORE_NATIVE_ADAPTER_SOURCE_FILES = {
     "hermes_installer/components/resources_internal_dispatch.py": "2c6cbda366df596fc1160f7fd6607e48fdee8ad29840f3d6bb9cd6858c2a668b",
     "hermes_installer/components/resources_active_profile_source.py": "408ac8e98609b5beab00b048ec28f5e3c6c7e01868295148e334c68542d077dc",
     "hermes_installer/components/resources_native_plugin_bundle/plugin.yaml": "a3310f4d5645680ef10b62a99894a251cecde21ba04bdab113335463a3fad852",
-    "hermes_installer/components/resources_native_plugin_bundle/__init__.py": "80d05220f14ace8531ed888a224e0d6635d61681fe77ae314cf514f30eaa2884",
+    "hermes_installer/components/resources_native_plugin_bundle/__init__.py": "4396520df44888361257924d8a7b1de00be83d510e655bf627aa08aadedce8bb",
     "hermes_installer/native_invocations.py": "16878d0b5416a763743ca9fa8b1714db93e5c9b063d3f71880ca429ebf16dc63",
-    "hermes_installer/remote/jarvis_final_effects.py": "fdfadff944797345c9f6bf6fc91b42ed05f0d2ad99ae383f86dd6553e3fc4583",
+    "hermes_installer/remote/jarvis_final_effects.py": "ca625acb83476605659954764bcbdec35632db1add32ff6712cc7263f3b10b2f",
+    "hermes_installer/remote/obsidian_native_tools.py": "6578f07111f2e81ff1ae64fd64de58b33c74d26417eca574236c6e49bfff70a3",
+    "hermes_installer/remote/obsidian_owner_lifecycle.py": "a35bba1ec02051401904d78255510edef65442275e69a60ac51cfe5d470888c5",
 }
 CORE_NATIVE_PLUGIN_STAGED_FILES = {
     "plugin.yaml": "a3310f4d5645680ef10b62a99894a251cecde21ba04bdab113335463a3fad852",
-    "__init__.py": "80d05220f14ace8531ed888a224e0d6635d61681fe77ae314cf514f30eaa2884",
+    "__init__.py": "4396520df44888361257924d8a7b1de00be83d510e655bf627aa08aadedce8bb",
 }
 CORE_NATIVE_PLUGIN_ID = "hermes-installer-resources-delegation"
 CORE_PYVENV_CFG_SHA256 = "d982d4b71a70c99f49afef3c0b2cf683c2f053a802da8885d366657b9565f1ad"
