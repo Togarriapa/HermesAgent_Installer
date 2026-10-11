@@ -20,10 +20,11 @@ class _FixedClient(CoreRpcClient):
     def __init__(self, result):
         self.result = result
         self.calls = []
+        self.responses = []
 
     async def _rpc(self, method, params):
         self.calls.append((method, params))
-        return self.result
+        return self.responses.pop(0) if self.responses else self.result
 
 
 def test_extension_writes_use_only_fixed_native_management_actions():
@@ -45,10 +46,25 @@ def test_extension_writes_use_only_fixed_native_management_actions():
     }
     assert client.calls[-1] == ("plugins.manage", {"action": "remove", "name": "owner-helper"})
 
-    client.result = {"servers": [{"name": "github", "source": "config"}]}
-    client.result = {"removed": True, "name": "github"}
-    assert asyncio.run(client.remove_mcp("github"))["removed"] is True
-    assert client.calls[-1] == ("mcp.servers.remove", {"name": "github"})
+    client.responses = [{"ok": True, "removed": True}, {"servers": []}]
+    assert asyncio.run(client.remove_mcp("github")) == {
+        "ok": True, "name": "github", "removed": True,
+    }
+    assert client.calls[-2:] == [
+        ("mcp.servers.remove", {"name": "github"}),
+        ("mcp.servers.list", {}),
+    ]
+
+
+def test_mcp_removal_requires_native_absence_readback():
+    client = _FixedClient({})
+    client.responses = [
+        {"ok": True, "removed": True},
+        {"servers": [{"name": "github", "transport": "http", "enabled": True,
+                      "source": "config"}]},
+    ]
+    with pytest.raises(JarvisChatDenied, match="not reflected"):
+        asyncio.run(client.remove_mcp("github"))
 
 
 def test_extension_native_write_postconditions_fail_closed():
@@ -92,7 +108,11 @@ def test_extension_snapshot_keeps_provenance_and_prefixes_builtins():
     assert by_identity[("skills", "local-procedure")]["source"] == "unknown"
     assert by_identity[("mcps", "github")]["source"] == "useradded"
     assert by_identity[("mcps", "plugin-server")]["source"] == "bundledResources"
-    assert result["availableActions"]["skills"]["edit"] is False
+    # Resource overlays and owner-added Hermes-home entrypoints use the
+    # source-bound root adapter. Unrecognized native rows remain read-only.
+    assert result["availableActions"]["skills"]["edit"] is True
+    assert result["availableActions"]["skills"]["remove"] is True
+    assert "Hermes stock skills remain read-only" in result["availableActions"]["skills"]["reason"]
     assert result["availableActions"]["plugins"]["remove"] is True
     assert result["availableActions"]["mcps"]["edit"] is False
 

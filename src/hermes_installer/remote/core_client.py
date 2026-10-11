@@ -837,7 +837,10 @@ class CoreRpcClient:
         result = await self._rpc("mcp.servers.remove", {"name": name})
         if result.get("ok") is not True or result.get("removed") is not True:
             raise JarvisChatDenied("official MCP removal was not confirmed")
-        return {"ok": True, "name": name}
+        remaining = await self.list_mcp_servers()
+        if any(row.get("name") == name for row in remaining):
+            raise JarvisChatDenied("official MCP removal is not reflected in the current configuration")
+        return {"ok": True, "name": name, "removed": True}
 
     async def pause_schedule(self, job_id: str) -> None:
         """Pause exactly one server-selected job and confirm the native paused state."""
