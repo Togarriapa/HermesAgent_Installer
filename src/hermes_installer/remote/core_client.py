@@ -43,6 +43,54 @@ _CONTEXT_CATEGORY_LABELS = {
 _CONTEXT_SOURCES = {"local_estimate", "provider_usage", "provider_usage_plus_estimate"}
 _CONTEXT_MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+ -]{0,159}$")
 _MAX_CONTEXT_TOKENS = 2_000_000
+_EXTENSION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@/-]{0,159}$", re.ASCII)
+
+
+def _safe_extension_identifier(value: Any) -> bool:
+    return isinstance(value, str) and _EXTENSION_ID.fullmatch(value) is not None and ".." not in value.split("/")
+
+
+def _safe_json_values(value: Any, *, depth: int = 0) -> bool:
+    if depth > 4:
+        return False
+    if value is None or type(value) in {str, bool, int}:
+        return not isinstance(value, str) or len(value) <= 2048
+    if type(value) is float:
+        return math.isfinite(value)
+    if isinstance(value, list):
+        return len(value) <= 64 and all(_safe_json_values(item, depth=depth + 1) for item in value)
+    if isinstance(value, dict):
+        return (len(value) <= 64 and all(isinstance(key, str) and _safe_extension_identifier(key)
+                                         and _safe_json_values(item, depth=depth + 1)
+                                         for key, item in value.items()))
+    return False
+
+
+def _safe_plugin_settings_schema(value: Any) -> list[dict[str, Any]]:
+    """Keep non-secret setting metadata while omitting values for secret fields."""
+    if not isinstance(value, list) or len(value) > 64:
+        return []
+    output = []
+    for row in value:
+        if not isinstance(row, dict):
+            continue
+        kind, key = row.get("type"), row.get("key")
+        if (not _safe_extension_identifier(key)
+                or kind not in {"string", "number", "boolean", "enum", "secret", "json"}):
+            continue
+        safe = {"key": key, "type": kind,
+                "label": row.get("label", "")[:96] if isinstance(row.get("label", ""), str) else "",
+                "description": row.get("description", "")[:256] if isinstance(row.get("description", ""), str) else "",
+                "required": row.get("required") is True}
+        if kind == "secret":
+            safe["has_value"] = row.get("has_value") is True
+        else:
+            choices = row.get("choices")
+            if (kind == "enum" and isinstance(choices, list) and len(choices) <= 64
+                    and all(isinstance(choice, str) and len(choice) <= 128 for choice in choices)):
+                safe["choices"] = choices
+        output.append(safe)
+    return output
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,7 +217,9 @@ class CoreRpcClient:
         if method not in {"session.create", "session.resume", "session.history", "session.interrupt",
                           "session.context_breakdown", "session.status",
                           "profiles.list", "cron.manage", "plugins.list", "mcp.servers.status",
-                          "file.attach", "tools.list", "skills.manage", "config.get", "config.set"}:
+                          "mcp.servers.list", "mcp.catalog", "mcp.servers.add", "mcp.servers.remove",
+                          "file.attach", "tools.list", "skills.manage", "plugins.manage",
+                          "config.get", "config.set"}:
             raise JarvisChatDenied("core method is outside the fixed adapter")
         client, ws, ws_types = await self._connect()
         request_id = secrets.token_hex(12)
@@ -643,6 +693,136 @@ class CoreRpcClient:
                 raise JarvisChatDenied("official core skill inventory exceeded its bound")
             projected.append({"category": safe_category, "names": names})
         return projected
+
+    async def install_skill(self, identifier: str) -> dict[str, Any]:
+        """Install one official hub identifier through Hermes' quarantine and scan path.
+
+        This is the only write action exposed for skills by the pinned ``skills.manage`` RPC.
+        Editing and removal have no matching action in that upstream contract.
+        """
+        if (not isinstance(identifier, str) or not 1 <= len(identifier) <= 160
+                or any(ord(char) < 0x21 or ord(char) > 0x7e for char in identifier)):
+            raise JarvisChatDenied("skill identifier is invalid")
+        result = await self._rpc("skills.manage", {"action": "install", "query": identifier})
+        installed_name = self._bounded_profile_text(result.get("name"), limit=128)
+        if result.get("installed") is not True or installed_name is None:
+            raise JarvisChatDenied("official skill install was not confirmed")
+        return {"installed": True, "name": installed_name}
+
+    async def list_managed_plugins(self) -> list[dict[str, Any]]:
+        """Read plugin management rows, dropping host paths and secret settings values."""
+        result = await self._rpc("plugins.manage", {"action": "list"})
+        rows = result.get("plugins")
+        if not isinstance(rows, list) or len(rows) > 512:
+            raise JarvisChatDenied("official plugin management list was invalid")
+        projected = []
+        for row in rows:
+            if not isinstance(row, dict):
+                raise JarvisChatDenied("official plugin management row was invalid")
+            name = self._bounded_profile_text(row.get("name"), limit=96)
+            key = self._bounded_profile_text(row.get("key"), limit=96)
+            source = row.get("source")
+            if (name is None or key is None or source not in {"bundled", "user", "git", "catalog", "unknown"}
+                    or not isinstance(row.get("version"), str) or len(row["version"]) > 64
+                    or not isinstance(row.get("status"), str) or len(row["status"]) > 48):
+                raise JarvisChatDenied("official plugin management row was invalid")
+            settings_rows = row.get("settings_schema")
+            if not isinstance(settings_rows, list) or len(settings_rows) > 64:
+                raise JarvisChatDenied("official plugin settings schema was invalid")
+            settings_revision = hashlib.sha256(json.dumps(
+                settings_rows, sort_keys=True, separators=(",", ":"),
+                ensure_ascii=True, allow_nan=False).encode("ascii")).hexdigest()
+            projected.append({
+                "name": name, "key": key, "version": row["version"], "source": source,
+                "status": row["status"], "catalog_name": (
+                    row.get("catalog_name") if isinstance(row.get("catalog_name"), str) else None),
+                "update_available": row.get("update_available") if type(row.get("update_available")) is bool else None,
+                "settings_schema": _safe_plugin_settings_schema(row.get("settings_schema")),
+                "settings_revision": settings_revision,
+            })
+        return projected
+
+    async def install_plugin(self, catalog_name: str) -> dict[str, Any]:
+        if not _safe_extension_identifier(catalog_name):
+            raise JarvisChatDenied("plugin catalog identifier is invalid")
+        result = await self._rpc("plugins.manage", {
+            "action": "install", "catalog_name": catalog_name, "enable": False, "force": False,
+        })
+        name = result.get("plugin_name")
+        if result.get("ok") is not True or not isinstance(name, str):
+            raise JarvisChatDenied("official plugin install was not confirmed")
+        return {"ok": True, "name": self._bounded_profile_text(name, limit=96)}
+
+    async def remove_plugin(self, name: str) -> dict[str, Any]:
+        if not _safe_extension_identifier(name):
+            raise JarvisChatDenied("plugin name is invalid")
+        result = await self._rpc("plugins.manage", {"action": "remove", "name": name})
+        removed = self._bounded_profile_text(result.get("name"), limit=96)
+        if result.get("ok") is not True or removed != name:
+            raise JarvisChatDenied("official plugin removal was not confirmed")
+        return {"ok": True, "name": removed, "reversible": False}
+
+    async def set_plugin_enabled(self, key: str, enabled: bool) -> dict[str, Any]:
+        if not _safe_extension_identifier(key) or type(enabled) is not bool:
+            raise JarvisChatDenied("plugin toggle arguments are invalid")
+        result = await self._rpc("plugins.manage", {"action": "toggle", "key": key, "enable": enabled})
+        if result.get("ok") is not True and result.get("unchanged") is not True:
+            raise JarvisChatDenied("official plugin toggle was not confirmed")
+        return {"ok": True, "name": self._bounded_profile_text(result.get("name"), limit=96),
+                "enabled": enabled, "restart_required": result.get("restart_required") is True}
+
+    async def update_plugin_settings(self, key: str, values: dict[str, Any]) -> dict[str, Any]:
+        if (not _safe_extension_identifier(key) or not isinstance(values, dict) or not values
+                or len(values) > 32 or not _safe_json_values(values)):
+            raise JarvisChatDenied("plugin settings arguments are invalid")
+        result = await self._rpc("plugins.manage", {"action": "settings", "key": key, "values": values})
+        if result.get("ok") is not True:
+            raise JarvisChatDenied("official plugin settings were not confirmed")
+        return {"ok": True, "name": self._bounded_profile_text(result.get("name"), limit=96)}
+
+    async def list_mcp_servers(self) -> list[dict[str, Any]]:
+        """Return secret-free MCP setup rows; never return URLs, argv or environment values."""
+        result = await self._rpc("mcp.servers.list", {})
+        rows = result.get("servers")
+        if not isinstance(rows, list) or len(rows) > 256:
+            raise JarvisChatDenied("official MCP configuration list was invalid")
+        projected = []
+        for row in rows:
+            if not isinstance(row, dict):
+                raise JarvisChatDenied("official MCP configuration row was invalid")
+            name = self._bounded_profile_text(row.get("name"), limit=96)
+            transport = row.get("transport")
+            if (name is None or transport not in {"http", "stdio", "unknown"}
+                    or type(row.get("enabled")) is not bool):
+                raise JarvisChatDenied("official MCP configuration row was invalid")
+            config_revision = hashlib.sha256(json.dumps(
+                row, sort_keys=True, separators=(",", ":"),
+                ensure_ascii=True, allow_nan=False).encode("ascii")).hexdigest()
+            projected.append({"name": name, "transport": transport, "enabled": row["enabled"],
+                              "source": row.get("source") if row.get("source") in {"plugin", "config"} else "unknown",
+                              "config_revision": config_revision})
+        return projected
+
+    async def add_catalog_mcp(self, name: str) -> dict[str, Any]:
+        if not _safe_extension_identifier(name):
+            raise JarvisChatDenied("MCP catalog identifier is invalid")
+        result = await self._rpc("mcp.catalog", {})
+        catalog = result.get("servers")
+        if (not isinstance(catalog, list)
+                or not any(isinstance(row, dict) and row.get("name") == name for row in catalog)):
+            raise JarvisChatDenied("MCP identifier is not in the official local catalog")
+        added = await self._rpc("mcp.servers.add", {"name": name, "preset": name})
+        if added.get("ok") is not True:
+            raise JarvisChatDenied("official MCP add was not confirmed")
+        return {"ok": True, "name": name}
+
+    async def remove_mcp(self, name: str) -> dict[str, Any]:
+        if not _safe_extension_identifier(name):
+            raise JarvisChatDenied("MCP server name is invalid")
+        result = await self._rpc("mcp.servers.remove", {"name": name})
+        if result.get("ok") is not True or result.get("removed") is not True:
+            raise JarvisChatDenied("official MCP removal was not confirmed")
+        return {"ok": True, "name": name}
 
     async def pause_schedule(self, job_id: str) -> None:
         """Pause exactly one server-selected job and confirm the native paused state."""
