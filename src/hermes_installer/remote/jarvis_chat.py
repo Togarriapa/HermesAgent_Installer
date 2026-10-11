@@ -519,7 +519,7 @@ class JarvisChatStore:
                 if locked:
                     raise JarvisChatDenied("model selection is already in progress")
                 operation_id = secrets.token_hex(16)
-                db.execute("INSERT INTO model_selection_ops VALUES(?,?,?,?,?,'unknown-pending',?,?,?, ?,?)",
+                db.execute("INSERT INTO model_selection_ops VALUES(?,?,?,?,?,?,'unknown-pending',?,?,?,?)",
                            (operation_id, owner, conversation_id, idem_hash, request_hash, model_id,
                             core_generation, conversation["backend_id"], now_wall, now_wall))
                 db.execute("INSERT INTO model_selection_locks VALUES(?,?,?,?,?)",

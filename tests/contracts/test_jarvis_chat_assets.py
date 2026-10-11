@@ -54,7 +54,8 @@ class JarvisChatAssetTests(unittest.TestCase):
         navigation = client.split("async function showView(view, navSelection = view) {", 1)[1].split("if (selected !== \"chat\")", 1)[0]
         self.assertIn('button.setAttribute("aria-current", "page")', navigation)
         self.assertIn('primaryNav.scrollTo({ left: Math.max(0, left), behavior })', navigation)
-        self.assertIn('window.matchMedia("(prefers-reduced-motion: reduce)")', navigation)
+        self.assertIn('motionReduced()', navigation)
+        self.assertIn('window.matchMedia("(prefers-reduced-motion: reduce)")', client)
         self.assertIn('button.dataset.openSessions === "true" ? "sessions" : button.dataset.view', navigation)
         self.assertIn('showView("chat", "sessions")', client)
         _content_type, stylesheet = reviewed_chat_asset("/chat/assets/app.css")

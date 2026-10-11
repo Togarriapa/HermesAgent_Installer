@@ -255,4 +255,4 @@ def install_jarvis_models_routes(app: Any, service: JarvisChatService) -> None:
 
     app.router.add_get(FEATURE_ROUTES[0][1], list_conversations, allow_head=False)
     app.router.add_get(FEATURE_ROUTES[1][1], get_settings, allow_head=False)
-    app.router.add_post(FEATURE_ROUTES[2][1], set_selection, allow_head=False)
+    app.router.add_post(FEATURE_ROUTES[2][1], set_selection)

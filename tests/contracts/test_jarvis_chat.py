@@ -170,7 +170,7 @@ def test_model_selection_revision_rejects_stale_generation_and_active_turn(tmp_p
         store.issue_model_selection_revision(
             "subject-a", conversation["id"], "another-core-generation", "a" * 64)
     begin(store, "subject-a", conversation, "active-turn-model-denial-001")
-    with pytest.raises(JarvisChatDenied, match="active turn"):
+    with pytest.raises(JarvisChatDenied, match="turn is active"):
         store.issue_model_selection_revision(
             "subject-a", conversation["id"], "core-generation-a", "a" * 64)
 
