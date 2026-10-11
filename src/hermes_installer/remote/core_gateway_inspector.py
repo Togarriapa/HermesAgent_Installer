@@ -1848,8 +1848,15 @@ def _valid_profile_skill_restore_id(value: Any, source: str) -> bool:
     if source == "resources":
         return re.fullmatch(r"[0-9a-f]{64}", value) is not None
     if source == "owner-added":
-        return re.fullmatch(r"[A-Za-z0-9_-]{16,96}", value) is not None
+        return (re.fullmatch(r"[A-Za-z0-9_-]{16,96}", value) is not None
+                and re.fullmatch(r"[0-9a-f]{64}", value) is None)
     return False
+
+
+def _valid_profile_skill_restore_candidate(value: Any) -> bool:
+    """Validate adapter syntax before the root resolves the selected source row."""
+    return (_valid_profile_skill_restore_id(value, "resources")
+            or _valid_profile_skill_restore_id(value, "owner-added"))
 
 
 def observe_profile_admin(config: CoreGatewayConfig, *, request: dict[str, Any],
@@ -4871,8 +4878,8 @@ class CoreGatewayInspector:
         elif action in {"skill-archive", "skill-restore"}:
             body.update({"expected_sha256": expected_sha256, "idempotency_key": idempotency_key})
             if action == "skill-restore":
-                if not isinstance(restore_id, str) or re.fullmatch(r"[0-9a-f]{64}", restore_id) is None:
-                    raise CoreGatewayDenied("archived Resources version is required")
+                if not _valid_profile_skill_restore_candidate(restore_id):
+                    raise CoreGatewayDenied("an exact archived native skill version is required")
                 body["restore_id"] = restore_id
         raw = json.dumps(body, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("ascii")
         if len(raw) > MAX_PROFILE_ADMIN_REQUEST_BYTES or time.monotonic() >= deadline:

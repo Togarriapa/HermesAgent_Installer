@@ -7,8 +7,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from hermes_installer.remote.jarvis_chat_assets import reviewed_chat_asset
+from hermes_installer.remote.jarvis_chat_assets import (
+    FEATURE_CHUNK_PATHS, FEATURE_CSS_CHUNK_PATHS, reviewed_chat_asset,
+)
 from hermes_installer.remote.jarvis_feature_registry import FEATURE_ASSETS
+
+
+def reviewed_client_bundle():
+    """Return the exact browser client asset used by focused behavior harnesses."""
+    return reviewed_chat_asset("/chat/assets/app.js")
 
 
 class JarvisChatAssetTests(unittest.TestCase):
@@ -77,7 +84,8 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('group.dataset.current = String(active)', navigation)
         self.assertIn('summary.setAttribute("aria-current", "location")', navigation)
         self.assertIn('window.matchMedia("(prefers-reduced-motion: reduce)")', client)
-        self.assertIn('button.dataset.openSessions === "true" ? "sessions" : button.dataset.view', navigation)
+        self.assertIn('navSelection === "sessions" && selected === "chat" ? "sessions" : selected', navigation)
+        self.assertIn('if (selectedNavigation === "sessions") setPanel(true);', navigation)
         self.assertIn('showView("chat", "sessions")', client)
         self.assertIn('showView("overview");', client)
         self.assertIn('data-view="chat">Chats</button>', page.decode("utf-8"))
@@ -93,8 +101,20 @@ class JarvisChatAssetTests(unittest.TestCase):
         features_tag = '<script defer src="/chat/assets/features.js"></script>'
         app_tag = '<script defer src="/chat/assets/app.js"></script>'
         self.assertLess(markup.index(features_tag), markup.index(app_tag))
+        for chunk_path in FEATURE_CHUNK_PATHS:
+            self.assertLess(markup.index(f'<script defer src="{chunk_path}"></script>'), markup.index(features_tag))
+        for css_path in FEATURE_CSS_CHUNK_PATHS:
+            self.assertLess(markup.index(f'<link rel="stylesheet" href="{css_path}">'),
+                            markup.index(features_tag))
         primary_nav = markup.split('<nav class="primary-nav"', 1)[1].split('</nav>', 1)[0]
-        self.assertEqual(primary_nav.count('<button type="button" class="nav-item"'), 3 + len(FEATURE_ASSETS))
+        expected_destinations = {"overview", "chat", "projects", "second-brain", "capabilities", "settings"}
+        expected_destinations.update(feature.feature_id for feature in FEATURE_ASSETS
+                                     if feature.feature_id not in {"overview", "projects", "second-brain"})
+        for destination in expected_destinations:
+            with self.subTest(destination=destination):
+                self.assertEqual(primary_nav.count(f'data-view="{destination}"'), 1)
+        self.assertEqual(primary_nav.count('<button type="button" class="nav-item'),
+                         len(expected_destinations))
         self.assertEqual(primary_nav.count('class="nav-group'), 1)
         self.assertIn('data-nav-group="manage"', primary_nav)
         manage_menu = primary_nav.split('data-nav-group="manage"', 1)[1].split("</details>", 1)[0]
@@ -118,14 +138,18 @@ class JarvisChatAssetTests(unittest.TestCase):
                 self.assertIn(label, primary_nav)
 
 
+        chunk_sources = [reviewed_chat_asset(path)[1].decode("utf-8") for path in FEATURE_CHUNK_PATHS]
         _content_type, registry = reviewed_chat_asset("/chat/assets/features.js")
-        source = registry.decode("utf-8")
-        self.assertIn('Object.defineProperty(script, "jarvisReviewedFeatures"', source)
-        self.assertIn("writable: false, configurable: false", source)
+        registry_source = registry.decode("utf-8")
+        source = "\n".join(chunk_sources)
+        self.assertIn("chunkPaths.flatMap", registry_source)
+        self.assertIn('Object.defineProperty(script, "jarvisReviewedFeatures"', registry_source)
+        self.assertIn("writable: false, configurable: false", registry_source)
+        self.assertIn('Object.defineProperty(script, "jarvisReviewedFeatureChunk"', source)
         self.assertIn("Object.freeze(features.map", source)
-        self.assertNotIn("import(", source)
-        self.assertNotIn("https://", source)
-        self.assertNotIn("http://", source)
+        self.assertNotIn("import(", registry_source + source)
+        self.assertNotIn("https://", registry_source + source)
+        self.assertNotIn("http://", registry_source + source)
         for feature in FEATURE_ASSETS:
             with self.subTest(feature=feature.feature_id):
                 self.assertIn("id:" + json.dumps(feature.feature_id), source)
@@ -140,8 +164,7 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('script[src="/chat/assets/features.js"]', client)
         self.assertIn("featureRegistryScript.jarvisReviewedFeatures", client)
         self.assertNotIn("__JARVIS_FEATURE_ASSETS__", client)
-        _content_type, features = reviewed_chat_asset("/chat/assets/features.js")
-        self.assertIn("turnCountsByDay", features.decode("utf-8"))
+        self.assertTrue(any("turnCountsByDay" in chunk for chunk in chunk_sources))
         _content_type, app_script = reviewed_chat_asset("/chat/assets/app.js")
         client = app_script.decode("utf-8")
 
@@ -152,16 +175,18 @@ class JarvisChatAssetTests(unittest.TestCase):
             self.assertIn(f'data-view="{destination}"', manage_menu)
 
         _registry_type, registry = reviewed_chat_asset("/chat/assets/features.js")
+        chunk_sources = [reviewed_chat_asset(path)[1].decode("utf-8") for path in FEATURE_CHUNK_PATHS]
         self.assertIn('item.hidden = !featuresById.has(item.dataset.requiresFeature);', client)
         for feature_id in (
             "missions", "bots", "activity", "native-controls", "resources-learning",
             "native-inventory", "files", "models-settings",
         ):
             with self.subTest(feature=feature_id):
-                self.assertIn(f'id:"{feature_id}"', registry.decode("utf-8"))
+                self.assertTrue(any(f'id:"{feature_id}"' in chunk for chunk in chunk_sources))
                 self.assertIn(f'data-view="{feature_id}"', source)
-        _content_type, stylesheet = reviewed_chat_asset("/chat/assets/app.css")
-        css = stylesheet.decode("utf-8")
+        css_assets = [reviewed_chat_asset(path)[1].decode("utf-8")
+                      for path in ("/chat/assets/app.css", *FEATURE_CSS_CHUNK_PATHS)]
+        css = "\n".join(css_assets)
         self.assertIn('.primary-nav>.nav-item,.primary-nav>.nav-group{flex:1 1 0;min-width:0}', css)
         self.assertIn('html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-orbit-dial', css)
         self.assertIn('class="presence-orbit-dial"', source)
@@ -241,8 +266,8 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn("unmountCapabilitiesDetails();", client)
         self.assertIn("Review remains in /skills pending.", client)
 
-        _content_type, stylesheet = reviewed_chat_asset("/chat/assets/app.css")
-        style = stylesheet.decode("utf-8")
+        style = "\n".join(reviewed_chat_asset(path)[1].decode("utf-8")
+                            for path in ("/chat/assets/app.css", *FEATURE_CSS_CHUNK_PATHS))
         self.assertIn(".capability-workspace-layout", style)
         self.assertIn(".capability-learning-diff", style)
 
@@ -281,9 +306,11 @@ class JarvisChatAssetTests(unittest.TestCase):
             "/chat": "text/html; charset=utf-8",
             "/chat/": "text/html; charset=utf-8",
             "/chat/assets/app.css": "text/css; charset=utf-8",
-            "/chat/assets/features.js": "text/javascript; charset=utf-8",
             "/chat/assets/app.js": "text/javascript; charset=utf-8",
         }
+        expected["/chat/assets/features.js"] = "text/javascript; charset=utf-8"
+        expected.update({path: "text/javascript; charset=utf-8" for path in FEATURE_CHUNK_PATHS})
+        expected.update({path: "text/css; charset=utf-8" for path in FEATURE_CSS_CHUNK_PATHS})
         for route, content_type in expected.items():
             with self.subTest(route=route):
                 actual_type, body = reviewed_chat_asset(route)
@@ -297,12 +324,17 @@ class JarvisChatAssetTests(unittest.TestCase):
         ):
             with self.subTest(route=route), self.assertRaises(ValueError):
                 reviewed_chat_asset(route)
+        for route in (*FEATURE_CHUNK_PATHS, *FEATURE_CSS_CHUNK_PATHS):
+            with self.subTest(route=route), self.assertRaises(ValueError):
+                reviewed_chat_asset(route + "?x=1")
 
     def test_browser_bundle_passes_node_syntax_check(self):
         with tempfile.TemporaryDirectory() as temporary:
-            for asset_name in ("features.js", "app.js"):
+            asset_paths = [*FEATURE_CHUNK_PATHS, "/chat/assets/features.js", "/chat/assets/app.js"]
+            for asset_path in asset_paths:
+                asset_name = asset_path.rsplit("/", 1)[-1]
                 with self.subTest(asset=asset_name):
-                    _content_type, script = reviewed_chat_asset(f"/chat/assets/{asset_name}")
+                    _content_type, script = reviewed_chat_asset(asset_path)
                     path = Path(temporary) / asset_name
                     path.write_bytes(script)
                     result = subprocess.run(
@@ -513,7 +545,8 @@ HELPER
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
         client = script.decode("utf-8")
         self.assertIn('const preferenceKey = "jarvis.ui.preferences.v1"', client)
-        self.assertIn('for (const id of ["speech-output", "chat-speech-output"]) byId(id).checked = uiPreferences.readAloud', client)
+        self.assertIn('byId("speech-output").checked = uiPreferences.readAloud;', client)
+        self.assertIn('byId("chat-speech-output").checked = uiPreferences.readAloud;', client)
         self.assertIn('current.lang = uiPreferences.language', client)
         self.assertIn('uiPreferences.motion !== "full" && window.matchMedia("(prefers-reduced-motion: reduce)").matches', client)
         self.assertIn('"language-not-supported":', client)

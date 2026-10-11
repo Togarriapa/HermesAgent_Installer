@@ -498,7 +498,7 @@ def create_core_gateway_app(launch: CoreGatewayLaunch):
 def _install_core_chat_asset_routes(app: Any) -> None:
     """Install only the reviewed UI paths; no static root or arbitrary file route."""
     from aiohttp import web
-    from .jarvis_chat_assets import reviewed_chat_asset
+    from .jarvis_chat_assets import FEATURE_CHUNK_PATHS, FEATURE_CSS_CHUNK_PATHS, reviewed_chat_asset
 
     async def home(request: Any):
         if request.raw_path != "/":
@@ -517,7 +517,8 @@ def _install_core_chat_asset_routes(app: Any) -> None:
         return web.Response(body=body, headers=headers)
 
     app.router.add_get("/", home, allow_head=False)
-    for path in ("/chat", "/chat/", "/chat/assets/app.css", "/chat/assets/features.js", "/chat/assets/app.js",
+    for path in ("/chat", "/chat/", "/chat/assets/app.css", *FEATURE_CSS_CHUNK_PATHS, *FEATURE_CHUNK_PATHS,
+                 "/chat/assets/features.js", "/chat/assets/app.js",
                  "/chat/manifest.webmanifest", "/chat/assets/jarvis-app-icon.svg"):
         app.router.add_get(path, asset, allow_head=False)
 

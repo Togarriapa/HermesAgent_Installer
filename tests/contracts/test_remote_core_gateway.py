@@ -40,6 +40,9 @@ class CoreGatewayInspectorClientTests(unittest.TestCase):
             owner_id, "resources"))
         self.assertFalse(core_gateway_inspector._valid_profile_skill_restore_id(
             owner_id, "untrusted-source"))
+        self.assertTrue(core_gateway_inspector._valid_profile_skill_restore_candidate(owner_id))
+        self.assertTrue(core_gateway_inspector._valid_profile_skill_restore_candidate(resources_id))
+        self.assertFalse(core_gateway_inspector._valid_profile_skill_restore_candidate("short"))
 
     def test_owner_turn_mission_binding_requires_typed_value_and_spent_row_match(self):
         from hermes_installer.remote import jarvis_mission_executor
@@ -1051,7 +1054,9 @@ class CoreGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
             await client.close()
 
     async def test_core_app_protects_redirect_and_only_reviewed_chat_assets(self):
-        from hermes_installer.remote.jarvis_chat_assets import reviewed_chat_asset
+        from hermes_installer.remote.jarvis_chat_assets import (
+            FEATURE_CHUNK_PATHS, FEATURE_CSS_CHUNK_PATHS, reviewed_chat_asset,
+        )
         import hermes_installer.remote.jarvis_chat as jarvis_chat
 
         config = _config()
@@ -1101,7 +1106,9 @@ class CoreGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(overview["chat"]["turnCounts"]["total"], 0)
                     self.assertEqual(len(overview["chat"]["turnCountsByDay"]), 7)
 
-                    for path in ("/chat", "/chat/", "/chat/assets/app.css", "/chat/assets/features.js",
+                    for path in ("/chat", "/chat/", "/chat/assets/app.css", *FEATURE_CSS_CHUNK_PATHS,
+                                 *FEATURE_CHUNK_PATHS,
+                                 "/chat/assets/features.js",
                                  "/chat/assets/app.js", "/chat/manifest.webmanifest",
                                  "/chat/assets/jarvis-app-icon.svg"):
                         with self.subTest(path=path):
@@ -1131,6 +1138,9 @@ class CoreGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_chat_asset_route_does_not_reveal_page_before_ingress(self):
         import hermes_installer.remote.jarvis_chat as jarvis_chat
+        from hermes_installer.remote.jarvis_chat_assets import (
+            FEATURE_CHUNK_PATHS, FEATURE_CSS_CHUNK_PATHS,
+        )
 
         config = _config()
         launch = core_gateway.CoreGatewayLaunch(config, RemotePolicy(
@@ -1146,7 +1156,9 @@ class CoreGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
                 client = TestClient(TestServer(app))
                 await client.start_server()
                 try:
-                    for path in ("/chat", "/chat/api/overview"):
+                    for path in ("/chat", "/chat/api/overview", *FEATURE_CHUNK_PATHS,
+                                 *FEATURE_CSS_CHUNK_PATHS, "/chat/assets/features.js",
+                                 "/chat/assets/app.css", "/chat/assets/app.js"):
                         with self.subTest(path=path):
                             response = await client.get(path, headers={"Host": config.hostname})
                             self.assertEqual(response.status, 403)

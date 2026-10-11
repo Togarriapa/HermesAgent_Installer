@@ -29,6 +29,12 @@ _HTML = '''<!doctype html>
   <title>Jarvis</title>
   <!-- JARVIS_MOBILE_MANIFEST -->
   <link rel="stylesheet" href="/chat/assets/app.css">
+  <link rel="stylesheet" href="/chat/assets/features-core.css">
+  <link rel="stylesheet" href="/chat/assets/features-workspace.css">
+  <link rel="stylesheet" href="/chat/assets/features-knowledge.css">
+  <script defer src="/chat/assets/features-core.js"></script>
+  <script defer src="/chat/assets/features-workspace.js"></script>
+  <script defer src="/chat/assets/features-knowledge.js"></script>
   <script defer src="/chat/assets/features.js"></script>
   <script defer src="/chat/assets/app.js"></script>
 </head>
@@ -1889,20 +1895,42 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
 '''.encode("utf-8")
 
 
+FEATURE_CHUNK_PATHS = (
+    "/chat/assets/features-core.js",
+    "/chat/assets/features-workspace.js",
+    "/chat/assets/features-knowledge.js",
+)
+FEATURE_CSS_CHUNK_PATHS = (
+    "/chat/assets/features-core.css",
+    "/chat/assets/features-workspace.css",
+    "/chat/assets/features-knowledge.css",
+)
+_FEATURE_CHUNK_IDS = (
+    ("missions", "bots", "activity", "native-controls"),
+    ("resources-learning", "native-inventory", "files", "models-settings", "overview"),
+    ("integrations", "context", "second-brain", "extensions", "projects", "profiles-admin"),
+)
+_FEATURE_CHUNKS_JS: dict[str, bytes] = {}
+_FEATURE_CSS_CHUNKS: dict[str, bytes] = {}
 _FEATURES_JS = b""
 
 
 def _compose_feature_assets() -> None:
     """Compose reviewed feature markup, styles, and the separately bounded registry."""
-    global _HTML, _CSS, _JS, _FEATURES_JS
+    global _HTML, _CSS, _JS, _FEATURE_CHUNKS_JS, _FEATURE_CSS_CHUNKS, _FEATURES_JS
     _HTML = _HTML.replace(b"<!-- JARVIS_MOBILE_MANIFEST -->", MOBILE_MANIFEST_LINK_HTML.encode("utf-8"))
     _HTML = _HTML.replace(b"<!-- JARVIS_MOBILE_SETTINGS -->", SETTINGS_FRAGMENT_HTML.encode("utf-8"))
     _CSS += ("\n" + SETTINGS_FRAGMENT_CSS).encode("utf-8")
     validate_feature_assets(FEATURE_ASSETS)
     grouped_nav: dict[str, list[str]] = {"manage": []}
     panels: list[str] = []
-    css_fragments: list[bytes] = []
-    javascript: list[str] = []
+    css_fragments: dict[str, list[str]] = {path: [] for path in FEATURE_CSS_CHUNK_PATHS}
+    javascript: dict[str, list[str]] = {path: [] for path in FEATURE_CHUNK_PATHS}
+    chunk_path_by_id = {
+        feature_id: path
+        for path, feature_ids in zip(FEATURE_CHUNK_PATHS, _FEATURE_CHUNK_IDS, strict=True)
+        for feature_id in feature_ids
+    }
     for feature in FEATURE_ASSETS:
         feature_id = escape(feature.feature_id, quote=True)
         nav_label = escape(feature.nav_label)
@@ -1920,14 +1948,17 @@ def _compose_feature_assets() -> None:
             f'{feature.view_html}</div></section>'
         )
         panels.append(panel_markup)
+        chunk_path = chunk_path_by_id.get(feature.feature_id)
+        if chunk_path is None:
+            raise ValueError("Jarvis feature is not assigned to a reviewed browser chunk")
         if feature.css:
-            css_fragments.append(feature.css.encode("utf-8"))
+            css_fragments[chunk_path.replace(".js", ".css")].append(feature.css)
         routes = json.dumps(
             [{"method": method, "path": path} for method, path in feature.api_routes],
             ensure_ascii=True,
             separators=(",", ":"),
         )
-        javascript.append(
+        javascript[chunk_path].append(
             "{id:" + json.dumps(feature_id) + ",routes:" + routes
             + ",mount:(" + feature.mount_js + "),unmount:(" + feature.unmount_js + ")}"
         )
@@ -1946,10 +1977,34 @@ def _compose_feature_assets() -> None:
     if "__JARVIS_CAPABILITY_DETAILS__" in html:
         raise ValueError("Jarvis capability detail markup was not composed")
     _HTML = html.encode("utf-8")
-    _CSS += ("\n".encode("utf-8") + b"\n".join(css_fragments)) if css_fragments else b""
-    _CSS += ("\n" + _CAPABILITY_DETAILS_CSS).encode("utf-8")
+    _FEATURE_CSS_CHUNKS = {
+        path: ("\n".join(css_fragments[path]) + ("\n" if css_fragments[path] else "")
+               + (_CAPABILITY_DETAILS_CSS if path == FEATURE_CSS_CHUNK_PATHS[-1] else "")).encode("utf-8")
+        for path in FEATURE_CSS_CHUNK_PATHS
+    }
     _JS = script.encode("utf-8")
-    registry = "[" + ",".join(javascript) + "]"
+    _FEATURE_CHUNKS_JS = {}
+    for path, entries in javascript.items():
+        chunk = "[" + ",".join(entries) + "]"
+        _FEATURE_CHUNKS_JS[path] = (
+            "(() => {\n"
+            '  "use strict";\n'
+            "  const script = document.currentScript;\n"
+            f'  if (!script || script.tagName !== "SCRIPT" || script.getAttribute("src") !== {json.dumps(path)}) {{\n'
+            '    throw new Error("A reviewed Jarvis feature chunk was loaded from an unexpected script.");\n'
+            "  }\n"
+            f"  const features = {chunk};\n"
+            '  Object.defineProperty(script, "jarvisReviewedFeatureChunk", {\n'
+            "    value: Object.freeze(features.map((feature) => Object.freeze({\n"
+            "      id: feature.id,\n"
+            "      routes: Object.freeze(feature.routes.map((route) => Object.freeze({method: route.method, path: route.path}))),\n"
+            "      mount: feature.mount,\n"
+            "      unmount: feature.unmount,\n"
+            "    }))), enumerable: false, writable: false, configurable: false,\n"
+            "  });\n"
+            "})();\n"
+        ).encode("utf-8")
+    chunk_sources = ", ".join(json.dumps(path) for path in FEATURE_CHUNK_PATHS)
     _FEATURES_JS = (
         "(() => {\n"
         '  "use strict";\n'
@@ -1957,15 +2012,16 @@ def _compose_feature_assets() -> None:
         '  if (!script || script.tagName !== "SCRIPT" || script.getAttribute("src") !== "/chat/assets/features.js") {\n'
         '    throw new Error("The reviewed Jarvis feature registry was loaded from an unexpected script.");\n'
         "  }\n"
-        f"  const features = {registry};\n"
-        "  const frozenFeatures = Object.freeze(features.map((feature) => Object.freeze({\n"
-        "    id: feature.id,\n"
-        "    routes: Object.freeze(feature.routes.map((route) => Object.freeze({method: route.method, path: route.path}))),\n"
-        "    mount: feature.mount,\n"
-        "    unmount: feature.unmount,\n"
-        "  })));\n"
+        f"  const chunkPaths = [{chunk_sources}];\n"
+        "  const features = chunkPaths.flatMap((path) => {\n"
+        '    const chunk = document.querySelector(`script[src="${path}"]`);\n'
+        "    if (!chunk || !Array.isArray(chunk.jarvisReviewedFeatureChunk)) {\n"
+        '      throw new Error("A reviewed Jarvis feature chunk is unavailable.");\n'
+        "    }\n"
+        "    return chunk.jarvisReviewedFeatureChunk;\n"
+        "  });\n"
         '  Object.defineProperty(script, "jarvisReviewedFeatures", {\n'
-        "    value: frozenFeatures, enumerable: false, writable: false, configurable: false,\n"
+        "    value: Object.freeze(features), enumerable: false, writable: false, configurable: false,\n"
         "  });\n"
         "})();\n"
     ).encode("utf-8")
@@ -1977,6 +2033,10 @@ _ASSETS = MappingProxyType({
     "/chat": ("text/html; charset=utf-8", _HTML),
     "/chat/": ("text/html; charset=utf-8", _HTML),
     "/chat/assets/app.css": ("text/css; charset=utf-8", _CSS),
+    **{path: ("text/css; charset=utf-8", body)
+       for path, body in _FEATURE_CSS_CHUNKS.items()},
+    **{path: ("text/javascript; charset=utf-8", body)
+       for path, body in _FEATURE_CHUNKS_JS.items()},
     "/chat/assets/features.js": ("text/javascript; charset=utf-8", _FEATURES_JS),
     "/chat/assets/app.js": ("text/javascript; charset=utf-8", _JS),
     "/chat/manifest.webmanifest": reviewed_mobile_static_asset("/chat/manifest.webmanifest"),
