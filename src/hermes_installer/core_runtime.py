@@ -40,20 +40,44 @@ def _run(argv,check=True):
  except (OSError,subprocess.TimeoutExpired) as e: raise CoreRuntimeError("fixed action unavailable") from e
  if check and r.returncode: raise CoreRuntimeError("fixed service action failed")
  return r
+def _validated_executable(path,allowed_uids):
+ """Validate an executable chain while retaining its original venv entrypoint."""
+ path=Path(path)
+ if not path.is_absolute(): raise CoreRuntimeError("fixed executable path must be absolute")
+ allowed=set(allowed_uids)
+ directory_owners=allowed|{0}
+ candidate=path
+ for _ in range(40):
+  parent=candidate.parent
+  for directory in reversed((parent,*parent.parents)):
+   try: info=directory.lstat()
+   except OSError as exc: raise CoreRuntimeError("fixed executable parent is unavailable") from exc
+   if (not stat.S_ISDIR(info.st_mode) or info.st_uid not in directory_owners
+       or (stat.S_IMODE(info.st_mode)&0o022 and
+           not (info.st_uid==0 and info.st_mode&stat.S_ISVTX))):
+    raise CoreRuntimeError("fixed executable parent custody is unsafe")
+  try: info=candidate.lstat()
+  except OSError as exc: raise CoreRuntimeError("fixed executable is unavailable") from exc
+  if info.st_uid not in allowed:
+   raise CoreRuntimeError("fixed executable ownership is unsafe")
+  if stat.S_ISLNK(info.st_mode):
+   try: target=os.readlink(candidate)
+   except OSError as exc: raise CoreRuntimeError("fixed executable link is unsafe") from exc
+   candidate=Path(os.path.abspath(target if os.path.isabs(target) else candidate.parent/target))
+   continue
+  if (not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode)&0o022
+      or not (info.st_mode&0o111)):
+   raise CoreRuntimeError("fixed executable target is unsafe")
+  return path
+ raise CoreRuntimeError("fixed executable link chain is too deep")
 def _install_bundled_resources(account):
  """Run the vendored offline importer as admin before enabling public interaction."""
  try:
   python=Path(sys.executable)
-  resolved=python.resolve(strict=True)
-  python_stat=resolved.stat()
-  runuser_stat=RUNUSER.lstat()
-  if (not python.is_absolute() or not stat.S_ISREG(python_stat.st_mode)
-      or python_stat.st_uid not in {ROOT_UID,account.pw_uid}
-      or stat.S_IMODE(python_stat.st_mode)&0o022
-      or stat.S_ISLNK(runuser_stat.st_mode) or not stat.S_ISREG(runuser_stat.st_mode)
-      or runuser_stat.st_uid!=ROOT_UID or stat.S_IMODE(runuser_stat.st_mode)&0o022):
-   raise CoreRuntimeError("fixed installer runtime or account-switch executable is unsafe")
-  argv=[str(RUNUSER),"-u","admin","--",str(resolved),"-m",
+  interpreter=_validated_executable(python,{ROOT_UID,account.pw_uid})
+  runuser=_validated_executable(RUNUSER,{ROOT_UID})
+  if runuser!=RUNUSER: raise CoreRuntimeError("account-switch executable path differs from its fixed location")
+  argv=[str(RUNUSER),"-u","admin","--",str(interpreter),"-m",
         "hermes_installer.registry.manual_jarvis_skills","import-bundled",
         "--home",str(HERMES_HOME),"--hermes-source",str(SOURCE),"--python",str(PYTHON)]
   env={"PATH":"/usr/sbin:/usr/bin:/sbin:/bin","HOME":str(HOME),

@@ -165,10 +165,12 @@ def test_launcher_uses_isolated_pinned_loopback_without_secret_arguments():
 
 def test_bundled_resource_import_uses_exact_admin_home_source_and_pm_python(tmp_path, monkeypatch):
     installer_python = tmp_path / "installer-python"
+    interpreter_target = tmp_path / "pm-python-target"
     runuser = tmp_path / "runuser"
-    for executable in (installer_python, runuser):
+    for executable in (interpreter_target, runuser):
         executable.write_text("fixed fixture executable")
         executable.chmod(0o755)
+    installer_python.symlink_to(interpreter_target)
     monkeypatch.setattr(core.sys, "executable", str(installer_python))
     monkeypatch.setattr(core, "RUNUSER", runuser)
     monkeypatch.setattr(core, "ROOT_UID", os.getuid())
@@ -182,12 +184,13 @@ def test_bundled_resource_import_uses_exact_admin_home_source_and_pm_python(tmp_
     account = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())
     receipt = core._install_bundled_resources(account)
     argv, kwargs = calls[0]
-    assert argv == [str(runuser), "-u", "admin", "--", str(installer_python.resolve()), "-m",
+    assert argv == [str(runuser), "-u", "admin", "--", str(installer_python), "-m",
                     "hermes_installer.registry.manual_jarvis_skills", "import-bundled",
                     "--home", str(core.HERMES_HOME), "--hermes-source", str(core.SOURCE),
                     "--python", str(core.PYTHON)]
     assert kwargs["timeout"] == 600
     assert kwargs["env"]["HOME"] == str(core.HOME)
+    assert kwargs["env"]["PYTHONNOUSERSITE"] == "1"
     assert receipt["state"] == "discovered"
     assert receipt["functional"] is False and receipt["target_verified"] is False
 
