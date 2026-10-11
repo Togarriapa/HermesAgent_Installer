@@ -1798,3 +1798,14 @@ The system SHALL derive internal Orchestrator specialization from root-held veri
 #### Scenario: Current selected specialization
 - **WHEN** root consumes a current exact claim for the real injected parent
 - **THEN** the native delegation path preserves parent tool/privacy/budget and pause/depth/concurrency gates without claiming sandboxing or full bundle activation.
+
+### Requirement: Independently admitted owner learning snapshot
+The system SHALL validate the forwarded Access JWT independently in root against the fixed issuer, audience and sole-owner allowlist before reading native pending skill diffs. A one-use root-retained ingress issuance SHALL bound the complete operation to its original five-second deadline.
+
+#### Scenario: Stale or fabricated admission
+- **WHEN** a request has no retained ingress entry, fails JWT validation or exceeds the original deadline
+- **THEN** root denies the read without restamping a proof or returning candidate content.
+
+#### Scenario: Read-only pending review
+- **WHEN** current owner admission and source custody pass
+- **THEN** root returns bounded sanitized pending candidates and diffs, reports partial failures truthfully and performs no approval or write.

@@ -37,3 +37,5 @@ Settings/readiness now has one fixed sanitized root IPC source, independently va
 Parallel implementation now has four bounded feature slices inside the existing task groups: missions/team/queue, Bots/channels/cron, authentic activity/usage, and capability/learning lifecycle. One UI integrator composes reviewed static modules with the existing protected gateway; every slice starts with actual backend behavior, preserves all original scope and reports pending evidence.
 
 The next Resources slice requires a concrete root-held source prompt claim joined to actual native provider/parent invocation and inherited zero-additional-metered route evidence. Existing manual core process/settings observations cannot supply that authority. Fixed sanitized profile/cron reads may proceed independently through private typed core-client methods; no generic RPC is published.
+
+Owner skill-learning inspection uses independent root validation of the actual forwarded Access JWT and the original one-use ingress issuance, rather than an unimplemented owner-turn handle. The finite read-only snapshot preserves private diffs, original deadlines and native approval ownership.
