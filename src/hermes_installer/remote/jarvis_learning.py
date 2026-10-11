@@ -1,34 +1,29 @@
-"""Read-only projection of Hermes' native skill-learning review queue.
-
-This module never creates, approves, rejects, applies, or rolls back a skill
-change.  A root-owned adapter supplies current pending records and the official
-``write_approval.skill_pending_diff`` result from the active Hermes session.
-"""
+"""Sanitized read-only view over the sealed root native skill-learning observation."""
 from __future__ import annotations
 
 import hashlib
 import math
 import re
+import time
 from collections.abc import Mapping, Sequence
-from typing import Any, Protocol
+from typing import Any
 
 
-_PENDING_ID = re.compile(r"[0-9a-f]{8}\Z")
-_READ_ACTIONS = frozenset({"create", "edit", "patch", "write_file"})
-_MAX_ROWS = 100
-_MAX_DIFF_CHARS = 16_000
+_OPAQUE_ID = re.compile(r"[0-9a-f]{24}\Z")
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_ACTIONS = frozenset({"create", "edit", "patch", "write_file", "remove_file", "delete", "batch"})
+_READINESS = frozenset({"read-only-native-review", "partial", "unavailable"})
+_PENDING_REASONS = frozenset({
+    "pending_directory_unavailable", "pending_member_invalid", "pending_limit_exceeded",
+    "pending_record_skipped", "pending_record_invalid", "native_diff_unavailable",
+    "diff_limit_reached", "pending_custody_changed",
+})
+_MAX_ROWS = 64
+_MAX_DIFF_BYTES = 256 * 1024
 
 
 class JarvisLearningUnavailable(RuntimeError):
-    """The owner review queue or its native diff source is unavailable."""
-
-
-class NativeSkillReviewReader(Protocol):
-    """Read-only adapter over native write_approval APIs, bound to one owner HOME."""
-
-    def list_pending_skills(self) -> Sequence[Mapping[str, Any]]: ...
-
-    def skill_pending_diff(self, record: Mapping[str, Any]) -> str: ...
+    """The sealed owner review observation is unavailable or no longer current."""
 
 
 def _plain_text(value: Any, limit: int) -> str:
@@ -37,74 +32,125 @@ def _plain_text(value: Any, limit: int) -> str:
     return " ".join("".join(ch for ch in value if ch >= " " and ch != "\x7f").split())[:limit]
 
 
-def build_learning_projection(reader: NativeSkillReviewReader, *,
-                              owner_principal_verified: bool) -> dict[str, Any]:
-    """Return bounded review metadata/diffs for the authenticated owner only.
+def _verify_current(observation: object, *, config: object, peer_pid: int,
+                    peer_uid: int, peer_gid: int, accepted_ingress: object,
+                    now: float) -> bool:
+    from .core_gateway_inspector import CoreVerifiedSkillLearningObservation
 
-    ``owner_principal_verified`` must come from the protected Jarvis ingress
-    principal, never a request field. The projection exposes no native pending
-    payload, path, account, prompt, or credential and has no mutation surface.
-    """
-    if owner_principal_verified is not True:
-        raise JarvisLearningUnavailable("skill learning review is owner-only")
-    if reader is None or not callable(getattr(reader, "list_pending_skills", None)):
-        raise JarvisLearningUnavailable("native skill review source is unavailable")
+    if type(observation) is not CoreVerifiedSkillLearningObservation:
+        return False
     try:
-        records = reader.list_pending_skills()
+        return observation.verify_current(
+            config, peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+            accepted_ingress=accepted_ingress, now=now,
+        ) is True
     except Exception:
-        raise JarvisLearningUnavailable("native skill review source is unavailable") from None
-    if not isinstance(records, Sequence) or isinstance(records, (str, bytes)) or len(records) > _MAX_ROWS:
-        raise JarvisLearningUnavailable("native skill review source returned an invalid record set")
+        return False
+
+
+def build_learning_projection(observation: object, *, config: object,
+                              peer_pid: int, peer_uid: int, peer_gid: int,
+                              accepted_ingress: object) -> dict[str, Any]:
+    """Project one sealed, current root observation; this module reads no files.
+
+    Owner identity, forwarded JWT, ingress proof, fixed native HOME/source and
+    before/after custody are attested by CoreVerifiedSkillLearningObservation.
+    Browser input never supplies these bindings. The projection is read-only.
+    """
+    now = time.monotonic()
+    if not _verify_current(observation, config=config, peer_pid=peer_pid, peer_uid=peer_uid,
+                           peer_gid=peer_gid, accepted_ingress=accepted_ingress, now=now):
+        raise JarvisLearningUnavailable("current root skill-learning observation is unavailable")
+    readiness = getattr(observation, "readiness", None)
+    reasons = getattr(observation, "pending_reasons", None)
+    candidates = getattr(observation, "candidates", None)
+    expires = getattr(observation, "expires_monotonic", None)
+    try:
+        expires_value = float(expires)
+    except (TypeError, ValueError, OverflowError):
+        expires_value = float("nan")
+    if (not isinstance(readiness, str) or readiness not in _READINESS
+            or not isinstance(reasons, Sequence)
+            or isinstance(reasons, (str, bytes)) or len(reasons) > 16
+            or not isinstance(candidates, Sequence) or isinstance(candidates, (str, bytes))
+            or len(candidates) > _MAX_ROWS or isinstance(expires, bool)
+            or not isinstance(expires, (int, float)) or not math.isfinite(expires_value)
+            or now >= expires or (readiness == "unavailable" and candidates)):
+        raise JarvisLearningUnavailable("root skill-learning observation schema is invalid")
 
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for record in records:
-        if not isinstance(record, Mapping):
-            raise JarvisLearningUnavailable("native skill review record is malformed")
-        pending_id = record.get("id")
-        action = record.get("action")
-        if (not isinstance(pending_id, str) or not _PENDING_ID.fullmatch(pending_id)
-                or pending_id in seen or not isinstance(action, str) or action not in _READ_ACTIONS):
-            raise JarvisLearningUnavailable("native skill review record is malformed")
-        seen.add(pending_id)
-        created = record.get("created_at")
+    total_bytes = 0
+    for candidate in candidates:
+        if not isinstance(candidate, Mapping):
+            raise JarvisLearningUnavailable("root candidate record is malformed")
+        expected = {
+            "opaque_id", "revision_sha256", "action", "created_at", "skill_label", "summary",
+            "diff_text", "diff_sha256", "truncated", "state",
+        }
+        if set(candidate) != expected:
+            raise JarvisLearningUnavailable("root candidate record has an unexpected schema")
+        opaque_id = candidate["opaque_id"]
+        revision = candidate["revision_sha256"]
+        diff_hash = candidate["diff_sha256"]
+        action = candidate["action"]
+        diff = candidate["diff_text"]
+        created = candidate["created_at"]
+        truncated = candidate["truncated"]
         try:
-            created_value = float(created)
+            created_value = float(created) if created is not None else None
         except (TypeError, ValueError, OverflowError):
             created_value = float("nan")
-        if (isinstance(created, bool) or not isinstance(created, (int, float))
-                or not math.isfinite(created_value) or created_value < 0):
-            raise JarvisLearningUnavailable("native skill review record is malformed")
-        try:
-            diff = reader.skill_pending_diff(record)
-        except Exception:
-            raise JarvisLearningUnavailable("native skill review diff is unavailable") from None
-        if not isinstance(diff, str) or len(diff) > _MAX_DIFF_CHARS:
-            raise JarvisLearningUnavailable("native skill review diff exceeds its bound")
+        if (not isinstance(opaque_id, str) or not _OPAQUE_ID.fullmatch(opaque_id)
+                or opaque_id in seen or not isinstance(revision, str) or not _SHA256.fullmatch(revision)
+                or not isinstance(diff_hash, str) or not _SHA256.fullmatch(diff_hash)
+                or not isinstance(action, str) or action not in _ACTIONS
+                or not isinstance(diff, str) or type(truncated) is not bool
+                or not isinstance(candidate["skill_label"], str)
+                or not isinstance(candidate["summary"], str)
+                or candidate["state"] != "pending-review"
+                or (created is not None and (isinstance(created, bool)
+                    or not isinstance(created, (int, float)) or not math.isfinite(created_value)))):
+            raise JarvisLearningUnavailable("root candidate record is malformed")
         try:
             diff_bytes = diff.encode("utf-8", errors="strict")
         except UnicodeEncodeError:
-            raise JarvisLearningUnavailable("native skill review diff is malformed") from None
-        if len(diff_bytes) > _MAX_DIFF_CHARS * 4:
-            raise JarvisLearningUnavailable("native skill review diff exceeds its bound")
+            raise JarvisLearningUnavailable("root candidate diff is malformed") from None
+        if any(ord(char) < 0x20 and char not in "\n\r\t" or ord(char) == 0x7f for char in diff):
+            raise JarvisLearningUnavailable("root candidate diff contains control characters")
+        total_bytes += len(diff_bytes)
+        if total_bytes > _MAX_DIFF_BYTES:
+            raise JarvisLearningUnavailable("root candidate diff exceeds the projection bound")
+        if not truncated and hashlib.sha256(diff_bytes).hexdigest() != diff_hash:
+            raise JarvisLearningUnavailable("root candidate diff digest does not match")
+        seen.add(opaque_id)
         rows.append({
-            "id": pending_id,
+            "id": opaque_id,
+            "revisionSha256": revision,
             "action": action,
-            "summary": _plain_text(record.get("summary"), 240),
-            "origin": (record.get("origin") if isinstance(record.get("origin"), str)
-                       and record.get("origin") in {"foreground", "background_review"} else "unknown"),
+            "skillLabel": _plain_text(candidate["skill_label"], 120),
+            "summary": _plain_text(candidate["summary"], 240),
             "createdAt": created_value,
             "diff": diff,
-            "diffSha256": hashlib.sha256(diff_bytes).hexdigest(),
+            "diffSha256": diff_hash,
+            "truncated": truncated,
             "reviewState": "awaiting-native-approval",
-            "approvalRoute": "Hermes /skills pending and /skills approve <id>",
+            "approvalRoute": "Review in the owner Hermes conversation with /skills pending.",
         })
-    rows.sort(key=lambda item: (item["createdAt"], item["id"]))
+    if not _verify_current(observation, config=config, peer_pid=peer_pid, peer_uid=peer_uid,
+                           peer_gid=peer_gid, accepted_ingress=accepted_ingress,
+                           now=time.monotonic()):
+        raise JarvisLearningUnavailable("root skill-learning observation changed during projection")
+    safe_reasons = [reason for reason in reasons
+                    if isinstance(reason, str) and reason in _PENDING_REASONS]
+    if len(safe_reasons) != len(reasons):
+        raise JarvisLearningUnavailable("root skill-learning pending reasons are malformed")
     return {
         "schema": 1,
-        "state": "read-only-native-review",
+        "state": readiness,
         "canApply": False,
         "canRollback": False,
+        "pendingReasons": safe_reasons,
         "candidates": rows,
-        "nextStep": "Use Hermes /refine on the intended owner conversation to propose changes; review and approve them in Hermes /skills.",
+        "nextStep": "Use /skills pending in the owner Hermes conversation for the full native review. This view cannot approve or apply changes.",
     }

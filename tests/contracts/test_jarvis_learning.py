@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import sys
+import time
+import types
 
 import pytest
 
@@ -10,76 +13,107 @@ from hermes_installer.remote.jarvis_learning import (
 )
 
 
-class Reader:
-    def __init__(self, records, diffs):
-        self.records = records
-        self.diffs = diffs
-        self.diff_reads = []
-
-    def list_pending_skills(self):
-        return self.records
-
-    def skill_pending_diff(self, record):
-        self.diff_reads.append(record["id"])
-        return self.diffs[record["id"]]
-
-
-def test_projection_uses_native_diff_and_never_exposes_mutation_actions():
-    record = {
-        "id": "a1b2c3d4", "action": "create", "name": "private-skill",
-        "summary": "  Add a reviewed   helper\nwith references ",
-        "origin": "background_review", "created_at": 1234.5,
-        "payload": {"content": "private full candidate payload"},
+def candidate(diff="--- a/SKILL.md\n+++ b/SKILL.md\n+candidate\n", **overrides):
+    row = {
+        "opaque_id": "1" * 24,
+        "revision_sha256": "2" * 64,
+        "action": "create",
+        "created_at": 1234.5,
+        "skill_label": "jarvis-helper",
+        "summary": "Add a reviewed helper",
+        "diff_text": diff,
+        "diff_sha256": hashlib.sha256(diff.encode()).hexdigest(),
+        "truncated": False,
+        "state": "pending-review",
     }
-    diff = "--- a/SKILL.md\n+++ b/SKILL.md\n+candidate\n"
-    reader = Reader([record], {record["id"]: diff})
+    row.update(overrides)
+    return row
 
-    result = build_learning_projection(reader, owner_principal_verified=True)
 
-    assert reader.diff_reads == [record["id"]]
+class Observation:
+    readiness = "read-only-native-review"
+    pending_reasons = ()
+    candidates = (candidate(),)
+    expires_monotonic = time.monotonic() + 10
+
+    def __init__(self, valid=True):
+        self.valid = valid
+        self.verify_calls = []
+
+    def verify_current(self, config, *, peer_pid, peer_uid, peer_gid, accepted_ingress, now=None):
+        self.verify_calls.append((config, peer_pid, peer_uid, peer_gid, accepted_ingress, now))
+        return self.valid
+
+
+@pytest.fixture
+def api_type(monkeypatch):
+    module = types.ModuleType("hermes_installer.remote.core_gateway_inspector")
+    module.CoreVerifiedSkillLearningObservation = Observation
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    return module
+
+
+def project(observation):
+    return build_learning_projection(
+        observation, config=object(), peer_pid=44, peer_uid=996, peer_gid=981,
+        accepted_ingress=object(),
+    )
+
+
+def test_projection_requires_and_rechecks_sealed_current_observation(api_type):
+    observation = Observation()
+
+    result = project(observation)
+
+    assert len(observation.verify_calls) == 2
     assert result["state"] == "read-only-native-review"
     assert result["canApply"] is False and result["canRollback"] is False
-    assert result["candidates"] == [{
-        "id": record["id"], "action": "create", "summary": "Add a reviewed helper with references",
-        "origin": "background_review", "createdAt": 1234.5, "diff": diff,
-        "diffSha256": hashlib.sha256(diff.encode()).hexdigest(),
-        "reviewState": "awaiting-native-approval",
-        "approvalRoute": "Hermes /skills pending and /skills approve <id>",
-    }]
+    assert result["candidates"][0]["id"] == "1" * 24
+    assert result["candidates"][0]["skillLabel"] == "jarvis-helper"
+    assert result["candidates"][0]["diff"].startswith("--- a/SKILL.md")
+    assert result["candidates"][0]["approvalRoute"].endswith("/skills pending.")
     assert "payload" not in result["candidates"][0]
-    assert "name" not in result["candidates"][0]
 
 
-def test_projection_denies_unverified_principal_before_reading_native_queue():
-    reader = Reader([], {})
-    with pytest.raises(JarvisLearningUnavailable, match="owner-only"):
-        build_learning_projection(reader, owner_principal_verified=False)
-    assert reader.diff_reads == []
+def test_unsealed_observation_is_rejected_before_reading_candidate_fields(api_type):
+    class Forged:
+        readiness = "read-only-native-review"
+        pending_reasons = ()
+        candidates = (candidate(),)
+        expires_monotonic = time.monotonic() + 10
+
+    with pytest.raises(JarvisLearningUnavailable, match="current root"):
+        project(Forged())
 
 
-@pytest.mark.parametrize("bad_record", [
-    {"id": "../../etc", "action": "create", "created_at": 1},
-    {"id": "aaaaaaaa", "action": "delete", "created_at": 1},
-    {"id": "aaaaaaaa", "action": [], "created_at": 1},
-    {"id": "aaaaaaaa", "action": "create", "created_at": True},
-    {"id": "aaaaaaaa", "action": "create", "created_at": 10**10000},
+def test_stale_root_observation_is_rejected(api_type):
+    observation = Observation(valid=False)
+    with pytest.raises(JarvisLearningUnavailable, match="current root"):
+        project(observation)
+    assert len(observation.verify_calls) == 1
+
+
+@pytest.mark.parametrize("bad", [
+    candidate(opaque_id="../../etc"),
+    candidate(diff_sha256="0" * 64),
+    candidate(action="approve"),
+    candidate(truncated="false"),
+    candidate(extra="not-in-closed-schema"),
 ])
-def test_projection_rejects_invalid_ids_actions_and_timestamps(bad_record):
-    reader = Reader([bad_record], {})
-    with pytest.raises(JarvisLearningUnavailable, match="malformed"):
-        build_learning_projection(reader, owner_principal_verified=True)
-    assert reader.diff_reads == []
+def test_malformed_or_mutation_shaped_candidate_is_rejected(api_type, bad):
+    observation = Observation()
+    observation.candidates = (bad,)
+    with pytest.raises(JarvisLearningUnavailable):
+        project(observation)
 
 
-def test_projection_rejects_ambiguous_duplicate_pending_ids():
-    row = {"id": "aaaaaaaa", "action": "create", "created_at": 1}
-    reader = Reader([row, dict(row)], {"aaaaaaaa": "diff"})
-    with pytest.raises(JarvisLearningUnavailable, match="malformed"):
-        build_learning_projection(reader, owner_principal_verified=True)
+def test_expired_or_unrecognized_pending_state_is_rejected(api_type):
+    observation = Observation()
+    observation.expires_monotonic = 0
+    with pytest.raises(JarvisLearningUnavailable, match="schema"):
+        project(observation)
 
-
-def test_projection_rejects_oversized_diff_instead_of_truncating_review():
-    row = {"id": "aaaaaaaa", "action": "create", "created_at": 1}
-    reader = Reader([row], {"aaaaaaaa": "x" * 16_001})
-    with pytest.raises(JarvisLearningUnavailable, match="exceeds its bound"):
-        build_learning_projection(reader, owner_principal_verified=True)
+    observation.expires_monotonic = time.monotonic() + 10
+    observation.pending_reasons = ("secret-path:/home/admin/.hermes",)
+    with pytest.raises(JarvisLearningUnavailable, match="pending reasons"):
+        project(observation)
