@@ -657,12 +657,37 @@ class _StageHTTPConnector:
 
     def write(self, data: bytes) -> None:
         self.owner.verify_current(self.admission)
-        if not isinstance(data, bytes) or len(data) > 65_536 or b"X-Forwarded-Proto:" in data:
+        if not isinstance(data, bytes) or len(data) > 65_536:
             raise ManualStageDenied("Xpra asset request exceeds bound")
         split = data.find(b"\r\n\r\n")
-        if split < 0 or b"\r\nHost: 127.0.0.1:14500\r\n" not in data[:split + 2]:
+        if split < 0:
             raise ManualStageDenied("Xpra asset request is not the fixed framed route")
-        self.sock.sendall(data[:split] + b"\r\nX-Forwarded-Proto: https\r\n\r\n")
+        try:
+            lines = data[:split].decode("ascii", "strict").split("\r\n")
+            request_parts = lines[0].split(" ")
+            if len(request_parts) != 3 or request_parts[2] != "HTTP/1.1":
+                raise ValueError
+            method, public_path, _version = request_parts
+            from .client_assets import canonical_asset
+            canonical = canonical_asset(public_path)
+            if canonical != public_path:
+                raise ValueError
+            origin_path = "/" + canonical.removeprefix("/client/")
+            expected_headers = [
+                "Host: 127.0.0.1:14500", "Accept: */*",
+                "Accept-Encoding: identity", "Connection: close",
+            ]
+            if method not in {"GET", "HEAD"} or lines[1:] != expected_headers:
+                raise ValueError
+        except Exception:
+            raise ManualStageDenied("Xpra asset request is not the fixed canonical route") from None
+        # The public /client/ namespace is a fixed adapter over Xpra's actual
+        # root-relative HTML layout. Only canonical manifest members cross it;
+        # browser headers and caller-selected origin paths never reach Xpra.
+        rewritten = (f"{method} {origin_path} HTTP/1.1\r\n" +
+                     "\r\n".join(expected_headers) +
+                     "\r\nX-Forwarded-Proto: https\r\n\r\n").encode("ascii")
+        self.sock.sendall(rewritten)
 
     def read(self, maximum_bytes: int = 65_536) -> bytes:
         self.owner.verify_current(self.admission)

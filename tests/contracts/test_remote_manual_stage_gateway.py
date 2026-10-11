@@ -179,6 +179,26 @@ class ManualStageGatewayTests(unittest.TestCase):
         with self.assertRaises(StageInspectionDenied):
             _check_app_file_size(MAX_APP_FILE_BYTES + 1)
 
+    def test_stage_http_adapter_maps_only_canonical_client_assets_to_xpra_root(self):
+        from types import SimpleNamespace
+        from hermes_installer.remote.http_framing import build_asset_request
+        from hermes_installer.remote.manual_stage import _StageHTTPConnector
+        connector = object.__new__(_StageHTTPConnector)
+        connector.owner = SimpleNamespace(verify_current=lambda _admission: None)
+        connector.admission = object()
+        connector.sock = mock.Mock()
+        frame = build_asset_request("GET", "/client/js/Client.js", canonicalize=lambda x: x)
+        connector.write(frame)
+        emitted = connector.sock.sendall.call_args.args[0]
+        self.assertTrue(emitted.startswith(b"GET /js/Client.js HTTP/1.1\r\n"))
+        self.assertIn(b"X-Forwarded-Proto: https\r\n", emitted)
+        self.assertNotIn(b"/client/", emitted)
+        connector.sock.reset_mock()
+        for path in ("/client/../../etc/passwd", "/client/not-in-manifest"):
+            with self.subTest(path=path), self.assertRaises(ManualStageDenied):
+                connector.write(build_asset_request("GET", path, canonicalize=lambda x: x))
+        connector.sock.sendall.assert_not_called()
+
     def test_upstream_websocket_large_frame_splits_and_idle_is_not_eof(self):
         from types import SimpleNamespace
         from hermes_installer.remote.manual_stage import _StageWebSocketConnector
