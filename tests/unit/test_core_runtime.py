@@ -6,6 +6,7 @@ performed separately on the enrolled Pi.
 import hashlib
 import json
 import os
+import subprocess
 import sys
 from types import ModuleType, SimpleNamespace
 
@@ -130,6 +131,14 @@ def test_launcher_uses_only_pinned_hermes_and_installer_adapter_paths():
     expected = shlex.quote(f"{core.SOURCE}:{core.ADAPTER_SOURCE}")
     assert f"export PYTHONPATH={expected}" in launcher
     assert "python -P -m hermes_cli.main" in launcher
+
+
+def test_generated_core_launcher_has_valid_shell_syntax():
+    result = subprocess.run(
+        ["sh", "-n"], input=core._launcher(), stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, check=False, timeout=5,
+    )
+    assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
 
 
 def _install_legacy_service_fixture(tmp_path, monkeypatch):

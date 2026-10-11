@@ -1080,7 +1080,7 @@ def _journal():
   if d.get("adapter_migration_state") == "preparing":
    raise CoreRuntimeError("adapter source migration recovery is required")
   if d.get("adapter_migration_state") == "active":
-  if (d.get("adapter_source")!=str(ADAPTER_SOURCE)
+   if (d.get("adapter_source")!=str(ADAPTER_SOURCE)
        or not re.fullmatch(r"[0-9a-f]{64}",str(d.get("adapter_generation","")))
        or not re.fullmatch(r"[0-9a-f]{64}",str(d.get("core_source_generation","")))
        or not re.fullmatch(r"[0-9a-f]{64}",str(d.get("plugin_selection_sha256","")))):
