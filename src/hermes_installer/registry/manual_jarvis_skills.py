@@ -454,7 +454,9 @@ def install_manual_jarvis_skills(
                 "owned Resources generation contains missing or untracked files; preserving it")
         for name, content in files.items():
             destination = target / name
-            if _hash_regular_file(destination, max_bytes=_MEMBER_LIMIT) != _sha256(content):
+            member_limit = (_PACKAGE_MEMBER_LIMIT if name.startswith("registry/package/")
+                            else _MEMBER_LIMIT)
+            if _hash_regular_file(destination, max_bytes=member_limit) != _sha256(content):
                 raise ManualJarvisSkillsError("an owned skill changed after staging; preserving it as a user edit")
         return {
             "state": "already-staged",
