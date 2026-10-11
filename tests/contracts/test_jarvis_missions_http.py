@@ -208,7 +208,7 @@ def test_mission_routes_and_feature_assets_are_literal_and_finite():
         ("extensions", jarvis_feature_registry._extensions.install_jarvis_extensions_admin_routes,
          jarvis_feature_registry._EXTENSIONS_ASSETS.api_routes),
         ("projects", jarvis_feature_registry._projects.install_jarvis_projects_routes,
-         jarvis_feature_registry._projects.FEATURE_ROUTES),
+         jarvis_feature_registry._PROJECTS_ROUTES),
         ("profiles-admin", jarvis_feature_registry._profiles.install_jarvis_profiles_admin_routes,
          jarvis_feature_registry._PROFILE_ADMIN_ASSETS.api_routes),
     )

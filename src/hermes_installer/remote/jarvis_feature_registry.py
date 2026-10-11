@@ -29,6 +29,11 @@ from .jarvis_second_brain_assets import FEATURE_ASSETS as _OBSIDIAN_ASSETS
 from .jarvis_extensions_assets import FEATURE_ASSETS as _EXTENSIONS_ASSETS
 from .jarvis_projects_assets import FEATURE_ASSETS as _PROJECTS_ASSETS
 _PROFILE_ADMIN_ASSETS = _profiles.reviewed_profiles_admin_feature()
+_PROJECTS_ROUTES = (
+    *_projects.FEATURE_ROUTES,
+    ("GET", "/chat/api/conversations"),
+    ("GET", "/chat/api/second-brain/notes"),
+)
 
 # Runtime resources are compiled only from these explicit, reviewed modules.
 FEATURE_ASSETS: tuple[JarvisFeatureAssets, ...] = (
@@ -57,7 +62,7 @@ FEATURE_ROUTE_INSTALLERS = (
     ("context", _context.install_jarvis_context_routes, _CONTEXT_ASSETS.api_routes),
     ("second-brain", _obsidian.install_jarvis_obsidian_vault_routes, _OBSIDIAN_ASSETS.api_routes),
     ("extensions", _extensions.install_jarvis_extensions_admin_routes, _EXTENSIONS_ASSETS.api_routes),
-    ("projects", _projects.install_jarvis_projects_routes, _projects.FEATURE_ROUTES),
+    ("projects", _projects.install_jarvis_projects_routes, _PROJECTS_ROUTES),
     ("profiles-admin", _profiles.install_jarvis_profiles_admin_routes,
      _PROFILE_ADMIN_ASSETS.api_routes),
 )
