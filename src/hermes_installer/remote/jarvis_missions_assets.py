@@ -36,7 +36,7 @@ FEATURE_ASSETS = JarvisFeatureAssets(
   <section class="jm-panel jm-preview" data-jm-preview hidden aria-labelledby="jm-preview-heading">
     <div class="jm-list-heading"><div><p class="jm-eyebrow">SOURCE-BOUND PLAN</p><h2 id="jm-preview-heading">Preview</h2></div><span class="jm-pending-badge">Execution pending</span></div>
     <div data-jm-preview-content></div>
-    <p class="jm-boundary">Previewing does not start a Hermes task, reserve model spend, or create a review result. Launch becomes available only after the protected native dispatcher and current permission policy are installed.</p>
+    <p class="jm-boundary">Previewing does not start a Hermes task, reserve model spend, or create a review result. You may record explicit, short-lived approval for this exact plan; approval alone never launches work. Native execution remains unavailable until the protected dispatcher and current permission policy are installed.</p>
   </section>
 </section>
 """,
@@ -64,6 +64,7 @@ FEATURE_ASSETS = JarvisFeatureAssets(
 [data-feature-root="missions"] button:focus-visible,[data-feature-root="missions"] input:focus-visible,[data-feature-root="missions"] textarea:focus-visible{outline:2px solid var(--accent,#8eb8ff);outline-offset:2px}
 [data-feature-root="missions"] button:hover{border-color:var(--accent,#8eb8ff)}
 [data-feature-root="missions"] .jm-primary{justify-self:start;background:var(--accent,#8eb8ff);border-color:var(--accent,#8eb8ff);color:var(--accent-ink,#101725)}
+[data-feature-root="missions"] .jm-approval{margin-top:14px}
 [data-feature-root="missions"] .jm-refresh{flex:none}
 [data-feature-root="missions"] .jm-count,[data-feature-root="missions"] .jm-pending-badge{padding:5px 9px;border-radius:999px;background:color-mix(in srgb,var(--accent,#8eb8ff) 14%,transparent);color:var(--accent,#8eb8ff);font-size:.75rem;font-weight:700}
 [data-feature-root="missions"] .jm-list{display:grid;gap:9px;margin-top:18px}
@@ -87,6 +88,7 @@ FEATURE_ASSETS = JarvisFeatureAssets(
         ("POST", "/chat/api/missions"),
         ("GET", "/chat/api/missions/{mission_id}"),
         ("POST", "/chat/api/missions/{mission_id}/preview"),
+        ("POST", "/chat/api/missions/{mission_id}/approve"),
         ("POST", "/chat/api/missions/{mission_id}/launch"),
         ("POST", "/chat/api/missions/{mission_id}/stop"),
         ("POST", "/chat/api/missions/{mission_id}/review"),
@@ -98,6 +100,9 @@ FEATURE_ASSETS = JarvisFeatureAssets(
   let generation = 0;
   let retryPayload = '';
   let retryKey = '';
+  let approvalRetryPlan = '';
+  let approvalRetryKey = '';
+  let approvalRetryAcknowledged = false;
   const signal = abort.signal;
   const el = (selector) => root.querySelector(selector);
   const stateNode = el('[data-jm-state]');
@@ -179,7 +184,48 @@ FEATURE_ASSETS = JarvisFeatureAssets(
     const reasons = document.createElement('ul');
     for (const reason of preview.pending_reasons || []) addText(reasons, 'li', '', reason);
     box.append(reasons);
-    setMessage('Preview saved for revision ' + preview.revision + '. Native execution is unavailable; no run or approval nonce was created.');
+    const approval = document.createElement('div');
+    approval.className = 'jm-approval';
+    const approve = document.createElement('button');
+    approve.type = 'button';
+    approve.className = 'jm-primary';
+    approve.textContent = 'Approve this plan';
+    approve.addEventListener('click', (event) => recordApproval(preview, event.currentTarget), { signal });
+    approval.append(approve);
+    box.append(approval);
+    if (preview.approval && preview.approval.status === 'approved-pending-execution') {
+      addText(box, 'p', 'jm-card-meta', 'Owner approval recorded until ' + preview.approval.expires_at + '. Execution is still unavailable.');
+    }
+    setMessage('Preview saved for revision ' + preview.revision + '. No Hermes task or model spend has started.');
+  };
+  const recordApproval = async (preview, button) => {
+    const requestGeneration = ++generation;
+    const planKey = preview.mission_id + ':' + preview.revision + ':' + preview.plan_sha256;
+    if (planKey !== approvalRetryPlan || approvalRetryAcknowledged) {
+      approvalRetryPlan = planKey;
+      approvalRetryAcknowledged = false;
+      approvalRetryKey = typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID().replaceAll('-', '')
+        : Array.from(crypto.getRandomValues(new Uint8Array(16)), (n) => n.toString(16).padStart(2, '0')).join('');
+    }
+    button.disabled = true;
+    setMessage('Recording owner approval for this exact plan…');
+    try {
+      const result = await api.post('/chat/api/missions/' + encodeURIComponent(preview.mission_id) + '/approve', {
+        revision: preview.revision,
+        plan_sha256: preview.plan_sha256,
+        idempotency_key: approvalRetryKey
+      });
+      if (!mounted || requestGeneration !== generation) return;
+      approvalRetryAcknowledged = true;
+      addText(el('[data-jm-preview-content]'), 'p', 'jm-card-meta',
+        'Approval recorded until ' + result.expires_at + '. This consent does not start a run; execution is still unavailable.');
+      setMessage('Owner approval recorded for this plan. No Hermes task or model spend has started.');
+    } catch (_) {
+      if (mounted && requestGeneration === generation) setMessage('Approval could not be recorded. Refresh the source-bound preview and try again.', 'error');
+    } finally {
+      if (mounted) button.disabled = false;
+    }
   };
   const load = async () => {
     const requestGeneration = ++generation;
@@ -200,7 +246,7 @@ FEATURE_ASSETS = JarvisFeatureAssets(
     try {
       const result = await api.get('/chat/api/missions/' + encodeURIComponent(missionId));
       if (!mounted || requestGeneration !== generation) return;
-      if (result.preview) renderPreview(result.preview);
+      if (result.preview) renderPreview({ ...result.preview, approval: result.approval });
       else setMessage('Draft loaded. Preview it to calculate a current-source plan digest.');
     } catch (_) {
       if (mounted && requestGeneration === generation) setMessage('The saved mission could not be opened.', 'error');
@@ -215,7 +261,7 @@ FEATURE_ASSETS = JarvisFeatureAssets(
       if (!mounted || requestGeneration !== generation) return;
       renderPreview(preview);
       await load();
-      if (mounted) setMessage('Preview saved for revision ' + preview.revision + '. Native execution is unavailable; no run or approval nonce was created.');
+      if (mounted) setMessage('Preview saved for revision ' + preview.revision + '. Native execution is unavailable and no run was started.');
     } catch (_) {
       if (mounted && requestGeneration === generation) setMessage('Preview unavailable. Refresh and try again; no execution was started.', 'error');
     }

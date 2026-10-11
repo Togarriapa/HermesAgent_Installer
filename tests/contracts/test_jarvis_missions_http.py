@@ -92,18 +92,48 @@ def test_owner_draft_preview_is_persisted_but_never_fabricates_execution(tmp_pat
             assert preview["approval_nonce"] is None and preview["expires_at"] is None
             assert len(preview["plan_sha256"]) == 64
 
+            approval_body = {
+                "revision": 1,
+                "plan_sha256": preview["plan_sha256"],
+                "idempotency_key": "mission-approve-idempotency-key-001",
+            }
+            approved_response = await client.post(
+                f"/chat/api/missions/{mission_id}/approve", json=approval_body)
+            assert approved_response.status == 200
+            approved = await approved_response.json()
+            assert approved["status"] == "approved-pending-execution"
+            assert approved["native_execution_available"] is False
+            assert approved["plan_sha256"] == preview["plan_sha256"]
+            assert len(approved["intent_nonce"]) == 64
+            assert approved["pending_reasons"]
+
+            approval_replay = await client.post(
+                f"/chat/api/missions/{mission_id}/approve", json=approval_body)
+            assert approval_replay.status == 200
+            assert (await approval_replay.json())["intent_nonce"] == approved["intent_nonce"]
+
             detail = await client.get(f"/chat/api/missions/{mission_id}")
             assert detail.status == 200
             assert (await detail.json())["preview"]["plan_sha256"] == preview["plan_sha256"]
+            detail_payload = await detail.json()
+            assert detail_payload["approval"]["status"] == "approved"
+            assert "intent_nonce" not in detail_payload["approval"]
 
             launch = await client.post(f"/chat/api/missions/{mission_id}/launch", json={
                 "revision": 1,
                 "plan_sha256": preview["plan_sha256"],
-                "approval_nonce": None,
+                "approval_nonce": approved["intent_nonce"],
                 "idempotency_key": "mission-launch-idempotency-key-001",
             })
             assert launch.status == 409
             assert "unavailable" in await launch.text()
+            with store._connect() as db:
+                approval_row = db.execute(
+                    "SELECT status, turn_id FROM jarvis_mission_approvals WHERE mission_id=?",
+                    (mission_id,),
+                ).fetchone()
+            assert approval_row["status"] == "approved"
+            assert approval_row["turn_id"] is None
 
             stop = await client.post(f"/chat/api/missions/{mission_id}/stop", json={
                 "revision": 1, "idempotency_key": "mission-stop-idempotency-key-001",
@@ -116,6 +146,10 @@ def test_owner_draft_preview_is_persisted_but_never_fabricates_execution(tmp_pat
 
             foreign = await client.get(f"/chat/api/missions/{mission_id}", headers={"X-Test-Subject": "owner-b"})
             assert foreign.status == 404
+            foreign_approval = await client.post(
+                f"/chat/api/missions/{mission_id}/approve", json=approval_body,
+                headers={"X-Test-Subject": "owner-b"})
+            assert foreign_approval.status == 404
             listing = await client.get("/chat/api/missions")
             assert len((await listing.json())["missions"]) == 2
             with store._connect() as db:
@@ -133,6 +167,7 @@ def test_mission_routes_and_feature_assets_are_literal_and_finite():
         "/chat/api/missions",
         "/chat/api/missions/{mission_id}",
         "/chat/api/missions/{mission_id}/preview",
+        "/chat/api/missions/{mission_id}/approve",
         "/chat/api/missions/{mission_id}/launch",
         "/chat/api/missions/{mission_id}/stop",
         "/chat/api/missions/{mission_id}/review",
