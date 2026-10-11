@@ -106,7 +106,7 @@ REVIEWED_SOURCE_MODULES = (
     ("hermes_installer.authority.bootstrap_enrollment", "src/hermes_installer/authority/bootstrap_enrollment.py", "lib/python/hermes_installer/authority/bootstrap_enrollment.py",
      "d491638ae8a27a3d1a6d3392a50e5e2d41935a181f85a6ff0eac66756429296c", 147_164, "module"),
     ("hermes_installer.authority.bootstrap_runtime_factory", "src/hermes_installer/authority/bootstrap_runtime_factory.py", "lib/python/hermes_installer/authority/bootstrap_runtime_factory.py",
-     "949e4bce79bfff32c9a8bb15152540968aca84b575d253725c80e3ecf23f64b7", 691_421, "module"),
+     "fa33c61ff093bbda37bcea509e5f282ded54d497f103b3ce3d99ee08a55c877c", 691_159, "module"),
     ("hermes_installer.authority.client", "src/hermes_installer/authority/client.py", "lib/python/hermes_installer/authority/client.py",
      "f8be053e3a00b49087c6104ed77a314a071c8b0a47cf9701c4050b7aae13b46f", 73_488, "module"),
     ("hermes_installer.authority.committed_pm_executable", "src/hermes_installer/authority/committed_pm_executable.py", "lib/python/hermes_installer/authority/committed_pm_executable.py",
