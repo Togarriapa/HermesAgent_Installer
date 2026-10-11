@@ -68,7 +68,7 @@ def test_save_requires_fresh_single_use_review_token_and_exact_file_cas():
     admin = JarvisProfileAdmin(provider)
     auth = {"subject": "owner-a", "core_generation": "core-a",
             "access_jwt": "jwt", "accepted_ingress": object()}
-    profile_id = admin.list_profiles(**auth)["profiles"][0]["id"]
+    profile_id = admin.list_profiles(**auth)["profiles"][1]["id"]
     initial = admin.read_file(**auth, profile_id=profile_id, file_kind="soul")
     proposed = initial["content"] + "Use concise answers.\n"
     preview = admin.preview(**auth, profile_id=profile_id, file_kind="soul",
@@ -83,6 +83,21 @@ def test_save_requires_fresh_single_use_review_token_and_exact_file_cas():
         admin.save(**auth, profile_id=profile_id, file_kind="soul",
             base_sha256=initial["sha256"], content=proposed,
             preview_token=preview["previewToken"], idempotency_key="idempotency_key_1234567890")
+
+
+def test_primary_soul_is_read_only_until_journal_aware_effective_prompt_transaction():
+    provider = _Provider()
+    admin = JarvisProfileAdmin(provider)
+    auth = {"subject": "owner-a", "core_generation": "core-a",
+            "access_jwt": "jwt", "accepted_ingress": object()}
+    profile_id = admin.list_profiles(**auth)["profiles"][0]["id"]
+    initial = admin.read_file(**auth, profile_id=profile_id, file_kind="soul")
+    assert initial["editable"] is False
+    assert "journal-aware effective-prompt transaction" in initial["editUnavailableReason"]
+    with pytest.raises(JarvisChatDenied, match="primary SOUL edits are unavailable"):
+        admin.preview(**auth, profile_id=profile_id, file_kind="soul",
+            base_sha256=initial["sha256"], content=initial["content"] + "Unsafe partial write.\n")
+    assert provider.writes == []
 
 
 def test_source_race_consumes_preview_without_repeating_the_write():
@@ -110,3 +125,5 @@ def test_editor_fragment_uses_fixed_routes_and_never_opens_expert_chat():
     assert "Experts remain internal workers" in feature.view_html
     assert "chat with" not in feature.mount_js.lower()
     assert "localStorage" not in feature.mount_js and "sessionStorage" not in feature.mount_js
+    assert "file.editable===true" in feature.mount_js
+    assert "journal-aware effective-prompt transaction" in feature.mount_js

@@ -469,6 +469,7 @@ def create_core_gateway_app(launch: CoreGatewayLaunch):
     from .jarvis_feature_registry import install_jarvis_feature_routes
     from .core_gateway_inspector import CoreGatewayInspector
     from .jarvis_final_effects import install_jarvis_final_effect_routes
+    from .jarvis_profiles_admin import CoreGatewayProfileAdminProvider, JarvisProfileAdmin
 
     if (type(launch) is not CoreGatewayLaunch or launch.policy.hostname != launch.config.hostname
             or launch.policy.issuer != launch.config.issuer
@@ -477,6 +478,8 @@ def create_core_gateway_app(launch: CoreGatewayLaunch):
         raise CoreGatewayDenied("core gateway policy/config binding changed")
     app = web.Application(client_max_size=64 * 1024)
     app["core_gateway_launch"] = launch
+    app["jarvis_profile_admin"] = JarvisProfileAdmin(
+        CoreGatewayProfileAdminProvider(launch.config))
     service = build_jarvis_chat_service(launch.principal_from_request,
                                        owner_turn_register=launch.register_owner_turn)
     service.inspector = CoreGatewayInspector(launch.config)

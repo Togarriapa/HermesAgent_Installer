@@ -12,6 +12,7 @@ from . import jarvis_context as _context
 from . import jarvis_obsidian_vault as _obsidian
 from . import jarvis_extensions_admin as _extensions
 from . import jarvis_projects as _projects
+from . import jarvis_profiles_admin as _profiles
 from .jarvis_runtime_visibility_assets import FEATURE_ASSETS as _ACTIVITY_ASSETS
 from .jarvis_bots_ui import FEATURE_ASSETS as _BOTS_ASSETS
 from .jarvis_feature_contract import JarvisFeatureAssets
@@ -27,6 +28,7 @@ from .jarvis_context_assets import FEATURE_ASSETS as _CONTEXT_ASSETS
 from .jarvis_second_brain_assets import FEATURE_ASSETS as _OBSIDIAN_ASSETS
 from .jarvis_extensions_assets import FEATURE_ASSETS as _EXTENSIONS_ASSETS
 from .jarvis_projects_assets import FEATURE_ASSETS as _PROJECTS_ASSETS
+_PROFILE_ADMIN_ASSETS = _profiles.reviewed_profiles_admin_feature()
 
 # Runtime resources are compiled only from these explicit, reviewed modules.
 FEATURE_ASSETS: tuple[JarvisFeatureAssets, ...] = (
@@ -40,6 +42,7 @@ FEATURE_ASSETS: tuple[JarvisFeatureAssets, ...] = (
     _OBSIDIAN_ASSETS,
     _EXTENSIONS_ASSETS,
     _PROJECTS_ASSETS,
+    _PROFILE_ADMIN_ASSETS,
 )
 
 # New endpoint installers are explicit. Activity is installed exactly once by
@@ -55,6 +58,8 @@ FEATURE_ROUTE_INSTALLERS = (
     ("second-brain", _obsidian.install_jarvis_obsidian_vault_routes, _OBSIDIAN_ASSETS.api_routes),
     ("extensions", _extensions.install_jarvis_extensions_admin_routes, _EXTENSIONS_ASSETS.api_routes),
     ("projects", _projects.install_jarvis_projects_routes, _projects.FEATURE_ROUTES),
+    ("profiles-admin", _profiles.install_jarvis_profiles_admin_routes,
+     _PROFILE_ADMIN_ASSETS.api_routes),
 )
 FEATURE_ROUTE_OWNERS = (
     ("activity", "chat-service.install", _ACTIVITY_ASSETS.api_routes),

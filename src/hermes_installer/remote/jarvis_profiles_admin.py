@@ -278,7 +278,8 @@ class JarvisProfileAdmin:
                 "id": self._opaque_id(subject, core_generation, row.profile_key),
                 "name": row.display_name, "kind": row.kind,
                 "sourceGeneration": row.source_generation,
-                "files": [{"kind": kind, "name": FILE_NAMES[kind], "editable": True}
+                "files": [{"kind": kind, "name": FILE_NAMES[kind],
+                           "editable": not (row.kind == "jarvis" and kind == "soul")}
                           for kind in row.file_kinds],
             })
             with self._lock:
@@ -303,9 +304,13 @@ class JarvisProfileAdmin:
             core_generation=core_generation, profile_key=profile.profile_key,
             file_kind=file_kind, access_jwt=access_jwt,
             accepted_ingress=accepted_ingress), profile_key=profile.profile_key, file_kind=file_kind)
+        editable = not (profile.kind == "jarvis" and file_kind == "soul")
         return {"profileId": profile_id, "fileKind": file_kind, "fileName": value.file_name,
                 "content": value.content, "sha256": value.sha256,
-                "sourceGeneration": value.source_generation, "effective": value.effective}
+                "sourceGeneration": value.source_generation, "effective": value.effective,
+                "editable": editable,
+                "editUnavailableReason": (None if editable else
+                    "Primary SOUL edits remain unavailable until the journal-aware effective-prompt transaction is qualified.")}
 
     def preview(self, *, subject: str, core_generation: str, profile_id: str,
                 file_kind: str, base_sha256: str, content: str, access_jwt: str,
@@ -318,6 +323,8 @@ class JarvisProfileAdmin:
                                 accepted_ingress=accepted_ingress)
         if file_kind not in profile.file_kinds:
             raise JarvisChatDenied("profile file is unavailable")
+        if profile.kind == "jarvis" and file_kind == "soul":
+            raise JarvisChatDenied("primary SOUL edits are unavailable pending the journal-aware effective-prompt transaction")
         current = _file(self._provider.read_file(subject=subject,
             core_generation=core_generation, profile_key=profile.profile_key,
             file_kind=file_kind, access_jwt=access_jwt,
@@ -360,6 +367,8 @@ class JarvisProfileAdmin:
                                 accepted_ingress=accepted_ingress)
         if file_kind not in profile.file_kinds:
             raise JarvisChatDenied("profile file is unavailable")
+        if profile.kind == "jarvis" and file_kind == "soul":
+            raise JarvisChatDenied("primary SOUL edits are unavailable pending the journal-aware effective-prompt transaction")
         content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
         subject_sha = hashlib.sha256(subject.encode()).hexdigest()
         with self._lock:
@@ -612,7 +621,7 @@ _MOUNT_JS = r'''function mount(root, api) {
   const token = () => { const b=new Uint8Array(24);crypto.getRandomValues(b);return Array.from(b,x=>x.toString(16).padStart(2,"0")).join(""); };
   const safeId = (v) => typeof v === "string" && /^[0-9a-f]{64}$/.test(v);
   const safeHash = (v) => typeof v === "string" && /^[0-9a-f]{64}$/.test(v);
-  const changed = () => { previewToken=null;save.disabled=true;review.disabled=!(file&&baseSha&&editor.value!==file.content); };
+  const changed = () => { previewToken=null;save.disabled=true;review.disabled=!(file&&file.editable===true&&baseSha&&editor.value!==file.content); };
   async function loadFile() {
     file=null;baseSha=null;previewToken=null;editor.value="";editor.disabled=true;review.disabled=true;save.disabled=true;
     const row=profiles.find((item)=>item.id===profileSelect.value), kind=fileSelect.value;
@@ -621,8 +630,8 @@ _MOUNT_JS = r'''function mount(root, api) {
     try { const value=await api.get(`/chat/api/profiles/${encodeURIComponent(row.id)}/files/${encodeURIComponent(kind)}`);
       if(!active||profileSelect.value!==row.id||fileSelect.value!==kind)return;
       if(!value||value.profileId!==row.id||value.fileKind!==kind||typeof value.content!=="string"||!safeHash(value.sha256)||typeof value.sourceGeneration!=="string")throw Error();
-      file=value;baseSha=value.sha256;editor.value=value.content;editor.disabled=false;
-      text("[data-editor-title]",value.fileName);text("[data-editor-state]",value.effective?"Current effective source · read only until you review a change":"Existing source is not confirmed effective");
+      file=value;baseSha=value.sha256;editor.value=value.content;editor.disabled=value.editable!==true;
+      text("[data-editor-title]",value.fileName);text("[data-editor-state]",value.editable!==true?(value.editUnavailableReason||"This source cannot be edited safely yet."):(value.effective?"Current effective source · read only until you review a change":"Existing source is not confirmed effective"));
       text("[data-profile-generation]",value.sourceGeneration);diff.textContent="No changes reviewed.";status.textContent="Actual file contents loaded from the current profile source.";
     } catch (_) { if(active){status.textContent="Profile source unavailable; no file was changed.";diff.textContent="Current content could not be verified.";} }
   }
@@ -641,7 +650,7 @@ _MOUNT_JS = r'''function mount(root, api) {
   });
   fileSelect.addEventListener("change",loadFile);editor.addEventListener("input",changed);
   review.addEventListener("click",async()=>{
-    if(!file||!selected||!baseSha||editor.value===file.content)return;
+    if(!file||file.editable!==true||!selected||!baseSha||editor.value===file.content)return;
     review.disabled=true;save.disabled=true;status.textContent="Building a current source diff…";
     try { const value=await api.post(`/chat/api/profiles/${encodeURIComponent(selected.id)}/preview`,{file_kind:file.fileKind,base_sha256:baseSha,content:editor.value});
       if(!active||!value||typeof value.diff!=="string"||typeof value.previewToken!=="string"||!safeHash(value.contentSha256)||value.baseSha256!==baseSha)throw Error();
@@ -650,7 +659,7 @@ _MOUNT_JS = r'''function mount(root, api) {
     changed();if(previewToken)save.disabled=false;
   });
   save.addEventListener("click",async()=>{
-    if(!file||!selected||!baseSha||!previewToken||save.disabled)return;
+    if(!file||file.editable!==true||!selected||!baseSha||!previewToken||save.disabled)return;
     save.disabled=true;review.disabled=true;status.textContent="Saving the reviewed profile generation and verifying effective readback…";
     try { const result=await api.post(`/chat/api/profiles/${encodeURIComponent(selected.id)}/save`,{file_kind:file.fileKind,base_sha256:baseSha,content:editor.value,preview_token:previewToken,idempotency_key:token()});
       previewToken=null;
