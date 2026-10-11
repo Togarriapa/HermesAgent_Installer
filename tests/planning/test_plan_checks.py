@@ -35,7 +35,9 @@ class PlanningChecks(unittest.TestCase):
     def test_current_scope_preserves_inventory_without_historical_head_files(self):
         result = checks.check_coverage(self.base)
         self.assertEqual(result['inventory_records'], 62)
-        self.assertEqual(result['acceptance_criteria'], 15)
+        self.assertEqual(result['acceptance_criteria'], 18)
+        self.assertEqual(result['requirements'], 219)
+        self.assertEqual(result['tasks'], 8)
         self.assertEqual(result['current_artifacts'], 4)
         self.assertFalse((self.base / 'plans').exists())
 
@@ -62,6 +64,24 @@ class PlanningChecks(unittest.TestCase):
     def test_missing_access_acceptance_denied(self):
         self.change(lambda data: data['acceptance'].__setitem__(slice(None), [a for a in data['acceptance'] if a['id'] != 'AC13']))
         self.rejected()
+
+    def test_missing_resources_policy_or_host_acceptance_denied(self):
+        for missing in ('AC16', 'AC17', 'AC18'):
+            with self.subTest(missing=missing):
+                path = self.base / 'requirements/current-scope.json'
+                original = path.read_text()
+                self.change(lambda data: data['acceptance'].__setitem__(slice(None), [a for a in data['acceptance'] if a['id'] != missing]))
+                self.rejected()
+                path.write_text(original)
+
+    def test_current_host_and_policy_obligations_omission_denied(self):
+        for missing in ('CORE-HOST', 'CORE-POLICY'):
+            with self.subTest(missing=missing):
+                path = self.base / 'requirements/current-scope.json'
+                original = path.read_text()
+                self.change(lambda data: data['requirements'].__setitem__(slice(None), [r for r in data['requirements'] if r['id'] != missing]))
+                self.rejected()
+                path.write_text(original)
 
     def test_acceptance_false_completion_denied(self):
         self.change(lambda data: data['acceptance'][0].update(status='PASS'))

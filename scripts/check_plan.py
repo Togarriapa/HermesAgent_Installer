@@ -66,10 +66,10 @@ def check_coverage(base):
     acceptance = indexed(scope.get('acceptance'), 'acceptance')
     original_ids = {f'R{number:04}' for number in range(1, 212)}
     require(original_ids <= requirements.keys(), 'Original functional requirement omitted')
-    required_core = {'CORE-SESSION', 'CORE-BOTS', 'CORE-LEASE', 'CORE-CLEANUP', 'CORE-RESOURCES', 'CORE-DOCS'}
-    require(required_core <= requirements.keys(), 'Current core/security/cleanup/release obligation omitted')
+    required_core = {'CORE-SESSION', 'CORE-BOTS', 'CORE-LEASE', 'CORE-CLEANUP', 'CORE-RESOURCES', 'CORE-DOCS', 'CORE-HOST', 'CORE-POLICY'}
+    require(set(requirements) == original_ids | required_core, 'Current functional requirement coverage changed')
     require(set(components) == set(REQUIRED_COMPONENT_IDS), 'Requested component inventory changed')
-    require(set(acceptance) == {f'AC{number:02}' for number in range(1, 16)}, 'Acceptance coverage changed')
+    require(set(acceptance) == {f'AC{number:02}' for number in range(1, 19)}, 'Acceptance coverage changed')
     required_tasks = {'BD-T266.1', 'HI-T266.2', 'RT-T266.3', 'RB-T266.4', 'VD-T266.5', 'BD-T267.1', 'VD-T267.2', 'VD-T268.1'}
     require(required_tasks <= tasks.keys(), 'Core/capability/UI/Resources/cleanup/release task omitted')
     for key, row in requirements.items():
