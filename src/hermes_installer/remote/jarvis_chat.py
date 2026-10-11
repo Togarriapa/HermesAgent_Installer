@@ -818,6 +818,21 @@ class JarvisChatService:
         except Exception:
             return None
 
+    @staticmethod
+    def _normalize_planning_context(planning_context: Any | None) -> Any | None:
+        if planning_context is None:
+            return None
+        try:
+            from .core_gateway_inspector import PlanningContext
+            if type(planning_context) is not PlanningContext:
+                raise ValueError
+            normalized = PlanningContext.from_wire(planning_context.to_wire())
+            if type(normalized) is not PlanningContext:
+                raise ValueError
+            return normalized
+        except Exception:
+            raise JarvisChatDenied("master planning context is invalid") from None
+
     def owner_turn_handle_for(self, principal: ChatPrincipal, turn_id: str) -> str | None:
         """Return a private process-local handle only to a trusted owner-bound server adapter."""
         if not isinstance(principal, ChatPrincipal):
@@ -1012,7 +1027,9 @@ class JarvisChatService:
                                 idempotency_key: str, before_schedule=None,
                                 on_schedule_failure=None,
                                 mission_binding: Any | None = None,
-                                require_mission_binding: bool = False) -> dict[str, str]:
+                                require_mission_binding: bool = False,
+                                planning_context: Any | None = None,
+                                require_planning_context: bool = False) -> dict[str, str]:
         """Queue one protected turn from a trusted server feature, before any native submit.
 
         ``before_schedule`` is an internal durable mapping hook, not an authorization source. It
@@ -1020,8 +1037,15 @@ class JarvisChatService:
         Any mapping/currentness failure terminalizes the reservation and never schedules a worker.
         """
         mission_binding = self._normalize_mission_binding(mission_binding)
+        planning_context = self._normalize_planning_context(planning_context)
         if type(require_mission_binding) is not bool:
             raise JarvisChatDenied("mission binding requirement is invalid")
+        if type(require_planning_context) is not bool:
+            raise JarvisChatDenied("planning context requirement is invalid")
+        if ((require_planning_context and planning_context is None)
+                or (planning_context is not None and
+                    (mission_binding is not None or require_mission_binding))):
+            raise JarvisChatDenied("master planning turn purpose is invalid")
         async with self._admission_lock:
             principal = self._current(request)
             conversation = self.store.get_conversation(principal.subject, conversation_id)
@@ -1030,7 +1054,8 @@ class JarvisChatService:
             turn_id, nonce, conversation = self.store.begin_turn(
                 principal.subject, conversation_id, text, idempotency_key, principal)
             try:
-                if (require_mission_binding or mission_binding is not None) and before_schedule is None:
+                if (require_mission_binding or mission_binding is not None
+                        or planning_context is not None) and before_schedule is None:
                     raise JarvisChatDenied("mission intent must be bound before scheduling")
                 if before_schedule is not None:
                     if not callable(before_schedule):
@@ -1043,9 +1068,11 @@ class JarvisChatService:
                         if mission_binding is not None and outcome != mission_binding:
                             raise JarvisChatDenied("mission turn binding changed before scheduling")
                         mission_binding = outcome
+                if planning_context is not None and mission_binding is not None:
+                    raise JarvisChatDenied("planning and execution turn purposes cannot be combined")
                 if require_mission_binding and mission_binding is None:
                     raise JarvisChatDenied("approved mission binding is unavailable")
-                if mission_binding is not None:
+                if mission_binding is not None or planning_context is not None:
                     if self._owner_turn_register is None:
                         raise JarvisChatDenied("mission owner-turn verification is unavailable")
                     owner_turn_context = self._capture_owner_turn_context(request, mission_binding)
@@ -1063,7 +1090,9 @@ class JarvisChatService:
                         turn_id, conversation["backend_id"], text, principal, conversation_id,
                         stored_session_id=conversation["session_key"],
                         owner_turn_context=owner_turn_context,
-                        require_mission_binding=require_mission_binding))
+                        require_mission_binding=require_mission_binding,
+                        planning_context=planning_context,
+                        require_planning_context=require_planning_context))
                     self._workers[turn_id] = task
             except BaseException:
                 if on_schedule_failure is not None:
@@ -1085,7 +1114,9 @@ class JarvisChatService:
                    activity_principal: ChatPrincipal | None = None,
                    conversation_id: str = "", *, stored_session_id: str = "",
                    owner_turn_context: tuple[str, Any, Any | None] | None = None,
-                   require_mission_binding: bool = False):
+                   require_mission_binding: bool = False,
+                   planning_context: Any | None = None,
+                   require_planning_context: bool = False):
         total = 0
         next_delta: asyncio.Task | None = None
         stream = None
@@ -1094,7 +1125,7 @@ class JarvisChatService:
             with self.store._connect() as db:
                 db.execute("UPDATE turns SET status='running',updated=? WHERE id=? AND status='queued'",
                            (_now(), turn_id))
-            if activity_principal is not None and conversation_id:
+            if activity_principal is not None and conversation_id and planning_context is None:
                 refs = self.files_store.claim_pending(
                     subject=activity_principal.subject, conversation_id=conversation_id,
                     turn_id=turn_id, core_generation=activity_principal.core_generation)
@@ -1107,6 +1138,13 @@ class JarvisChatService:
                                             or owner_turn_context[2] is None
                                             or self._owner_turn_register is None):
                 raise JarvisChatDenied("mission owner-turn verification is unavailable")
+            if planning_context is not None or require_planning_context:
+                planning_context = self._normalize_planning_context(planning_context)
+                if (planning_context is None or owner_turn_context is None
+                        or self._owner_turn_register is None or not callable(resume_stream)
+                        or planning_context.planner_prompt_sha256 != hashlib.sha256(
+                            text.encode("utf-8", errors="strict")).hexdigest()):
+                    raise JarvisChatDenied("master planning owner-turn verification is unavailable")
             if callable(resume_stream):
                 if (activity_principal is None or not conversation_id
                         or not _valid_core_session_id(stored_session_id)):
@@ -1131,11 +1169,13 @@ class JarvisChatService:
                             }
                             if mission_binding is not None:
                                 registration["mission_binding"] = mission_binding
+                            if planning_context is not None:
+                                registration["planning_context"] = planning_context
                             owner_handle = await asyncio.wait_for(asyncio.to_thread(
                                 self._owner_turn_register, **registration), timeout=5.0)
                             valid_handle = (isinstance(owner_handle, str)
                                             and re.fullmatch(r"[0-9a-f]{32}", owner_handle))
-                            if mission_binding is not None and not valid_handle:
+                            if (mission_binding is not None or planning_context is not None) and not valid_handle:
                                 raise JarvisChatDenied("mission owner-turn verification was not confirmed")
                             if valid_handle:
                                 if len(self._owner_turn_handles) >= MAX_OWNER_TURN_HANDLES:
@@ -1143,8 +1183,8 @@ class JarvisChatService:
                                 self._owner_turn_handles[turn_id] = owner_handle
                         except Exception:
                             # Ordinary chat stays useful without an optional observer, but a
-                            # mission-approved turn cannot run unless root bound its exact claim.
-                            if mission_binding is not None:
+                            # planning or mission turn cannot run unless root bound its exact claim.
+                            if mission_binding is not None or planning_context is not None:
                                 raise JarvisChatDenied(
                                     "mission owner-turn verification is unavailable") from None
 
