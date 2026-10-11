@@ -464,6 +464,8 @@ def create_core_gateway_app(launch: CoreGatewayLaunch):
     from .jarvis_chat import build_jarvis_chat_service, install_jarvis_chat_routes
     from .jarvis_dashboard import install_jarvis_dashboard_routes
     from .jarvis_feature_registry import install_jarvis_feature_routes
+    from .core_gateway_inspector import CoreGatewayInspector
+    from .jarvis_final_effects import install_jarvis_final_effect_routes
 
     if (type(launch) is not CoreGatewayLaunch or launch.policy.hostname != launch.config.hostname
             or launch.policy.issuer != launch.config.issuer
@@ -474,7 +476,10 @@ def create_core_gateway_app(launch: CoreGatewayLaunch):
     app["core_gateway_launch"] = launch
     service = build_jarvis_chat_service(launch.principal_from_request,
                                        owner_turn_register=launch.register_owner_turn)
+    service.inspector = CoreGatewayInspector(launch.config)
+    service._native_mission_preflight = service.inspector.preflight_native_mission
     install_jarvis_chat_routes(app, service)
+    install_jarvis_final_effect_routes(app, service)
     install_jarvis_dashboard_routes(app, service)
     install_jarvis_feature_routes(app, service)
     _install_core_chat_asset_routes(app)
