@@ -103,6 +103,31 @@ class VerifiedResourcesProfileSource:
     and current<self.expires_monotonic)
   except Exception:
    return False
+
+ def is_current_sealed(self, custody, now=None):
+  try:
+   from .remote import core_gateway_inspector as inspector
+   if (type(custody) is not inspector.CoreNativeObserverCustody
+       or custody._seal is not inspector._NATIVE_CUSTODY_SEAL
+       or custody.core_source_generation!=self.core_source_generation):
+    return False
+   return self.verify_current(core_source_generation=custody.core_source_generation,now=now)
+  except Exception:
+   return False
+
+ def resolve_current(self, custody):
+  if not self.is_current_sealed(custody): return None
+  try:
+   current=read_current_resources_profile_source(
+    core_source_generation=custody.core_source_generation)
+   if (current is None or current.profile_prompt_sha256!=self.profile_prompt_sha256
+       or current.profile_manifest_sha256!=self.profile_manifest_sha256
+       or current.profile_member_manifest_sha256!=self.profile_member_manifest_sha256
+       or not current.is_current_sealed(custody)):
+    return None
+   return current
+  except Exception:
+   return None
 def _digest(path):
  h=hashlib.sha256()
  with path.open("rb") as f:
