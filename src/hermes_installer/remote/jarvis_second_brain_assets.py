@@ -37,6 +37,7 @@ _VIEW = """<section class=\"second-brain-page\" aria-labelledby=\"second-brain-t
     <div class=\"brain-graph-heading\"><div><p class=\"second-brain-kicker\">DERIVED FROM VAULT LINKS</p><h2 id=\"brain-graph-title\">Knowledge map</h2></div>
       <button type=\"button\" data-graph-refresh>Refresh map</button></div>
     <p class=\"brain-graph-note\" data-graph-status>Connections represent indexed Obsidian links only; they do not imply communication or execution.</p>
+    <p class=\"brain-graph-note\">Node color uses the first listed vault tag. Filters match any selected tag.</p>
     <p class=\"brain-graph-note\">Moving dots are visual guides along those saved note links; they do not show live data transfer.</p>
     <p class=\"brain-graph-note\">Notes remain in your private vault when a chat or project is removed.</p>
     <div class=\"brain-graph-tools\"><div data-graph-legend aria-label=\"Filter notes by their actual Obsidian tags\"></div>

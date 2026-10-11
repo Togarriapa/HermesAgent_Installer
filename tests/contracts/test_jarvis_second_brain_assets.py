@@ -63,6 +63,8 @@ class JarvisSecondBrainAssetTests(unittest.TestCase):
         self.assertIn("data-graph-list", FEATURE_ASSETS.view_html)
         self.assertIn("Notes remain in your private vault when a chat or project is removed", FEATURE_ASSETS.view_html)
         self.assertIn("Moving dots are visual guides", FEATURE_ASSETS.view_html)
+        self.assertIn("Node color uses the first listed vault tag", FEATURE_ASSETS.view_html)
+        self.assertIn("Filters match any selected tag", FEATURE_ASSETS.view_html)
 
 
 if __name__ == "__main__":
