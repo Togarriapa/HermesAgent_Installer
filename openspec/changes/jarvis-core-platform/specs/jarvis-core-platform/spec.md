@@ -1975,3 +1975,14 @@ Original restrained dark/cyan layered visuals and responsive phone/tablet/wide l
 #### Scenario: Reference evidence remains limited
 - **WHEN** supplied video coverage contains only some verified frames, metadata or unavailable transcripts
 - **THEN** the research record states that exact coverage and does not claim a full review, Hermes functionality or live qualification from those references.
+
+### Requirement: Provenance-backed secondary workflow inspection
+Any dashboard workflow graph SHALL remain a secondary inspectable view derived from registered Resources provenance or authentic correlated activity, with configured/discovered and functional/active states distinguished and an accessible list alternative.
+
+#### Scenario: Cinematic reference or absent event lineage
+- **WHEN** a reference contains a decorative graph or the native event/source relation cannot be established
+- **THEN** the UI does not invent active nodes, edges, telemetry or execution authority; unsupported inspection remains explicitly pending.
+
+#### Scenario: Reference-derived skill improvement
+- **WHEN** a saved reference proposes a reusable Skill improvement
+- **THEN** actual source coverage and project fit accompany its existing native review/diff/approval/use/rollback lifecycle, and an inaccessible source or publisher snippet alone never establishes reviewed content or automatic ingestion/activation.
