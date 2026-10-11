@@ -33,9 +33,11 @@ class CoreGatewayInspectorClientTests(unittest.TestCase):
         self.assertIsNone(core_gateway_inspector._mission_binding_from_wire(None))
         self.assertIsNone(core_gateway_inspector._mission_binding_wire(None))
         binding = jarvis_mission_executor.MissionBinding.from_wire({
-            "schema": 1, "mission_id": "m" * 24, "revision": 2,
+            "schema": 2, "mission_id": "m" * 24, "revision": 2,
             "plan_sha256": "a" * 64, "task_sha256": "b" * 64,
-            "source_profile_id": "orchestrator",
+            "source_profile_id": "hermes", "execution_mode": "oneshot",
+            "autonomy_mode": "approval_required", "selected_source_ids": ["orchestrator"],
+            "scope_sha256": "c" * 64, "authorization_sha256": None,
         })
         self.assertEqual(core_gateway_inspector._mission_binding_wire(binding), binding.to_wire())
         with self.assertRaises(core_gateway_inspector.CoreInspectionDenied):
