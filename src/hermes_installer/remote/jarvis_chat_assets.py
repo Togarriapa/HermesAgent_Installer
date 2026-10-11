@@ -988,6 +988,19 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     }
     return false;
   }
+  async function classifyTurnStreamError(event, readyState, reconcile, onReconnect) {
+    let code = "";
+    const hasPayload = event && typeof event.data === "string";
+    if (hasPayload) { try { code = JSON.parse(event.data).code || ""; } catch (_) {} }
+    if (!hasPayload && readyState === 0) {
+      onReconnect();
+      return {kind: "reconnecting", code: ""};
+    }
+    if (!hasPayload && readyState === 2) {
+      try { if (await reconcile()) return {kind: "recovered", code: ""}; } catch (_) {}
+    }
+    return {kind: "failed", code: typeof code === "string" ? code : ""};
+  }
   function startHeartbeat(turnId, conversationAtStart, prompt, assistantBody, waiting) {
     heartbeatTimer = window.setInterval(async () => {
       if (activeTurnId !== turnId || !heartbeatNonce) return;
@@ -1007,6 +1020,9 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     // controls before opening SSE, whose connection can fail immediately.
     renderTurnControls(true);
     eventSource = new EventSource(`${API}/turns/${encodeURIComponent(turnId)}/events`, { withCredentials: true });
+    eventSource.addEventListener("open", () => {
+      if (activeTurnId === turnId && ui.connection.dataset.state !== "ready") setConnection("ready", "Secure connection");
+    });
     startHeartbeat(turnId, conversationAtStart, prompt, assistantBody, waiting);
     eventSource.addEventListener("message.delta", (event) => {
       if (activeTurnId !== turnId) return;
@@ -1040,20 +1056,26 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       stopSpeech();
       showError("Jarvis could not finish that response. You can try again.");
     });
-    eventSource.addEventListener("error", (event) => {
+    eventSource.addEventListener("error", async (event) => {
       if (activeTurnId !== turnId) return;
+      const source = eventSource;
+      const disposition = await classifyTurnStreamError(
+        event, source ? source.readyState : 2,
+        () => reconcileCompletedTurn(turnId, conversationAtStart, prompt, assistantBody, waiting),
+        () => setConnection("checking", "Reconnecting event stream…")
+      );
+      if (activeTurnId !== turnId) return;
+      if (disposition.kind === "reconnecting" || disposition.kind === "recovered") return;
       waiting.remove();
-      let code = "";
-      try { code = JSON.parse(event.data).code; } catch (_) {}
       const safeErrors = {
         busy: "Jarvis is busy right now. Your conversation remains separate.",
         authorization: "Your secure session is no longer current. Sign in again to continue.",
         "backend-unavailable": "The assistant service is currently unavailable."
       };
       closeStream();
-      if (typeof code === "string" && safeErrors[code]) {
-        showError(safeErrors[code]);
-        if (code === "authorization") setConnection("error", "Access unavailable");
+      if (typeof disposition.code === "string" && safeErrors[disposition.code]) {
+        showError(safeErrors[disposition.code]);
+        if (disposition.code === "authorization") setConnection("error", "Access unavailable");
       } else {
         showError("The response stream ended. Reload the conversation to see its saved state.");
         setConnection("error", "Connection interrupted");

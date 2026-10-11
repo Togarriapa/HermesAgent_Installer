@@ -341,6 +341,41 @@ RECONCILE
             )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_sse_retries_transient_disconnect_and_recovers_saved_completion(self):
+        _content_type, script = reviewed_client_bundle()
+        client = script.decode("utf-8")
+        classifier = "async function classifyTurnStreamError(" + client.split(
+            "async function classifyTurnStreamError(", 1)[1].split(
+                "\n  function startHeartbeat(", 1)[0]
+        harness = r'''const assert = require("node:assert/strict");
+CLASSIFIER
+(async () => {
+  let reconnects = 0, reconciliations = 0;
+  const retry = await classifyTurnStreamError({}, 0, async () => false, () => { reconnects += 1; });
+  assert.deepEqual(retry, {kind: "reconnecting", code: ""});
+  assert.equal(reconnects, 1);
+  assert.equal(reconciliations, 0);
+
+  const recovered = await classifyTurnStreamError({}, 2, async () => {
+    reconciliations += 1;
+    return true;
+  }, () => { reconnects += 1; });
+  assert.deepEqual(recovered, {kind: "recovered", code: ""});
+  assert.equal(reconciliations, 1);
+
+  const denied = await classifyTurnStreamError({data: JSON.stringify({code: "authorization"})}, 2,
+    async () => { throw new Error("authorization failures must not become success"); }, () => {});
+  assert.deepEqual(denied, {kind: "failed", code: "authorization"});
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+'''.replace("CLASSIFIER", classifier)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "sse-harness.js"
+            path.write_text(harness, encoding="utf-8")
+            result = subprocess.run(
+                ["node", str(path)], capture_output=True, text=True, check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_accepted_queued_turn_exposes_stop_until_terminal_cleanup(self):
         _content_type, script = reviewed_client_bundle()
         source = script.decode("utf-8")
