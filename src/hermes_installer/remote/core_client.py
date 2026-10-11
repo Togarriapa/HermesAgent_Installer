@@ -740,15 +740,16 @@ class CoreRpcClient:
             settings_rows = row.get("settings_schema")
             if not isinstance(settings_rows, list) or len(settings_rows) > 64:
                 raise JarvisChatDenied("official plugin settings schema was invalid")
+            safe_schema = _safe_plugin_settings_schema(settings_rows)
             settings_revision = hashlib.sha256(json.dumps(
-                settings_rows, sort_keys=True, separators=(",", ":"),
+                safe_schema, sort_keys=True, separators=(",", ":"),
                 ensure_ascii=True, allow_nan=False).encode("ascii")).hexdigest()
             projected.append({
                 "name": name, "key": key, "version": row["version"], "source": source,
                 "status": row["status"], "catalog_name": (
                     row.get("catalog_name") if isinstance(row.get("catalog_name"), str) else None),
                 "update_available": row.get("update_available") if type(row.get("update_available")) is bool else None,
-                "settings_schema": _safe_plugin_settings_schema(row.get("settings_schema")),
+                "settings_schema": safe_schema,
                 "settings_revision": settings_revision,
             })
         return projected
@@ -806,11 +807,14 @@ class CoreRpcClient:
             if (name is None or transport not in {"http", "stdio", "unknown"}
                     or type(row.get("enabled")) is not bool):
                 raise JarvisChatDenied("official MCP configuration row was invalid")
+            source = row.get("source") if row.get("source") in {"plugin", "config"} else "unknown"
+            safe_revision_row = {"name": name, "transport": transport,
+                                 "enabled": row["enabled"], "source": source}
             config_revision = hashlib.sha256(json.dumps(
-                row, sort_keys=True, separators=(",", ":"),
+                safe_revision_row, sort_keys=True, separators=(",", ":"),
                 ensure_ascii=True, allow_nan=False).encode("ascii")).hexdigest()
             projected.append({"name": name, "transport": transport, "enabled": row["enabled"],
-                              "source": row.get("source") if row.get("source") in {"plugin", "config"} else "unknown",
+                              "source": source,
                               "config_revision": config_revision})
         return projected
 
