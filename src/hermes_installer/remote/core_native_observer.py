@@ -37,6 +37,7 @@ _CODEX_ENDPOINT = "https://chatgpt.com/backend-api/codex"
 _CODEX_PROVIDER = "openai-codex"
 _CODEX_MODE = "codex_responses"
 _OBSERVER_RUNTIME_DIR = Path("/run/hermes-jarvis-native-observer")
+_NATIVE_INHERITANCE_POLICY_SEAL = object()
 
 
 class CoreNativeObservationUnavailable(PermissionError):
@@ -192,6 +193,85 @@ class NativeSourceMember:
 
 
 @dataclass(frozen=True, slots=True)
+class RootSelectedOrchestratorDelegationPolicy:
+    """Root-enrolled owner policy for Hermes' native inherited-tool delegation.
+
+    This policy is distinct from the Resources profile manifest: the profile has
+    no tool grants, and its empty ``profile_tool_names`` remains empty.  The
+    policy authorizes only the exact current parent tool closure selected by the
+    root-verified native configuration.  Hermes still applies its own blocked,
+    disabled, pause, depth, and lifecycle rules when it builds the child.
+    """
+
+    schema: int
+    policy_handle: str
+    policy_sha256: str
+    core_generation: str
+    core_source_generation: str
+    owner_subject_sha256: str
+    profile_id: str
+    mode: str
+    parent_tool_configuration_sha256: str
+    allowed_parent_tool_names: tuple[str, ...]
+    allow_inherited_mcp: bool
+    allow_native_orchestrator_delegation: bool
+    additional_metered_budget: int
+    issued_monotonic: float
+    expires_monotonic: float
+    _seal: object
+
+    def __post_init__(self) -> None:
+        if (type(self.schema) is not int or self.schema != 1
+                or not _OPAQUE.fullmatch(self.policy_handle or "")
+                or not _HASH.fullmatch(self.policy_sha256 or "")
+                or not _HASH.fullmatch(self.core_generation or "")
+                or not _HASH.fullmatch(self.core_source_generation or "")
+                or not _HASH.fullmatch(self.owner_subject_sha256 or "")
+                or self.profile_id != "orchestrator"
+                or self.mode != "native-parent-inheritance"
+                or not _HASH.fullmatch(self.parent_tool_configuration_sha256 or "")
+                or not isinstance(self.allowed_parent_tool_names, tuple)
+                or not self.allowed_parent_tool_names or len(self.allowed_parent_tool_names) > 256
+                or any(not _ID.fullmatch(item or "") for item in self.allowed_parent_tool_names)
+                or len(set(self.allowed_parent_tool_names)) != len(self.allowed_parent_tool_names)
+                or tuple(sorted(self.allowed_parent_tool_names)) != self.allowed_parent_tool_names
+                or type(self.allow_inherited_mcp) is not bool
+                or type(self.allow_native_orchestrator_delegation) is not bool
+                or not self.allow_native_orchestrator_delegation
+                or "delegate_task" not in self.allowed_parent_tool_names
+                or type(self.additional_metered_budget) is not int
+                or self.additional_metered_budget != 0
+                or type(self.issued_monotonic) not in (float, int)
+                or type(self.expires_monotonic) not in (float, int)
+                or not math.isfinite(self.issued_monotonic)
+                or not math.isfinite(self.expires_monotonic)
+                or self.issued_monotonic > time.monotonic()
+                or self.expires_monotonic <= self.issued_monotonic
+                or self.expires_monotonic > self.issued_monotonic + 600.0
+                or self._seal is not _NATIVE_INHERITANCE_POLICY_SEAL):
+            raise CoreNativeObservationUnavailable("root native inheritance policy is malformed")
+
+
+def _native_policy_digest_fields(policy: RootSelectedOrchestratorDelegationPolicy) -> dict[str, Any]:
+    return {
+        "schema": policy.schema,
+        "policy_handle": policy.policy_handle,
+        "core_generation": policy.core_generation,
+        "core_source_generation": policy.core_source_generation,
+        "owner_subject_sha256": policy.owner_subject_sha256,
+        "profile_id": policy.profile_id,
+        "mode": policy.mode,
+        "parent_tool_configuration_sha256": policy.parent_tool_configuration_sha256,
+        "allowed_parent_tool_names": list(policy.allowed_parent_tool_names),
+        "allow_inherited_mcp": policy.allow_inherited_mcp,
+        "allow_native_orchestrator_delegation": policy.allow_native_orchestrator_delegation,
+        "additional_metered_budget": policy.additional_metered_budget,
+        "issued_monotonic": policy.issued_monotonic,
+        "expires_monotonic": policy.expires_monotonic,
+    }
+
+
+@dataclass(frozen=True, slots=True)
 class RootSelectedInternalProfileDispatchClaim:
     """Closed, short-lived dispatch claim returned only over authenticated root IPC.
 
@@ -227,6 +307,12 @@ class RootSelectedInternalProfileDispatchClaim:
     base_url: str
     additional_metered_budget: int
     parent_tool_names: tuple[str, ...]
+    delegation_policy_handle: str
+    delegation_policy_sha256: str
+    parent_tool_configuration_sha256: str
+    allowed_parent_tool_names: tuple[str, ...]
+    allow_inherited_mcp: bool
+    allow_native_orchestrator_delegation: bool
     profile_tool_names: tuple[str, ...]
     parent_privacy_grants: tuple[str, ...]
     profile_privacy_requirements: tuple[str, ...]
@@ -265,8 +351,20 @@ class RootSelectedInternalProfileDispatchClaim:
                 or not isinstance(self.parent_tool_names, tuple)
                 or not self.parent_tool_names or len(self.parent_tool_names) > 256
                 or any(not _ID.fullmatch(item or "") for item in self.parent_tool_names)
+                or not _OPAQUE.fullmatch(self.delegation_policy_handle or "")
+                or not _HASH.fullmatch(self.delegation_policy_sha256 or "")
+                or not _HASH.fullmatch(self.parent_tool_configuration_sha256 or "")
+                or not isinstance(self.allowed_parent_tool_names, tuple)
+                or not self.allowed_parent_tool_names or len(self.allowed_parent_tool_names) > 256
+                or any(not _ID.fullmatch(item or "") for item in self.allowed_parent_tool_names)
+                or tuple(sorted(set(self.parent_tool_names))) != self.parent_tool_names
+                or tuple(sorted(set(self.allowed_parent_tool_names))) != self.allowed_parent_tool_names
+                or self.parent_tool_names != self.allowed_parent_tool_names
+                or type(self.allow_inherited_mcp) is not bool
+                or type(self.allow_native_orchestrator_delegation) is not bool
+                or not self.allow_native_orchestrator_delegation
                 or not isinstance(self.profile_tool_names, tuple)
-                or not self.profile_tool_names or len(self.profile_tool_names) > 256
+                or len(self.profile_tool_names) > 256
                 or any(not _ID.fullmatch(item or "") for item in self.profile_tool_names)
                 or not isinstance(self.parent_privacy_grants, tuple)
                 or len(self.parent_privacy_grants) > 128
@@ -442,6 +540,9 @@ class CoreNativeObservationClient:
             "source_manifest", "source_manifest_sha256", "prompt_b64", "prompt_sha256",
             "prompt_revision", "parent_tool_names", "parent_privacy_grants", "expires_monotonic",
             "evidence_class", "provider", "api_mode", "base_url", "additional_metered_budget",
+            "delegation_policy_handle", "delegation_policy_sha256",
+            "parent_tool_configuration_sha256", "allowed_parent_tool_names",
+            "allow_inherited_mcp", "allow_native_orchestrator_delegation",
         }
         if not isinstance(claim, dict) or set(claim) != required:
             raise CoreNativeObservationUnavailable("root dispatch claim payload is malformed")
@@ -463,9 +564,13 @@ class CoreNativeObservationClient:
                 manifest.append(NativeSourceMember(item["path"], item["sha256"], item["size"]))
             names, grants = claim["parent_tool_names"], claim["parent_privacy_grants"]
             profile_tools, privacy_requirements = claim["profile_tool_names"], claim["profile_privacy_requirements"]
+            allowed_names = claim["allowed_parent_tool_names"]
             if (not isinstance(names, list) or not isinstance(grants, list)
+                    or not isinstance(allowed_names, list)
                     or not isinstance(profile_tools, list) or not isinstance(privacy_requirements, list)
-                    or any(not isinstance(value, str) for value in (*names, *grants, *profile_tools, *privacy_requirements))):
+                    or any(not isinstance(value, str) for value in (*names, *grants, *allowed_names, *profile_tools, *privacy_requirements))
+                    or type(claim["allow_inherited_mcp"]) is not bool
+                    or type(claim["allow_native_orchestrator_delegation"]) is not bool):
                 raise ValueError
             if claim["claim_handle"] != claim_handle:
                 raise ValueError
@@ -485,6 +590,12 @@ class CoreNativeObservationClient:
                 source_manifest_sha256=claim["source_manifest_sha256"],
                 prompt_bytes=prompt_bytes, prompt_sha256=claim["prompt_sha256"],
                 prompt_revision=claim["prompt_revision"], parent_tool_names=tuple(names),
+                delegation_policy_handle=claim["delegation_policy_handle"],
+                delegation_policy_sha256=claim["delegation_policy_sha256"],
+                parent_tool_configuration_sha256=claim["parent_tool_configuration_sha256"],
+                allowed_parent_tool_names=tuple(allowed_names),
+                allow_inherited_mcp=claim["allow_inherited_mcp"],
+                allow_native_orchestrator_delegation=claim["allow_native_orchestrator_delegation"],
                 profile_tool_names=tuple(profile_tools), parent_privacy_grants=tuple(grants),
                 profile_privacy_requirements=tuple(privacy_requirements),
                 expires_monotonic=claim["expires_monotonic"],
@@ -520,6 +631,8 @@ class RootCoreNativeObservationRegistry:
         self._lock = threading.RLock()
         self._owners: dict[str, Any] = {}
         self._owner_turn_bindings: dict[str, str] = {}
+        self._policies: dict[str, dict[str, Any]] = {}
+        self._owner_policy_handles: dict[str, str] = {}
         self._attempts: dict[str, dict[str, Any]] = {}
         self._calls: dict[str, dict[str, Any]] = {}
         self._claims: dict[str, dict[str, Any]] = {}
@@ -554,6 +667,92 @@ class RootCoreNativeObservationRegistry:
                 self._close_fd(getattr(expired, "_core_pidfd", None))
         return handle
 
+    def enroll_current_orchestrator_policy(self, owner_turn_observation: Any,
+                                           current_tool_configuration: Any
+                                           ) -> RootSelectedOrchestratorDelegationPolicy:
+        """Root-enroll the owner turn's current native parent inheritance policy.
+
+        The configuration is a fixed sealed readback from the inspector, not a
+        caller mapping.  This policy grants no additional tools: its allowlist is
+        the already-selected native parent closure, and Hermes' own child builder
+        continues to apply its blocked/disabled, pause, depth and lifecycle gates.
+        """
+        from hermes_installer.remote.core_gateway_inspector import (
+            CoreVerifiedNativeToolConfiguration,
+            CoreVerifiedOwnerTurnObservation,
+        )
+        if (type(owner_turn_observation) is not CoreVerifiedOwnerTurnObservation
+                or type(current_tool_configuration) is not CoreVerifiedNativeToolConfiguration):
+            raise CoreNativeObservationUnavailable("sealed owner and native tool configuration are required")
+        now = time.monotonic()
+        handle = owner_turn_observation.owner_turn_handle
+        if (current_tool_configuration.is_current_sealed(
+                    custody=self._custody, owner_turn=owner_turn_observation, now=now) is not True
+                or owner_turn_observation.is_current_sealed(
+                    self._config, custody=self._custody, now=now) is not True
+                or current_tool_configuration.core_generation != owner_turn_observation.core_generation
+                or current_tool_configuration.core_source_generation != owner_turn_observation.core_source_generation
+                or current_tool_configuration.owner_subject_sha256 != owner_turn_observation.owner_subject_sha256):
+            raise CoreNativeObservationUnavailable("current native tool configuration is not owner-bound")
+        names = current_tool_configuration.allowed_parent_tool_names
+        if (not isinstance(names, tuple) or not names or len(names) > 256
+                or tuple(sorted(set(names))) != names
+                or any(not isinstance(name, str) or not _ID.fullmatch(name) for name in names)
+                or "delegate_task" not in names
+                or type(current_tool_configuration.allow_inherited_mcp) is not bool
+                or type(current_tool_configuration.allow_native_orchestrator_delegation) is not bool
+                or current_tool_configuration.allow_native_orchestrator_delegation is not True):
+            raise CoreNativeObservationUnavailable("selected native delegation policy is unavailable")
+        issued = time.monotonic()
+        expiry = min(float(owner_turn_observation.expires_monotonic), issued + 600.0)
+        if expiry <= issued:
+            raise CoreNativeObservationUnavailable("owner turn expires before policy enrollment")
+        policy_handle = secrets.token_urlsafe(32)
+        fields = {
+            "schema": 1, "policy_handle": policy_handle,
+            "core_generation": owner_turn_observation.core_generation,
+            "core_source_generation": owner_turn_observation.core_source_generation,
+            "owner_subject_sha256": owner_turn_observation.owner_subject_sha256,
+            "profile_id": "orchestrator", "mode": "native-parent-inheritance",
+            "parent_tool_configuration_sha256": current_tool_configuration.tool_configuration_sha256,
+            "allowed_parent_tool_names": list(names),
+            "allow_inherited_mcp": current_tool_configuration.allow_inherited_mcp,
+            "allow_native_orchestrator_delegation": current_tool_configuration.allow_native_orchestrator_delegation,
+            "additional_metered_budget": 0,
+            "issued_monotonic": issued, "expires_monotonic": expiry,
+        }
+        policy = RootSelectedOrchestratorDelegationPolicy(
+            schema=1, policy_handle=policy_handle,
+            policy_sha256=_hash(fields),
+            core_generation=owner_turn_observation.core_generation,
+            core_source_generation=owner_turn_observation.core_source_generation,
+            owner_subject_sha256=owner_turn_observation.owner_subject_sha256,
+            profile_id="orchestrator", mode="native-parent-inheritance",
+            parent_tool_configuration_sha256=current_tool_configuration.tool_configuration_sha256,
+            allowed_parent_tool_names=names,
+            allow_inherited_mcp=current_tool_configuration.allow_inherited_mcp,
+            allow_native_orchestrator_delegation=True,
+            additional_metered_budget=0, issued_monotonic=issued,
+            expires_monotonic=expiry, _seal=_NATIVE_INHERITANCE_POLICY_SEAL,
+        )
+        with self._lock:
+            self._ensure_open()
+            if self._owners.get(handle) is not owner_turn_observation:
+                raise CoreNativeObservationUnavailable("owner turn was not registered by this root")
+            old_handle = self._owner_policy_handles.pop(handle, None)
+            if old_handle is not None:
+                self._policies.pop(old_handle, None)
+            self._policies[policy_handle] = {
+                "policy": policy, "owner": owner_turn_observation,
+                "configuration": current_tool_configuration,
+            }
+            self._owner_policy_handles[handle] = policy_handle
+            while len(self._policies) > 256:
+                stale_handle = next(iter(self._policies))
+                stale = self._policies.pop(stale_handle)
+                self._owner_policy_handles.pop(stale["owner"].owner_turn_handle, None)
+        return policy
+
     @staticmethod
     def _close_fd(fd: Any) -> None:
         if type(fd) is int and fd >= 0:
@@ -567,6 +766,13 @@ class RootCoreNativeObservationRegistry:
             raise CoreNativeObservationUnavailable("root observer registry is closed")
 
     def _prune(self, now: float) -> None:
+        for handle, row in list(self._policies.items()):
+            policy = row.get("policy")
+            if not isinstance(policy, RootSelectedOrchestratorDelegationPolicy) or policy.expires_monotonic <= now:
+                self._policies.pop(handle, None)
+                owner = row.get("owner")
+                if owner is not None:
+                    self._owner_policy_handles.pop(owner.owner_turn_handle, None)
         for handle, row in list(self._attempts.items()):
             if row["expiry"] <= now:
                 self._attempts.pop(handle, None)
@@ -583,6 +789,9 @@ class RootCoreNativeObservationRegistry:
             if owner.expires_monotonic <= now:
                 self._owners.pop(handle, None)
                 self._owner_turn_bindings.pop(handle, None)
+                policy_handle = self._owner_policy_handles.pop(handle, None)
+                if policy_handle is not None:
+                    self._policies.pop(policy_handle, None)
                 self._close_fd(getattr(owner, "_core_pidfd", None))
                 continue
             if (owner.session_id == session_id
@@ -597,6 +806,30 @@ class RootCoreNativeObservationRegistry:
                 if bound == turn_id:
                     return owner
         return None
+
+    def _policy_for_owner(self, owner: Any, now: float) -> RootSelectedOrchestratorDelegationPolicy | None:
+        from hermes_installer.remote.core_gateway_inspector import CoreVerifiedNativeToolConfiguration
+        handle = self._owner_policy_handles.get(owner.owner_turn_handle)
+        row = self._policies.get(handle) if isinstance(handle, str) else None
+        if row is None or row.get("owner") is not owner:
+            return None
+        policy = row.get("policy")
+        configuration = row.get("configuration")
+        if (type(policy) is not RootSelectedOrchestratorDelegationPolicy
+                or type(configuration) is not CoreVerifiedNativeToolConfiguration
+                or policy._seal is not _NATIVE_INHERITANCE_POLICY_SEAL
+                or policy.expires_monotonic <= now
+                or policy.core_generation != self._custody.core_generation
+                or policy.core_generation != owner.core_generation
+                or policy.core_source_generation != self._custody.core_source_generation
+                or policy.owner_subject_sha256 != owner.owner_subject_sha256
+                or _hash(_native_policy_digest_fields(policy)) != policy.policy_sha256
+                or configuration.is_current_sealed(
+                    custody=self._custody, owner_turn=owner, now=now) is not True):
+            self._policies.pop(handle, None)
+            self._owner_policy_handles.pop(owner.owner_turn_handle, None)
+            return None
+        return policy
 
     def _handle(self, peer: tuple[int, int, int], request: dict[str, Any]) -> dict[str, Any]:
         op = request.get("op")
@@ -613,6 +846,7 @@ class RootCoreNativeObservationRegistry:
                 if set(request) != required:
                     raise ValueError("attempt schema mismatch")
                 owner = self._owner_for(request["session_id"], request["turn_id"])
+                policy = self._policy_for_owner(owner, time.monotonic()) if owner is not None else None
                 if (owner is None or request["provider"] != _CODEX_PROVIDER
                         or request["api_mode"] != _CODEX_MODE or request["base_url"] != _CODEX_ENDPOINT
                         or type(request["retry_count"]) is not int or request["retry_count"] != 0
@@ -625,7 +859,8 @@ class RootCoreNativeObservationRegistry:
                         or any(not isinstance(name, str) or not _ID.fullmatch(name)
                                for name in request["parent_tool_names"])
                         or len(set(request["parent_tool_names"])) != len(request["parent_tool_names"])
-                        or "delegate_task" not in request["parent_tool_names"]):
+                        or policy is None
+                        or tuple(sorted(request["parent_tool_names"])) != policy.allowed_parent_tool_names):
                     raise ValueError("attempt is not an enrolled current subscription turn")
                 handle = secrets.token_urlsafe(32)
                 if len(self._attempts) >= 2048:
@@ -634,7 +869,8 @@ class RootCoreNativeObservationRegistry:
                 self._attempts[handle] = {"owner": owner, "session_id": request["session_id"],
                     "turn_id": request["turn_id"], "api_request_id": request["api_request_id"],
                     "account": request["account_fingerprint"], "expiry": expiry, "response": None,
-                    "parent_tool_names": tuple(request["parent_tool_names"])}
+                    "parent_tool_names": tuple(request["parent_tool_names"]),
+                    "policy_handle": policy.policy_handle}
                 return {"schema": 1, "nonce": nonce, "ok": True, "attempt_handle": handle,
                         "owner_turn_handle": owner.owner_turn_handle, "expires_monotonic": expiry}
             if op == "register-response":
@@ -672,6 +908,7 @@ class RootCoreNativeObservationRegistry:
                     "handle": call_handle, "attempt_session_id": row["session_id"],
                     "attempt_turn_id": row["turn_id"],
                     "parent_tool_names": row["parent_tool_names"],
+                    "policy_handle": row["policy_handle"],
                     "tool_call_id": request["tool_call_id"], "tool_name": returned["name"],
                     "arguments": args, "arguments_sha256": returned["arguments_sha256"],
                     "expiry": row["expiry"], "peer": peer, "claim": None}
@@ -685,21 +922,24 @@ class RootCoreNativeObservationRegistry:
                     raise ValueError("prepare schema mismatch")
                 call = self._calls.get(request["observed_call_handle"])
                 source = self._source.resolve_current(self._custody)
+                policy_row = self._policies.get(call["policy_handle"]) if call is not None else None
+                policy = policy_row.get("policy") if policy_row is not None else None
                 try:
                     call_args = json.loads(call["arguments"].decode("utf-8", errors="strict")) if call else None
-                    source_tools = frozenset(source.profile_tool_names)
                     parent_tools = frozenset(call["parent_tool_names"]) if call else frozenset()
                 except Exception:
-                    call_args, source_tools, parent_tools = None, frozenset(), frozenset()
+                    call_args, parent_tools = None, frozenset()
                 if (call is None or call["expiry"] <= time.monotonic() or call["claim"] is not None
                         or call["tool_name"] != "resources_delegate"
                         or call["peer"] != peer
+                        or policy is None
+                        or type(policy) is not RootSelectedOrchestratorDelegationPolicy
+                        or self._policy_for_owner(call["owner"], time.monotonic()) is not policy
+                        or tuple(sorted(parent_tools)) != policy.allowed_parent_tool_names
+                        or policy.additional_metered_budget != 0
                         or source.is_current_sealed(custody=self._custody, now=time.monotonic()) is not True
                         or source.profile_id != "orchestrator"
                         or source.profile_privacy_requirements
-                        # Hermes' native delegate inherits the actual parent inventory;
-                        # without an exact source policy grant for that whole set, deny.
-                        or not source_tools or source_tools != parent_tools
                         or not isinstance(call_args, dict) or set(call_args) != {"goal"}
                         or not isinstance(call_args.get("goal"), str)
                         or not call_args["goal"].strip() or len(call_args["goal"]) > 1200
@@ -710,7 +950,9 @@ class RootCoreNativeObservationRegistry:
                     raise ValueError("dispatch claim registry is full")
                 call["claim"] = claim_handle
                 self._claims[claim_handle] = {"call": call,
-                    "owner": call["owner"], "expiry": min(call["expiry"], float(source.expires_monotonic))}
+                    "owner": call["owner"], "policy": policy,
+                    "expiry": min(call["expiry"], float(source.expires_monotonic),
+                                  policy.expires_monotonic)}
                 return {"schema": 1, "nonce": nonce, "ok": True, "claim_handle": claim_handle}
             if op == "consume-dispatch":
                 if set(request) != {"schema", "op", "nonce", "claim_handle"}:
@@ -719,12 +961,13 @@ class RootCoreNativeObservationRegistry:
                 if claim is None or claim["expiry"] <= time.monotonic():
                     raise ValueError("dispatch claim expired or was already consumed")
                 call, owner = claim["call"], claim["owner"]
+                policy = claim["policy"]
                 source = self._source.resolve_current(self._custody)
                 if (call["peer"] != peer or source.is_current_sealed(custody=self._custody, now=time.monotonic()) is not True
-                        or owner.is_current_sealed(self._config, custody=self._custody, now=time.monotonic()) is not True):
+                        or owner.is_current_sealed(self._config, custody=self._custody, now=time.monotonic()) is not True
+                        or self._policy_for_owner(owner, time.monotonic()) is not policy
+                        or tuple(sorted(call["parent_tool_names"])) != policy.allowed_parent_tool_names):
                     raise ValueError("dispatch lineage is no longer current")
-                if source.profile_privacy_requirements:
-                    raise ValueError("selected source requires an unverified privacy grant")
                 # Source/tool/privacy intersection is completed by the consumer against
                 # the exact locally injected parent Agent; no Agent crosses this socket.
                 manifest = [{"path": item.path, "sha256": item.sha256, "size": item.size}
@@ -746,6 +989,12 @@ class RootCoreNativeObservationRegistry:
                     "prompt_b64": base64.b64encode(source.effective_prompt).decode("ascii"),
                     "prompt_sha256": source.effective_prompt_sha256, "prompt_revision": source.source_revision,
                     "parent_tool_names": list(call["parent_tool_names"]), "parent_privacy_grants": [],
+                    "delegation_policy_handle": policy.policy_handle,
+                    "delegation_policy_sha256": policy.policy_sha256,
+                    "parent_tool_configuration_sha256": policy.parent_tool_configuration_sha256,
+                    "allowed_parent_tool_names": list(policy.allowed_parent_tool_names),
+                    "allow_inherited_mcp": policy.allow_inherited_mcp,
+                    "allow_native_orchestrator_delegation": policy.allow_native_orchestrator_delegation,
                     "expires_monotonic": claim["expiry"], "evidence_class": "protected-core-process-observation",
                     "provider": _CODEX_PROVIDER, "api_mode": _CODEX_MODE, "base_url": _CODEX_ENDPOINT,
                     "additional_metered_budget": 0}
@@ -782,6 +1031,8 @@ class RootCoreNativeObservationRegistry:
                 self._close_fd(getattr(owner, "_core_pidfd", None))
             self._owners.clear()
             self._owner_turn_bindings.clear()
+            self._policies.clear()
+            self._owner_policy_handles.clear()
             self._attempts.clear()
             self._calls.clear()
             self._claims.clear()
