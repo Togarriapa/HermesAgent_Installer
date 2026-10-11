@@ -36,6 +36,11 @@ def _store(root):
     return prepare_obsidian_vault(ObsidianVaultConfig(root, OWNER, owner_uid=1000))
 
 
+def _write_fixture(path, text, *, mode=0o600):
+    path.write_text(text, encoding="utf-8")
+    path.chmod(mode)
+
+
 def test_vault_preparation_is_idempotent_and_preserves_existing_obsidian_files(tmp_path):
     root = tmp_path / "managed"
     root.mkdir(mode=0o700)
@@ -43,11 +48,11 @@ def test_vault_preparation_is_idempotent_and_preserves_existing_obsidian_files(t
     vault.mkdir(mode=0o700)
     (vault / "Notes").mkdir(mode=0o700)
     note = vault / "Notes" / "existing.md"
-    note.write_text("# Existing\nKeep these bytes.\n", encoding="utf-8")
+    _write_fixture(note, "# Existing\nKeep these bytes.\n")
     settings = vault / ".obsidian"
     settings.mkdir(mode=0o700)
     config = settings / "app.json"
-    config.write_text('{"alwaysUpdateLinks":true}\n', encoding="utf-8")
+    _write_fixture(config, '{"alwaysUpdateLinks":true}\n')
 
     first = prepare_obsidian_vault(ObsidianVaultConfig(root, OWNER, owner_uid=1000))
     second = prepare_obsidian_vault(ObsidianVaultConfig(root, OWNER, owner_uid=1000))
@@ -62,15 +67,12 @@ def test_vault_preparation_is_idempotent_and_preserves_existing_obsidian_files(t
 
 def test_current_markdown_search_backlinks_and_graph_resolve_real_links(tmp_path):
     store = _store(tmp_path / "managed")
-    (store._root / "Notes" / "Alpha.md").write_text(
+    _write_fixture(store._root / "Notes" / "Alpha.md",
         "---\ntitle: Alpha note\ntags: [garden, seed]\naliases: [A note]\n---\n"
         "Read [[Beta|the other note]] and [a local note](Beta.md). "
-        "Ignore [the web](https://example.org). <script>text</script>\n",
-        encoding="utf-8")
-    (store._root / "Notes" / "Beta.md").write_text(
-        "# Beta\nA real note.\n", encoding="utf-8")
-    (store._root / "Notes" / "Gamma.md").write_text(
-        "Unresolved [[missing note]].\n", encoding="utf-8")
+        "Ignore [the web](https://example.org). <script>text</script>\n")
+    _write_fixture(store._root / "Notes" / "Beta.md", "# Beta\nA real note.\n")
+    _write_fixture(store._root / "Notes" / "Gamma.md", "Unresolved [[missing note]].\n")
 
     page = store.search_notes("garden", limit=10)
     alpha = next(note for note in page.notes if note.title == "Alpha note")
@@ -87,9 +89,17 @@ def test_current_markdown_search_backlinks_and_graph_resolve_real_links(tmp_path
     assert "<script>" in store.read_note(alpha.note_id).markdown
 
 
+def test_ordinary_obsidian_notes_may_be_readable_but_not_writable_by_others(tmp_path):
+    store = _store(tmp_path / "managed")
+    _write_fixture(store._root / "Notes" / "Readable.md", "# Readable\nOwner note.\n",
+                   mode=0o644)
+
+    assert [note.title for note in store.list_notes().notes] == ["Readable"]
+
+
 def test_expert_note_scope_and_execution_private_draft_do_not_escape_owner_projection(tmp_path):
     store = _store(tmp_path / "managed")
-    (store._root / "Notes" / "OwnerOnly.md").write_text("Private owner note.\n", encoding="utf-8")
+    _write_fixture(store._root / "Notes" / "OwnerOnly.md", "Private owner note.\n")
     note = store.list_notes().notes[0]
     draft = store.create_private_draft(
         execution_id="mission_run_123", source_instance_id="expert_alpha",
@@ -130,7 +140,7 @@ def test_symlinked_note_directory_and_traversal_are_not_read_or_written(tmp_path
 def test_stale_external_edit_keeps_owner_bytes_and_reviewed_draft(tmp_path):
     store = _store(tmp_path / "managed")
     target = store._root / "Notes" / "Target.md"
-    target.write_text("# Target\nOwner version.\n", encoding="utf-8")
+    _write_fixture(target, "# Target\nOwner version.\n")
     base_id = store.list_notes().notes[0].note_id
     base_sha = hashlib.sha256(target.read_bytes()).hexdigest()
     draft = store.create_private_draft(
@@ -138,7 +148,7 @@ def test_stale_external_edit_keeps_owner_bytes_and_reviewed_draft(tmp_path):
         title="Target", markdown="# Target\nExpert proposal.\n",
         base_note_id=base_id, base_sha256=base_sha,
     )
-    target.write_text("# Target\nConcurrent Obsidian edit.\n", encoding="utf-8")
+    _write_fixture(target, "# Target\nConcurrent Obsidian edit.\n")
 
     args = {
         "execution_id": "mission_run_456", "draft_id": draft.draft_id,
@@ -196,9 +206,8 @@ def test_promotion_requires_exact_typed_root_permit_and_current_dispatch(tmp_pat
 
 def test_backup_restore_preserves_notes_obsidian_settings_and_private_drafts(tmp_path):
     source = _store(tmp_path / "source-managed")
-    (source._root / "Notes" / "Durable.md").write_text("# Durable\nKeep me.\n", encoding="utf-8")
-    (source._root / ".obsidian" / "app.json").write_text(
-        '{"legacyEditor":false}\n', encoding="utf-8")
+    _write_fixture(source._root / "Notes" / "Durable.md", "# Durable\nKeep me.\n")
+    _write_fixture(source._root / ".obsidian" / "app.json", '{"legacyEditor":false}\n')
     draft = source.create_private_draft(
         execution_id="mission_backup", source_instance_id="expert_beta",
         title="Private", markdown="# Private\nKeep this review.\n",
@@ -217,11 +226,11 @@ def test_backup_restore_preserves_notes_obsidian_settings_and_private_drafts(tmp
 
 def test_backup_restore_refuses_to_overwrite_existing_external_note(tmp_path):
     source = _store(tmp_path / "source-managed")
-    (source._root / "Notes" / "Shared.md").write_text("# Shared\nOriginal.\n", encoding="utf-8")
+    _write_fixture(source._root / "Notes" / "Shared.md", "# Shared\nOriginal.\n")
     snapshot = source.create_backup()
     restored = _store(tmp_path / "restore-managed")
     target = restored._root / "Notes" / "Shared.md"
-    target.write_text("# Shared\nExternal edit.\n", encoding="utf-8")
+    _write_fixture(target, "# Shared\nExternal edit.\n")
 
     with pytest.raises(ObsidianVaultConflict, match="restore target settings conflict"):
         restored.restore_backup(snapshot)
@@ -258,6 +267,22 @@ def test_private_drafts_reject_group_or_world_readable_existing_directory(tmp_pa
             execution_id="mission_secure", source_instance_id="expert_alpha",
             title="No leakage", markdown="# No leakage\n",
         )
+
+
+def test_private_draft_records_reject_group_or_world_readable_mode(tmp_path):
+    store = _store(tmp_path / "managed")
+    draft = store.create_private_draft(
+        execution_id="mission_secure_file", source_instance_id="expert_alpha",
+        title="No leakage", markdown="# No leakage\n",
+    )
+    record = (store._root / ".hermes-private" / "drafts" / draft.execution_id
+              / f"{draft.draft_id}.json")
+    record.chmod(0o644)
+
+    with pytest.raises(ObsidianVaultError, match="owner-only"):
+        store.read_private_draft(execution_id=draft.execution_id, draft_id=draft.draft_id)
+    with pytest.raises(ObsidianVaultError, match="incomplete"):
+        store.create_backup()
 
 
 def _root_effect_proof(arguments, owner):
