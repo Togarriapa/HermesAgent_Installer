@@ -198,9 +198,21 @@ class JarvisChatAssetTests(unittest.TestCase):
                       for path in ("/chat/assets/app.css", *FEATURE_CSS_CHUNK_PATHS)]
         css = "\n".join(css_assets)
         self.assertIn('.primary-nav>.nav-item,.primary-nav>.nav-group{flex:1 1 0;min-width:0}', css)
-        self.assertIn('html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-orbit-dial', css)
-        self.assertIn('class="presence-orbit-dial"', source)
-        self.assertIn('.jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-orbit-inner{animation:presence-turn 22s linear infinite}', css)
+        overview_features = [feature for feature in FEATURE_ASSETS if feature.feature_id == "overview"]
+        self.assertEqual(len(overview_features), 1)
+        overview = overview_features[0]
+        self.assertEqual(markup.count(overview.view_html), 1)
+        self.assertEqual(source.count(overview.mount_js), 1)
+        self.assertIn('class="reactor-dial"', overview.view_html)
+        self.assertIn('class="reactor-orbit-inner"', overview.view_html)
+        self.assertIn(
+            '.overview-stage[data-core-state="verified"][data-activity="active"] .reactor-orbit-outer',
+            overview.css,
+        )
+        self.assertIn(
+            '.overview-stage[data-core-state="verified"][data-activity="quiet"] .reactor-orbit-inner',
+            overview.css,
+        )
         self.assertIn('feature.id === "overview" && method === "GET" && path === "/chat/api/overview"', client)
         sender = client.split("async function sendMessage(text", 1)[1].split("function createIdempotencyKey()", 1)[0]
         self.assertIn("return true;", sender)
