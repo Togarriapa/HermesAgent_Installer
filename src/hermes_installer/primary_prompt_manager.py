@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import fcntl
 import json
 import os
 import re
@@ -209,8 +210,9 @@ def _read_record(core) -> dict[str, Any] | None:
             or not _valid_file_signature(prior_signature)
             or type(value.get("owner_prefix_length")) is not int
             or not 0 <= value["owner_prefix_length"] <= MAX_SOUL_BYTES
-            or value.get("owner_prefix_sha256") != value.get("prior_soul_sha256")
-            or value.get("owner_prefix_length") != prior_signature[6]
+            or (value.get("state") in {"preparing", "writing"}
+                and (value.get("owner_prefix_sha256") != value.get("prior_soul_sha256")
+                     or value.get("owner_prefix_length") != prior_signature[6]))
             or value.get("owner_separator_hex") not in {"", "0a", "0a0a"}
             or not isinstance(result_signature, list)
             or (value.get("state") in {"adopted", "rolling_back", "rolled_back"}
@@ -539,6 +541,178 @@ def _status_record(record, receipt):
         "native_effective_prompt_chars": receipt.get("native_effective_prompt_chars"),
         "functional": False,
     }
+
+
+def write_owner_prefix(content: str, *, expected_sha256: str, idempotency_key: str,
+                       core_source_generation: str) -> dict[str, Any]:
+    from . import core_runtime as core
+    if os.geteuid() != core.ROOT_UID:
+        raise PrimaryPromptAdoptionError("requires the fixed Linux root actor")
+    _ensure_dirs(core)
+    lock_path = core.PRIMARY_PROMPT_BACKUPS / "owner-prefix.lock"
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        info = os.fstat(lock_fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != core.ROOT_UID
+                or info.st_gid != core.ROOT_UID or stat.S_IMODE(info.st_mode) != 0o600):
+            raise PrimaryPromptAdoptionError("owner SOUL edit lock custody differs")
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        return _write_owner_prefix_locked(content, expected_sha256=expected_sha256,
+            idempotency_key=idempotency_key, core_source_generation=core_source_generation)
+    finally:
+        os.close(lock_fd)
+
+
+def _write_owner_prefix_locked(content: str, *, expected_sha256: str, idempotency_key: str,
+                               core_source_generation: str) -> dict[str, Any]:
+    """Edit only the owner prefix of an adopted SOUL, preserving its managed block.
+
+    The adoption backup remains the original pre-adoption SOUL so the existing
+    rollback still restores exactly what the owner had before Jarvis was added.
+    Each edit has its own root-only backup/idempotency journal.
+    """
+    from . import core_runtime as core
+    if (os.geteuid() != core.ROOT_UID or not isinstance(content, str) or "\x00" in content
+            or not _safe_hash(expected_sha256) or not _safe_hash(core_source_generation)
+            or not isinstance(idempotency_key, str)
+            or re.fullmatch(r"[A-Za-z0-9_-]{22,128}", idempotency_key) is None):
+        raise PrimaryPromptAdoptionError("owner SOUL edit request is invalid")
+    try:
+        proposed_prefix = content.encode("utf-8", "strict")
+    except UnicodeError:
+        raise PrimaryPromptAdoptionError("owner SOUL edit is not UTF-8") from None
+    if not 0 < len(proposed_prefix) <= MAX_SOUL_BYTES:
+        raise PrimaryPromptAdoptionError("owner SOUL edit exceeds its bound")
+    proposed_document = proposed_prefix
+    _check_root_context(core)
+    _ensure_dirs(core)
+    record = _read_record(core)
+    if record is None or record.get("state") != "adopted":
+        raise PrimaryPromptAdoptionError("an adopted Jarvis primary prompt is required")
+    current, signature = _read_soul(core)
+    key_hash = _sha(idempotency_key.encode("ascii"))
+    journal_name = f"owner-prefix-{key_hash}.json"
+    backup_name = f"owner-prefix-{key_hash}.backup"
+    journal_path = core.PRIMARY_PROMPT_BACKUPS / journal_name
+    backup_path = core.PRIMARY_PROMPT_BACKUPS / backup_name
+    try:
+        prior_raw = core._projection_file(journal_path, owner=core.ROOT_UID,
+            group=core.ROOT_UID, mode=0o600, maximum=16 * 1024)
+        journal = json.loads(prior_raw)
+        if (type(journal) is not dict or set(journal) != {"schema", "state", "key_sha256",
+                "source_generation", "base_sha256", "proposed_sha256", "backup_name"}
+                or journal.get("schema") != 1 or journal.get("key_sha256") != key_hash
+                or journal.get("source_generation") != core_source_generation
+                or journal.get("base_sha256") != expected_sha256
+                or journal.get("proposed_sha256") != _sha(proposed_document)
+                or journal.get("backup_name") != backup_name
+                or journal.get("state") not in {"prepared", "committed"}):
+            raise PrimaryPromptAdoptionError("owner SOUL edit idempotency record differs")
+        backup = core._projection_file(backup_path, owner=core.ROOT_UID,
+            group=core.ROOT_UID, mode=0o600, maximum=MAX_SOUL_BYTES)
+    except FileNotFoundError:
+        journal = None
+        backup = b""
+    if journal is None:
+        if core_source_generation != record["core_source_generation"]:
+            raise PrimaryPromptAdoptionError("Core source generation changed")
+        source_generation, _discovery, artifact_sha, manifest, files, _prompt = _fixed_bundle(core)
+        if artifact_sha != record["artifact_sha256"] or source_generation != core_source_generation:
+            raise PrimaryPromptAdoptionError("pinned Resources source changed")
+        if signature != record["result_soul_signature"] or _sha(current) != expected_sha256:
+            raise PrimaryPromptAdoptionError("active SOUL changed; reload before saving")
+        _record_matches_current(core, record, current, manifest, files)
+        prefix, separator, block = split_managed_block(current,
+            owner_prefix_length=record["owner_prefix_length"],
+            separator=bytes.fromhex(record["owner_separator_hex"]))
+        suffix = separator + block
+        if not proposed_document.endswith(suffix):
+            raise PrimaryPromptAdoptionError("managed Jarvis overlay must remain byte-for-byte unchanged")
+        proposed_prefix = proposed_document[:-len(suffix)]
+        if not 0 < len(proposed_prefix) <= MAX_SOUL_BYTES - len(suffix):
+            raise PrimaryPromptAdoptionError("owner prefix exceeds its bound")
+        if (b"<!-- HERMES-INSTALLER-MANAGED-JARVIS-PRIMARY v1 BEGIN -->" in proposed_prefix
+                or b"<!-- HERMES-INSTALLER-MANAGED-JARVIS-PRIMARY v1 END -->" in proposed_prefix):
+            raise PrimaryPromptAdoptionError("owner prefix cannot contain managed block markers")
+        try:
+            old_edit_backup = core._projection_file(backup_path, owner=core.ROOT_UID,
+                group=core.ROOT_UID, mode=0o600, maximum=MAX_SOUL_BYTES)
+        except FileNotFoundError:
+            core._atomic(backup_path, current, 0o600, core.ROOT_UID, core.ROOT_UID)
+        else:
+            if old_edit_backup != current:
+                raise PrimaryPromptAdoptionError("orphan owner SOUL edit backup differs")
+        journal = {"schema": 1, "state": "prepared", "key_sha256": key_hash,
+            "source_generation": core_source_generation, "base_sha256": expected_sha256,
+            "proposed_sha256": _sha(proposed_document), "backup_name": backup_name}
+        core._atomic(journal_path, (json.dumps(journal, sort_keys=True,
+            separators=(",", ":")) + "\n").encode("ascii"), 0o600, core.ROOT_UID, core.ROOT_UID)
+    else:
+        if _sha(backup) != expected_sha256:
+            raise PrimaryPromptAdoptionError("owner SOUL edit backup does not match its base digest")
+        if journal["state"] == "committed" and _sha(current) == journal["proposed_sha256"]:
+            return _status_record(record, _record_matches_current(core, record, current,
+                *(_fixed_bundle(core)[3:5]))) | {"state": "active", "recovery_id": key_hash}
+        if _sha(current) not in {expected_sha256, journal["proposed_sha256"]}:
+            raise PrimaryPromptAdoptionError("active SOUL changed during interrupted edit")
+        if _sha(current) == journal["proposed_sha256"]:
+            # A process may have stopped after the atomic file replacement but
+            # before refreshing the root receipt. Rebuild that receipt from the
+            # immutable source and native loader before resolving the bundle.
+            core._write_resources_discovery()
+        source_generation, _discovery, artifact_sha, manifest, files, _prompt = _fixed_bundle(
+            core, recovery_record=record, current_prompt_sha256=_sha(current))
+        if source_generation != core_source_generation or artifact_sha != record["artifact_sha256"]:
+            raise PrimaryPromptAdoptionError("Core or Resources generation changed")
+        if _sha(current) == journal["proposed_sha256"]:
+            # Replacement completed before the root receipt update; verify and resume it.
+            suffix = bytes.fromhex(record["owner_separator_hex"]) + _record_managed_block(record, files)
+            if not proposed_document.endswith(suffix) or not current.endswith(suffix):
+                raise PrimaryPromptAdoptionError("managed Jarvis overlay changed during edit recovery")
+            proposed_prefix = current[:-len(suffix)]
+        else:
+            suffix = bytes.fromhex(record["owner_separator_hex"]) + _record_managed_block(record, files)
+            if not proposed_document.endswith(suffix):
+                raise PrimaryPromptAdoptionError("managed Jarvis overlay must remain byte-for-byte unchanged")
+            proposed_prefix = proposed_document[:-len(suffix)]
+            current = backup
+            signature = _read_soul(core)[1]
+    desired = proposed_prefix + bytes.fromhex(record["owner_separator_hex"]) + block if journal is None else (
+        proposed_prefix + bytes.fromhex(record["owner_separator_hex"]) + _record_managed_block(record, files))
+    if _sha(current) != _sha(desired):
+        stage = ".SOUL.md.jarvis-" + secrets.token_hex(12) + ".stage"
+        _atomic_admin_replace(core, desired, expected_signature=signature,
+            uid=signature[3], gid=signature[4], mode=stat.S_IMODE(signature[2]), stage_name=stage)
+    active, active_signature = _read_soul(core)
+    if active != desired:
+        raise PrimaryPromptAdoptionError("owner SOUL replacement readback differs")
+    # Verify the real Hermes loader against the exact pinned source before the
+    # Resources receipt and adoption journal are advanced.
+    native_receipt = _verify_native(core, manifest, files, active, record["managed_block_sha256"])
+    updated = dict(record)
+    updated.update({"owner_prefix_sha256": _sha(proposed_prefix),
+        "owner_prefix_length": len(proposed_prefix), "result_soul_sha256": _sha(active),
+        "result_soul_signature": active_signature,
+        "native_effective_prompt_sha256": native_receipt["native_effective_prompt_sha256"],
+        "native_effective_prompt_chars": native_receipt["native_effective_prompt_chars"],
+        "observed_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")})
+    _record_matches_current(core, updated, active, manifest, files)
+    core._write_resources_discovery()
+    discovery = core.read_current_resources_discovery(core_source_generation=core_source_generation)
+    if discovery.get("resources_state") != "discovered" or discovery.get("artifact_sha256") != artifact_sha:
+        raise PrimaryPromptAdoptionError("effective SOUL receipt did not verify")
+    _write_record(core, updated)
+    journal["state"] = "committed"
+    core._atomic_replace(journal_path, (json.dumps(journal, sort_keys=True,
+        separators=(",", ":")) + "\n").encode("ascii"), 0o600, core.ROOT_UID, core.ROOT_UID)
+    return _status_record(updated, native_receipt) | {"state": "active", "recovery_id": key_hash}
+
+
+def _record_managed_block(record, files) -> bytes:
+    block = render_managed_block(files["registry/profiles/hermes/SOUL.md"])
+    if _sha(block) != record["managed_block_sha256"]:
+        raise PrimaryPromptAdoptionError("managed Jarvis overlay changed")
+    return block
 
 
 def primary_prompt_status() -> dict[str, Any]:

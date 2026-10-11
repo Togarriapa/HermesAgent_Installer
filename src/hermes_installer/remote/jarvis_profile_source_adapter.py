@@ -639,6 +639,24 @@ def write_profile_file(profile_id: str, file_kind: str, *, expected_sha256: str,
             or not re.fullmatch(r"[0-9a-f]{64}", core_source_generation)
             or not isinstance(content, str) or "\x00" in content):
         raise ProfileFileCustodyError("profile edit request is invalid")
+    if profile_id == "hermes" and file_kind == "soul":
+        # The primary SOUL has a separate managed Jarvis overlay journal. A
+        # generic leaf replacement would invalidate its adoption and rollback
+        # hashes, so owner-prefix edits must pass through that transaction.
+        from ..primary_prompt_manager import write_owner_prefix
+        try:
+            result = write_owner_prefix(content, expected_sha256=expected_sha256,
+                idempotency_key=idempotency_key,
+                core_source_generation=core_source_generation)
+        except Exception as exc:
+            if isinstance(exc, ProfileFileCustodyError):
+                raise
+            raise ProfileFileCustodyError(str(exc)) from None
+        state = result.get("state")
+        return ProfileFileWrite("active" if state == "active" else state,
+            "hermes", "soul", result.get("active_soul_sha256"),
+            result.get("active_soul_sha256"), result.get("recovery_id"),
+            result.get("managed_primary_block_verified") is True)
     try:
         proposed = content.encode("utf-8", "strict")
     except UnicodeError:
