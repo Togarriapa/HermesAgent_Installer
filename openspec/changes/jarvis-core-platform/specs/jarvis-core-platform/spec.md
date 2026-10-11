@@ -1820,3 +1820,10 @@ The system SHALL admit Codex delegation route evidence only from the explicitly 
 #### Scenario: Untrusted route assertion
 - **WHEN** only hook strings, token presence or a changed process/source/route is available
 - **THEN** no positive dispatch claim is issued.
+
+### Requirement: Finite pause-only schedule effect
+The system SHALL accept schedule pause only for an owner-bound opaque current job, unchanged snapshot revision and one-use approval. It SHALL verify the actual native paused state and preserve original authentication deadlines.
+
+#### Scenario: Resume or uncertain effect
+- **WHEN** a caller asks to resume/run or a pause result is uncertain
+- **THEN** no catch-up/run action or automatic duplicate effect occurs.

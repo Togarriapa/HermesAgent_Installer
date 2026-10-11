@@ -50,3 +50,5 @@ RB-T266.4 implementation detail: compose the current root import/core custody pr
 RB-T266.4 learning detail: implement observe-skill-learning with independent root Access JWT validation and one-use original ingress issuance custody; read only native pending skill records/diffs and deny stale/corrupt/unowned sources. RT-T266.3 exposes this bounded owner-only view with escaped text. Both task groups and functional acceptance remain open pending Pi effects/failure checks.
 
 RB-T266.4 bridge detail: enroll the reviewed current-core Codex transport observer, verify actual authenticated subscription response/account/call lineage and deny metered fallback before one harmless native specialization. VD-T266.5 requires Pi source/process-change and route/fallback denial evidence. No task or acceptance is closed by this source contract.
+
+RT-T266.3 finite next slice includes pause-only native schedules with current snapshot/nonce/idempotency and verified post-state; model choices remain drafts until protected CAS is reviewed. RB-T266.4 includes the concrete separate core observer registry and exact skill-base before/after custody. All existing task groups remain open.

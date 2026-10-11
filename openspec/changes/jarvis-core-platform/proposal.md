@@ -41,3 +41,5 @@ The next Resources slice requires a concrete root-held source prompt claim joine
 Owner skill-learning inspection uses independent root validation of the actual forwarded Access JWT and the original one-use ingress issuance, rather than an unimplemented owner-turn handle. The finite read-only snapshot preserves private diffs, original deadlines and native approval ownership.
 
 The actual Codex subscription bridge uses an explicitly enrolled protected core-process observer at the real transport seam. It does not relabel the older OpenAI API-bearer handler or claim root TLS interception, and preserves subscription-only zero-additional-metered routing.
+
+Implement the next useful ports proportionately: owner-approved pause-only schedules, read-only native controls and truthful model drafts, plus the separate source-verified core observer leaf. Align learning reason enums to the actual fixed helper vocabulary and verify skill-base read custody before and after native diff.
