@@ -968,15 +968,40 @@ def verify_staged_native_resources_plugin(*, deadline: float) -> str:
                 _deny()
             os.close(directory_fd)
             directory_fd = child_fd
-        from ..core_runtime import _projection_at
         if set(os.listdir(directory_fd)) != set(CORE_NATIVE_PLUGIN_STAGED_FILES):
             _deny()
         values: dict[str, str] = {}
         for name, expected in CORE_NATIVE_PLUGIN_STAGED_FILES.items():
             if time.monotonic() >= deadline:
                 raise TimeoutError("staged native plugin proof deadline expired")
-            data = _projection_at(directory_fd, name, owner=0,
-                                  group=0, mode=0o444, maximum=64 * 1024)
+            fd = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                         | getattr(os, "O_CLOEXEC", 0), dir_fd=directory_fd)
+            try:
+                before = os.fstat(fd)
+                if (not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_gid != 0
+                        or stat.S_IMODE(before.st_mode) != 0o444 or before.st_nlink != 1
+                        or before.st_size > 64 * 1024):
+                    _deny()
+                content = bytearray()
+                while len(content) <= 64 * 1024:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("staged native plugin proof deadline expired")
+                    chunk = os.read(fd, min(8192, 64 * 1024 + 1 - len(content)))
+                    if not chunk:
+                        break
+                    content.extend(chunk)
+                after = os.fstat(fd)
+                named = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                signature = lambda value: (value.st_dev, value.st_ino, value.st_mode,
+                    value.st_uid, value.st_gid, value.st_nlink, value.st_size,
+                    value.st_mtime_ns, value.st_ctime_ns)
+                if (len(content) != before.st_size or len(content) > 64 * 1024
+                        or signature(before) != signature(after)
+                        or signature(before) != signature(named)):
+                    _deny()
+                data = bytes(content)
+            finally:
+                os.close(fd)
             actual = hashlib.sha256(data).hexdigest()
             if actual != expected:
                 _deny()
