@@ -11,7 +11,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 import unittest
 from unittest import mock
-from hermes_installer.remote.gateway import RemotePolicy
+from hermes_installer.remote.gateway import GatewayDenied, RemotePolicy
 from hermes_installer.remote.manual_stage import (
     ManualGatewayStageConfig, ManualStageDenied, StageAcceptedIngressObservation,
     StageEdgeAccessVerifier, StageGatewayPolicySessionAdapter, _CURRENT_INGRESS,
@@ -156,6 +156,74 @@ class ManualStageGatewayTests(unittest.TestCase):
         self.assertNotIn(token, output)
         self.assertNotIn("owner@example.net", output)
         self.assertRegex(output, r"elapsed_ms=(?:[5-9][0-9]{3}|[1-5][0-9]{4}|60000)\b")
+
+    def test_slow_jwks_validation_does_not_block_loop_or_return_late_authority(self):
+        import asyncio
+        from types import SimpleNamespace
+        from hermes_installer.remote import manual_stage
+
+        started = threading.Event()
+        release = threading.Event()
+        cancellation_seen = []
+        principal = Principal("owner@example.net", "subject", time.time() + 60, "f" * 64)
+
+        def delayed_validation(*_args, cancel_event=None, **_kwargs):
+            started.set()
+            release.wait(1)
+            cancellation_seen.append(cancel_event.is_set())
+            return principal
+
+        async def exercise():
+            ticks = 0
+            finished = asyncio.Event()
+
+            async def heartbeat():
+                nonlocal ticks
+                while not finished.is_set():
+                    ticks += 1
+                    await asyncio.sleep(0.005)
+
+            heartbeat_task = asyncio.create_task(heartbeat())
+            with mock.patch.object(manual_stage, "validate_access_jwt", side_effect=delayed_validation):
+                validation_task = asyncio.create_task(manual_stage._validate_stage_access_jwt(
+                    "opaque-test-token", self.verifier.policy,
+                    deadline_monotonic=time.monotonic() + 0.08))
+                while not started.is_set():
+                    await asyncio.sleep(0.001)
+                with self.assertRaises(GatewayDenied):
+                    await validation_task
+            finished.set()
+            await heartbeat_task
+            release.set()
+            await asyncio.sleep(0.03)
+            self.assertGreaterEqual(ticks, 5)
+            self.assertEqual(cancellation_seen, [True])
+
+        asyncio.run(exercise())
+
+        class Headers(dict):
+            def getall(self, key, default=()):
+                value = self.get(key, default)
+                return value if isinstance(value, list) else [value] if value != default else []
+
+        peer = SimpleNamespace(family=__import__("socket").AF_UNIX,
+            getsockname=lambda: str(self.config.ingress_socket),
+            getsockopt=lambda *_args: __import__("struct").pack("3i", 77, 981, 981))
+        request = SimpleNamespace(headers=Headers({"Host": self.config.hostname,
+            "Cf-Access-Jwt-Assertion": "opaque-test-token"}), path="/client/bootstrap.html", method="GET",
+            transport=SimpleNamespace(get_extra_info=lambda name: peer if name == "socket" else None))
+        release.clear()
+        started.clear()
+        with mock.patch.object(manual_stage, "MAX_PROBE_SECONDS", 0.05), \
+                mock.patch.object(manual_stage, "validate_access_jwt", side_effect=delayed_validation), \
+                mock.patch("hermes_installer.remote.manual_stage_inspector.verify_current_ingress",
+                           create=True) as inspect:
+            with self.assertRaises(ManualStageDenied):
+                asyncio.run(manual_stage._accept_stage_ingress(request, self.config, self.verifier.policy))
+            inspect.assert_not_called()
+        release.set()
+        time.sleep(0.03)
+        self.assertEqual(cancellation_seen[-1], True)
 
     def test_heartbeat_is_one_use_and_bound_to_original_token_and_principal(self):
         token = self.token()

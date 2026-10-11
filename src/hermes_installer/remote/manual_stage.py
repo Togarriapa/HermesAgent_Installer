@@ -899,6 +899,37 @@ def _request_peer_credentials(request, config: ManualGatewayStageConfig) -> tupl
         raise ManualStageDenied("request did not arrive over the protected Unix ingress") from None
 
 
+def _consume_validation_task(task: asyncio.Task) -> None:
+    """Observe a cancelled worker's eventual exception without exposing its value."""
+    try:
+        task.exception()
+    except BaseException:
+        pass
+
+
+async def _validate_stage_access_jwt(token: str, policy: RemotePolicy, *, deadline_monotonic: float) -> Principal:
+    """Run bounded JWKS/TLS work off-loop; a late worker result is never authority."""
+    cancellation = threading.Event()
+    task = asyncio.create_task(asyncio.to_thread(validate_access_jwt, token, policy=policy,
+        cancel_event=cancellation, deadline_monotonic=deadline_monotonic))
+    try:
+        remaining = max(0.0, deadline_monotonic - time.monotonic())
+        done, _pending = await asyncio.wait({task}, timeout=remaining)
+        if not done:
+            cancellation.set()
+            task.add_done_callback(_consume_validation_task)
+            raise GatewayDenied("Access verification deadline expired")
+        principal = task.result()
+        if cancellation.is_set() or time.monotonic() >= deadline_monotonic:
+            cancellation.set()
+            raise GatewayDenied("Access verification deadline expired")
+        return principal
+    except asyncio.CancelledError:
+        cancellation.set()
+        task.add_done_callback(_consume_validation_task)
+        raise
+
+
 async def _accept_stage_ingress(request, config: ManualGatewayStageConfig,
                                 policy: RemotePolicy, *,
                                 listener_identity: tuple[int, int] | None = None) -> StageAcceptedIngressObservation:
@@ -921,8 +952,8 @@ async def _accept_stage_ingress(request, config: ManualGatewayStageConfig,
         if not isinstance(token, str) or not 1 <= len(token) <= 16_384:
             raise ValueError
         phase = "jwt"
-        principal = validate_access_jwt(token, policy=policy,
-                                        deadline_monotonic=request_started + MAX_PROBE_SECONDS)
+        principal = await _validate_stage_access_jwt(token, policy=policy,
+            deadline_monotonic=request_started + MAX_PROBE_SECONDS)
         phase = "unix-peer"
         peer_pid, peer_uid, peer_gid = _request_peer_credentials(request, config)
         listener = os.lstat(config.ingress_socket)
