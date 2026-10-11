@@ -358,7 +358,7 @@ def _recheck_principal(service: JarvisChatService, request: Any, expected: Any) 
 
 
 def _mission_binding_route_ready(service: JarvisChatService) -> bool:
-    """Require root validation of the current autonomy-bearing binding before any session effect."""
+    """Require the schema-2 spent-binding seam before starting a native mission turn."""
     try:
         parameters = inspect.signature(service.start_server_turn).parameters
         from . import core_gateway_inspector
@@ -367,7 +367,18 @@ def _mission_binding_route_ready(service: JarvisChatService) -> bool:
     return ("require_mission_binding" in parameters
             and "before_schedule" in parameters
             and getattr(core_gateway_inspector, "MISSION_BINDING_SCHEMA", None) == 2
+            and callable(getattr(service, "_native_mission_preflight", None))
             and callable(getattr(service, "_owner_turn_register", None)))
+
+
+def _preflight_spent_mission_binding(service: JarvisChatService, binding: Any,
+                                     owner_subject_sha256: str) -> Any:
+    """Root-validate the spent, exact-turn binding before owner registration or model submit."""
+    preflight = getattr(service, "_native_mission_preflight", None)
+    if (not callable(preflight)
+            or preflight(binding, owner_subject_sha256=owner_subject_sha256) is not True):
+        raise JarvisChatDenied("root mission binding validation denied")
+    return binding
 
 
 def _preview(store: Any, owner: str, row: sqlite3.Row, binding: dict[str, str | None],
@@ -478,7 +489,7 @@ def record_jarvis_master_plan(store: Any, decision: Any, *, config: Any,
             or len(set(selected)) != len(selected)):
         return False
     catalog = _verified_team_catalog()
-    if any(not isinstance(identity, str) or identity not in catalog["sources"]
+    if any(not isinstance(identity, str) or identity not in catalog["profiles"]
            for identity in selected):
         return False
     try:
@@ -789,8 +800,9 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                 raise web.HTTPConflict(text="Jarvis master planning decision is pending",
                                        headers=_secure_headers())
             if (mission["execution_mode"] != "oneshot"
-                    or selected_sources != ["orchestrator"]):
-                raise web.HTTPConflict(text="the selected Jarvis route is not enrolled for task start",
+                    or type(selected_sources) is not list or not selected_sources
+                    or any(identity not in catalog["profiles"] for identity in selected_sources)):
+                raise web.HTTPConflict(text="the selected Jarvis expert route is not enrolled for task start",
                                        headers=_secure_headers())
 
             idem_hash = hashlib.sha256(key.encode("ascii")).hexdigest()
@@ -931,7 +943,8 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                     raise web.HTTPConflict(text="mission approval is stale or expired", headers=_secure_headers())
                 selected_sources = json.loads(row["selected_source_ids"] or "null")
                 if (row["execution_mode"] != "oneshot"
-                        or selected_sources != ["orchestrator"]
+                        or type(selected_sources) is not list or not selected_sources
+                        or any(identity not in catalog["profiles"] for identity in selected_sources)
                         or binding["core_generation"] != principal.core_generation
                         or not re.fullmatch(r"[a-f0-9]{64}", binding["core_generation"] or "")
                         or not re.fullmatch(r"[a-f0-9]{64}", binding["core_source_generation"] or "")
@@ -939,6 +952,9 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                     raise web.HTTPConflict(text="first native mission route is unavailable", headers=_secure_headers())
                 execution_prompt = mission_execution_prompt(row["brief"])
                 goal_sha256 = mission_goal_arguments_sha256(row["brief"])
+                if not _mission_binding_route_ready(service):
+                    raise web.HTTPConflict(text="root mission binding validation is unavailable",
+                                           headers=_secure_headers())
                 try:
                     run, replay = executor.reserve(
                         owner=owner, mission_id=row["id"], revision=revision,
@@ -961,12 +977,14 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                     executor.mark(run["id"], status="conversation_ready",
                                   conversation_id=conversation["id"])
                     def before_schedule(turn_id: str):
-                        return executor.binding_after_spend(
+                        mission_binding = executor.binding_after_spend(
                             run_id=run["id"], owner=owner, mission_id=row["id"],
                             revision=revision, plan_sha256=body["plan_sha256"],
                             task_sha256=goal_sha256, intent_nonce=nonce,
                             idempotency_key=body["idempotency_key"], source_binding=binding,
                             gateway_turn_id=turn_id)
+                        _recheck_principal(service, request, principal)
+                        return _preflight_spent_mission_binding(service, mission_binding, owner)
                     def on_schedule_failure(turn_id: str):
                         executor.fail_schedule(run_id=run["id"], owner=owner,
                                                gateway_turn_id=turn_id)

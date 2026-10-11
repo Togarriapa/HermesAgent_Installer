@@ -21,8 +21,8 @@ FEATURE_ASSETS = JarvisFeatureAssets(
         <input id="jm-title" name="title" maxlength="120" required autocomplete="off" placeholder="Prepare the weekly operations brief">
         <label for="jm-brief">Brief and constraints</label>
         <textarea id="jm-brief" name="brief" maxlength="8000" rows="6" required placeholder="Describe the requested outcome, sources that may be used, and constraints."></textarea>
-        <fieldset><legend>Team identities in the verified bundle</legend>
-          <p class="jm-help">Only the Orchestrator profile is eligible for this first native handoff. Other profiles remain planning-only.</p>
+        <fieldset><legend>Source preferences for Jarvis</legend>
+          <p class="jm-help">These preferences do not choose the team. Jarvis selects the exact internal profiles in its protected plan; experts prepare drafts for Jarvis review.</p>
           <div class="jm-team-options" data-jm-team-options><span class="jm-muted">Loading verified identities…</span></div>
         </fieldset>
         <button class="jm-primary" type="submit">Save draft</button>
@@ -200,8 +200,8 @@ FEATURE_ASSETS = JarvisFeatureAssets(
     approval.className = 'jm-approval';
     const planningReady = preview.execution_mode === 'oneshot'
       && Array.isArray(preview.selected_source_ids)
-      && JSON.stringify(preview.selected_source_ids) === '["orchestrator"]';
-    if (!planningReady) addText(approval, 'p', 'jm-card-meta', 'Owner authorization and task start remain unavailable until Jarvis selects the enrolled Orchestrator one-shot route.');
+      && preview.selected_source_ids.length > 0;
+    if (!planningReady) addText(approval, 'p', 'jm-card-meta', 'Task start remains unavailable until Jarvis selects an enrolled expert One-shot route.');
     const autonomyLabel = document.createElement('label');
     autonomyLabel.textContent = 'Task authorization';
     const autonomyMode = document.createElement('select');
@@ -227,9 +227,9 @@ FEATURE_ASSETS = JarvisFeatureAssets(
     if (preview.approval && ['approved-pending-execution', 'approved'].includes(preview.approval.status)) {
       addText(box, 'p', 'jm-card-meta', 'Owner approval recorded until ' + preview.approval.expires_at + '. Launch remains a separate action.');
       activeApprovalNonce = preview.approval.intent_nonce;
-      if (activeApprovalNonce && (preview.team || []).length === 1 && preview.team[0].id === 'orchestrator') {
-        if (preview.execution_mode === 'oneshot'
-            && JSON.stringify(preview.selected_source_ids) === '["orchestrator"]') {
+      if (activeApprovalNonce && Array.isArray(preview.selected_source_ids)
+          && preview.selected_source_ids.length > 0) {
+        if (preview.execution_mode === 'oneshot') {
           const launch = document.createElement('button');
           launch.type = 'button'; launch.className = 'jm-primary'; launch.textContent = 'Start approved Jarvis task';
           launch.addEventListener('click', (event) => launchMission(preview, event.currentTarget), { signal });

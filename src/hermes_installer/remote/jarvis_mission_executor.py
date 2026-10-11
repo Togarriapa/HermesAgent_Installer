@@ -29,7 +29,7 @@ _MISSION_BINDING_V1_FIELDS = frozenset({
     "schema", "mission_id", "revision", "plan_sha256", "task_sha256", "source_profile_id",
 })
 _MISSION_INSTRUCTION = (
-    "Carry out exactly one owner-approved mission. Make exactly one call to the registered "
+    "As Jarvis, carry out exactly one owner-approved mission. Make exactly one call to the registered "
     "`resources_delegate` tool using the exact arguments object shown below. Do not rewrite, "
     "summarize, extend, or add instructions to its goal; do not execute the goal yourself, "
     "add argument keys, or call any other tools. If the tool is missing or denies the call, "
@@ -104,7 +104,8 @@ class MissionBinding:
                 or type(self.revision) is not int or self.revision < 1
                 or not isinstance(self.plan_sha256, str) or _SHA256_RE.fullmatch(self.plan_sha256) is None
                 or not isinstance(self.task_sha256, str) or _SHA256_RE.fullmatch(self.task_sha256) is None
-                or self.source_profile_id != "orchestrator"):
+                or (self.schema == 1 and self.source_profile_id != "orchestrator")
+                or (self.schema == 2 and self.source_profile_id != "hermes")):
             raise ValueError("mission binding is malformed")
         if self.schema == 1:
             if any(value is not None for value in (
@@ -267,7 +268,6 @@ def _spent_row(store: Any, binding: MissionBinding, *, gateway_turn_id: str,
                 or tuple(selected_source_ids) != binding.selected_source_ids
                 or binding.scope_sha256 != expected_scope
                 or binding.authorization_sha256 != expected_authorization
-                or selected_source_ids != ["orchestrator"]
                 or not isinstance(row["brief"], str) or not row["brief"]
                 or expected_task != binding.task_sha256
                 or type(source) is not dict or set(source) != {"core_source_generation", "core_generation"}
@@ -299,8 +299,8 @@ def resolve_spent_mission_claim(store: Any, binding: MissionBinding, gateway_tur
                                 owner_subject_sha256: str, core_generation: str,
                                 core_source_generation: str, source_profile_id: str,
                                 canonical_arguments_sha256: str) -> bool:
-    """Join one consumed native claim to the exact approved Orchestrator goal bytes."""
-    if (type(binding) is not MissionBinding or source_profile_id != "orchestrator"
+    """Join one consumed native claim to the exact approved Jarvis goal bytes."""
+    if (type(binding) is not MissionBinding or source_profile_id != "hermes"
             or binding.source_profile_id != source_profile_id
             or not isinstance(canonical_arguments_sha256, str)
             or _SHA256_RE.fullmatch(canonical_arguments_sha256) is None
@@ -446,9 +446,9 @@ class MissionExecutionAdapter:
                     or int(mission["revision"]) != revision
                     or mission["plan_sha256"] != plan_sha256
                     or mission["source_binding"] != source_binding
-                    or json.loads(mission["selected_source_ids"] or "null") != ["orchestrator"]):
+                    or not json.loads(mission["selected_source_ids"] or "null")):
                 db.rollback()
-                raise ValueError("current approved Orchestrator mission required")
+                raise ValueError("current approved Jarvis mission with selected experts required")
             db.execute(
                 "INSERT INTO jarvis_mission_runs "
                 "(id,owner,mission_id,revision,plan_sha256,task_sha256,source_binding,"
@@ -542,7 +542,7 @@ class MissionExecutionAdapter:
         if approval is None or mission is None or not selected_source_ids:
             raise ValueError("spent task-start authorization is unavailable")
         binding = MissionBinding(
-            2, mission_id, revision, plan_sha256, task_sha256, "orchestrator",
+            2, mission_id, revision, plan_sha256, task_sha256, "hermes",
             mission["execution_mode"], approval["autonomy_mode"], selected_source_ids,
             approval["scope_sha256"], approval["authorization_sha256"],
         )

@@ -14,9 +14,11 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from hermes_installer.remote.core_client import CoreTurnEvent
 from hermes_installer.remote.jarvis_activity import NativeActivityEvent
-from hermes_installer.remote.jarvis_chat import ChatPrincipal, JarvisChatService, JarvisChatStore
+from hermes_installer.remote.jarvis_chat import (
+    ChatPrincipal, JarvisChatDenied, JarvisChatService, JarvisChatStore,
+)
 from hermes_installer.remote import jarvis_missions
-from hermes_installer.remote.jarvis_mission_executor import _native_child_result_state
+from hermes_installer.remote.jarvis_mission_executor import MissionBinding, _native_child_result_state
 
 
 CORE = "a" * 64
@@ -40,6 +42,75 @@ def test_mission_result_requires_matching_native_child_start_and_successful_comp
     assert _native_child_result_state([
         {"child_ref": child_a, "type": "subagent.complete", "status": "completed"},
     ]) == (False, False)
+
+
+def test_spent_binding_root_preflight_denial_stops_before_owner_registration_or_model_submit(tmp_path):
+    binding = MissionBinding(
+        schema=2, mission_id="m" * 24, revision=1,
+        plan_sha256="a" * 64, task_sha256="b" * 64, source_profile_id="hermes",
+        execution_mode="oneshot", autonomy_mode="approval_required",
+        selected_source_ids=("reviewer",), scope_sha256="c" * 64,
+    )
+    preflight_calls, registrations, submissions, compensations = [], [], [], []
+
+    class Backend:
+        async def stream_owned_turn(self, *_args, **_kwargs):
+            submissions.append("model-submit")
+            yield CoreTurnEvent("complete")
+
+        async def stop(self, _session_id):
+            return None
+
+    store = JarvisChatStore(tmp_path / "preflight.sqlite3")
+    conversation = store.create_conversation("owner-a", "runtime-session", "stored-session", CORE)
+    service = JarvisChatService(
+        store, Backend(), principal_from_request=_principal,
+        owner_turn_register=lambda **kwargs: registrations.append(kwargs) or "d" * 32,
+    )
+
+    def deny_root(binding_arg, *, owner_subject_sha256):
+        preflight_calls.append((binding_arg, owner_subject_sha256))
+        return False
+
+    service._native_mission_preflight = deny_root
+    request = SimpleNamespace(headers={}, get=lambda _key: None)
+
+    async def launch():
+        with pytest.raises(JarvisChatDenied, match="root mission binding validation denied"):
+            await service.start_server_turn(
+                request, conversation_id=conversation["id"], text="bounded mission",
+                idempotency_key="preflight-denial-key-0001",
+                before_schedule=lambda _turn_id: jarvis_missions._preflight_spent_mission_binding(
+                    service, binding, "owner-a"),
+                require_mission_binding=True,
+                on_schedule_failure=lambda turn_id: compensations.append(turn_id),
+            )
+
+    asyncio.run(launch())
+    assert preflight_calls == [(binding, "owner-a")]
+    assert len(compensations) == 1
+    assert registrations == []
+    assert submissions == []
+    turn = store.owned_turn("owner-a", compensations[0])
+    assert turn["status"] == "cancelled"
+
+
+def test_spent_binding_root_preflight_requires_exact_true_and_returns_same_binding():
+    binding = object()
+    calls = []
+
+    class Service:
+        def _native_mission_preflight(self, value, *, owner_subject_sha256):
+            calls.append((value, owner_subject_sha256))
+            return True
+
+    service = Service()
+    assert jarvis_missions._preflight_spent_mission_binding(service, binding, "owner-a") is binding
+    assert calls == [(binding, "owner-a")]
+
+    service._native_mission_preflight = lambda *_args, **_kwargs: 1
+    with pytest.raises(JarvisChatDenied, match="root mission binding validation denied"):
+        jarvis_missions._preflight_spent_mission_binding(service, binding, "owner-a")
 
 
 class ObservedBackend:
