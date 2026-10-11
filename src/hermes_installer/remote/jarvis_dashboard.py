@@ -10,8 +10,10 @@ import asyncio
 import hashlib
 import hmac
 import json
+import math
 import secrets
-from datetime import date, datetime, time, timedelta, timezone
+import sqlite3
+from datetime import datetime, time, timedelta, timezone
 from functools import lru_cache
 from importlib.resources import files as package_files
 from typing import Any
@@ -42,18 +44,26 @@ def _iso_utc(timestamp: float | None) -> str | None:
     return value.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _aggregate(store: Any, subject: str, *, today: date) -> dict[str, Any]:
-    """Read only this principal's durable turn rows and return bounded aggregates."""
+_DURATION_SAMPLE_LIMIT = 100
+_TURN_DURATION_LIMIT_MS = 600_000
+
+
+def _aggregate(store: Any, subject: str, *, observed_at: datetime) -> dict[str, Any]:
+    """Read this principal's bounded turn window and current lifetime totals."""
     owner = store._owner(subject)
-    first_day = today - timedelta(days=6)
+    first_day = observed_at.date() - timedelta(days=6)
     start = datetime.combine(first_day, time.min, UTC).timestamp()
-    end = datetime.combine(today + timedelta(days=1), time.min, UTC).timestamp()
+    end = observed_at.timestamp()
     daily = {
-        (today - timedelta(days=offset)).isoformat(): {
-            "date": (today - timedelta(days=offset)).isoformat(),
+        (observed_at.date() - timedelta(days=offset)).isoformat(): {
+            "date": (observed_at.date() - timedelta(days=offset)).isoformat(),
             "total": 0, "completed": 0, "failed": 0, "cancelled": 0,
         }
         for offset in range(6, -1, -1)
+    }
+    window_counts = {
+        "total": 0, "active": 0, "completed": 0, "failed": 0,
+        "cancelled": 0, "unknown": 0,
     }
     with store._connect() as db:
         totals = db.execute(
@@ -69,14 +79,43 @@ def _aggregate(store: Any, subject: str, *, today: date) -> dict[str, Any]:
             "FROM turns WHERE owner=? AND created>=? AND created<? "
             "GROUP BY day,status", (owner, start, end)
         ).fetchall()
+        duration_rows = db.execute(
+            "SELECT status,created,updated FROM turns WHERE owner=? "
+            "AND status IN ('completed','failed','cancelled') "
+            "AND created>=? AND created<? AND updated>=created "
+            "ORDER BY created DESC LIMIT ?",
+            (owner, start, end, _DURATION_SAMPLE_LIMIT + 1),
+        ).fetchall()
     for row in rows:
-        bucket = daily.get(row["day"])
-        if bucket is None:
-            continue
         amount = int(row["count"])
-        bucket["total"] += amount
-        if row["status"] in {"completed", "failed", "cancelled"}:
-            bucket[row["status"]] += amount
+        window_counts["total"] += amount
+        status = row["status"]
+        if status in {"queued", "running"}:
+            window_counts["active"] += amount
+        elif status in {"completed", "failed", "cancelled"}:
+            window_counts[status] += amount
+        else:
+            window_counts["unknown"] += amount
+        bucket = daily.get(row["day"])
+        if bucket is not None:
+            bucket["total"] += amount
+            if status in {"completed", "failed", "cancelled"}:
+                bucket[status] += amount
+    more_durations = len(duration_rows) > _DURATION_SAMPLE_LIMIT
+    durations = []
+    for row in duration_rows[:_DURATION_SAMPLE_LIMIT]:
+        created, updated = float(row["created"]), float(row["updated"])
+        elapsed = updated - created
+        if (not math.isfinite(created) or not math.isfinite(updated)
+                or not math.isfinite(elapsed) or not 0 <= elapsed <= _TURN_DURATION_LIMIT_MS / 1000):
+            continue
+        duration_ms = round(elapsed * 1000)
+        durations.append({
+            "status": row["status"],
+            "acceptedAt": _iso_utc(created),
+            "finishedAt": _iso_utc(updated),
+            "durationMs": duration_ms,
+        })
     return {
         "turnCounts": {
             "total": int(totals["total"] or 0),
@@ -86,8 +125,52 @@ def _aggregate(store: Any, subject: str, *, today: date) -> dict[str, Any]:
             "active": int(totals["active"] or 0),
         },
         "lastTurnAt": _iso_utc(totals["last_created"]),
+        "statistics": {
+            "window": {
+                "startAt": _iso_utc(start),
+                "endAt": _iso_utc(end),
+                "timezone": "UTC",
+                "basis": "turn accepted during the seven UTC calendar days ending at observation time",
+            },
+            "observedAt": _iso_utc(end),
+            "turnCounts": window_counts,
+            "duration": {
+                "basis": "turn accepted to terminal status; elapsed time includes queue time",
+                "sampleLimit": _DURATION_SAMPLE_LIMIT,
+                "partial": more_durations,
+                "samples": list(reversed(durations)),
+            },
+        },
         "turnCountsByDay": list(daily.values()),
     }
+
+
+def _mission_overview(store: Any, owner: str, *, observed_at: float) -> dict[str, Any]:
+    """Count only live approvals still bound to their current owner mission revision."""
+    try:
+        with store._connect() as db:
+            tables = {row[0] for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
+                "('jarvis_missions','jarvis_mission_approvals')")}
+            if tables != {"jarvis_missions", "jarvis_mission_approvals"}:
+                return {
+                    "state": "unavailable", "approvedPendingCount": None,
+                    "reason": "The owner mission approval projection is not installed.",
+                }
+            count = db.execute(
+                "SELECT COUNT(*) FROM jarvis_mission_approvals AS a "
+                "JOIN jarvis_missions AS m ON m.id=a.mission_id AND m.owner=a.owner "
+                "WHERE a.owner=? AND a.status='approved' AND a.expires>? "
+                "AND m.status='preview_pending' AND a.revision=m.revision "
+                "AND a.plan_sha256=m.plan_sha256 AND a.source_binding=m.source_binding",
+                (owner, observed_at),
+            ).fetchone()[0]
+    except sqlite3.Error:
+        return {
+            "state": "unavailable", "approvedPendingCount": None,
+            "reason": "The owner mission approval projection could not be read.",
+        }
+    return {"state": "observed", "approvedPendingCount": int(count)}
 
 
 def build_overview(store: Any, subject: str, *, observed_at: datetime | None = None,
@@ -97,8 +180,8 @@ def build_overview(store: Any, subject: str, *, observed_at: datetime | None = N
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=UTC)
     moment = moment.astimezone(UTC)
-    aggregate = _aggregate(store, subject, today=moment.date())
     owner = store._owner(subject)
+    aggregate = _aggregate(store, subject, observed_at=moment)
     with store._connect() as db:
         conversations = db.execute(
             "SELECT COUNT(*) FROM conversations WHERE owner=?", (owner,)
@@ -120,6 +203,24 @@ def build_overview(store: Any, subject: str, *, observed_at: datetime | None = N
         "chat": {
             "conversationCount": int(conversations),
             **aggregate,
+        },
+        "missions": _mission_overview(store, owner, observed_at=moment.timestamp()),
+        "schedules": {
+            "state": "unavailable", "pausedCount": None,
+            "reason": ("The current typed schedule projection exposes enabled state but no "
+                       "verified paused state."),
+        },
+        "resources": {
+            "discovery": {
+                "state": projection.get("resources_state", "pending"),
+                "observedAt": projection.get("discovery_observed_at_utc"),
+                "counts": counts,
+            },
+            "dispatch": {
+                "state": "unavailable", "count": None,
+                "reason": ("The current verified owner projection does not include a count of "
+                           "dispatched source identities."),
+            },
         },
         "capabilities": {
             "readiness": "pending",
