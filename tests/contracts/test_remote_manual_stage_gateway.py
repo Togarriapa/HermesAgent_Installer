@@ -225,6 +225,45 @@ class ManualStageGatewayTests(unittest.TestCase):
         time.sleep(0.03)
         self.assertEqual(cancellation_seen[-1], True)
 
+    def test_stage_jwks_cache_is_singleflight_expires_and_refreshes_unknown_kid(self):
+        from hermes_installer.network import HTTPResult
+        from hermes_installer.remote.manual_stage import _FreshStageJWKS
+
+        now = [10.0]
+        source = _FreshStageJWKS(self.config.issuer)
+        source.cache = __import__("hermes_installer.remote.jwks", fromlist=["JWKSCache"]).JWKSCache(
+            self.config.issuer, ttl_seconds=1, clock=lambda: now[0])
+        self.assertEqual(source.cache.ttl_seconds, 1)
+        calls = []
+        lock = threading.Lock()
+        document = json.dumps({"keys": [{"kty": "RSA", "kid": "live-kid", "use": "sig",
+                                          "alg": "RS256", "n": "AQ", "e": "AQAB"}]}).encode()
+
+        class Network:
+            def __init__(self, **_kwargs):
+                pass
+
+            def request(self, _url, **_kwargs):
+                with lock:
+                    calls.append(1)
+                time.sleep(0.03)
+                return HTTPResult(200, {"Content-Length": str(len(document))}, document)
+
+        with mock.patch("hermes_installer.remote.jwks.BoundedNetwork", Network):
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                rows = list(pool.map(lambda _index: source.key("live-kid"), range(8)))
+            self.assertEqual(len(rows), 8)
+            self.assertEqual(len(calls), 1)
+            now[0] = 11.01
+            source.key("live-kid")
+            self.assertEqual(len(calls), 2)
+            with self.assertRaises(GatewayDenied):
+                source.key("rotated-kid")
+            self.assertEqual(len(calls), 3)
+            with self.assertRaises(GatewayDenied):
+                source.key("still-unknown")
+            self.assertEqual(len(calls), 3)
+
     def test_heartbeat_is_one_use_and_bound_to_original_token_and_principal(self):
         token = self.token()
         ingress = self.make_ingress(token)

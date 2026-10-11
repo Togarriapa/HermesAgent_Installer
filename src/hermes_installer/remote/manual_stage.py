@@ -276,13 +276,12 @@ def _unique_json_pairs(pairs):
 
 
 class _FreshStageJWKS:
-    """Use the existing bounded Cloudflare JWKS reader without stale cache hits."""
+    """Use the bounded Cloudflare reader with a one-second signing-key cache."""
     def __init__(self, issuer: str):
         from .jwks import JWKSCache
         self.cache = JWKSCache(issuer, ttl_seconds=1)
 
     def key(self, kid: str, *, cancel_event=None, deadline_monotonic=None):
-        self.cache.load(force=True, cancel_event=cancel_event, deadline_monotonic=deadline_monotonic)
         return self.cache.key(kid, cancel_event=cancel_event, deadline_monotonic=deadline_monotonic)
 
 
