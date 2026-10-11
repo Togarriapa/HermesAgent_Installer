@@ -61,11 +61,15 @@ class ManualJarvisSkillsTests(unittest.TestCase):
             journal = json.loads((generation / ".hermes-installer-resource-ownership.json").read_text())
             _manifest, artifact_files = _read_artifact(self.bundle, self.digest)
             self.assertEqual(len(journal["members"]), len(artifact_files))
+            expected_skill_paths = {
+                f"installer-resources-113f42d33be9/{name}"
+                for name in artifact_files if name.startswith("skills/")
+            }
             self.assertEqual(
-                {p.parent.name for p in generation.glob("skills/*/SKILL.md")},
-                {row["skill_id"] for row in json.loads((generation / ".hermes-installer-resource-ownership.json").read_text())["members"]
+                {row["path"] for row in journal["members"]
                  if row["path"].startswith("installer-resources-113f42d33be9/skills/")
-                 and row["path"].endswith("/SKILL.md")})
+                 and row["path"].endswith("/SKILL.md")},
+                expected_skill_paths)
             self.assertEqual(len(list((generation / "skills").glob("*/SKILL.md"))), _BUNDLE_SKILL_COUNT)
             self.assertEqual(len(list((generation / "registry/profiles").glob("*/SOUL.md"))), _BUNDLE_PROFILE_COUNT)
             self.assertFalse((home / "profiles").exists())
@@ -102,7 +106,7 @@ class ManualJarvisSkillsTests(unittest.TestCase):
             home = self.make_home(tmp)
             result = install_manual_jarvis_skills(
                 self.bundle, hermes_home=home, expected_sha256=self.digest)
-            skill = Path(result["generation_path"]) / "conversation-gateway/SKILL.md"
+            skill = Path(result["generation_path"]) / "skills/conversation-gateway/SKILL.md"
             skill.write_text("user edit\n", encoding="utf-8")
             with self.assertRaises(ManualJarvisSkillsError):
                 install_manual_jarvis_skills(
