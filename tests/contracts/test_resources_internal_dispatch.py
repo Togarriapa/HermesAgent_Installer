@@ -32,7 +32,7 @@ def digest(value: bytes | str) -> str:
 
 
 def current_claim(parent, **overrides):
-    prompt = b"You are the source-selected internal orchestration profile."
+    prompt = b"You are Jarvis, the owner-facing master profile."
     values = dict(
         claim_id="claim_0123456789abcdef",
         profile_id=PROFILE_ID,
@@ -65,7 +65,7 @@ def current_claim(parent, **overrides):
         mission_binding=MissionBinding(
             schema=2, mission_id="mission_0123456789abcdef01234567", revision=2,
             plan_sha256=digest("plan"), task_sha256=digest('{"goal":"bounded task"}'),
-            source_profile_id="orchestrator", execution_mode="oneshot",
+            source_profile_id="hermes", execution_mode="oneshot",
             autonomy_mode="approval_required", selected_source_ids=("researcher",),
             scope_sha256=digest("scope"), authorization_sha256=None,
         ),
@@ -101,14 +101,34 @@ class FakeAuthorization:
     pass
 
 
+class FakeMissionAuthorization:
+    def __init__(self, claim, task_sha256):
+        self.claim_handle = claim.claim_id
+        self.mission_binding_sha256 = digest(json.dumps(
+            claim.mission_binding.to_wire(), sort_keys=True, separators=(",", ":")))
+        self.gateway_turn_id = claim.gateway_turn_id
+        self.owner_subject_sha256 = claim.owner_subject_sha256
+        self.core_generation = claim.core_generation
+        self.core_source_generation = claim.core_source_generation
+        self.source_profile_id = claim.mission_binding.source_profile_id
+        self.canonical_arguments_sha256 = task_sha256
+        self.expires_monotonic = claim.expires_monotonic
+
+
 class FakeRootClaimSource(OneShotIssuer):
     def __init__(self, claim):
         super().__init__(claim)
         self.source_reads = []
         self.admissions = []
+        self.events = []
+
+    def authorize_mission_claim(self, claim, *, task_sha256):
+        self.events.append("authorize")
+        return FakeMissionAuthorization(claim, task_sha256)
 
     def read_selected_expert_source(self, *, resources_claim, source_id):
         assert resources_claim is self.claim
+        self.events.append("read:" + source_id)
         if source_id.startswith("team-"):
             raise PermissionError("team expansion is not part of the retained profile catalog")
         self.source_reads.append(source_id)
@@ -116,6 +136,7 @@ class FakeRootClaimSource(OneShotIssuer):
 
     def admit_selected_expert_child(self, *, resources_claim, child, source, goal):
         assert resources_claim is self.claim
+        self.events.append("admit:" + source.profile_id)
         assert child.valid_tool_names <= {"web_search", "web_extract", "todo_list", "skills_list", "skill_view"}
         assert "delegate_task" not in child.valid_tool_names
         self.admissions.append((source.profile_id, goal, child))
@@ -126,6 +147,7 @@ def install_native_child_fakes(monkeypatch):
     observer = types.ModuleType("hermes_installer.remote.core_native_observer")
     observer.RootInternalProfileClaimSource = FakeRootClaimSource
     observer.RootNativeSelectedSourceDelivery = FakeDelivery
+    observer.RootVerifiedMissionDispatchAuthorization = FakeMissionAuthorization
     observer.RootVerifiedNativeChildAuthorization = FakeAuthorization
     adapter = types.ModuleType("hermes_installer.remote.native_child_adapter")
 
@@ -148,7 +170,8 @@ def install_native_child_fakes(monkeypatch):
         calls.append(kwargs)
         if kwargs["source"].profile_id == "failed-expert":
             raise RuntimeError("native child failed")
-        return {"draft": "review this", "source_id": kwargs["source"].profile_id}
+        return {"status": "completed", "summary": "review this",
+                "source_id": kwargs["source"].profile_id}
 
     adapter.build_native_child = build_native_child
     adapter.run_native_child = run_native_child
@@ -223,6 +246,7 @@ def test_registered_tool_runs_only_root_selected_expert_through_native_child_lif
     }
     assert issuer.source_reads == ["researcher"]
     assert [row[0] for row in issuer.admissions] == ["researcher"]
+    assert issuer.events == ["authorize", "read:researcher", "admit:researcher"]
     assert len(children) == len(calls) == 1
     assert children[0][0]["mode"] is Mode.EXPERT_READ_RESEARCH
     assert children[0][0]["source"].effective_prompt == b"Verified prompt for researcher"
@@ -237,7 +261,7 @@ def test_exact_plan_selection_fans_out_in_order_with_separate_reviewable_drafts(
     binding = MissionBinding(
         schema=2, mission_id="mission_0123456789abcdef01234567", revision=3,
         plan_sha256=digest("plan-3"), task_sha256=digest('{"goal":"bounded task"}'),
-        source_profile_id="orchestrator", execution_mode="kanban",
+        source_profile_id="hermes", execution_mode="kanban",
         autonomy_mode="approval_required", selected_source_ids=("researcher", "writer"),
         scope_sha256=digest("scope-3"), authorization_sha256=None,
     )
@@ -264,7 +288,7 @@ def test_team_bundle_stays_pending_without_verified_expansion(native_registry, m
     binding = MissionBinding(
         schema=2, mission_id="mission_0123456789abcdef01234567", revision=4,
         plan_sha256=digest("plan-4"), task_sha256=digest('{"goal":"bounded task"}'),
-        source_profile_id="orchestrator", execution_mode="oneshot",
+        source_profile_id="hermes", execution_mode="oneshot",
         autonomy_mode="approval_required", selected_source_ids=("team-research",),
         scope_sha256=digest("scope-4"), authorization_sha256=None,
     )
@@ -371,7 +395,7 @@ def test_child_lifecycle_failure_stays_pending_and_is_not_reported_as_completion
         mission_binding=MissionBinding(
             schema=2, mission_id="mission_0123456789abcdef01234567", revision=2,
             plan_sha256=digest("plan"), task_sha256=digest('{"goal":"bounded task"}'),
-            source_profile_id="orchestrator", execution_mode="kanban",
+            source_profile_id="hermes", execution_mode="kanban",
             autonomy_mode="approval_required", selected_source_ids=("failed-expert",),
             scope_sha256=digest("scope"), authorization_sha256=None,
         ),

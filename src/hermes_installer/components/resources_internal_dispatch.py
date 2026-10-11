@@ -23,7 +23,7 @@ from typing import Any, Protocol
 from hermes_installer.remote.jarvis_mission_executor import MissionBinding
 
 
-PROFILE_ID = "orchestrator"  # Fixed Resources bridge registration/claim identity.
+PROFILE_ID = "hermes"  # Fixed Jarvis master source identity for the Resources bridge claim.
 MAX_SELECTED_EXPERTS = 12
 MAX_GOAL_CHARS = 1200
 MAX_PROMPT_BYTES = 64 * 1024
@@ -33,7 +33,7 @@ _REGISTRATION_SEAL = object()
 _RESOURCES_DELEGATE_SCHEMA = {
     "name": "resources_delegate",
     "description": (
-        "Delegate one bounded task to the root-selected internal orchestrator identity. "
+        "Delegate one bounded task to the internal expert profiles selected by Jarvis. "
         "The source identity, prompt, grants, provider route and budget are fixed by owner policy."
     ),
     "parameters": {
@@ -185,6 +185,9 @@ class InternalProfileClaimSource(Protocol):
     def read_selected_expert_source(self, *, resources_claim: RootSelectedInternalProfileDispatchClaim,
                                     source_id: str) -> Any: ...
 
+    def authorize_mission_claim(self, resources_claim: RootSelectedInternalProfileDispatchClaim,
+                                *, task_sha256: str) -> Any: ...
+
     def admit_selected_expert_child(self, *, resources_claim: RootSelectedInternalProfileDispatchClaim,
                                     child: object, source: Any, goal: str) -> Any: ...
 
@@ -234,17 +237,13 @@ def _claim_is_current(claim: RootSelectedInternalProfileDispatchClaim,
         and _valid_digest(claim.core_source_generation)
         and (claim.mission_binding is None or type(claim.mission_binding) is MissionBinding)
         and "resources_delegate" in parent_tools
-        and "delegate_task" in parent_tools
         and claim.parent_tool_names == parent_tools
         and claim.parent_tool_names.issubset(claim.configured_parent_tool_names)
-        and claim.profile_tool_names == frozenset()
-        and claim.inherited_child_tool_names == parent_tools
         and isinstance(claim.delegation_policy_handle, str)
         and re.fullmatch(r"[A-Za-z0-9_-]{16,128}", claim.delegation_policy_handle) is not None
         and _valid_digest(claim.delegation_policy_sha256)
         and _valid_digest(claim.parent_tool_configuration_sha256)
         and type(claim.allow_inherited_mcp) is bool
-        and claim.allow_native_orchestrator_delegation is True
         and claim.profile_privacy_requirements.issubset(claim.parent_privacy_grants)
         and claim.route_class == "existing-owner-codex-zero-additional-metered"
         and _valid_digest(claim.route_receipt_sha256)
@@ -298,6 +297,7 @@ def make_resources_delegate_handler(ctx: HermesPluginContext,
         binding = claim.mission_binding
         selected = getattr(binding, "selected_source_ids", None)
         if (type(binding) is not MissionBinding or binding.schema != 2
+                or binding.source_profile_id != PROFILE_ID
                 or binding.execution_mode not in {"oneshot", "kanban"}
                 or binding.task_sha256 != _mission_task_sha256(goal)
                 or type(selected) is not tuple or not 1 <= len(selected) <= MAX_SELECTED_EXPERTS
@@ -308,7 +308,7 @@ def make_resources_delegate_handler(ctx: HermesPluginContext,
         try:
             from hermes_installer.remote.core_native_observer import (
                 RootInternalProfileClaimSource, RootNativeSelectedSourceDelivery,
-                RootVerifiedNativeChildAuthorization,
+                RootVerifiedMissionDispatchAuthorization, RootVerifiedNativeChildAuthorization,
             )
             from hermes_installer.remote.native_child_adapter import (
                 NativeChildMode, build_native_child, run_native_child,
@@ -317,6 +317,27 @@ def make_resources_delegate_handler(ctx: HermesPluginContext,
                 raise ResourcesDispatchDenied("fixed root expert admission client is unavailable")
         except Exception:
             return _denied("root-authorized native expert dispatch is unavailable")
+
+        task_sha256 = _mission_task_sha256(goal)
+        try:
+            mission_authorization = claim_source.authorize_mission_claim(
+                claim, task_sha256=task_sha256,
+            )
+            if (type(mission_authorization) is not RootVerifiedMissionDispatchAuthorization
+                    or mission_authorization.claim_handle != claim.claim_id
+                    or mission_authorization.mission_binding_sha256
+                        != hashlib.sha256(_canonical_json(binding.to_wire())).hexdigest()
+                    or mission_authorization.gateway_turn_id != claim.gateway_turn_id
+                    or mission_authorization.owner_subject_sha256 != claim.owner_subject_sha256
+                    or mission_authorization.core_generation != claim.core_generation
+                    or mission_authorization.core_source_generation != claim.core_source_generation
+                    or mission_authorization.source_profile_id != binding.source_profile_id
+                    or mission_authorization.canonical_arguments_sha256 != task_sha256
+                    or not time.monotonic() < mission_authorization.expires_monotonic
+                        <= min(claim.expires_monotonic, time.monotonic() + 30.0)):
+                raise ResourcesDispatchDenied("root mission authorization does not match the exact current task")
+        except Exception:
+            return _denied("the spent Jarvis task authorization is unavailable or no longer matches")
 
         drafts: list[dict[str, Any]] = []
         total_bytes = 0
@@ -348,6 +369,11 @@ def make_resources_delegate_handler(ctx: HermesPluginContext,
                     child=child, parent_agent=parent_agent, goal=goal,
                     authorization=authorization, source=source,
                 )
+                if (type(native_result) is not dict or native_result.get("status") != "completed"
+                        or native_result.get("failed") is True or native_result.get("error")
+                        or not isinstance(native_result.get("summary"), str)
+                        or not native_result["summary"].strip()):
+                    raise ResourcesDispatchDenied("native expert lifecycle did not report a successful completion")
                 encoded = json.dumps(native_result, ensure_ascii=False, sort_keys=True,
                                      separators=(",", ":"), allow_nan=False).encode("utf-8", "strict")
                 total_bytes += len(encoded)
@@ -395,7 +421,7 @@ def _denied(message: str) -> str:
 
 def register_resources_delegate(ctx: HermesPluginContext,
                                 claim_source: InternalProfileClaimSource) -> ResourcesDelegateRegistrationReceipt:
-    """Register the reviewed fixed tool without shadowing built-ins."""
+    """Register the reviewed fixed Jarvis expert-dispatch tool without shadowing built-ins."""
     handler = make_resources_delegate_handler(ctx, claim_source)
     registration = ctx.register_tool(
         name="resources_delegate",
