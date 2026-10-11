@@ -1083,6 +1083,11 @@ class CoreGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
                  patch.object(core_gateway, "accept_core_ingress", return_value=accepted):
                 app = core_gateway.create_core_gateway_app(launch)
                 app["core_listener_identity"] = (1, 2)
+                for path in (*FEATURE_CHUNK_PATHS, *FEATURE_CSS_CHUNK_PATHS):
+                    with self.subTest(asset_path=path):
+                        routes = [route for route in app.router.routes()
+                                  if getattr(route.resource, "canonical", None) == path]
+                        self.assertEqual([route.method for route in routes], ["GET"])
                 decision_routes = [
                     route for route in app.router.routes()
                     if getattr(route.resource, "canonical", None)

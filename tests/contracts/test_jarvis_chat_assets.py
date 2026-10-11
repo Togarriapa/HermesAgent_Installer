@@ -86,7 +86,10 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('window.matchMedia("(prefers-reduced-motion: reduce)")', client)
         self.assertIn('navSelection === "sessions" && selected === "chat" ? "sessions" : selected', navigation)
         self.assertIn('if (selectedNavigation === "sessions") setPanel(true);', navigation)
-        self.assertIn('showView("chat", "sessions")', client)
+        self.assertIn(
+            'showView(button.dataset.view, button.dataset.openSessions === "true" ? "sessions" : button.dataset.view)',
+            client,
+        )
         self.assertIn('showView("overview");', client)
         self.assertIn('data-view="chat">Chats</button>', page.decode("utf-8"))
         _content_type, stylesheet = reviewed_chat_asset("/chat/assets/app.css")
@@ -148,8 +151,12 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('Object.defineProperty(script, "jarvisReviewedFeatureChunk"', source)
         self.assertIn("Object.freeze(features.map", source)
         self.assertNotIn("import(", registry_source + source)
-        self.assertNotIn("https://", registry_source + source)
-        self.assertNotIn("http://", registry_source + source)
+        external_url_literals = set(re.findall(r"https?://[^\s\"'`<>]+", registry_source + source))
+        self.assertEqual(external_url_literals, {"http://www.w3.org/2000/svg"})
+        self.assertNotRegex(
+            registry_source + source,
+            r"(?:fetch|EventSource|WebSocket|XMLHttpRequest)\s*\(\s*[\"']https?://",
+        )
         for feature in FEATURE_ASSETS:
             with self.subTest(feature=feature.feature_id):
                 self.assertIn("id:" + json.dumps(feature.feature_id), source)
@@ -547,7 +554,12 @@ HELPER
         self.assertIn('const preferenceKey = "jarvis.ui.preferences.v1"', client)
         self.assertIn('byId("speech-output").checked = uiPreferences.readAloud;', client)
         self.assertIn('byId("chat-speech-output").checked = uiPreferences.readAloud;', client)
-        self.assertIn('current.lang = uiPreferences.language', client)
+        self.assertIn('current.lang = byId("speech-language").value', client)
+        self.assertIn(
+            'for (const id of ["speech-language", "chat-speech-language"]) byId(id).value = uiPreferences.language;',
+            client,
+        )
+        self.assertIn('saveUIPreferences({language: event.currentTarget.value});', client)
         self.assertIn('uiPreferences.motion !== "full" && window.matchMedia("(prefers-reduced-motion: reduce)").matches', client)
         self.assertIn('"language-not-supported":', client)
         self.assertIn('utterance.rate = Number(byId("speech-rate").value)', client)

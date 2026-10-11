@@ -591,7 +591,12 @@ def install_jarvis_projects_routes(app: Any, service: JarvisChatService) -> None
             raise web.HTTPNotFound(text="not found", headers=_secure_headers()) from None
 
     for method, path in FEATURE_ROUTES:
-        app.router.add_route(method, path, route, allow_head=False)
+        if method == "GET":
+            app.router.add_get(path, route, allow_head=False)
+        elif method == "POST":
+            app.router.add_post(path, route)
+        else:
+            raise ValueError("project route method is not reviewed")
 
 
 async def project_context_for_turn(service: JarvisChatService, principal: Any,
