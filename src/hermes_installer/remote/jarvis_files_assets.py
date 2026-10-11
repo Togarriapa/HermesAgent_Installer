@@ -60,220 +60,175 @@ _CSS = """
 """
 
 _MOUNT = r"""function mount(container, api, state) {
-  const root = container.querySelector('[data-feature-root="files"]') || container;
-  const conversationSelect = root.querySelector('[data-conversation]');
-  const fileInput = root.querySelector('[data-file]');
-  const uploadButton = root.querySelector('[data-upload]');
-  const refreshButton = root.querySelector('[data-refresh]');
-  const note = root.querySelector('[data-note]');
-  const preview = root.querySelector('[data-preview]');
-  const previewMeta = root.querySelector('[data-preview-meta]');
-  const previewBytes = root.querySelector('[data-preview-bytes]');
-  const list = root.querySelector('[data-files]');
-  const empty = root.querySelector('[data-empty]');
-  let stopped = false, busy = false, pendingAttempt = null, conversationId = '', previewRevision = 0;
-  function call(method, path, body) {
-    if (stopped) return Promise.reject(new Error('View closed'));
-    return method === 'GET' ? api.get(path) : api.post(path, body);
-  }
-  function filesPath(id = conversationId) { return '/chat/api/conversations/' + encodeURIComponent(id) + '/files'; }
-  function addText(parent, tag, text, className) {
-    const node = document.createElement(tag);
-    if (className) node.className = className;
-    node.textContent = text;
-    parent.append(node);
-    return node;
-  }
-  function sizeText(value) {
-    if (!Number.isSafeInteger(value) || value < 0) return 'Unknown size';
-    return value < 1024 ? value + ' B' : (value / 1024).toFixed(1) + ' KiB';
-  }
-  function renderFiles(items) {
-    list.replaceChildren();
-    for (const file of (Array.isArray(items) ? items : [])) {
-      if (!file || typeof file.name !== 'string' || typeof file.id !== 'string') continue;
-      const row = document.createElement('li');
-      const detail = document.createElement('span');
-      addText(detail, 'span', file.name, 'files-name');
-      addText(detail, 'span', (typeof file.mime_type === 'string' ? file.mime_type : 'Text file') +
-        ' · ' + sizeText(file.size_bytes) +
-        (typeof file.sha256 === 'string' && /^[a-f0-9]{64}$/.test(file.sha256) ? ' · SHA-256 ' + file.sha256 : '') +
-        (Number.isFinite(file.created_at) ? ' · ' + new Date(file.created_at * 1000).toLocaleString() : ''), 'files-meta');
-      row.append(detail);
-      const stateLabel = ({ready: 'Staged for next message', attached: 'Consumed by a turn',
-        pending: 'Staging', unavailable: 'Unavailable'})[file.state] || 'Unknown';
-      addText(row, 'span', stateLabel, 'files-state');
-      list.append(row);
-    }
-    empty.hidden = list.childElementCount > 0;
-  }
-  async function refreshFiles() {
-    if (stopped || busy || !conversationId) return;
-    busy = true;
-    refreshButton.disabled = true;
-    try {
-      const data = await call('GET', filesPath());
-      if (!stopped) renderFiles(data && data.files);
-    } catch (_) {
-      if (!stopped) note.textContent = 'File status is temporarily unavailable.';
-    } finally {
-      busy = false;
-      if (!stopped) refreshButton.disabled = false;
-    }
-  }
-  async function loadConversations() {
-    try {
-      const data = await call('GET', '/chat/api/conversations');
-      if (stopped) return;
-      const rows = data && Array.isArray(data.conversations) ? data.conversations : [];
-      conversationSelect.replaceChildren();
-      for (const conversation of rows) {
-        if (!conversation || typeof conversation.id !== 'string') continue;
-        const option = document.createElement('option');
-        option.value = conversation.id;
-        option.textContent = typeof conversation.title === 'string' ? conversation.title : 'Conversation';
-        conversationSelect.append(option);
-      }
-      conversationId = conversationSelect.value || '';
-      if (!conversationId) {
-        const option = document.createElement('option');
-        option.value = '';
-        option.textContent = 'Create a conversation in Chat first';
-        conversationSelect.append(option);
-        note.textContent = 'Create a conversation in Chat before staging files.';
-        uploadButton.disabled = true;
-      } else {
-        note.textContent = 'File contents are sent to the selected private conversation when you next message Jarvis.';
-        uploadButton.disabled = !fileInput.files || fileInput.files.length === 0;
-        await refreshFiles();
-      }
-    } catch (_) {
-      if (!stopped) note.textContent = 'Conversation list is temporarily unavailable.';
-    }
-  }
-  function toBase64(buffer) {
-    const bytes = new Uint8Array(buffer);
-    let binary = '';
-    for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-      binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-    }
-    return btoa(binary);
-  }
-  async function previewSelectedFile(file, revision = ++previewRevision) {
-    preview.hidden = true;
-    previewMeta.textContent = '';
-    previewBytes.textContent = '';
-    if (!file) return false;
-    const suffix = file.name.toLocaleLowerCase().split('.').pop();
-    if (file.size < 1 || file.size > 128 * 1024 || !['txt', 'md', 'csv', 'json'].includes(suffix) ||
-        !/^[A-Za-z0-9][A-Za-z0-9._ -]{0,119}$/.test(file.name) || file.name.includes('..')) {
-      note.textContent = 'Choose a non-empty TXT, Markdown, CSV, or JSON file no larger than 128 KiB.';
-      return false;
-    }
-    try {
-      const bytes = await file.arrayBuffer();
-      const decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-      if (stopped || revision !== previewRevision || fileInput.files?.[0] !== file) return false;
-      previewMeta.textContent = file.name + ' · ' + sizeText(file.size) + ' · UTF-8 upload bytes';
-      previewBytes.textContent = decoded;
-      preview.hidden = false;
-      note.textContent = 'Preview shows the selected file bytes decoded as UTF-8. Stage it to attach it to your next message.';
-      return true;
-    } catch (_) {
-      if (!stopped && fileInput.files?.[0] === file) {
-        note.textContent = 'This file is not valid UTF-8 text and cannot be staged.';
-      }
-      return false;
-    }
-  }
-  async function stageFile() {
-    if (stopped || busy || !conversationId) return;
-    const targetConversation = conversationId;
-    const file = fileInput.files && fileInput.files[0];
-    if (!file) return;
-    busy = true;
-    uploadButton.disabled = true;
-    conversationSelect.disabled = true;
-    refreshButton.disabled = true;
-    try {
-      if (!(await previewSelectedFile(file)) || stopped || targetConversation !== conversationId ||
-          fileInput.files?.[0] !== file) return;
-      note.textContent = 'Staging file in the selected Hermes conversation…';
-      if (!pendingAttempt || pendingAttempt.file !== file || pendingAttempt.conversationId !== targetConversation) {
-        pendingAttempt = {
-          file: file,
-          conversationId: targetConversation,
-          body: {
-            name: file.name,
-            content_base64: toBase64(await file.arrayBuffer()),
-            idempotency_key: crypto.randomUUID().replaceAll('-', '')
-          }
-        };
-      }
-      await call('POST', filesPath(targetConversation), pendingAttempt.body);
-      if (stopped) return;
-      pendingAttempt = null;
-      fileInput.value = '';
-      note.textContent = 'File staged. Its contents will be attached to your next message in this conversation.';
-      try {
-        renderFiles((await call('GET', filesPath(targetConversation))).files);
-      } catch (_) {
-        if (!stopped) note.textContent = 'File staged successfully. Refresh the conversation file list to confirm its current state.';
-      }
-    } catch (_) {
-      if (!stopped) note.textContent = 'No upload receipt arrived. Re-submit the same selected file to retry its idempotent request.';
-    } finally {
-      busy = false;
-      if (!stopped) {
-        conversationSelect.disabled = false;
-        refreshButton.disabled = false;
-        uploadButton.disabled = !conversationId || !fileInput.files || fileInput.files.length === 0;
-      }
-    }
-  }
-  function onConversationChange() {
-    conversationId = conversationSelect.value || '';
-    const selectedConversation = conversationId;
-    pendingAttempt = null;
-    renderFiles([]);
-    uploadButton.disabled = true;
-    const revision = ++previewRevision;
-    previewSelectedFile(fileInput.files && fileInput.files[0], revision).then((valid) => {
-      if (!stopped && revision === previewRevision && selectedConversation === conversationId) {
-        uploadButton.disabled = !selectedConversation || !valid;
-      }
-    });
-    refreshFiles();
-  }
-  function onFileChange() {
-    pendingAttempt = null;
-    const selectedConversation = conversationId;
-    const file = fileInput.files && fileInput.files[0];
-    uploadButton.disabled = true;
-    const revision = ++previewRevision;
-    previewSelectedFile(file, revision).then((valid) => {
-      if (!stopped && revision === previewRevision && selectedConversation === conversationId &&
-          fileInput.files?.[0] === file) {
-        uploadButton.disabled = !selectedConversation || !valid;
-      }
-    });
-  }
-  conversationSelect.addEventListener('change', onConversationChange);
-  fileInput.addEventListener('change', onFileChange);
-  uploadButton.addEventListener('click', stageFile);
-  refreshButton.addEventListener('click', refreshFiles);
-  loadConversations();
-  return function cleanup() {
-    stopped = true;
-    previewRevision++;
-    conversationSelect.removeEventListener('change', onConversationChange);
-    fileInput.removeEventListener('change', onFileChange);
-    uploadButton.removeEventListener('click', stageFile);
-    refreshButton.removeEventListener('click', refreshFiles);
-    preview.hidden = true;
-    previewMeta.textContent = '';
-    previewBytes.textContent = '';
-  };
+const root = container.querySelector('[data-feature-root="files"]') || container;
+const conversationSelect = root.querySelector('[data-conversation]');
+const fileInput = root.querySelector('[data-file]');
+const uploadButton = root.querySelector('[data-upload]');
+const refreshButton = root.querySelector('[data-refresh]');
+const note = root.querySelector('[data-note]');
+const preview = root.querySelector('[data-preview]');
+const previewMeta = root.querySelector('[data-preview-meta]');
+const previewBytes = root.querySelector('[data-preview-bytes]');
+const list = root.querySelector('[data-files]');
+const empty = root.querySelector('[data-empty]');
+let stopped = false, busy = false, pendingAttempt = null, conversationId = '', previewRevision = 0;
+function call(method, path, body) {
+if (stopped) return Promise.reject(new Error('View closed'));
+return method === 'GET' ? api.get(path) : api.post(path, body);
+}
+function filesPath(id = conversationId) { return '/chat/api/conversations/' + encodeURIComponent(id) + '/files'; }
+function addText(parent, tag, text, className) { const node = document.createElement(tag); if (className) node.className = className; node.textContent = text; parent.append(node); return node; }
+function sizeText(value) { return !Number.isSafeInteger(value) || value < 0 ? 'Unknown size' : value < 1024 ? value + ' B' : (value / 1024).toFixed(1) + ' KiB'; }
+function renderFiles(items) {
+list.replaceChildren();
+for (const file of (Array.isArray(items) ? items : [])) {
+if (!file || typeof file.name !== 'string' || typeof file.id !== 'string') continue;
+const row = document.createElement('li');
+const detail = document.createElement('span');
+addText(detail, 'span', file.name, 'files-name');
+addText(detail, 'span', (typeof file.mime_type === 'string' ? file.mime_type : 'Text file') + ' · ' +
+sizeText(file.size_bytes) + (typeof file.sha256 === 'string' && /^[a-f0-9]{64}$/.test(file.sha256) ?
+' · SHA-256 ' + file.sha256 : '') + (Number.isFinite(file.created_at) ?
+' · ' + new Date(file.created_at * 1000).toLocaleString() : ''), 'files-meta');
+row.append(detail);
+const stateLabel = ({ready: 'Ready for next message', attached: 'Consumed by turn', pending: 'Staging', unavailable: 'Unavailable'})[file.state] || 'Unknown';
+addText(row, 'span', stateLabel, 'files-state');
+list.append(row);
+}
+empty.hidden = list.childElementCount > 0;
+}
+async function refreshFiles() {
+if (stopped || busy || !conversationId) return;
+busy = true; refreshButton.disabled = true;
+try { const data = await call('GET', filesPath()); if (!stopped) renderFiles(data && data.files); }
+catch (_) { if (!stopped) note.textContent = 'File status is temporarily unavailable.'; }
+finally { busy = false; if (!stopped) refreshButton.disabled = false; }
+}
+async function loadConversations() {
+try {
+const data = await call('GET', '/chat/api/conversations');
+if (stopped) return;
+conversationSelect.replaceChildren();
+for (const conversation of (data && Array.isArray(data.conversations) ? data.conversations : [])) {
+if (!conversation || typeof conversation.id !== 'string') continue;
+const option = document.createElement('option');
+option.value = conversation.id;
+option.textContent = typeof conversation.title === 'string' ? conversation.title : 'Conversation'; conversationSelect.append(option);
+}
+conversationId = conversationSelect.value || '';
+if (!conversationId) {
+const option = document.createElement('option');
+option.value = ''; option.textContent = 'Create a conversation in Chat first'; conversationSelect.append(option);
+note.textContent = 'Create a conversation in Chat before staging files.'; uploadButton.disabled = true;
+} else {
+note.textContent = 'File contents are sent to the selected private conversation when you next message Jarvis.';
+uploadButton.disabled = !fileInput.files || fileInput.files.length === 0; await refreshFiles();
+}
+} catch (_) {
+if (!stopped) note.textContent = 'Conversation list is temporarily unavailable.';
+}
+}
+function toBase64(buffer) {
+const bytes = new Uint8Array(buffer); let binary = '';
+for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+return btoa(binary);
+}
+async function previewSelectedFile(file, revision) {
+preview.hidden = true; previewMeta.textContent = previewBytes.textContent = '';
+if (!file) return false;
+if (file.size < 1 || file.size > 131072 || !/\.(txt|md|csv|json)$/i.test(file.name) ||
+!/^[A-Za-z0-9][A-Za-z0-9._ -]{0,119}$/.test(file.name) || file.name.includes('..')) {
+note.textContent = 'Choose supported text up to 128 KiB.'; return false;
+}
+try {
+const decoded = new TextDecoder('utf-8', {fatal:true}).decode(await file.arrayBuffer());
+if (stopped || revision !== previewRevision || fileInput.files?.[0] !== file) return false;
+previewMeta.textContent = file.name + ' · ' + sizeText(file.size) + ' · UTF-8 bytes';
+previewBytes.textContent = decoded; preview.hidden = false;
+note.textContent = 'UTF-8 upload preview ready; stage to attach it.'; return true;
+} catch (_) {
+if (!stopped && revision === previewRevision && fileInput.files?.[0] === file) note.textContent = 'Invalid UTF-8 text.';
+return false;
+}
+}
+function previewChoice(file) {
+const revision = ++previewRevision, selectedConversation = conversationId;
+previewSelectedFile(file, revision).then((valid) => {
+if (!stopped && revision === previewRevision && selectedConversation === conversationId && fileInput.files?.[0] === file)
+uploadButton.disabled = !selectedConversation || !valid;
+});
+}
+async function stageFile() {
+if (stopped || busy || !conversationId) return;
+const targetConversation = conversationId;
+const file = fileInput.files?.[0];
+if (!file) return;
+busy = true;
+uploadButton.disabled = true;
+fileInput.disabled = true;
+conversationSelect.disabled = true;
+refreshButton.disabled = true;
+try {
+if (!(await previewSelectedFile(file, ++previewRevision)) || stopped || targetConversation !== conversationId || fileInput.files?.[0] !== file) return;
+note.textContent = 'Staging attachment…';
+if (!pendingAttempt || pendingAttempt.file !== file || pendingAttempt.conversationId !== targetConversation) {
+pendingAttempt = {file, conversationId: targetConversation, body: {
+name: file.name, content_base64: toBase64(await file.arrayBuffer()),
+idempotency_key: crypto.randomUUID().replaceAll('-', '')
+}};
+}
+await call('POST', filesPath(targetConversation), pendingAttempt.body);
+if (stopped) return;
+pendingAttempt = null;
+fileInput.value = '';
+note.textContent = 'Attachment staged for next message.';
+try {
+renderFiles((await call('GET', filesPath(targetConversation))).files);
+} catch (_) {
+if (!stopped) note.textContent = 'Staged; refresh status.';
+}
+} catch (_) {
+if (!stopped) note.textContent = 'No receipt; reselect same file to retry.';
+} finally {
+busy = false;
+if (!stopped) {
+conversationSelect.disabled = false;
+fileInput.disabled = false;
+refreshButton.disabled = false;
+uploadButton.disabled = !conversationId || !fileInput.files?.length;
+}
+}
+}
+function onConversationChange() {
+conversationId = conversationSelect.value || '';
+pendingAttempt = null;
+renderFiles([]);
+uploadButton.disabled = true;
+previewChoice(fileInput.files?.[0]);
+refreshFiles();
+}
+function onFileChange() {
+pendingAttempt = null;
+const file = fileInput.files?.[0];
+uploadButton.disabled = true;
+previewChoice(file);
+}
+conversationSelect.addEventListener('change', onConversationChange);
+fileInput.addEventListener('change', onFileChange);
+uploadButton.addEventListener('click', stageFile);
+refreshButton.addEventListener('click', refreshFiles);
+loadConversations();
+return function cleanup() {
+stopped = true;
+previewRevision++;
+conversationSelect.removeEventListener('change', onConversationChange);
+fileInput.removeEventListener('change', onFileChange);
+uploadButton.removeEventListener('click', stageFile);
+refreshButton.removeEventListener('click', refreshFiles);
+preview.hidden = true;
+previewMeta.textContent = '';
+previewBytes.textContent = '';
+};
 }"""
 
 _UNMOUNT = "function unmount() {}"
