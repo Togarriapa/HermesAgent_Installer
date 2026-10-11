@@ -1639,6 +1639,11 @@ The installer SHALL satisfy: Expose polished responsive Jarvis through protected
 - **THEN** only the fixed root inspector operation MUST project validated fields from current custody and independently verified root-owned discovery receipt/CAS.
 - **AND** its original nonce-bound proof expires within5s; stale/missing data is pending/unknown and cannot expose HOME, credentials, raw config or claim functional authentication.
 
+#### Scenario: Parallel finite UI composition
+- **WHEN** a feature slice is integrated into Jarvis
+- **THEN** only its reviewed fixed routes/assets MUST join the existing authenticated gateway and subject-owned service; no wildcard proxy or dynamic code loader is allowed.
+- **AND** its first useful backend effect/read is qualified before reporting operation; pending capability panels MUST remain truthful.
+
 ### Requirement: R0204 current functional obligation
 The installer SHALL satisfy: Deny unreviewed generic commands, backend management, host filesystem, clipboard, arbitrary URL and control proxies. Reviewed attachments/browser/voice capabilities require separate owner-bound finite adapters.
 
@@ -1718,6 +1723,11 @@ The installer SHALL satisfy: Port complete server-owned Bots room/group roster/o
 - **WHEN** this obligation is implemented for a selected authorized target/account
 - **THEN** verification MUST exercise Actual DM/group/roster/orchestration/relay with full durable server state, bounded worker jobs, restart persistence and cross-owner/account/budget denial; bounded ui_meta mirror or frontend-only scheduler cannot pass.
 - **AND** missing dependency/account/hardware or failed evidence leaves acceptance OPEN with exact next action, preserving data and prior working state.
+
+#### Scenario: Real mission and Bot state
+- **WHEN** an owner launches or stops a previewed mission or Bot workflow
+- **THEN** native delegated/task semantics MUST bind exact source-selected team, plan digest, one-use approval, ownership and current grants before effects.
+- **AND** queue/group/relay state survives restart without duplicate actions; missing account/background authority stays unavailable.
 
 ### Requirement: CORE-LEASE current functional obligation
 The installer SHALL satisfy: Keep original turn ceiling min(original JWT expiry, initial acceptance+600s, stricter backend deadline). Distinct <=30s leases require new protected nonce heartbeat; <=5s ingress witness per byte and <=4s SSE segments. No cached restamp, expired revival or later-JWT ceiling extension.

@@ -4032,6 +4032,41 @@
       "cp313_aarch64_sha256": "ee2922902c45ae8ccada2c5b501ab86c36525b883eff4255313a253a3160861c",
       "cp314_aarch64_sha256": "501a031947e3a9025ed4405a168e6ef5ae3126c59f90ce0cd6f2bfc477be31b7",
       "status": "official metadata observed; actual wheel/import/Pi acceptance pending"
-    }
+    },
+    "parallel_slices": [
+      {
+        "id": "missions-team-queue",
+        "task_ids": [
+          "HI-T266.2",
+          "RT-T266.3"
+        ],
+        "status": "source-contract review required; implementation and Pi acceptance OPEN"
+      },
+      {
+        "id": "bots-channels-cron",
+        "task_ids": [
+          "HI-T266.2",
+          "RT-T266.3"
+        ],
+        "status": "source-contract review required; implementation and Pi acceptance OPEN"
+      },
+      {
+        "id": "activity-tool-usage",
+        "task_ids": [
+          "HI-T266.2",
+          "RT-T266.3"
+        ],
+        "status": "source-contract review required; implementation and Pi acceptance OPEN"
+      },
+      {
+        "id": "capability-search-learning",
+        "task_ids": [
+          "HI-T266.2",
+          "RT-T266.3",
+          "RB-T266.4"
+        ],
+        "status": "source-contract review required; implementation and Pi acceptance OPEN"
+      }
+    ]
   }
 }
