@@ -6,7 +6,8 @@ performed separately on the enrolled Pi.
 import hashlib
 import json
 import os
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -67,7 +68,7 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False):
                 "python_sha256": "a" * 64, "python_link": "pinned-link",
                 "python_uid": 1000, "python_gid": 1000, "python_mode": 0o755}
     monkeypatch.setattr(core, "_identity", lambda: identity)
-    monkeypatch.setattr(core, "_owned_listener", lambda: True)
+    monkeypatch.setattr(core, "_owned_listener", lambda **_kwargs: True)
     monkeypatch.setattr(core, "_launcher", lambda: b"test fixed core launcher")
     monkeypatch.setattr(core, "_install_bundled_resources", lambda _account: _resource_receipt())
     monkeypatch.setattr(core, "_write_resources_discovery", lambda: {
@@ -129,6 +130,72 @@ def test_launcher_uses_only_pinned_hermes_and_installer_adapter_paths():
     expected = shlex.quote(f"{core.SOURCE}:{core.ADAPTER_SOURCE}")
     assert f"export PYTHONPATH={expected}" in launcher
     assert "python -P -m hermes_cli.main" in launcher
+
+
+def _install_legacy_service_fixture(tmp_path, monkeypatch):
+    calls, enabled = _fake_runtime(tmp_path, monkeypatch)
+    launcher_bytes = core._legacy_launcher()
+    core.LAUNCHER.write_bytes(launcher_bytes)
+    core.LAUNCHER.chmod(0o755)
+    record = json.loads(core.JOURNAL.read_text())
+    record.update({"state": "active",
+                   "launcher_sha256": hashlib.sha256(launcher_bytes).hexdigest(),
+                   "unit_sha256": hashlib.sha256(core._unit()).hexdigest()})
+    core.JOURNAL.write_text(json.dumps(record, sort_keys=True) + "\n")
+    core.JOURNAL.chmod(0o600)
+    monkeypatch.setattr(core, "ADAPTER_MIGRATION_BACKUP",
+                        core.JOURNAL.parent / "adapter-migration-backup")
+    monkeypatch.setattr(core, "_validate_adapter_source_path", lambda: None)
+    monkeypatch.setattr(core, "_core_source_generation", lambda: "c" * 64)
+    monkeypatch.setattr(core, "_identity", lambda: {
+        "commit": core.COMMIT, "lock_sha256": core.LOCK_SHA256,
+        "python_sha256": "a" * 64, "python_link": "pinned-link",
+        "python_uid": 1000, "python_gid": 1000, "python_mode": 0o755,
+    })
+    bootstrap = ModuleType("hermes_installer.remote.native_plugin_bootstrap")
+    def enable_plugin():
+        calls.append((("bridge", "enable"), core.UNIT.exists()))
+        return SimpleNamespace(plugin_key="hermes-installer-resources-delegation")
+    bootstrap.enable_native_resources_plugin = enable_plugin
+    inspector = ModuleType("hermes_installer.remote.core_gateway_inspector")
+    inspector._current_native_adapter_generation = lambda *, deadline: "a" * 64
+    inspector.verify_staged_native_resources_plugin = lambda *, deadline: "b" * 64
+    monkeypatch.setitem(sys.modules,
+                        "hermes_installer.remote.native_plugin_bootstrap", bootstrap)
+    monkeypatch.setitem(sys.modules,
+                        "hermes_installer.remote.core_gateway_inspector", inspector)
+    return calls, enabled, launcher_bytes
+
+
+def test_adapter_migration_activates_bridge_before_owned_core_restart(tmp_path, monkeypatch):
+    calls, _enabled, old_launcher = _install_legacy_service_fixture(tmp_path, monkeypatch)
+
+    result = core.install_or_resume()
+
+    assert "migrated to the immutable installer adapter generation" in result
+    record = json.loads(core.JOURNAL.read_text())
+    assert record["adapter_migration_state"] == "active"
+    assert record["launcher_sha256"] == hashlib.sha256(core.LAUNCHER.read_bytes()).hexdigest()
+    assert core.LAUNCHER.read_bytes() != old_launcher
+    assert (core.ADAPTER_MIGRATION_BACKUP / "launcher").read_bytes() == old_launcher
+    ordered = [call[0] for call in calls]
+    assert ordered.index(("bridge", "enable")) < ordered.index(("systemctl", "restart", core.SERVICE))
+
+
+def test_adapter_migration_restores_exact_owned_files_after_restart_failure(tmp_path, monkeypatch):
+    calls, _enabled, old_launcher = _install_legacy_service_fixture(tmp_path, monkeypatch)
+    old_unit = core.UNIT.read_bytes()
+    old_journal = core.JOURNAL.read_bytes()
+    monkeypatch.setattr(core, "_wait_for_listener",
+                        lambda: (_ for _ in ()).throw(core.CoreRuntimeError("injected post-restart failure")))
+
+    with pytest.raises(core.CoreRuntimeError, match="injected post-restart failure"):
+        core.migrate_owned_core_to_adapter_path()
+
+    assert core.LAUNCHER.read_bytes() == old_launcher
+    assert core.UNIT.read_bytes() == old_unit
+    assert core.JOURNAL.read_bytes() == old_journal
+    assert [call[0] for call in calls].count(("systemctl", "restart", core.SERVICE)) == 2
 
 
 def test_failed_start_is_resumable_without_rotating_session_credential(tmp_path, monkeypatch):
