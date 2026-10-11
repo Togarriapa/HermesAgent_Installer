@@ -1063,9 +1063,11 @@ class CoreRpcClient:
         try:
             resume_id = secrets.token_hex(12)
             early_session_info: list[dict] = []
+            resume_params = {"session_id": stored_session_id, "source": "jarvis"}
+            if expected_model is not None:
+                resume_params["eager_build"] = True
             await ws.send_json({"jsonrpc": "2.0", "id": resume_id, "method": "session.resume",
-                                "params": {"session_id": stored_session_id, "source": "jarvis",
-                                           "eager_build": expected_model is not None}})
+                                "params": resume_params})
             resumed = await self._receive(ws, ws_types, expected_id=resume_id,
                                           early_session_info=early_session_info)
             session_id, resumed_key = resumed.get("session_id"), resumed.get("resumed")

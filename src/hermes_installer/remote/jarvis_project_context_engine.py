@@ -194,11 +194,17 @@ class ProjectContextEngine:
         messages = request_messages if selected is None else selected
         if (not isinstance(messages, list) or not messages
                 or any(not isinstance(item, dict) for item in messages)
-                or not isinstance(incoming_message, dict)):
+                or not isinstance(incoming_message, dict)
+                or incoming_message.get("role") != "user"
+                or not isinstance(incoming_message.get("content"), str)):
+            return selected
+        system_index = next((index for index, item in enumerate(messages)
+                             if item.get("role") == "system"), None)
+        if system_index is None or not isinstance(messages[system_index].get("content"), str):
             return selected
         session_id = self._native_session_id
         content = incoming_message.get("content")
-        if not isinstance(session_id, str) or not isinstance(content, str):
+        if not isinstance(session_id, str):
             return selected
         prompt_sha256 = hashlib.sha256(content.encode("utf-8", "strict")).hexdigest()
         snapshot = self._provider.read(session_id=session_id, prompt_sha256=prompt_sha256)
@@ -206,14 +212,8 @@ class ProjectContextEngine:
             return selected
         if not snapshot.is_current_shape(session_id=session_id, prompt_sha256=prompt_sha256):
             return selected
-        system_index = next((index for index, item in enumerate(messages)
-                             if item.get("role") == "system"), None)
-        if system_index is None:
-            return selected
         result = [dict(item) for item in messages]
-        base = result[system_index].get("content")
-        if not isinstance(base, str):
-            return selected
+        base = result[system_index]["content"]
         marker = f"[Jarvis Projects context {snapshot.context_sha256}]"
         if marker in base:
             return result
@@ -223,7 +223,7 @@ class ProjectContextEngine:
         return result
 
 
-def install_current_project_context_middleware(ctx: Any, *,
+def install_current_project_context_middleware(ctx: Any,
                                               provider: CurrentProjectContextProvider | None = None) -> Any:
     """Attach owner context at Hermes' supported per-provider-request seam.
 

@@ -209,7 +209,14 @@ def test_isolated_turn_readback_precedes_prompt_submit_and_mapping_rotation():
 
         async def send_json(self, request):
             order.append(("send", request["method"], request["params"].copy()))
-            if request["method"] == "prompt.submit":
+            if request["method"] == "session.resume":
+                self.frames.append(SimpleNamespace(type=1, data=json.dumps({
+                    "jsonrpc": "2.0", "id": request["id"],
+                    "result": {"session_id": "runtime-parent", "resumed": "stored-parent",
+                               "info": {"lazy": False, "stored_session_id": "stored-parent",
+                                        "model": "gpt-6-sol", "provider": "openai-codex"}},
+                })))
+            elif request["method"] == "prompt.submit":
                 self.frames.append(SimpleNamespace(type=1, data=json.dumps({
                     "jsonrpc": "2.0", "id": request["id"], "result": {"status": "streaming"},
                 })))

@@ -329,6 +329,9 @@ class JarvisProjectsStore:
 
     def context(self, subject: str, conversation_id: str) -> str:
         """Return explicit project text plus a bounded sample of real saved project chats."""
+        # Distinguish an owned chat with no attached project (empty context) from
+        # a foreign/nonexistent conversation. The latter must remain owner-denied.
+        self._require_owned_conversation(subject, conversation_id)
         owner = self._owner(subject)
         excerpts = []
         with self.store._connect() as db:
