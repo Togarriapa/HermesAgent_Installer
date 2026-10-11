@@ -20,7 +20,8 @@ from typing import Any
 
 from .core_gateway import (
     CORE_CONFIG, CORE_GATEWAY_UNIT, CORE_GATEWAY_UNIT_PATH, CORE_HOST, CORE_INGRESS_SOCKET,
-    CORE_INSPECTOR_SOCKET, CORE_PORT, CORE_SERVICE_UNIT, CoreGatewayConfig,
+    CORE_INSPECTOR_SOCKET, CORE_PORT, CORE_SERVICE_UNIT, GATEWAY_ARGV, GATEWAY_EXECUTABLE,
+    CoreGatewayConfig,
 )
 
 TUNNEL_UNIT = "hermes-jarvis-mvp-tunnel.service"

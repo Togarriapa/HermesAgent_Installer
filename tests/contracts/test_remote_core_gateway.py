@@ -225,6 +225,61 @@ class CoreGatewayProofTests(unittest.TestCase):
             with self.assertRaises(core_gateway_inspector.CoreInspectionDenied):
                 core_gateway_inspector._current_core_source(config, deadline=time.monotonic() - 1)
 
+    def test_unit_process_checks_fixed_gateway_and_tunnel_launch_contracts(self):
+        config = dataclasses.replace(_config(), gateway_unit_sha256="1" * 64,
+            gateway_python_sha256="2" * 64, tunnel_unit_sha256="3" * 64,
+            cloudflared_binary_sha256="4" * 64)
+        cases = (
+            (core_gateway_inspector.CORE_GATEWAY_UNIT, 440, None, None,
+                config.gateway_unit_sha256, {
+                "FragmentPath": str(core_gateway_inspector.CORE_GATEWAY_UNIT_PATH),
+                "User": str(config.gateway_uid), "Group": str(config.gateway_gid),
+            }, core_gateway_inspector.GATEWAY_EXECUTABLE,
+                (core_gateway_inspector.GATEWAY_ARGV[0], *core_gateway_inspector.GATEWAY_ARGV[1:]),
+                config.gateway_uid, config.gateway_gid, config.gateway_python_sha256),
+            (core_gateway_inspector.TUNNEL_UNIT, 441, 998, config.gateway_gid,
+                config.tunnel_unit_sha256, {
+                "FragmentPath": str(core_gateway_inspector.TUNNEL_UNIT_PATH),
+                "DynamicUser": "yes", "SupplementaryGroups": str(config.gateway_gid),
+            }, core_gateway_inspector.TUNNEL_EXECUTABLE,
+                core_gateway_inspector.TUNNEL_ARGV, 998, config.gateway_gid,
+                config.cloudflared_binary_sha256),
+        )
+        for unit, pid, peer_uid, peer_gid, unit_digest, properties, executable, argv, uid, gid, digest in cases:
+            with self.subTest(unit=unit):
+                properties = {"MainPID": str(pid),
+                              "ControlGroup": f"/system.slice/{unit}",
+                              "InvocationID": "12345678-1234-1234-1234-123456789012",
+                              **properties}
+                deadline = time.monotonic() + 2
+                with patch.object(core_gateway_inspector, "_unit_properties",
+                                  return_value=properties), \
+                     patch.object(core_gateway_inspector, "_protected_file_sha",
+                                  return_value=unit_digest) as hash_file, \
+                     patch.object(core_gateway_inspector, "_process",
+                                  return_value=(17, "88")) as process:
+                    result = core_gateway_inspector._check_unit_process(config, unit=unit,
+                        pid=pid, deadline=deadline, peer_uid=peer_uid, peer_gid=peer_gid)
+                self.assertEqual(result, (17, "88", properties["InvocationID"]))
+                hash_file.assert_called_once_with(Path(properties["FragmentPath"]), deadline=deadline)
+                kwargs = process.call_args.kwargs
+                self.assertEqual(kwargs["uid"], uid)
+                self.assertEqual(kwargs["gid"], gid)
+                self.assertEqual(kwargs["argv"], argv)
+                self.assertEqual(kwargs["executable"], executable)
+                self.assertEqual(kwargs["executable_sha256"], digest)
+                self.assertEqual(kwargs["cgroup"], properties["ControlGroup"])
+
+        bad = {"MainPID": "440", "ControlGroup": f"/system.slice/{core_gateway_inspector.CORE_GATEWAY_UNIT}",
+               "InvocationID": "12345678-1234-1234-1234-123456789012",
+               "FragmentPath": "/tmp/unreviewed.service", "User": str(config.gateway_uid),
+               "Group": str(config.gateway_gid)}
+        with patch.object(core_gateway_inspector, "_unit_properties", return_value=bad):
+            with self.assertRaises(core_gateway_inspector.CoreInspectionDenied):
+                core_gateway_inspector._check_unit_process(config,
+                    unit=core_gateway_inspector.CORE_GATEWAY_UNIT, pid=440,
+                    deadline=time.monotonic() + 2)
+
 
 class CoreGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
     async def test_wrong_host_is_denied_before_jwt_or_root_observation(self):
