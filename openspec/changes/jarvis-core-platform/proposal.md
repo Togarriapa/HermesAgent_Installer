@@ -69,3 +69,5 @@ Native Bot Chat is globally canonical per profile and cannot safely provide fami
 Direct user clarification establishes Jarvis as sole master, flexible expert/team routing and default approval unless explicit task-start autonomy. Experts may develop internal work and knowledge but never hold final external-effect authority. Correct source/compiler routing before primary adoption; preserve all Resources and actual connected capability scope.
 
 Clarify schema2 mission state so Jarvis chooses execution mode and owner autonomy remains a scoped explicit task-start grant. Internal review and launch consent do not substitute for final-effect authority.
+
+Break the new-task planning cycle with a distinct owned no-tools Jarvis planning admission, actual subscription response and root-validated durable plan. Short authority remains separate from persisted Kanban data and later expert/final-effect approval.

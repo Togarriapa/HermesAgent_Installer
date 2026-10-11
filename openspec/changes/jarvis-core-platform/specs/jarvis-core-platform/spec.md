@@ -1930,3 +1930,10 @@ Mission state SHALL distinguish Jarvis-selected execution mode, explicit initial
 #### Scenario: Reviewed result without owner authorization
 - **WHEN** Jarvis approves an internal result but no current owner final-effect scope exists
 - **THEN** it requests approval and waits rather than publishing.
+
+### Requirement: New-task planning without execution authority cycle
+The system SHALL admit a new owner task's read-only no-tools Jarvis planning turn without requiring prior completed parent output or launch approval. It SHALL record a validated durable plan from actual completion while reserving grants and final approval for later fresh execution admission.
+
+#### Scenario: Restarted Kanban plan
+- **WHEN** persisted plan data survives restart but its short completion receipt expired
+- **THEN** data remains visible while execution requires fresh current admission; no expired authority is revived.
