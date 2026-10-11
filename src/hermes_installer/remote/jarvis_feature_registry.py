@@ -11,6 +11,7 @@ from . import jarvis_models as _models
 from . import jarvis_context as _context
 from . import jarvis_obsidian_vault as _obsidian
 from . import jarvis_extensions_admin as _extensions
+from . import jarvis_projects as _projects
 from .jarvis_runtime_visibility_assets import FEATURE_ASSETS as _ACTIVITY_ASSETS
 from .jarvis_bots_ui import FEATURE_ASSETS as _BOTS_ASSETS
 from .jarvis_feature_contract import JarvisFeatureAssets
@@ -25,6 +26,7 @@ from .jarvis_integrations_assets import FEATURE_ASSETS as _INTEGRATIONS_ASSETS
 from .jarvis_context_assets import FEATURE_ASSETS as _CONTEXT_ASSETS
 from .jarvis_second_brain_assets import FEATURE_ASSETS as _OBSIDIAN_ASSETS
 from .jarvis_extensions_assets import FEATURE_ASSETS as _EXTENSIONS_ASSETS
+from .jarvis_projects_assets import FEATURE_ASSETS as _PROJECTS_ASSETS
 
 # Runtime resources are compiled only from these explicit, reviewed modules.
 FEATURE_ASSETS: tuple[JarvisFeatureAssets, ...] = (
@@ -37,6 +39,7 @@ FEATURE_ASSETS: tuple[JarvisFeatureAssets, ...] = (
     _CONTEXT_ASSETS,
     _OBSIDIAN_ASSETS,
     _EXTENSIONS_ASSETS,
+    _PROJECTS_ASSETS,
 )
 
 # New endpoint installers are explicit. Activity is installed exactly once by
@@ -51,6 +54,7 @@ FEATURE_ROUTE_INSTALLERS = (
     ("context", _context.install_jarvis_context_routes, _CONTEXT_ASSETS.api_routes),
     ("second-brain", _obsidian.install_jarvis_obsidian_vault_routes, _OBSIDIAN_ASSETS.api_routes),
     ("extensions", _extensions.install_jarvis_extensions_admin_routes, _EXTENSIONS_ASSETS.api_routes),
+    ("projects", _projects.install_jarvis_projects_routes, _projects.FEATURE_ROUTES),
 )
 FEATURE_ROUTE_OWNERS = (
     ("activity", "chat-service.install", _ACTIVITY_ASSETS.api_routes),
@@ -64,6 +68,10 @@ FEATURE_ROUTE_OWNERS = (
 _SHARED_INSTALLER_READS = {
     "files": {("GET", "/chat/api/conversations")},
     "context": {("GET", "/chat/api/conversations")},
+    "projects": {
+        ("GET", "/chat/api/conversations"),
+        ("GET", "/chat/api/second-brain/notes"),
+    },
     "second-brain": set(),
 }
 _INTEGRATIONS_SHARED_READS = (

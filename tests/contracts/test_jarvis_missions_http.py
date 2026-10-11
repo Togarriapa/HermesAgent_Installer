@@ -188,7 +188,7 @@ def test_mission_routes_and_feature_assets_are_literal_and_finite():
     }
     assert jarvis_feature_registry.FEATURE_ASSETS[0] == MISSION_ASSETS
     assert {asset.feature_id for asset in jarvis_feature_registry.FEATURE_ASSETS} == {
-        "missions", "bots", "activity", "native-controls", "resources-learning", "native-inventory", "files", "models-settings", "overview", "integrations", "context", "second-brain", "extensions",
+        "missions", "bots", "activity", "native-controls", "resources-learning", "native-inventory", "files", "models-settings", "overview", "integrations", "context", "second-brain", "extensions", "projects",
     }
     assert jarvis_feature_registry.FEATURE_ROUTE_INSTALLERS == (
         ("missions", jarvis_missions.install_jarvis_missions_routes,
@@ -207,6 +207,8 @@ def test_mission_routes_and_feature_assets_are_literal_and_finite():
          jarvis_feature_registry._OBSIDIAN_ASSETS.api_routes),
         ("extensions", jarvis_feature_registry._extensions.install_jarvis_extensions_admin_routes,
          jarvis_feature_registry._EXTENSIONS_ASSETS.api_routes),
+        ("projects", jarvis_feature_registry._projects.install_jarvis_projects_routes,
+         jarvis_feature_registry._projects.FEATURE_ROUTES),
     )
     assert {feature_id for feature_id, _owner, _routes
             in jarvis_feature_registry.FEATURE_ROUTE_OWNERS} == {
