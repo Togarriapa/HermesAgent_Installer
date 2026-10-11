@@ -51,3 +51,5 @@ The first real mission is a single source-selected Orchestrator task bound exact
 The first specialization deliberately uses supported native parent-tool inheritance under an independently root-enrolled policy. This replaces the unavailable prompt-grant equality interpretation while preserving exact source custody and native restrictions; it makes no sandbox or text-only-child claim.
 
 Align the verified resources_delegate {goal} schema and configured-maximum inventory terminology. Remaining Models, Logs/browser, integrations, statistics, voice/Android and full Resources capabilities are prioritized as bounded owner packages within the existing eight groups, without inferring live acceptance.
+
+Provide a useful first Models effect through the native session-only selector and fixed source-known Codex IDs, preserving owner conversation and subscription route boundaries. Persistent global configuration and dynamic catalogs remain separate.

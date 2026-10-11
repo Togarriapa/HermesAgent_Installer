@@ -60,3 +60,5 @@ HI-T266.2/RB-T266.4 first mission proof joins exact approved task/plan/source to
 RB-T266.4 first policy: issue and consume the separate current root-enrolled inherited-tool Orchestrator policy, accounting for native MCP/depth/blocked rules without altering207 source prompts. Prove one actual owner specialization and failure on changed parent policy/route/source on Pi; full Resources acceptance remains open.
 
 Within RT-T266.3/HI-T266.2, prioritize native Models/config CAS, authentic Logs/tool/usage, owned artifact/browser visibility, channel/webhook/pairing adapters, measured graphs and voice/device ports in the design owner packages. RB-T266.4 preserves full Resources dispatch/enrichment; VD-T266.5 requires Pi evidence for each useful increment. All obligations remain open.
+
+RT-T266.3 Models first effect: fixed conversation-scoped Codex --session selection with source-known IDs, current route/owner/revision approval and native post-read; prove no global persistence or metered fallback on Pi. Durable default config CAS remains later; acceptance stays open.

@@ -1859,3 +1859,10 @@ The system SHALL distinguish configured maximum tool metadata from effective nat
 #### Scenario: Inventory ambiguity
 - **WHEN** native listing cannot establish effective authorization or availability
 - **THEN** the UI reports configured or unknown status and execution relies on separate current policy and native filtering.
+
+### Requirement: Owned session model selection
+The system SHALL restrict model changes to a current owner conversation, the reviewed Codex known-model allowlist and session-only native switching. It SHALL require current subscription routing, one-use approval and verified session post-state without changing global configuration.
+
+#### Scenario: Busy or uncertain selection
+- **WHEN** the session is busy, model availability is unproved or routing/currentness fails
+- **THEN** selection denies or stays explicitly pending without fallback or repeated mutation.
