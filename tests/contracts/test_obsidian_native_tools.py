@@ -226,5 +226,6 @@ def test_promotion_requires_master_effect_permit_and_expert_cannot_write_owner_n
     with patch("hermes_installer.remote.obsidian_native_tools.current_native_tool_dispatch",
                return_value=expert_dispatch), pytest.raises(
                    ObsidianNativeToolUnavailable, match="does not admit"):
-        _admit_current_obsidian_call(
-            observed_call=expert_observed, scope=expert_scope, binding=expert_binding)
+        with _admit_current_obsidian_call(
+                observed_call=expert_observed, scope=expert_scope, binding=expert_binding):
+            pytest.fail("Expert promotion scope must not be admitted")

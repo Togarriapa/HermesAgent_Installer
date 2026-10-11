@@ -80,9 +80,6 @@ def _admit_current_obsidian_call(*, observed_call: ObservedNativeToolCall,
                 != observed_call.arguments_sha256
             or (permit is not None and type(permit) is not FinalEffectPermit)):
         raise ObsidianNativeToolUnavailable("current root-admitted Obsidian call is unavailable")
-    if (scope.tool_name == "obsidian_promote_reviewed_draft"
-            and scope.mode != "master_effect"):
-        raise ObsidianNativeToolUnavailable("root caller mode does not admit this Obsidian tool")
     if (scope.mode == "master_read" and scope.tool_name not in _READ_TOOLS
             or scope.mode == "expert_read" and scope.tool_name not in _EXPERT_TOOLS
             or scope.mode == "master_effect" and scope.tool_name != "obsidian_promote_reviewed_draft"
