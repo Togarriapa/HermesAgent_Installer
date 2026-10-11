@@ -1,6 +1,7 @@
 """Bounded proposal parsing for the root-sealed Jarvis master turn adapter."""
 import hashlib
 import json
+import time
 
 import pytest
 
@@ -12,6 +13,7 @@ from hermes_installer.remote.jarvis_master_planning import (
     parse_master_plan_output,
     parse_master_review_output,
 )
+from hermes_installer.remote import jarvis_master_planning as planning
 
 
 MISSION_ID = "0123456789abcdefghijklmn"
@@ -93,3 +95,35 @@ def test_decision_mint_fails_closed_without_bridge_completion_type():
             completion=object(), config=object(), custody=object(), raw_output="{}",
             mission_id=MISSION_ID, revision=1, title="Research", goal="Compare options",
             allowed_source_ids=SOURCE_IDS)
+
+
+@pytest.mark.parametrize("selected", [[], ["researcher"]])
+def test_typed_plan_decision_seals_zero_or_catalog_selected_sources(monkeypatch, selected):
+    raw = json.dumps({"execution_mode": "oneshot", "selected_source_ids": selected,
+                      "plan": {"steps": []}})
+    _prompt, prompt_digest = build_master_plan_prompt(
+        mission_id=MISSION_ID, revision=1, title="Research", goal="Compare options",
+        allowed_source_ids=SOURCE_IDS)
+
+    class RootCompletionFixture:
+        owner_subject_sha256 = "a" * 64
+        owner_turn_handle = "b" * 32
+        gateway_turn_id = "c" * 24
+        core_generation = "d" * 64
+        core_source_generation = "e" * 64
+        prompt_sha256 = prompt_digest
+        response_sha256 = hashlib.sha256(raw.encode()).hexdigest()
+        expires_monotonic = time.monotonic() + 60
+        owner_turn_expires_monotonic = time.monotonic() + 600
+
+        def is_current_sealed(self, _config, *, custody, now=None):
+            return custody is fixture_custody and (time.monotonic() if now is None else now) < self.expires_monotonic
+
+    fixture_custody = object()
+    monkeypatch.setattr(planning, "_completion_type", lambda: RootCompletionFixture)
+    decision = issue_master_plan_decision(
+        completion=RootCompletionFixture(), config=object(), custody=fixture_custody,
+        raw_output=raw, mission_id=MISSION_ID, revision=1, title="Research",
+        goal="Compare options", allowed_source_ids=SOURCE_IDS)
+    assert decision.selected_source_ids == tuple(selected)
+    assert decision.is_current_sealed(object(), custody=fixture_custody)

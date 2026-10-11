@@ -222,6 +222,15 @@ def _verify_completion(completion: Any, *, config: Any, custody: Any, now: float
         return False
 
 
+def _original_owner_deadline(completion: Any) -> float:
+    """Read the inspector-bound original owner deadline; never derive a fresh lease."""
+    deadline = getattr(completion, "owner_turn_expires_monotonic", None)
+    if (isinstance(deadline, bool) or not isinstance(deadline, (int, float))
+            or not math.isfinite(deadline)):
+        raise JarvisMasterPlanningDenied("original owner-turn deadline is unavailable")
+    return float(deadline)
+
+
 @dataclass(frozen=True, slots=True)
 class CoreVerifiedJarvisMasterPlanDecision:
     schema: int
@@ -254,7 +263,7 @@ class CoreVerifiedJarvisMasterPlanDecision:
                         and _HASH.fullmatch(self.goal_sha256 or "")
                         and self.execution_mode in {"oneshot", "kanban"}
                         and type(self.selected_source_ids) is tuple
-                        and 1 <= len(self.selected_source_ids) <= 16
+                        and 0 <= len(self.selected_source_ids) <= 16
                         and len(set(self.selected_source_ids)) == len(self.selected_source_ids)
                         and all(_ID.fullmatch(item or "") for item in self.selected_source_ids)
                         and _HASH.fullmatch(self.plan_sha256 or "")
@@ -265,7 +274,7 @@ class CoreVerifiedJarvisMasterPlanDecision:
                                                "plan": dict(self.plan)})) == self.plan_sha256
                         and math.isfinite(self.expires_monotonic)
                         and current < self.expires_monotonic
-                        and self.expires_monotonic <= self._completion.expires_monotonic
+                        and self.expires_monotonic <= _original_owner_deadline(self._completion)
                         and self._completion.response_sha256 == self.response_sha256
                         and self._completion.owner_subject_sha256 == self.owner_subject_sha256
                         and self._completion.owner_turn_handle == self.owner_turn_handle
@@ -321,7 +330,7 @@ class CoreVerifiedJarvisMasterReviewDecision:
                         and _HASH.fullmatch(self.response_sha256 or "")
                         and math.isfinite(self.expires_monotonic)
                         and current < self.expires_monotonic
-                        and self.expires_monotonic <= self._completion.expires_monotonic
+                        and self.expires_monotonic <= _original_owner_deadline(self._completion)
                         and self._completion.response_sha256 == self.response_sha256
                         and self._completion.owner_subject_sha256 == self.owner_subject_sha256
                         and self._completion.owner_turn_handle == self.owner_turn_handle
@@ -366,7 +375,9 @@ def issue_master_plan_decision(*, completion: Any, config: Any, custody: Any,
     parsed = parse_master_plan_output(raw_output, allowed_source_ids=allowed_source_ids)
     if _sha256(raw_output.encode("utf-8", errors="strict")) != completion.response_sha256:
         raise JarvisMasterPlanningDenied("planning output does not match the root completion")
-    expiry = min(float(completion.expires_monotonic), current + 600.0)
+    expiry = _original_owner_deadline(completion)
+    if current >= expiry:
+        raise JarvisMasterPlanningDenied("original owner turn has expired")
     return CoreVerifiedJarvisMasterPlanDecision(
         schema=1, owner_subject_sha256=completion.owner_subject_sha256,
         mission_id=mission_id, revision=revision, gateway_turn_id=completion.gateway_turn_id,
@@ -395,6 +406,9 @@ def issue_master_review_decision(*, completion: Any, config: Any, custody: Any,
     parsed = parse_master_review_output(raw_output, expected_result_sha256=result_sha256)
     if _sha256(raw_output.encode("utf-8", errors="strict")) != completion.response_sha256:
         raise JarvisMasterPlanningDenied("review output does not match the root completion")
+    expiry = _original_owner_deadline(completion)
+    if current >= expiry:
+        raise JarvisMasterPlanningDenied("original owner turn has expired")
     return CoreVerifiedJarvisMasterReviewDecision(
         schema=1, owner_subject_sha256=completion.owner_subject_sha256,
         mission_id=mission_id, revision=revision, gateway_turn_id=completion.gateway_turn_id,
@@ -402,5 +416,5 @@ def issue_master_review_decision(*, completion: Any, config: Any, custody: Any,
         core_source_generation=completion.core_source_generation, run_id=run_id,
         result_sha256=result_sha256, decision=parsed["decision"],
         response_sha256=parsed["response_sha256"],
-        expires_monotonic=min(float(completion.expires_monotonic), current + 600.0),
+        expires_monotonic=expiry,
         _completion=completion, _seal=_DECISION_SEAL)
