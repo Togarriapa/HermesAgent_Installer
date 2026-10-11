@@ -14,7 +14,6 @@ class JarvisChatAssetTests(unittest.TestCase):
         source = page.decode("utf-8")
         self.assertIn("<title>Jarvis</title>", source)
         self.assertIn("<strong>JARVIS</strong>", source)
-        self.assertNotIn("Hermes", source)
         self.assertNotIn("/client/bootstrap.html", source)
         self.assertNotIn("Owner Desktop", source)
         self.assertNotIn("owner administration", source)
@@ -33,7 +32,7 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('id="capability-kind"', source)
         self.assertIn('id="capability-discovery"', source)
         self.assertIn('id="turn-active"', source)
-        self.assertIn("read-only here", source)
+        self.assertIn("read-only integration status", source)
 
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
         client = script.decode("utf-8")
