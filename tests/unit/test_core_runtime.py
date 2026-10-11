@@ -457,8 +457,12 @@ def test_root_native_readback_checks_current_loader_results_against_owned_bytes(
     assert receipt["active_prompt_matches_bundled_primary"] is False
 
     payload["loaded"] = skills[:-1]
-    with pytest.raises(core.CoreRuntimeError, match="did not match"):
+    with pytest.raises(core.CoreRuntimeError, match="did not match") as error:
         core._root_native_readback(manifest, files, active_prompt)
+    assert '"loaded_mismatch"' in str(error.value)
+    assert '"loaded_expected_mismatch_count":1' in str(error.value)
+    assert "skill-000" not in str(error.value)
+    assert active_prompt.decode() not in str(error.value)
 
 
 def test_missing_resources_projection_is_explicitly_pending(monkeypatch, tmp_path):

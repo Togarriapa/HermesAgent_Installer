@@ -519,17 +519,10 @@ def _root_native_readback(manifest,files,active_prompt):
  discovered=value.get("skills") if isinstance(value,dict) else None
  loaded=value.get("loaded") if isinstance(value,dict) else None
  profiles=value.get("visible_profiles") if isinstance(value,dict) else None
- if (not isinstance(value,dict) or set(value)!=expected_keys
-     or value.get("python_version")!="3.14.7" or value.get("profile")!="default"
-     or not isinstance(discovered,list) or any(not isinstance(name,str) for name in discovered)
-     or discovered!=sorted(set(discovered)) or not set(skill_ids).issubset(set(discovered))
-     or not isinstance(loaded,list) or loaded!=skill_ids
-     or not isinstance(profiles,list) or any(not isinstance(name,str) for name in profiles)
-     or profiles!=sorted(set(profiles)) or "default" not in profiles
-     or not isinstance(value.get("profile_display_name"),str)
-     or len(value["profile_display_name"])>120
-     or value.get("digests")!=expected_digests):
-  raise CoreRuntimeError("independent pinned native read-back did not match the root-verified files")
+ diagnostic=_native_readback_mismatch(value,expected_keys,skill_ids,expected_digests)
+ if diagnostic["mismatches"]:
+  encoded=json.dumps(diagnostic,sort_keys=True,separators=(",",":"))
+  raise CoreRuntimeError("independent pinned native read-back did not match the root-verified files; "+encoded)
  bundled_sha=hashlib.sha256(files["registry/profiles/hermes/SOUL.md"]).hexdigest()
  return {"hermes_revision":COMMIT,"python_version":value["python_version"],
   "profile_id":"default","profile_identity_loaded":True,
@@ -538,6 +531,86 @@ def _root_native_readback(manifest,files,active_prompt):
   "active_primary_prompt_sha256":expected_digests["profile:default"],
   "bundled_primary_prompt_sha256":bundled_sha,
   "active_prompt_matches_bundled_primary":expected_digests["profile:default"]==bundled_sha}
+
+def _native_readback_mismatch(value,expected_keys,skill_ids,expected_digests):
+ """Return bounded, non-content diagnostics for a failed native projection."""
+ codes=[]; details={"schema":1,"expected_skill_count":len(skill_ids)}
+ if not isinstance(value,dict):
+  codes.append("response_not_object")
+  details["observed_type"]=type(value).__name__[:40]
+  details["mismatches"]=codes
+  return details
+ keys=set(value)
+ missing=expected_keys-keys; extra=keys-expected_keys
+ if missing:
+  codes.append("response_fields_missing")
+  details["missing_fields"]=sorted(missing)
+ if extra: codes.append("response_fields_extra"); details["extra_field_count"]=len(extra)
+ if value.get("python_version")!="3.14.7": codes.append("python_version")
+ if value.get("profile")!="default": codes.append("profile")
+ discovered=value.get("skills")
+ if not isinstance(discovered,list) or any(not isinstance(name,str) for name in discovered):
+  codes.append("skills_shape")
+  discovered=[]
+ else:
+  details["discovered_skill_count"]=len(discovered)
+  if discovered!=sorted(set(discovered)): codes.append("skills_order_or_duplicates")
+  missing_skills=set(skill_ids)-set(discovered)
+  if missing_skills:
+   codes.append("expected_skills_missing")
+   details["missing_expected_skill_count"]=len(missing_skills)
+ loaded=value.get("loaded")
+ if not isinstance(loaded,list) or any(not isinstance(name,str) for name in loaded):
+  codes.append("loaded_shape")
+  details["loaded_skill_count"]=len(loaded) if isinstance(loaded,list) else None
+ elif loaded!=skill_ids:
+  codes.append("loaded_mismatch")
+  details["loaded_skill_count"]=len(loaded)
+  details["loaded_expected_mismatch_count"]=sum(
+   left!=right for left,right in zip(loaded,skill_ids))+abs(len(loaded)-len(skill_ids))
+ profiles=value.get("visible_profiles")
+ if not isinstance(profiles,list) or any(not isinstance(name,str) for name in profiles):
+  codes.append("profiles_shape")
+ else:
+  details["visible_profile_count"]=len(profiles)
+  if profiles!=sorted(set(profiles)): codes.append("profiles_order_or_duplicates")
+  if "default" not in profiles: codes.append("default_profile_missing")
+ display=value.get("profile_display_name")
+ if not isinstance(display,str): codes.append("profile_display_name_shape")
+ else:
+  details["profile_display_name_length"]=len(display)
+  details["profile_display_name_sha256"]=hashlib.sha256(display.encode("utf-8",errors="replace")).hexdigest()
+  if len(display)>120: codes.append("profile_display_name_length")
+ observed=value.get("digests")
+ if not isinstance(observed,dict) or any(not isinstance(key,str) or not isinstance(item,str)
+                                          for key,item in observed.items()):
+  codes.append("digests_shape")
+ else:
+  expected_keys=set(expected_digests); observed_keys=set(observed)
+  details["expected_digest_count"]=len(expected_keys)
+  details["observed_digest_count"]=len(observed_keys)
+  details["missing_digest_count"]=len(expected_keys-observed_keys)
+  details["extra_digest_count"]=len(observed_keys-expected_keys)
+  details["digest_value_mismatch_count"]=sum(
+   observed.get(key)!=expected_digests[key] for key in expected_keys&observed_keys)
+  details["profile_digest_mismatch_count"]=int(
+   "profile:default" in expected_keys&observed_keys
+   and observed.get("profile:default")!=expected_digests["profile:default"])
+  details["skill_digest_mismatch_count"]=sum(
+   key.startswith("skill:") and observed.get(key)!=expected_digests[key]
+   for key in expected_keys&observed_keys)
+  if (expected_keys!=observed_keys or any(observed.get(key)!=expected_digests[key]
+                                           for key in expected_keys&observed_keys)):
+   codes.append("digests_mismatch")
+  try:
+   canonical=json.dumps(observed,sort_keys=True,separators=(",",":"),ensure_ascii=True).encode("ascii")
+   details["observed_digest_map_sha256"]=hashlib.sha256(canonical).hexdigest()
+   expected_canonical=json.dumps(expected_digests,sort_keys=True,separators=(",",":"),ensure_ascii=True).encode("ascii")
+   details["expected_digest_map_sha256"]=hashlib.sha256(expected_canonical).hexdigest()
+  except (TypeError,ValueError,UnicodeError):
+   codes.append("digests_not_canonical")
+ details["mismatches"]=sorted(set(codes))
+ return details
 
 def native_inventory_bytes(manifest,files):
  """Canonical digest of the IDs and bytes independently returned by Hermes."""
