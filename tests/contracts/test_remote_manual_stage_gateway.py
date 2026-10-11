@@ -960,6 +960,60 @@ class ManualStageGatewayTests(unittest.TestCase):
                 inspector._authenticate_gateway_inspector_peer(self.config,
                     pid=expected[0], uid=expected[1] + 1, gid=expected[2], deadline=99.0)
         check.assert_not_called()
+    @unittest.skipUnless(HAS_AIOHTTP, "install the isolated gateway runtime dependencies")
+    def test_threaded_admission_capture_reaches_parent_response_currentness(self):
+        import asyncio
+        from aiohttp import web
+        from aiohttp.test_utils import TestClient, TestServer
+        from hermes_installer.remote.manual_stage import (
+            StageFixedXpraConnector, StageGatewayLaunch, _stage_ingress_middleware,
+        )
+        principal = Principal("owner@example.net", "subject", time.time() + 120, "f" * 64)
+        sessions = StageGatewayPolicySessionAdapter(self.config, self.verifier)
+        connector = StageFixedXpraConnector(self.config, sessions)
+        launch = StageGatewayLaunch(self.verifier.policy, sessions, connector)
+        ingress = self.fixture_ingress("threaded-token", principal)
+        remaining_ttls = [4.9, 0.25]
+        def next_native_proof():
+            ttl = remaining_ttls.pop(0)
+            issued = time.monotonic()
+            return self.native_observation(issued=issued, expires=issued + ttl)
+        async def handler(request):
+            token = _CURRENT_INGRESS.get()
+            self.assertIs(token, request["stage_ingress"])
+            await asyncio.to_thread(sessions.admit, access_jwt="threaded-token",
+                                    action="asset-read", route_id="xpra-http")
+            if request.match_info["case"] == "expired":
+                await asyncio.sleep(0.35)
+            return web.Response(body=b"protected native application bytes")
+        app = web.Application(middlewares=[web.middleware(_stage_ingress_middleware)])
+        app["manual_stage_launch"] = launch
+        app["gateway_runtime"] = type("Runtime", (), {"sessions": {}})()
+        app["stage_listener_identity"] = self.listener_identity
+        app.router.add_get("/threaded/{case}", handler)
+
+        async def exercise():
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            try:
+                with mock.patch("hermes_installer.remote.manual_stage._accept_stage_ingress",
+                                new=mock.AsyncMock(return_value=ingress)), \
+                     mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
+                     mock.patch.object(self.verifier, "verify",
+                                       return_value=(principal, time.monotonic() + 30,
+                                                     time.monotonic() + 120)), \
+                     mock.patch.object(sessions, "_verify_xpra_current",
+                                       side_effect=lambda **_kwargs: next_native_proof()):
+                    live = await client.get("/threaded/live")
+                    self.assertEqual(live.status, 200)
+                    self.assertEqual(await live.read(), b"protected native application bytes")
+                    stale = await client.get("/threaded/expired")
+                    self.assertEqual(stale.status, 403)
+                    self.assertNotIn(b"protected native application bytes", await stale.read())
+            finally:
+                await client.close()
+        asyncio.run(exercise())
+
     def test_native_observation_consumer_accepts_only_original_live_root_lease(self):
         from hermes_installer.remote import manual_stage_inspector as inspector
         from hermes_installer.remote.manual_stage import _verify_native_observation_current

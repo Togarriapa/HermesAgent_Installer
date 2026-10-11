@@ -72,7 +72,13 @@ class ManualStageDenied(PermissionError):
 _INGRESS_SEAL = object()
 _CURRENT_INGRESS: contextvars.ContextVar["StageAcceptedIngressObservation | None"] = contextvars.ContextVar(
     "hermes_manual_stage_ingress", default=None)
-_CURRENT_NATIVE_OBSERVATION: contextvars.ContextVar[Any | None] = contextvars.ContextVar(
+@dataclass(slots=True)
+class _RequestNativeObservationCapture:
+    """Mutable request-local handoff across asyncio.to_thread context copies."""
+    observation: Any | None = None
+
+
+_CURRENT_NATIVE_OBSERVATION: contextvars.ContextVar[_RequestNativeObservationCapture | None] = contextvars.ContextVar(
     "hermes_manual_stage_native_observation", default=None)
 
 
@@ -417,7 +423,9 @@ class StageGatewayPolicySessionAdapter:
                                   heartbeat_expiry=min(expiry, ingress.witness_expires_monotonic),
                                   last_ingress=ingress, native_observation=native_observation)
             self._records[handle] = record
-            _CURRENT_NATIVE_OBSERVATION.set(native_observation)
+            capture = _CURRENT_NATIVE_OBSERVATION.get()
+            if capture is not None:
+                capture.observation = native_observation
             return admission
 
     def heartbeat_material(self, handle: Any) -> tuple[str, str]:
@@ -521,7 +529,9 @@ class StageGatewayPolicySessionAdapter:
             current.access_jwt = access_jwt
             current.last_edge_check = ingress.request_started_monotonic
             current.native_observation = native_observation
-            _CURRENT_NATIVE_OBSERVATION.set(native_observation)
+            capture = _CURRENT_NATIVE_OBSERVATION.get()
+            if capture is not None:
+                capture.observation = native_observation
             current.challenge = secrets.token_urlsafe(32)
             current.challenge_expiry = min(expiry, jwt_deadline, now + 29)
             current.admission = StageGatewayAdmission(
@@ -1061,15 +1071,14 @@ async def _stage_ingress_middleware(request, handler):
         return web.Response(status=403, text="Forbidden", headers={"Cache-Control": "no-store"})
     request["stage_ingress"] = accepted
     context_token = _CURRENT_INGRESS.set(accepted)
-    native_context_token = _CURRENT_NATIVE_OBSERVATION.set(None)
-    native_observation = None
+    capture = _RequestNativeObservationCapture()
+    native_context_token = _CURRENT_NATIVE_OBSERVATION.set(capture)
     try:
         response = await handler(request)
     except Exception as exc:
         _log_stage_denial("handler", exc)
         raise
     finally:
-        native_observation = _CURRENT_NATIVE_OBSERVATION.get()
         _CURRENT_NATIVE_OBSERVATION.reset(native_context_token)
         _CURRENT_INGRESS.reset(context_token)
     if response.status >= 400:
@@ -1078,9 +1087,9 @@ async def _stage_ingress_middleware(request, handler):
         try:
             _read_config_current(launch.stage_sessions.config)
             accepted.verify_current(launch.stage_sessions.config)
-            if native_observation is not None:
+            if capture.observation is not None:
                 _verify_native_observation_current(
-                    launch.stage_sessions.config, native_observation, now=time.monotonic())
+                    launch.stage_sessions.config, capture.observation, now=time.monotonic())
         except Exception as exc:
             _log_stage_denial("response-currentness", exc)
             return web.Response(status=403, text="Forbidden", headers={"Cache-Control": "no-store"})
