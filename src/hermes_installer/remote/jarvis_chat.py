@@ -26,7 +26,7 @@ MAX_ASSISTANT_CHARS = 64_000
 MAX_EVENTS_PER_TURN = 8_192
 MAX_ACTIVE_TURNS = 2
 MAX_ACTIVE_TURNS_PER_CONVERSATION = 1
-HEARTBEAT_SECONDS = 5.0
+MAX_LEASE_SECONDS = 30.0
 SSE_CONNECTION_SECONDS = 4.0
 MAX_HISTORY_CHARS = 128_000
 MAX_TURN_SECONDS = 600.0
@@ -77,24 +77,52 @@ def _now() -> float:
 
 def _read_private_secret(path: Path, *, owner_uid: int, allowed_group: int | None = None) -> str:
     """Read a server-only Hermes session token through a no-follow protected descriptor."""
+    directory_flags = (os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                       | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
-    fd = os.open(path, flags)
     try:
-        info = os.fstat(fd)
-        mode = stat.S_IMODE(info.st_mode)
-        group_mode = mode & 0o070
-        if (not stat.S_ISREG(info.st_mode) or info.st_uid != owner_uid
-                or mode & 0o007
-                or (allowed_group is None and group_mode != 0)
-                or (allowed_group is not None and (info.st_gid != allowed_group
-                                                    or group_mode not in {0, 0o040}))
-                or info.st_size < 32 or info.st_size > 4096):
-            raise JarvisChatDenied("official API key custody is invalid")
-        raw = os.read(fd, 4097)
-        if len(raw) != info.st_size or len(raw) > 4096:
-            raise JarvisChatDenied("official API key file changed while reading")
+        parent_fd = os.open(path.parent, directory_flags)
+    except OSError:
+        raise JarvisChatDenied("official API key custody is invalid") from None
+    try:
+        parent_before = os.fstat(parent_fd)
+        parent_mode = stat.S_IMODE(parent_before.st_mode)
+        if (not stat.S_ISDIR(parent_before.st_mode) or parent_before.st_uid != owner_uid
+                or (allowed_group is None and parent_mode & 0o077)
+                or (allowed_group is not None and (parent_before.st_gid != allowed_group
+                                                   or parent_mode != 0o750))):
+            raise JarvisChatDenied("official API key parent custody is invalid")
+        try:
+            fd = os.open(path.name, flags, dir_fd=parent_fd)
+        except OSError:
+            raise JarvisChatDenied("official API key custody is invalid") from None
+        try:
+            info = os.fstat(fd)
+            mode = stat.S_IMODE(info.st_mode)
+            expected_mode = 0o600 if allowed_group is None else 0o640
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != owner_uid
+                    or info.st_nlink != 1 or mode != expected_mode
+                    or (allowed_group is not None and info.st_gid != allowed_group)
+                    or info.st_size < 32 or info.st_size > 4096):
+                raise JarvisChatDenied("official API key custody is invalid")
+            raw = os.read(fd, 4097)
+            after = os.fstat(fd)
+            parent_after = os.fstat(parent_fd)
+            try:
+                named_after = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+            except OSError:
+                raise JarvisChatDenied("official API key changed while reading") from None
+            def signature(item):
+                return (item.st_dev, item.st_ino, item.st_mode, item.st_uid, item.st_gid,
+                        item.st_nlink, item.st_size, item.st_mtime_ns, item.st_ctime_ns)
+            if (signature(after) != signature(info) or signature(parent_after) != signature(parent_before)
+                    or (named_after.st_dev, named_after.st_ino) != (info.st_dev, info.st_ino)
+                    or len(raw) != info.st_size or len(raw) > 4096):
+                raise JarvisChatDenied("official API key changed while reading")
+        finally:
+            os.close(fd)
     finally:
-        os.close(fd)
+        os.close(parent_fd)
     try:
         key = raw.decode("ascii").strip()
     except UnicodeDecodeError:
@@ -257,8 +285,9 @@ class JarvisChatStore:
         if conversation["core_generation"] != principal.core_generation:
             raise JarvisChatDenied("core session generation is stale")
         now = time.monotonic()
-        expiry = min(now + HEARTBEAT_SECONDS, principal.witness_expires_monotonic,
-                     principal.expires_monotonic)
+        # The sealed request proof must be current at this point. It authorizes one bounded
+        # lease, while the admitted JWT deadline remains the absolute upper bound.
+        expiry = min(now + MAX_LEASE_SECONDS, principal.expires_monotonic)
         if expiry <= now:
             raise JarvisChatDenied("protected chat lease is expired")
         turn_id, nonce = _opaque_id(), secrets.token_hex(32)
@@ -296,17 +325,19 @@ class JarvisChatStore:
     def rotate_heartbeat(self, subject: str, turn_id: str, nonce: str, principal: ChatPrincipal) -> str:
         owner = self._owner(subject)
         now = time.monotonic()
-        expiry = min(now + HEARTBEAT_SECONDS, principal.witness_expires_monotonic,
-                     principal.expires_monotonic)
+        expiry = min(now + MAX_LEASE_SECONDS, principal.expires_monotonic)
         if (expiry <= now or not ID_RE.fullmatch(turn_id or "")
                 or not NONCE_RE.fullmatch(nonce or "")):
             raise JarvisChatDenied("protected chat heartbeat was denied")
         replacement = secrets.token_hex(32)
         with self._connect() as db:
-            updated = db.execute("UPDATE turns SET heartbeat_nonce=?,heartbeat_expiry=?,jwt_expiry=?,updated=? "
+            updated = db.execute("UPDATE turns SET heartbeat_nonce=?,"
+                                 "heartbeat_expiry=MIN(?,jwt_expiry,?),"
+                                 "jwt_expiry=MIN(jwt_expiry,?),updated=? "
                                  "WHERE id=? AND owner=? AND heartbeat_nonce=? AND status IN ('queued','running') "
                                  "AND heartbeat_expiry>? AND jwt_expiry>? AND core_generation=?",
-                                 (replacement, expiry, principal.expires_monotonic, _now(), turn_id, owner,
+                                 (replacement, expiry, principal.expires_monotonic,
+                                  principal.expires_monotonic, _now(), turn_id, owner,
                                   nonce, now, now, principal.core_generation)).rowcount
         if updated != 1:
             raise JarvisChatDenied("protected chat heartbeat was denied")
@@ -583,6 +614,7 @@ class JarvisChatService:
     async def _run(self, turn_id: str, session_id: str, text: str):
         total = 0
         next_delta: asyncio.Task | None = None
+        stream = None
         turn_deadline = time.monotonic() + MAX_TURN_SECONDS
         try:
             with self.store._connect() as db:
@@ -649,6 +681,17 @@ class JarvisChatService:
                 pass
             self.store.finish_turn(turn_id, "failed", error_code="backend_unavailable")
         finally:
+            if next_delta is not None:
+                if not next_delta.done():
+                    next_delta.cancel()
+                await asyncio.gather(next_delta, return_exceptions=True)
+            if stream is not None:
+                close = getattr(stream, "aclose", None)
+                if close is not None:
+                    try:
+                        await close()
+                    except Exception:
+                        pass
             self._workers.pop(turn_id, None)
 
     async def heartbeat(self, request):
@@ -686,7 +729,7 @@ class JarvisChatService:
             await response.prepare(request)
             terminal = False
             stream_deadline = time.monotonic() + SSE_CONNECTION_SECONDS
-            while not terminal:
+            while not terminal and time.monotonic() < stream_deadline:
                 # The long-lived response is authorized by the separately refreshed nonce lease.
                 # Each heartbeat passes fresh JWT+Unix ingress middleware and atomically rotates
                 # this turn's owner-bound lease.
@@ -699,6 +742,7 @@ class JarvisChatService:
                     rows, status, _ = self.store.events_after(principal.subject, turn_id, cursor)
                 for row in rows:
                     if time.monotonic() >= stream_deadline:
+                        terminal = True
                         break
                     cursor = row["sequence"]
                     name = row["name"]
@@ -714,13 +758,30 @@ class JarvisChatService:
                         self.store.finish_turn(turn_id, "cancelled")
                         terminal = True
                         break
-                    await response.write(f"id: {cursor}\nevent: {name}\ndata: {payload}\n\n".encode())
+                    try:
+                        self._current(request)
+                        await response.write(f"id: {cursor}\nevent: {name}\ndata: {payload}\n\n".encode())
+                    except JarvisChatDenied:
+                        worker = self._workers.get(turn_id)
+                        if worker is not None:
+                            worker.cancel()
+                        self.store.finish_turn(turn_id, "cancelled")
+                        terminal = True
+                        break
                     terminal = name in {"turn.completed", "turn.failed", "turn.cancelled"}
                 if status not in _ACTIVE and not rows:
                     terminal = True
                 if not terminal and time.monotonic() < stream_deadline:
-                    await asyncio.sleep(0.2)
-            await response.write_eof()
+                    await asyncio.sleep(min(0.2, max(0.0, stream_deadline - time.monotonic())))
+            # The <=5 second ingress witness can expire during the segment. Do not write even
+            # the terminating chunk unless the same sealed proof is still current.
+            try:
+                self._current(request)
+                await response.write_eof()
+            except JarvisChatDenied:
+                transport = request.transport
+                if transport is not None:
+                    transport.close()
             return response
         except web.HTTPException:
             raise
@@ -741,7 +802,13 @@ class JarvisChatService:
             turn_id = request.match_info.get("turn_id", "")
             row = self.store.owned_turn(principal.subject, turn_id)
             if row["core_generation"] == principal.core_generation and row["status"] in _ACTIVE:
-                await self.backend.stop(row["runtime_session_id"])
+                worker = self._workers.get(turn_id)
+                if worker is not None:
+                    # _run owns the upstream stream and closes it on cancellation.
+                    worker.cancel()
+                    await asyncio.gather(worker, return_exceptions=True)
+                else:
+                    await self.backend.stop(row["runtime_session_id"])
             self.store.cancel_turn(principal.subject, turn_id)
             worker = self._workers.get(turn_id)
             if worker is not None:
