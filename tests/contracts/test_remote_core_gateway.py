@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import hashlib
+import json
 import os
 import stat
 import time
@@ -39,7 +40,7 @@ def _root_observation(config, *, now=10.0):
     nonce = "b" * 64
     core_pid, start_ticks, listener_inode = 330, "77", 8822
     invocation = "12345678-1234-1234-1234-123456789012"
-    source_generation = "d" * 64
+    source_generation = _expected_source_generation(config)
     generation = hashlib.sha256(
         b"hermes-jarvis-core-generation-v1\0" +
         f"{invocation}\0{core_pid}\0{start_ticks}\0{listener_inode}\0{source_generation}".encode("ascii")
@@ -62,6 +63,20 @@ def _root_observation(config, *, now=10.0):
     proof_sha = core_gateway_inspector._observation_digest(claims)
     return core_gateway_inspector.CoreVerifiedIngressObservation(
         **claims, proof_sha256=proof_sha, _seal=core_gateway_inspector._PROOF_SEAL)
+
+
+def _expected_source_generation(config):
+    inspector = core_gateway_inspector
+    if config.core_python != inspector.CORE_PYTHON_LINK:
+        raise AssertionError("fixture must use the reviewed PM Python link")
+    closure = {
+        "source_revision": inspector.CORE_SOURCE_REVISION,
+        "files": dict(inspector.CORE_SOURCE_FILES),
+        "pyvenv_cfg_sha256": inspector.CORE_PYVENV_CFG_SHA256,
+        "python_sha256": inspector.CORE_PYTHON_SHA256,
+    }
+    canonical = json.dumps(closure, sort_keys=True, separators=(",", ":")).encode("ascii")
+    return hashlib.sha256(b"hermes-jarvis-core-source-generation-v1\0" + canonical).hexdigest()
 
 
 def _accepted_observation(config, *, now, lease_seconds=4.0):
@@ -127,7 +142,8 @@ class CoreGatewayProofTests(unittest.TestCase):
 
     def test_source_proof_checks_exact_git_and_reviewed_file_closure(self):
         config = _config()
-        expected = dict(core_gateway_inspector.CORE_SOURCE_FILES)
+        expected = {str(core_gateway_inspector.CORE_SOURCE / relative): digest
+                    for relative, digest in core_gateway_inspector.CORE_SOURCE_FILES.items()}
         expected[str(config.core_python.parent.parent / "pyvenv.cfg")] = (
             core_gateway_inspector.CORE_PYVENV_CFG_SHA256)
         source_dir = SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=1000, st_gid=1000)
