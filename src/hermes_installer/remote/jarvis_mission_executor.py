@@ -24,6 +24,14 @@ _SHA256_RE = re.compile(r"[a-f0-9]{64}\Z", re.ASCII)
 _MISSION_BINDING_FIELDS = frozenset({
     "schema", "mission_id", "revision", "plan_sha256", "task_sha256", "source_profile_id",
 })
+_MISSION_INSTRUCTION = (
+    "Carry out exactly one owner-approved mission. Make exactly one call to the registered "
+    "`resources_delegate` tool using the exact arguments object shown below. Do not rewrite, "
+    "summarize, extend, or add instructions to its goal; do not execute the goal yourself, "
+    "add argument keys, or call any other tools. If the tool is missing or denies the call, "
+    "state that execution did not occur. "
+    "Only after a successful tool return, give the owner a concise summary of the returned result."
+)
 
 
 def _canonical(value: Any) -> bytes:
@@ -33,6 +41,22 @@ def _canonical(value: Any) -> bytes:
 
 def _digest(value: Any) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
+
+
+def mission_execution_prompt(approved_brief: str) -> str:
+    """Build the fixed Orchestrator request without changing the approved goal bytes."""
+    if not isinstance(approved_brief, str) or not 1 <= len(approved_brief) <= 8_000:
+        raise ValueError("approved mission brief is invalid")
+    arguments = _canonical({"goal": approved_brief}).decode("utf-8")
+    return (_MISSION_INSTRUCTION + "\n\nExact resources_delegate arguments object:\n"
+            + arguments)
+
+
+def mission_goal_arguments_sha256(approved_brief: str) -> str:
+    """Digest the same canonical single-field object root verifies at tool observation."""
+    if not isinstance(approved_brief, str) or not 1 <= len(approved_brief) <= 8_000:
+        raise ValueError("approved mission brief is invalid")
+    return _digest({"goal": approved_brief})
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,7 +210,8 @@ def resolve_spent_mission_claim(store: Any, binding: MissionBinding, gateway_tur
 
 __all__ = [
     "MissionBinding", "MissionLedgerReader", "resolve_spent_mission_binding",
-    "resolve_spent_mission_claim",
+    "resolve_spent_mission_claim", "mission_execution_prompt",
+    "mission_goal_arguments_sha256",
 ]
 
 
@@ -513,7 +538,7 @@ class MissionExecutionAdapter:
             return result
         kinds = {item.get("type") for item in activity}
         child_started = bool(kinds & {"subagent.start", "subagent.progress", "subagent.thinking", "subagent.tool"})
-        child_completed = any(
+        child_completed = child_started and any(
             item.get("type") == "subagent.complete" and item.get("status") in {"complete", "completed"}
             for item in activity
         )

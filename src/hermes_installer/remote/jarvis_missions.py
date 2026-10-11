@@ -648,11 +648,13 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                 raise web.HTTPConflict(text="mission revision changed", headers=_secure_headers())
             _recheck_principal(service, request, principal)
             if action == "launch":
+                from .jarvis_mission_executor import (
+                    _run_by_key, mission_execution_prompt, mission_goal_arguments_sha256,
+                )
                 nonce = body["approval_nonce"]
                 idem_hash = hashlib.sha256(body["idempotency_key"].encode("ascii")).hexdigest()
                 launch_hash = _hash({"mission_id": row["id"], "revision": revision,
                                      "plan_sha256": body["plan_sha256"]})
-                from .jarvis_mission_executor import _run_by_key
                 prior_run = _run_by_key(service.store, owner, idem_hash)
                 if prior_run is not None:
                     if (prior_run["mission_id"] != row["id"]
@@ -683,10 +685,12 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                         or not re.fullmatch(r"[a-f0-9]{64}", binding["core_source_generation"] or "")
                         or not _mission_binding_route_ready(service)):
                     raise web.HTTPConflict(text="first native mission route is unavailable", headers=_secure_headers())
+                execution_prompt = mission_execution_prompt(row["brief"])
+                goal_sha256 = mission_goal_arguments_sha256(row["brief"])
                 try:
                     run, replay = executor.reserve(
                         owner=owner, mission_id=row["id"], revision=revision,
-                        plan_sha256=body["plan_sha256"], task_sha256=_hash({"goal": row["brief"]}),
+                        plan_sha256=body["plan_sha256"], task_sha256=goal_sha256,
                         source_binding=_canonical(binding).decode("utf-8"),
                         idempotency_hash=idem_hash, request_hash=launch_hash,
                         approval_nonce=nonce)
@@ -708,14 +712,14 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                         return executor.binding_after_spend(
                             run_id=run["id"], owner=owner, mission_id=row["id"],
                             revision=revision, plan_sha256=body["plan_sha256"],
-                            task_sha256=_hash({"goal": row["brief"]}), intent_nonce=nonce,
+                            task_sha256=goal_sha256, intent_nonce=nonce,
                             idempotency_key=body["idempotency_key"], source_binding=binding,
                             gateway_turn_id=turn_id)
                     def on_schedule_failure(turn_id: str):
                         executor.fail_schedule(run_id=run["id"], owner=owner,
                                                gateway_turn_id=turn_id)
                     queued = await service.start_server_turn(
-                        request, conversation_id=conversation["id"], text=row["brief"],
+                        request, conversation_id=conversation["id"], text=execution_prompt,
                         idempotency_key=body["idempotency_key"], before_schedule=before_schedule,
                         require_mission_binding=True, on_schedule_failure=on_schedule_failure)
                     executor.mark(run["id"], status="queued",
