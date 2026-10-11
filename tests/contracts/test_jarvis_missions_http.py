@@ -216,6 +216,8 @@ def test_mission_routes_and_feature_assets_are_literal_and_finite():
          jarvis_feature_registry._files.FEATURE_ROUTES),
         ("models-settings", jarvis_feature_registry._models.install_jarvis_models_routes,
          jarvis_feature_registry._models.FEATURE_ROUTES),
+        ("context", jarvis_feature_registry._context.install_jarvis_context_routes,
+         jarvis_feature_registry._CONTEXT_ASSETS.api_routes),
     )
     assert {feature_id for feature_id, _owner, _routes
             in jarvis_feature_registry.FEATURE_ROUTE_OWNERS} == {
