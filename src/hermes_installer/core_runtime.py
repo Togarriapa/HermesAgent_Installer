@@ -13,6 +13,10 @@ UNIT=Path("/etc/systemd/system/hermes-jarvis-core.service")
 LAUNCHER=Path("/usr/local/libexec/hermes-jarvis-core-launcher")
 TOKEN=Path("/etc/hermes-installer/jarvis-core/session-token")
 JOURNAL=Path("/var/lib/hermes-installer/core-runtime/ownership.json")
+ETC_INSTALLER=Path("/etc/hermes-installer")
+VAR_LIB_INSTALLER=Path("/var/lib/hermes-installer")
+SYSTEMD_UNIT_DIR=Path("/etc/systemd/system")
+LIBEXEC_DIR=Path("/usr/local/libexec")
 SERVICE="hermes-jarvis-core.service"; COMMIT="7085fbf7753266fc4943c55ac04926186bc90005"
 LOCK_SHA256="49b79259220160f147255078a19af541a5f328d3871c8041cc1eb909d19eb549"
 WORKSPACE=HERMES_HOME/"workspaces"/"jarvis-core"
@@ -25,6 +29,11 @@ def _digest(path):
  with path.open("rb") as f:
   for b in iter(lambda:f.read(1048576),b""): h.update(b)
  return h.hexdigest()
+
+def _sync_directory(path):
+ fd=os.open(path,os.O_RDONLY|getattr(os,"O_DIRECTORY",0))
+ try: os.fsync(fd)
+ finally: os.close(fd)
 def _run(argv,check=True):
  try: r=subprocess.run(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=30,env={"PATH":"/usr/sbin:/usr/bin:/sbin:/bin","HOME":str(HOME),"LANG":"C.UTF-8"})
  except (OSError,subprocess.TimeoutExpired) as e: raise CoreRuntimeError("fixed action unavailable") from e
@@ -79,7 +88,7 @@ def _replace_journal(record):
  if st.st_uid!=ROOT_UID or stat.S_IMODE(st.st_mode)!=0o600: raise CoreRuntimeError("ownership journal permissions changed")
  fd,name=tempfile.mkstemp(prefix=".core-journal-",dir=JOURNAL.parent); tmp=Path(name)
  try:
-  os.fchmod(fd,0o600); os.fchown(fd,0,0)
+  os.fchmod(fd,0o600); os.fchown(fd,ROOT_UID,ROOT_UID)
   with os.fdopen(fd,"wb") as f:
    f.write((json.dumps(record,sort_keys=True)+"\n").encode()); f.flush(); os.fsync(f.fileno())
   os.replace(tmp,JOURNAL)
@@ -92,10 +101,11 @@ def _owned_file(path,body,mode,uid,gid,expected,repair):
  if path.exists() or path.is_symlink():
   if path.is_symlink() or not path.is_file(): raise CoreRuntimeError("owned service path has unsafe type")
   st=path.stat()
-  if (st.st_uid,st.st_gid,stat.S_IMODE(st.st_mode))!=(uid,gid,mode): raise CoreRuntimeError("owned service path metadata changed")
+  if (st.st_uid,st.st_gid,stat.S_IMODE(st.st_mode),st.st_nlink)!=(uid,gid,mode,1): raise CoreRuntimeError("owned service path metadata changed")
   if _digest(path)==expected: return
   if not repair: raise CoreRuntimeError("journal-owned service content changed")
   path.unlink()
+  _sync_directory(path.parent)
  _atomic(path,body,mode,uid,gid)
 def _identity():
  if not SOURCE.is_dir() or SOURCE.is_symlink(): raise CoreRuntimeError("pinned source unavailable")
@@ -120,9 +130,11 @@ test -f "$cred" && test ! -L "$cred"
 IFS= read -r HERMES_DASHBOARD_SESSION_TOKEN < "$cred"
 test -n "$HERMES_DASHBOARD_SESSION_TOKEN"
 export HERMES_DASHBOARD_SESSION_TOKEN
+unset PYTHONHOME PYTHONUSERBASE PYTHONSTARTUP VIRTUAL_ENV
 export HOME=/home/admin HERMES_HOME=/home/admin/.hermes
 export PATH=/home/admin/.hermes/bin:/home/admin/.local/bin:/usr/local/bin:/usr/bin:/bin
 export HERMES_DISABLE_LAZY_INSTALLS=1
+export PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1
 export PYTHONPATH=/home/admin/HermesInstaller/data/generations/hermes-agent-7085fbf77532
 cd /home/admin/.hermes/workspaces/jarvis-core
 exec /home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0/venv/bin/python -m hermes_cli.main serve --isolated --host 127.0.0.1 --port 8766
@@ -143,6 +155,8 @@ Environment=HOME={HOME}
 Environment=HERMES_HOME={HERMES_HOME}
 Environment=PATH=/home/admin/.hermes/bin:/home/admin/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=HERMES_DISABLE_LAZY_INSTALLS=1
+Environment=PYTHONNOUSERSITE=1
+Environment=PYTHONDONTWRITEBYTECODE=1
 LoadCredential=hermes-session-token:{TOKEN}
 ExecStart={LAUNCHER}
 Restart=on-failure
@@ -152,7 +166,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths={WORKSPACE}
+ReadWritePaths={HERMES_HOME}
 [Install]
 WantedBy=multi-user.target
 """.encode()
@@ -162,13 +176,16 @@ def _journal():
  if st.st_uid!=ROOT_UID or stat.S_IMODE(st.st_mode)!=0o600: raise CoreRuntimeError("core journal permissions unsafe")
  try: d=json.loads(JOURNAL.read_text())
  except (OSError,ValueError) as e: raise CoreRuntimeError("core journal invalid") from e
- if d.get("schema")!=1 or d.get("service")!=SERVICE or d.get("state") not in {"preparing","installed","active"}: raise CoreRuntimeError("core journal identity unsupported")
- if d["state"]!="preparing":
+ if d.get("schema")!=1 or d.get("service")!=SERVICE or d.get("state") not in {"preparing","installed","active","retiring"}: raise CoreRuntimeError("core journal identity unsupported")
+ if d["state"] in {"installed","active","retiring"}:
   for p,k,uid,gid,mode in FILE_CONTRACT:
-   if not p.is_file() or p.is_symlink() or _digest(p)!=d.get(k): raise CoreRuntimeError("owned service file changed")
+   if not p.exists() and not p.is_symlink() and d["state"]=="retiring": continue
+   if not p.is_file() or p.is_symlink(): raise CoreRuntimeError("owned service file changed")
    ps=p.stat()
    if (ps.st_uid,ps.st_gid,stat.S_IMODE(ps.st_mode),ps.st_nlink)!=(uid,gid,mode,1): raise CoreRuntimeError("owned service file metadata changed")
-  if hashlib.sha256(_unit()).hexdigest()!=d["unit_sha256"] or hashlib.sha256(_launcher()).hexdigest()!=d["launcher_sha256"]:
+   if not (d["state"]=="retiring" and d.get("cleanup_allow_partial")) and _digest(p)!=d.get(k):
+    raise CoreRuntimeError("owned service file changed")
+  if d["state"]!="retiring" and (hashlib.sha256(_unit()).hexdigest()!=d["unit_sha256"] or hashlib.sha256(_launcher()).hexdigest()!=d["launcher_sha256"]):
    raise CoreRuntimeError("owned service recipe differs from the reviewed source")
  return d
 def status():
@@ -187,6 +204,8 @@ def _owned_listener():
   if pid<=1: return False
   proc=Path("/proc")/str(pid)
   if int(proc.stat().st_uid)!=1000: return False
+  if Path(os.readlink(proc/"exe")).resolve(strict=True)!=PYTHON_REAL: return False
+  if Path(os.readlink(proc/"cwd")).resolve(strict=True)!=WORKSPACE.resolve(strict=True): return False
   argv=(proc/"cmdline").read_bytes().decode(errors="replace").split("\0")
   if argv[-1]=="": argv.pop()
   expected=[str(PYTHON),"-m","hermes_cli.main","serve","--isolated","--host","127.0.0.1","--port","8766"]
@@ -214,15 +233,17 @@ def install_or_resume():
  if account.pw_uid!=1000 or account.pw_dir!="/home/admin": raise CoreRuntimeError("admin identity mismatch")
  try: gid=grp.getgrgid(GATEWAY_GID).gr_gid
  except KeyError as e: raise CoreRuntimeError("gateway credential group 981 unavailable") from e
- _ensure_dir(Path("/etc/hermes-installer"),0,0,0o755)
- _ensure_dir(TOKEN.parent,0,gid,0o750)
- _ensure_dir(LAUNCHER.parent,0,0,0o755)
- _ensure_dir(UNIT.parent,0,0,0o755)
- _ensure_dir(JOURNAL.parent.parent,0,0,0o700)
- _ensure_dir(JOURNAL.parent,0,0,0o700)
+ _ensure_dir(ETC_INSTALLER,ROOT_UID,ROOT_UID,0o755)
+ _ensure_dir(TOKEN.parent,ROOT_UID,gid,0o750)
+ _ensure_dir(LIBEXEC_DIR,ROOT_UID,ROOT_UID,0o755)
+ _ensure_dir(SYSTEMD_UNIT_DIR,ROOT_UID,ROOT_UID,0o755)
+ _ensure_dir(VAR_LIB_INSTALLER,ROOT_UID,ROOT_UID,0o700)
+ _ensure_dir(JOURNAL.parent,ROOT_UID,ROOT_UID,0o700)
  launcher,unit=_launcher(),_unit()
  if JOURNAL.exists() or JOURNAL.is_symlink():
   record=_journal()
+  if record["state"]=="retiring":
+   raise CoreRuntimeError("core service retirement is in progress; use the fixed rollback action")
   if any(record.get(key)!=identity.get(source_key) for key,source_key in
          (("source_commit","commit"),("lock_sha256","lock_sha256"),("python_sha256","python_sha256"),
           ("python_link","python_link"),("python_uid","python_uid"),("python_gid","python_gid"),("python_mode","python_mode"))):
@@ -236,28 +257,30 @@ def install_or_resume():
           "admin_uid":account.pw_uid,"admin_gid":account.pw_gid,"host":"127.0.0.1","port":8766,
           "token_sha256":None,"unit_sha256":hashlib.sha256(unit).hexdigest(),
           "launcher_sha256":hashlib.sha256(launcher).hexdigest()}
-  _atomic(JOURNAL,(json.dumps(record,sort_keys=True)+"\n").encode(),0o600)
+  _atomic(JOURNAL,(json.dumps(record,sort_keys=True)+"\n").encode(),0o600,ROOT_UID,ROOT_UID)
  if record["state"]=="preparing":
   token_valid=False
   if TOKEN.exists() or TOKEN.is_symlink():
    if TOKEN.is_symlink() or not TOKEN.is_file(): raise CoreRuntimeError("interrupted credential has unsafe type")
    ts=TOKEN.stat(); raw=TOKEN.read_bytes()
-   if (ts.st_uid,ts.st_gid,stat.S_IMODE(ts.st_mode))!=(0,gid,0o640):
+   if (ts.st_uid,ts.st_gid,stat.S_IMODE(ts.st_mode),ts.st_nlink)!=(0,gid,0o640,1):
     raise CoreRuntimeError("interrupted credential owner or mode changed")
    token_valid=(len(raw)==65 and raw.endswith(b"\n") and
                 all(c in b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-" for c in raw[:-1]))
    if token_valid and record.get("token_sha256") is not None:
     token_valid=_digest(TOKEN)==record["token_sha256"]
-   if not token_valid: TOKEN.unlink()
+   if not token_valid:
+    TOKEN.unlink()
+    _sync_directory(TOKEN.parent)
   if not token_valid:
    raw=(secrets.token_urlsafe(48)+"\n").encode()
-   _atomic(TOKEN,raw,0o640,0,gid)
+   _atomic(TOKEN,raw,0o640,ROOT_UID,gid)
   if record.get("token_sha256")!=_digest(TOKEN):
    record["token_sha256"]=_digest(TOKEN)
    _replace_journal(record)
  _ensure_workspace(account.pw_uid,account.pw_gid)
- _owned_file(LAUNCHER,launcher,0o755,0,0,record["launcher_sha256"],record["state"]=="preparing")
- _owned_file(UNIT,unit,0o644,0,0,record["unit_sha256"],record["state"]=="preparing")
+ _owned_file(LAUNCHER,launcher,0o755,ROOT_UID,ROOT_UID,record["launcher_sha256"],record["state"]=="preparing")
+ _owned_file(UNIT,unit,0o644,ROOT_UID,ROOT_UID,record["unit_sha256"],record["state"]=="preparing")
  if record["state"]=="preparing":
   record["state"]="installed"
   _replace_journal(record)
@@ -272,9 +295,47 @@ def _wait_for_listener():
  raise CoreRuntimeError("owned service did not prove its isolated loopback listener within 30 seconds")
 def rollback():
  if os.geteuid()!=0 or not Path("/proc").is_dir(): raise CoreRuntimeError("requires installed Linux root actor")
- _journal(); _run(["systemctl","disable","--now",SERVICE],False)
- if _run(["systemctl","is-active",SERVICE],False).stdout.strip()=="active": raise CoreRuntimeError("unit remains active; files preserved")
+ record=_journal()
+ if record["state"]!="retiring":
+  if record["state"]=="preparing":
+   record["cleanup_allow_partial"]=True
+  else:
+   fragment=_run(["systemctl","show","--property=FragmentPath","--value",SERVICE],False).stdout.strip()
+   active=_run(["systemctl","is-active",SERVICE],False).stdout.strip()
+   if fragment and Path(fragment)!=UNIT:
+    raise CoreRuntimeError("service name resolves to a different unit; preserving all state")
+   if active=="active" and fragment!=str(UNIT):
+    raise CoreRuntimeError("active unit is not the journal-owned unit; preserving all state")
+   record["cleanup_allow_partial"]=False
+  record["state"]="retiring"
+  _replace_journal(record)
+ active=_run(["systemctl","is-active",SERVICE],False).stdout.strip()
+ fragment=_run(["systemctl","show","--property=FragmentPath","--value",SERVICE],False).stdout.strip()
+ if active=="active":
+  if fragment!=str(UNIT): raise CoreRuntimeError("active service is not journal-owned; preserving all state")
+  _run(["systemctl","disable","--now",SERVICE])
+ if _run(["systemctl","is-active",SERVICE],False).stdout.strip()=="active":
+  raise CoreRuntimeError("journal-owned service remains active; preserving files")
+ mainpid=_run(["systemctl","show","--property=MainPID","--value",SERVICE],False).stdout.strip()
+ if mainpid and mainpid!="0" and Path("/proc",mainpid).exists():
+  raise CoreRuntimeError("service process remains after stop; preserving files")
+ if _owned_listener(): raise CoreRuntimeError("journal-owned listener remains after stop; preserving files")
+ for path,key,uid,gid,mode in FILE_CONTRACT:
+  if not path.exists() and not path.is_symlink(): continue
+  if path.is_symlink() or not path.is_file():
+   raise CoreRuntimeError("owned service path has unsafe type; preserving remaining files")
+  st=path.stat()
+  if (st.st_uid,st.st_gid,stat.S_IMODE(st.st_mode),st.st_nlink)!=(uid,gid,mode,1):
+   raise CoreRuntimeError("owned service path metadata changed; preserving remaining files")
+  if not record.get("cleanup_allow_partial") and _digest(path)!=record.get(key):
+   raise CoreRuntimeError("owned service file changed; preserving remaining files")
+  if path==TOKEN and record.get(key) is None:
+   raw=path.read_bytes()
+   if not raw.endswith(b"\n") or len(raw)!=65:
+    raise CoreRuntimeError("partial credential is not the journaled generated token")
+  path.unlink()
  _run(["systemctl","daemon-reload"])
- for p in (UNIT,LAUNCHER,TOKEN,JOURNAL): p.unlink()
- return "owned service files removed; Hermes home and runtime preserved"
+ JOURNAL.unlink()
+ _sync_directory(JOURNAL.parent)
+ return "journal-owned core service files removed; Hermes home, PM runtime, and workspace preserved"
 __all__=["CoreRuntimeError","install_or_resume","rollback","status"]

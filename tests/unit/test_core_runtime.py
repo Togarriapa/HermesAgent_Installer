@@ -6,16 +6,143 @@ performed separately on the enrolled Pi.
 import hashlib
 import json
 import os
+from types import SimpleNamespace
 
 import pytest
 
 from hermes_installer import core_runtime as core
 
 
+def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False):
+    etc = tmp_path / "etc" / "hermes-installer"
+    var = tmp_path / "var" / "lib" / "hermes-installer"
+    unit_dir = tmp_path / "etc" / "systemd" / "system"
+    libexec = tmp_path / "usr" / "local" / "libexec"
+    home = tmp_path / "home" / "admin" / ".hermes"
+    for path in (etc, var.parent, unit_dir, libexec, home):
+        path.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(core, "ETC_INSTALLER", etc)
+    monkeypatch.setattr(core, "VAR_LIB_INSTALLER", var)
+    monkeypatch.setattr(core, "SYSTEMD_UNIT_DIR", unit_dir)
+    monkeypatch.setattr(core, "LIBEXEC_DIR", libexec)
+    monkeypatch.setattr(core, "TOKEN", etc / "jarvis-core" / "session-token")
+    monkeypatch.setattr(core, "JOURNAL", var / "core-runtime" / "ownership.json")
+    monkeypatch.setattr(core, "UNIT", unit_dir / core.SERVICE)
+    monkeypatch.setattr(core, "LAUNCHER", libexec / "hermes-jarvis-core-launcher")
+    monkeypatch.setattr(core, "HOME", home.parent)
+    monkeypatch.setattr(core, "HERMES_HOME", home)
+    monkeypatch.setattr(core, "WORKSPACE", home / "workspaces" / "jarvis-core")
+    monkeypatch.setattr(core, "ROOT_UID", os.getuid())
+    monkeypatch.setattr(core, "GATEWAY_GID", os.getgid())
+    monkeypatch.setattr(core, "FILE_CONTRACT", (
+        (core.UNIT, "unit_sha256", os.getuid(), os.getuid(), 0o644),
+        (core.LAUNCHER, "launcher_sha256", os.getuid(), os.getuid(), 0o755),
+        (core.TOKEN, "token_sha256", os.getuid(), os.getgid(), 0o640)))
+    monkeypatch.setattr(core.os, "geteuid", lambda: 0)
+
+    class Account:
+        pw_uid = 1000
+        pw_gid = 1000
+        pw_dir = "/home/admin"
+
+    monkeypatch.setattr(core.pwd, "getpwnam", lambda _: Account())
+    monkeypatch.setattr(core.grp, "getgrgid", lambda _: SimpleNamespace(gr_gid=os.getgid()))
+    identity = {"commit": core.COMMIT, "lock_sha256": core.LOCK_SHA256,
+                "python_sha256": "a" * 64, "python_link": "pinned-link",
+                "python_uid": 1000, "python_gid": 1000, "python_mode": 0o755}
+    monkeypatch.setattr(core, "_identity", lambda: identity)
+    monkeypatch.setattr(core, "_owned_listener", lambda: True)
+    monkeypatch.setattr(core, "_launcher", lambda: b"test fixed core launcher")
+
+    calls = []
+    enabled = {"value": False}
+    failure = {"pending": fail_enable_once}
+
+    def fake_run(argv, check=True):
+        calls.append((tuple(argv), core.UNIT.exists()))
+        out = ""
+        if argv[:2] == ["systemctl", "is-active"]:
+            out = "active" if enabled["value"] else "inactive"
+        elif argv[:2] == ["systemctl", "show"] and "FragmentPath" in argv[2]:
+            out = str(core.UNIT) if core.UNIT.exists() else ""
+        elif argv[:2] == ["systemctl", "show"] and "MainPID" in argv[2]:
+            out = "0"
+        elif argv[:2] == ["systemctl", "enable"]:
+            if failure["pending"]:
+                failure["pending"] = False
+                if check:
+                    raise core.CoreRuntimeError("injected service start failure")
+            enabled["value"] = True
+        elif argv[:2] == ["systemctl", "disable"]:
+            enabled["value"] = False
+        return SimpleNamespace(stdout=out, returncode=0)
+
+    monkeypatch.setattr(core, "_run", fake_run)
+    monkeypatch.setattr(core, "_wait_for_listener", lambda: None)
+    return calls, enabled
+
+
+def test_install_resume_and_rollback_use_only_fixed_owned_paths(tmp_path, monkeypatch):
+    calls, enabled = _fake_runtime(tmp_path, monkeypatch)
+    preserve = core.HERMES_HOME / "auth.json"
+    preserve.write_text("user credential")
+    first = core.install_or_resume()
+    token = core.TOKEN.read_bytes()
+    second = core.install_or_resume()
+    assert token == core.TOKEN.read_bytes()
+    assert enabled["value"]
+    assert "listener verified" in first and "listener verified" in second
+    assert preserve.read_text() == "user credential"
+    monkeypatch.setattr(core, "_owned_listener", lambda: False)
+    assert core.rollback().startswith("journal-owned core service files removed")
+    assert not core.UNIT.exists() and not core.LAUNCHER.exists()
+    assert preserve.read_text() == "user credential"
+    assert any(argv == ("systemctl", "daemon-reload") and not unit_exists
+               for argv, unit_exists in calls)
+
+
+def test_failed_start_is_resumable_without_rotating_session_credential(tmp_path, monkeypatch):
+    _fake_runtime(tmp_path, monkeypatch, fail_enable_once=True)
+    with pytest.raises(core.CoreRuntimeError, match="injected"):
+        core.install_or_resume()
+    token = core.TOKEN.read_bytes()
+    assert json.loads(core.JOURNAL.read_text())["state"] == "installed"
+    message = core.install_or_resume()
+    assert "listener verified" in message
+    assert core.TOKEN.read_bytes() == token
+
+
+def test_rollback_cleans_journaled_preparing_partial_stage(tmp_path, monkeypatch):
+    _fake_runtime(tmp_path, monkeypatch)
+    original = core._owned_file
+    interrupted = {"done": False}
+
+    def fail_during_launcher(path, body, mode, uid, gid, expected, repair):
+        if path == core.LAUNCHER and not interrupted["done"]:
+            path.write_bytes(b"partial launcher")
+            os.chown(path, uid, gid)
+            path.chmod(mode)
+            interrupted["done"] = True
+            raise core.CoreRuntimeError("injected interruption")
+        return original(path, body, mode, uid, gid, expected, repair)
+
+    monkeypatch.setattr(core, "_owned_file", fail_during_launcher)
+    with pytest.raises(core.CoreRuntimeError, match="injected"):
+        core.install_or_resume()
+    monkeypatch.setattr(core, "_owned_file", original)
+    assert json.loads(core.JOURNAL.read_text())["state"] == "preparing"
+    monkeypatch.setattr(core, "_owned_listener", lambda: False)
+    assert core.rollback().startswith("journal-owned core service files removed")
+    assert not core.TOKEN.exists() and not core.LAUNCHER.exists()
+
+
 def test_launcher_uses_isolated_pinned_loopback_without_secret_arguments():
     launcher = core._launcher().decode()
     assert "HERMES_DASHBOARD_SESSION_TOKEN" in launcher
     assert "--isolated --host 127.0.0.1 --port 8766" in launcher
+    assert "HERMES_DISABLE_LAZY_INSTALLS=1" in launcher
+    assert "PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1" in launcher
+    assert "unset PYTHONHOME PYTHONUSERBASE PYTHONSTARTUP VIRTUAL_ENV" in launcher
     assert "auth.json" not in launcher
 
 
