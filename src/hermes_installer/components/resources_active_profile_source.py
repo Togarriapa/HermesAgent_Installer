@@ -184,6 +184,16 @@ class RootVerifiedJarvisMasterSource:
     _config: Any = field(repr=False, compare=False)
     _seal: object = field(repr=False, compare=False)
 
+    @property
+    def generation_sha256(self) -> str:
+        """Compatibility name used by the root planner admission wire."""
+        return self.artifact_sha256
+
+    @property
+    def effective_prompt_sha256(self) -> str:
+        """Digest of the effective prompt reported by the pinned native loader."""
+        return self.native_effective_prompt_sha256
+
     @classmethod
     def current_master_source(cls, custody: Any, config: Any
                               ) -> "RootVerifiedJarvisMasterSource | None":
