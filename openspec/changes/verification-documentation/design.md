@@ -258,3 +258,12 @@ Luna implements RT-T263.1; VD-T263.2 tests effects/failures and actual binding-e
 ## Local tunnel digest v263b
 
 Extends v263 under the same RT-T263.1/VD-T263.2 tasks and R0196..R0205/AC13..15. `tunnel_config_sha256` is exactly the domain-separated canonical local wiring projection in `planning/jarvis-local-tunnel-wiring-digest-v263b.json`, not a Cloudflare API configuration read. Keep distinct full protected `config_sha256`, four schema2 additions and strict boot_id-only refresh. No extra manifest, credential or scope; all acceptance remains OPEN.
+
+
+## Native observation burst sharing v264
+
+Extends RT-F02/R0196..R0205/AC13..15 and v259/v263 under unchanged original scope. Actual burst request ages exceed five seconds while full scans take less than0.4s; the serialized perasset fullscan and discarded root timestamps are the concrete seam.
+
+The exact `planning/jarvis-native-observation-burst-sharing-v264.json` authorizes root-owned native single-flight sharing only during the original nonextendable five-second observation. Every nonce request retains fresh cheap custody/currentness joins, and every app request retains fresh Unix ingress/JWT checks. Fullscan is mandatory initially and after expiry/change/failure. Typed root timestamps propagate to per-byte denial; no restamp or authorization cache.
+
+RT-T264.1 implements inspector and consumer; VD-T264.2 verifies effects/negative burst behavior and actual Pi visibility/revocation/restart. No runtime source pins or acceptance; all AC OPEN.

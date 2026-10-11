@@ -1433,3 +1433,17 @@ The manual stage SHALL use the exact v263b local wiring digest distinct from ful
 #### Scenario: Boot identity changes
 - **WHEN** protected config boot_id is refreshed
 - **THEN** validate schema2, preserve other fields atomically and require fresh current proofs
+
+
+## ADDED Requirements
+
+### Requirement: Original-expiry native burst observation
+The manual stage SHALL share only inspector-owned native evidence during its original five-second lifetime with fresh nonce/custody/currentness checks. It SHALL preserve independent per-request ingress/JWT and original deadlines, repeating full native hashing on expiry/change/failure.
+
+#### Scenario: Browser assets arrive concurrently
+- **WHEN** the exact same native observation remains live
+- **THEN** share its original issue/expiry through typed authenticated IPC without restamping or caching authorization
+
+#### Scenario: Shared native proof expires or changes
+- **WHEN** expiry, currentness mismatch or failed refresh occurs
+- **THEN** deny effects until a new complete bounded fullscan succeeds; never revive the old observation

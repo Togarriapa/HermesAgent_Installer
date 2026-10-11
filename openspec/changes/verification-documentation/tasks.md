@@ -296,3 +296,9 @@ RT-T259.3/LC-T259.4/VD-T259.5 additionally require the separate stage adapter, p
 
 - [ ] `RT-T263.1` Apply exact local wiring digest and strict schema2 boot refresh clarification; existing v263 task remains OPEN.
 - [ ] `VD-T263.2` Verify canonical field/type/domain mutations and boot refresh preserves schema2 fields while invalidating old proof; existing live gates remain OPEN.
+
+
+## Native observation burst sharing v264
+
+- [ ] `RT-T264.1` Implement exact root-owned original-expiry native snapshot/single-flight and typed consumer; retain every independent ingress/JWT/currentness check. Depends RT-T263.1.
+- [ ] `VD-T264.2` Verify burst/expiry/mutation/failure effects and actual Pi scripts/CSS/pixels/input plus existing revocation/restart gates. Depends RT-T264.1; all AC OPEN.

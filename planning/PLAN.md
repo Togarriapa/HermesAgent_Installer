@@ -280,3 +280,8 @@ Confirmed jarvis.togarriapahome.uk. `planning/jarvis-visible-desktop-mvp-stage-v
 ## Local tunnel digest clarification v263b
 
 `planning/jarvis-local-tunnel-wiring-digest-v263b.json`; exact local domain/projection, separate full config hash, strict schema2 boot refresh. Same tasks/all AC OPEN.
+
+
+## Native burst observation v264
+
+`planning/jarvis-native-observation-burst-sharing-v264.json`; RT-T264.1/VD-T264.2 OPEN. Share only original-expiry native root evidence, independent ingress/JWT unchanged; actual Pi burst and full AC remain OPEN.
