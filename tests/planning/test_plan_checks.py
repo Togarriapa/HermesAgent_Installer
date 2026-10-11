@@ -1,38 +1,110 @@
-"""Negative integrity/coverage tests; these establish planning checks only."""
-import importlib.util,json,shutil,tempfile,unittest,subprocess,hashlib,sys
+"""Current-scope coverage failures; execute only on the authorized Pi."""
+import importlib.util
+import json
+import shutil
+import tempfile
+import unittest
 from pathlib import Path
-spec=importlib.util.spec_from_file_location('check_plan',Path('scripts/check_plan.py'));checks=importlib.util.module_from_spec(spec);spec.loader.exec_module(checks)
+
+spec = importlib.util.spec_from_file_location('check_plan', Path('scripts/check_plan.py'))
+checks = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(checks)
+
+
 class PlanningChecks(unittest.TestCase):
- def setUp(self):
-  self.temp=tempfile.TemporaryDirectory();self.base=Path(self.temp.name)/'baseline';shutil.copytree('plans/2026-10-09-v1',self.base)
- def tearDown(self):self.temp.cleanup()
- def change(self,mutate):
-  p=self.base/'planning/traceability.json';data=json.loads(p.read_text());mutate(data);p.write_text(json.dumps(data))
- def test_valid_frozen_scope(self):
-  self.assertEqual(checks.check_coverage(self.base)['acceptance_criteria'],12);self.assertGreater(checks.check_integrity(self.base),50)
- def test_dropped_source_line_rejected(self):
-  self.change(lambda d:d['source_line_mapping'].pop());self.assertRaises(AssertionError,checks.check_coverage,self.base)
- def test_missing_acceptance_links_rejected(self):
-  self.change(lambda d:d['acceptance'][0].update(requirement_ids=[]));self.assertRaises(AssertionError,checks.check_coverage,self.base)
- def test_task_dependency_cycle_rejected(self):
-  self.change(lambda d:d['tasks'][0]['depends_on'].append(d['tasks'][0]['id']));self.assertRaises(AssertionError,checks.check_coverage,self.base)
- def test_changed_or_extra_baseline_file_rejected(self):
-  (self.base/'original-prompt.md').write_text('changed');self.assertRaises(AssertionError,checks.check_integrity,self.base)
- def test_removed_baseline_file_rejected(self):
-  (self.base/'planning/model-roles.json').unlink();self.assertRaises(AssertionError,checks.check_integrity,self.base)
- def test_extra_baseline_file_rejected(self):
-  (self.base/'unexpected-file').write_text('extra');self.assertRaises(AssertionError,checks.check_integrity,self.base)
- def test_rewriting_hashes_and_contents_does_not_bypass_tag(self):
-  temp=Path(self.temp.name)
-  def git(*args):subprocess.run(['git',*args],cwd=temp,check=True,capture_output=True)
-  git('init');git('add','baseline');git('-c','user.name=Planning Check','-c','user.email=planning-check@example.invalid','commit','-m','Baseline fixture');git('tag','immutable-test')
-  target=self.base/'BASELINE.md';target.write_text(target.read_text()+'changed')
-  hp=self.base/'hashes.json';manifest=json.loads(hp.read_text());manifest['files']['BASELINE.md']=hashlib.sha256(target.read_bytes()).hexdigest();hp.write_text(json.dumps(manifest))
-  checks.check_integrity(self.base)
-  result=subprocess.run([sys.executable,str(Path('scripts/check_plan.py').resolve()),'--baseline','baseline','--tag','immutable-test'],cwd=temp,capture_output=True,text=True)
-  self.assertNotEqual(result.returncode,0)
- def test_dropped_direct_user_addition_rejected(self):
-  self.change(lambda d:d['additional_sources'].clear());self.assertRaises(AssertionError,checks.check_coverage,self.base)
- def test_missing_remote_acceptance_rejected(self):
-  self.change(lambda d:d['additional_acceptance'].pop());self.assertRaises(AssertionError,checks.check_coverage,self.base)
-if __name__=='__main__':unittest.main()
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.base = Path(self.temp.name)
+        (self.base / 'requirements').mkdir()
+        shutil.copy('requirements/current-scope.json', self.base / 'requirements/current-scope.json')
+        shutil.copy('CURRENT-PLAN.md', self.base / 'CURRENT-PLAN.md')
+        shutil.copytree('openspec/changes/jarvis-core-platform', self.base / 'openspec/changes/jarvis-core-platform')
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def change(self, mutate):
+        path = self.base / 'requirements/current-scope.json'
+        data = json.loads(path.read_text())
+        mutate(data)
+        path.write_text(json.dumps(data))
+
+    def rejected(self):
+        self.assertRaises(checks.PlanError, checks.check_coverage, self.base)
+
+    def test_current_scope_preserves_inventory_without_historical_head_files(self):
+        result = checks.check_coverage(self.base)
+        self.assertEqual(result['inventory_records'], 62)
+        self.assertEqual(result['acceptance_criteria'], 15)
+        self.assertEqual(result['current_artifacts'], 4)
+        self.assertFalse((self.base / 'plans').exists())
+
+    def test_dropped_original_functional_requirement_denied(self):
+        self.change(lambda data: data['requirements'].__setitem__(slice(None), [r for r in data['requirements'] if r['id'] != 'R0001']))
+        self.rejected()
+
+    def test_core_security_lease_obligation_omission_denied(self):
+        self.change(lambda data: data['requirements'].__setitem__(slice(None), [r for r in data['requirements'] if r['id'] != 'CORE-LEASE']))
+        self.rejected()
+
+    def test_duplicate_requirement_id_denied(self):
+        self.change(lambda data: data['requirements'].append(dict(data['requirements'][0])))
+        self.rejected()
+
+    def test_component_replaced_with_equal_count_denied(self):
+        self.change(lambda data: data['components'][0].update(id='invented-component'))
+        self.rejected()
+
+    def test_requested_alias_omission_denied(self):
+        self.change(lambda data: next(c for c in data['components'] if c['id'] == 'playwright-mcp').update(aliases=['playwright']))
+        self.rejected()
+
+    def test_missing_access_acceptance_denied(self):
+        self.change(lambda data: data['acceptance'].__setitem__(slice(None), [a for a in data['acceptance'] if a['id'] != 'AC13']))
+        self.rejected()
+
+    def test_acceptance_false_completion_denied(self):
+        self.change(lambda data: data['acceptance'][0].update(status='PASS'))
+        self.rejected()
+
+    def test_account_component_false_readiness_denied(self):
+        self.change(lambda data: data['components'][0].update(acceptance='READY'))
+        self.rejected()
+
+    def test_broken_security_requirement_task_link_denied(self):
+        self.change(lambda data: data['requirements'][0].update(task_id='unknown-task'))
+        self.rejected()
+
+    def test_empty_effect_verification_denied(self):
+        self.change(lambda data: data['requirements'][0].update(verification_method=''))
+        self.rejected()
+
+    def test_task_cycle_denied(self):
+        self.change(lambda data: data['tasks'][0]['depends_on'].append(data['tasks'][0]['id']))
+        self.rejected()
+
+    def test_missing_spec_requirement_denied(self):
+        path = self.base / 'openspec/changes/jarvis-core-platform/specs/jarvis-core-platform/spec.md'
+        path.write_text(path.read_text().replace('Requirement: R0001', 'Requirement: removed-R0001'))
+        self.rejected()
+
+    def test_missing_task_checkbox_denied(self):
+        path = self.base / 'openspec/changes/jarvis-core-platform/tasks.md'
+        path.write_text(path.read_text().replace('- [ ] BD-T266.1', '- Historical BD-T266.1'))
+        self.rejected()
+
+    def test_second_active_change_denied(self):
+        (self.base / 'openspec/changes/obsolete-product').mkdir()
+        self.rejected()
+
+    def test_missing_design_denied(self):
+        (self.base / 'openspec/changes/jarvis-core-platform/design.md').unlink()
+        self.rejected()
+
+    def test_unknown_component_requirement_denied(self):
+        self.change(lambda data: data['components'][0].update(requirement_ids=['invented-requirement']))
+        self.rejected()
+
+
+if __name__ == '__main__':
+    unittest.main()

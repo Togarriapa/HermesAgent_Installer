@@ -1,10 +1,10 @@
 {
   "name": "hermes-agent-installer",
   "version": "0.0.0",
-  "description": "OpenSpec-driven Raspberry Pi Hermes installer; immutable specification baseline",
+  "description": "Core Hermes installer and protected Jarvis platform; one current OpenSpec scope",
   "scripts": {
     "validate:specs": "openspec validate --all --strict --no-interactive --json",
-    "validate:plan": "python3 scripts/check_plan.py --live && python3 scripts/check_plan.py",
+    "validate:plan": "python3 scripts/check_plan.py",
     "test:planning": "python3 -m unittest discover -s tests/planning -v"
   },
   "repository": {

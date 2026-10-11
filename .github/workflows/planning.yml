@@ -1,24 +1,25 @@
-name: Planning integrity and OpenSpec
+name: Current scope and authorized Pi checks
+# Manual only: no off-Pi tests or automatic target enrollment.
+# This runner label must be explicitly enrolled by the owner; no hosted fallback.
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
 
   runtime-contracts:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, ARM64, hermes-authorized-pi]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
-          python-version: "3.13"
+          python-version: "3.14"
       - name: Install hash-pinned runtime YAML dependency
         run: python -m pip install --require-hashes -r requirements-runtime.txt
       - name: Install hash-pinned contract test tools
         run: python -m pip install --require-hashes -r requirements-test.txt
       - name: Install hash-pinned JWT and cryptography test primitives
-        run: python -m pip install --no-deps --require-hashes -r src/hermes_installer/remote/requirements-ci-x86-py313-core.lock
+        run: python -m pip install --no-deps --require-hashes -r src/hermes_installer/remote/requirements-arm64-py314.lock
       - name: Compile installer modules
         run: python -m compileall -q src
       - name: Run runtime contract and failure tests
@@ -32,7 +33,7 @@ jobs:
         run: python -m unittest discover -s tests/acceptance -v
 
   planning:
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, ARM64, hermes-authorized-pi]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -50,6 +51,4 @@ jobs:
         env:
           OPENSPEC_TELEMETRY: '0'
       - run: npm run validate:plan
-      - name: Compare immutable full tree against baseline tag
-        run: python3 scripts/check_plan.py --tag hermes-installer-plan-2026-10-09-v1
       - run: npm run test:planning

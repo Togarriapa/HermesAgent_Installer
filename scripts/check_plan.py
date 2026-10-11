@@ -1,109 +1,133 @@
 #!/usr/bin/env python3
-"""Validate planning coverage and frozen baseline integrity; never validate runtime readiness."""
-import argparse,hashlib,json,re,subprocess,sys
+"""Validate the one current scope and its OpenSpec links, not runtime readiness."""
+import argparse
+import json
+import re
+import sys
 from pathlib import Path
 
-def load(path):return json.loads(path.read_text())
-def check_coverage(base):
- data=load(base/'planning/traceability.json');items=load(base/'planning/component-contracts.json')
- source=base/'original-prompt.md' if (base/'original-prompt.md').exists() else base/'plans/2026-10-09-v1/original-prompt.md'
- raw=source.read_bytes();lines=raw.decode().splitlines()
- assert hashlib.sha256(raw).hexdigest()==data['source_sha256'],'Original prompt digest mismatch'
- req={x['id']:x for x in data['requirements']};tasks={x['id']:x for x in data['tasks']};ev={x['id']:x for x in data['evidence']}
- assert len(req)==len(data['requirements']) and len(tasks)==len(data['tasks']) and len(ev)==len(data['evidence']),'Duplicate identity'
- mapped={m['line']:m for m in data['source_line_mapping']}
- assert set(mapped)=={n for n,s in enumerate(lines,1) if s.strip()},'Source line dropped or invented'
- for m in mapped.values():assert m['requirement_ids'] and all(x in req for x in m['requirement_ids']),'Unmapped source context/obligation'
- specs='\n'.join(p.read_text() for p in (base/'openspec').rglob('spec.md'))
- tasktext='\n'.join(p.read_text() for p in (base/'openspec/changes').rglob('tasks.md'))
- # v267 moved mixed Desktop proposals verbatim to explicit superseded history.
- # Their task IDs remain source coverage, never active/completed runtime evidence.
- redirect=base/'planning/active-obligation-index-v267.json'
- if redirect.exists():
-  index=load(redirect)
-  assert index['change']=='jarvis-core-platform','Unknown active obligation redirect'
-  assert (base/'openspec/changes/jarvis-core-platform/tasks.md').is_file(),'Missing active core task plan'
-  expected_history={name:'openspec/superseded/v267/'+name for name in ('installer-bootstrap-desktop','remote-desktop-tunnel')}
-  assert index['historical_changes']==expected_history,'Unexpected historical task source'
-  historical_text='\n'.join((base/path/'tasks.md').read_text() for path in expected_history.values())
-  # Mixed source obligations can remain active in another functional change.
-  # Exclude the generated core reference list so it cannot prove itself.
-  retained_active_text='\n'.join(p.read_text() for p in (base/'openspec/changes').rglob('tasks.md') if 'jarvis-core-platform' not in p.parts)
-  cross_history=[]
-  for name in ('cross-change-desktop-task-references.json','root-integration-desktop-task-references.json'):
-   path=base/'openspec/superseded/v267'/name
-   if path.exists():
-    rows=load(path)
-    assert rows['schema']==1,'Unsupported historical task reference schema'
-    cross_history.extend(row['text'] for row in rows['entries'])
-  retained_source_text='\n'.join((historical_text,retained_active_text,*cross_history))
-  for tid in index['retained_task_id_prefixes']:
-   assert tid in retained_source_text,'Task redirect lacks retained source '+tid
-  tasktext+='\n'+historical_text+'\n'+'\n'.join(cross_history)
- for rid,r in req.items():
-  assert 'Requirement: '+rid+' ' in specs,'Missing OpenSpec requirement '+rid
-  assert r['task_id'] in tasks and r['test_id'] in ev,'Missing task/evidence '+rid
-  assert rid in tasks[r['task_id']]['requirement_ids'] and rid in ev[r['test_id']]['requirement_ids'],'Broken trace link '+rid
-  assert r['task_id'] in tasktext,'Missing tracked checkbox task '+r['task_id']
-  assert r['verification_method'] and ev[r['test_id']]['assertion'],'Missing substantive verification '+rid
- itemids={i['id'] for i in items}
- for r in req.values():
-  if r.get('component_id'):assert r['component_id'] in itemids,'Requested component omitted '+r['component_id']
- for item in items:
-  assert item.get('class') and item.get('component_type'),'Missing component type '+item['id']
-  assert item['aliases'] and item['requirement_ids'] and item['task_ids'] and item['evidence_ids'],'Incomplete item '+item['id']
-  assert all(x in req for x in item['requirement_ids']) and all(x in tasks for x in item['task_ids']) and all(x in ev for x in item['evidence_ids']),'Broken item links'
-  if item['source_selection']=='pending-user-selection':assert item['status']=='pending-source' and not item['states']['enabled'],'Unselected source activated'
- assert len({i['id'] for i in items})==len(items),'Duplicate component identity'
- for name,aliases in [('ecc',['affaan-m/ECC','ecc']),('omniroute',['OmniRoute','omniroute']),('playwright-mcp',['playright','Playwright MCP'])]:
-  item=next(i for i in items if i['id']==name);assert set(aliases)<=set(item['aliases']),'Alias dropped'
- assert len(data['acceptance'])==12 and {a['id'] for a in data['acceptance']}=={f'AC{n:02}' for n in range(1,13)},'Missing acceptance criterion'
- for a in data['acceptance']:
-  assert a['text'] and a['source_line'] and a['requirement_ids'] and a['task_ids'] and a['evidence_ids'],'Unlinked acceptance '+a['id']
-  assert lines[a['source_line']-1].startswith(str(int(a['id'][2:]))+'. '),'Wrong acceptance source line'
- additional=data.get('additional_sources',[])
- expected={r['source_file'] for r in req.values() if r.get('source_file')}
- assert {a['file'] for a in additional}==expected,'Missing direct-user addition source mapping'
- for a in additional:
-  ap=base/a['file'];araw=ap.read_bytes();alines=araw.decode().splitlines()
-  assert hashlib.sha256(araw).hexdigest()==a['sha256'],'Additional user source digest changed'
-  amap={m['line']:m for m in a['source_line_mapping']}
-  assert set(amap)=={n for n,l in enumerate(alines,1) if l.strip()},'Direct-user addition line dropped'
-  for m in amap.values():assert m['requirement_ids'] and all(i in req for i in m['requirement_ids']),'Unmapped direct-user addition'
- added=data.get('additional_acceptance',[])
- if expected:
-  assert {a['id'] for a in added}>={'AC13','AC14','AC15'},'Missing remote acceptance criterion'
-  for a in added:
-   assert a['text'] and a['requirement_ids'] and a['task_ids'] and a['evidence_ids'],'Incomplete added acceptance mapping'
-   assert all(i in req for i in a['requirement_ids']) and all(i in tasks for i in a['task_ids']) and all(i in ev for i in a['evidence_ids']),'Broken added acceptance links'
- active=set();done=set()
- def visit(tid):
-  assert tid in tasks,'Unknown task dependency '+tid
-  assert tid not in active,'Task dependency cycle '+tid
-  if tid in done:return
-  active.add(tid)
-  for dep in tasks[tid]['depends_on']:visit(dep)
-  active.remove(tid);done.add(tid)
- for tid in tasks:visit(tid)
- return {'requirements':len(req),'tasks':len(tasks),'inventory_records':len(items),'source_lines':len(mapped),'acceptance_criteria':12,'additional_acceptance_criteria':len(added),'additional_source_lines':sum(len(a['source_line_mapping']) for a in additional)}
 
-def check_integrity(baseline):
- manifest=load(baseline/'hashes.json')
- observed={str(p.relative_to(baseline)):hashlib.sha256(p.read_bytes()).hexdigest() for p in baseline.rglob('*') if p.is_file() and p != baseline/'hashes.json'}
- assert observed==manifest['files'],'Frozen baseline file set or digest changed'
- return len(observed)
+REQUIRED_COMPONENT_IDS = ('addy-osmani-s-agent-skills', 'adewaskar-jarvis', 'agent-memory', 'antropic-cybersecurity-skills', 'apple-design', 'awesome-design', 'awesome-harness-engineering', 'banana-claude', 'book-to-skill', 'browser-use', 'claude-free', 'claude-mem', 'cloudflare-access', 'cloudflare-tunnel', 'codex-account', 'colibri', 'coral', 'diagram-design', 'ecc', 'emil-kowalski-impeccable', 'emil-skills', 'figma-mcp', 'glm-5-2', 'google', 'google-calendar', 'google-community-mcp', 'google-contacts', 'google-docs', 'google-drive', 'google-gmail', 'google-sheets', 'graphify', 'gstack', 'hermes-agent', 'hermes-desktop', 'home-assistant', 'humanizer', 'hyperframes', 'jakeschincariol-replica-skill', 'latent-spaces-brag', 'nemotron-free', 'obsidian-skills', 'omniroute', 'open-executive', 'open-viking', 'openai-api', 'openrouter-account', 'panniantong-agent-reach', 'playwright-mcp', 'ponytail', 'public-apis-public-apis', 'remote-desktop-bridge', 'remote-desktop-html5', 'resource-registry', 'revenuecat-mcp', 'ruflo', 'scientific-agent-skills', 'scrapegraph-ai', 'screenshot-to-code', 'superpowers', 'taste-skill', 'ui-ux-pro-max')
+
+
+class PlanError(ValueError):
+    pass
+
+
+def require(condition, message):
+    if not condition:
+        raise PlanError(message)
+
+
+def load(path):
+    return json.loads(path.read_text())
+
+
+def indexed(rows, label):
+    require(isinstance(rows, list) and rows, f'Missing {label}')
+    result = {}
+    for row in rows:
+        require(isinstance(row, dict), f'Invalid {label} row')
+        key = row.get('id')
+        require(isinstance(key, str) and key and key not in result, f'Duplicate/invalid {label} ID')
+        result[key] = row
+    return result
+
+
+def linked(row, field, target, label):
+    values = row.get(field)
+    require(isinstance(values, list) and values and len(values) == len(set(values)), f'Missing/duplicate {label} {field}')
+    require(all(value in target for value in values), f'Unknown {label} {field}')
+    return values
+
+
+def current_status(row, field, label):
+    require(row.get(field) == 'OPEN', f'{label} falsely claims acceptance without release evidence')
+
+
+def check_coverage(base):
+    base = Path(base)
+    scope = load(base / 'requirements/current-scope.json')
+    require(scope.get('schema') == 1 and scope.get('change') == 'jarvis-core-platform', 'Unsupported current scope')
+    require((base / 'CURRENT-PLAN.md').is_file(), 'Missing current plan entrypoint')
+    change_root = base / 'openspec/changes'
+    changes = {p.name for p in change_root.iterdir() if p.is_dir()}
+    require(changes == {'jarvis-core-platform'}, 'Current OpenSpec must contain only jarvis-core-platform')
+    change = change_root / 'jarvis-core-platform'
+    artifacts = [change / 'proposal.md', change / 'design.md', change / 'tasks.md', change / 'specs/jarvis-core-platform/spec.md']
+    for path in artifacts:
+        require(path.is_file() and path.read_text().strip(), f'Missing current artifact {path.name}')
+    specs = artifacts[3].read_text()
+    task_text = artifacts[2].read_text()
+    checkbox_ids = set(re.findall(r'^- \[[ xX]\]\s+(?:\d+(?:\.\d+)*\s+)?`?([A-Z]{2}-[A-Z]\d+(?:\.\d+)?)\b', task_text, re.M))
+    requirements = indexed(scope.get('requirements'), 'requirement')
+    tasks = indexed(scope.get('tasks'), 'task')
+    components = indexed(scope.get('components'), 'component')
+    acceptance = indexed(scope.get('acceptance'), 'acceptance')
+    original_ids = {f'R{number:04}' for number in range(1, 212)}
+    require(original_ids <= requirements.keys(), 'Original functional requirement omitted')
+    required_core = {'CORE-SESSION', 'CORE-BOTS', 'CORE-LEASE', 'CORE-CLEANUP', 'CORE-RESOURCES', 'CORE-DOCS'}
+    require(required_core <= requirements.keys(), 'Current core/security/cleanup/release obligation omitted')
+    require(set(components) == set(REQUIRED_COMPONENT_IDS), 'Requested component inventory changed')
+    require(set(acceptance) == {f'AC{number:02}' for number in range(1, 16)}, 'Acceptance coverage changed')
+    required_tasks = {'BD-T266.1', 'HI-T266.2', 'RT-T266.3', 'RB-T266.4', 'VD-T266.5', 'BD-T267.1', 'VD-T267.2', 'VD-T268.1'}
+    require(required_tasks <= tasks.keys(), 'Core/capability/UI/Resources/cleanup/release task omitted')
+    for key, row in requirements.items():
+        require(isinstance(row.get('text'), str) and row['text'].strip(), f'Missing requirement text {key}')
+        require(row.get('phase') in range(1, 6), f'Invalid requirement phase {key}')
+        require(row.get('task_id') in tasks, f'Unknown task for {key}')
+        for field in ('implementation_module', 'verification_method', 'test_path'):
+            require(isinstance(row.get(field), str) and row[field].strip(), f'Missing substantive {field} for {key}')
+        require(re.search(r'^### Requirement:\s+' + re.escape(key) + r'(?:\s|:|$)', specs, re.M), f'Missing current spec requirement {key}')
+        current_status(row, 'acceptance', key)
+    for key, row in tasks.items():
+        require(row.get('phase') in range(1, 6), f'Invalid task phase {key}')
+        require(key in checkbox_ids, f'Missing current checkbox task {key}')
+        require(isinstance(row.get('depends_on'), list), f'Missing task dependencies {key}')
+        require(all(dep in tasks for dep in row['depends_on']), f'Unknown task dependency {key}')
+        current_status(row, 'acceptance', key)
+    active, done = set(), set()
+    def visit(key):
+        require(key not in active, f'Task dependency cycle {key}')
+        if key in done:
+            return
+        active.add(key)
+        for dep in tasks[key]['depends_on']:
+            visit(dep)
+        active.remove(key)
+        done.add(key)
+    for key in tasks:
+        visit(key)
+    for key, row in components.items():
+        for field in ('requested_name', 'verification_method'):
+            require(isinstance(row.get(field), str) and row[field].strip(), f'Missing component {field} {key}')
+        require(isinstance(row.get('aliases'), list) and row['aliases'], f'Missing component aliases {key}')
+        require(isinstance(row.get('source_urls'), list) and row['source_urls'], f'Missing component sources {key}')
+        linked(row, 'requirement_ids', requirements, key)
+        linked(row, 'task_ids', tasks, key)
+        current_status(row, 'acceptance', key)
+    for name, aliases in [('ecc', {'affaan-m/ECC', 'ecc'}), ('omniroute', {'OmniRoute', 'omniroute'}), ('playwright-mcp', {'playright', 'Playwright MCP'})]:
+        require(aliases <= set(components[name]['aliases']), f'Requested alias omitted {name}')
+    for key, row in acceptance.items():
+        require(isinstance(row.get('text'), str) and row['text'].strip(), f'Missing acceptance assertion {key}')
+        linked(row, 'requirement_ids', requirements, key)
+        linked(row, 'task_ids', tasks, key)
+        current_status(row, 'status', key)
+    return {'requirements': len(requirements), 'tasks': len(tasks), 'inventory_records': len(components), 'acceptance_criteria': len(acceptance), 'current_artifacts': len(artifacts)}
+
 
 def main():
- p=argparse.ArgumentParser();p.add_argument('--baseline',type=Path,default=Path('plans/2026-10-09-v1'));p.add_argument('--live',action='store_true');p.add_argument('--tag');args=p.parse_args()
- try:
-  stats=check_coverage(Path('.') if args.live else args.baseline)
-  if not args.live:stats['hashed_files']=check_integrity(args.baseline)
-  if args.tag:
-   subprocess.run(['git','rev-parse','--verify','refs/tags/'+args.tag],check=True,capture_output=True)
-   subprocess.run(['git','diff','--exit-code','refs/tags/'+args.tag,'--',str(args.baseline)],check=True)
-   tracked=subprocess.run(['git','ls-tree','-r','--name-only','refs/tags/'+args.tag,'--',str(args.baseline)],check=True,capture_output=True,text=True).stdout.splitlines()
-   assert tracked,'Tag lacks baseline'
-  print(json.dumps({'planning_coverage':'pass','runtime_acceptance':'not-established',**stats},indent=2));return 0
- except (AssertionError,KeyError,ValueError,OSError,subprocess.CalledProcessError) as e:
-  print('Planning validation failed: '+str(e),file=sys.stderr);return 1
-if __name__=='__main__':raise SystemExit(main())
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--root', type=Path, default=Path('.'))
+    args = parser.parse_args()
+    try:
+        stats = check_coverage(args.root)
+        print(json.dumps({'planning_coverage': 'pass', 'runtime_acceptance': 'not-established', **stats}, indent=2))
+        return 0
+    except (PlanError, KeyError, TypeError, ValueError, OSError) as error:
+        print('Current planning validation failed: ' + str(error), file=sys.stderr)
+        return 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
