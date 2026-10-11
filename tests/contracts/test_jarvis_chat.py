@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 from types import SimpleNamespace
 
@@ -236,53 +237,104 @@ def test_server_turn_mapping_runs_before_worker_and_failure_compensates_without_
     asyncio.run(exercise())
 
 
-def test_each_native_owned_turn_rebinds_runtime_and_turn_before_submit(tmp_path):
+def test_owner_turn_registration_uses_actual_rebound_session_and_final_prompt(tmp_path):
     store = JarvisChatStore(tmp_path / "chat.sqlite3")
     conversation = new_conversation(store, "subject-a")
     initial = store.get_conversation("subject-a", conversation["id"])
-    observed = []
+    access_jwt = "accepted-jwt-fixture"
+    ingress = object()
+    calls = []
+    sent = []
+    turn_ids = []
+    attachment_reference = "[attachment reference]"
+    accepted_text = "private accepted prompt"
+    final_first_prompt = accepted_text + "\n\n" + attachment_reference
+    final_second_prompt = "ordinary chat remains available\n\n" + attachment_reference
+
+    class Headers:
+        def getall(self, name, default=()):
+            return [access_jwt] if name == "Cf-Access-Jwt-Assertion" else list(default)
+
+    class Request:
+        headers = Headers()
+
+        def get(self, key):
+            return ingress if key == "core_ingress" else None
 
     class Backend:
-        async def resume_session(self, _stored):
-            raise AssertionError("same-generation runtime is resumed on the submit socket")
-
         def stream_owned_turn(self, stored_session_id, text, *, before_submit):
             async def events():
-                assert stored_session_id == initial["session_key"]
-                assert text == "hello"
-                await before_submit("runtime-after-idle")
-                with store._connect() as db:
-                    turn_id = db.execute(
-                        "SELECT id FROM turns WHERE conversation_id=? AND status='running'",
-                        (conversation["id"],)).fetchone()[0]
-                turn = store.owned_turn("subject-a", turn_id)
-                current = store.get_conversation("subject-a", conversation["id"])
-                observed.append((current["backend_id"], turn["runtime_session_id"], turn_id))
+                if not sent:
+                    assert stored_session_id == initial["session_key"]
+                    assert text == final_first_prompt
+                    actual_session = "runtime-after-idle"
+                else:
+                    actual_session = "runtime-after-idle"
+                await before_submit(actual_session)
+                sent.append((actual_session, text))
                 yield SimpleNamespace(kind="complete")
             return events()
-
-        async def stream(self, _session_id, _text):
-            raise AssertionError("native owned turns must use the resume-capable adapter")
 
         async def stop(self, _session_id):
             pass
 
+    def register_owner_turn(**kwargs):
+        calls.append(kwargs)
+        if len(calls) > 1:
+            raise RuntimeError("root owner observation unavailable")
+        return "a" * 32
+
     service = JarvisChatService(
-        store, Backend(), principal_from_request=lambda _request: principal("subject-a"))
+        store, Backend(), principal_from_request=lambda _request: principal("subject-a"),
+        owner_turn_register=register_owner_turn)
+    request = Request()
+    service.files_store.claim_pending = lambda **_kwargs: [attachment_reference]
 
     async def exercise():
         queued = await service.start_server_turn(
-            SimpleNamespace(), conversation_id=conversation["id"], text="hello",
-            idempotency_key="idle-resume-request-key-0001")
-        for _ in range(100):
+            request, conversation_id=conversation["id"], text=accepted_text,
+            idempotency_key="owner-turn-request-key-00000001")
+        assert "owner_turn_handle" not in queued
+        turn_ids.append(queued["turn_id"])
+        for _ in range(50):
             if store.owned_turn("subject-a", queued["turn_id"])["status"] == "completed":
                 break
             await asyncio.sleep(0.01)
         assert store.owned_turn("subject-a", queued["turn_id"])["status"] == "completed"
+        unavailable = await service.start_server_turn(
+            request, conversation_id=conversation["id"], text="ordinary chat remains available",
+            idempotency_key="owner-turn-request-key-00000002")
+        turn_ids.append(unavailable["turn_id"])
+        for _ in range(50):
+            if store.owned_turn("subject-a", unavailable["turn_id"])["status"] == "completed":
+                break
+            await asyncio.sleep(0.01)
+        assert store.owned_turn("subject-a", unavailable["turn_id"])["status"] == "completed"
 
     asyncio.run(exercise())
-    assert observed[0][:2] == ("runtime-after-idle", "runtime-after-idle")
-    assert store.get_conversation("subject-a", conversation["id"])["session_key"] == initial["session_key"]
+
+    assert sent == [("runtime-after-idle", accepted_text),
+                    ("runtime-after-idle", final_second_prompt)]
+    assert calls[0] == {
+        "access_jwt": access_jwt,
+        "accepted_ingress": ingress,
+        "session_id": "runtime-subject-a",
+        "conversation_id": conversation["id"],
+        "gateway_turn_id": turn_ids[0],
+        "prompt_sha256": hashlib.sha256(final_first_prompt.encode("utf-8")).hexdigest(),
+    }
+    assert calls[1]["gateway_turn_id"] == turn_ids[1]
+    assert calls[1]["prompt_sha256"] == hashlib.sha256(
+        final_second_prompt.encode("utf-8")).hexdigest()
+    assert service.owner_turn_handle_for(principal("subject-a"), turn_ids[0]) == "a" * 32
+    assert service.owner_turn_handle_for(principal("subject-a"), turn_ids[1]) is None
+    with pytest.raises(JarvisChatDenied):
+        service.owner_turn_handle_for(principal("subject-b"), turn_ids[0])
+    assert sent == [("runtime-after-idle", accepted_text),
+                    ("runtime-after-idle", "ordinary chat remains available")]
+    current = store.get_conversation("subject-a", conversation["id"])
+    assert current["backend_id"] == "runtime-after-idle"
+    assert current["session_key"] == initial["session_key"]
 
 
 def test_heartbeat_nonce_is_owner_bound_single_use_and_expiring(tmp_path):
