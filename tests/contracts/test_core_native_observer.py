@@ -189,6 +189,38 @@ def test_root_enrolled_planning_turn_reaches_provider_with_zero_tools(tmp_path: 
     assert receipts[0]["response_text"] == response.output_text
 
 
+def test_master_plan_readback_requires_root_retained_completion_record():
+    """Gateway mission rows alone cannot create root-verified plan data."""
+    import threading
+
+    import hermes_installer.remote.core_native_observer as observer
+
+    registry = object.__new__(observer.RootCoreNativeObservationRegistry)
+    registry._lock = threading.RLock()
+    registry._master_plan_records = {}
+    key = ("a" * 64, "mission_12345678901234567890", 1)
+    assert registry.read_master_plan_record(
+        owner_subject_sha256=key[0], mission_id=key[1], revision=key[2]) is None
+
+    record = observer.RootObservedMasterPlanRecord(
+        owner_subject_sha256=key[0], mission_id=key[1], revision=key[2],
+        gateway_turn_id="turn_12345678901234567890", conversation_id="conversation_1234567890",
+        session_id="session_12345678901234567890", owner_turn_handle="o" * 32,
+        core_generation="b" * 64, core_source_generation="c" * 64,
+        goal_sha256="d" * 64, catalog_sha256="e" * 64, planner_prompt_sha256="f" * 64,
+        master_source_generation_sha256="1" * 64, master_source_manifest_sha256="2" * 64,
+        master_prompt_sha256="3" * 64, plan_json="{}", plan_sha256="4" * 64,
+        response_sha256="5" * 64, selected_source_ids=(), execution_mode="oneshot",
+        _seal=observer._MASTER_PLAN_RECORD_SEAL,
+    )
+    registry._master_plan_records[key] = record
+    assert record.is_root_observed() is True
+    assert registry.read_master_plan_record(
+        owner_subject_sha256=key[0], mission_id=key[1], revision=key[2]) is record
+    assert registry.read_master_plan_record(
+        owner_subject_sha256="6" * 64, mission_id=key[1], revision=key[2]) is None
+
+
 @pytest.mark.parametrize("retry_count", [None, -1, 1, True])
 def test_codex_attempt_rejects_unknown_or_retry_count_before_ipc(tmp_path: Path, retry_count):
     client = CoreNativeObservationClient(socket_path=tmp_path / "unused.sock")

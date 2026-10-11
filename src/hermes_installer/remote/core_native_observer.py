@@ -23,7 +23,7 @@ import os
 import sqlite3
 from types import SimpleNamespace
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Any, Callable, Mapping
@@ -42,6 +42,59 @@ _CODEX_PROVIDER = "openai-codex"
 _CODEX_MODE = "codex_responses"
 _OBSERVER_RUNTIME_DIR = Path("/run/hermes-jarvis-native-observer")
 _NATIVE_INHERITANCE_POLICY_SEAL = object()
+_MASTER_PLAN_RECORD_SEAL = object()
+
+
+@dataclass(frozen=True, slots=True)
+class RootObservedMasterPlanRecord:
+    """Root-memory evidence of a provider-completed, zero-tool planning result."""
+
+    owner_subject_sha256: str
+    mission_id: str
+    revision: int
+    gateway_turn_id: str
+    conversation_id: str
+    session_id: str
+    owner_turn_handle: str
+    core_generation: str
+    core_source_generation: str
+    goal_sha256: str
+    catalog_sha256: str
+    planner_prompt_sha256: str
+    master_source_generation_sha256: str
+    master_source_manifest_sha256: str
+    master_prompt_sha256: str
+    plan_json: str
+    plan_sha256: str
+    response_sha256: str
+    selected_source_ids: tuple[str, ...]
+    execution_mode: str
+    _seal: object = field(repr=False, compare=False)
+
+    def is_root_observed(self) -> bool:
+        try:
+            return bool(type(self) is RootObservedMasterPlanRecord
+                and self._seal is _MASTER_PLAN_RECORD_SEAL
+                and all(_HASH.fullmatch(getattr(self, name) or "") for name in (
+                    "owner_subject_sha256", "core_generation", "core_source_generation",
+                    "goal_sha256", "catalog_sha256", "planner_prompt_sha256",
+                    "master_source_generation_sha256", "master_source_manifest_sha256",
+                    "master_prompt_sha256", "plan_sha256", "response_sha256"))
+                and isinstance(self.mission_id, str) and _ID.fullmatch(self.mission_id)
+                and type(self.revision) is int and self.revision >= 1
+                and isinstance(self.gateway_turn_id, str) and _ID.fullmatch(self.gateway_turn_id)
+                and isinstance(self.conversation_id, str) and _ID.fullmatch(self.conversation_id)
+                and isinstance(self.session_id, str) and _ID.fullmatch(self.session_id)
+                and isinstance(self.owner_turn_handle, str) and _OPAQUE.fullmatch(self.owner_turn_handle)
+                and isinstance(self.plan_json, str) and 1 <= len(self.plan_json.encode("utf-8")) <= 16_384
+                and type(self.selected_source_ids) is tuple
+                and len(self.selected_source_ids) <= 12
+                and len(set(self.selected_source_ids)) == len(self.selected_source_ids)
+                and all(isinstance(item, str) and _ID.fullmatch(item) for item in self.selected_source_ids)
+                and self.execution_mode in {"oneshot", "kanban"}
+                and (bool(self.selected_source_ids) or self.execution_mode == "oneshot"))
+        except Exception:
+            return False
 _RESOURCES_DELEGATE_REGISTRATION_SEAL = object()
 _RESOURCES_DELEGATE_SOURCE_SHA256 = "6eee1b932dfda36efc93e3901ccedf86af06af684d1c5c77bf882c1ba18a5d64"
 _RESOURCES_DELEGATE_SCHEMA_SHA256 = "9325cea421e122395475b0ba0d0517cb4aa4c16c3d4a14c5145f9fcc3f957f33"
@@ -1652,6 +1705,9 @@ class RootCoreNativeObservationRegistry:
         self._consumed_dispatches: dict[str, dict[str, Any]] = {}
         self._child_sessions: dict[str, dict[str, Any]] = {}
         self._planning_completions: dict[str, dict[str, Any]] = {}
+        # Unlike the gateway-owned mission SQLite rows, these records are retained
+        # only after this root process observed and validated the native completion.
+        self._master_plan_records: dict[tuple[str, str, int], RootObservedMasterPlanRecord] = {}
         self._master_selections: dict[str, dict[str, Any]] = {}
         self._selected_source_deliveries: dict[str, dict[str, Any]] = {}
         self._master_source_deliveries: dict[str, dict[str, Any]] = {}
@@ -2158,16 +2214,14 @@ class RootCoreNativeObservationRegistry:
         catalog, catalog_sha = _read_root_planning_catalog(owner.core_source_generation)
         if catalog_sha != context.catalog_sha256:
             raise ValueError("master planning catalog changed")
-        parsed = parse_master_plan_output(raw_output, allowed_source_ids=catalog["sources"])
+        parsed = parse_master_plan_output(raw_output, allowed_source_ids=catalog["profiles"])
+        if (not parsed["selected_source_ids"] and parsed["execution_mode"] != "oneshot"):
+            raise ValueError("empty source selection is only valid for OneShot")
         if hashlib.sha256(raw_output.encode("utf-8", errors="strict")).hexdigest() != response_text_sha256:
             raise ValueError("master planning response digest changed")
         path = Path("/var/lib/hermes-jarvis-chat/chat.sqlite3")
-        info = os.lstat(path)
-        parent = os.lstat(path.parent)
-        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1
-                or stat.S_IMODE(info.st_mode) & 0o022 or not stat.S_ISDIR(parent.st_mode)
-                or parent.st_uid != 0 or stat.S_IMODE(parent.st_mode) & 0o022):
-            raise ValueError("fixed mission ledger custody differs")
+        from hermes_installer.remote.core_gateway_inspector import _mission_store_identity
+        ledger_identity = _mission_store_identity(self._config, path, include_sidecars=False)
         plan_json = json.dumps(parsed["plan"], ensure_ascii=False, sort_keys=True,
                                separators=(",", ":"), allow_nan=False)
         selected_json = json.dumps(list(parsed["selected_source_ids"]),
@@ -2183,6 +2237,7 @@ class RootCoreNativeObservationRegistry:
                     (context.mission_id, owner.owner_subject_sha256, context.revision)).fetchone()
                 planning = db.execute(
                     "SELECT task_sha256,catalog_sha256,source_binding,planner_prompt_sha256,"
+                    "master_source_generation_sha256,master_source_manifest_sha256,master_prompt_sha256,"
                     "gateway_turn_id,conversation_id,status FROM jarvis_mission_planning_turns "
                     "WHERE owner=? AND mission_id=? AND revision=?",
                     (owner.owner_subject_sha256, context.mission_id, context.revision)).fetchone()
@@ -2198,6 +2253,9 @@ class RootCoreNativeObservationRegistry:
                         or planning["task_sha256"] != context.goal_sha256
                         or planning["catalog_sha256"] != context.catalog_sha256
                         or planning["planner_prompt_sha256"] != context.planner_prompt_sha256
+                        or planning["master_source_generation_sha256"] != context.master_source_generation_sha256
+                        or planning["master_source_manifest_sha256"] != context.master_source_manifest_sha256
+                        or planning["master_prompt_sha256"] != context.master_prompt_sha256
                         or turn["owner"] != owner.owner_subject_sha256
                         or turn["conversation_id"] != owner.conversation_id
                         or turn["runtime_session_id"] != owner.session_id
@@ -2212,11 +2270,16 @@ class RootCoreNativeObservationRegistry:
                     "UPDATE jarvis_missions SET execution_mode=?,selected_source_ids=?,master_plan_json=?,"
                     "master_plan_sha256=?,master_plan_response_sha256=?,master_plan_gateway_turn_id=?,"
                     "master_plan_owner_turn_handle=?,master_plan_core_generation=?,"
-                    "master_plan_core_source_generation=?,updated=? WHERE id=? AND owner=? AND revision=? "
+                    "master_plan_core_source_generation=?,master_plan_catalog_sha256=?,"
+                    "master_plan_planner_prompt_sha256=?,master_plan_source_generation_sha256=?,"
+                    "master_plan_source_manifest_sha256=?,master_plan_master_prompt_sha256=?,updated=? "
+                    "WHERE id=? AND owner=? AND revision=? "
                     "AND status='draft' AND execution_mode='pending' AND master_plan_sha256 IS NULL",
                     (parsed["execution_mode"], selected_json, plan_json, parsed["plan_sha256"],
                      parsed["response_sha256"], owner.gateway_turn_id, owner.owner_turn_handle,
-                     owner.core_generation, owner.core_source_generation, time.time(),
+                     owner.core_generation, owner.core_source_generation, context.catalog_sha256,
+                     context.planner_prompt_sha256, context.master_source_generation_sha256,
+                     context.master_source_manifest_sha256, context.master_prompt_sha256, time.time(),
                      context.mission_id, owner.owner_subject_sha256, context.revision)).rowcount
                 changed_row = db.execute(
                     "UPDATE jarvis_mission_planning_turns SET status='completed',updated=? "
@@ -2229,10 +2292,51 @@ class RootCoreNativeObservationRegistry:
                 if owner.is_current_sealed(self._config, custody=self._custody,
                                             now=time.monotonic()) is not True:
                     raise ValueError("planning owner expired during persistence")
+                if _mission_store_identity(self._config, path, include_sidecars=False) != ledger_identity:
+                    raise ValueError("mission ledger custody changed during persistence")
                 db.commit()
             except Exception:
                 db.rollback()
                 raise
+        record = RootObservedMasterPlanRecord(
+            owner_subject_sha256=owner.owner_subject_sha256,
+            mission_id=context.mission_id, revision=context.revision,
+            gateway_turn_id=owner.gateway_turn_id, conversation_id=owner.conversation_id,
+            session_id=owner.session_id, owner_turn_handle=owner.owner_turn_handle,
+            core_generation=owner.core_generation,
+            core_source_generation=owner.core_source_generation,
+            goal_sha256=context.goal_sha256, catalog_sha256=context.catalog_sha256,
+            planner_prompt_sha256=context.planner_prompt_sha256,
+            master_source_generation_sha256=context.master_source_generation_sha256,
+            master_source_manifest_sha256=context.master_source_manifest_sha256,
+            master_prompt_sha256=context.master_prompt_sha256,
+            plan_json=plan_json, plan_sha256=parsed["plan_sha256"],
+            response_sha256=response_text_sha256,
+            selected_source_ids=tuple(parsed["selected_source_ids"]),
+            execution_mode=parsed["execution_mode"], _seal=_MASTER_PLAN_RECORD_SEAL)
+        key = (owner.owner_subject_sha256, context.mission_id, context.revision)
+        with self._lock:
+            current_owner = self._owners.get(owner.owner_turn_handle)
+            if (current_owner is not owner
+                    or owner.is_current_sealed(self._config, custody=self._custody,
+                                                now=time.monotonic()) is not True):
+                raise ValueError("planning owner changed before root result retention")
+            self._master_plan_records[key] = record
+            while len(self._master_plan_records) > 256:
+                self._master_plan_records.pop(next(iter(self._master_plan_records)))
+
+    def read_master_plan_record(self, *, owner_subject_sha256: str,
+                                 mission_id: str, revision: int) -> RootObservedMasterPlanRecord | None:
+        """Return only a root-retained completion; gateway rows cannot mint one."""
+        if (not _HASH.fullmatch(owner_subject_sha256 or "")
+                or not isinstance(mission_id, str) or not _ID.fullmatch(mission_id or "")
+                or type(revision) is not int or revision < 1):
+            return None
+        with self._lock:
+            record = self._master_plan_records.get((owner_subject_sha256, mission_id, revision))
+            if record is None or record.is_root_observed() is not True:
+                return None
+            return record
 
     def _policy_for_owner(self, owner: Any, now: float) -> RootSelectedOrchestratorDelegationPolicy | None:
         from hermes_installer.remote.core_gateway_inspector import CoreVerifiedNativeToolConfiguration

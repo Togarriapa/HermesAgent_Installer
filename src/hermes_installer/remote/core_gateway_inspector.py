@@ -499,6 +499,10 @@ def _read_root_planning_catalog(core_source_generation: str) -> tuple[dict[str, 
         label = item.get("displayName") or item["name"]
         if not isinstance(label, str) or not label or len(label) > 120:
             raise CoreInspectionDenied("pinned Resources label is invalid")
+        # Match the exact, bounded projection used by jarvis_missions._verified_team_catalog.
+        label = " ".join("".join(ch for ch in label if ch >= " " and ch != "\x7f").split())[:120]
+        if not label:
+            raise CoreInspectionDenied("pinned Resources label is empty")
         sources[item["id"]] = {"label": label, "kind": item["kind"]}
         if item["kind"] == "profiles":
             profiles[item["id"]] = label
@@ -516,6 +520,73 @@ def _read_root_planning_catalog(core_source_generation: str) -> tuple[dict[str, 
     if _read_catalog(core_source_generation) is None or time.monotonic() >= deadline:
         raise CoreInspectionDenied("Resources catalog changed during projection")
     return catalog, digest
+
+
+def _mission_store_identity(config: CoreGatewayConfig, path: Path, *,
+                            include_sidecars: bool = True) -> tuple[Any, ...]:
+    """Validate the fixed gateway-owned SQLite store and return stable file identity.
+
+    The store is intentionally owned by the gateway UID (normally 996), not root.
+    Root reads it only after this narrow owner/mode/path check; database rows remain
+    untrusted and are independently joined to root observations before use.
+    """
+    expected = Path("/var/lib/hermes-jarvis-chat/chat.sqlite3")
+    if path != expected:
+        raise CoreInspectionDenied("mission ledger path differs")
+    for ancestor in (Path("/"), Path("/var"), Path("/var/lib")):
+        item = os.lstat(ancestor)
+        if (not stat.S_ISDIR(item.st_mode) or item.st_uid != 0
+                or stat.S_IMODE(item.st_mode) & 0o022):
+            raise CoreInspectionDenied("mission ledger ancestor custody differs")
+    parent = os.lstat(path.parent)
+    if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != config.gateway_uid
+            or stat.S_IMODE(parent.st_mode) & 0o077):
+        raise CoreInspectionDenied("mission ledger custody differs")
+    directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                           | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+    file_fds: list[int] = []
+    try:
+        parent_fd_info = os.fstat(directory_fd)
+        if (parent_fd_info.st_dev, parent_fd_info.st_ino, parent_fd_info.st_uid) != (
+                parent.st_dev, parent.st_ino, parent.st_uid):
+            raise CoreInspectionDenied("mission ledger parent changed")
+        info = os.stat(path.name, dir_fd=directory_fd, follow_symlinks=False)
+        db_fd = os.open(path.name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                        | getattr(os, "O_CLOEXEC", 0), dir_fd=directory_fd)
+        file_fds.append(db_fd)
+        opened = os.fstat(db_fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != config.gateway_uid
+                or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) & 0o077
+                or (opened.st_dev, opened.st_ino, opened.st_uid, opened.st_nlink)
+                    != (info.st_dev, info.st_ino, info.st_uid, info.st_nlink)):
+            raise CoreInspectionDenied("mission ledger custody differs")
+        sidecars: list[tuple[Any, ...]] = []
+        for suffix in ("-wal", "-shm", "-journal"):
+            candidate_name = path.name + suffix
+            try:
+                item = os.stat(candidate_name, dir_fd=directory_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                sidecars.append((suffix, None))
+                continue
+            if (not stat.S_ISREG(item.st_mode) or item.st_uid != config.gateway_uid
+                    or item.st_nlink != 1 or stat.S_IMODE(item.st_mode) & 0o077):
+                raise CoreInspectionDenied("mission ledger sidecar custody differs")
+            side_fd = os.open(candidate_name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                              | getattr(os, "O_CLOEXEC", 0), dir_fd=directory_fd)
+            file_fds.append(side_fd)
+            opened = os.fstat(side_fd)
+            if (opened.st_dev, opened.st_ino, opened.st_uid, opened.st_nlink) != (
+                    item.st_dev, item.st_ino, item.st_uid, item.st_nlink):
+                raise CoreInspectionDenied("mission ledger sidecar changed")
+            sidecars.append((suffix, item.st_dev, item.st_ino, item.st_uid, item.st_mode,
+                             item.st_nlink, item.st_size, item.st_mtime_ns, item.st_ctime_ns))
+        identity = (parent.st_dev, parent.st_ino, parent.st_uid, parent.st_mode,
+                    info.st_dev, info.st_ino, info.st_uid, info.st_mode, info.st_nlink)
+        return identity + (tuple(sidecars),) if include_sidecars else identity
+    finally:
+        for descriptor in file_fds:
+            os.close(descriptor)
+        os.close(directory_fd)
 
 
 def _mission_binding_from_wire(value: Any) -> Any:
@@ -589,20 +660,16 @@ def _verify_planning_context(context: Any, *, owner_subject_sha256: str,
         from hermes_installer.remote.jarvis_mission_executor import (
             MissionLedgerReader, mission_goal_arguments_sha256,
         )
-        from hermes_installer.remote.jarvis_master_planning import build_master_plan_prompt
+        from hermes_installer.remote.jarvis_missions import (
+            build_jarvis_mission_master_plan_prompt, mission_catalog_sha256,
+        )
         from hermes_installer.components.resources_active_profile_source import (
             RootVerifiedJarvisMasterSource,
         )
         expected_path = Path("/var/lib/hermes-jarvis-chat/chat.sqlite3")
         if CHAT_STORE_PATH != expected_path:
             raise ValueError
-        parent = os.lstat(expected_path.parent)
-        target = os.lstat(expected_path)
-        if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0
-                or stat.S_IMODE(parent.st_mode) & 0o022
-                or not stat.S_ISREG(target.st_mode) or target.st_uid != 0
-                or target.st_nlink != 1 or stat.S_IMODE(target.st_mode) & 0o022):
-            raise ValueError
+        ledger_identity = _mission_store_identity(config, expected_path)
         current_source = RootVerifiedJarvisMasterSource.current_master_source(custody, config)
         if (type(current_source) is not RootVerifiedJarvisMasterSource
                 or current_source.profile_id != "hermes"
@@ -615,12 +682,12 @@ def _verify_planning_context(context: Any, *, owner_subject_sha256: str,
         catalog, catalog_sha = _read_root_planning_catalog(core_source_generation)
         with MissionLedgerReader(path=expected_path)._connect() as db:
             mission_columns = {row[1] for row in db.execute("PRAGMA table_info(jarvis_missions)")}
-            required_mission = {"id", "owner", "revision", "title", "brief", "status",
+            required_mission = {"id", "owner", "revision", "title", "brief", "team_ids", "status",
                                 "execution_mode", "master_plan_sha256"}
             if not required_mission.issubset(mission_columns):
                 raise ValueError
             mission = db.execute(
-                "SELECT id,owner,revision,title,brief,status,execution_mode,master_plan_sha256 "
+                "SELECT id,owner,revision,title,brief,team_ids,status,execution_mode,master_plan_sha256 "
                 "FROM jarvis_missions WHERE id=? AND owner=? AND revision=?",
                 (dto.mission_id, owner_subject_sha256, dto.revision)).fetchone()
             if (mission is None or mission["status"] != "draft"
@@ -630,10 +697,11 @@ def _verify_planning_context(context: Any, *, owner_subject_sha256: str,
                     or not isinstance(mission["brief"], str) or not 1 <= len(mission["brief"]) <= 8000):
                 raise ValueError
             expected_goal = mission_goal_arguments_sha256(mission["brief"])
-            prompt, expected_prompt_sha = build_master_plan_prompt(
-                mission_id=dto.mission_id, revision=dto.revision, title=mission["title"],
-                goal=mission["brief"], allowed_source_ids=catalog["sources"])
+            exact_catalog_sha = mission_catalog_sha256(catalog)
+            prompt = build_jarvis_mission_master_plan_prompt(mission, catalog)
+            expected_prompt_sha = hashlib.sha256(prompt.encode("utf-8", errors="strict")).hexdigest()
             if (dto.goal_sha256 != expected_goal or dto.catalog_sha256 != catalog_sha
+                    or exact_catalog_sha != catalog_sha
                     or dto.planner_prompt_sha256 != expected_prompt_sha
                     or dto.master_source_generation_sha256 != current_source.generation_sha256
                     or dto.master_source_manifest_sha256 != current_source.source_member_manifest_sha256
@@ -690,8 +758,10 @@ def _verify_planning_context(context: Any, *, owner_subject_sha256: str,
                         or turn["conversation_id"] != conversation_id
                         or turn["status"] not in {"queued", "running"}
                         or turn["runtime_session_id"] != session_id
-                        or turn["core_generation"] != core_generation):
+                    or turn["core_generation"] != core_generation):
                     raise ValueError
+        if _mission_store_identity(config, expected_path) != ledger_identity:
+            raise ValueError
         if (time.monotonic() >= proof_deadline
                 or current_source.is_current_sealed(custody, now=time.monotonic()) is not True
                 or _read_root_planning_catalog(core_source_generation)[1] != catalog_sha):
@@ -718,14 +788,14 @@ def _prepare_planning_context(*, owner_subject_sha256: str, mission_id: str,
         from hermes_installer.remote.jarvis_mission_executor import (
             MissionLedgerReader, mission_goal_arguments_sha256,
         )
-        from hermes_installer.remote.jarvis_master_planning import build_master_plan_prompt
+        from hermes_installer.remote.jarvis_missions import (
+            build_jarvis_mission_master_plan_prompt, mission_catalog_sha256,
+        )
         from hermes_installer.components.resources_active_profile_source import RootVerifiedJarvisMasterSource
         expected_path = Path("/var/lib/hermes-jarvis-chat/chat.sqlite3")
         if CHAT_STORE_PATH != expected_path:
             raise ValueError
-        db_info = os.lstat(expected_path)
-        if not stat.S_ISREG(db_info.st_mode) or db_info.st_uid != 0 or db_info.st_nlink != 1:
-            raise ValueError
+        ledger_identity = _mission_store_identity(config, expected_path)
         master = RootVerifiedJarvisMasterSource.current_master_source(custody, config)
         if (type(master) is not RootVerifiedJarvisMasterSource
                 or master.profile_id != "hermes" or master.display_name != "Jarvis"
@@ -734,7 +804,7 @@ def _prepare_planning_context(*, owner_subject_sha256: str, mission_id: str,
         catalog, catalog_sha = _read_root_planning_catalog(core_source_generation)
         with MissionLedgerReader(path=expected_path)._connect() as db:
             row = db.execute(
-                "SELECT id,owner,revision,title,brief,status,execution_mode,master_plan_sha256 "
+                "SELECT id,owner,revision,title,brief,team_ids,status,execution_mode,master_plan_sha256 "
                 "FROM jarvis_missions WHERE id=? AND owner=? AND revision=?",
                 (mission_id, owner_subject_sha256, revision)).fetchone()
             if (row is None or row["status"] != "draft" or row["execution_mode"] != "pending"
@@ -749,9 +819,10 @@ def _prepare_planning_context(*, owner_subject_sha256: str, mission_id: str,
                 (owner_subject_sha256, mission_id, revision)).fetchone()
             if reserved is None or reserved["status"] != "reserved" or reserved["gateway_turn_id"] not in (None, ""):
                 raise ValueError
-            prompt, prompt_sha = build_master_plan_prompt(
-                mission_id=mission_id, revision=revision, title=row["title"],
-                goal=row["brief"], allowed_source_ids=catalog["sources"])
+            prompt = build_jarvis_mission_master_plan_prompt(row, catalog)
+            prompt_sha = hashlib.sha256(prompt.encode("utf-8", errors="strict")).hexdigest()
+            if mission_catalog_sha256(catalog) != catalog_sha:
+                raise ValueError
             source_binding = json.loads(reserved["source_binding"], object_pairs_hook=_unique_pairs)
             goal_sha = mission_goal_arguments_sha256(row["brief"])
             if (prompt_sha != planner_prompt_sha256 or reserved["task_sha256"] != goal_sha
@@ -764,6 +835,8 @@ def _prepare_planning_context(*, owner_subject_sha256: str, mission_id: str,
                                           "core_source_generation": core_source_generation}
                     or hashlib.sha256(prompt.encode("utf-8", errors="strict")).hexdigest() != prompt_sha):
                 raise ValueError
+        if _mission_store_identity(config, expected_path) != ledger_identity:
+            raise ValueError
         if (time.monotonic() >= deadline
                 or master.is_current_sealed(custody, now=time.monotonic()) is not True
                 or _read_root_planning_catalog(core_source_generation)[1] != catalog_sha):
@@ -1284,7 +1357,7 @@ def prepare_master_planning_context(config: CoreGatewayConfig, *, request: dict[
 def observe_read_master_plan(config: CoreGatewayConfig, *, request: dict[str, Any],
                              caller_pid: int, caller_uid: int, caller_gid: int,
                              peer_pid: int, peer_uid: int, peer_gid: int,
-                             custody: Any) -> dict[str, Any]:
+                             custody: Any, registry: Any) -> dict[str, Any]:
     """Read a durable plan only after fresh Access, owner, turn, CAS and master joins."""
     required = {"schema", "op", "nonce", "peer_pid", "peer_uid", "peer_gid", "access_jwt",
                 "core_generation", "ingress_nonce", "ingress_proof_sha256", "mission_id", "revision"}
@@ -1332,18 +1405,28 @@ def observe_read_master_plan(config: CoreGatewayConfig, *, request: dict[str, An
     try:
         from hermes_installer.components.resources_active_profile_source import RootVerifiedJarvisMasterSource
         from hermes_installer.remote.jarvis_mission_executor import mission_goal_arguments_sha256
+        from hermes_installer.remote.core_native_observer import RootObservedMasterPlanRecord
         path = Path("/var/lib/hermes-jarvis-chat/chat.sqlite3")
-        path_info, parent_info = os.lstat(path), os.lstat(path.parent)
-        if (not stat.S_ISREG(path_info.st_mode) or path_info.st_uid != 0 or path_info.st_nlink != 1
-                or stat.S_IMODE(path_info.st_mode) & 0o022
-                or not stat.S_ISDIR(parent_info.st_mode) or parent_info.st_uid != 0
-                or stat.S_IMODE(parent_info.st_mode) & 0o022):
+        ledger_identity = _mission_store_identity(config, path)
+        if (registry is None or not callable(getattr(registry, "read_master_plan_record", None))):
             raise ValueError
         master = RootVerifiedJarvisMasterSource.current_master_source(custody, config)
         if (type(master) is not RootVerifiedJarvisMasterSource
                 or master.is_current_sealed(custody, now=time.monotonic()) is not True):
             raise ValueError
         catalog, catalog_sha = _read_root_planning_catalog(custody.core_source_generation)
+        observed = registry.read_master_plan_record(
+            owner_subject_sha256=owner_hash, mission_id=request["mission_id"],
+            revision=request["revision"])
+        if (type(observed) is not RootObservedMasterPlanRecord
+                or observed.is_root_observed() is not True
+                or observed.owner_subject_sha256 != owner_hash
+                or observed.mission_id != request["mission_id"]
+                or observed.revision != request["revision"]
+                or observed.owner_turn_handle == ""
+                or observed.core_generation != custody.core_generation
+                or observed.core_source_generation != custody.core_source_generation):
+            raise ValueError
         with sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=1) as db:
             db.row_factory = sqlite3.Row
             db.execute("PRAGMA query_only=ON")
@@ -1363,7 +1446,10 @@ def observe_read_master_plan(config: CoreGatewayConfig, *, request: dict[str, An
             if (mission["status"] != "draft" or mission["execution_mode"] not in {"oneshot", "kanban"}
                     or not _is_hash(mission["master_plan_sha256"])
                     or not _is_hash(mission["master_plan_response_sha256"])
-                    or not isinstance(selected, list) or any(item not in catalog["sources"] for item in selected)
+                    or not isinstance(selected, list) or len(selected) > 12
+                    or len(set(selected)) != len(selected)
+                    or any(not isinstance(item, str) or item not in catalog["profiles"] for item in selected)
+                    or (not selected and mission["execution_mode"] != "oneshot")
                     or planning["status"] != "completed" or turn is None
                     or planning["gateway_turn_id"] != mission["master_plan_gateway_turn_id"]
                     or planning["conversation_id"] != turn["conversation_id"]
@@ -1375,8 +1461,31 @@ def observe_read_master_plan(config: CoreGatewayConfig, *, request: dict[str, An
                     or planning["master_source_generation_sha256"] != master.generation_sha256
                     or planning["master_source_manifest_sha256"] != master.source_member_manifest_sha256
                     or planning["master_prompt_sha256"] != master.effective_prompt_sha256
+                    or planning["master_source_generation_sha256"] != observed.master_source_generation_sha256
+                    or planning["master_source_manifest_sha256"] != observed.master_source_manifest_sha256
+                    or planning["master_prompt_sha256"] != observed.master_prompt_sha256
+                    or planning["gateway_turn_id"] != observed.gateway_turn_id
+                    or planning["conversation_id"] != observed.conversation_id
+                    or mission["master_plan_owner_turn_handle"] != observed.owner_turn_handle
+                    or mission["master_plan_gateway_turn_id"] != observed.gateway_turn_id
+                    or mission["master_plan_core_generation"] != observed.core_generation
+                    or mission["master_plan_core_source_generation"] != observed.core_source_generation
+                    or mission["master_plan_sha256"] != observed.plan_sha256
+                    or mission["master_plan_response_sha256"] != observed.response_sha256
+                    or mission["master_plan_json"] != observed.plan_json
+                    or planning["task_sha256"] != observed.goal_sha256
+                    or planning["catalog_sha256"] != observed.catalog_sha256
+                    or planning["planner_prompt_sha256"] != observed.planner_prompt_sha256
+                    or selected != list(observed.selected_source_ids)
+                    or mission["execution_mode"] != observed.execution_mode
+                    or mission["master_plan_catalog_sha256"] != planning["catalog_sha256"]
+                    or mission["master_plan_planner_prompt_sha256"] != planning["planner_prompt_sha256"]
+                    or mission["master_plan_source_generation_sha256"] != master.generation_sha256
+                    or mission["master_plan_source_manifest_sha256"] != master.source_member_manifest_sha256
+                    or mission["master_plan_master_prompt_sha256"] != master.effective_prompt_sha256
                     or turn["owner"] != owner_hash or turn["status"] != "completed"
-                    or turn["runtime_session_id"] is None
+                    or turn["runtime_session_id"] != observed.session_id
+                    or turn["conversation_id"] != observed.conversation_id
                     or turn["core_generation"] != custody.core_generation):
                 raise ValueError
             full_digest = hashlib.sha256(_canonical_json({"execution_mode": mission["execution_mode"],
@@ -1402,6 +1511,8 @@ def observe_read_master_plan(config: CoreGatewayConfig, *, request: dict[str, An
                 "source_profile_id": "hermes", "selected_source_ids": selected,
                 "execution_mode": mission["execution_mode"],
             }
+        if _mission_store_identity(config, path) != ledger_identity:
+            raise ValueError
         if (time.monotonic() >= deadline or master.is_current_sealed(custody, now=time.monotonic()) is not True
                 or _read_root_planning_catalog(custody.core_source_generation)[1] != catalog_sha):
             raise ValueError
@@ -3337,7 +3448,8 @@ def _serve_connection(conn: socket.socket, config: CoreGatewayConfig) -> None:
             result = observe_read_master_plan(config, request=request,
                 caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
                 peer_pid=request.get("peer_pid"), peer_uid=request.get("peer_uid"),
-                peer_gid=request.get("peer_gid"), custody=_CORE_NATIVE_CUSTODY)
+                peer_gid=request.get("peer_gid"), custody=_CORE_NATIVE_CUSTODY,
+                registry=_CORE_NATIVE_REGISTRY)
             maximum = MAX_MASTER_PLAN_RESPONSE
         elif request.get("op") in {"list-final-effects", "decide-final-effect"}:
             result = observe_final_effect_request(config, request=request, caller_pid=caller_pid,
