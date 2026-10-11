@@ -120,6 +120,7 @@ class CoreGatewayInspectorClientTests(unittest.TestCase):
                 raw = json.dumps(request_body, separators=(",", ":")).encode("utf-8")
                 self.incoming = bytearray(struct.pack("!I", len(raw)) + raw)
                 self.outgoing = bytearray()
+                self.closed = False
 
             def settimeout(self, _timeout):
                 pass
@@ -134,6 +135,9 @@ class CoreGatewayInspectorClientTests(unittest.TestCase):
 
             def sendall(self, value):
                 self.outgoing.extend(value)
+
+            def close(self):
+                self.closed = True
 
         connection = IPCConnection(request)
         try:
@@ -152,6 +156,7 @@ class CoreGatewayInspectorClientTests(unittest.TestCase):
             self.assertTrue(probe.called)
             self.assertEqual(result["readiness"], native["state"])
             self.assertEqual(result["ingress_proof_sha256"], proof["proof_sha256"])
+            self.assertTrue(connection.closed)
             with self.assertRaises(core_gateway_inspector.CoreInspectionDenied):
                 core_gateway_inspector._consume_ingress_issue(
                     caller_pid=440, caller_start_ticks="88", nonce=proof["nonce"],
