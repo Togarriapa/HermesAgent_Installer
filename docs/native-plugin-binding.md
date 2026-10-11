@@ -1,6 +1,6 @@
 # Root-selected native plugin binding status
 
-The HI08/HI09 source-context requirements are in `planning/native-host-service-contract.json`. Sol's detailed native package binding contract is being merged separately; this worker-side resolver projection is implemented in `hermes_installer.native_plugin_bindings` against that proposed wire. The contract is not a claim that an Authority RPC or runtime loader is installed.
+The current native host/package boundary is defined by requirements/current-scope.json and the reviewed executable contracts; this worker-side resolver projection is implemented in `hermes_installer.native_plugin_bindings` against that proposed wire. The contract is not a claim that an Authority RPC or runtime loader is installed.
 
 The planned plugin-loader binding uses only the no-argument `bind_selected_native_package()` and `read_native_resolver(opaque_binding_handle)` queries. Root selects exactly one active package using the authenticated peer process, profile and generation; zero or ambiguous selection fails. The response is a short-lived same-peer binding handle and a canonical resolver document whose SHA-256 is checked locally. Caller paths, `PYTHONPATH`, user site-packages, profile plugin directories, resource YAML, environment identity variables, and dynamic import locations never select code.
 
