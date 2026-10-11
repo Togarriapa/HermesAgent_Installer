@@ -31,3 +31,5 @@ The original supplied prompt, all211 obligation IDs/62 component aliases, curren
 Latest Claude-based video references are research inputs for the same Hermes-native UI/voice/skill-learning scope, not verified features or authority changes. Existing R0055/R0131 carry creation/versioning/review/rollback; no new requirement is needed.
 
 Next implementation priorities are sanitized effective settings/readiness, permission-visible browser voice with text fallback, and actual source-selected native internal-profile dispatch. Preserve all caption-derived feature requests in the parity matrix with finite adapters or precise pending status; never equate another creator's demo with Hermes/Pi support. Current Resources discovery is396 skills/207 internal208 total records/88 declarations, not full functional acceptance.
+
+Settings/readiness now has one fixed sanitized root IPC source, independently validated durable discovery/CAS and explicit stale/unknown states; no gateway HOME/YAML inventory. Canonical opt-in plugin sections/delegate context preserve source-selected additive identity and native gates. PyYAML exact official wheels need isolated Pi verification.

@@ -4023,6 +4023,15 @@
       "other_declarations_preserved": 88,
       "functional_dispatch": "OPEN",
       "data_preservation": "Root reports existing auth/config/SOUL unchanged; not a fresh-install or all-capability acceptance claim."
+    },
+    "effective_projection_contract": "design.md Exact settings/readiness source handoff; fixed observe-core-overview, durable root discovery/CAS, sanitized fields and original5s proof",
+    "pyyaml_dependency": {
+      "version": "6.0.3",
+      "source": "https://pypi.org/pypi/PyYAML/6.0.3/json",
+      "license": "MIT",
+      "cp313_aarch64_sha256": "ee2922902c45ae8ccada2c5b501ab86c36525b883eff4255313a253a3160861c",
+      "cp314_aarch64_sha256": "501a031947e3a9025ed4405a168e6ef5ae3126c59f90ce0cd6f2bfc477be31b7",
+      "status": "official metadata observed; actual wheel/import/Pi acceptance pending"
     }
   }
 }

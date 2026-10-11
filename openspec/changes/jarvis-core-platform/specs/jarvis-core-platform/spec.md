@@ -1634,6 +1634,11 @@ The installer SHALL satisfy: Expose polished responsive Jarvis through protected
 - **THEN** the server MUST build an allowlisted effective projection from current trusted core/config/discovery evidence, with timestamp, provenance and unknown/pending states.
 - **AND** account secrets, tokens, raw config, host paths and private family data MUST remain absent; owner-only finite controls revalidate permissions and preserve recovery.
 
+#### Scenario: Root-owned readiness observation
+- **WHEN** the gateway requests effective settings or Resources readiness
+- **THEN** only the fixed root inspector operation MUST project validated fields from current custody and independently verified root-owned discovery receipt/CAS.
+- **AND** its original nonce-bound proof expires within5s; stale/missing data is pending/unknown and cannot expose HOME, credentials, raw config or claim functional authentication.
+
 ### Requirement: R0204 current functional obligation
 The installer SHALL satisfy: Deny unreviewed generic commands, backend management, host filesystem, clipboard, arbitrary URL and control proxies. Reviewed attachments/browser/voice capabilities require separate owner-bound finite adapters.
 
