@@ -1,0 +1,562 @@
+# This file is part of Xpra.
+# Copyright (C) 2010 Antoine Martin <antoine@xpra.org>
+# Copyright (C) 2008 Nathaniel Smith <njs@pobox.com>
+# Xpra is released under the terms of the GNU GPL v2, or, at your option, any
+# later version. See the file COPYING for details.
+
+import re
+import shlex
+import signal
+import os.path
+from time import monotonic
+from subprocess import Popen
+from typing import Any
+from collections.abc import Callable, Sequence
+
+from xpra.util.child_reaper import get_child_reaper, ProcInfo
+from xpra.common import noop
+from xpra.os_util import OSX, WIN32, gi_import
+from xpra.util.objects import typedict
+from xpra.util.str_fn import csv
+from xpra.util.env import envint, restore_script_env, source_env
+from xpra.net.common import Packet
+from xpra.util.system import stop_proc
+from xpra.util.thread import start_thread
+from xpra.exit_codes import ExitCode
+from xpra.scripts.parsing import parse_env
+from xpra.util.pid import write_pid
+from xpra.server.subsystem.stub import StubServerMixin
+from xpra.log import Logger
+
+GLib = gi_import("GLib")
+
+log = Logger("exec")
+
+TERMINATE_DELAY = envint("XPRA_TERMINATE_DELAY", 1000) / 1000.0
+
+COMMAND_SIGNALS = ("SIGINT", "SIGTERM", "SIGHUP", "SIGKILL", "SIGUSR1", "SIGUSR2")
+
+
+def os_kill_by_name(pid: int, signame: str):
+    sigval = getattr(signal, signame, 0)
+    if not sigval:
+        log.error(f"Error: signal {signame!r} not found!")
+        return
+    try:
+        os.kill(pid, sigval)
+    except Exception as e:
+        log.error(f"Error sending signal {signame!r} to pid {pid}")
+        log.estr(e)
+
+
+send_signame = os_kill_by_name
+
+if WIN32:
+    COMMAND_SIGNALS = ("SIGINT", "SIGTERM", "SIGKILL")
+    SIGNAL_ALIASES = {
+        "SIGINT": "CTRL_C_EVENT",
+        "SIGTERM": "CTRL_BREAK_EVENT",
+    }
+
+    def terminate_process(pid: int) -> None:
+        from xpra.platform.win32.constants import PROCESS_TERMINATE
+        from xpra.platform.win32.common import OpenProcess, TerminateProcess, CloseHandle
+        handle = OpenProcess(PROCESS_TERMINATE, False, pid)
+        if not handle:
+            log.error(f"Error: Could not open process {pid} to terminate")
+            return
+        if not TerminateProcess(handle, 1):
+            log.error(f"Error: could not terminate process {pid}")
+        CloseHandle(handle)
+
+    def win32_send_signal(pid: int, signame: str) -> None:
+        if signame == "SIGKILL":
+            terminate_process(pid)
+        else:
+            win32_signal_name = SIGNAL_ALIASES.get(signame, signame)
+            os_kill_by_name(pid, win32_signal_name)
+
+
+def guess_session_name(procs=(), exec_wrapper=()) -> str:
+    if not procs:
+        return ""
+    # use the commands to define the session name:
+    child_reaper = get_child_reaper()
+    child_reaper.poll()
+    cmd_names = []
+    for proc in procs:
+        proc_info = child_reaper.get_proc_info(proc.pid)
+        if not proc_info:
+            continue
+        cmd = proc_info.command
+        if exec_wrapper:
+            # strip exec wrapper
+            l = len(exec_wrapper)
+            if len(cmd) > l and cmd[:l] == exec_wrapper:
+                cmd = cmd[l:]
+        elif len(cmd) > 1 and cmd[0] in ("vglrun", "nohup"):
+            cmd.pop(0)
+        if cmd[0].find("ibus-daemon") >= 0:
+            continue
+        bcmd = os.path.basename(cmd[0])
+        if bcmd not in cmd_names:
+            cmd_names.append(bcmd)
+    log(f"guess_session_name() commands={cmd_names}")
+    return csv(cmd_names)
+
+
+def dictget(dictinstance: dict, *parts: str) -> str:
+    if not parts:
+        return ""
+    value = dictinstance.get(parts[0])
+    if len(parts) > 1:
+        if isinstance(value, dict):
+            return dictget(value, *parts[1:])
+        return ""
+    return value
+
+
+def expand_vars(real_cmd: list[str], attrs: dict[str, Any]):
+    # replace all instances of %name1.name2 with attrs['name1']['name2']
+    return [str_expand_vars(cmd, attrs) for cmd in real_cmd]
+
+
+def str_expand_vars(cmd: str, attrs: dict[str, Any]) -> str:
+    if not attrs:
+        return cmd
+    if cmd.find("%") < 0:
+        return cmd
+
+    processed = ""
+    while True:
+        m = re.search(r"%([a-zA-Z0-9_.-]+)", cmd)
+        if not m:
+            processed += cmd
+            break
+        var = m.group(1)
+        parts = var.split(".")
+        val = dictget(attrs, *parts)
+        if not val:
+            val = "%" + var
+        elif not isinstance(val, (str, int, float)):
+            val = str(val)
+        processed += cmd[:m.start()] + str(val)
+        cmd = cmd[m.end():]
+    return processed
+
+
+def get_attrs(source) -> dict[str, Any]:
+    if not source:
+        return {}
+    return {"client": source.get_info()}
+
+
+class ChildCommandServer(StubServerMixin):
+    toggle_features = ("start-new-commands",)
+    """
+    Mixin for servers that start subcommands,
+    ie "--start=xterm"
+    """
+
+    PREFIX = "command"
+
+    def __init__(self):
+        StubServerMixin.__init__(self)
+        self.hello_request_handlers["run"] = self._handle_hello_request_run
+        self.child_display: str = ""
+        self.start_commands: Sequence[str] = []
+        self.start_late_commands: Sequence[str] = []
+        self.start_child_commands: Sequence[str] = []
+        self.start_child_late_commands: Sequence[str] = []
+        self.start_after_connect: Sequence[str] = []
+        self.start_after_connect_done = False
+        self.start_child_after_connect: Sequence[str] = []
+        self.start_on_connect: Sequence[str] = []
+        self.start_child_on_connect: Sequence[str] = []
+        self.start_on_disconnect: Sequence[str] = []
+        self.start_child_on_disconnect: Sequence[str] = []
+        self.start_on_last_client_exit: Sequence[str] = []
+        self.start_child_on_last_client_exit: Sequence[str] = []
+        self.exit_with_children: bool = False
+        self.children_count: int = 0
+        self.start_after_connect_done: bool = False
+        self.start_new_commands: bool = False
+        self.source_env: dict[str, str] = {}
+        self.start_env: dict[str, str] = {}
+        self.exec_cwd: str = os.getcwd()
+        self.exec_wrapper: list[str] = []
+        self.terminate_children: bool = False
+        self.children_started: list[ProcInfo] = []
+        self.reaper_exit: Callable = self.reaper_exit_check
+        self.session_name = ""
+
+        def server_is_running(*args) -> None:
+            log("server_is_running%s", args)
+            self.exec_start_late_commands()
+        self.connect("running", server_is_running)
+
+    def init(self, opts) -> None:
+        self.exit_with_children = opts.exit_with_children
+        self.terminate_children = opts.terminate_children
+        self.start_new_commands = opts.start_new_commands
+        self.start_commands = opts.start
+        self.start_late_commands = opts.start_late
+        self.start_child_commands = opts.start_child
+        self.start_child_late_commands = opts.start_child_late
+        self.start_after_connect = opts.start_after_connect
+        self.start_child_after_connect = opts.start_child_after_connect
+        self.start_on_connect = opts.start_on_connect
+        self.start_child_on_connect = opts.start_child_on_connect
+        self.start_on_disconnect = opts.start_on_disconnect
+        self.start_child_on_disconnect = opts.start_child_on_disconnect
+        self.start_on_last_client_exit = opts.start_on_last_client_exit
+        self.start_child_on_last_client_exit = opts.start_child_on_last_client_exit
+        if opts.exec_wrapper:
+            self.exec_wrapper = shlex.split(opts.exec_wrapper)
+        self.source_env = source_env(opts.source_start)
+        self.start_env = parse_env(opts.start_env)
+
+    def setup(self) -> None:
+        start_thread(self.threaded_command_setup, "threaded-command-setup", daemon=True)
+        self.connect("last-client-exited", self.exec_on_last_client_exit)
+        self.connect("client-exited", self.remove_client)
+        self.add_command_control_commands()
+
+    def add_command_control_commands(self) -> None:
+        self.args_control("start", "executes the command arguments in the server context", min_args=1)
+        self.args_control("start-child","executes the command arguments in the server context, "
+                                        "as a 'child' (honouring exit-with-children)", min_args=1)
+        self.args_control("start-env", "modify the environment used to start new commands", min_args=1)
+
+    def exec_on_last_client_exit(self, *args) -> None:
+        log("exec_on_last_client_exit%s", args)
+        self._exec_commands(self.start_on_last_client_exit, self.start_child_on_last_client_exit)
+
+    def threaded_command_setup(self) -> None:
+        self.exec_start_commands()
+
+        def set_reaper_callback() -> None:
+            child_reaper = get_child_reaper()
+            child_reaper.set_quit_callback(self.reaper_exit)
+            child_reaper.check()
+
+        GLib.idle_add(set_reaper_callback)
+
+    def cleanup(self) -> None:
+        # during cleanup, just ignore the reaper exit callback:
+        self.reaper_exit = noop
+
+    def late_cleanup(self, stop=True) -> None:
+        if self.terminate_children and stop:
+            self.terminate_children_processes()
+
+    def get_server_features(self, _source) -> dict[str, Any]:
+        return {
+            "start-new-commands": self.start_new_commands,
+            "exit-with-children": self.exit_with_children,
+            "server-commands-signals": COMMAND_SIGNALS,
+            "server-commands-info": not WIN32 and not OSX,
+        }
+
+    def add_new_client(self, ss, *_args) -> None:
+        self.exec_on_connect_commands(ss)
+
+    def remove_client(self, server, ss) -> None:
+        log("remove_client(%s, %s)", server, ss)
+        self.exec_on_disconnect_commands(ss)
+
+    def get_info(self, _proto) -> dict[str, Any]:
+        info: dict[Any, Any] = {
+            "start": self.start_commands,
+            "start-late": self.start_late_commands,
+            "start-child": self.start_child_commands,
+            "start-child-late": self.start_child_late_commands,
+            "start-after-connect": self.start_after_connect,
+            "start-child-after-connect": self.start_child_after_connect,
+            "start-on-connect": self.start_on_connect,
+            "start-child-on-connect": self.start_child_on_connect,
+            "start-on-disconnect": self.start_on_disconnect,
+            "start-child-on-disconnect": self.start_child_on_disconnect,
+            "exit-with-children": self.exit_with_children,
+            "start-after-connect-done": self.start_after_connect_done,
+            "start-new": self.start_new_commands,
+            "source-env": self.source_env,
+            "start-env": self.start_env,
+        }
+        for i, procinfo in enumerate(self.children_started):
+            info[i] = procinfo.get_info()
+        cinfo: dict[str, Any] = {ChildCommandServer.PREFIX: info}
+        return cinfo
+
+    def get_child_env(self) -> dict[str, str]:
+        # subclasses may add more
+        env = restore_script_env(super().get_child_env())
+        env.update(self.source_env)
+        env.update(self.start_env)
+        if self.child_display:
+            env["DISPLAY"] = self.child_display
+        return env
+
+    def get_full_child_command(self, cmd, use_wrapper=True) -> list[str]:
+        # make sure we have it as a list:
+        cmd = super().get_full_child_command(cmd, use_wrapper)
+        if not use_wrapper or not self.exec_wrapper:
+            return cmd
+        return self.exec_wrapper + cmd
+
+    def exec_start_late_commands(self) -> None:
+        log("exec_start_late_commands() start-late=%s, start_child=%s",
+            self.start_late_commands, self.start_child_late_commands)
+        self._exec_commands(self.start_late_commands, self.start_child_late_commands)
+
+    def exec_start_commands(self) -> None:
+        log("exec_start_commands() start=%s, start_child=%s", self.start_commands, self.start_child_commands)
+        self._exec_commands(self.start_commands, self.start_child_commands)
+
+    def exec_after_connect_commands(self) -> None:
+        log("exec_after_connect_commands() start=%s, start_child=%s",
+            self.start_after_connect, self.start_child_after_connect)
+        self._exec_commands(self.start_after_connect, self.start_child_after_connect)
+
+    def exec_on_connect_commands(self, source) -> None:
+        log("exec_on_connect_commands(%s) start_after_connect_done=%s", source, self.start_after_connect_done)
+        if not self.start_after_connect_done:  # pylint: disable=access-member-before-definition
+            self.start_after_connect_done = True
+            self.exec_after_connect_commands()
+        log("exec_on_connect_commands(%s) start=%s, start_child=%s", source, self.start_on_connect, self.start_child_on_connect)
+        self._exec_commands(self.start_on_connect, self.start_child_on_connect, source)
+
+    def exec_on_disconnect_commands(self, source) -> None:
+        log("exec_on_disconnect_commands(%s) start=%s, start_child=%s", source, self.start_on_disconnect, self.start_child_on_disconnect)
+        self._exec_commands(self.start_on_disconnect, self.start_child_on_disconnect, source)
+
+    def _exec_commands(self, start_list: Sequence[str], start_child_list: Sequence[str], source=None) -> None:
+        started = []
+        for x in start_list:
+            if x:
+                if proc := self.start_command(x, x, ignore=True, source=source):
+                    started.append(proc)
+        for x in start_child_list:
+            if x:
+                if proc := self.start_command(x, x, ignore=False, source=source):
+                    started.append(proc)
+        procs = tuple(x for x in started if x)
+        if not self.session_name:
+            GLib.idle_add(self.guess_session_name, procs)
+
+    def start_command(self, name: str, child_cmd, ignore: bool = False, callback: Callable | None = None,
+                      use_wrapper: bool = True, shell: bool = False, source=None, **kwargs):
+        env = self.get_child_env()
+        log("start_command%s exec_wrapper=%s, exec_cwd=%s",
+            (name, child_cmd, ignore, callback, use_wrapper, shell, kwargs), self.exec_wrapper, self.exec_cwd)
+        real_cmd = []
+        cmd_str = None
+        try:
+            real_cmd = self.get_full_child_command(child_cmd, use_wrapper)
+            attrs = get_attrs(source)
+            real_cmd = expand_vars(real_cmd, attrs)
+            log("full child command(%s, %s)=%s", child_cmd, use_wrapper, real_cmd)
+            cmd_str = " ".join(real_cmd)
+            # pylint: disable=consider-using-with
+            proc = Popen(real_cmd, env=env, shell=shell, cwd=self.exec_cwd, **kwargs)
+            procinfo = self.add_process(proc, name, real_cmd, ignore=ignore, callback=callback)
+            is_ibus_daemon = real_cmd[0].endswith("daemonizer") and "ibus-daemon" in real_cmd
+            cmd_info = "ibus-daemon" if is_ibus_daemon else cmd_str
+            log.info(f"started command `{cmd_info}` with pid {proc.pid}")
+            if not ignore:
+                self.children_count += 1
+            self.children_started.append(procinfo)
+            session_dir = os.environ.get("XPRA_SESSION_DIR", "")
+            if session_dir and not procinfo.dead:
+                pidname = name.split(" ")[0]
+                if pidname.find(os.sep) >= 0:
+                    pidname = pidname.split(os.sep)[-1]
+                pidfile = os.path.join(session_dir, f"{pidname}.pid")
+                if not os.path.exists(pidfile):
+                    procinfo.pidfile = pidfile
+                    procinfo.pidinode = write_pid(pidfile, procinfo.pid)
+                log(f"pidfile({name})={pidfile}, inode={procinfo.pidinode}, pid={procinfo.pid}")
+            return proc
+        except (OSError, ValueError) as e:
+            log("start_command%s", (name, child_cmd, ignore, callback, use_wrapper, shell, kwargs), exc_info=True)
+            log.error(f"Error spawning child {child_cmd!r}")
+            if len(real_cmd) > 1:
+                log.error(" using command:")
+                log.error(f" `{cmd_str}`")
+            log.error(f" {e}")
+            return None
+
+    def add_process(self, process, name: str, command, ignore: bool = False,
+                    callback: Callable | None = None) -> ProcInfo:
+        return get_child_reaper().add_process(process, name, command, ignore, callback=callback)
+
+    @staticmethod
+    def is_child_alive(proc) -> bool:
+        return proc is not None and proc.poll() is None
+
+    def reaper_exit_check(self) -> None:
+        log(f"reaper_exit_check() exit_with_children={self.exit_with_children}")
+        if self.exit_with_children and self.children_count:
+            log.info("all children have exited and --exit-with-children was specified, exiting")
+            GLib.idle_add(self.clean_quit)
+
+    def terminate_children_processes(self) -> None:
+        cl = tuple(self.children_started)
+        self.children_started = []
+        log(f"terminate_children_processes() children={cl}")
+        if not cl:
+            return
+        wait_for = []
+        child_reaper = get_child_reaper()
+        child_reaper.poll()
+        for procinfo in cl:
+            proc = procinfo.process
+            name = procinfo.name
+            if self.is_child_alive(proc):
+                wait_for.append(procinfo)
+                log(f"child command {name!r} is still alive, calling terminate on {proc}")
+                stop_proc(proc, "child %s" % name)
+        if not wait_for:
+            return
+        log(f"waiting for child commands to exit: {wait_for}")
+        start = monotonic()
+        while monotonic() - start < TERMINATE_DELAY and wait_for:
+            child_reaper.poll()
+            # this is called from the UI thread, we cannot sleep
+            # sleep(1)
+            wait_for = [procinfo for procinfo in wait_for if self.is_child_alive(procinfo.process)]
+            log(f"still not terminated: {wait_for}")
+        log("done waiting for child commands")
+
+    def guess_session_name(self, procs=()) -> None:
+        new_name = guess_session_name(procs, self.exec_wrapper)
+        if new_name and self.session_name != new_name:
+            self.session_name = new_name
+            # weak dependency:
+            mdns_update = getattr(self, "mdns_update", noop)
+            mdns_update()
+
+    def _handle_hello_request_run(self, proto, caps: typedict) -> bool:
+        command = caps.strtupleget("run")
+        if not command:
+            response = {
+                "code": ExitCode.NO_DATA,
+                "message": "missing command",
+            }
+        else:
+            name = command[0]
+            ss = self.get_server_source(proto)
+            proc = self.start_command(name, command, ignore=True, source=ss)
+            if not proc:
+                response = {
+                    "code": ExitCode.COMPONENT_MISSING,
+                    "message": "failed to run the command specified",
+                }
+            else:
+                response = {
+                    "pid": proc.pid,
+                }
+        proto.send_now(Packet("hello", {"run_response": response}))
+        return True
+
+    def _process_start_command(self, proto, packet: Packet) -> None:
+        self._process_command_start(proto, packet)
+
+    def _process_command_start(self, proto, packet: Packet) -> None:
+        log(f"start new command: {packet}")
+        if not self.start_new_commands:
+            log.warn("Warning: received start-command request,")
+            log.warn(" but the feature is currently disabled")
+            return
+        name = packet.get_str(1)
+        command = packet[2]
+        ignore = packet.get_bool(3)
+        cmd: str | tuple
+        if isinstance(command, (list, tuple)):
+            cmd = tuple(command)
+        else:
+            cmd = str(command)
+        ss = self.get_server_source(proto)
+        proc = self.start_command(name, cmd, ignore=ignore, source=ss)
+        if len(packet) >= 5:
+            shared = packet.get_bool(4)
+            if proc and not shared:
+                if not ss:
+                    raise RuntimeError("no server source found for %s" % proto)
+                log(f"adding filter: pid={proc.pid} for {proto}")
+                ss.add_window_filter("window", "pid", "=", proc.pid)
+        log(f"process_start_command: proc={proc}")
+
+    def _process_command_signal(self, _proto, packet: Packet) -> None:
+        pid = packet.get_u32(1)
+        if pid <= 1:
+            log.error(f"Error: invalid pid {pid}")
+            return
+        signame = packet.get_str(2)
+        if signame not in COMMAND_SIGNALS:
+            log.warn("Warning: invalid signal received: '%s'", signame)
+            return
+        procinfo = get_child_reaper().get_proc_info(pid)
+        if not procinfo:
+            log.warn("Warning: command not found for pid %i", pid)
+            return
+        if procinfo.returncode is not None:
+            log.warn("Warning: command for pid %i has already terminated", pid)
+            return
+        log.info(f"sending signal {signame!r} to pid {pid}")
+        try:
+            send_signame(pid, signame)
+        except Exception as e:
+            log.error(f"Error sending signal {signame!r} to pid {pid}")
+            log.estr(e)
+
+    def init_packet_handlers(self) -> None:
+        log("init_packet_handlers() COMMANDS_SIGNALS=%s, start new commands=%s",
+            COMMAND_SIGNALS, self.start_new_commands)
+        if COMMAND_SIGNALS:
+            self.add_packets("command-signal")
+        if self.start_new_commands:
+            self.add_packets(f"{ChildCommandServer.PREFIX}-start")
+            self.add_legacy_alias("start-command", f"{ChildCommandServer.PREFIX}-start")
+
+    #########################################
+    # Control Commands
+    #########################################
+
+    def control_command_start(self, *args) -> str:
+        return self.do_control_command_start(True, *args)
+
+    def control_command_start_child(self, *args) -> str:
+        return self.do_control_command_start(False, *args)
+
+    def do_control_command_start(self, ignore: bool, *args) -> str:
+        from xpra.net.control.common import ControlError
+        if not self.start_new_commands:
+            raise ControlError("this feature is currently disabled")
+        proc = self.start_command(shlex.join(args), args, ignore=ignore)
+        if not proc:
+            raise ControlError("failed to start new child command %r" % shlex.join(args))
+        return "new %scommand started with pid=%s" % (["child ", ""][ignore], proc.pid)
+
+    def control_command_start_env(self, action: str = "set", var_name: str = "", value=None) -> str:
+        if action != "get" and not var_name:
+            raise RuntimeError("the environment variable name must be specified")
+        if action == "unset":
+            assert value is None, f"invalid number of arguments for {action}"
+            if self.start_env.pop(var_name, None) is None:
+                return f"{var_name!r} is not set"
+            return f"{var_name} unset"
+        if action == "set":
+            assert value, "the value must be specified"
+            self.start_env[var_name] = value
+            return f"{var_name}={value}"
+        if action == "get":
+            env = self.get_child_env()
+            if var_name:
+                if var_name not in env:
+                    return f"# {var_name!r} is not defined"
+                value = env[var_name]
+                return f"{var_name}={value}"
+            else:
+                return "\n".join(f"{k}={v}" for k, v in sorted(env.items()))
+        return f"invalid start-env subcommand {action!r}"

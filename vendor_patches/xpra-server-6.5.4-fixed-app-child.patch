@@ -1,0 +1,32 @@
+--- a/usr/lib/python3/dist-packages/xpra/server/subsystem/command.py
++++ b/usr/lib/python3/dist-packages/xpra/server/subsystem/command.py
+@@
+     def __init__(self):
+         StubServerMixin.__init__(self)
+-        self.hello_request_handlers["run"] = self._handle_hello_request_run
+         self.child_display: str = ""
+@@
+         self.terminate_children = opts.terminate_children
+         self.start_new_commands = opts.start_new_commands
++        if self.start_new_commands:
++            self.hello_request_handlers["run"] = self._handle_hello_request_run
++        else:
++            self.hello_request_handlers.pop("run", None)
+         self.start_commands = opts.start
+@@
+     def _handle_hello_request_run(self, proto, caps: typedict) -> bool:
++        if not self.start_new_commands:
++            response = {"code": ExitCode.UNSUPPORTED, "message": "command execution is disabled"}
++            proto.send_now(Packet("hello", {"run_response": response}))
++            return True
+         command = caps.strtupleget("run")
+@@
+     def _process_command_signal(self, _proto, packet: Packet) -> None:
++        if not self.start_new_commands:
++            log.warn("Warning: received command-signal request, but the feature is currently disabled")
++            return
+         pid = packet.get_u32(1)
+@@
+-        if COMMAND_SIGNALS:
++        if COMMAND_SIGNALS and self.start_new_commands:
+             self.add_packets("command-signal")

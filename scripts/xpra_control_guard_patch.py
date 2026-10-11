@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply the pinned Xpra 6.5.4 control-disabled startup guards."""
+"""Apply the pinned Xpra 6.5.4 disabled-control and no-client-command guards."""
 from __future__ import annotations
 
 import hashlib
@@ -20,6 +20,9 @@ WINDOW_SIZE = 42_383
 WINDOW_SHA256 = "6f36f82a51d55b5302772e23f7f6e1317226184e0635b0f3f5954dacaca16a0f"
 CORE_MD5 = "f27671cadfd5efe5a6f363b30da72fef"
 WINDOW_MD5 = "991eb3b6866c1df49fa55b54e2fbad7b"
+COMMAND_SIZE = 23_581
+COMMAND_SHA256 = "804eca53b88e23996fb41c394318531548193a750f07e6846dbdaffe8db7126e"
+COMMAND_MD5 = "53922da70a3214d9adc47a901313a487"
 
 OLD = (
     b'    def args_control(self, name: str, descr: str, **kwargs) -> None:\n'
@@ -37,7 +40,8 @@ NEW = (
 STUB_RELATIVE = Path("usr/lib/python3/dist-packages/xpra/server/subsystem/stub.py")
 CORE_RELATIVE = Path("usr/lib/python3/dist-packages/xpra/server/core.py")
 WINDOW_RELATIVE = Path("usr/lib/python3/dist-packages/xpra/server/subsystem/window.py")
-LOCAL_VERSION = "6.5.4-r0-1+jarvis2"
+COMMAND_RELATIVE = Path("usr/lib/python3/dist-packages/xpra/server/subsystem/command.py")
+LOCAL_VERSION = "6.5.4-r0-1+jarvis3"
 PACKAGE = "xpra-server"
 ARCHITECTURE = "arm64"
 
@@ -84,6 +88,46 @@ WINDOW_PATCHED_SIZE = 42_476
 WINDOW_PATCHED_SHA256 = "7fd74d70e6a50e2f02727e263bdbec34826d23871abf4feedb230741ef09264f"
 WINDOW_PATCHED_MD5 = "1eb15f0297d3f5c84b0dce12f41d45d4"
 
+COMMAND_OLD_NEW = (
+    (b'        self.hello_request_handlers["run"] = self._handle_hello_request_run\n', b""),
+    (b'        self.start_new_commands = opts.start_new_commands\n',
+     b'        self.start_new_commands = opts.start_new_commands\n'
+     b'        if self.start_new_commands:\n'
+     b'            self.hello_request_handlers["run"] = self._handle_hello_request_run\n'
+     b'        else:\n'
+     b'            self.hello_request_handlers.pop("run", None)\n'),
+    (b'    def _handle_hello_request_run(self, proto, caps: typedict) -> bool:\n',
+     b'    def _handle_hello_request_run(self, proto, caps: typedict) -> bool:\n'
+     b'        if not self.start_new_commands:\n'
+     b'            response = {"code": ExitCode.UNSUPPORTED, "message": "command execution is disabled"}\n'
+     b'            proto.send_now(Packet("hello", {"run_response": response}))\n'
+     b'            return True\n'),
+    (b'    def _process_command_signal(self, _proto, packet: Packet) -> None:\n',
+     b'    def _process_command_signal(self, _proto, packet: Packet) -> None:\n'
+     b'        if not self.start_new_commands:\n'
+     b'            log.warn("Warning: received command-signal request, but the feature is currently disabled")\n'
+     b'            return\n'),
+    (b'        if COMMAND_SIGNALS:\n            self.add_packets("command-signal")\n',
+     b'        if COMMAND_SIGNALS and self.start_new_commands:\n            self.add_packets("command-signal")\n'),
+)
+COMMAND_PATCHED_SIZE = 24_117
+COMMAND_PATCHED_SHA256 = "09e90f7dcb8a76687c59ee8c538faef21ce2881bdaed4cafb760eb8fe141f2d3"
+COMMAND_PATCHED_MD5 = "b5cbadc4d602785467178814cba3f1a2"
+
+
+def patch_command_bytes(data: bytes) -> bytes:
+    if len(data) != COMMAND_SIZE or hashlib.sha256(data).hexdigest() != COMMAND_SHA256:
+        raise ValueError("server/subsystem/command.py does not match the pinned official Xpra 6.5.4 input")
+    for old, _new in COMMAND_OLD_NEW:
+        if data.count(old) != 1:
+            raise ValueError("expected exactly one pinned command-subsystem guard anchor")
+    patched = data
+    for old, new in COMMAND_OLD_NEW:
+        patched = patched.replace(old, new, 1)
+    if len(patched) != COMMAND_PATCHED_SIZE or hashlib.sha256(patched).hexdigest() != COMMAND_PATCHED_SHA256:
+        raise ValueError("patched command.py does not match the reviewed v262 patch")
+    return patched
+
 
 def _patch_guard_member(data: bytes, *, size: int, sha256: str, old: bytes, new: bytes, label: str) -> bytes:
     if len(data) != size or hashlib.sha256(data).hexdigest() != sha256:
@@ -114,11 +158,13 @@ PATCHED_CONTROL_MD5S = (
     (STUB_RELATIVE.as_posix(), SOURCE_MD5, PATCHED_MD5),
     (CORE_RELATIVE.as_posix(), CORE_MD5, CORE_PATCHED_MD5),
     (WINDOW_RELATIVE.as_posix(), WINDOW_MD5, WINDOW_PATCHED_MD5),
+    (COMMAND_RELATIVE.as_posix(), COMMAND_MD5, COMMAND_PATCHED_MD5),
 )
 PATCHED_MEMBER_FACTS = {
     STUB_RELATIVE.as_posix(): (PATCHED_SIZE, PATCHED_SHA256),
     CORE_RELATIVE.as_posix(): (CORE_PATCHED_SIZE, CORE_PATCHED_SHA256),
     WINDOW_RELATIVE.as_posix(): (WINDOW_PATCHED_SIZE, WINDOW_PATCHED_SHA256),
+    COMMAND_RELATIVE.as_posix(): (COMMAND_PATCHED_SIZE, COMMAND_PATCHED_SHA256),
 }
 
 
@@ -127,6 +173,7 @@ def patch_tree(root: Path) -> None:
         (STUB_RELATIVE, patch_bytes),
         (CORE_RELATIVE, patch_core_bytes),
         (WINDOW_RELATIVE, patch_window_bytes),
+        (COMMAND_RELATIVE, patch_command_bytes),
     ):
         path = root / member
         path.write_bytes(patcher(path.read_bytes()))
@@ -232,7 +279,7 @@ def verify_control_directories(original: Path, rebuilt: Path) -> None:
             continue
         if name == "control":
             old_line = b"Version: 6.5.4-r0-1\n"
-            if old_bytes.count(old_line) != 1 or old_bytes.replace(old_line, b"Version: 6.5.4-r0-1+jarvis2\n", 1) != new_bytes:
+            if old_bytes.count(old_line) != 1 or old_bytes.replace(old_line, b"Version: 6.5.4-r0-1+jarvis3\n", 1) != new_bytes:
                 raise ValueError("control metadata changed beyond the exact local package version")
         elif name == "md5sums":
             expected_bytes = old_bytes
@@ -243,7 +290,7 @@ def verify_control_directories(original: Path, rebuilt: Path) -> None:
                     raise ValueError(f"md5sums does not contain the exact original row for {member}")
                 expected_bytes = expected_bytes.replace(old_row, new_row, 1)
             if expected_bytes != new_bytes:
-                raise ValueError("md5sums changed beyond the three reviewed source members")
+                raise ValueError("md5sums changed beyond the four reviewed source members")
 
 
 def verify_repacked_package(original_root: Path, rebuilt_root: Path) -> None:
