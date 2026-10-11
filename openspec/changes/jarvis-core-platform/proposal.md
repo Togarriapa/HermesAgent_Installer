@@ -59,3 +59,5 @@ Prioritize three independent visible increments on existing backend support: bro
 Complete three current backend slices in parallel: existing schedule pause/status, owned staged-file visibility and the first genuine approved mission execution. Avoid duplicate endpoints or inventing artifact reads/mission authority absent from the native runtime.
 
 Address missing actions and useful visibility after the current menu shell through measured overview data, real tool/browser timelines, actionable integration setup status and a narrowly audited native voice port. Recorded video evidence guides UX without establishing backend support or permission.
+
+Close the primary prompt adoption gap: storing the compiled Jarvis SOUL in the registry does not activate it. Adopt one fully verified managed block with exact owner-context preservation, journaled recovery and native effective prompt qualification; discovery and full Resources readiness remain distinct.

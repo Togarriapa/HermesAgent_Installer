@@ -1887,3 +1887,14 @@ The system SHALL prioritize measured overview data, authentic tool visibility an
 #### Scenario: Missing effect adapter
 - **WHEN** a requested configuration or voice action lacks a safe native adapter
 - **THEN** the UI identifies the exact missing prerequisite and preserves usable existing functions without claiming activation.
+
+### Requirement: Owned full primary prompt adoption
+The system SHALL adopt the verified full primary Jarvis prompt through a journaled managed SOUL block while preserving exact existing owner bytes, account configuration and recovery data. Owner restrictions SHALL take precedence and ambiguous ownership SHALL deny overwrite.
+
+#### Scenario: Edited block or conflicting context
+- **WHEN** the managed block is edited, ambiguous or conflicts with owner restrictions
+- **THEN** automatic overwrite denies and readiness remains pending with an exact recovery action.
+
+#### Scenario: Effective primary readback
+- **WHEN** native primary prompt rendering omits, truncates or overrides expected content
+- **THEN** the system does not claim primary activation from file presence or model identity text.
