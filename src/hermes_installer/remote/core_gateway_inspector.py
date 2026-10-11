@@ -658,7 +658,8 @@ class CoreVerifiedIngressObservation:
                 and (self.peer_pid, self.peer_uid, self.peer_gid) == (peer_pid, peer_uid, peer_gid)
                 and (self.origin_socket_device, self.origin_socket_inode) == listener_identity
                 and type(current) in (int, float) and self.issued_monotonic <= current < self.expires_monotonic
-                and 0 < self.expires_monotonic - self.issued_monotonic <= MAX_PROOF_SECONDS
+                and self.issued_monotonic < self.expires_monotonic <=
+                    self.issued_monotonic + MAX_PROOF_SECONDS
                 and self.peer_start_ticks.isdecimal() and self.core_start_ticks.isdecimal()
                 and _is_hash(self.core_source_generation)
                 and self.core_generation == hashlib.sha256(

@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from yarl import URL
 
 from hermes_installer.remote import core_gateway, core_gateway_inspector
 from hermes_installer.remote.gateway import Principal, RemotePolicy
@@ -380,7 +381,8 @@ class CoreGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
                 for path in ("/chat/assets/not-reviewed.js", "/chat/assets/app.js?x=1",
                              "/chat/assets/%61pp.js"):
                     with self.subTest(path=path):
-                        response = await client.get(path, headers=headers)
+                        target = URL(path, encoded=True) if "%" in path else path
+                        response = await client.get(target, headers=headers)
                         self.assertEqual(response.status, 404)
                         self.assertNotIn(b"JARVIS", await response.read())
             finally:
