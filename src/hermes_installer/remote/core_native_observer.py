@@ -198,8 +198,8 @@ class RootSelectedOrchestratorDelegationPolicy:
 
     This policy is distinct from the Resources profile manifest: the profile has
     no tool grants, and its empty ``profile_tool_names`` remains empty.  The
-    policy authorizes only the exact current parent tool closure selected by the
-    root-verified native configuration.  Hermes still applies its own blocked,
+    policy caps tools at the configured native parent maximum. The observed
+    provider request carries the effective current subset. Hermes still applies its own blocked,
     disabled, pause, depth, and lifecycle rules when it builds the child.
     """
 
@@ -212,7 +212,7 @@ class RootSelectedOrchestratorDelegationPolicy:
     profile_id: str
     mode: str
     parent_tool_configuration_sha256: str
-    allowed_parent_tool_names: tuple[str, ...]
+    configured_parent_tool_names: tuple[str, ...]
     allow_inherited_mcp: bool
     allow_native_orchestrator_delegation: bool
     additional_metered_budget: int
@@ -230,15 +230,15 @@ class RootSelectedOrchestratorDelegationPolicy:
                 or self.profile_id != "orchestrator"
                 or self.mode != "native-parent-inheritance"
                 or not _HASH.fullmatch(self.parent_tool_configuration_sha256 or "")
-                or not isinstance(self.allowed_parent_tool_names, tuple)
-                or not self.allowed_parent_tool_names or len(self.allowed_parent_tool_names) > 256
-                or any(not _ID.fullmatch(item or "") for item in self.allowed_parent_tool_names)
-                or len(set(self.allowed_parent_tool_names)) != len(self.allowed_parent_tool_names)
-                or tuple(sorted(self.allowed_parent_tool_names)) != self.allowed_parent_tool_names
+                or not isinstance(self.configured_parent_tool_names, tuple)
+                or not self.configured_parent_tool_names or len(self.configured_parent_tool_names) > 256
+                or any(not _ID.fullmatch(item or "") for item in self.configured_parent_tool_names)
+                or len(set(self.configured_parent_tool_names)) != len(self.configured_parent_tool_names)
+                or tuple(sorted(self.configured_parent_tool_names)) != self.configured_parent_tool_names
                 or type(self.allow_inherited_mcp) is not bool
                 or type(self.allow_native_orchestrator_delegation) is not bool
                 or not self.allow_native_orchestrator_delegation
-                or "delegate_task" not in self.allowed_parent_tool_names
+                or "delegate_task" not in self.configured_parent_tool_names
                 or type(self.additional_metered_budget) is not int
                 or self.additional_metered_budget != 0
                 or type(self.issued_monotonic) not in (float, int)
@@ -262,7 +262,7 @@ def _native_policy_digest_fields(policy: RootSelectedOrchestratorDelegationPolic
         "profile_id": policy.profile_id,
         "mode": policy.mode,
         "parent_tool_configuration_sha256": policy.parent_tool_configuration_sha256,
-        "allowed_parent_tool_names": list(policy.allowed_parent_tool_names),
+        "configured_parent_tool_names": list(policy.configured_parent_tool_names),
         "allow_inherited_mcp": policy.allow_inherited_mcp,
         "allow_native_orchestrator_delegation": policy.allow_native_orchestrator_delegation,
         "additional_metered_budget": policy.additional_metered_budget,
@@ -310,7 +310,7 @@ class RootSelectedInternalProfileDispatchClaim:
     delegation_policy_handle: str
     delegation_policy_sha256: str
     parent_tool_configuration_sha256: str
-    allowed_parent_tool_names: tuple[str, ...]
+    configured_parent_tool_names: tuple[str, ...]
     allow_inherited_mcp: bool
     allow_native_orchestrator_delegation: bool
     profile_tool_names: tuple[str, ...]
@@ -354,12 +354,12 @@ class RootSelectedInternalProfileDispatchClaim:
                 or not _OPAQUE.fullmatch(self.delegation_policy_handle or "")
                 or not _HASH.fullmatch(self.delegation_policy_sha256 or "")
                 or not _HASH.fullmatch(self.parent_tool_configuration_sha256 or "")
-                or not isinstance(self.allowed_parent_tool_names, tuple)
-                or not self.allowed_parent_tool_names or len(self.allowed_parent_tool_names) > 256
-                or any(not _ID.fullmatch(item or "") for item in self.allowed_parent_tool_names)
+                or not isinstance(self.configured_parent_tool_names, tuple)
+                or not self.configured_parent_tool_names or len(self.configured_parent_tool_names) > 256
+                or any(not _ID.fullmatch(item or "") for item in self.configured_parent_tool_names)
                 or tuple(sorted(set(self.parent_tool_names))) != self.parent_tool_names
-                or tuple(sorted(set(self.allowed_parent_tool_names))) != self.allowed_parent_tool_names
-                or self.parent_tool_names != self.allowed_parent_tool_names
+                or tuple(sorted(set(self.configured_parent_tool_names))) != self.configured_parent_tool_names
+                or not set(self.parent_tool_names).issubset(self.configured_parent_tool_names)
                 or type(self.allow_inherited_mcp) is not bool
                 or type(self.allow_native_orchestrator_delegation) is not bool
                 or not self.allow_native_orchestrator_delegation
@@ -450,7 +450,7 @@ class CoreNativeObservationClient:
                 or not parent_tool_names or len(parent_tool_names) > 512
                 or any(not isinstance(name, str) or not _ID.fullmatch(name) for name in parent_tool_names)
                 or len(set(parent_tool_names)) != len(parent_tool_names)
-                or "delegate_task" not in parent_tool_names):
+                or "resources_delegate" not in parent_tool_names):
             raise CoreNativeObservationUnavailable("attempt is outside the selected Codex subscription route")
         payload = {
             "session_id": _require_id(session_id, "session ID"),
@@ -541,7 +541,7 @@ class CoreNativeObservationClient:
             "prompt_revision", "parent_tool_names", "parent_privacy_grants", "expires_monotonic",
             "evidence_class", "provider", "api_mode", "base_url", "additional_metered_budget",
             "delegation_policy_handle", "delegation_policy_sha256",
-            "parent_tool_configuration_sha256", "allowed_parent_tool_names",
+            "parent_tool_configuration_sha256", "configured_parent_tool_names",
             "allow_inherited_mcp", "allow_native_orchestrator_delegation",
         }
         if not isinstance(claim, dict) or set(claim) != required:
@@ -564,11 +564,11 @@ class CoreNativeObservationClient:
                 manifest.append(NativeSourceMember(item["path"], item["sha256"], item["size"]))
             names, grants = claim["parent_tool_names"], claim["parent_privacy_grants"]
             profile_tools, privacy_requirements = claim["profile_tool_names"], claim["profile_privacy_requirements"]
-            allowed_names = claim["allowed_parent_tool_names"]
+            configured_names = claim["configured_parent_tool_names"]
             if (not isinstance(names, list) or not isinstance(grants, list)
-                    or not isinstance(allowed_names, list)
+                    or not isinstance(configured_names, list)
                     or not isinstance(profile_tools, list) or not isinstance(privacy_requirements, list)
-                    or any(not isinstance(value, str) for value in (*names, *grants, *allowed_names, *profile_tools, *privacy_requirements))
+                    or any(not isinstance(value, str) for value in (*names, *grants, *configured_names, *profile_tools, *privacy_requirements))
                     or type(claim["allow_inherited_mcp"]) is not bool
                     or type(claim["allow_native_orchestrator_delegation"]) is not bool):
                 raise ValueError
@@ -593,7 +593,7 @@ class CoreNativeObservationClient:
                 delegation_policy_handle=claim["delegation_policy_handle"],
                 delegation_policy_sha256=claim["delegation_policy_sha256"],
                 parent_tool_configuration_sha256=claim["parent_tool_configuration_sha256"],
-                allowed_parent_tool_names=tuple(allowed_names),
+                configured_parent_tool_names=tuple(configured_names),
                 allow_inherited_mcp=claim["allow_inherited_mcp"],
                 allow_native_orchestrator_delegation=claim["allow_native_orchestrator_delegation"],
                 profile_tool_names=tuple(profile_tools), parent_privacy_grants=tuple(grants),
@@ -694,14 +694,11 @@ class RootCoreNativeObservationRegistry:
                 or current_tool_configuration.core_source_generation != owner_turn_observation.core_source_generation
                 or current_tool_configuration.owner_subject_sha256 != owner_turn_observation.owner_subject_sha256):
             raise CoreNativeObservationUnavailable("current native tool configuration is not owner-bound")
-        names = current_tool_configuration.allowed_parent_tool_names
+        names = current_tool_configuration.configured_parent_tool_names
         if (not isinstance(names, tuple) or not names or len(names) > 256
                 or tuple(sorted(set(names))) != names
                 or any(not isinstance(name, str) or not _ID.fullmatch(name) for name in names)
-                or "delegate_task" not in names
-                or type(current_tool_configuration.allow_inherited_mcp) is not bool
-                or type(current_tool_configuration.allow_native_orchestrator_delegation) is not bool
-                or current_tool_configuration.allow_native_orchestrator_delegation is not True):
+                or "delegate_task" not in names or "resources_delegate" not in names):
             raise CoreNativeObservationUnavailable("selected native delegation policy is unavailable")
         issued = time.monotonic()
         expiry = min(float(owner_turn_observation.expires_monotonic), issued + 600.0)
@@ -715,9 +712,11 @@ class RootCoreNativeObservationRegistry:
             "owner_subject_sha256": owner_turn_observation.owner_subject_sha256,
             "profile_id": "orchestrator", "mode": "native-parent-inheritance",
             "parent_tool_configuration_sha256": current_tool_configuration.tool_configuration_sha256,
-            "allowed_parent_tool_names": list(names),
-            "allow_inherited_mcp": current_tool_configuration.allow_inherited_mcp,
-            "allow_native_orchestrator_delegation": current_tool_configuration.allow_native_orchestrator_delegation,
+            "configured_parent_tool_names": list(names),
+            # Fixed root-enrolled owner-only policy bits; neither selected by the
+            # Hermes user config nor inferred from provider tools.list metadata.
+            "allow_inherited_mcp": True,
+            "allow_native_orchestrator_delegation": True,
             "additional_metered_budget": 0,
             "issued_monotonic": issued, "expires_monotonic": expiry,
         }
@@ -729,8 +728,8 @@ class RootCoreNativeObservationRegistry:
             owner_subject_sha256=owner_turn_observation.owner_subject_sha256,
             profile_id="orchestrator", mode="native-parent-inheritance",
             parent_tool_configuration_sha256=current_tool_configuration.tool_configuration_sha256,
-            allowed_parent_tool_names=names,
-            allow_inherited_mcp=current_tool_configuration.allow_inherited_mcp,
+            configured_parent_tool_names=names,
+            allow_inherited_mcp=True,
             allow_native_orchestrator_delegation=True,
             additional_metered_budget=0, issued_monotonic=issued,
             expires_monotonic=expiry, _seal=_NATIVE_INHERITANCE_POLICY_SEAL,
@@ -873,7 +872,10 @@ class RootCoreNativeObservationRegistry:
                                for name in request["parent_tool_names"])
                         or len(set(request["parent_tool_names"])) != len(request["parent_tool_names"])
                         or policy is None
-                        or tuple(sorted(request["parent_tool_names"])) != policy.allowed_parent_tool_names):
+                        or not set(request["parent_tool_names"]).issubset(policy.configured_parent_tool_names)
+                        or "resources_delegate" not in request["parent_tool_names"]
+                        or (not policy.allow_inherited_mcp
+                            and any(name.startswith("mcp__") for name in request["parent_tool_names"]))):
                     raise ValueError("attempt is not an enrolled current subscription turn")
                 handle = secrets.token_urlsafe(32)
                 if len(self._attempts) >= 2048:
@@ -948,7 +950,9 @@ class RootCoreNativeObservationRegistry:
                         or policy is None
                         or type(policy) is not RootSelectedOrchestratorDelegationPolicy
                         or self._policy_for_owner(call["owner"], time.monotonic()) is not policy
-                        or tuple(sorted(parent_tools)) != policy.allowed_parent_tool_names
+                        or not parent_tools.issubset(policy.configured_parent_tool_names)
+                        or (not policy.allow_inherited_mcp
+                            and any(name.startswith("mcp__") for name in parent_tools))
                         or policy.additional_metered_budget != 0
                         or source.is_current_sealed(custody=self._custody, now=time.monotonic()) is not True
                         or source.profile_id != "orchestrator"
@@ -979,7 +983,9 @@ class RootCoreNativeObservationRegistry:
                 if (call["peer"] != peer or source.is_current_sealed(custody=self._custody, now=time.monotonic()) is not True
                         or owner.is_current_sealed(self._config, custody=self._custody, now=time.monotonic()) is not True
                         or self._policy_for_owner(owner, time.monotonic()) is not policy
-                        or tuple(sorted(call["parent_tool_names"])) != policy.allowed_parent_tool_names):
+                        or not set(call["parent_tool_names"]).issubset(policy.configured_parent_tool_names)
+                        or (not policy.allow_inherited_mcp
+                            and any(name.startswith("mcp__") for name in call["parent_tool_names"]))):
                     raise ValueError("dispatch lineage is no longer current")
                 # Source/tool/privacy intersection is completed by the consumer against
                 # the exact locally injected parent Agent; no Agent crosses this socket.
@@ -1005,7 +1011,7 @@ class RootCoreNativeObservationRegistry:
                     "delegation_policy_handle": policy.policy_handle,
                     "delegation_policy_sha256": policy.policy_sha256,
                     "parent_tool_configuration_sha256": policy.parent_tool_configuration_sha256,
-                    "allowed_parent_tool_names": list(policy.allowed_parent_tool_names),
+                    "configured_parent_tool_names": list(policy.configured_parent_tool_names),
                     "allow_inherited_mcp": policy.allow_inherited_mcp,
                     "allow_native_orchestrator_delegation": policy.allow_native_orchestrator_delegation,
                     "expires_monotonic": claim["expiry"], "evidence_class": "protected-core-process-observation",
@@ -1393,6 +1399,8 @@ class RootInternalProfileClaimSource:
                     or claim.session_id != getattr(parent_agent, "session_id")
                     or claim.arguments_sha256 != hashlib.sha256(_canonical(dict(arguments))).hexdigest()
                     or set(claim.parent_tool_names) != set(parent_tools)
+                    or not set(claim.parent_tool_names).issubset(claim.configured_parent_tool_names)
+                    or (not claim.allow_inherited_mcp and any(name.startswith("mcp__") for name in parent_tools))
                     or claim.profile_privacy_requirements or claim.parent_privacy_grants):
                 raise ValueError
             route_receipt = _hash({
@@ -1418,13 +1426,13 @@ class RootInternalProfileClaimSource:
                 profile_tool_names=frozenset(claim.profile_tool_names),
                 # This is native parent inheritance authorized by the distinct
                 # root policy, not a Resources profile tool grant.
-                inherited_child_tool_names=frozenset(claim.allowed_parent_tool_names),
+                inherited_child_tool_names=parent_tools,
                 parent_privacy_grants=frozenset(),
                 profile_privacy_requirements=frozenset(),
                 delegation_policy_handle=claim.delegation_policy_handle,
                 delegation_policy_sha256=claim.delegation_policy_sha256,
                 parent_tool_configuration_sha256=claim.parent_tool_configuration_sha256,
-                allowed_parent_tool_names=frozenset(claim.allowed_parent_tool_names),
+                configured_parent_tool_names=frozenset(claim.configured_parent_tool_names),
                 allow_inherited_mcp=claim.allow_inherited_mcp,
                 allow_native_orchestrator_delegation=claim.allow_native_orchestrator_delegation,
                 route_class="existing-owner-codex-zero-additional-metered",
