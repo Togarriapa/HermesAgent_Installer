@@ -1,6 +1,8 @@
 # Hermes Desktop remote gateway only: CPython 3.14 / Debian Trixie ARM64.
 # Install inside its dedicated component venv with pip --require-hashes -r this file.
 # Each native wheel hash is scoped to cp314 + aarch64; cryptography uses ABI3.
+PyYAML==6.0.3 \
+    --hash=sha256:501a031947e3a9025ed4405a168e6ef5ae3126c59f90ce0cd6f2bfc477be31b7
 aiohttp==3.13.5 \
     --hash=sha256:ecc26751323224cf8186efcf7fbcbc30f4e1d8c7970659daf25ad995e4032a56
 PyJWT==2.15.1 \

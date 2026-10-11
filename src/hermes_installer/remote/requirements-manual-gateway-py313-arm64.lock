@@ -1,0 +1,5 @@
+# Narrow dependency update for the separately managed CPython 3.13 ARM64
+# gateway venv. This lock intentionally contains only the dependency newly
+# needed by the dashboard's bundled Resources inventory.
+PyYAML==6.0.3 \
+    --hash=sha256:ee2922902c45ae8ccada2c5b501ab86c36525b883eff4255313a253a3160861c
