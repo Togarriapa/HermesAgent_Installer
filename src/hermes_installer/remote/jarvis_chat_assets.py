@@ -142,12 +142,18 @@ _HTML = '''<!doctype html>
           <p class="muted">Optional browser features. Text chat remains available on every device.</p>
           <h3 class="voice-group-title">Speech input</h3>
           <label class="voice-choice" id="speech-consent-row" hidden><input id="speech-consent" type="checkbox"><span><strong>Enable push-to-talk for this page</strong><small>Browser speech recognition may process audio through your browser or platform speech service outside Jarvis. Audio is not sent to the Jarvis chat service. Availability and processing depend on your browser.</small></span></label>
+          <label class="voice-choice voice-select-row" id="speech-language-row"><span><strong>Recognition language</strong><select id="speech-language" aria-label="Speech recognition language"><option value="en-US">English (United States)</option><option value="en-GB">English (United Kingdom)</option><option value="pt-PT">Português (Portugal)</option><option value="pt-BR">Português (Brasil)</option><option value="es-ES">Español (España)</option><option value="fr-FR">Français</option><option value="de-DE">Deutsch</option><option value="it-IT">Italiano</option></select><small>Applies to the next push-to-talk capture. The browser or operating system chooses the microphone; manage the input device there.</small></span></label>
           <p class="voice-unavailable" id="speech-unavailable" hidden></p>
           <h3 class="voice-group-title">Speech output</h3>
-          <label class="voice-choice" id="speech-output-row" hidden><input id="speech-output" type="checkbox"><span><strong>Read completed replies aloud on this page</strong><small>Uses voices available from your browser or operating system; selected voices may use their platform speech service. No separate Jarvis TTS provider is used. Replies are spoken only after Jarvis finishes.</small></span></label>
+          <label class="voice-choice" id="speech-output-row" hidden><input id="speech-output" type="checkbox"><span><strong>Read completed replies aloud</strong><small>Uses voices available from your browser or operating system; selected voices may use their platform speech service. No separate Jarvis TTS provider is used. Replies are spoken only after Jarvis finishes.</small></span></label>
           <label class="voice-choice voice-select-row" id="speech-voice-row" hidden><span><strong>Speech voice</strong><select id="speech-voice" aria-label="Speech voice"></select></span></label>
+          <div class="voice-range-row" id="speech-tuning-row" hidden><label for="speech-rate"><strong>Speaking rate</strong><output id="speech-rate-value" for="speech-rate">1.0×</output><input id="speech-rate" type="range" min="0.5" max="2" step="0.1" value="1"></label><label for="speech-pitch"><strong>Voice pitch</strong><output id="speech-pitch-value" for="speech-pitch">1.0</output><input id="speech-pitch" type="range" min="0" max="2" step="0.1" value="1"></label></div>
           <p class="voice-unavailable" id="speech-voice-status" role="status" aria-live="polite" hidden></p>
           <p class="voice-unavailable" id="speech-output-unavailable" hidden></p>
+          <h3 class="voice-group-title">Appearance</h3>
+          <div class="voice-range-row appearance-preferences"><label for="ui-density"><strong>Layout density</strong><select id="ui-density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label><label for="ui-text-size"><strong>Text size</strong><select id="ui-text-size"><option value="normal">Default</option><option value="large">Large</option></select></label><label for="ui-motion"><strong>Motion</strong><select id="ui-motion"><option value="system">Follow device setting</option><option value="reduce">Reduce motion</option></select></label></div>
+          <p class="muted">Voice output and appearance choices are stored only in this browser on this device. Microphone permission and push-to-talk consent are never saved; push-to-talk must be enabled again each time.</p>
+          <p class="voice-unavailable" id="preference-storage-status" role="status" aria-live="polite" hidden></p>
           <p class="voice-unavailable" id="voice-settings-status" role="status" aria-live="polite" hidden></p>
         </section>
       </section>
@@ -248,6 +254,11 @@ _CSS = '''@charset "UTF-8";
 @media(prefers-reduced-motion:reduce){.assistant-hud[data-state="busy"] .orb-halo{animation:none;opacity:.72}.nav-item,.icon-button,.new-chat-button,.send-button,.stop-button,.voice-button,.data-card{transition:none}}
 @media(prefers-reduced-transparency:reduce){.topbar,.primary-nav,.data-card,.assistant-hud,.composer{backdrop-filter:none;background-color:#0a1d25}}
 @media(prefers-contrast:more){.assistant-hud,.data-card,.primary-nav,.composer{border-color:currentColor}}
+.voice-range-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:14px 0;border-bottom:1px solid var(--line)}.voice-range-row label{display:grid;grid-template-columns:1fr auto;align-items:center;gap:9px;color:#c4d8da;font-size:12px}.voice-range-row label strong{font-size:12px;font-weight:600}.voice-range-row output{color:var(--cyan);font-variant-numeric:tabular-nums}.voice-range-row input[type="range"]{grid-column:1/-1;width:100%;accent-color:var(--cyan);min-height:32px}.voice-range-row select{grid-column:1/-1;min-width:0;min-height:42px;padding:8px 10px;border:1px solid var(--line-strong);border-radius:9px;background:#0c1f26;color:var(--text);font:inherit}.voice-select-row small{max-width:600px;color:#8ba5aa;font-size:11px;line-height:1.5}.appearance-preferences label{align-items:start}.appearance-preferences select{grid-row:2}.appearance-preferences label strong{grid-row:1}
+html[data-jarvis-density="compact"] .data-card{padding:15px}html[data-jarvis-density="compact"] .message-list{gap:14px}html[data-jarvis-density="compact"] .voice-choice{padding-block:10px}html[data-jarvis-density="compact"] .settings-list>div{padding-block:10px}
+html[data-jarvis-text-size="large"] .message-content{font-size:16px}html[data-jarvis-text-size="large"] .data-main{font-size:1.08rem}html[data-jarvis-text-size="large"] .voice-choice strong,html[data-jarvis-text-size="large"] .settings-list dt,html[data-jarvis-text-size="large"] .settings-list dd{font-size:15px}
+html[data-jarvis-motion="reduce"] *,html[data-jarvis-motion="reduce"] *::before,html[data-jarvis-motion="reduce"] *::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+@media(max-width:600px){.voice-range-row{grid-template-columns:1fr}.voice-range-row label{min-height:52px}.voice-range-row input[type="range"]{min-height:40px}}
 '''.encode("utf-8")
 
 
@@ -278,6 +289,10 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   let speechUtterance = null;
   let voiceSupported = false;
   let synthesisSupported = false;
+  const preferenceKey = "jarvis.ui.preferences.v1";
+  const preferenceDefaults = Object.freeze({readAloud: false, language: "en-US", voiceURI: "", rate: 1, pitch: 1, density: "comfortable", textSize: "normal", motion: "system"});
+  let uiPreferences = {...preferenceDefaults};
+  let preferenceStorageAvailable = true;
   const API = "/chat/api";
   const FEATURE_ASSETS = __JARVIS_FEATURE_ASSETS__;
   const featuresById = new Map(FEATURE_ASSETS.map((feature) => [feature.id, feature]));
@@ -357,6 +372,68 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     byId("voice-settings-status").textContent = message;
     byId("voice-settings-status").hidden = !message;
   }
+  function boundedPreferenceNumber(value, min, max, fallback) {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.round(Math.min(max, Math.max(min, number)) * 10) / 10 : fallback;
+  }
+  function loadUIPreferences() {
+    try {
+      const raw = window.localStorage.getItem(preferenceKey);
+      if (raw && raw.length <= 2048) {
+        const saved = JSON.parse(raw);
+        if (saved && typeof saved === "object" && !Array.isArray(saved)) {
+          uiPreferences = {
+            ...preferenceDefaults,
+            readAloud: saved.readAloud === true,
+            language: ["en-US", "en-GB", "pt-PT", "pt-BR", "es-ES", "fr-FR", "de-DE", "it-IT"].includes(saved.language) ? saved.language : "en-US",
+            voiceURI: typeof saved.voiceURI === "string" ? saved.voiceURI.slice(0, 256) : "",
+            rate: boundedPreferenceNumber(saved.rate, 0.5, 2, 1),
+            pitch: boundedPreferenceNumber(saved.pitch, 0, 2, 1),
+            density: saved.density === "compact" ? "compact" : "comfortable",
+            textSize: saved.textSize === "large" ? "large" : "normal",
+            motion: saved.motion === "reduce" ? "reduce" : "system"
+          };
+        }
+      }
+    } catch (_) { preferenceStorageAvailable = false; }
+    byId("preference-storage-status").textContent = preferenceStorageAvailable
+      ? "Voice and appearance choices are saved on this device. Microphone consent is never saved."
+      : "Local preference storage is unavailable. Changes apply only until this page closes.";
+    byId("preference-storage-status").hidden = false;
+    byId("speech-language").value = uiPreferences.language;
+    byId("speech-voice").dataset.preferredVoice = uiPreferences.voiceURI;
+    byId("speech-output").checked = uiPreferences.readAloud;
+    byId("speech-rate").value = String(uiPreferences.rate);
+    byId("speech-pitch").value = String(uiPreferences.pitch);
+    byId("ui-density").value = uiPreferences.density;
+    byId("ui-text-size").value = uiPreferences.textSize;
+    byId("ui-motion").value = uiPreferences.motion;
+    applyAppearancePreferences();
+    updateSpeechTuningLabels();
+  }
+  function saveUIPreferences(patch) {
+    uiPreferences = {...uiPreferences, ...patch};
+    if (!preferenceStorageAvailable) return;
+    try {
+      const safe = {readAloud: uiPreferences.readAloud, language: uiPreferences.language, voiceURI: uiPreferences.voiceURI, rate: uiPreferences.rate, pitch: uiPreferences.pitch, density: uiPreferences.density, textSize: uiPreferences.textSize, motion: uiPreferences.motion};
+      window.localStorage.setItem(preferenceKey, JSON.stringify(safe));
+    } catch (_) {
+      preferenceStorageAvailable = false;
+      byId("preference-storage-status").textContent = "Local preference storage is unavailable. Changes apply only until this page closes.";
+    }
+  }
+  function applyAppearancePreferences() {
+    document.documentElement.dataset.jarvisDensity = uiPreferences.density;
+    document.documentElement.dataset.jarvisTextSize = uiPreferences.textSize;
+    document.documentElement.dataset.jarvisMotion = uiPreferences.motion;
+  }
+  function updateSpeechTuningLabels() {
+    byId("speech-rate-value").textContent = `${Number(byId("speech-rate").value).toFixed(1)}×`;
+    byId("speech-pitch-value").textContent = Number(byId("speech-pitch").value).toFixed(1);
+  }
+  function shouldReduceMotion() {
+    return uiPreferences.motion === "reduce" || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
   function updateSpeechVoiceStatus() {
     const status = byId("speech-voice-status");
     if (!synthesisSupported) { status.hidden = true; return; }
@@ -398,6 +475,8 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     }
     stopSpeech();
     const utterance = new window.SpeechSynthesisUtterance(text);
+    utterance.rate = Number(byId("speech-rate").value);
+    utterance.pitch = Number(byId("speech-pitch").value);
     const selectedVoice = byId("speech-voice").value;
     const voice = window.speechSynthesis.getVoices().find((candidate) => candidate.voiceURI === selectedVoice);
     if (voice) {
@@ -452,10 +531,11 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     byId("speech-output-row").hidden = !synthesisSupported;
     byId("speech-output-unavailable").hidden = synthesisSupported;
     if (!synthesisSupported) byId("speech-output-unavailable").textContent = "Speech output is not supported by this browser. Replies remain available as text.";
+    byId("speech-tuning-row").hidden = !synthesisSupported;
     if (synthesisSupported) {
       const refreshVoices = () => {
         const select = byId("speech-voice");
-        const previous = select.value;
+        const previous = select.value || select.dataset.preferredVoice || "";
         select.replaceChildren();
         for (const voice of window.speechSynthesis.getVoices()) {
           const option = document.createElement("option");
@@ -465,6 +545,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
         }
         byId("speech-voice-row").hidden = select.options.length === 0;
         if ([...select.options].some((option) => option.value === previous)) select.value = previous;
+        else if (select.options.length) select.dataset.preferredVoice = "";
         updateSpeechVoiceStatus();
       };
       refreshVoices();
@@ -486,7 +567,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     }
     current.continuous = false;
     current.interimResults = false;
-    current.lang = navigator.language || "en-US";
+    current.lang = byId("speech-language").value;
     let transcriptReceived = false;
     const captureEligible = () => byId("speech-consent").checked
       && !ui.input.disabled && !byId("main-content").hidden
@@ -521,6 +602,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
         "service-not-allowed": "The browser speech service is unavailable. You can continue by typing.",
         "audio-capture": "No microphone is available. You can continue by typing.",
         "no-speech": "No speech was detected. You can continue by typing.",
+        "language-not-supported": "This browser speech service does not support the selected language. Choose another language or type your message.",
         network: "The browser speech service could not be reached. You can continue by typing."
       };
       stopRecognition(messages[event.error] || "Speech input stopped. You can continue by typing.");
@@ -1029,7 +1111,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     const primaryNav = activeNavItem && activeNavItem.closest(".primary-nav");
     if (activeNavItem && primaryNav && primaryNav.scrollWidth > primaryNav.clientWidth) {
       const left = activeNavItem.offsetLeft - (primaryNav.clientWidth - activeNavItem.offsetWidth) / 2;
-      const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+      const behavior = shouldReduceMotion() ? "auto" : "smooth";
       primaryNav.scrollTo({ left: Math.max(0, left), behavior });
     }
     if (selected !== "chat") {
@@ -1102,12 +1184,25 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   });
   byId("speech-output").addEventListener("change", (event) => {
     if (!event.currentTarget.checked) stopSpeech("Read-aloud is off.");
+    saveUIPreferences({readAloud: Boolean(event.currentTarget.checked)});
     updateSpeechVoiceStatus();
   });
   byId("speech-voice").addEventListener("change", () => {
     stopSpeech("Speech voice changed.");
+    saveUIPreferences({voiceURI: byId("speech-voice").value});
     updateSpeechVoiceStatus();
   });
+  byId("speech-language").addEventListener("change", () => saveUIPreferences({language: byId("speech-language").value}));
+  byId("speech-rate").addEventListener("input", () => { updateSpeechTuningLabels(); saveUIPreferences({rate: boundedPreferenceNumber(byId("speech-rate").value, 0.5, 2, 1)}); });
+  byId("speech-pitch").addEventListener("input", () => { updateSpeechTuningLabels(); saveUIPreferences({pitch: boundedPreferenceNumber(byId("speech-pitch").value, 0, 2, 1)}); });
+  for (const [id, key, allowed] of [["ui-density", "density", ["comfortable", "compact"]], ["ui-text-size", "textSize", ["normal", "large"]], ["ui-motion", "motion", ["system", "reduce"]]]) {
+    byId(id).addEventListener("change", (event) => {
+      const value = allowed.includes(event.currentTarget.value) ? event.currentTarget.value : allowed[0];
+      event.currentTarget.value = value;
+      saveUIPreferences({[key]: value});
+      applyAppearancePreferences();
+    });
+  }
   ui.toggle.addEventListener("click", () => setPanel(ui.panel.dataset.open !== "true"));
   ui.close.addEventListener("click", () => setPanel(false));
   ui.scrim.addEventListener("click", () => setPanel(false));
@@ -1122,6 +1217,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       stopSpeech("Reply audio stopped when this page went into the background.");
     }
   });
+  loadUIPreferences();
   configureVoice();
   (async () => {
     try {

@@ -176,6 +176,33 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn("transcript.slice(0, Math.max(0, limit - existing.length - separator.length))", source)
         self.assertIn('document.visibilityState !== "visible"', source)
 
+    def test_voice_and_appearance_preferences_are_local_bounded_and_do_not_persist_consent(self):
+        _content_type, page = reviewed_chat_asset("/chat")
+        markup = page.decode("utf-8")
+        for control in ("speech-language", "speech-rate", "speech-pitch", "ui-density", "ui-text-size", "ui-motion"):
+            with self.subTest(control=control):
+                self.assertIn(f'id="{control}"', markup)
+        self.assertIn("browser or operating system chooses the microphone", markup)
+        self.assertIn("Microphone permission and push-to-talk consent are never saved", markup)
+
+        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
+        client = script.decode("utf-8")
+        self.assertIn('const preferenceKey = "jarvis.ui.preferences.v1"', client)
+        self.assertIn('byId("speech-output").checked = uiPreferences.readAloud', client)
+        self.assertIn('current.lang = byId("speech-language").value', client)
+        self.assertIn('"language-not-supported":', client)
+        self.assertIn('utterance.rate = Number(byId("speech-rate").value)', client)
+        self.assertIn('utterance.pitch = Number(byId("speech-pitch").value)', client)
+        self.assertIn('readAloud: uiPreferences.readAloud, language: uiPreferences.language, voiceURI: uiPreferences.voiceURI', client)
+        self.assertNotIn('safe.consent', client)
+        self.assertIn('function shouldReduceMotion()', client)
+        self.assertIn('uiPreferences.motion === "reduce" || window.matchMedia', client)
+        _content_type, stylesheet = reviewed_chat_asset("/chat/assets/app.css")
+        css = stylesheet.decode("utf-8")
+        self.assertIn('html[data-jarvis-density="compact"]', css)
+        self.assertIn('html[data-jarvis-text-size="large"]', css)
+        self.assertIn('html[data-jarvis-motion="reduce"]', css)
+
 
 if __name__ == "__main__":
     unittest.main()
