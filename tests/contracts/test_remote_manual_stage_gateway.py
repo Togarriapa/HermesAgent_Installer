@@ -252,6 +252,47 @@ class ManualStageGatewayTests(unittest.TestCase):
         with self.assertRaises(StageInspectionDenied):
             _check_app_file_size(MAX_APP_FILE_BYTES + 1)
 
+    def test_listener_readback_matches_ipv4_loopback_port_and_selected_pid_inode(self):
+        from pathlib import Path
+        import os
+        import hermes_installer.remote.manual_stage_inspector as inspector
+
+        real_read_text = Path.read_text
+        real_iterdir = Path.iterdir
+        real_readlink = os.readlink
+        pid = 4242
+        fd_path = Path(f"/proc/{pid}/fd")
+        fd_entry = fd_path / "7"
+        proc_rows = {"text": ""}
+
+        def proc_read_text(path, *args, **kwargs):
+            if path == Path("/proc/net/tcp"):
+                return ("sl local_address rem_address st tx_queue tr tm->when retrnsmt uid timeout inode\n"
+                        + proc_rows["text"])
+            return real_read_text(path, *args, **kwargs)
+
+        def proc_iterdir(path):
+            if path == fd_path:
+                return iter((fd_entry,))
+            return real_iterdir(path)
+
+        def listener_result(local_address, inode="424242", process_inode="424242"):
+            row = f"0: {local_address} 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 {inode} 1\n"
+            proc_rows["text"] = row
+            def readlink(path, *args, **kwargs):
+                if path == fd_entry:
+                    return f"socket:[{process_inode}]"
+                return real_readlink(path, *args, **kwargs)
+            with mock.patch.object(Path, "read_text", proc_read_text), \
+                    mock.patch.object(Path, "iterdir", proc_iterdir), \
+                    mock.patch.object(inspector.os, "readlink", readlink):
+                return inspector._listener_owned_by(pid)
+
+        self.assertTrue(listener_result("0100007F:38A4"))  # 127.0.0.1:14500
+        self.assertFalse(listener_result("0100007F:38B4"))  # 14516
+        self.assertFalse(listener_result("00000000:38A4"))  # public IPv4 bind
+        self.assertFalse(listener_result("0100007F:38A4", process_inode="999999"))
+
     def test_xpra_control_modules_pin_independent_paths_sizes_hashes_and_rejects_changes(self):
         from pathlib import Path
         import os

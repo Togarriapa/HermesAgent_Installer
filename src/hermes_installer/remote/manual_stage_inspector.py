@@ -37,6 +37,7 @@ XPRA_CORE_SHA256 = "95a8bb41304181555ac33482931ba1c2460b4a1b03e458c3c5e8825adcf3
 XPRA_WINDOW_PATH = Path("/usr/lib/python3/dist-packages/xpra/server/subsystem/window.py")
 XPRA_WINDOW_SIZE = 42_476
 XPRA_WINDOW_SHA256 = "7fd74d70e6a50e2f02727e263bdbec34826d23871abf4feedb230741ef09264f"
+XPRA_PORT = 14_500
 XPRA_PINNED_MODULES = (
     (XPRA_CONTROL_STUB_PATH, XPRA_CONTROL_STUB_SIZE, XPRA_CONTROL_STUB_SHA256),
     (XPRA_CORE_PATH, XPRA_CORE_SIZE, XPRA_CORE_SHA256),
@@ -370,7 +371,7 @@ def _validate_xpra_argv(config: Any, pid: int) -> str:
 
 
 def _listener_owned_by(pid: int) -> bool:
-    expected = "0100007F:38B4"  # 127.0.0.1:14500
+    expected = f"0100007F:{XPRA_PORT:04X}"
     inodes = set()
     for line in Path("/proc/net/tcp").read_text().splitlines()[1:]:
         fields = line.split()
