@@ -54,7 +54,7 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False):
         (core.UNIT, "unit_sha256", os.getuid(), os.getuid(), 0o644),
         (core.LAUNCHER, "launcher_sha256", os.getuid(), os.getuid(), 0o755),
         (core.TOKEN, "token_sha256", os.getuid(), os.getgid(), 0o640)))
-    monkeypatch.setattr(core.os, "geteuid", lambda: core.ROOT_UID)
+    monkeypatch.setattr(core.os, "geteuid", lambda: 0)
 
     class Account:
         pw_uid = 1000
@@ -269,7 +269,7 @@ def test_legacy_resources_refresh_requires_pinned_archive_and_identical_material
     monkeypatch.setattr(core, "LEGACY_MATERIALIZED_RESOURCES_ARTIFACT_SHA256", digest)
     monkeypatch.setattr(core, "ROOT_UID", os.getuid())
     monkeypatch.setattr(core, "HERMES_HOME", tmp_path / "home")
-    monkeypatch.setattr(core.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(core.os, "geteuid", lambda: core.ROOT_UID)
     monkeypatch.setattr(native, "_read_artifact", lambda _archive, _digest:
                         (old_manifest, dict(members)))
     monkeypatch.setattr(native, "_canonical_json", lambda value:
