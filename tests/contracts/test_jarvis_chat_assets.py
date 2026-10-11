@@ -516,6 +516,105 @@ HELPER
             )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_overview_command_retains_draft_on_queue_failure_and_clears_only_after_queue(self):
+        _content_type, script = reviewed_client_bundle()
+        client = script.decode("utf-8")
+        feature_api = "function featureApi(feature, root) {" + client.split(
+            "function featureApi(feature, root) {", 1)[1].split(
+                "\n  function unmountFeature()", 1)[0]
+        sender = "async function sendMessage(text" + client.split(
+            "async function sendMessage(text", 1)[1].split(
+                "\n  function createIdempotencyKey()", 1)[0]
+        overview = next(feature for feature in FEATURE_ASSETS if feature.feature_id == "overview")
+        submit = "async function submitCommand(event) {" + overview.mount_js.split(
+            "async function submitCommand(event) {", 1)[1].split(
+                "\n  commandForm.addEventListener", 1)[0]
+        routes = json.dumps(
+            [{"method": method, "path": path} for method, path in overview.api_routes],
+            separators=(",", ":"),
+        )
+        harness = r'''const assert = require("node:assert/strict");
+const API = "/chat/api";
+let failQueue = true;
+const requests = [], views = [], errors = [];
+const selectedChoice = {modelId: "reviewed-model", reasoningEffort: "high"};
+const chatDraft = "A separate Chat draft";
+const assistantBody = {textContent: "", parentElement: {dataset: {}}, append(node) { this.waiting = node; }};
+const ui = {
+  connection: {dataset: {state: "ready"}},
+  input: {disabled: false, value: chatDraft, style: {}},
+  send: {disabled: false}
+};
+let observation = {textContent: ""};
+const commandInput = {value: "  retain this Overview draft  ", disabled: false};
+const submitButton = {disabled: false};
+const commandForm = {querySelector() { return submitButton; }};
+let stopped = false, activeTurnId = null, conversationId = "existing-conversation";
+function request(path, options) {
+  requests.push({path, options});
+  if (failQueue) return Promise.reject(new Error("simulated queue failure"));
+  return Promise.resolve({status: "queued", turnId: "queued-turn", heartbeatNonce: "nonce",
+    turnConfiguration: {state: "queued", modelId: selectedChoice.modelId}});
+}
+function currentTurnChoice() { return selectedChoice; }
+function clearError() {}
+function stopRecognition() {}
+function stopSpeech() {}
+function setAssistantState() {}
+function appendMessage() { return assistantBody; }
+function renderTurnModelControls() {}
+function showTurnConfiguration() {}
+function watchTurn() {}
+function refreshConversationsInBackground() {}
+function showError(message) { errors.push(message); }
+function showView(view) { views.push(view); return Promise.resolve(); }
+function createIdempotencyKey() { return "fixed-contract-key"; }
+function $(selector) {
+  assert.equal(selector, "[data-observation]");
+  return observation;
+}
+const document = {createElement() { return {className: "", textContent: ""}; }};
+const routes = FEATURE_ROUTES;
+FEATURE_API
+SENDER
+SUBMIT
+(async () => {
+  const api = featureApi({id: "overview", routes}, {});
+  const originalDraft = commandInput.value;
+  await submitCommand({preventDefault() {}});
+  assert.equal(commandInput.value, originalDraft);
+  assert.equal(observation.textContent,
+    "Command not sent. Your text remains here; try again or open Chat.");
+  assert.deepEqual(errors, ["simulated queue failure"]);
+  assert.deepEqual(views, ["chat"]);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].path, "/chat/api/conversations/existing-conversation/turns");
+  assert.deepEqual(JSON.parse(requests[0].options.body), {
+    text: originalDraft.trim(), modelId: "reviewed-model", reasoningEffort: "high"
+  });
+  assert.equal(ui.input.value, chatDraft);
+  assert.equal(ui.input.disabled, false);
+  assert.equal(submitButton.disabled, false);
+
+  failQueue = false;
+  observation.textContent = "";
+  await submitCommand({preventDefault() {}});
+  assert.equal(commandInput.value, "");
+  assert.equal(ui.input.value, chatDraft);
+  assert.equal(requests.length, 2);
+  assert.equal(JSON.parse(requests[1].options.body).modelId, "reviewed-model");
+  assert.equal(JSON.parse(requests[1].options.body).reasoningEffort, "high");
+  assert.equal(submitButton.disabled, false);
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+'''.replace("FEATURE_ROUTES", routes).replace("FEATURE_API", feature_api).replace("SENDER", sender).replace("SUBMIT", submit)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "overview-command-harness.js"
+            path.write_text(harness, encoding="utf-8")
+            result = subprocess.run(
+                ["node", str(path)], capture_output=True, text=True, check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_accepted_queued_turn_exposes_stop_until_terminal_cleanup(self):
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
         source = script.decode("utf-8")

@@ -610,7 +610,9 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       if (ui.connection.dataset.state !== "ready") throw new Error("The secure Jarvis connection is not ready. Try again after it reconnects.");
       if (activeTurnId || ui.input.disabled) throw new Error("Jarvis is already responding in this conversation. Continue in Chat or wait for the response to finish.");
       await showView("chat");
-      await sendMessage(text.trim());
+      const accepted = await sendMessage(text.trim());
+      if (!accepted) throw new Error("Jarvis could not safely queue this response.");
+      return true;
     };
     if (feature.id === "overview") api.newConversation = async () => {
       if (ui.connection.dataset.state !== "ready") throw new Error("The secure Jarvis connection is not ready. Try again after it reconnects.");
@@ -1549,6 +1551,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       status.textContent = error.message;
       assistantBody.append(status);
       showError(error.message);
+      return false;
     }
   }
   function createIdempotencyKey() {
