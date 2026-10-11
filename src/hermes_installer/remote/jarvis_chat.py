@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import logging
 import math
@@ -476,10 +477,13 @@ class JarvisChatService:
             raise ValueError("typed, current ingress principal resolver is required")
         self.store, self.backend = store, backend
         from .jarvis_activity import JarvisActivityStore
+        from .jarvis_files import JarvisFilesStore
         self.activity_store = JarvisActivityStore(store)
+        self.files_store = JarvisFilesStore(store)
         self._principal_from_request = principal_from_request
         self._workers: dict[str, asyncio.Task] = {}
         self._worker_lock = asyncio.Lock()
+        self._admission_lock = asyncio.Lock()
         self._resume_lock = asyncio.Lock()
 
     async def _ensure_current_runtime(self, request, principal: ChatPrincipal,
@@ -643,19 +647,12 @@ class JarvisChatService:
             if len(keys) != 1:
                 raise ValueError
             key = keys[0]
-            conversation = self.store.get_conversation(
-                principal.subject, request.match_info.get("conversation_id", ""))
-            conversation = await self._ensure_current_runtime(request, principal, conversation)
-            principal = self._current(request)
-            turn_id, nonce, conversation = self.store.begin_turn(
-                principal.subject, request.match_info.get("conversation_id", ""), body["text"], key, principal)
-            async with self._worker_lock:
-                task = asyncio.create_task(self._run(
-                    turn_id, conversation["backend_id"], body["text"], principal,
-                    request.match_info.get("conversation_id", "")))
-                self._workers[turn_id] = task
+            queued = await self.start_server_turn(
+                request, conversation_id=request.match_info.get("conversation_id", ""),
+                text=body["text"], idempotency_key=key)
             self._current(request)
-            return web.json_response({"turnId": turn_id, "status": "queued", "heartbeatNonce": nonce},
+            return web.json_response({"turnId": queued["turn_id"], "status": "queued",
+                                      "heartbeatNonce": queued["heartbeat_nonce"]},
                                      status=202, headers=_secure_headers())
         except web.HTTPException:
             raise
@@ -670,6 +667,53 @@ class JarvisChatService:
         except Exception:
             raise web.HTTPServiceUnavailable(text="chat unavailable", headers=_secure_headers()) from None
 
+    async def start_server_turn(self, request, *, conversation_id: str, text: str,
+                                idempotency_key: str, before_schedule=None,
+                                on_schedule_failure=None) -> dict[str, str]:
+        """Queue one protected turn from a trusted server feature, before any native submit.
+
+        ``before_schedule`` is an internal durable mapping hook, not an authorization source. It
+        runs after the owner-bound turn is reserved and before its worker can call ``prompt.submit``.
+        Any mapping/currentness failure terminalizes the reservation and never schedules a worker.
+        """
+        async with self._admission_lock:
+            principal = self._current(request)
+            conversation = self.store.get_conversation(principal.subject, conversation_id)
+            conversation = await self._ensure_current_runtime(request, principal, conversation)
+            principal = self._current(request)
+            turn_id, nonce, conversation = self.store.begin_turn(
+                principal.subject, conversation_id, text, idempotency_key, principal)
+            try:
+                if before_schedule is not None:
+                    if not callable(before_schedule):
+                        raise JarvisChatDenied("server turn mapping is invalid")
+                    outcome = before_schedule(turn_id)
+                    if inspect.isawaitable(outcome):
+                        await outcome
+                current = self._current(request)
+                if (current.subject != principal.subject
+                        or current.core_generation != principal.core_generation):
+                    raise JarvisChatDenied("protected core turn changed before scheduling")
+                async with self._worker_lock:
+                    task = asyncio.create_task(self._run(
+                        turn_id, conversation["backend_id"], text, principal, conversation_id))
+                    self._workers[turn_id] = task
+            except BaseException:
+                if on_schedule_failure is not None:
+                    try:
+                        if not callable(on_schedule_failure):
+                            raise JarvisChatDenied("server turn compensation is invalid")
+                        outcome = on_schedule_failure(turn_id)
+                        if inspect.isawaitable(outcome):
+                            await outcome
+                    except BaseException:
+                        # The turn still must not be scheduled; compensation is best effort and
+                        # must not replace the scheduling/currentness exception.
+                        pass
+                self.store.finish_turn(turn_id, "cancelled", error_code="server_turn_not_scheduled")
+                raise
+        return {"turn_id": turn_id, "status": "queued", "heartbeat_nonce": nonce}
+
     async def _run(self, turn_id: str, session_id: str, text: str,
                    activity_principal: ChatPrincipal | None = None,
                    conversation_id: str = ""):
@@ -681,6 +725,12 @@ class JarvisChatService:
             with self.store._connect() as db:
                 db.execute("UPDATE turns SET status='running',updated=? WHERE id=? AND status='queued'",
                            (_now(), turn_id))
+            if activity_principal is not None and conversation_id:
+                refs = self.files_store.claim_pending(
+                    subject=activity_principal.subject, conversation_id=conversation_id,
+                    turn_id=turn_id, core_generation=activity_principal.core_generation)
+                if refs:
+                    text = text + "\n\n" + "\n".join(refs)
             stream = self.backend.stream(session_id, text).__aiter__()
             next_delta = asyncio.create_task(stream.__anext__())
             terminal_received = False

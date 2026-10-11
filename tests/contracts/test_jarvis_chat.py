@@ -120,6 +120,64 @@ def test_two_active_turn_bound_and_one_turn_per_conversation(tmp_path):
     assert next_turn
 
 
+def test_server_turn_mapping_runs_before_worker_and_failure_compensates_without_submit(tmp_path):
+    store = JarvisChatStore(tmp_path / "chat.sqlite3")
+    conversation = new_conversation(store, "subject-a")
+    observed = []
+
+    class Backend:
+        async def resume_session(self, _stored):
+            raise AssertionError("current generation does not require resume")
+
+        def stream(self, _session_id, _text):
+            async def completed():
+                observed.append("submit")
+                yield SimpleNamespace(kind="complete")
+            return completed()
+
+        async def stop(self, _session_id):
+            pass
+
+    request = SimpleNamespace()
+    service = JarvisChatService(
+        store, Backend(), principal_from_request=lambda _request: principal("subject-a"))
+
+    async def exercise():
+        async def before(turn_id):
+            observed.append(("mapped", turn_id))
+
+        queued = await service.start_server_turn(
+            request, conversation_id=conversation["id"], text="server authored goal",
+            idempotency_key="server-request-key-00000001", before_schedule=before)
+        assert queued["turn_id"] == observed[0][1]
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert observed[0][0] == "mapped"
+        assert observed[1] == "submit"
+
+        failure_turn = None
+        def bind_then_fail(turn_id):
+            nonlocal failure_turn
+            failure_turn = turn_id
+            observed.append("bound-before-failure")
+            raise RuntimeError("mapping failure")
+
+        def compensate(turn_id):
+            assert turn_id == failure_turn
+            observed.append("compensated")
+
+        with pytest.raises(RuntimeError, match="mapping failure"):
+            await service.start_server_turn(
+                request, conversation_id=conversation["id"], text="another server goal",
+                idempotency_key="server-request-key-00000002", before_schedule=bind_then_fail,
+                on_schedule_failure=compensate)
+        assert observed[-2:] == ["bound-before-failure", "compensated"]
+        assert store.owned_turn("subject-a", failure_turn)["status"] == "cancelled"
+        assert observed.count("submit") == 1
+
+    asyncio.run(exercise())
+
+
 def test_heartbeat_nonce_is_owner_bound_single_use_and_expiring(tmp_path):
     store = JarvisChatStore(tmp_path / "chat.sqlite3")
     conversation = new_conversation(store, "subject-a")
