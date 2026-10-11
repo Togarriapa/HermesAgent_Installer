@@ -106,7 +106,7 @@ def test_owner_turn_registration_is_not_available_from_core_worker_socket(tmp_pa
 
 def test_mission_binding_roundtrips_only_the_root_sealed_typed_wire_shape():
     binding = MissionBinding(
-        schema=1, mission_id="mission-17", revision=3,
+        schema=1, mission_id="m" * 24, revision=3,
         plan_sha256="a" * 64, task_sha256="b" * 64,
         source_profile_id="orchestrator",
     )
@@ -114,3 +114,5 @@ def test_mission_binding_roundtrips_only_the_root_sealed_typed_wire_shape():
     assert _mission_binding_from_wire(binding.to_wire()) == binding
     with pytest.raises(CoreNativeObservationUnavailable):
         _mission_binding_from_wire({**binding.to_wire(), "owner_subject_sha256": "c" * 64})
+    with pytest.raises(CoreNativeObservationUnavailable):
+        _mission_binding_from_wire({**binding.to_wire(), "mission_id": "mission-17"})

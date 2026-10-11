@@ -333,7 +333,7 @@ def test_owner_turn_registration_uses_actual_rebound_session_and_final_prompt(tm
     with pytest.raises(JarvisChatDenied):
         service.owner_turn_handle_for(principal("subject-b"), turn_ids[0])
     assert sent == [("runtime-after-idle", final_first_prompt),
-                    ("runtime-after-idle", "ordinary chat remains available")]
+                    ("runtime-after-idle", final_second_prompt)]
     current = store.get_conversation("subject-a", conversation["id"])
     assert current["backend_id"] == "runtime-after-idle"
     assert current["session_key"] == initial["session_key"]
@@ -424,12 +424,18 @@ def test_mission_binding_is_captured_after_schedule_mapping_and_required_at_root
             await asyncio.sleep(0.01)
         assert store.owned_turn("subject-a", queued["turn_id"])["status"] == "failed"
 
-        missing = await service.start_server_turn(
-            Request(), conversation_id=conversation["id"], text="server mission prompt",
-            idempotency_key="mission-binding-required-key-01",
-            before_schedule=lambda _turn_id: None,
-            require_mission_binding=True, on_schedule_failure=lambda _turn_id: None)
-        assert store.owned_turn("subject-a", missing["turn_id"])["status"] == "cancelled"
+        missing_turn_ids = []
+        with pytest.raises(JarvisChatDenied, match="approved mission binding is unavailable"):
+            await service.start_server_turn(
+                Request(), conversation_id=conversation["id"], text="server mission prompt",
+                idempotency_key="mission-binding-required-key-01",
+                before_schedule=lambda _turn_id: None,
+                require_mission_binding=True,
+                on_schedule_failure=lambda turn_id: missing_turn_ids.append(turn_id))
+        assert len(missing_turn_ids) == 1
+        assert store.owned_turn("subject-a", missing_turn_ids[0])["status"] == "cancelled"
+        assert all(call["gateway_turn_id"] != missing_turn_ids[0] for call in registered)
+        assert submitted == []
 
         ordinary = await service.start_server_turn(
             Request(), conversation_id=conversation["id"], text="ordinary prompt",
