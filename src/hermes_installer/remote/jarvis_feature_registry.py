@@ -159,7 +159,8 @@ def install_jarvis_feature_routes(app, service) -> None:
                 raise ValueError("dashboard feature asset and installer routes differ")
             registered = {_route_shape((route.method, route.resource.canonical))
                           for route in app.router.routes()}
-            if declared & registered != _SHARED_INSTALLER_READS.get(feature_id, set()):
+            expected_existing_shared = _SHARED_INSTALLER_READS.get(feature_id, set()) & registered
+            if declared & registered != expected_existing_shared:
                 raise ValueError("feature reused an unreviewed shared route")
         else:
             owner, routes = owners[feature_id]
