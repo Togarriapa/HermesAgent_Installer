@@ -273,6 +273,13 @@ _CSS += """
 @media(prefers-reduced-motion:reduce){html[data-jarvis-motion="full"] [data-feature-root="overview"] .overview-stage[data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"]) .reactor-orbit-inner{animation:jarvis-reactor-turn 22s linear infinite!important}html[data-jarvis-motion="full"] [data-feature-root="overview"] .overview-stage[data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"]) .reactor-dial{animation:jarvis-reactor-reverse 36s linear infinite!important}}
 [data-feature-root="overview"][data-stale="true"] .overview-stage .reactor-orbit-outer{stroke:#dbb66f;opacity:.45}
 html[data-jarvis-motion="reduce"] [data-feature-root="overview"] .reactor-dial,html[data-jarvis-motion="reduce"] [data-feature-root="overview"] .reactor-orbit-inner,html[data-jarvis-motion="reduce"] [data-feature-root="overview"] .reactor-orbit-outer{animation:none!important;transform:none!important}
+/* A fresh response is necessary, but it is not sufficient while hidden/offline. */
+html:not([data-page-visible="true"]) [data-feature-root="overview"] .overview-stage .reactor-dial,
+html:not([data-page-visible="true"]) [data-feature-root="overview"] .overview-stage .reactor-orbit,
+[data-feature-root="overview"]:not([data-network-online="true"]) .overview-stage .reactor-dial,
+[data-feature-root="overview"]:not([data-network-online="true"]) .overview-stage .reactor-orbit{animation:none!important;transform:none!important}
+@media(prefers-reduced-motion:reduce){html[data-jarvis-motion="full"]:not([data-page-visible="true"]) [data-feature-root="overview"] .overview-stage[data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"]) .reactor-dial,html[data-jarvis-motion="full"]:not([data-page-visible="true"]) [data-feature-root="overview"] .overview-stage[data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"]) .reactor-orbit{animation:none!important;transform:none!important}}
+@media(prefers-reduced-motion:reduce){html[data-jarvis-motion="full"] [data-feature-root="overview"]:not([data-network-online="true"]) .overview-stage[data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"]) .reactor-dial,html[data-jarvis-motion="full"] [data-feature-root="overview"]:not([data-network-online="true"]) .overview-stage[data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"]) .reactor-orbit{animation:none!important;transform:none!important}}
 """
 
 _MOUNT = r"""function mount(container, api) {
@@ -284,6 +291,9 @@ _MOUNT = r"""function mount(container, api) {
   let coreFreshnessTimer = null;
   let coreFreshUntil = 0;
   let lastCoreObservedAt = null;
+  let refreshGeneration = 0;
+  root.dataset.pageVisible = String(document.visibilityState === 'visible');
+  root.dataset.networkOnline = 'checking';
   function node(tag, value) { const item = document.createElement(tag); item.textContent = value; return item; }
   function number(value) { return Number.isSafeInteger(value) && value >= 0 ? value : null; }
   function format(value) { return value === null ? 'Unknown' : value.toLocaleString(); }
@@ -321,7 +331,7 @@ _MOUNT = r"""function mount(container, api) {
       ? 'Service observation unverified' : active === null
       ? 'Current activity unavailable' : active === 1 ? 'Accepted turn in progress' : 'Accepted turns in progress';
   }
-  function markCoreStale() {
+  function markCoreStale(reason = 'stale') {
     if (stopped) return;
     if (coreFreshnessTimer !== null) clearTimeout(coreFreshnessTimer);
     coreFreshnessTimer = null;
@@ -331,11 +341,16 @@ _MOUNT = r"""function mount(container, api) {
     const stage = $('.overview-stage');
     stage.dataset.coreState = 'unverified';
     stage.dataset.activity = 'unknown';
-    $('[data-core-status]').textContent = 'Last service observation is stale';
+    $('[data-core-status]').textContent = reason === 'offline' ? 'Offline · service status unverified'
+      : reason === 'hidden' ? 'Dashboard paused · service status unverified'
+      : 'Last service observation is stale';
     $('[data-core-readiness]').textContent = 'Current service readiness is unverified.';
-    $('[data-core-observed]').textContent = `Observed ${time(lastCoreObservedAt)} · stale`;
-    $('[data-reactor-state]').textContent = 'Service observation is stale; current activity is unverified.';
-    $('[data-reactor-active-label]').textContent = 'Service observation stale';
+    $('[data-core-observed]').textContent = `Observed ${time(lastCoreObservedAt)} · ${reason === 'offline' ? 'offline' : reason === 'hidden' ? 'paused' : 'stale'}`;
+    $('[data-reactor-state]').textContent = reason === 'offline' ? 'Device is offline; service activity is unverified.'
+      : reason === 'hidden' ? 'Dashboard paused while this page was hidden.'
+      : 'Service observation is stale; current activity is unverified.';
+    $('[data-reactor-active-label]').textContent = reason === 'offline' ? 'Offline · unverified'
+      : reason === 'hidden' ? 'Paused while hidden' : 'Service observation stale';
   }
   function recheckCoreFreshness() {
     if (coreFreshUntil && Date.now() >= coreFreshUntil) markCoreStale();
@@ -403,11 +418,26 @@ _MOUNT = r"""function mount(container, api) {
   }
   async function refresh() {
     if (stopped) return;
+    if (document.visibilityState !== 'visible' || navigator.onLine === false) {
+      root.dataset.networkOnline = 'false';
+      markCoreStale(navigator.onLine === false ? 'offline' : 'hidden');
+      return;
+    }
     refreshButton.disabled = true;
+    const generation = ++refreshGeneration;
     $('[data-observation]').textContent = 'Refreshing measured owner data…';
-    try { const data = await api.get('/chat/api/overview'); if (!stopped) render(data); }
+    try {
+      const data = await api.get('/chat/api/overview');
+      if (!stopped && generation === refreshGeneration && document.visibilityState === 'visible' && navigator.onLine !== false) {
+        root.dataset.networkOnline = 'true';
+        render(data);
+      } else if (!stopped && generation === refreshGeneration) {
+        root.dataset.networkOnline = 'false';
+        markCoreStale(navigator.onLine === false ? 'offline' : 'hidden');
+      }
+    }
     catch (_error) {
-      if (!stopped) {
+      if (!stopped && generation === refreshGeneration) {
         root.dataset.stale = 'true';
         markCoreStale();
         $('[data-observation]').textContent = lastObservation
@@ -415,7 +445,7 @@ _MOUNT = r"""function mount(container, api) {
           : 'Current measured owner data is unavailable; no earlier observation is cached.';
       }
     }
-    finally { refreshButton.disabled = false; }
+    finally { if (generation === refreshGeneration) refreshButton.disabled = false; }
   }
   const commandForm = $('[data-command-form]');
   const commandInput = $('#command-input');
@@ -459,9 +489,35 @@ _MOUNT = r"""function mount(container, api) {
   commandInput.addEventListener('input',() => {
     commandInput.style.height='auto'; commandInput.style.height=`${Math.min(commandInput.scrollHeight,144)}px`;
   });
+  function onVisibilityChange() {
+    refreshGeneration += 1;
+    root.dataset.pageVisible = String(document.visibilityState === 'visible');
+    if (document.visibilityState !== 'visible') {
+      root.dataset.networkOnline = 'false';
+      markCoreStale('hidden');
+    } else if (navigator.onLine === false) {
+      root.dataset.networkOnline = 'false';
+      markCoreStale('offline');
+    } else {
+      root.dataset.networkOnline = 'checking';
+      refresh();
+    }
+  }
+  function onNetworkChange() {
+    refreshGeneration += 1;
+    if (navigator.onLine === false) {
+      root.dataset.networkOnline = 'false';
+      markCoreStale('offline');
+    } else {
+      root.dataset.networkOnline = 'checking';
+      if (document.visibilityState === 'visible') refresh();
+    }
+  }
   refreshButton.addEventListener('click',refresh); refresh();
-  document.addEventListener('visibilitychange',recheckCoreFreshness);
-  return function cleanup() { stopped=true; if (coreFreshnessTimer !== null) clearTimeout(coreFreshnessTimer); refreshButton.disabled=false; commandForm.querySelector('button[type="submit"]').disabled=false; commandInput.disabled=false; newConversation.disabled=false; refreshButton.removeEventListener('click',refresh); commandForm.removeEventListener('submit',submitCommand); newConversation.removeEventListener('click',startNewConversation); document.removeEventListener('visibilitychange',recheckCoreFreshness); for (const button of promptButtons) button.removeEventListener('click',promptHandlers.get(button)); };
+  document.addEventListener('visibilitychange',onVisibilityChange);
+  window.addEventListener('offline',onNetworkChange);
+  window.addEventListener('online',onNetworkChange);
+  return function cleanup() { stopped=true; if (coreFreshnessTimer !== null) clearTimeout(coreFreshnessTimer); refreshButton.disabled=false; commandForm.querySelector('button[type="submit"]').disabled=false; commandInput.disabled=false; newConversation.disabled=false; refreshButton.removeEventListener('click',refresh); commandForm.removeEventListener('submit',submitCommand); newConversation.removeEventListener('click',startNewConversation); document.removeEventListener('visibilitychange',onVisibilityChange); window.removeEventListener('offline',onNetworkChange); window.removeEventListener('online',onNetworkChange); for (const button of promptButtons) button.removeEventListener('click',promptHandlers.get(button)); };
 }"""
 
 _UNMOUNT = "function unmount() {}"

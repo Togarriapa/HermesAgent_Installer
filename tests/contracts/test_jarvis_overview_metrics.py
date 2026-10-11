@@ -179,3 +179,21 @@ def test_overview_presence_is_gated_by_fresh_core_witness():
     assert '.overview-stage[data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"])' in css
     assert '[data-feature-root="overview"][data-stale="true"] .overview-stage .reactor-dial' in css
     assert '[data-feature-root="overview"] .quick-actions{display:flex;flex-wrap:wrap;overflow:visible' in css
+
+
+def test_overview_presence_stops_when_hidden_or_offline_until_fresh_readback():
+    css = FEATURE_ASSETS.css
+    js = FEATURE_ASSETS.mount_js
+
+    assert '[data-feature-root="overview"]:not([data-network-online="true"]) .overview-stage .reactor-orbit' in css
+    assert 'html:not([data-page-visible="true"]) [data-feature-root="overview"] .overview-stage .reactor-orbit' in css
+    assert "root.dataset.pageVisible = String(document.visibilityState === 'visible')" in js
+    assert "document.addEventListener('visibilitychange',onVisibilityChange)" in js
+    assert "window.addEventListener('offline',onNetworkChange)" in js
+    assert "window.addEventListener('online',onNetworkChange)" in js
+    assert "root.dataset.networkOnline = 'checking'" in js
+    assert "refreshGeneration += 1" in js
+    assert "generation === refreshGeneration && document.visibilityState === 'visible' && navigator.onLine !== false" in js
+    assert js.index("const data = await api.get('/chat/api/overview')") < js.index("root.dataset.networkOnline = 'true';", js.index("const data = await api.get('/chat/api/overview')"))
+    assert "markCoreStale('hidden')" in js
+    assert "markCoreStale('offline')" in js
