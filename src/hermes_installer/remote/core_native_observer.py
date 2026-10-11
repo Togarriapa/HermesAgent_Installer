@@ -566,6 +566,17 @@ class RootCoreNativeObservationRegistry:
         if self._closed:
             raise CoreNativeObservationUnavailable("root observer registry is closed")
 
+    def _prune(self, now: float) -> None:
+        for handle, row in list(self._attempts.items()):
+            if row["expiry"] <= now:
+                self._attempts.pop(handle, None)
+        for handle, row in list(self._calls.items()):
+            if row["expiry"] <= now:
+                self._calls.pop(handle, None)
+        for handle, row in list(self._claims.items()):
+            if row["expiry"] <= now:
+                self._claims.pop(handle, None)
+
     def _owner_for(self, session_id: str, turn_id: str) -> Any:
         now = time.monotonic()
         for handle, owner in list(self._owners.items()):
@@ -594,6 +605,7 @@ class RootCoreNativeObservationRegistry:
             raise ValueError("invalid observer request")
         with self._lock:
             self._ensure_open()
+            self._prune(time.monotonic())
             if op == "register-attempt":
                 required = {"schema", "op", "nonce", "session_id", "turn_id", "api_request_id",
                             "provider", "model", "base_url", "api_mode", "account_fingerprint",
@@ -616,6 +628,8 @@ class RootCoreNativeObservationRegistry:
                         or "delegate_task" not in request["parent_tool_names"]):
                     raise ValueError("attempt is not an enrolled current subscription turn")
                 handle = secrets.token_urlsafe(32)
+                if len(self._attempts) >= 2048:
+                    raise ValueError("native attempt registry is full")
                 expiry = min(float(owner.expires_monotonic), time.monotonic() + 30.0)
                 self._attempts[handle] = {"owner": owner, "session_id": request["session_id"],
                     "turn_id": request["turn_id"], "api_request_id": request["api_request_id"],
@@ -652,6 +666,8 @@ class RootCoreNativeObservationRegistry:
                         or not _ID.fullmatch(returned["name"])):
                     raise ValueError("tool call differs from consumed provider output")
                 call_handle = secrets.token_urlsafe(32)
+                if len(self._calls) >= 2048:
+                    raise ValueError("native call registry is full")
                 self._calls[call_handle] = {"owner": row["owner"], "attempt": request["attempt_handle"],
                     "handle": call_handle, "attempt_session_id": row["session_id"],
                     "attempt_turn_id": row["turn_id"],
@@ -677,6 +693,8 @@ class RootCoreNativeObservationRegistry:
                         or source.profile_privacy_requirements):
                     raise ValueError("selected profile or native call is unavailable")
                 claim_handle = secrets.token_urlsafe(32)
+                if len(self._claims) >= 2048:
+                    raise ValueError("dispatch claim registry is full")
                 call["claim"] = claim_handle
                 self._claims[claim_handle] = {"call": call,
                     "owner": call["owner"], "expiry": min(call["expiry"], float(source.expires_monotonic))}
