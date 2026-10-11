@@ -1011,7 +1011,8 @@ class JarvisChatService:
     async def start_server_turn(self, request, *, conversation_id: str, text: str,
                                 idempotency_key: str, before_schedule=None,
                                 on_schedule_failure=None,
-                                mission_binding: Any | None = None) -> dict[str, str]:
+                                mission_binding: Any | None = None,
+                                require_mission_binding: bool = False) -> dict[str, str]:
         """Queue one protected turn from a trusted server feature, before any native submit.
 
         ``before_schedule`` is an internal durable mapping hook, not an authorization source. It
@@ -1019,6 +1020,8 @@ class JarvisChatService:
         Any mapping/currentness failure terminalizes the reservation and never schedules a worker.
         """
         mission_binding = self._normalize_mission_binding(mission_binding)
+        if type(require_mission_binding) is not bool:
+            raise JarvisChatDenied("mission binding requirement is invalid")
         async with self._admission_lock:
             principal = self._current(request)
             conversation = self.store.get_conversation(principal.subject, conversation_id)
@@ -1027,7 +1030,7 @@ class JarvisChatService:
             turn_id, nonce, conversation = self.store.begin_turn(
                 principal.subject, conversation_id, text, idempotency_key, principal)
             try:
-                if mission_binding is not None and before_schedule is None:
+                if (require_mission_binding or mission_binding is not None) and before_schedule is None:
                     raise JarvisChatDenied("mission intent must be bound before scheduling")
                 if before_schedule is not None:
                     if not callable(before_schedule):
@@ -1040,6 +1043,8 @@ class JarvisChatService:
                         if mission_binding is not None and outcome != mission_binding:
                             raise JarvisChatDenied("mission turn binding changed before scheduling")
                         mission_binding = outcome
+                if require_mission_binding and mission_binding is None:
+                    raise JarvisChatDenied("approved mission binding is unavailable")
                 if mission_binding is not None:
                     if self._owner_turn_register is None:
                         raise JarvisChatDenied("mission owner-turn verification is unavailable")
@@ -1057,7 +1062,8 @@ class JarvisChatService:
                     task = asyncio.create_task(self._run(
                         turn_id, conversation["backend_id"], text, principal, conversation_id,
                         stored_session_id=conversation["session_key"],
-                        owner_turn_context=owner_turn_context))
+                        owner_turn_context=owner_turn_context,
+                        require_mission_binding=require_mission_binding))
                     self._workers[turn_id] = task
             except BaseException:
                 if on_schedule_failure is not None:
@@ -1078,7 +1084,8 @@ class JarvisChatService:
     async def _run(self, turn_id: str, session_id: str, text: str,
                    activity_principal: ChatPrincipal | None = None,
                    conversation_id: str = "", *, stored_session_id: str = "",
-                   owner_turn_context: tuple[str, Any, Any | None] | None = None):
+                   owner_turn_context: tuple[str, Any, Any | None] | None = None,
+                   require_mission_binding: bool = False):
         total = 0
         next_delta: asyncio.Task | None = None
         stream = None
@@ -1094,6 +1101,12 @@ class JarvisChatService:
                 if refs:
                     text = text + "\n\n" + "\n".join(refs)
             resume_stream = getattr(self.backend, "stream_owned_turn", None)
+            if require_mission_binding and not callable(resume_stream):
+                raise JarvisChatDenied("owned mission turn adapter is unavailable")
+            if require_mission_binding and (owner_turn_context is None
+                                            or owner_turn_context[2] is None
+                                            or self._owner_turn_register is None):
+                raise JarvisChatDenied("mission owner-turn verification is unavailable")
             if callable(resume_stream):
                 if (activity_principal is None or not conversation_id
                         or not _valid_core_session_id(stored_session_id)):

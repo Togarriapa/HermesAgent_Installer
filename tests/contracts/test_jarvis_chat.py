@@ -424,6 +424,13 @@ def test_mission_binding_is_captured_after_schedule_mapping_and_required_at_root
             await asyncio.sleep(0.01)
         assert store.owned_turn("subject-a", queued["turn_id"])["status"] == "failed"
 
+        missing = await service.start_server_turn(
+            Request(), conversation_id=conversation["id"], text="server mission prompt",
+            idempotency_key="mission-binding-required-key-01",
+            before_schedule=lambda _turn_id: None,
+            require_mission_binding=True, on_schedule_failure=lambda _turn_id: None)
+        assert store.owned_turn("subject-a", missing["turn_id"])["status"] == "cancelled"
+
         ordinary = await service.start_server_turn(
             Request(), conversation_id=conversation["id"], text="ordinary prompt",
             idempotency_key="mission-binding-ordinary-key-01")
