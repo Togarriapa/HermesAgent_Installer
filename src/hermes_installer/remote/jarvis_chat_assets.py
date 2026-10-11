@@ -448,6 +448,25 @@ _CSS += b'''/* Direct destinations; configuration remains one compact Manage men
 @media(prefers-reduced-motion:reduce){html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-orbit-inner{animation:presence-turn 22s linear infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-orbit-dial{animation:reactor-dial-turn 36s linear infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-core{animation:reactor-core-breathe 5s ease-in-out infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="thinking"] .presence-orbit-inner{animation:presence-turn 18s linear infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="thinking"] .presence-orbit-reactor{animation:presence-turn 14s linear infinite reverse!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="listening"] .presence-orbit-outer{animation:reactor-listening 1.7s ease-in-out infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="speaking"] .presence-orbit-reactor{animation:presence-turn 12s linear infinite!important}html[data-jarvis-motion="full"][data-page-visible="true"] .assistant-hud[data-state="idle"] .orb-halo{animation:jarvis-halo-breathe 5.5s ease-in-out infinite!important}html[data-jarvis-motion="full"][data-page-visible="true"] .assistant-hud[data-state="listening"] .orb-halo{animation:jarvis-halo-breathe 1.7s ease-in-out infinite!important}html[data-jarvis-motion="full"][data-page-visible="true"] .assistant-hud[data-state="speaking"] .orb-ring{animation:presence-turn 12s linear infinite!important}}
 '''
 
+_CSS += b'''
+/* Target sizes verified by the Pi phone/tablet/desktop render probe. */
+#jarvis-home,#history-toggle,#message-input,.conversation-item{min-height:44px}
+#history-toggle{min-width:44px}
+html[data-jarvis-motion="reduce"] *,html[data-jarvis-motion="reduce"] *::before,html[data-jarvis-motion="reduce"] *::after{transition-duration:0s!important}
+@media(prefers-reduced-motion:reduce){html:not([data-jarvis-motion="full"]) *,html:not([data-jarvis-motion="full"]) *::before,html:not([data-jarvis-motion="full"]) *::after{transition-duration:0s!important}}
+/* Keep every mobile section reachable without clipping its popup or shrinking its target. */
+@media(max-width:760px){
+  /* A filtered header traps fixed descendants inside its short box. */
+  .topbar{backdrop-filter:none;-webkit-backdrop-filter:none}
+  .primary-nav{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));grid-template-rows:1fr;align-items:stretch;justify-content:stretch;overflow:visible;overflow-x:visible;overflow-y:visible;overscroll-behavior-inline:auto;scroll-snap-type:none}
+  .nav-group{position:static;min-width:0;flex:none}
+  .nav-group>summary{width:100%;min-width:0;height:100%;min-height:46px;justify-content:center;gap:3px;padding-inline:3px;font-size:clamp(8px,2.1vw,8.5px);line-height:1.05;letter-spacing:-.025em;text-align:center;white-space:normal;overflow-wrap:anywhere}
+  .nav-group>summary:after{flex:0 0 5px}
+  .nav-menu,.nav-group:nth-last-child(-n+2) .nav-menu{position:absolute;inset:auto 0 calc(100% + 12px);width:auto;min-width:0;max-width:none;max-height:min(64dvh,520px)}
+  .voice-choice{width:100%;min-height:44px}
+}
+'''
+
 
 _JS = r'''/* Browser client is text-first with optional, explicitly enabled browser voice. */
 (() => {
