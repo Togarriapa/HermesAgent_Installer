@@ -189,7 +189,7 @@ def run_native_child(*, child: Any, parent_agent: Any, goal: str,
         parent_turn_id = getattr(parent_agent, "_current_turn_id")
     except (AttributeError, TypeError, ValueError):
         raise NativeChildDenied("native child lineage is incomplete") from None
-        if (child is None or not names.issubset(expected_names)
+    if (child is None or not names.issubset(expected_names)
             or names != frozenset(getattr(child, "_jarvis_native_child_tool_names", ()))
             or not isinstance(child_session_id, str) or not child_session_id
             or not isinstance(parent_session_id, str) or not parent_session_id
