@@ -568,6 +568,9 @@ class ManualStageGatewayTests(unittest.TestCase):
                 mock.patch.object(sessions, "_verify_xpra_current") as inspect, \
                 mock.patch("hermes_installer.remote.manual_stage._StageHTTPConnector", return_value=fake_connector) as create:
             admission = sessions.admit(access_jwt="fixture-token", action="asset-read", route_id="xpra-http")
+            record = sessions._records[admission.handle]
+            self.assertEqual(record.last_edge_check, 100.0)
+            self.assertEqual(record.last_inspection_check, 100.0)
             inspect.assert_called_once()
             self.assertIs(connector.open(admission.handle), fake_connector)
             # Opening the connector relies on the exact admission witness; it
@@ -596,6 +599,78 @@ class ManualStageGatewayTests(unittest.TestCase):
                 with self.assertRaises(ManualStageDenied):
                     connector.open(admission.handle)
             create.assert_not_called()
+
+    def test_admission_denies_if_queued_inspection_outlives_edge_or_root_witness(self):
+        principal = Principal("owner@example.net", "subject", time.time() + 120, "f" * 64)
+        clock = [100.0]
+        sessions = StageGatewayPolicySessionAdapter(self.config, self.verifier)
+        sessions.monotonic = lambda: clock[0]
+
+        def slow_inspection(**_kwargs):
+            # Simulate time spent waiting for the global inspector queue. The
+            # edge witness was completed before this wait and must not be
+            # restamped when the queued inspection returns.
+            clock[0] = 105.01
+
+        with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
+                mock.patch.object(self.verifier, "verify", return_value=(principal, 130.0, 140.0)), \
+                mock.patch.object(sessions, "_verify_xpra_current", side_effect=slow_inspection):
+            with self.assertRaises(ManualStageDenied):
+                sessions.admit(access_jwt="fixture-token", action="asset-read", route_id="xpra-http")
+        self.assertEqual(sessions._records, {})
+
+    def test_watchdog_inspection_timestamp_is_conservative_and_slow_check_closes(self):
+        principal = Principal("owner@example.net", "subject", time.time() + 120, "f" * 64)
+        clock = [100.0]
+        sessions = StageGatewayPolicySessionAdapter(self.config, self.verifier)
+        sessions.monotonic = lambda: clock[0]
+        with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
+                mock.patch.object(self.verifier, "verify", return_value=(principal, 130.0, 140.0)), \
+                mock.patch.object(sessions, "_verify_xpra_current"):
+            admission = sessions.admit(access_jwt="fixture-token", action="websocket-attach",
+                                       route_id="xpra-websocket")
+        clock[0] = 102.0
+        with mock.patch.object(sessions, "_verify_xpra_current", side_effect=lambda **_kw: clock.__setitem__(0, 102.25)):
+            sessions.refresh_active_inspection(admission.handle)
+        self.assertEqual(sessions._records[admission.handle].last_inspection_check, 102.0)
+
+        clock[0] = 103.0
+        with mock.patch.object(sessions, "_verify_xpra_current", side_effect=lambda **_kw: clock.__setitem__(0, 108.01)):
+            with self.assertRaises(ManualStageDenied):
+                sessions.refresh_active_inspection(admission.handle)
+        with self.assertRaises(ManualStageDenied):
+            sessions.current(admission.handle)
+
+    def test_renewal_binds_edge_and_inspection_times_before_inspector_queue(self):
+        principal = Principal("owner@example.net", "subject", time.time() + 120, "f" * 64)
+        clock = [200.0]
+        sessions = StageGatewayPolicySessionAdapter(self.config, self.verifier)
+        sessions.monotonic = lambda: clock[0]
+        with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
+                mock.patch.object(self.verifier, "verify", return_value=(principal, 230.0, 240.0)), \
+                mock.patch.object(sessions, "_verify_xpra_current"):
+            admission = sessions.admit(access_jwt="fixture-token", action="websocket-attach",
+                                       route_id="xpra-websocket")
+        clock[0] = 201.0
+        challenge = sessions.challenge(admission.handle)
+        with mock.patch.object(self.verifier, "verify", return_value=(principal, 230.0, 240.0)), \
+                mock.patch.object(sessions, "_verify_xpra_current", side_effect=lambda **_kw: clock.__setitem__(0, 201.25)):
+            sessions.renew(handle=admission.handle, session_id=admission.session_id,
+                           access_jwt="fixture-token", renewal_nonce=challenge.renewal_nonce)
+        record = sessions._records[admission.handle]
+        self.assertEqual(record.last_edge_check, 201.0)
+        self.assertEqual(record.last_inspection_check, 201.0)
+        self.assertEqual(record.admission.policy_verified_monotonic, 201.0)
+
+        clock[0] = 202.0
+        challenge = sessions.challenge(admission.handle)
+        with mock.patch.object(self.verifier, "verify", return_value=(principal, 230.0, 240.0)), \
+                mock.patch.object(sessions, "_verify_xpra_current", side_effect=lambda **_kw: clock.__setitem__(0, 207.01)):
+            with self.assertRaises(ManualStageDenied):
+                sessions.renew(handle=admission.handle, session_id=admission.session_id,
+                               access_jwt="fixture-token", renewal_nonce=challenge.renewal_nonce)
+        with self.assertRaises(ManualStageDenied):
+            sessions.current(admission.handle)
 
     def test_active_edge_watchdog_rechecks_and_closes_revoked_session(self):
         from hermes_installer.remote.gateway import validate_access_jwt

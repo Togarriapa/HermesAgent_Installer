@@ -408,8 +408,13 @@ class StageGatewayPolicySessionAdapter:
         _read_config_current(self.config)
         sid = secrets.token_urlsafe(24)
         principal, expiry, jwt_deadline = self.verifier.verify(access_jwt, action=action, session_id=sid)
+        edge_finished = self.monotonic()
+        inspection_started = self.monotonic()
         self._verify_xpra_current()
         now = self.monotonic()
+        if (now - edge_finished > MAX_PROBE_SECONDS
+                or now - inspection_started > MAX_PROBE_SECONDS):
+            raise ManualStageDenied("manual-stage admission proof expired while waiting for current-state checks")
         with self._lock:
             self._purge(now)
             if expected_kind == "leased-websocket" and sum(
@@ -419,10 +424,10 @@ class StageGatewayPolicySessionAdapter:
             admission = StageGatewayAdmission(
                 handle, sid, expected_kind, hashlib.sha256((principal.email + "\0" + principal.subject).encode()).hexdigest(),
                 PROFILE, "manual-stage", "manual-stage-xpra", route_id, now, expiry,
-                jwt_deadline, now, "manual-edge-probe-v1", self.config.config_sha256)
+                jwt_deadline, edge_finished, "manual-edge-probe-v1", self.config.config_sha256)
             # Existing browser code renews every 25 seconds; leave a small
             # scheduling margin while keeping the grant itself at <=30s.
-            record = _StageRecord(admission, principal, access_jwt, now, now,
+            record = _StageRecord(admission, principal, access_jwt, edge_finished, inspection_started,
                                   challenge_expiry=min(expiry, now + 29))
             self._records[handle] = record
             return admission
@@ -449,7 +454,12 @@ class StageGatewayPolicySessionAdapter:
             if (principal.subject != record.principal.subject or principal.email != record.principal.email
                     or expiry <= self.monotonic()):
                 raise ManualStageDenied("fresh Access edge renewal changed principal or expired")
+            edge_finished = self.monotonic()
+            inspection_started = self.monotonic()
             self._verify_xpra_current()
+            if (self.monotonic() - edge_finished > MAX_PROBE_SECONDS
+                    or self.monotonic() - inspection_started > MAX_PROBE_SECONDS):
+                raise ManualStageDenied("manual-stage renewal proof expired while waiting for current-state checks")
         except Exception:
             self.close(handle, session_id=session_id)
             raise ManualStageDenied("fresh Access edge renewal was denied") from None
@@ -458,8 +468,8 @@ class StageGatewayPolicySessionAdapter:
             now = self.monotonic()
             current.principal = principal
             current.access_jwt = access_jwt
-            current.last_edge_check = now
-            current.last_inspection_check = now
+            current.last_edge_check = edge_finished
+            current.last_inspection_check = inspection_started
             current.challenge = secrets.token_urlsafe(32)
             current.challenge_expiry = min(expiry, now + 29)
             current.admission = StageGatewayAdmission(
@@ -467,7 +477,7 @@ class StageGatewayPolicySessionAdapter:
                 current.admission.principal_binding_id, current.admission.profile_id,
                 current.admission.gateway_generation, current.admission.desktop_generation,
                 current.admission.route_id, current.admission.issued_monotonic,
-                min(expiry, now + MAX_LEASE_SECONDS), jwt_deadline, now,
+                min(expiry, now + MAX_LEASE_SECONDS), jwt_deadline, edge_finished,
                 "manual-edge-probe-v1", self.config.config_sha256)
             return current.admission.lease_expires_monotonic
 
@@ -501,6 +511,7 @@ class StageGatewayPolicySessionAdapter:
         try:
             principal, _lease, _jwt_deadline = self.verifier.verify(
                 token, action="renew", session_id=session_id, probe_budget_seconds=2.5)
+            edge_finished = self.monotonic()
             if principal.subject != principal_before.subject or principal.email != principal_before.email:
                 raise ManualStageDenied("fresh Access edge check changed the active principal")
         except Exception:
@@ -510,7 +521,7 @@ class StageGatewayPolicySessionAdapter:
             current = self._current(handle)
             if current is not record:
                 raise ManualStageDenied("active Access session changed during edge check")
-            current.last_edge_check = self.monotonic()
+            current.last_edge_check = edge_finished
 
     def refresh_active_inspection(self, handle: Any) -> None:
         with self._lock:
@@ -518,12 +529,17 @@ class StageGatewayPolicySessionAdapter:
         # The WebSocket watchdog has a three-second overall budget.  Keep its
         # wait behind concurrent admissions bounded well below that budget.
         from .manual_stage_inspector import WATCHDOG_INSPECTION_QUEUE_WAIT_SECONDS
+        inspection_started = self.monotonic()
         self._verify_xpra_current(queue_timeout_seconds=WATCHDOG_INSPECTION_QUEUE_WAIT_SECONDS)
+        inspected_at = self.monotonic()
+        if inspected_at - inspection_started > MAX_PROBE_SECONDS:
+            self.close(handle, session_id=record.admission.session_id)
+            raise ManualStageDenied("fresh root Xpra inspection exceeded its proof lifetime")
         with self._lock:
             current = self._current(handle)
             if current is not record:
                 raise ManualStageDenied("active Xpra stage changed during root inspection")
-            current.last_inspection_check = self.monotonic()
+            current.last_inspection_check = inspection_started
 
     def _current(self, handle: Any) -> _StageRecord:
         record = self._records.get(handle)
