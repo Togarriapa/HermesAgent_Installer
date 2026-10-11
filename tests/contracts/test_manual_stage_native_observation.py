@@ -97,5 +97,36 @@ class NativeObservationProducerTests(unittest.TestCase):
             self.assertIsNone(inspector._NATIVE_OBSERVATION_SNAPSHOT)
         self.assertGreater(old["expires_monotonic"], old["issued_monotonic"])
 
+    def test_watchdog_margin_forces_genuine_refresh_then_shares_fresh_lease(self):
+        key = ("1" * 64, 456, self.config.boot_id)
+        clock = [2.1]
+        starting_snapshot = {
+            "key": key, "config_sha256": self.config.config_sha256,
+            "boot_id": self.config.boot_id, "native_observation_sha256": "a" * 64,
+            "issued_monotonic": 0.0, "expires_monotonic": 5.0,
+        }
+        with inspector._NATIVE_OBSERVATION_CONDITION:
+            inspector._NATIVE_OBSERVATION_SNAPSHOT = dict(starting_snapshot)
+        scans = []
+        def fullscan(_config, *, nonce):
+            issued = clock[0]
+            scans.append(nonce)
+            return {"schema": 1, "nonce": nonce, "proof_sha256": f"{len(scans):064x}",
+                "boot_id": self.config.boot_id, "issued_monotonic": issued,
+                "expires_monotonic": issued + 5.0}
+        patches = self._patch_runtime(lambda: key)
+        with mock.patch.object(inspector.time, "monotonic", side_effect=lambda: clock[0]), \
+             patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], \
+             mock.patch.object(inspector, "observe_stage", side_effect=fullscan):
+            refreshed = self._observe("1" * 64)
+            self.assertEqual(refreshed["issued_monotonic"], 2.1)
+            self.assertEqual(refreshed["expires_monotonic"], 7.1)
+            clock[0] = 2.2
+            joined = self._observe("2" * 64)
+        self.assertEqual(len(scans), 1)
+        self.assertEqual(joined["issued_monotonic"], refreshed["issued_monotonic"])
+        self.assertEqual(joined["expires_monotonic"], refreshed["expires_monotonic"])
+        self.assertNotEqual(joined["nonce"], refreshed["nonce"])
+
 if __name__ == "__main__":
     unittest.main()

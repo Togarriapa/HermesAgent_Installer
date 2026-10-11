@@ -54,7 +54,9 @@ _NATIVE_OBSERVATION_SEAL = object()
 _NATIVE_OBSERVATION_CONDITION = threading.Condition()
 _NATIVE_OBSERVATION_SNAPSHOT: dict[str, Any] | None = None
 _NATIVE_OBSERVATION_SCAN_RUNNING = False
-_NATIVE_OBSERVATION_MIN_REMAINING_SECONDS = 0.15
+# A returned observation must survive the 2s watchdog cadence with margin for
+# the next bounded native refresh; proofs closer to expiry force a real scan.
+_NATIVE_OBSERVATION_MIN_REMAINING_SECONDS = 3.0
 GATEWAY_EXECUTABLE = Path("/usr/bin/python3.13")
 GATEWAY_EXECUTABLE_SHA256 = "bd241b38381974ae27d7d5098a6d0e6dda0a744b5e9fdd6fe3a1ae632588961e"
 GATEWAY_ARGV = ("/opt/hermes-jarvis-mvp-20261011/gateway-venv/bin/python", "-m",
