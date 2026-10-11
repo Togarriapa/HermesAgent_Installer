@@ -512,7 +512,7 @@ def _root_native_readback(manifest,files,active_prompt):
  except (ValueError,TypeError):
   raise CoreRuntimeError("independent pinned native read-back is invalid") from None
  expected_keys={"python_version","profile","skills","loaded","visible_profiles",
-  "profile_display_name","digests"}
+  "profile_display_name","profile_file_sha256","digests"}
  expected_digests={"profile:default":hashlib.sha256(active_prompt).hexdigest()}
  expected_digests.update({"skill:"+row["skill_id"]:hashlib.sha256(files[row["archive_path"]]).hexdigest()
   for row in manifest["skill_members"]})
@@ -529,6 +529,7 @@ def _root_native_readback(manifest,files,active_prompt):
   "loaded_skill_count":len(skill_ids),
   "loaded_skill_inventory_sha256":hashlib.sha256(native_inventory_bytes(manifest,files)).hexdigest(),
   "active_primary_prompt_sha256":expected_digests["profile:default"],
+  "native_loaded_primary_prompt_sha256":value["digests"]["profile:default"],
   "bundled_primary_prompt_sha256":bundled_sha,
   "active_prompt_matches_bundled_primary":expected_digests["profile:default"]==bundled_sha}
 
@@ -581,32 +582,49 @@ def _native_readback_mismatch(value,expected_keys,skill_ids,expected_digests):
   details["profile_display_name_length"]=len(display)
   details["profile_display_name_sha256"]=hashlib.sha256(display.encode("utf-8",errors="replace")).hexdigest()
   if len(display)>120: codes.append("profile_display_name_length")
+ expected_profile_sha=expected_digests.get("profile:default")
+ observed_profile_sha=value.get("profile_file_sha256")
+ profile_file_matches=(isinstance(observed_profile_sha,str)
+                       and observed_profile_sha==expected_profile_sha)
+ details["profile_file_matches_expected"]=profile_file_matches
+ if not profile_file_matches: codes.append("profile_file_digest_mismatch")
  observed=value.get("digests")
  if not isinstance(observed,dict) or any(not isinstance(key,str) or not isinstance(item,str)
                                           for key,item in observed.items()):
   codes.append("digests_shape")
  else:
-  expected_keys=set(expected_digests); observed_keys=set(observed)
+  expected_skill_keys={key for key in expected_digests if key.startswith("skill:")}
+  observed_skill_keys={key for key in observed if key.startswith("skill:")}
+  expected_keys=expected_skill_keys|{"profile:default"}
+  observed_keys=set(observed)
   details["expected_digest_count"]=len(expected_keys)
   details["observed_digest_count"]=len(observed_keys)
   details["missing_digest_count"]=len(expected_keys-observed_keys)
   details["extra_digest_count"]=len(observed_keys-expected_keys)
   details["digest_value_mismatch_count"]=sum(
-   observed.get(key)!=expected_digests[key] for key in expected_keys&observed_keys)
-  details["profile_digest_mismatch_count"]=int(
-   "profile:default" in expected_keys&observed_keys
-   and observed.get("profile:default")!=expected_digests["profile:default"])
+   observed.get(key)!=expected_digests[key] for key in expected_skill_keys&observed_keys)
+  loaded_profile_sha=observed.get("profile:default")
+  valid_loaded_profile_sha=(isinstance(loaded_profile_sha,str)
+                            and re.fullmatch(r"[0-9a-f]{64}",loaded_profile_sha) is not None)
+  details["loaded_profile_digest_valid"]=valid_loaded_profile_sha
+  if valid_loaded_profile_sha:
+   details["loaded_profile_digest_sha256"]=loaded_profile_sha
+  else:
+   codes.append("loaded_profile_digest_invalid")
+  details["profile_digest_mismatch_count"]=int(not valid_loaded_profile_sha)
   details["skill_digest_mismatch_count"]=sum(
    key.startswith("skill:") and observed.get(key)!=expected_digests[key]
-   for key in expected_keys&observed_keys)
-  if (expected_keys!=observed_keys or any(observed.get(key)!=expected_digests[key]
-                                           for key in expected_keys&observed_keys)):
+   for key in expected_skill_keys&observed_keys)
+  if (expected_skill_keys!=observed_skill_keys
+      or any(observed.get(key)!=expected_digests[key] for key in expected_skill_keys&observed_keys)
+      or "profile:default" not in observed or observed_keys!=expected_keys):
    codes.append("digests_mismatch")
   try:
    canonical=json.dumps(observed,sort_keys=True,separators=(",",":"),ensure_ascii=True).encode("ascii")
    details["observed_digest_map_sha256"]=hashlib.sha256(canonical).hexdigest()
-   expected_canonical=json.dumps(expected_digests,sort_keys=True,separators=(",",":"),ensure_ascii=True).encode("ascii")
-   details["expected_digest_map_sha256"]=hashlib.sha256(expected_canonical).hexdigest()
+   expected_skills={key:value for key,value in expected_digests.items() if key.startswith("skill:")}
+   expected_canonical=json.dumps(expected_skills,sort_keys=True,separators=(",",":"),ensure_ascii=True).encode("ascii")
+   details["expected_skill_digest_map_sha256"]=hashlib.sha256(expected_canonical).hexdigest()
   except (TypeError,ValueError,UnicodeError):
    codes.append("digests_not_canonical")
  details["mismatches"]=sorted(set(codes))

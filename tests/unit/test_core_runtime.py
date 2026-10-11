@@ -444,7 +444,7 @@ def test_root_native_readback_checks_current_loader_results_against_owned_bytes(
                              for row in rows})
     payload = {"python_version": "3.14.7", "profile": "default", "skills": skills,
         "loaded": skills, "visible_profiles": ["default"], "profile_display_name": "Default",
-        "digests": expected_digests}
+        "profile_file_sha256": expected_digests["profile:default"], "digests": expected_digests}
     monkeypatch.setattr(core.pwd, "getpwnam", lambda _name: SimpleNamespace(
         pw_uid=1000, pw_gid=1000, pw_dir="/home/admin"))
     monkeypatch.setattr(core, "_validated_executable", lambda path, _owners: path)
@@ -455,6 +455,15 @@ def test_root_native_readback_checks_current_loader_results_against_owned_bytes(
     receipt = core._root_native_readback(manifest, files, active_prompt)
     assert receipt["loaded_skill_count"] == 396
     assert receipt["active_prompt_matches_bundled_primary"] is False
+
+    # Hermes strips/filters/truncates SOUL text before returning it. The native
+    # digest may differ from raw file bytes; the separate raw-file digest binds
+    # the loaded profile to the root-verified file without duplicating loader logic.
+    payload["digests"]["profile:default"] = "b" * 64
+    receipt = core._root_native_readback(manifest, files, active_prompt)
+    assert receipt["loaded_skill_count"] == 396
+    assert receipt["active_primary_prompt_sha256"] == expected_digests["profile:default"]
+    assert receipt["native_loaded_primary_prompt_sha256"] == "b" * 64
 
     payload["loaded"] = skills[:-1]
     with pytest.raises(core.CoreRuntimeError, match="did not match") as error:

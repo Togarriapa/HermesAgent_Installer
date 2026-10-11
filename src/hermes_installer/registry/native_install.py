@@ -118,7 +118,7 @@ def selected_profile_materialization(
     return mapping
 
 
-_PROBE = r'''import hashlib, json, os, sys
+_PROBE = r'''import hashlib, json, os, re, stat, sys
 from pathlib import Path
 
 if sys.version_info[:2] != (3, 14):
@@ -140,9 +140,45 @@ profile_home = Path(matches[0].path).resolve()
 
 # This is the function Hermes uses to read the profile identity for prompt slot #1.
 from agent.prompt_builder import load_soul_md
+soul_path = profile_home / "SOUL.md"
+def read_soul_identity():
+    fd = os.open(soul_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+    try:
+        before = os.fstat(fd)
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid()
+                or before.st_nlink != 1 or before.st_size > 1024 * 1024):
+            raise RuntimeError("profile identity file custody differs")
+        chunks = bytearray()
+        while len(chunks) <= 1024 * 1024:
+            block = os.read(fd, min(65536, 1024 * 1024 + 1 - len(chunks)))
+            if not block:
+                break
+            chunks.extend(block)
+        after = os.fstat(fd)
+        parent_fd = os.open(profile_home, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                            | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+        try:
+            named = os.stat(soul_path.name, dir_fd=parent_fd, follow_symlinks=False)
+        finally:
+            os.close(parent_fd)
+        signature = lambda item: (item.st_dev, item.st_ino, item.st_mode, item.st_uid,
+                                  item.st_gid, item.st_nlink, item.st_size,
+                                  item.st_mtime_ns, item.st_ctime_ns)
+        if (len(chunks) != before.st_size or signature(before) != signature(after)
+                or signature(before) != signature(named)):
+            raise RuntimeError("profile identity changed while reading")
+        return bytes(chunks), signature(before)
+    finally:
+        os.close(fd)
+
+raw_soul_before, raw_soul_signature_before = read_soul_identity()
 soul = load_soul_md(home_override=profile_home)
 if not isinstance(soul, str) or not soul.strip():
     raise RuntimeError("selected profile has no loadable SOUL.md identity")
+raw_soul_after, raw_soul_signature_after = read_soul_identity()
+if (raw_soul_before != raw_soul_after
+        or raw_soul_signature_before != raw_soul_signature_after):
+    raise RuntimeError("profile identity changed while Hermes loaded it")
 
 # Exercise Hermes' own skill catalog and progressive-disclosure loader in this
 # profile's HERMES_HOME. No model/session is started. Compiled installer skills
@@ -174,6 +210,7 @@ print(json.dumps({"python_version": sys.version.split()[0], "profile": profile_i
                   "skills": sorted(names), "loaded": loaded,
                   "visible_profiles": visible_profiles,
                   "profile_display_name": str(matches[0].display_name or ""),
+                  "profile_file_sha256": hashlib.sha256(raw_soul_before).hexdigest(),
                   "digests": digests}, sort_keys=True))
 '''
 
