@@ -6,6 +6,7 @@ It never relays arbitrary methods or exposes the service token/runtime session i
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import math
@@ -21,6 +22,15 @@ CORE_PORT = 8766
 CORE_PATH = "/api/ws"
 MAX_RPC_FRAME_BYTES = 256 * 1024
 MAX_CORE_TEXT_CHARS = 64_000
+MAX_FILE_ATTACHMENT_BYTES = 128 * 1024
+
+
+@dataclass(frozen=True, slots=True)
+class NativeFileAttachment:
+    """Private native @file reference returned by the pinned attach RPC."""
+
+    name: str
+    ref_text: str
 
 
 def _valid_session_id(value: Any) -> bool:
@@ -128,7 +138,8 @@ class CoreRpcClient:
     async def _rpc(self, method: str, params: dict[str, Any]) -> dict:
         # Method names are not parameters to public endpoints; this still defends internal misuse.
         if method not in {"session.create", "session.resume", "session.history", "session.interrupt",
-                          "profiles.list", "cron.manage", "plugins.list", "mcp.servers.status"}:
+                          "profiles.list", "cron.manage", "plugins.list", "mcp.servers.status",
+                          "file.attach", "tools.list", "skills.manage"}:
             raise JarvisChatDenied("core method is outside the fixed adapter")
         client, ws, ws_types = await self._connect()
         request_id = secrets.token_hex(12)
@@ -254,6 +265,99 @@ class CoreRpcClient:
             projected.append({"name": name, "transport": transport, "tools": tools,
                               "connected": connected, "disabled": disabled, "status": status})
         return {"servers": projected, "checked_at": checked_at}
+
+    async def toolsets_inventory(self) -> list[dict[str, Any]]:
+        """Read the fixed default-profile toolset selection and resolved tool names."""
+        result = await self._rpc("tools.list", {})
+        rows = result.get("toolsets")
+        if not isinstance(rows, list) or len(rows) > 256:
+            raise JarvisChatDenied("official core toolset inventory was invalid")
+        projected: list[dict[str, Any]] = []
+        total_tools = 0
+        for row in rows:
+            if not isinstance(row, dict):
+                raise JarvisChatDenied("official core toolset row was invalid")
+            name = self._bounded_profile_text(row.get("name"), limit=96)
+            count, enabled, tools = row.get("tool_count"), row.get("enabled"), row.get("tools")
+            if (name is None or type(count) is not int or not 0 <= count <= 10_000
+                    or type(enabled) is not bool or not isinstance(tools, list) or len(tools) > 512):
+                raise JarvisChatDenied("official core toolset row was invalid")
+            safe_tools = []
+            for tool in tools:
+                label = self._bounded_profile_text(tool, limit=128)
+                if label is None:
+                    raise JarvisChatDenied("official core tool name was invalid")
+                safe_tools.append(label)
+            total_tools += len(safe_tools)
+            if total_tools > 2_000:
+                raise JarvisChatDenied("official core toolset inventory exceeded its bound")
+            projected.append({"name": name, "tool_count": count, "enabled": enabled,
+                              "tools": safe_tools})
+        return projected
+
+    async def skills_inventory(self) -> list[dict[str, Any]]:
+        """List locally available default-profile skill labels without hub or install calls."""
+        result = await self._rpc("skills.manage", {"action": "list"})
+        groups = result.get("skills")
+        if not isinstance(groups, dict) or len(groups) > 256:
+            raise JarvisChatDenied("official core skill inventory was invalid")
+        projected: list[dict[str, Any]] = []
+        total_skills = 0
+        for category, values in sorted(groups.items()):
+            safe_category = self._bounded_profile_text(category, limit=96)
+            if safe_category is None or not isinstance(values, list) or len(values) > 2_000:
+                raise JarvisChatDenied("official core skill category was invalid")
+            names = []
+            for value in values:
+                name = self._bounded_profile_text(value, limit=128)
+                if name is None:
+                    raise JarvisChatDenied("official core skill name was invalid")
+                names.append(name)
+            total_skills += len(names)
+            if total_skills > 2_000:
+                raise JarvisChatDenied("official core skill inventory exceeded its bound")
+            projected.append({"category": safe_category, "names": names})
+        return projected
+
+    async def pause_schedule(self, job_id: str) -> None:
+        """Pause exactly one server-selected job and confirm the native paused state."""
+        if (not isinstance(job_id, str) or not 1 <= len(job_id) <= 256
+                or any(ord(char) < 0x21 or ord(char) > 0x7e for char in job_id)):
+            raise JarvisChatDenied("official core schedule selection was invalid")
+        result = await self._rpc("cron.manage", {"action": "pause", "name": job_id})
+        job = result.get("job")
+        if (result.get("success") is not True or not isinstance(job, dict)
+                or job.get("state") != "paused"
+                or (job.get("job_id") is not None and job.get("job_id") != job_id)):
+            raise JarvisChatDenied("official core schedule pause was not confirmed")
+
+    async def attach_file(self, session_id: str, *, name: str, media_type: str,
+                          content: bytes) -> NativeFileAttachment:
+        """Stage bounded server-provided bytes in one live owned session.
+
+        The adapter always sends an empty native ``path`` and constructs the data URL itself;
+        callers cannot select a gateway filesystem path or the RPC method/params.
+        """
+        if (not _valid_session_id(session_id) or not isinstance(name, str)
+                or not 1 <= len(name) <= 120 or any(ord(char) < 0x20 for char in name)
+                or media_type not in {"text/plain", "text/markdown", "text/csv", "application/json"}
+                or not isinstance(content, bytes) or not 1 <= len(content) <= MAX_FILE_ATTACHMENT_BYTES):
+            raise JarvisChatDenied("file attachment is outside the fixed adapter bounds")
+        encoded = base64.b64encode(content).decode("ascii")
+        result = await self._rpc("file.attach", {
+            "session_id": session_id,
+            "path": "",
+            "data_url": f"data:{media_type};base64,{encoded}",
+            "name": name,
+        })
+        returned_name, ref_text = result.get("name"), result.get("ref_text")
+        if (result.get("attached") is not True or result.get("uploaded") is not True
+                or not isinstance(returned_name, str) or not 1 <= len(returned_name) <= 160
+                or any(ord(char) < 0x20 for char in returned_name)
+                or not isinstance(ref_text, str) or not ref_text.startswith("@file:")
+                or len(ref_text) > 4096 or any(ord(char) < 0x20 for char in ref_text)):
+            raise JarvisChatDenied("official core file attachment was not confirmed")
+        return NativeFileAttachment(name=returned_name, ref_text=ref_text)
 
     @staticmethod
     def _activity_from_frame(frame: Mapping[str, Any], session_id: str) -> NativeActivityEvent | None:
