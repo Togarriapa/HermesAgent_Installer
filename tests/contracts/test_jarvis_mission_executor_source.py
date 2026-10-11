@@ -6,6 +6,7 @@ it proves source behavior only, never Pi deployment or official Hermes readiness
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 from types import SimpleNamespace
 
@@ -321,7 +322,14 @@ def test_master_plan_turn_reserves_exact_owned_turn_once_before_scheduling(tmp_p
             observed.append((conversation_id, idempotency_key))
             return {"status": "queued", "turn_id": "t" * 24}
 
-        context = prepare("", ingress, mission_id, 1, "e" * 64)
+        with store._connect() as db:
+            mission_for_prompt = db.execute(
+                "SELECT * FROM jarvis_missions WHERE id=?", (mission_id,)
+            ).fetchone()
+        prompt = jarvis_missions.build_jarvis_mission_master_plan_prompt(
+            mission_for_prompt, jarvis_missions._verified_team_catalog())
+        prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+        context = prepare("", ingress, mission_id, 1, prompt_sha256)
         service.start_server_turn = start_server_turn
         first = await jarvis_missions.start_master_plan_turn(
             service, request, mission_id=mission_id, revision=1,
