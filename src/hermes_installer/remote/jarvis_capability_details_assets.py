@@ -51,27 +51,27 @@ VIEW_HTML = '''
 
 
 CSS = '''
-.capability-workspace{max-width:1080px;margin:28px auto 0;padding-top:24px;border-top:1px solid var(--line)}
+.capability-workspace{max-width:var(--page-max-width,1240px);margin:28px auto 0;padding-top:24px;border-top:1px solid var(--line)}
 .capability-workspace-heading,.capability-learning-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
-.capability-workspace-kicker{margin:0 0 7px;color:#7dabb3;font-size:9px;font-weight:700;letter-spacing:.17em}
-.capability-workspace-heading h2,.capability-learning h3{margin:0;color:#d8eff1;font-size:17px;font-weight:580}
-.capability-workspace-heading p:not(.capability-workspace-kicker),.capability-workspace-muted{max-width:720px;color:#8ba5aa;font-size:12px;line-height:1.6}
-.capability-workspace-heading button,.capability-learning-heading button{flex:none;min-height:38px;padding:8px 12px;border:1px solid var(--line-strong);border-radius:9px;background:rgba(25,128,139,.13);color:#dcfbfc;font:inherit;font-size:11px;cursor:pointer}
-.capability-workspace-heading button:hover,.capability-learning-heading button:hover{background:rgba(23,142,153,.22)}
+.capability-workspace-kicker{margin:0 0 7px;color:var(--muted);font-size:9px;font-weight:700;letter-spacing:.17em}
+.capability-workspace-heading h2,.capability-learning h3{margin:0;color:var(--text);font-size:17px;font-weight:580}
+.capability-workspace-heading p:not(.capability-workspace-kicker),.capability-workspace-muted{max-width:720px;color:var(--muted);font-size:12px;line-height:1.6}
+.capability-workspace-heading button,.capability-learning-heading button{flex:none;min-height:44px;padding:8px 12px;border:1px solid var(--line-strong);border-radius:9px;background:color-mix(in srgb,var(--cyan) 12%,transparent);color:var(--text);font:inherit;font-size:11px;cursor:pointer}
+.capability-workspace-heading button:hover,.capability-learning-heading button:hover{background:color-mix(in srgb,var(--cyan) 22%,transparent)}
 .capability-workspace-controls{display:grid;grid-template-columns:auto minmax(180px,1fr) auto minmax(150px,.45fr);align-items:center;gap:8px 12px;margin:16px 0}
-.capability-workspace-controls label{color:#9eb5b9;font-size:11px}.capability-workspace-controls input,.capability-workspace-controls select{min-width:0;min-height:39px;padding:8px 10px;border:1px solid var(--line-strong);border-radius:8px;background:#0c1f26;color:var(--text);font:inherit;font-size:12px}
+.capability-workspace-controls label{color:var(--muted);font-size:11px}.capability-workspace-controls input,.capability-workspace-controls select{min-width:0;min-height:44px;padding:8px 10px;border:1px solid var(--line-strong);border-radius:8px;background:var(--panel);color:var(--text);font:inherit;font-size:12px}
 .capability-workspace-controls :focus-visible,.capability-workspace-heading button:focus-visible,.capability-learning-heading button:focus-visible,.capability-workspace-results button:focus-visible,.capability-learning-list summary:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
-.capability-workspace-status,.capability-workspace-count{color:#8ba5aa;font-size:11px}.capability-workspace-layout{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(260px,.9fr);gap:14px;align-items:start}
-.capability-workspace-layout h3{margin:0 0 9px;color:#cde5e8;font-size:12px;font-weight:600}.capability-workspace-results,.capability-learning-list{display:grid;gap:7px;margin:0;padding:0;list-style:none}
-.capability-workspace-results button{width:100%;display:grid;gap:5px;padding:10px 11px;text-align:left;border:1px solid var(--line);border-radius:9px;background:rgba(12,31,38,.55);color:#d8eff1;cursor:pointer}
-.capability-workspace-results button[aria-pressed="true"]{border-color:rgba(88,228,235,.48);background:rgba(25,128,139,.13)}
-.capability-workspace-result-name{font-size:12px;font-weight:600;overflow-wrap:anywhere}.capability-workspace-result-meta{color:#90a9ad;font-size:10px;overflow-wrap:anywhere}
-.capability-workspace-detail{min-width:0;padding:14px;border:1px solid var(--line);border-radius:11px;background:rgba(12,31,38,.5)}
+.capability-workspace-status,.capability-workspace-count{color:var(--muted);font-size:11px}.capability-workspace-layout{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(260px,.9fr);gap:14px;align-items:start}
+.capability-workspace-layout h3{margin:0 0 9px;color:var(--text);font-size:12px;font-weight:600}.capability-workspace-results,.capability-learning-list{display:grid;gap:7px;margin:0;padding:0;list-style:none}
+.capability-workspace-results button{width:100%;min-height:44px;display:grid;gap:5px;padding:10px 11px;text-align:left;border:1px solid var(--line);border-radius:9px;background:color-mix(in srgb,var(--panel) 76%,transparent);color:var(--text);cursor:pointer}
+.capability-workspace-results button[aria-pressed="true"]{border-color:var(--line-strong);background:color-mix(in srgb,var(--cyan) 12%,var(--panel))}
+.capability-workspace-result-name{font-size:12px;font-weight:600;overflow-wrap:anywhere}.capability-workspace-result-meta{color:var(--muted);font-size:10px;overflow-wrap:anywhere}
+.capability-workspace-detail{min-width:0;padding:14px;border:1px solid var(--line);border-radius:11px;background:color-mix(in srgb,var(--panel) 68%,transparent)}
 .capability-workspace-detail dl{display:grid;gap:0;margin:12px 0 0}.capability-workspace-detail dl>div{display:grid;grid-template-columns:minmax(82px,.45fr) minmax(0,1fr);gap:12px;padding:9px 0;border-top:1px solid var(--line)}
-.capability-workspace-detail dt{color:#8ba5aa;font-size:10px}.capability-workspace-detail dd{min-width:0;margin:0;color:#d2e7e9;font-size:11px;line-height:1.55;overflow-wrap:anywhere;white-space:pre-wrap}
-.capability-workspace-badge{display:inline-block;width:max-content;max-width:100%;padding:3px 7px;border:1px solid var(--line-strong);border-radius:999px;color:#b9e8eb;font-size:10px}
-.capability-learning{margin-top:24px;padding:17px;border:1px solid var(--line);border-radius:12px;background:rgba(12,31,38,.42)}.capability-learning-heading{align-items:center}.capability-learning-heading h3{font-size:14px}.capability-learning-list{margin-top:12px}
-.capability-learning-card{padding:12px;border:1px solid var(--line);border-radius:9px;background:rgba(7,19,25,.45)}.capability-learning-card h4{margin:0;color:#d8eff1;font-size:12px;font-weight:600}.capability-learning-meta{margin:7px 0;color:#8ba5aa;font-size:10px;line-height:1.55;overflow-wrap:anywhere}.capability-learning-card details summary{color:#c1dadd;font-size:11px;cursor:pointer}.capability-learning-diff{max-height:22rem;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;color:#c5d8da;font-size:10px;line-height:1.55}
+.capability-workspace-detail dt{color:var(--muted);font-size:10px}.capability-workspace-detail dd{min-width:0;margin:0;color:var(--text);font-size:11px;line-height:1.55;overflow-wrap:anywhere;white-space:pre-wrap}
+.capability-workspace-badge{display:inline-block;width:max-content;max-width:100%;padding:3px 7px;border:1px solid var(--line-strong);border-radius:999px;color:var(--cyan);font-size:10px}
+.capability-learning{margin-top:24px;padding:17px;border:1px solid var(--line);border-radius:12px;background:color-mix(in srgb,var(--panel) 58%,transparent)}.capability-learning-heading{align-items:center}.capability-learning-heading h3{font-size:14px}.capability-learning-list{margin-top:12px}
+.capability-learning-card{padding:12px;border:1px solid var(--line);border-radius:9px;background:color-mix(in srgb,var(--bg) 62%,transparent)}.capability-learning-card h4{margin:0;color:var(--text);font-size:12px;font-weight:600}.capability-learning-meta{margin:7px 0;color:var(--muted);font-size:10px;line-height:1.55;overflow-wrap:anywhere}.capability-learning-card details summary{min-height:44px;display:flex;align-items:center;color:var(--text);font-size:11px;cursor:pointer}.capability-learning-diff{max-height:22rem;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text);font-size:10px;line-height:1.55}
 @media(max-width:760px){.capability-workspace-heading,.capability-learning-heading{align-items:stretch;flex-direction:column}.capability-workspace-controls{grid-template-columns:1fr}.capability-workspace-layout{grid-template-columns:1fr}.capability-workspace-heading button,.capability-learning-heading button{align-self:flex-start}.capability-workspace-detail dl>div{grid-template-columns:90px minmax(0,1fr)}}
 '''
 
