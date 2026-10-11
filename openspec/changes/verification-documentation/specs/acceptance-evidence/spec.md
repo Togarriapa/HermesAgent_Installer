@@ -1385,3 +1385,13 @@ The MVP SHALL permit only the v260 exact disabled-control guard in a separately 
 #### Scenario: Control module is deliberately disabled
 - **WHEN** features.control is false and the control module is unavailable
 - **THEN** args_control returns before import while enabled control behavior and all other guards remain unchanged
+
+
+## ADDED Requirements
+
+### Requirement: Complete fixed-startup disabled-control repair
+The MVP SHALL retain v260stub, permit only reviewed v261 core/window guards in local xpra-server+jarvis2, and require explicit remote-logging=no with actual inspector/readback before app launch.
+
+#### Scenario: Configuration could enable remote logging
+- **WHEN** the exact off flag or a reviewed installed member is absent
+- **THEN** stage launch remains unavailable without enabling control or weakening other security constraints

@@ -3829,5 +3829,21 @@
       ]
     },
     "scope": "guard-only owned local xpra-server rebuild under BD259.1; all AC OPEN"
+  },
+  "xpra_disabled_control_complete_startup_repair_v261": {
+    "contract": "planning/xpra-disabled-control-complete-startup-repair-v261.json",
+    "amendment": "plans/amendments/2026-10-11-xpra-disabled-control-complete-startup-repair-v261.md",
+    "tasks": {
+      "BD-T261.1": [
+        "BD-T260.1"
+      ],
+      "VD-T261.2": [
+        "BD-T261.1"
+      ],
+      "BD-T259.1": [
+        "VD-T261.2"
+      ]
+    },
+    "acceptance": "only fixed MVP startup guards/offflag, all AC OPEN"
   }
 }

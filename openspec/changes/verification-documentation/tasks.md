@@ -276,3 +276,7 @@ RT-T259.3/LC-T259.4/VD-T259.5 additionally require the separate stage adapter, p
 
 - [ ] BD-T260.1: Implement exact source-reviewed disabled-control guard and fixed-input local xpra-server+jarvis1 repack with normalized payload/control graph comparison.
 - [ ] VD-T260.2: Verify disabled/enabled control behavior, input/extra patch/graph failures and actual owned ARM64 app-only launch; all MVP/full acceptance separate OPEN.
+
+
+- [ ] BD-T261.1: Implement exact core/window guards with v260stub, local +jarvis2 fullgraph and explicit remote-logging=no launch/inspector readback.
+- [ ] VD-T261.2: Verify disabled/enabled methods, exact input/graph/metadata denial and actual bounded ARM64 app startup; all acceptance separate OPEN.

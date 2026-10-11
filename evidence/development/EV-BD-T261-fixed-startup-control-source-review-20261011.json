@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "tasks": [
+    "BD-T261.1",
+    "VD-T261.2"
+  ],
+  "claim": "source/method review only",
+  "input_package": {
+    "name": "xpra-server",
+    "version": "6.5.4-r0-1",
+    "architecture": "arm64",
+    "size_bytes": 407788,
+    "sha256": "5e46390ee30241e4c5fdcd0ac29218c5c21990ce4a8cce3dd80306c704424b31"
+  },
+  "members": [
+    {
+      "path": "usr/lib/python3/dist-packages/xpra/server/subsystem/stub.py",
+      "original_size_bytes": 4978,
+      "original_sha256": "d0f4cf681095d90c3f1ab039c2932e7fb6b450d3c01ba48fa873e10ff1c95a4e",
+      "patched_size_bytes": 5071,
+      "patched_sha256": "da12f27c1421dc71248b568791f186ee3d470d0969c4020da0d9d6d7a1a02279",
+      "change": "Retained immutable v260 guard."
+    },
+    {
+      "path": "usr/lib/python3/dist-packages/xpra/server/core.py",
+      "original_size_bytes": 75650,
+      "original_sha256": "67bf4c1c903fedfd4bb9c7e040e5f4b2d1e9b41f7efcbf43c50a02306ca8000a",
+      "patched_size_bytes": 75743,
+      "patched_sha256": "95a8bb41304181555ac33482931ba1c2460b4a1b03e458c3c5e8825adcf34e77",
+      "change": "Exactly three-line early control guard in add_core_control_commands."
+    },
+    {
+      "path": "usr/lib/python3/dist-packages/xpra/server/subsystem/window.py",
+      "original_size_bytes": 42383,
+      "original_sha256": "6f36f82a51d55b5302772e23f7f6e1317226184e0635b0f3f5954dacaca16a0f",
+      "patched_size_bytes": 42476,
+      "patched_sha256": "7fd74d70e6a50e2f02727e263bdbec34826d23871abf4feedb230741ef09264f",
+      "change": "Exactly three-line early control guard in add_window_control_commands."
+    }
+  ],
+  "checks": [
+    "Both new original members independently read from actual exact-hash signed input DEB payload.",
+    "Guards add exactly three lines per new member; existingstub patch unchanged.",
+    "Full actual original methods with blocked control module reproduce ModuleNotFoundError.",
+    "Full actual patched methods return while disabled before imports.",
+    "Full enabled original versus patched registered command/argument lists identical: core1 and window35.",
+    "Five current helper regression tests passed independently; no privileged host installer invoked.",
+    "Retained features.py120 shows logging exclusion depends actual opts.remote_logging; explicitoffflag required in exact stage argv/inspector."
+  ],
+  "limitations": [
+    "Actual rebuilt package graph, installed core/window hash readback and actual Pi launch still OPEN.",
+    "No all-Xpra-feature compatibility claim or changed control enforcement."
+  ]
+}

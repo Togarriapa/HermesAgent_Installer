@@ -260,3 +260,8 @@ Confirmed jarvis.togarriapahome.uk. `planning/jarvis-visible-desktop-mvp-stage-v
 ## Xpra disabled-control MVP repair v260
 
 `planning/xpra-disabled-control-mvp-repair-v260.json`; BD-T260.1/VD-T260.2 required within BD259.1. Only exact args_control guard/local xpra-server+jarvis1 rebuild with signed original and full unchanged graph/readback. Exact member guard and bounded method regression reviewed; full repack/installed readback/live launch pending, all AC OPEN.
+
+
+## Complete fixed-startup Xpra repair v261
+
+`planning/xpra-disabled-control-complete-startup-repair-v261.json`; BD261.1/VD261.2 withinBD259.1. Retainedstub + core/window guards, local+jarvis2 and required explicit remote-logging=no. Exact member/method review passed; package/readback/launch pending, service stopped/full AC OPEN.
