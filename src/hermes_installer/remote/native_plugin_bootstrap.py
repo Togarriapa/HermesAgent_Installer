@@ -42,6 +42,14 @@ class StagedNativeResourcesPlugin:
     module_path: Path
 
 
+@dataclass(frozen=True, slots=True)
+class NativePluginSelectionReceipt:
+    """Read-only projection of the official saved plugin and toolset selection."""
+
+    plugin_key: str
+    selection_sha256: str
+
+
 def _fixed_bundle_bytes() -> dict[str, bytes]:
     root = importlib.resources.files(PLUGIN_BUNDLE)
     result: dict[str, bytes] = {}
@@ -320,7 +328,89 @@ def enable_native_resources_plugin() -> StagedNativeResourcesPlugin:
     return staged
 
 
+_OFFICIAL_SELECTION_READ_SCRIPT = r'''+import hashlib
+import json
+from hermes_cli.config import load_config
+from hermes_cli.toolset_validation import parse_platform_toolsets_value
+
+key = "hermes-installer-resources-delegation"
+toolset = "resources_internal"
+config = load_config()
+if not isinstance(config, dict):
+    raise RuntimeError("Hermes config is unavailable")
+plugins = config.get("plugins") or {}
+if not isinstance(plugins, dict):
+    raise RuntimeError("Hermes plugin selection is malformed")
+enabled, disabled = plugins.get("enabled", []), plugins.get("disabled", [])
+if (not isinstance(enabled, list) or not isinstance(disabled, list)
+        or any(not isinstance(value, str) for value in (*enabled, *disabled))
+        or key not in enabled or key in disabled):
+    raise RuntimeError("fixed Resources plugin is not selected")
+platforms = config.get("platform_toolsets") or {}
+if not isinstance(platforms, dict):
+    raise RuntimeError("Hermes toolset selection is malformed")
+selected = {}
+for name, raw in platforms.items():
+    if not isinstance(name, str):
+        raise RuntimeError("Hermes toolset selection is malformed")
+    parsed = parse_platform_toolsets_value(raw)
+    if raw is not None and parsed is None:
+        raise RuntimeError("Hermes toolset selection is ambiguous")
+    if parsed is not None:
+        if toolset not in parsed:
+            raise RuntimeError("fixed Resources toolset is not selected")
+        selected[name] = sorted(set(parsed))
+projection = {"enabled": sorted(set(enabled)), "disabled": sorted(set(disabled)),
+              "platform_toolsets": selected}
+digest = hashlib.sha256(json.dumps(projection, sort_keys=True, separators=(",", ":"),
+                                  ensure_ascii=True).encode("ascii")).hexdigest()
+print("native-plugin-selection:" + digest)
+'''
+
+
+def verify_native_resources_plugin_selection() -> NativePluginSelectionReceipt:
+    """Read current PM-owned enable/toolset selection without changing Hermes config.
+
+    This receipt proves saved selection only. The live native ToolEntry, observer
+    route and root-issued delegation claim remain independent checks.
+    """
+    from .core_gateway_inspector import CORE_NATIVE_ADAPTER_SOURCE, CORE_PYTHON_LINK, CORE_SOURCE
+
+    try:
+        account = pwd.getpwnam("admin")
+        environment = {
+            "HOME": "/home/admin",
+            "HERMES_HOME": str(HERMES_HOME),
+            "PATH": "/home/admin/.hermes/bin:/home/admin/.local/bin:/usr/local/bin:/usr/bin:/bin",
+            "HERMES_DISABLE_LAZY_INSTALLS": "1",
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONPATH": f"{CORE_SOURCE}:{CORE_NATIVE_ADAPTER_SOURCE}",
+        }
+        result = subprocess.run(
+            [str(CORE_PYTHON_LINK), "-B", "-c", _OFFICIAL_SELECTION_READ_SCRIPT],
+            cwd=CORE_SOURCE, env=environment, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10,
+            check=False, user=account.pw_uid, group=account.pw_gid, extra_groups=(),
+        )
+        prefix = b"native-plugin-selection:"
+        if result.returncode != 0 or len(result.stdout) > 1024 or len(result.stderr) > 16 * 1024:
+            raise NativePluginBootstrapUnavailable("official native plugin selection is not current")
+        lines = result.stdout.strip().splitlines()
+        if len(lines) != 1 or not lines[0].startswith(prefix):
+            raise NativePluginBootstrapUnavailable("official native plugin selection is malformed")
+        digest = lines[0][len(prefix):].decode("ascii", "strict")
+        if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+            raise NativePluginBootstrapUnavailable("official native plugin selection is malformed")
+        return NativePluginSelectionReceipt(PLUGIN_KEY, digest)
+    except NativePluginBootstrapUnavailable:
+        raise
+    except Exception:
+        raise NativePluginBootstrapUnavailable("official native plugin selection is unavailable") from None
+
+
 __all__ = [
-    "NativePluginBootstrapUnavailable", "PLUGIN_KEY", "StagedNativeResourcesPlugin",
-    "stage_native_resources_plugin", "enable_native_resources_plugin",
+    "NativePluginBootstrapUnavailable", "NativePluginSelectionReceipt", "PLUGIN_KEY",
+    "StagedNativeResourcesPlugin", "stage_native_resources_plugin",
+    "enable_native_resources_plugin", "verify_native_resources_plugin_selection",
 ]
