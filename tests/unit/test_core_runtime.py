@@ -157,6 +157,8 @@ def _install_legacy_service_fixture(tmp_path, monkeypatch):
         calls.append((("bridge", "enable"), core.UNIT.exists()))
         return SimpleNamespace(plugin_key="hermes-installer-resources-delegation")
     bootstrap.enable_native_resources_plugin = enable_plugin
+    bootstrap.verify_native_resources_plugin_selection = lambda: SimpleNamespace(
+        plugin_key="hermes-installer-resources-delegation", selection_sha256="d" * 64)
     inspector = ModuleType("hermes_installer.remote.core_gateway_inspector")
     inspector._current_native_adapter_generation = lambda *, deadline: "a" * 64
     inspector.verify_staged_native_resources_plugin = lambda *, deadline: "b" * 64

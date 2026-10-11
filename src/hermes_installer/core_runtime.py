@@ -1080,9 +1080,10 @@ def _journal():
   if d.get("adapter_migration_state") == "preparing":
    raise CoreRuntimeError("adapter source migration recovery is required")
   if d.get("adapter_migration_state") == "active":
-   if (d.get("adapter_source")!=str(ADAPTER_SOURCE)
+  if (d.get("adapter_source")!=str(ADAPTER_SOURCE)
        or not re.fullmatch(r"[0-9a-f]{64}",str(d.get("adapter_generation","")))
-       or not re.fullmatch(r"[0-9a-f]{64}",str(d.get("core_source_generation","")))):
+       or not re.fullmatch(r"[0-9a-f]{64}",str(d.get("core_source_generation","")))
+       or not re.fullmatch(r"[0-9a-f]{64}",str(d.get("plugin_selection_sha256","")))):
     raise CoreRuntimeError("adapter migration custody record is incomplete")
   if d["state"]!="retiring" and (hashlib.sha256(_unit()).hexdigest()!=d["unit_sha256"] or hashlib.sha256(_launcher()).hexdigest()!=d["launcher_sha256"]):
    raise CoreRuntimeError("owned service recipe differs from the reviewed source")
@@ -1278,10 +1279,17 @@ def migrate_owned_core_to_adapter_path():
  # The bridge transaction stages immutable code and uses Hermes' official enable
  # API. It must succeed before this service's journaled files or process change.
  try:
-  from hermes_installer.remote.native_plugin_bootstrap import enable_native_resources_plugin
+  from hermes_installer.remote.native_plugin_bootstrap import (
+   enable_native_resources_plugin,verify_native_resources_plugin_selection,
+  )
   staged=enable_native_resources_plugin()
   if getattr(staged,"plugin_key",None)!="hermes-installer-resources-delegation":
    raise CoreRuntimeError("native bridge activation did not verify the fixed plugin")
+  selection=verify_native_resources_plugin_selection()
+  selection_digest=getattr(selection,"selection_sha256",None)
+  if (getattr(selection,"plugin_key",None)!="hermes-installer-resources-delegation"
+      or not re.fullmatch(r"[0-9a-f]{64}",str(selection_digest or ""))):
+   raise CoreRuntimeError("native plugin selection is not currently verified")
   from hermes_installer.remote.core_gateway_inspector import (
    _current_native_adapter_generation,verify_staged_native_resources_plugin,
   )
@@ -1302,7 +1310,8 @@ def migrate_owned_core_to_adapter_path():
   raise CoreRuntimeError("journal-owned core changed during native bridge activation")
  marker={**record,"adapter_migration_state":"preparing",
          "adapter_migration_backup":backup_manifest,
-         "adapter_source":str(ADAPTER_SOURCE),"adapter_generation":adapter_generation}
+         "adapter_source":str(ADAPTER_SOURCE),"adapter_generation":adapter_generation,
+         "plugin_selection_sha256":selection_digest}
  _replace_journal(marker)
  restart_attempted=False
  try:
@@ -1313,7 +1322,7 @@ def migrate_owned_core_to_adapter_path():
            "launcher_sha256":hashlib.sha256(new_launcher).hexdigest(),
            "adapter_source":str(ADAPTER_SOURCE),"adapter_generation":adapter_generation,
            "adapter_migration_state":"active","adapter_migration_backup":backup_manifest,
-           "core_source_generation":current}
+           "core_source_generation":current,"plugin_selection_sha256":selection_digest}
   _replace_journal(updated)
   _run(["systemctl","daemon-reload"])
   if not _owned_unit_loaded():
@@ -1325,6 +1334,7 @@ def migrate_owned_core_to_adapter_path():
   if (not _owned_listener()
       or _current_native_adapter_generation(deadline=deadline)!=adapter_generation
       or verify_staged_native_resources_plugin(deadline=deadline)!=staged_digest
+      or getattr(verify_native_resources_plugin_selection(),"selection_sha256",None)!=selection_digest
       or _core_source_generation()!=current):
    raise CoreRuntimeError("adapter core post-restart custody is not current")
   final=_journal()
