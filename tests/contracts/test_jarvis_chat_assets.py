@@ -64,6 +64,44 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn("Internal profile · catalog only; not selectable", client)
         self.assertIn('"current-core-witness": "A current process and listener were observed; functional readiness has not been verified."', client)
 
+    def test_command_centre_groups_existing_routes_and_preserves_command_results(self):
+        _content_type, page = reviewed_chat_asset("/chat")
+        source = page.decode("utf-8")
+        self.assertIn('<div class="workspace" data-current-view="overview">', source)
+        self.assertIn('<main class="data-main" id="overview-view"', source)
+        self.assertIn('data-view="overview"', source.split('data-nav-group="command-centre"', 1)[1].split("</details>", 1)[0])
+        expected_groups = {
+            "conversations": ("chat", "sessions"),
+            "work": ("missions", "bots"),
+            "resources": ("capabilities", "resources-learning", "native-inventory", "files"),
+            "system": ("settings", "activity", "native-controls", "models-settings"),
+        }
+        for group, destinations in expected_groups.items():
+            with self.subTest(group=group):
+                markup = source.split(f'data-nav-group="{group}"', 1)[1].split("</details>", 1)[0]
+                for destination in destinations:
+                    if destination == "sessions":
+                        self.assertIn('data-open-sessions="true"', markup)
+                    else:
+                        self.assertIn(f'data-view="{destination}"', markup)
+
+        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
+        client = script.decode("utf-8")
+        self.assertIn('const data = await request(`${API}/overview`);', client)
+        sender = client.split("async function sendMessage(text) {", 1)[1].split("function createIdempotencyKey()", 1)[0]
+        self.assertIn("return true;", sender)
+        self.assertIn("return false;", sender)
+        bridge = client.split("async function sendOverviewCommand(event) {", 1)[1].split("overviewForm.addEventListener", 1)[0]
+        self.assertIn("const accepted = await sendMessage(text);", bridge)
+        self.assertIn("if (accepted)", bridge)
+        self.assertIn("Your text is preserved here", bridge)
+        self.assertIn("overviewCommandPending", bridge)
+        self.assertIn('if (feature.id === "models-settings") contextualCleanup = preselectCurrentModelConversation(root);', client)
+        model_context = client.split("function preselectCurrentModelConversation(root) {", 1)[1].split("function mountFeature(feature)", 1)[0]
+        self.assertIn('select.value = id;', model_context)
+        self.assertIn('observer.disconnect();', model_context)
+        self.assertIn('finally { if (contextualCleanup) contextualCleanup(); }', client)
+
     def test_capability_inventory_filter_and_details_are_data_backed(self):
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
         client = script.decode("utf-8")
