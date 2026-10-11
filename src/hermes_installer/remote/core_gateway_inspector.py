@@ -1847,7 +1847,7 @@ def observe_profile_admin(config: CoreGatewayConfig, *, request: dict[str, Any],
     action = request.get("action") if type(request) is dict else None
     base = {"schema", "op", "action", "nonce", "peer_pid", "peer_uid", "peer_gid",
             "access_jwt", "core_generation", "ingress_nonce", "ingress_proof_sha256"}
-    fields = (set() if action in {"list", "skills-list"} else {"profile_id", "file_kind"} if action == "read" else
+    fields = (set() if action in {"list", "skills-list", "skills-archives-list"} else {"profile_id", "file_kind"} if action == "read" else
               {"profile_id", "file_kind", "expected_sha256", "content", "idempotency_key"}
               if action == "write" else {"skill_id"} if action == "skill-read" else
               {"skill_id", "expected_sha256", "content", "idempotency_key"}
@@ -1872,7 +1872,7 @@ def observe_profile_admin(config: CoreGatewayConfig, *, request: dict[str, Any],
             or re.fullmatch(r"[0-9a-f]{64}", request["ingress_nonce"]) is None
             or not _is_hash(request.get("ingress_proof_sha256"))):
         raise CoreInspectionDenied("Profile administration request is invalid")
-    if action not in {"list", "skills-list"}:
+    if action not in {"list", "skills-list", "skills-archives-list"}:
         if action in {"skill-read", "skill-write", "skill-archive", "skill-restore", "skill-restore-list"}:
             if (not isinstance(request.get("skill_id"), str)
                     or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", request["skill_id"]) is None):
@@ -1926,14 +1926,15 @@ def observe_profile_admin(config: CoreGatewayConfig, *, request: dict[str, Any],
     from ..components.resources_active_profile_source import _read_catalog
     from .jarvis_profile_source_adapter import (
         archive_profile_skill, current_profile_files, current_profile_skill_files, read_profile_file,
-        read_profile_skill, read_resources_skill, write_profile_file, write_profile_skill,
+        list_archived_profile_skills, read_profile_skill, read_resources_skill,
+        restore_profile_skill, write_profile_file, write_profile_skill,
     )
     custody = capture_current_core_native_custody(config)
     try:
         if (custody.core_generation != request["core_generation"]
                 or custody.core_source_generation != current["core_source_generation"]):
             raise CoreInspectionDenied("Profile administration Core generation changed")
-        if action.startswith("skill-"):
+        if action.startswith("skill-") or action == "skills-archives-list":
             from .. import core_runtime as core
             core.recover_resources_skill_overlay()
         catalog = _read_catalog(custody.core_source_generation)
@@ -1942,7 +1943,7 @@ def observe_profile_admin(config: CoreGatewayConfig, *, request: dict[str, Any],
         profile_ids = tuple(sorted(catalog["sources"]))
         if action == "list":
             result: Any = current_profile_files(profile_ids)
-        elif action in {"skills-list", "skill-read", "skill-write", "skill-archive",
+        elif action in {"skills-list", "skills-archives-list", "skill-read", "skill-write", "skill-archive",
                         "skill-restore", "skill-restore-list"}:
             if "hermes" not in catalog["sources"]:
                 raise CoreInspectionDenied("Current Jarvis profile source is unavailable")
@@ -1962,7 +1963,9 @@ def observe_profile_admin(config: CoreGatewayConfig, *, request: dict[str, Any],
             for selected_id in pinned_ids:
                 member = member_by_id[selected_id]
                 resources_rows.append({"skill_id": selected_id, "name": selected_id,
-                    "sha256": member["sha256"], "source": "resources", "editable": True,
+                    "sha256": hashlib.sha256(overlay_contents[selected_id]).hexdigest()
+                        if selected_id in overlay_contents else member["sha256"],
+                    "source": "resources", "editable": True,
                     "overlay_active": selected_id in overlay_contents})
             resource_ids = set(pinned_ids)
             # Files outside the pinned generation are native Hermes-home skills;
@@ -1973,15 +1976,27 @@ def observe_profile_admin(config: CoreGatewayConfig, *, request: dict[str, Any],
             inventory = tuple(resources_rows) + native_rows
             if action == "skills-list":
                 result = inventory
+            elif action == "skills-archives-list":
+                resource_archives = core.list_archived_resources_skills(custody.core_source_generation)
+                owner_archives = list_archived_profile_skills(None)
+                owner_groups: dict[str, list[dict[str, str]]] = {}
+                for version in owner_archives:
+                    owner_groups.setdefault(version["skill_id"], []).append({
+                        "restore_id": version["restore_id"], "sha256": version["sha256"]})
+                result = {"archives": [
+                    *({"skill_id": row["skill_id"], "source": "resources", "versions": row["versions"]}
+                      for row in resource_archives),
+                    *({"skill_id": skill_id, "source": "owner-added", "versions": versions}
+                      for skill_id, versions in sorted(owner_groups.items()))]}
             else:
                 selected_skill = request["skill_id"]
                 row = next((item for item in inventory if item["skill_id"] == selected_skill), None)
                 if action == "skill-restore-list":
-                    if selected_skill not in resource_ids:
-                        raise CoreInspectionDenied("archived versions are available for Resources skills only")
-                    result = {"skill_id": selected_skill, "versions":
-                        core.list_archived_resources_skill_versions(selected_skill, custody.core_source_generation)}
-                elif row is None and action != "skill-archive":
+                    versions = (core.list_archived_resources_skill_versions(selected_skill,
+                        custody.core_source_generation) if selected_skill in resource_ids
+                        else list_archived_profile_skills(selected_skill))
+                    result = {"skill_id": selected_skill, "versions": versions}
+                elif row is None and action not in {"skill-archive", "skill-restore"}:
                     raise CoreInspectionDenied("Native skill is not currently installed")
                 elif action == "skill-read":
                     value = (read_resources_skill(selected_skill) if row["source"] == "resources"
@@ -2031,15 +2046,22 @@ def observe_profile_admin(config: CoreGatewayConfig, *, request: dict[str, Any],
                             "source_generation": value.source_generation, "sha256": value.sha256,
                             "recovery_id": value.recovery_id, "effective_readback": value.readback}
                 elif action == "skill-restore":
-                    if row is None or row["source"] != "resources":
-                        raise CoreInspectionDenied("Only Resources skill overlays can be restored")
-                    value = core.admin_resources_skill("restore", selected_skill,
-                        expected_sha256=request["expected_sha256"], restore_id=request["restore_id"],
-                        idempotency_key=hashlib.sha256(request["idempotency_key"].encode("ascii")).hexdigest(),
-                        core_source_generation=custody.core_source_generation)
-                    result = {"state": value["state"], "skill_id": selected_skill,
-                        "source_generation": value["source_generation"], "sha256": value["sha256"],
-                        "recovery_id": value["recovery_id"], "effective_readback": value["effective_readback"]}
+                    if selected_skill in resource_ids:
+                        value = core.admin_resources_skill("restore", selected_skill,
+                            expected_sha256=request["expected_sha256"], restore_id=request["restore_id"],
+                            idempotency_key=hashlib.sha256(request["idempotency_key"].encode("ascii")).hexdigest(),
+                            core_source_generation=custody.core_source_generation)
+                        result = {"state": value["state"], "skill_id": selected_skill,
+                            "source_generation": value["source_generation"], "sha256": value["sha256"],
+                            "recovery_id": value["recovery_id"], "effective_readback": value["effective_readback"]}
+                    else:
+                        value = restore_profile_skill(selected_skill,
+                            expected_sha256=request["expected_sha256"], restore_id=request["restore_id"],
+                            idempotency_key=request["idempotency_key"],
+                            core_source_generation=custody.core_source_generation)
+                        result = {"state": value.state, "skill_id": selected_skill,
+                            "source_generation": value.source_generation, "sha256": value.sha256,
+                            "recovery_id": value.recovery_id, "effective_readback": value.readback}
         elif request["profile_id"] not in catalog["sources"]:
             raise CoreInspectionDenied("Profile is not in the current source manifest")
         elif action == "read":
@@ -4784,7 +4806,7 @@ class CoreGatewayInspector:
                             restore_id: str | None = None) -> dict[str, Any]:
         """Use the fixed root inspector for current profile and native skill files."""
         from .core_gateway import CoreAcceptedIngressObservation, _read_config_current
-        if (action not in {"list", "read", "write", "skills-list", "skill-read", "skill-write",
+        if (action not in {"list", "read", "write", "skills-list", "skills-archives-list", "skill-read", "skill-write",
                 "skill-archive", "skill-restore", "skill-restore-list"}
                 or type(accepted_ingress) is not CoreAcceptedIngressObservation
                 or not isinstance(access_jwt, str) or not 1 <= len(access_jwt) <= 16_384
@@ -4795,7 +4817,7 @@ class CoreGatewayInspector:
         if action in {"skill-read", "skill-write", "skill-archive", "skill-restore", "skill-restore-list"}:
             if not isinstance(skill_id, str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", skill_id) is None:
                 raise CoreGatewayDenied("verified native skill selector is required")
-        elif action not in {"list", "skills-list"}:
+        elif action not in {"list", "skills-list", "skills-archives-list"}:
             if (not isinstance(profile_id, str)
                     or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,95}", profile_id) is None
                     or file_kind not in {"soul", "description", "instructions"}):

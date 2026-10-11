@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import stat
+import struct
 import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -1100,6 +1101,12 @@ def main(argv: list[str] | None = None) -> int:
     bundled.add_argument("--hermes-source", required=True)
     bundled.add_argument("--python", required=True)
     bundled.add_argument("--replace-owned-from-sha256")
+    overlay = sub.add_parser("install-overlay", help="replace one exact owner Resources overlay generation")
+    overlay.add_argument("--home", required=True)
+    overlay.add_argument("--hermes-source", required=True)
+    overlay.add_argument("--python", required=True)
+    overlay.add_argument("--expected-sha256", required=True)
+    overlay.add_argument("--previous-sha256", required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "build":
@@ -1115,6 +1122,21 @@ def main(argv: list[str] | None = None) -> int:
                 expected_sha256=args.expected_sha256,
                 hermes_source=args.hermes_source, python=args.python,
             )
+        elif args.command == "install-overlay":
+            incoming = sys.stdin.buffer.read(2 * _ARTIFACT_LIMIT + 16 + 1)
+            if len(incoming) < 16 or len(incoming) > 2 * _ARTIFACT_LIMIT + 16:
+                raise ManualJarvisSkillsError("overlay transaction input is outside its bound")
+            next_size, previous_size = struct.unpack(">QQ", incoming[:16])
+            if (not 0 < next_size <= _ARTIFACT_LIMIT or not 0 < previous_size <= _ARTIFACT_LIMIT
+                    or len(incoming) != 16 + next_size + previous_size):
+                raise ManualJarvisSkillsError("overlay transaction framing differs")
+            next_archive = incoming[16:16 + next_size]
+            previous_archive = incoming[16 + next_size:]
+            result = install_and_verify_manual_jarvis_skills(
+                next_archive, hermes_home=args.home, expected_sha256=args.expected_sha256,
+                hermes_source=args.hermes_source, python=args.python,
+                replace_owned_from_archive=previous_archive,
+                replace_owned_from_sha256=args.previous_sha256)
         else:
             previous_archive = None
             previous_sha256 = args.replace_owned_from_sha256

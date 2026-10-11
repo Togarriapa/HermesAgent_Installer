@@ -307,6 +307,8 @@ def write_profile_skill(skill_name: str, *, expected_sha256: str, content: str,
         raise ProfileFileCustodyError("native skill edit is not UTF-8") from None
     if not 0 < len(proposed) <= MAX_FILE_BYTES or os.geteuid() != 0:
         raise ProfileFileCustodyError("bounded root skill edit is required")
+    if not content.startswith(f"---\nname: {skill_name}\n"):
+        raise ProfileFileCustodyError("native skill edit must preserve its frontmatter identity")
     directory = _open_skill_directory(skill_name)
     backup_dir = _backup_directory()
     key_hash = hashlib.sha256(idempotency_key.encode()).hexdigest()
@@ -452,6 +454,8 @@ def archive_profile_skill(skill_name: str, *, expected_sha256: str,
             existing = read_profile_skill("hermes", skill_name)
             if not secrets.compare_digest(existing.sha256, expected_sha256):
                 return ProfileFileWrite("conflict", "hermes", "skill", None, existing.sha256, None, False)
+            if not existing.content.startswith(f"---\nname: {skill_name}\n"):
+                raise ProfileFileCustodyError("native skill cannot be archived without its fixed identity")
             key_hash = hashlib.sha256(idempotency_key.encode()).hexdigest()
             recovery_id = secrets.token_urlsafe(24)
             backup_name = f"{recovery_id}.backup"
@@ -499,6 +503,168 @@ def archive_profile_skill(skill_name: str, *, expected_sha256: str,
             return ProfileFileWrite("archived", "hermes", "skill",
                 hashlib.sha256((core_source_generation + "\0archived\0" + skill_name).encode()).hexdigest(),
                 existing.sha256, recovery_id, True)
+        finally:
+            os.close(lock_fd)
+    finally:
+        os.close(directory)
+        os.close(backup_dir)
+
+
+def list_archived_profile_skills(skill_name: str | None) -> tuple[dict[str, str], ...]:
+    """Project intact root-journaled archives, optionally filtered to one skill."""
+    if ((skill_name is not None and (not isinstance(skill_name, str) or not _SKILL_ID.fullmatch(skill_name)))
+            or os.geteuid() != 0):
+        raise ProfileFileCustodyError("native skill archive selector is invalid")
+    backup_dir = _backup_directory()
+    try:
+        names = sorted(name for name in os.listdir(backup_dir)
+            if re.fullmatch(r"skill-archive-[0-9a-f]{64}\.json", name))
+        if len(names) > 4096:
+            raise ProfileFileCustodyError("native skill archive inventory exceeds its bound")
+        versions = []
+        for journal_name in names:
+            record = _read_root_record(backup_dir, journal_name)
+            if (record is None or record.get("schema") != 1 or record.get("state") != "archived"
+                    or not isinstance(record.get("skill_name"), str)
+                    or not _SKILL_ID.fullmatch(record["skill_name"])
+                    or (skill_name is not None and record.get("skill_name") != skill_name)):
+                continue
+            recovery_id = record.get("backup_name", "").removesuffix(".backup")
+            if (not re.fullmatch(r"[A-Za-z0-9_-]{16,96}", recovery_id)
+                    or not isinstance(record.get("base_sha256"), str)
+                    or re.fullmatch(r"[0-9a-f]{64}", record["base_sha256"]) is None
+                    or set(record) != {"schema", "state", "skill_name", "core_source_generation",
+                        "base_sha256", "prior_signature", "backup_name", "idempotency_key_sha256",
+                        "created_monotonic_ns"}):
+                continue
+            try:
+                body = _read_root_bytes(backup_dir, record["backup_name"], maximum=MAX_FILE_BYTES)
+                if hashlib.sha256(body).hexdigest() != record["base_sha256"]:
+                    continue
+                text = body.decode("utf-8", "strict")
+            except (ProfileFileCustodyError, KeyError, UnicodeError):
+                continue
+            if not text.startswith(f"---\nname: {record['skill_name']}\n"):
+                continue
+            version = {"restore_id": recovery_id, "sha256": record["base_sha256"]}
+            if skill_name is None:
+                version["skill_id"] = record["skill_name"]
+            versions.append(version)
+        return tuple(versions)
+    finally:
+        os.close(backup_dir)
+
+
+def restore_profile_skill(skill_name: str, *, expected_sha256: str, restore_id: str,
+                          idempotency_key: str, core_source_generation: str) -> ProfileFileWrite:
+    """Restore only the exact archived SKILL.md leaf under its existing fixed directory."""
+    if (not isinstance(skill_name, str) or not _SKILL_ID.fullmatch(skill_name)
+            or not isinstance(expected_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256)
+            or not isinstance(restore_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,96}", restore_id)
+            or not isinstance(idempotency_key, str) or not _SAFE_IDEMPOTENCY.fullmatch(idempotency_key)
+            or not isinstance(core_source_generation, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", core_source_generation) or os.geteuid() != 0):
+        raise ProfileFileCustodyError("native skill restore request is invalid")
+    directory = _open_skill_directory(skill_name)
+    backup_dir = _backup_directory()
+    key_hash = hashlib.sha256(idempotency_key.encode("ascii")).hexdigest()
+    journal_name = f"skill-restore-{key_hash}.json"
+    try:
+        lock_fd = os.open(f"skill-{skill_name}.lock", os.O_CREAT | os.O_RDWR
+                          | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=backup_dir)
+        try:
+            lock = os.fstat(lock_fd)
+            if not stat.S_ISREG(lock.st_mode) or lock.st_uid != 0 or stat.S_IMODE(lock.st_mode) != 0o600:
+                raise ProfileFileCustodyError("native skill restore lock custody differs")
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            prior = _read_root_record(backup_dir, journal_name)
+            if prior is not None:
+                restore_fields = {"schema", "state", "skill_name", "restore_id",
+                    "core_source_generation", "base_sha256", "idempotency_key_sha256",
+                    "created_monotonic_ns"}
+                if (set(prior) not in (restore_fields, restore_fields | {"readback_sha256"})
+                        or prior.get("schema") != 1 or prior.get("skill_name") != skill_name
+                        or prior.get("restore_id") != restore_id
+                        or prior.get("core_source_generation") != core_source_generation
+                        or prior.get("base_sha256") != expected_sha256
+                        or prior.get("idempotency_key_sha256") != key_hash):
+                    raise ProfileFileCustodyError("native skill restore idempotency record differs")
+                try:
+                    current = read_profile_skill("hermes", skill_name)
+                except FileNotFoundError:
+                    return ProfileFileWrite("unknown-pending", "hermes", "skill", None, None, restore_id, False)
+                if current.sha256 != expected_sha256:
+                    return ProfileFileWrite("conflict", "hermes", "skill", None, current.sha256, None, False)
+                if prior.get("state") != "restored":
+                    prior["state"] = "restored"
+                    prior["readback_sha256"] = current.sha256
+                    _atomic_root_record(backup_dir, journal_name,
+                        json.dumps(prior, sort_keys=True, separators=(",", ":")).encode())
+                return ProfileFileWrite("restored", "hermes", "skill",
+                    hashlib.sha256((core_source_generation + "\0" + current.sha256).encode()).hexdigest(),
+                    current.sha256, restore_id, True)
+            try:
+                current = read_profile_skill("hermes", skill_name)
+            except FileNotFoundError:
+                current = None
+            if current is not None:
+                return ProfileFileWrite("conflict", "hermes", "skill", None, current.sha256, None, False)
+            # Archive selection is joined to its root-owned journal and backup;
+            # no path or content is accepted from the caller.
+            archives = list_archived_profile_skills(skill_name)
+            if {"restore_id": restore_id, "sha256": expected_sha256} not in archives:
+                raise ProfileFileCustodyError("native archived skill version is unavailable")
+            archive_record = None
+            for name in os.listdir(backup_dir):
+                if not re.fullmatch(r"skill-archive-[0-9a-f]{64}\.json", name):
+                    continue
+                candidate = _read_root_record(backup_dir, name)
+                if (candidate and candidate.get("state") == "archived"
+                        and candidate.get("skill_name") == skill_name
+                        and candidate.get("backup_name", "").removesuffix(".backup") == restore_id):
+                    archive_record = candidate
+                    break
+            if archive_record is None:
+                raise ProfileFileCustodyError("native archive journal disappeared")
+            body = _read_root_bytes(backup_dir, archive_record["backup_name"], maximum=MAX_FILE_BYTES)
+            if hashlib.sha256(body).hexdigest() != expected_sha256:
+                raise ProfileFileCustodyError("native skill archive bytes changed")
+            content = body.decode("utf-8", "strict")
+            if not content.startswith(f"---\nname: {skill_name}\n"):
+                raise ProfileFileCustodyError("native skill archive identity differs")
+            journal = {"schema": 1, "state": "prepared", "skill_name": skill_name,
+                "restore_id": restore_id, "core_source_generation": core_source_generation,
+                "base_sha256": expected_sha256, "idempotency_key_sha256": key_hash,
+                "created_monotonic_ns": time.monotonic_ns()}
+            _atomic_root_record(backup_dir, journal_name,
+                json.dumps(journal, sort_keys=True, separators=(",", ":")).encode())
+            request = json.dumps({"schema": 1, "op": "restore-skill-entrypoint",
+                "skill_name": skill_name, "content": content, "recovery_id": restore_id},
+                sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+            try:
+                child = subprocess.run([str(_CORE_PYTHON), "-I", str(Path(__file__).resolve()),
+                        "--profile-file-helper"], input=request, stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL, timeout=3.0, check=False, close_fds=True,
+                    user=HOME_UID, group=HOME_GID, extra_groups=(), cwd="/",
+                    env={"PATH": "/usr/bin:/bin", "PYTHONNOUSERSITE": "1"})
+                result = json.loads(child.stdout.decode("utf-8", "strict")) if child.returncode == 0 else None
+            except Exception:
+                result = None
+            if result != {"ok": True, "sha256": expected_sha256}:
+                journal["state"] = "unknown-pending"
+                _atomic_root_record(backup_dir, journal_name,
+                    json.dumps(journal, sort_keys=True, separators=(",", ":")).encode())
+                return ProfileFileWrite("unknown-pending", "hermes", "skill", None, None, restore_id, False)
+            readback = read_profile_skill("hermes", skill_name)
+            if readback.sha256 != expected_sha256:
+                raise ProfileFileCustodyError("native skill restore readback differs")
+            journal["state"] = "restored"
+            journal["readback_sha256"] = readback.sha256
+            _atomic_root_record(backup_dir, journal_name,
+                json.dumps(journal, sort_keys=True, separators=(",", ":")).encode())
+            return ProfileFileWrite("restored", "hermes", "skill",
+                hashlib.sha256((core_source_generation + "\0" + readback.sha256).encode()).hexdigest(),
+                readback.sha256, restore_id, True)
         finally:
             os.close(lock_fd)
     finally:
@@ -623,6 +789,31 @@ def _read_root_record(directory_fd: int, name: str) -> dict[str, Any] | None:
     if type(value) is not dict:
         raise ProfileFileCustodyError("profile recovery record schema differs")
     return value
+
+
+def _read_root_bytes(directory_fd: int, name: str, *, maximum: int) -> bytes:
+    if (not isinstance(name, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,96}\.backup", name) is None
+            or type(maximum) is not int or not 0 < maximum <= 256 * 1024):
+        raise ProfileFileCustodyError("profile backup selector is invalid")
+    fd = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                 | getattr(os, "O_CLOEXEC", 0), dir_fd=directory_fd)
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1
+                or not 0 < info.st_size <= maximum):
+            raise ProfileFileCustodyError("profile backup custody differs")
+        raw = bytearray()
+        while len(raw) <= maximum:
+            part = os.read(fd, min(32 * 1024, maximum + 1 - len(raw)))
+            if not part:
+                break
+            raw.extend(part)
+        if len(raw) != info.st_size or _signature(os.fstat(fd)) != _signature(info):
+            raise ProfileFileCustodyError("profile backup changed during read")
+        return bytes(raw)
+    finally:
+        os.close(fd)
 
 
 def _atomic_owner_replace(directory_fd: int, name: str, body: bytes,
@@ -821,7 +1012,8 @@ def write_profile_file(profile_id: str, file_kind: str, *, expected_sha256: str,
 
 def _run_profile_file_helper(request: Any) -> dict[str, Any]:
     """Apply one exact file CAS while running with the Core owner UID."""
-    if type(request) is dict and request.get("op") in {"replace-skill-entrypoint", "archive-skill-entrypoint"}:
+    if type(request) is dict and request.get("op") in {
+            "replace-skill-entrypoint", "archive-skill-entrypoint", "restore-skill-entrypoint"}:
         return _run_skill_file_helper(request)
     fields = {"schema", "op", "profile_id", "file_kind", "expected_sha256",
               "expected_signature", "content", "recovery_id"}
@@ -858,7 +1050,52 @@ def _run_profile_file_helper(request: Any) -> dict[str, Any]:
 def _run_skill_file_helper(request: dict[str, Any]) -> dict[str, Any]:
     fields = {"schema", "op", "skill_name", "expected_sha256", "expected_signature", "content", "recovery_id"}
     archive_fields = {"schema", "op", "skill_name", "expected_sha256", "expected_signature", "recovery_id"}
+    restore_fields = {"schema", "op", "skill_name", "content", "recovery_id"}
     is_archive = request.get("op") == "archive-skill-entrypoint"
+    is_restore = request.get("op") == "restore-skill-entrypoint"
+    if is_restore:
+        if (os.geteuid() != HOME_UID or set(request) != restore_fields
+                or request.get("schema") != 1
+                or not isinstance(request.get("skill_name"), str)
+                or not _SKILL_ID.fullmatch(request["skill_name"])
+                or not isinstance(request.get("content"), str) or "\x00" in request["content"]
+                or not 0 < len(request["content"].encode("utf-8", "strict")) <= MAX_FILE_BYTES
+                or not isinstance(request.get("recovery_id"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{16,96}", request["recovery_id"])):
+            raise ProfileFileCustodyError("Core UID skill restore request is invalid")
+        try:
+            read_profile_skill("hermes", request["skill_name"])
+        except FileNotFoundError:
+            pass
+        else:
+            raise ProfileFileCustodyError("native skill leaf already exists")
+        if not request["content"].startswith(f"---\nname: {request['skill_name']}\n"):
+            raise ProfileFileCustodyError("native skill restore identity differs")
+        directory = _open_skill_directory(request["skill_name"])
+        try:
+            fd = os.open("SKILL.md", os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                         | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+                         0o644, dir_fd=directory)
+            try:
+                os.fchown(fd, HOME_UID, HOME_GID)
+                os.fchmod(fd, 0o644)
+                _write_all(fd, request["content"].encode("utf-8", "strict"))
+                os.fsync(fd)
+                info = os.fstat(fd)
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != HOME_UID
+                        or info.st_gid != HOME_GID or info.st_nlink != 1
+                        or stat.S_IMODE(info.st_mode) != 0o644):
+                    raise ProfileFileCustodyError("restored native skill custody differs")
+            except BaseException:
+                os.close(fd)
+                os.unlink("SKILL.md", dir_fd=directory)
+                raise
+            os.close(fd)
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        readback = read_profile_skill("hermes", request["skill_name"])
+        return {"ok": True, "sha256": readback.sha256}
     if (os.geteuid() != HOME_UID or set(request) != (archive_fields if is_archive else fields)
             or request.get("schema") != 1
             or not isinstance(request.get("skill_name"), str) or not _SKILL_ID.fullmatch(request["skill_name"])

@@ -214,10 +214,12 @@ class CoreGatewayProfileAdminProvider:
         return ProfileAdminWriteResult(row["state"], row["source_generation"], row["sha256"],
             row["recovery_id"], row["effective_readback"])
 
-    def list_archived_skills(self, *, core_generation: str, skill_id: str,
+    def list_archived_skills(self, *, core_generation: str, skill_id: str, source: str = "resources",
                              access_jwt: str, accepted_ingress: Any) -> tuple[dict[str, str], ...]:
         if accepted_ingress.core_generation != core_generation:
             raise JarvisChatDenied("skill Core generation changed")
+        if source not in {"resources", "owner-added"}:
+            raise JarvisChatDenied("skill archive source is invalid")
         row = self._call(action="skill-restore-list", access_jwt=access_jwt,
             accepted_ingress=accepted_ingress, skill_id=skill_id)
         versions = row.get("versions") if type(row) is dict and row.get("skill_id") == skill_id else None
@@ -226,10 +228,48 @@ class CoreGatewayProfileAdminProvider:
         result = []
         for item in versions:
             if (type(item) is not dict or set(item) != {"restore_id", "sha256"}
-                    or not _HASH.fullmatch(item.get("restore_id", ""))
+                    or not isinstance(item.get("restore_id"), str)
+                    or (re.fullmatch(r"[0-9a-f]{64}", item["restore_id"]) is None
+                        if source == "resources" else
+                        re.fullmatch(r"[A-Za-z0-9_-]{16,96}", item["restore_id"]) is None)
                     or not _HASH.fullmatch(item.get("sha256", ""))):
                 raise JarvisChatDenied("archived Resources version inventory is invalid")
             result.append(dict(item))
+        return tuple(result)
+
+    def list_skill_archives(self, *, core_generation: str, access_jwt: str,
+                            accepted_ingress: Any) -> tuple[dict[str, Any], ...]:
+        """List restorable versions independently of the now-archived live row."""
+        if accepted_ingress.core_generation != core_generation:
+            raise JarvisChatDenied("skill Core generation changed")
+        row = self._call(action="skills-archives-list", access_jwt=access_jwt,
+            accepted_ingress=accepted_ingress)
+        archives = row.get("archives") if type(row) is dict else None
+        if type(archives) is not list or len(archives) > 8192:
+            raise JarvisChatDenied("native skill archive inventory is unavailable")
+        result = []
+        seen = set()
+        for item in archives:
+            if (type(item) is not dict or set(item) != {"skill_id", "source", "versions"}
+                    or not isinstance(item.get("skill_id"), str)
+                    or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", item["skill_id"]) is None
+                    or item.get("source") not in {"resources", "owner-added"}
+                    or item["skill_id"] in seen or type(item.get("versions")) is not list
+                    or not 0 < len(item["versions"]) <= 4096):
+                raise JarvisChatDenied("native skill archive row is invalid")
+            seen.add(item["skill_id"])
+            versions = []
+            for version in item["versions"]:
+                if (type(version) is not dict or set(version) != {"restore_id", "sha256"}
+                        or not isinstance(version.get("restore_id"), str)
+                        or (re.fullmatch(r"[0-9a-f]{64}", version["restore_id"]) is None
+                            if item["source"] == "resources" else
+                            re.fullmatch(r"[A-Za-z0-9_-]{16,96}", version["restore_id"]) is None)
+                        or not _HASH.fullmatch(version.get("sha256", ""))):
+                    raise JarvisChatDenied("native skill archive version is invalid")
+                versions.append(dict(version))
+            result.append({"skill_id": item["skill_id"], "source": item["source"],
+                "versions": tuple(versions)})
         return tuple(result)
 
     def restore_skill(self, *, core_generation: str, skill_id: str, expected_sha256: str,

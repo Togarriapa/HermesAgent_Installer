@@ -1,6 +1,6 @@
 """Fixed, journaled adoption of the pinned Hermes core service."""
 from __future__ import annotations
-import fcntl, grp, hashlib, json, os, pwd, re, secrets, shlex, stat, subprocess, sys, tempfile, time
+import fcntl, grp, hashlib, json, os, pwd, re, secrets, shlex, stat, struct, subprocess, sys, tempfile, time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -972,6 +972,42 @@ def list_archived_resources_skill_versions(skill_id,core_source_generation):
    continue
  return results
 
+def list_archived_resources_skills(core_source_generation):
+ """Project all currently restorable Resources overlays in one bounded journal scan."""
+ if (os.geteuid()!=ROOT_UID or not isinstance(core_source_generation,str)
+     or re.fullmatch(r"[0-9a-f]{64}",core_source_generation) is None):
+  raise CoreRuntimeError("Resources archive inventory request is malformed")
+ recover_resources_skill_overlay()
+ current=read_current_resources_discovery(core_source_generation=core_source_generation)
+ if current.get("resources_state")!="discovered": raise CoreRuntimeError("verified Resources source is unavailable")
+ directory=RESOURCES_SKILL_OVERLAYS
+ try: names=os.listdir(directory)
+ except FileNotFoundError: return []
+ candidates=sorted(name[:-5] for name in names if re.fullmatch(r"[0-9a-f]{64}\.json",name))
+ if len(candidates)>4096: raise CoreRuntimeError("Resources archive inventory exceeds its bound")
+ from .registry import manual_jarvis_skills as native
+ from .registry import resources_skill_overlay as transform
+ base=native.build_manual_jarvis_skills_artifact()
+ base_manifest,_=native._read_artifact(base,hashlib.sha256(base).hexdigest())
+ pinned={row["skill_id"] for row in base_manifest["skill_members"]}
+ output={}
+ for restore_id in candidates:
+  raw=_projection_file(directory/(restore_id+".json"),owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=4096)
+  try:
+   metadata=json.loads(raw); skill_id=metadata.get("skill_id") if type(metadata) is dict else None
+   if (type(metadata) is not dict or set(metadata)!={"schema","skill_id","content_sha256","restore_id"}
+       or metadata.get("schema")!=1 or metadata.get("restore_id")!=restore_id or skill_id not in pinned
+       or re.fullmatch(r"[0-9a-f]{64}",metadata.get("content_sha256","")) is None): continue
+   content=_projection_file(directory/(metadata["content_sha256"]+".bin"),owner=ROOT_UID,
+     group=ROOT_UID,mode=0o600,maximum=256*1024)
+   if hashlib.sha256(content).hexdigest()!=metadata["content_sha256"]: continue
+   transform.build_effective_artifact(base,skill_id,content)
+   output.setdefault(skill_id,[]).append({"restore_id":restore_id,"sha256":metadata["content_sha256"]})
+  except (CoreRuntimeError,ValueError,TypeError,KeyError):
+   continue
+ return [{"skill_id":name,"versions":sorted(versions,key=lambda row:row["restore_id"])}
+         for name,versions in sorted(output.items())]
+
 def recover_resources_skill_overlay():
  """Resolve a crash-window transaction only when the exact old or new tree is present."""
  pending_path=RESOURCES_SKILL_OVERLAYS/"pending.json"
@@ -1019,6 +1055,37 @@ def recover_resources_skill_overlay():
   return True
  except Exception:
   raise CoreRuntimeError("Resources skill overlay recovery needs operator review; no retry was attempted") from None
+
+def _install_resources_skill_overlay_as_owner(next_archive,previous_archive,*,next_sha,previous_sha):
+ """Run the exact native generation exchange as the Hermes home owner."""
+ account=pwd.getpwnam("admin")
+ runuser=_validated_executable(RUNUSER,{ROOT_UID})
+ interpreter=_validated_executable(Path(sys.executable),{ROOT_UID,account.pw_uid})
+ if runuser!=RUNUSER: raise CoreRuntimeError("fixed account-switch executable differs")
+ argv=[str(runuser),"-u","admin","--",str(interpreter),"-m",
+   "hermes_installer.registry.manual_jarvis_skills","install-overlay",
+   "--home",str(HERMES_HOME),"--hermes-source",str(SOURCE),"--python",str(PYTHON),
+   "--expected-sha256",next_sha,"--previous-sha256",previous_sha]
+ framed=struct.pack(">QQ",len(next_archive),len(previous_archive))+next_archive+previous_archive
+ env={"PATH":"/usr/sbin:/usr/bin:/sbin:/bin","HOME":str(HOME),"HERMES_HOME":str(HERMES_HOME),
+   "LANG":"C.UTF-8","PYTHONPATH":str(ADAPTER_SOURCE),"PYTHONNOUSERSITE":"1",
+   "PYTHONDONTWRITEBYTECODE":"1"}
+ try:
+  result=subprocess.run(argv,input=framed,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+    timeout=600,env=env,check=False,close_fds=True)
+ except (OSError,subprocess.TimeoutExpired,ValueError):
+  raise CoreRuntimeError("native Resources overlay installation did not complete") from None
+ if result.returncode!=0 or not isinstance(result.stdout,bytes) or len(result.stdout)>8*1024*1024:
+  raise CoreRuntimeError("native Resources overlay installation or readback failed")
+ try:
+  receipt=json.loads(result.stdout.decode("utf-8","strict"))
+ except (ValueError,UnicodeError):
+  raise CoreRuntimeError("native Resources overlay receipt is malformed") from None
+ if (type(receipt) is not dict or receipt.get("state")!="discovered"
+     or receipt.get("discovered") is not True or receipt.get("artifact_sha256")!=next_sha
+     or receipt.get("native_receipt",{}).get("loaded_skill_count")!=396):
+  raise CoreRuntimeError("native Resources overlay receipt does not match the requested generation")
+ return receipt
 
 def admin_resources_skill(action,skill_id,*,expected_sha256,idempotency_key,core_source_generation,
                           content=None,restore_id=None):
@@ -1112,18 +1179,20 @@ def admin_resources_skill(action,skill_id,*,expected_sha256,idempotency_key,core
   _atomic_replace(RESOURCES_SKILL_OVERLAYS/"pending.json",
    json.dumps(pending,sort_keys=True,separators=(",",":" )).encode("ascii"),0o600,ROOT_UID,ROOT_UID)
   try:
-   native.install_and_verify_manual_jarvis_skills(next_archive,hermes_home=HERMES_HOME,
-    expected_sha256=next_sha,hermes_source=SOURCE,python=PYTHON,
-    replace_owned_from_archive=current_archive,replace_owned_from_sha256=current_sha)
+   _install_resources_skill_overlay_as_owner(next_archive,current_archive,
+    next_sha=next_sha,previous_sha=current_sha)
    _atomic_replace(RESOURCES_SKILL_OVERLAYS/"active.json",
     (json.dumps(next_record,sort_keys=True,separators=(",",":"))+"\n").encode("ascii"),0o600,ROOT_UID,ROOT_UID)
    receipt=_write_resources_discovery()
    _atomic_replace(operation_path,(json.dumps({"schema":1,"request_sha256":request_sha,"result":result},
     sort_keys=True,separators=(",",":"))+"\n").encode("ascii"),0o600,ROOT_UID,ROOT_UID)
    (RESOURCES_SKILL_OVERLAYS/"pending.json").unlink(missing_ok=True); _sync_directory(RESOURCES_SKILL_OVERLAYS)
-  except Exception:
+  except CoreRuntimeError:
    recover_resources_skill_overlay()
    raise
+  except Exception:
+   recover_resources_skill_overlay()
+   raise CoreRuntimeError("native Resources skill replacement or readback failed") from None
   return {**result,"artifact_sha256":receipt["artifact_sha256"]}
  finally:
   fcntl.flock(fd,fcntl.LOCK_UN); os.close(fd)
