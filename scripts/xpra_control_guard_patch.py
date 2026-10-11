@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply the single pinned Xpra 6.5.4 control-disabled startup fix."""
+"""Apply the pinned Xpra 6.5.4 control-disabled startup guards."""
 from __future__ import annotations
 
 import hashlib
@@ -14,6 +14,12 @@ PATCHED_SIZE = 5_071
 PATCHED_SHA256 = "da12f27c1421dc71248b568791f186ee3d470d0969c4020da0d9d6d7a1a02279"
 SOURCE_MD5 = "f2bf39a8a05eb972fb70c9da330154d2"
 PATCHED_MD5 = "14fa7242a94bfcdceebee92ee13a33a9"
+CORE_SIZE = 75_650
+CORE_SHA256 = "67bf4c1c903fedfd4bb9c7e040e5f4b2d1e9b41f7efcbf43c50a02306ca8000a"
+WINDOW_SIZE = 42_383
+WINDOW_SHA256 = "6f36f82a51d55b5302772e23f7f6e1317226184e0635b0f3f5954dacaca16a0f"
+CORE_MD5 = "f27671cadfd5efe5a6f363b30da72fef"
+WINDOW_MD5 = "991eb3b6866c1df49fa55b54e2fbad7b"
 
 OLD = (
     b'    def args_control(self, name: str, descr: str, **kwargs) -> None:\n'
@@ -29,7 +35,9 @@ NEW = (
     b'        run = getattr(self, "control_command_%s" % name.replace("-", "_"), noop)\n'
 )
 STUB_RELATIVE = Path("usr/lib/python3/dist-packages/xpra/server/subsystem/stub.py")
-LOCAL_VERSION = "6.5.4-r0-1+jarvis1"
+CORE_RELATIVE = Path("usr/lib/python3/dist-packages/xpra/server/core.py")
+WINDOW_RELATIVE = Path("usr/lib/python3/dist-packages/xpra/server/subsystem/window.py")
+LOCAL_VERSION = "6.5.4-r0-1+jarvis2"
 PACKAGE = "xpra-server"
 ARCHITECTURE = "arm64"
 
@@ -45,9 +53,83 @@ def patch_bytes(data: bytes) -> bytes:
     return patched
 
 
+CORE_OLD = (
+    b'    def add_core_control_commands(self) -> None:\n'
+    b'        from xpra.net.control.common import parse_boolean_value\n'
+)
+CORE_NEW = (
+    b'    def add_core_control_commands(self) -> None:\n'
+    b'        from xpra.server import features\n'
+    b'        if not features.control:\n'
+    b'            return\n'
+    b'        from xpra.net.control.common import parse_boolean_value\n'
+)
+WINDOW_OLD = (
+    b'    def add_window_control_commands(self) -> None:\n'
+    b'        from xpra.util.parsing import parse_scaling_value, from0to100\n'
+    b'        from xpra.net.control.common import parse_boolean_value, parse_4intlist\n'
+)
+WINDOW_NEW = (
+    b'    def add_window_control_commands(self) -> None:\n'
+    b'        from xpra.server import features\n'
+    b'        if not features.control:\n'
+    b'            return\n'
+    b'        from xpra.util.parsing import parse_scaling_value, from0to100\n'
+    b'        from xpra.net.control.common import parse_boolean_value, parse_4intlist\n'
+)
+CORE_PATCHED_SIZE = 75_743
+CORE_PATCHED_SHA256 = "95a8bb41304181555ac33482931ba1c2460b4a1b03e458c3c5e8825adcf34e77"
+CORE_PATCHED_MD5 = "4be1d1a6c50413f074eaf7d316aa07b3"
+WINDOW_PATCHED_SIZE = 42_476
+WINDOW_PATCHED_SHA256 = "7fd74d70e6a50e2f02727e263bdbec34826d23871abf4feedb230741ef09264f"
+WINDOW_PATCHED_MD5 = "1eb15f0297d3f5c84b0dce12f41d45d4"
+
+
+def _patch_guard_member(data: bytes, *, size: int, sha256: str, old: bytes, new: bytes, label: str) -> bytes:
+    if len(data) != size or hashlib.sha256(data).hexdigest() != sha256:
+        raise ValueError(f"{label} does not match the pinned official Xpra 6.5.4 source")
+    if data.count(old) != 1:
+        raise ValueError(f"expected exactly one original {label} control-registration body")
+    return data.replace(old, new, 1)
+
+
+def patch_core_bytes(data: bytes) -> bytes:
+    patched = _patch_guard_member(data, size=CORE_SIZE, sha256=CORE_SHA256,
+                                  old=CORE_OLD, new=CORE_NEW, label="server/core.py")
+    if len(patched) != CORE_PATCHED_SIZE or hashlib.sha256(patched).hexdigest() != CORE_PATCHED_SHA256:
+        raise ValueError("patched server/core.py does not match the reviewed patch")
+    return patched
+
+
+def patch_window_bytes(data: bytes) -> bytes:
+    patched = _patch_guard_member(data, size=WINDOW_SIZE, sha256=WINDOW_SHA256,
+                                  old=WINDOW_OLD, new=WINDOW_NEW,
+                                  label="server/subsystem/window.py")
+    if len(patched) != WINDOW_PATCHED_SIZE or hashlib.sha256(patched).hexdigest() != WINDOW_PATCHED_SHA256:
+        raise ValueError("patched server/subsystem/window.py does not match the reviewed patch")
+    return patched
+
+
+PATCHED_CONTROL_MD5S = (
+    (STUB_RELATIVE.as_posix(), SOURCE_MD5, PATCHED_MD5),
+    (CORE_RELATIVE.as_posix(), CORE_MD5, CORE_PATCHED_MD5),
+    (WINDOW_RELATIVE.as_posix(), WINDOW_MD5, WINDOW_PATCHED_MD5),
+)
+PATCHED_MEMBER_FACTS = {
+    STUB_RELATIVE.as_posix(): (PATCHED_SIZE, PATCHED_SHA256),
+    CORE_RELATIVE.as_posix(): (CORE_PATCHED_SIZE, CORE_PATCHED_SHA256),
+    WINDOW_RELATIVE.as_posix(): (WINDOW_PATCHED_SIZE, WINDOW_PATCHED_SHA256),
+}
+
+
 def patch_tree(root: Path) -> None:
-    path = root / STUB_RELATIVE
-    path.write_bytes(patch_bytes(path.read_bytes()))
+    for member, patcher in (
+        (STUB_RELATIVE, patch_bytes),
+        (CORE_RELATIVE, patch_core_bytes),
+        (WINDOW_RELATIVE, patch_window_bytes),
+    ):
+        path = root / member
+        path.write_bytes(patcher(path.read_bytes()))
 
 
 def update_control_directory(directory: Path) -> None:
@@ -73,17 +155,15 @@ def update_control_directory(directory: Path) -> None:
 
     md5_path = directory / "md5sums"
     lines = md5_path.read_text(encoding="ascii").splitlines(keepends=True)
-    member = STUB_RELATIVE.as_posix()
-    old_md5 = SOURCE_MD5
-    new_md5 = PATCHED_MD5
-    matches = [i for i, line in enumerate(lines) if line.rstrip("\n").split(maxsplit=1)[-1:] == [member]]
-    if len(matches) != 1:
-        raise ValueError("expected one md5sums entry for the exact patched module")
-    index = matches[0]
-    parts = lines[index].split(maxsplit=1)
-    if len(parts) != 2 or parts[0] != old_md5:
-        raise ValueError("original stub.py checksum in package md5sums differs")
-    lines[index] = f"{new_md5}  {member}\n"
+    for member, old_md5, new_md5 in PATCHED_CONTROL_MD5S:
+        matches = [i for i, line in enumerate(lines) if line.rstrip("\n").split(maxsplit=1)[-1:] == [member]]
+        if len(matches) != 1:
+            raise ValueError(f"expected one md5sums entry for {member}")
+        index = matches[0]
+        parts = lines[index].split(maxsplit=1)
+        if len(parts) != 2 or parts[0] != old_md5:
+            raise ValueError(f"original package checksum differs for {member}")
+        lines[index] = f"{new_md5}  {member}\n"
     md5_path.write_text("".join(lines), encoding="ascii")
 
 
@@ -120,13 +200,16 @@ def verify_payload_trees(
 ) -> None:
     before = _tree_manifest(original, exclude_top=exclude_top)
     after = _tree_manifest(rebuilt, exclude_top=exclude_top)
-    key = STUB_RELATIVE.as_posix()
+    expected = PATCHED_MEMBER_FACTS
     if set(before) != set(after):
         raise ValueError("rebuilt data archive changed the package member set")
+    if not set(expected).issubset(before):
+        raise ValueError("package tree is missing one or more fixed patched Xpra modules")
     for member in before:
-        if member == key:
-            if after[member] != ("file", before[member][1], PATCHED_SIZE, PATCHED_SHA256):
-                raise ValueError("rebuilt stub.py does not match its reviewed mode/size/hash")
+        if member in expected:
+            size, sha256 = expected[member]
+            if after[member] != ("file", before[member][1], size, sha256):
+                raise ValueError(f"rebuilt member does not match reviewed mode/size/hash: {member}")
         elif before[member] != after[member]:
             raise ValueError(f"rebuilt package changed an unrelated payload member: {member}")
 
@@ -149,14 +232,18 @@ def verify_control_directories(original: Path, rebuilt: Path) -> None:
             continue
         if name == "control":
             old_line = b"Version: 6.5.4-r0-1\n"
-            if old_bytes.count(old_line) != 1 or old_bytes.replace(old_line, b"Version: 6.5.4-r0-1+jarvis1\n", 1) != new_bytes:
+            if old_bytes.count(old_line) != 1 or old_bytes.replace(old_line, b"Version: 6.5.4-r0-1+jarvis2\n", 1) != new_bytes:
                 raise ValueError("control metadata changed beyond the exact local package version")
         elif name == "md5sums":
-            old_md5, new_md5 = SOURCE_MD5.encode(), PATCHED_MD5.encode()
-            old_row = old_md5 + b"  " + STUB_RELATIVE.as_posix().encode() + b"\n"
-            new_row = new_md5 + b"  " + STUB_RELATIVE.as_posix().encode() + b"\n"
-            if old_bytes.count(old_row) != 1 or old_bytes.replace(old_row, new_row, 1) != new_bytes:
-                raise ValueError("md5sums changed beyond the patched stub.py checksum")
+            expected_bytes = old_bytes
+            for member, old_md5, new_md5 in PATCHED_CONTROL_MD5S:
+                old_row = old_md5.encode() + b"  " + member.encode() + b"\n"
+                new_row = new_md5.encode() + b"  " + member.encode() + b"\n"
+                if expected_bytes.count(old_row) != 1:
+                    raise ValueError(f"md5sums does not contain the exact original row for {member}")
+                expected_bytes = expected_bytes.replace(old_row, new_row, 1)
+            if expected_bytes != new_bytes:
+                raise ValueError("md5sums changed beyond the three reviewed source members")
 
 
 def verify_repacked_package(original_root: Path, rebuilt_root: Path) -> None:
@@ -178,7 +265,9 @@ def main() -> int:
         directory = Path(sys.argv[2])
         if sys.argv[1] == "patch":
             patch_tree(directory)
-            print(f"patched size={PATCHED_SIZE} sha256={PATCHED_SHA256}")
+            print("patched fixed source members:")
+            for member, (size, digest) in PATCHED_MEMBER_FACTS.items():
+                print(f"{member} size={size} sha256={digest}")
         elif sys.argv[1] == "metadata":
             update_control_directory(directory)
         else:
