@@ -46,7 +46,8 @@ _MASTER_PLAN_STORE_MAX_RECORDS = 4096
 _NATIVE_ACTIVITY_STORE_NAME = "native-child-activity.json"
 _NATIVE_ACTIVITY_MAX_BYTES = 512 * 1024
 _NATIVE_ACTIVITY_MAX_INSTANCES = 100
-_NATIVE_ACTIVITY_MAX_EVENTS_PER_INSTANCE = 16
+_NATIVE_ACTIVITY_MAX_EVENTS_PER_INSTANCE = 8
+_NATIVE_ACTIVITY_MAX_DEDUP_IDS_PER_INSTANCE = 32
 _NATIVE_ACTIVITY_MAX_EVENTS_PER_READ = 200
 _NATIVE_INHERITANCE_POLICY_SEAL = object()
 _MASTER_PLAN_RECORD_SEAL = object()
@@ -472,7 +473,7 @@ def _native_activity_snapshot_from_bytes(raw: bytes) -> list[dict[str, Any]] | N
             "mission_revision", "gateway_turn_id", "profile_id", "source_revision",
             "source_generation_sha256", "source_manifest_sha256", "core_generation",
             "core_source_generation", "child_lineage_sha256", "parent_lineage_sha256",
-            "created_at", "updated_at", "status", "events"}
+            "created_at", "updated_at", "tool_count_total", "seen_event_ids", "status", "events"}
         event_fields = {"event_id", "kind", "status", "at", "duration_ms", "tool_count"}
         for row in value["instances"]:
             if (type(row) is not dict or set(row) != fields
@@ -496,6 +497,13 @@ def _native_activity_snapshot_from_bytes(raw: bytes) -> list[dict[str, Any]] | N
                     or ((row["mission_id"] is None) != (row["mission_revision"] is None))
                     or any(type(row[name]) not in (int, float) or not math.isfinite(row[name])
                            for name in ("created_at", "updated_at"))
+                    or type(row["tool_count_total"]) is not int
+                    or not 0 <= row["tool_count_total"] <= 1_000_000
+                    or type(row["seen_event_ids"]) is not list
+                    or len(row["seen_event_ids"]) > _NATIVE_ACTIVITY_MAX_DEDUP_IDS_PER_INSTANCE
+                    or len(set(row["seen_event_ids"])) != len(row["seen_event_ids"])
+                    or any(not isinstance(item, str) or not _HASH.fullmatch(item)
+                           for item in row["seen_event_ids"])
                     or row["status"] not in {"admitted", "running", "responded", "completed", "unknown"}
                     or type(row["events"]) is not list
                     or len(row["events"]) > _NATIVE_ACTIVITY_MAX_EVENTS_PER_INSTANCE):
@@ -514,6 +522,8 @@ def _native_activity_snapshot_from_bytes(raw: bytes) -> list[dict[str, Any]] | N
                         or type(event["tool_count"]) is not int or not 0 <= event["tool_count"] <= 128):
                     return None
                 event_ids.add(event["event_id"])
+            if not event_ids.issubset(set(row["seen_event_ids"])):
+                return None
         return value["instances"]
     except Exception:
         return None
@@ -1158,8 +1168,6 @@ class CoreVerifiedJarvisMasterPlanningCompletion:
     def is_current_sealed(self, config: Any = None, custody: Any = None,
                           now: float | None = None) -> bool:
         current = time.monotonic() if now is None else now
-        observed_at = time.time()
-        window_start = observed_at - 7 * 24 * 60 * 60
         if (type(self) is not CoreVerifiedJarvisMasterPlanningCompletion
                 or self._seal is not _MASTER_PLANNING_COMPLETION_SEAL
                 or not _HASH.fullmatch(self.owner_subject_sha256 or "")
@@ -2242,6 +2250,7 @@ class RootCoreNativeObservationRegistry:
                     b"jarvis-native-parent-lineage-v1\0" + child["parent_session_id"].encode("utf-8")
                     + b"\0" + child["parent_turn_id"].encode("utf-8")).hexdigest(),
                 "created_at": time.time(), "updated_at": time.time(),
+                "tool_count_total": 0, "seen_event_ids": [],
                 "status": "admitted", "events": [],
             }
             child["activity"] = row
@@ -2254,11 +2263,17 @@ class RootCoreNativeObservationRegistry:
             event_id = hashlib.sha256(
                 b"jarvis-native-activity-admitted-v1\0" + execution_key.encode("ascii")).hexdigest()
         events = row["events"]
-        if any(event["event_id"] == event_id for event in events):
+        if kind == "tool_call" and (type(tool_count) is not int or not 0 <= tool_count <= 128):
             return
+        if event_id in row["seen_event_ids"]:
+            return
+        row["seen_event_ids"].append(event_id)
+        del row["seen_event_ids"][:-_NATIVE_ACTIVITY_MAX_DEDUP_IDS_PER_INSTANCE]
         events.append({"event_id": event_id, "kind": kind, "status": status,
                        "at": time.time(), "duration_ms": duration_ms,
                        "tool_count": tool_count})
+        if kind == "tool_call":
+            row["tool_count_total"] = min(1_000_000, row["tool_count_total"] + tool_count)
         del events[:-_NATIVE_ACTIVITY_MAX_EVENTS_PER_INSTANCE]
         row["updated_at"] = time.time()
         row["status"] = ("completed" if kind == "completed" and status == "completed" else
@@ -2274,6 +2289,8 @@ class RootCoreNativeObservationRegistry:
         current = time.monotonic() if now is None else now
         with self._lock:
             self._ensure_open()
+            observed_at = time.time()
+            window_start = observed_at - 7 * 24 * 60 * 60
             source = self._current_master_source()
             if (not _HASH.fullmatch(owner_subject_sha256 or "")
                     or core_generation != self._custody.core_generation
@@ -2308,7 +2325,7 @@ class RootCoreNativeObservationRegistry:
                     "source_generation_sha256": row["source_generation_sha256"],
                     "status": visible_status, "stale": stale_after_restart,
                     "created_at": row["created_at"], "updated_at": row["updated_at"],
-                    "tool_count": sum(event["tool_count"] for event in row["events"]),
+                    "tool_count": row["tool_count_total"],
                     "events": [{key: event[key] for key in
                         ("kind", "status", "at", "duration_ms", "tool_count")} for event in recent],
                 })

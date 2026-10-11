@@ -26,7 +26,8 @@ def _row(*, owner: str = "a" * 64, execution: str = "e" * 32,
         "source_manifest_sha256": "c" * 64, "core_generation": "d" * 64,
         "core_source_generation": "f" * 64, "child_lineage_sha256": "1" * 64,
         "parent_lineage_sha256": "2" * 64, "created_at": created,
-        "updated_at": created + 1, "status": status,
+        "updated_at": created + 1, "tool_count_total": 0,
+        "seen_event_ids": ["3" * 64], "status": status,
         "events": [{"event_id": "3" * 64, "kind": "admitted", "status": "accepted",
                     "at": created, "duration_ms": None, "tool_count": 0}],
     }
@@ -81,15 +82,23 @@ def test_real_observed_callback_event_is_owner_source_bound_and_replay_deduped(m
     registry._record_child_activity(child, kind="admitted", status="accepted", event_id="unused")
     registry._record_child_activity(child, kind="attempt", status="started", event_id="4" * 64)
     registry._record_child_activity(child, kind="attempt", status="started", event_id="4" * 64)
+    registry._record_child_activity(child, kind="tool_call", status="observed", event_id="5" * 64,
+                                    tool_count=1)
+    for index in range(9):
+        registry._record_child_activity(child, kind="attempt", status="started",
+            event_id=f"{index + 6:064x}")
+    registry._record_child_activity(child, kind="tool_call", status="observed", event_id="5" * 64,
+                                    tool_count=1)
 
-    assert len(saved) == 2
+    assert len(saved) == 12
     rows = observer._native_activity_snapshot_from_bytes(saved[-1])
     assert rows is not None and len(rows) == 1
     row = rows[0]
     assert row["owner_subject_sha256"] == owner.owner_subject_sha256
     assert row["profile_id"] == "developer" and row["source_generation_sha256"] == "b" * 64
     assert row["display_alias"].startswith("Dev ")
-    assert len(row["events"]) == 2
+    assert len(row["events"]) == observer._NATIVE_ACTIVITY_MAX_EVENTS_PER_INSTANCE
+    assert row["tool_count_total"] == 1
     serialized = saved[-1].decode()
     assert "private-child-session" not in serialized
     assert "private-parent-session" not in serialized
@@ -105,6 +114,7 @@ def test_activity_projection_filters_owner_and_source_and_never_exposes_private_
     item = result["instances"][0]
     assert item["execution_key"] == "e" * 32
     assert item["display_alias"] == "Dev Peter"
+    assert item["tool_count"] == 0
     assert "owner_subject_sha256" not in item and "child_lineage_sha256" not in item
 
     other_owner = registry.read_native_activity(owner_subject_sha256="9" * 64,
@@ -145,8 +155,9 @@ def test_read_caps_instances_and_summaries():
     for index in range(120):
         row = _row(execution=f"{index:032x}")
         row["events"] = [{**row["events"][0],
-                          "event_id": f"{index * 16 + event_index + 1:064x}"}
-                         for event_index in range(16)]
+                          "event_id": f"{index * 8 + event_index + 1:064x}"}
+                         for event_index in range(8)]
+        row["seen_event_ids"] = [event["event_id"] for event in row["events"]]
         rows.append(row)
     registry = _registry(rows)
     result = registry.read_native_activity(owner_subject_sha256="a" * 64,
