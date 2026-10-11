@@ -15,7 +15,10 @@ from hermes_installer.remote.manual_stage import (
     _PendingProbe, _cookie_value, _stage_edge_https_request,
 )
 from hermes_installer.remote.gateway import Principal
-from hermes_installer.remote.manual_stage_inspector import StageInspectionDenied, _validate_nft
+from hermes_installer.remote.manual_stage_inspector import (
+    MAX_APP_FILE_BYTES, MAX_APP_TREE_BYTES, StageInspectionDenied,
+    _check_app_file_size, _validate_nft,
+)
 
 try:
     import jwt
@@ -46,8 +49,9 @@ class ManualStageGatewayTests(unittest.TestCase):
             xpra_program=Path("/usr/bin/xpra"), xpra_program_sha256="b" * 64,
             xpra_argv_sha256="e" * 64,
             unit_fragment=Path("/etc/systemd/system/hermes-xpra-stage.service"), unit_sha256="f" * 64,
-            appdir=Path("/usr/share/xpra/www"), appdir_manifest_sha256="d" * 64,
-            boot_id="00000000-0000-0000-0000-000000000001",
+            appdir=Path("/opt/hermes-jarvis-mvp-20261011/Hermes-Desktop.AppDir"),
+            appdir_manifest_sha256="d" * 64,
+            boot_id="00000000-0000-0000-0000-000000000000",
             config_path=Path("/etc/hermes-installer/gateway-stage.json"), config_sha256="c" * 64)
         self.verifier = StageEdgeAccessVerifier(self.config)
         self.verifier.policy = RemotePolicy(self.config.hostname, self.config.issuer, self.config.audience,
@@ -65,7 +69,7 @@ class ManualStageGatewayTests(unittest.TestCase):
         token = self.token()
         principal = __import__("hermes_installer.remote.gateway", fromlist=["validate_access_jwt"]).validate_access_jwt(
             token, policy=self.verifier.policy)
-        nonce = "one-use-stage-nonce"
+        nonce = "a" * 64
         self.verifier._pending[nonce] = _PendingProbe(
             "websocket-attach", "session-bound-id-123456", hashlib.sha256(token.encode()).hexdigest(),
             principal.email, principal.subject, self.config.config_sha256, time.monotonic() + 5)
@@ -80,8 +84,8 @@ class ManualStageGatewayTests(unittest.TestCase):
         principal = __import__("hermes_installer.remote.gateway", fromlist=["validate_access_jwt"]).validate_access_jwt(
             token, policy=self.verifier.policy)
         digest = hashlib.sha256(token.encode()).hexdigest()
-        for nonce, expiry, config_digest in (("expired-stage-nonce", time.monotonic() - 1, self.config.config_sha256),
-                                             ("changed-stage-nonce", time.monotonic() + 5, "d" * 64)):
+        for nonce, expiry, config_digest in (("b" * 64, time.monotonic() - 1, self.config.config_sha256),
+                                             ("c" * 64, time.monotonic() + 5, "d" * 64)):
             self.verifier._pending[nonce] = _PendingProbe("renew", "session-bound-id-123456", digest,
                 principal.email, principal.subject, config_digest, expiry)
             with self.subTest(nonce=nonce), self.assertRaises(ManualStageDenied):
@@ -149,18 +153,50 @@ class ManualStageGatewayTests(unittest.TestCase):
         from hermes_installer.remote.manual_stage_inspector import _validate_xpra_argv
         argv = ("/usr/bin/python3.13", "/usr/bin/xpra", "start", ":118",
                 "--bind-tcp=127.0.0.1:14500,auth=http-header:property=X-Forwarded-Proto,value=https",
-                "--start-new-commands=no", "--clipboard=no", "--speaker=off",
-                "--microphone=off", "--webcam=no", "--file-transfer=no",
-                "--printing=no", "--open-files=no", "--open-url=no")
+                "--daemon=no", "--systemd-run=no", "--bind=none", "--html=on",
+                "--start-child=/opt/hermes-jarvis-mvp-20261011/Hermes-Desktop.AppDir/Hermes",
+                "--exit-with-children=yes", "--terminate-children=yes", "--start-new-commands=no",
+                "--commands=no", "--shell=no", "--control=no", "--audio=no", "--tray=no",
+                "--file-transfer=no", "--open-files=no", "--open-url=no", "--forward-xdg-open=no",
+                "--clipboard=no", "--webcam=no", "--speaker=off", "--microphone=off",
+                "--notifications=no", "--system-tray=no", "--sharing=no", "--mdns=no",
+                "--dbus=no", "--dbus-control=no", "--dbus-launch=", "--http-scripts=off",
+                "--printing=no", "--xvfb=/usr/bin/Xvfb -screen 0 1920x1080x24 +extension GLX +extension RANDR +extension RENDER +extension Composite -extension DOUBLE-BUFFER -nolisten tcp -noreset -auth $XAUTHORITY")
         from dataclasses import replace
         config = replace(self.config, xpra_argv_sha256=hashlib.sha256(b"\0".join(x.encode() for x in argv)).hexdigest())
         with mock.patch("hermes_installer.remote.manual_stage_inspector._process_argv", return_value=argv):
             self.assertEqual(_validate_xpra_argv(config, 123), config.xpra_argv_sha256)
-        bad = argv + ("--start-child=/bin/sh",)
+        bad = tuple("--start-child=/bin/sh" if x.startswith("--start-child=") else x for x in argv)
         config = replace(config, xpra_argv_sha256=hashlib.sha256(b"\0".join(x.encode() for x in bad)).hexdigest())
         with mock.patch("hermes_installer.remote.manual_stage_inspector._process_argv", return_value=bad):
             with self.assertRaises(StageInspectionDenied):
                 _validate_xpra_argv(config, 123)
+
+    def test_inspector_accepts_observed_hermes_file_sizes_with_bounded_totals(self):
+        _check_app_file_size(195_497_248)
+        _check_app_file_size(MAX_APP_FILE_BYTES)
+        self.assertGreaterEqual(MAX_APP_TREE_BYTES, 363_556_225)
+        with self.assertRaises(StageInspectionDenied):
+            _check_app_file_size(MAX_APP_FILE_BYTES + 1)
+
+    def test_upstream_websocket_large_frame_splits_and_idle_is_not_eof(self):
+        from types import SimpleNamespace
+        from hermes_installer.remote.manual_stage import _StageWebSocketConnector
+        connector = object.__new__(_StageWebSocketConnector)
+        connector.owner = SimpleNamespace(verify_current=lambda _admission: None)
+        connector.admission = object()
+        connector._rx_lock = __import__("threading").Lock()
+        connector._rx_buffer = bytearray()
+        payload = bytes((index % 251 for index in range(150_000)))
+        results = iter([payload, None])
+        def fake_run(coro, timeout=5):
+            coro.close()
+            return next(results)
+        connector._run = fake_run
+        chunks = [connector.read(), connector.read(), connector.read()]
+        self.assertEqual([len(chunk) for chunk in chunks], [65_536, 65_536, 18_928])
+        self.assertEqual(b"".join(chunks), payload)
+        self.assertIsNone(connector.read())
 
     def test_manual_stage_composes_existing_server_without_managed_authority(self):
         from hermes_installer.remote.manual_stage import (
@@ -192,16 +228,16 @@ class ManualStageGatewayTests(unittest.TestCase):
             admission = sessions.admit(access_jwt=self.token(), action="websocket-attach",
                                        route_id="xpra-websocket")
             clock[0] = 103.9
-            sessions.verify_fresh_access_edge(admission.handle)
+            sessions.assert_current_proofs(admission.handle)
             verify.assert_called_once()
             verify.reset_mock()
             clock[0] = 104.0
-            sessions.verify_fresh_access_edge(admission.handle)
+            sessions.refresh_active_edge(admission.handle)
             verify.assert_called_once()
             verify.side_effect = ManualStageDenied("edge now denies token")
             clock[0] = 108.0
             with self.assertRaises(ManualStageDenied):
-                sessions.verify_fresh_access_edge(admission.handle)
+                sessions.refresh_active_edge(admission.handle)
             with self.assertRaises(ManualStageDenied):
                 sessions.current(admission.handle)
 

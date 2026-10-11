@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import secrets
 import signal
 import socket
@@ -30,6 +31,7 @@ STAGE_CONFIG = Path("/etc/hermes-installer/gateway-stage.json")
 GATEWAY_HOST, GATEWAY_PORT = "127.0.0.1", 8765
 XPRA_HOST, XPRA_PORT = "127.0.0.1", 14500
 XPRA_UNIT = "hermes-xpra-stage.service"
+HERMES_STAGE_EXECUTABLE = Path("/opt/hermes-jarvis-mvp-20261011/Hermes-Desktop.AppDir/Hermes")
 PROFILE = "hermes-desktop"
 MAX_LEASE_SECONDS = 30
 MAX_PROBE_SECONDS = 5
@@ -72,7 +74,8 @@ class ManualGatewayStageConfig:
             try:
                 info = os.fstat(fd)
                 if (not stat.S_ISREG(info.st_mode) or info.st_uid != expected_owner_uid
-                        or stat.S_IMODE(info.st_mode) not in {0o400, 0o600} or info.st_size > 16_384):
+                        or stat.S_IMODE(info.st_mode) not in {0o400, 0o440, 0o600}
+                        or info.st_size > 16_384):
                     raise ManualStageDenied("manual stage config is not an owned private regular file")
                 raw = b""
                 while len(raw) <= 16_384:
@@ -125,7 +128,12 @@ class ManualGatewayStageConfig:
                     or not _digest(result.xpra_binary_sha256) or not _digest(result.xpra_program_sha256)
                     or not _digest(result.xpra_argv_sha256) or not _digest(result.unit_sha256)
                     or not _digest(result.appdir_manifest_sha256)
-                    or not re.fullmatch(r"[0-9a-f-]{36}", result.boot_id)):
+                    or result.appdir != HERMES_STAGE_EXECUTABLE.parent
+                    or not re.fullmatch(r"[0-9a-f-]{36}", result.boot_id)
+                    or Path("/proc/sys/kernel/random/boot_id").read_text().strip() != result.boot_id):
+                raise ValueError
+            if (os.geteuid() not in {expected_owner_uid, result.gateway_uid}
+                    or (stat.S_IMODE(info.st_mode) == 0o440 and info.st_gid != result.gateway_gid)):
                 raise ValueError
             if result.hostname != "jarvis.togarriapahome.uk":
                 raise ValueError
@@ -181,17 +189,20 @@ class StageEdgeAccessVerifier:
         self._pending: dict[str, _PendingProbe] = {}
         self._lock = threading.Lock()
 
-    def verify(self, access_jwt: str, *, action: str, session_id: str) -> tuple[Principal, float, float]:
+    def verify(self, access_jwt: str, *, action: str, session_id: str,
+               probe_budget_seconds: float = MAX_PROBE_SECONDS) -> tuple[Principal, float, float]:
         if (action not in {"asset-read", "websocket-attach", "renew"}
                 or not isinstance(session_id, str) or not 20 <= len(session_id) <= 128
-                or any(c not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_" for c in session_id)):
+                or any(c not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_" for c in session_id)
+                or type(probe_budget_seconds) not in (int, float)
+                or not 0.5 <= probe_budget_seconds <= MAX_PROBE_SECONDS):
             raise ManualStageDenied("edge verification action/session is invalid")
         started = self.monotonic()
-        probe_deadline = started + MAX_PROBE_SECONDS
+        probe_deadline = started + probe_budget_seconds
         principal = validate_access_jwt(access_jwt, policy=self.policy,
                                         deadline_monotonic=probe_deadline)
         now = self.monotonic()
-        nonce = secrets.token_urlsafe(32)
+        nonce = secrets.token_hex(32)
         fingerprint = hashlib.sha256(access_jwt.encode("ascii", "strict")).hexdigest()
         with self._lock:
             self._purge(now)
@@ -253,7 +264,7 @@ class StageEdgeAccessVerifier:
         # nonce cannot be retried with a different identity or header set.
         with self._lock:
             record = self._pending.pop(nonce, None)
-        if (not isinstance(nonce, str) or not nonce or len(nonce) > 128
+        if (not isinstance(nonce, str) or not re.fullmatch(r"[0-9a-f]{64}", nonce)
                 or not isinstance(cookie_jwt, str) or not isinstance(forwarded_jwt, str)
                 or not cookie_jwt or not forwarded_jwt):
             raise ManualStageDenied("probe assertion or nonce is invalid")
@@ -312,7 +323,7 @@ def _stage_edge_https_request(url: str, method: str, headers: dict[str, str], bo
     except ValueError:
         raise NetworkError("manual edge probe query differs") from None
     if (len(params) != 1 or params[0][0] != "nonce"
-            or not re.fullmatch(r"[A-Za-z0-9_-]{32,64}", params[0][1])):
+            or not re.fullmatch(r"[0-9a-f]{64}", params[0][1])):
         raise NetworkError("manual edge probe query differs")
     connection = http.client.HTTPSConnection(parsed.hostname, 443, timeout=socket_timeout,
                                              context=ssl.create_default_context())
@@ -366,6 +377,7 @@ class _StageRecord:
     principal: Principal
     access_jwt: str = field(repr=False)
     last_edge_check: float = 0.0
+    last_inspection_check: float = 0.0
     challenge: str = field(default_factory=lambda: secrets.token_urlsafe(32), repr=False)
     challenge_expiry: float = 0.0
 
@@ -406,7 +418,7 @@ class StageGatewayPolicySessionAdapter:
                 jwt_deadline, now, "manual-edge-probe-v1", self.config.config_sha256)
             # Existing browser code renews every 25 seconds; leave a small
             # scheduling margin while keeping the grant itself at <=30s.
-            record = _StageRecord(admission, principal, access_jwt, now,
+            record = _StageRecord(admission, principal, access_jwt, now, now,
                                   challenge_expiry=min(expiry, now + 29))
             self._records[handle] = record
             return admission
@@ -443,6 +455,7 @@ class StageGatewayPolicySessionAdapter:
             current.principal = principal
             current.access_jwt = access_jwt
             current.last_edge_check = now
+            current.last_inspection_check = now
             current.challenge = secrets.token_urlsafe(32)
             current.challenge_expiry = min(expiry, now + 29)
             current.admission = StageGatewayAdmission(
@@ -464,19 +477,26 @@ class StageGatewayPolicySessionAdapter:
         with self._lock:
             return self._current(handle).admission
 
-    def verify_fresh_access_edge(self, handle: Any) -> None:
-        """Recheck the active token at most every four seconds while streaming."""
+    def assert_current_proofs(self, handle: Any) -> None:
+        """Require both current witnesses before any Xpra connector I/O."""
         with self._lock:
             record = self._current(handle)
             now = self.monotonic()
-            if now - record.last_edge_check < 4.0:
-                return
+            if (now - record.last_edge_check > MAX_PROBE_SECONDS
+                    or now - record.last_inspection_check > MAX_PROBE_SECONDS):
+                self._records.pop(handle, None)
+                raise ManualStageDenied("active edge or root observation proof is stale")
+
+    def refresh_active_edge(self, handle: Any) -> None:
+        """Refresh the retained token's protected-edge proof for the WS watchdog."""
+        with self._lock:
+            record = self._current(handle)
             token = record.access_jwt
             session_id = record.admission.session_id
             principal_before = record.principal
         try:
             principal, _lease, _jwt_deadline = self.verifier.verify(
-                token, action="renew", session_id=session_id)
+                token, action="renew", session_id=session_id, probe_budget_seconds=2.5)
             if principal.subject != principal_before.subject or principal.email != principal_before.email:
                 raise ManualStageDenied("fresh Access edge check changed the active principal")
         except Exception:
@@ -487,6 +507,16 @@ class StageGatewayPolicySessionAdapter:
             if current is not record:
                 raise ManualStageDenied("active Access session changed during edge check")
             current.last_edge_check = self.monotonic()
+
+    def refresh_active_inspection(self, handle: Any) -> None:
+        with self._lock:
+            record = self._current(handle)
+        self._verify_xpra_current()
+        with self._lock:
+            current = self._current(handle)
+            if current is not record:
+                raise ManualStageDenied("active Xpra stage changed during root inspection")
+            current.last_inspection_check = self.monotonic()
 
     def _current(self, handle: Any) -> _StageRecord:
         record = self._records.get(handle)
@@ -569,7 +599,8 @@ def _read_config_current(config: ManualGatewayStageConfig) -> None:
         try:
             info = os.fstat(fd)
             if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
-                    or stat.S_IMODE(info.st_mode) not in {0o400, 0o600}):
+                    or stat.S_IMODE(info.st_mode) not in {0o400, 0o440, 0o600}
+                    or (stat.S_IMODE(info.st_mode) == 0o440 and info.st_gid != config.gateway_gid)):
                 raise ValueError
             digest = hashlib.sha256()
             total = 0
@@ -598,7 +629,8 @@ class StageFixedXpraConnector:
 
     def open(self, handle: Any):
         _read_config_current(self.config)
-        self.sessions._verify_xpra_current()
+        self.sessions.assert_current_proofs(handle)
+        self.sessions.refresh_active_inspection(handle)
         admission = self.sessions.current(handle)
         if admission.route_id == "xpra-http":
             return _StageHTTPConnector(self, admission)
@@ -612,8 +644,7 @@ class StageFixedXpraConnector:
         if (current.session_id != admission.session_id or current.route_id != admission.route_id
                 or current.lease_expires_monotonic <= time.monotonic()):
             raise ManualStageDenied("Xpra connector lease is no longer current")
-        self.sessions.verify_fresh_access_edge(admission.handle)
-        self.sessions._verify_xpra_current()
+        self.sessions.assert_current_proofs(admission.handle)
 
 
 class _StageHTTPConnector:
@@ -653,6 +684,8 @@ class _StageWebSocketConnector:
         self.expires_monotonic = admission.lease_expires_monotonic
         self._ready = threading.Event()
         self._failure: BaseException | None = None
+        self._rx_lock = threading.Lock()
+        self._rx_buffer = bytearray()
         self._thread = threading.Thread(target=self._thread_main, name="jarvis-xpra-stage-ws", daemon=True)
         self._thread.start()
         if not self._ready.wait(6) or self._failure is not None:
@@ -673,9 +706,12 @@ class _StageWebSocketConnector:
                     headers={"X-Forwarded-Proto": "https"})
                 async def edge_watchdog():
                     while not self.websocket.closed:
-                        await asyncio.sleep(4)
+                        await asyncio.sleep(2)
                         try:
-                            await asyncio.to_thread(self.owner.verify_current, self.admission)
+                            await asyncio.wait_for(asyncio.gather(
+                                asyncio.to_thread(self.owner.sessions.refresh_active_edge, self.admission.handle),
+                                asyncio.to_thread(self.owner.sessions.refresh_active_inspection, self.admission.handle)),
+                                timeout=3)
                         except Exception:
                             await self.websocket.close(code=1008, message=b"Access edge authorization expired")
                             return
@@ -696,9 +732,21 @@ class _StageWebSocketConnector:
 
     def _run(self, coro, timeout=5):
         if self._failure is not None:
+            if hasattr(coro, "close"):
+                coro.close()
             raise ManualStageDenied("loopback Xpra WebSocket failed")
-        self.owner.verify_current(self.admission)
-        future = asyncio.run_coroutine_threadsafe(coro, self.loop)
+        try:
+            self.owner.verify_current(self.admission)
+        except Exception:
+            if hasattr(coro, "close"):
+                coro.close()
+            raise
+        try:
+            future = asyncio.run_coroutine_threadsafe(coro, self.loop)
+        except Exception:
+            if hasattr(coro, "close"):
+                coro.close()
+            raise
         return future.result(timeout=timeout)
 
     def write(self, data: bytes) -> None:
@@ -706,15 +754,24 @@ class _StageWebSocketConnector:
             raise ManualStageDenied("Xpra WebSocket frame exceeds bound")
         self._run(self.websocket.send_bytes(data), timeout=5)
 
-    def read(self, maximum_bytes: int = 65_536) -> bytes:
+    def read(self, maximum_bytes: int = 65_536) -> bytes | None:
         from aiohttp import WSMsgType
         if not 1 <= maximum_bytes <= 65_536:
             raise ManualStageDenied("Xpra WebSocket read exceeds bound")
+        with self._rx_lock:
+            if self._rx_buffer:
+                self.owner.verify_current(self.admission)
+                data = bytes(self._rx_buffer[:maximum_bytes])
+                del self._rx_buffer[:maximum_bytes]
+                return data
         async def receive():
             while True:
-                msg = await self.websocket.receive(timeout=4)
+                try:
+                    msg = await self.websocket.receive(timeout=4)
+                except asyncio.TimeoutError:
+                    return None
                 if msg.type == WSMsgType.BINARY:
-                    if len(msg.data) > maximum_bytes:
+                    if len(msg.data) > 1_048_576:
                         raise ManualStageDenied("Xpra WebSocket frame exceeds bound")
                     return msg.data
                 if msg.type in {WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.CLOSING, WSMsgType.ERROR}:
@@ -722,7 +779,14 @@ class _StageWebSocketConnector:
                 if msg.type == WSMsgType.PING:
                     await self.websocket.pong(msg.data)
         try:
-            return self._run(receive(), timeout=5)
+            data = self._run(receive(), timeout=5)
+            if data is None:
+                return None
+            if len(data) > maximum_bytes:
+                with self._rx_lock:
+                    self._rx_buffer.extend(data[maximum_bytes:])
+                return data[:maximum_bytes]
+            return data
         except Exception:
             return b""
 
@@ -797,12 +861,10 @@ def create_stage_gateway_app(launch: StageGatewayLaunch):
 
 def main() -> None:
     """The service config is root-owned; the gateway starts only as a non-root UID."""
-    parser = argparse.ArgumentParser(description="separately owned Jarvis manual gateway stage")
-    parser.add_argument("--config", type=Path, default=STAGE_CONFIG)
-    args = parser.parse_args()
+    argparse.ArgumentParser(description="separately owned Jarvis manual gateway stage").parse_args()
     if os.geteuid() == 0:
         raise SystemExit("manual Access gateway must run as its dedicated unprivileged service UID")
-    config = ManualGatewayStageConfig.load(args.config)
+    config = ManualGatewayStageConfig.load()
     policy = RemotePolicy(config.hostname, config.issuer, config.audience,
                           config.allowed_emails, _FreshStageJWKS(config.issuer))
     edge = StageEdgeAccessVerifier(config)

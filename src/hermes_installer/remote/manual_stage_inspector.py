@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import select
 import signal
 import socket
@@ -25,10 +26,17 @@ MAX_REQUEST = 1024
 MAX_RESPONSE = 1024
 MAX_OUTPUT = 65_536
 OBSERVATION_SECONDS = 5.0
+MAX_APP_FILE_BYTES = 256 * 1024 * 1024
+MAX_APP_TREE_BYTES = 2 * 1024 * 1024 * 1024
 
 
 class StageInspectionDenied(PermissionError):
     pass
+
+
+def _check_app_file_size(size: int) -> None:
+    if type(size) is not int or size < 0 or size > MAX_APP_FILE_BYTES:
+        raise _deny()
 
 
 def _deny() -> StageInspectionDenied:
@@ -216,10 +224,11 @@ def _check_immutable_tree(appdir: Path, expected_manifest_sha256: str) -> str:
                     try:
                         file_info = os.fstat(fd)
                         if (not stat.S_ISREG(file_info.st_mode) or file_info.st_uid != 0
-                                or stat.S_IMODE(file_info.st_mode) & 0o022 or file_info.st_size > 64 * 1024 * 1024):
+                                or stat.S_IMODE(file_info.st_mode) & 0o022):
                             raise ValueError
+                        _check_app_file_size(file_info.st_size)
                         total_size += file_info.st_size
-                        if total_size > 2 * 1024 * 1024 * 1024:
+                        if total_size > MAX_APP_TREE_BYTES:
                             raise ValueError
                         file_hash = hashlib.sha256()
                         while True:
@@ -320,13 +329,25 @@ def _validate_xpra_argv(config: Any, pid: int) -> str:
     # No user-controlled command launching or remote filesystem/audio devices.
     # These exact disabled flags are part of the root-reviewed argv digest.
     required_disabled = {
-        "--start-new-commands=no", "--clipboard=no", "--speaker=off",
-        "--microphone=off", "--webcam=no", "--file-transfer=no",
-        "--printing=no", "--open-files=no", "--open-url=no",
+        "--daemon=no", "--systemd-run=no", "--bind=none", "--html=on",
+        "--start-new-commands=no", "--exit-with-children=yes", "--terminate-children=yes",
+        "--commands=no", "--shell=no", "--control=no", "--audio=no", "--tray=no",
+        "--clipboard=no", "--speaker=off", "--microphone=off", "--webcam=no",
+        "--file-transfer=no", "--printing=no", "--open-files=no", "--open-url=no",
+        "--forward-xdg-open=no", "--notifications=no", "--system-tray=no",
+        "--sharing=no", "--mdns=no", "--dbus=no", "--dbus-control=no",
+        "--dbus-launch=", "--http-scripts=off",
     }
     if not required_disabled.issubset(argv[4:]):
         raise _deny()
-    forbidden_prefixes = ("--start=", "--start-child=", "--exec-wrapper=", "--bind-tcp=0.0.0.0",
+    app_child = "--start-child=/opt/hermes-jarvis-mvp-20261011/Hermes-Desktop.AppDir/Hermes"
+    start_children = [arg for arg in argv[4:] if arg.startswith("--start-child=")]
+    if start_children != [app_child]:
+        raise _deny()
+    xvfb_values = [arg for arg in argv[4:] if arg.startswith("--xvfb=")]
+    if len(xvfb_values) != 1 or not xvfb_values[0].startswith("--xvfb=/usr/bin/Xvfb"):
+        raise _deny()
+    forbidden_prefixes = ("--start=", "--exec-wrapper=", "--bind-tcp=0.0.0.0",
                           "--bind-tcp=::", "--bind=0.0.0.0", "--bind=::")
     if any(any(arg.startswith(prefix) for prefix in forbidden_prefixes) for arg in argv[4:]):
         raise _deny()
@@ -360,7 +381,9 @@ def observe_stage(config: Any, *, nonce: str) -> dict[str, Any]:
             or any(c not in "0123456789abcdef" for c in nonce)
             or os.geteuid() != 0):
         raise _deny()
-    if Path("/proc/sys/kernel/random/boot_id").read_text().strip() != config.boot_id:
+    boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    if (not re.fullmatch(r"[0-9a-f-]{36}", boot_id)
+            or boot_id != config.boot_id):
         raise _deny()
     table = _run_fixed(("/usr/sbin/nft", "-j", "-n", "list", "table", TABLE_FAMILY, TABLE_NAME), deadline=deadline)
     _validate_nft(table, config.gateway_uid)
@@ -404,9 +427,10 @@ def observe_stage(config: Any, *, nonce: str) -> dict[str, Any]:
     proof = hashlib.sha256(b"hermes-manual-stage-inspection-v1\0" + b"\0".join((
         config.config_sha256.encode(), hashlib.sha256(table).hexdigest().encode(),
         props["InvocationID"].encode(), str(pid).encode(), start_ticks.encode(),
-        argv_digest.encode(), app_digest.encode(), config.boot_id.encode(), nonce.encode()))).hexdigest()
+        argv_digest.encode(), app_digest.encode(), boot_id.encode(), nonce.encode()))).hexdigest()
     return {"schema": 1, "nonce": nonce, "proof_sha256": proof,
-            "issued_monotonic": started, "expires_monotonic": min(deadline, time.monotonic() + OBSERVATION_SECONDS)}
+            "boot_id": boot_id, "issued_monotonic": started,
+            "expires_monotonic": min(deadline, time.monotonic() + OBSERVATION_SECONDS)}
 
 
 def _hash_path(path: Path) -> str:
@@ -557,10 +581,12 @@ def verify_current_inspection(config: Any) -> str:
         finally:
             conn.close()
         if not isinstance(result, dict) or set(result) != {
-                "schema", "nonce", "proof_sha256", "issued_monotonic", "expires_monotonic"}:
+                "schema", "nonce", "proof_sha256", "boot_id", "issued_monotonic", "expires_monotonic"}:
             raise ValueError
         now = time.monotonic()
-        if (result["schema"] != 1 or result["nonce"] != nonce
+        local_boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        if (result["schema"] != 1 or result["nonce"] != nonce or result["boot_id"] != local_boot_id
+                or not re.fullmatch(r"[0-9a-f-]{36}", local_boot_id)
                 or not isinstance(result["proof_sha256"], str) or len(result["proof_sha256"]) != 64
                 or any(c not in "0123456789abcdef" for c in result["proof_sha256"])
                 or type(result["issued_monotonic"]) not in (int, float)
@@ -576,12 +602,8 @@ def verify_current_inspection(config: Any) -> str:
 
 
 def main() -> None:
-    import argparse
-    from .manual_stage import ManualGatewayStageConfig, STAGE_CONFIG
-    parser = argparse.ArgumentParser(description="read-only Jarvis manual-stage inspector")
-    parser.add_argument("--config", type=Path, default=STAGE_CONFIG)
-    args = parser.parse_args()
-    serve_inspection_socket(ManualGatewayStageConfig.load(args.config))
+    from .manual_stage import ManualGatewayStageConfig
+    serve_inspection_socket(ManualGatewayStageConfig.load())
 
 
 if __name__ == "__main__":
