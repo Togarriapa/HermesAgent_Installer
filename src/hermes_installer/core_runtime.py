@@ -211,7 +211,8 @@ def _install_bundled_resources(account):
   current_sha=hashlib.sha256(current_archive).hexdigest()
   current_manifest,current_files=native._read_artifact(current_archive,current_sha)
   previous_cas=RESOURCES_CAS/(previous_sha+".zip")
-  generation_exists=native._GENERATION.exists() or native._GENERATION.is_symlink()
+  generation_path=HERMES_HOME/"skills"/native._GENERATION
+  generation_exists=generation_path.exists() or generation_path.is_symlink()
   current_generation=False
   if generation_exists:
    try:
