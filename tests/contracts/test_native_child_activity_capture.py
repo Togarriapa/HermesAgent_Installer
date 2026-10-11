@@ -17,6 +17,7 @@ import hermes_installer.remote.core_native_observer as observer
 
 def _row(*, owner: str = "a" * 64, execution: str = "e" * 32,
          source_generation: str = "b" * 64, status: str = "admitted") -> dict:
+    created = time.time() - 5
     return {
         "execution_key": execution, "display_alias": "Dev Peter",
         "owner_subject_sha256": owner, "mission_id": None, "mission_revision": None,
@@ -24,10 +25,10 @@ def _row(*, owner: str = "a" * 64, execution: str = "e" * 32,
         "source_revision": "rev-17", "source_generation_sha256": source_generation,
         "source_manifest_sha256": "c" * 64, "core_generation": "d" * 64,
         "core_source_generation": "f" * 64, "child_lineage_sha256": "1" * 64,
-        "parent_lineage_sha256": "2" * 64, "created_at": 1_800_000_000.0,
-        "updated_at": 1_800_000_001.0, "status": status,
+        "parent_lineage_sha256": "2" * 64, "created_at": created,
+        "updated_at": created + 1, "status": status,
         "events": [{"event_id": "3" * 64, "kind": "admitted", "status": "accepted",
-                    "at": 1_800_000_000.0, "duration_ms": None, "tool_count": 0}],
+                    "at": created, "duration_ms": None, "tool_count": 0}],
     }
 
 

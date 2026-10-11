@@ -1158,6 +1158,8 @@ class CoreVerifiedJarvisMasterPlanningCompletion:
     def is_current_sealed(self, config: Any = None, custody: Any = None,
                           now: float | None = None) -> bool:
         current = time.monotonic() if now is None else now
+        observed_at = time.time()
+        window_start = observed_at - 7 * 24 * 60 * 60
         if (type(self) is not CoreVerifiedJarvisMasterPlanningCompletion
                 or self._seal is not _MASTER_PLANNING_COMPLETION_SEAL
                 or not _HASH.fullmatch(self.owner_subject_sha256 or "")
@@ -2287,12 +2289,14 @@ class RootCoreNativeObservationRegistry:
                         or row["core_generation"] != core_generation
                         or row["core_source_generation"] != core_source_generation
                         or row["source_generation_sha256"] != source.artifact_sha256
-                        or row["created_at"] < time.time() - 7 * 24 * 60 * 60):
+                        or not window_start <= row["created_at"] <= observed_at
+                        or not window_start <= row["updated_at"] <= observed_at):
                     continue
                 remaining = _NATIVE_ACTIVITY_MAX_EVENTS_PER_READ - event_total
                 if remaining <= 0:
                     break
-                recent = row["events"][-remaining:]
+                recent = [event for event in row["events"]
+                          if window_start <= event["at"] <= observed_at][-remaining:]
                 stale_after_restart = (row["status"] != "completed"
                                        and row["updated_at"] < self._activity_started_at)
                 visible_status = "unknown" if stale_after_restart else row["status"]
@@ -2311,7 +2315,7 @@ class RootCoreNativeObservationRegistry:
                 event_total += len(recent)
                 if len(instances) >= _NATIVE_ACTIVITY_MAX_INSTANCES or event_total >= _NATIVE_ACTIVITY_MAX_EVENTS_PER_READ:
                     break
-            return {"schema": 1, "observed_at": time.time(), "window_seconds": 7 * 24 * 60 * 60,
+            return {"schema": 1, "observed_at": observed_at, "window_seconds": 7 * 24 * 60 * 60,
                     "coverage": "observed-callbacks", "instances": instances, "relations": []}
 
     @classmethod
