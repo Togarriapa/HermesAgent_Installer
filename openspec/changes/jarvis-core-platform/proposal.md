@@ -65,3 +65,5 @@ Close the primary prompt adoption gap: storing the compiled Jarvis SOUL in the r
 Prioritize full native Bot interactions, owned context/profile visibility, installable mobile/tablet usability and a polished accessible data-driven shell in parallel. Existing native contracts provide bounded starting points; unsupported memory mutation, relay and native wake-word require their own verified effects rather than menu-shell claims.
 
 Native Bot Chat is globally canonical per profile and cannot safely provide family-owner DMs on the shared default. Deliver honestly labeled durable Jarvis conversations through the existing owned session map first; retain native Bot/room/relay parity pending secure unique enrollment.
+
+Direct user clarification establishes Jarvis as sole master, flexible expert/team routing and default approval unless explicit task-start autonomy. Experts may develop internal work and knowledge but never hold final external-effect authority. Correct source/compiler routing before primary adoption; preserve all Resources and actual connected capability scope.

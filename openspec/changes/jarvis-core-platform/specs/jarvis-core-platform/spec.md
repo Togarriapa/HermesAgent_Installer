@@ -1912,3 +1912,14 @@ The first durable DM SHALL use the authenticated owner conversation map and exac
 #### Scenario: Shared canonical transcript
 - **WHEN** a canonical Bot Chat belongs to the shared profile without unique owner enrollment
 - **THEN** it is not adopted or exposed as another owner's conversation.
+
+### Requirement: Jarvis master and internal expert boundaries
+Jarvis SHALL be the sole user-facing master, selecting OneShot or Kanban and individual experts or Teams. Experts SHALL prepare internal work while only Jarvis performs final effects under actual owner authorization.
+
+#### Scenario: Default approval
+- **WHEN** the owner did not explicitly authorize full task autonomy at its start
+- **THEN** Jarvis asks through an authorized configured channel or text and waits before final effects.
+
+#### Scenario: Expert final action
+- **WHEN** an expert requests publication, posting, merging or other final external effect
+- **THEN** its dispatch authority denies and returns a proposal for Jarvis review, including during an autonomous task.
