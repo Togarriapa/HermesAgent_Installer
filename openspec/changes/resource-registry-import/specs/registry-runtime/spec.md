@@ -229,3 +229,146 @@ The installer SHALL satisfy this obligation: Missing required dependencies must 
 #### Scenario: R0061 unavailable or failed prerequisite
 - **WHEN** a catalog fixture contains a missing incompatible selector, inheritance cycle, unauthorized operation or conflicting overlay
 - **THEN** The installer SHALL report an actionable blocked/failed result, preserve prior owned data/state, and SHALL NOT claim this obligation passed without the required evidence.
+
+### Requirement: Root observed selected audio and HTTP ingress
+The implementation SHALL use the distinct selected capture/JWT/session provenance schemas of v40 under existing native-input semantics.
+
+#### Scenario: Microphone permission exists
+- **WHEN** actual selected scoped capture is authorized
+- **THEN** input remains UNKNOWN/private and no human identity or public clearance is inferred from device permission
+
+### Requirement: Authenticated original WhatsApp channel enrollment
+The implementation SHALL use v45 exact authenticated selected trigger schema and signed account-scoped webhook provenance for original WhatsApp channel activation.
+
+#### Scenario: Manifest semantic alias has no verified provider slug
+- **WHEN** authenticated selected trigger schema is absent
+- **THEN** channel reports exact setup/schema prerequisite and retains required scope without inventing a slug or unsigned production provenance
+
+### Requirement: Peer authenticated root observed channel delivery
+The implementation SHALL use v48 actual selected root transport capture and fixed producer-bound delivery before native channel processing.
+
+#### Scenario: Worker presents an SDK message object
+- **WHEN** no actual retained root transport/account/event proof exists
+- **THEN** no source context is minted and channel effects remain unavailable with exact trusted setup prerequisite
+
+Composio selected trigger derivation v77: `plans/amendments/2026-10-10-composio-trigger-artifact-exchange-derivation-v77.md`; existing RG-F03/R0060/RB-T08 gates remain open and account setup proof stays distinct.
+
+Existing resource child-attempt context v82: `plans/amendments/2026-10-10-resource-existing-child-attempt-context-v82.md`; existing RB-T08 task open.
+
+Pre-active native assembly selection v84: `plans/amendments/2026-10-10-pre-active-native-assembly-selection-v84.md`; HI-T08/HI-T09/RB-T09 remain open.
+
+Bootstrap action and derived store ownership v87: `plans/amendments/2026-10-10-bootstrap-action-derived-store-ownership-v87.md`; existing BD/HI/RB tasks remain open.
+
+Selected resource materialization and task route v88: `plans/amendments/2026-10-10-selected-resource-materialization-task-route-v88.md`; RB-T08/HI-T09/HI-T12 remain open.
+
+Nonrecursive selections and private source ceilings v90: `plans/amendments/2026-10-10-nonrecursive-selection-private-source-ceilings-v90.md`; existing original implementation and acceptance tasks remain open.
+
+Resource task proof DTO and custody v93: `plans/amendments/2026-10-10-resource-task-proof-dto-custody-v93.md`; RB-T08/HI-T09/HI-T12 remain open.
+
+HTTP and audio observed event schemas v94: `plans/amendments/2026-10-10-http-audio-observed-event-schemas-v94.md`; original RG-F03/R0060/native-input obligations remain open.
+
+Resource task authority module and seal v95: `plans/amendments/2026-10-10-resource-task-authority-module-seal-v95.md`; RB-T08/HI-T09/HI-T12 remain open.
+
+Private loopback enforcement choice v97: `plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97.md`; existing original implementation/acceptance obligations remain open.
+
+### Requirement: Current selected local audio endpoint and explicit capture consent
+
+The installer SHALL bind original local-audio-assist capture to the exact protected current endpoint/runtime/controller and actual foreground TTY permission described by v118, preserving separate private-egress/memory consent and pending physical-device evidence.
+
+#### Scenario: Device changes or permission expires
+
+- **WHEN** the selected endpoint tuple changes, consent is revoked or expires, capture overruns or the stream cannot open under the actual selected controller
+- **THEN** capture fails, retained PCM is zeroed, and no source event or permission claim is promoted from worker input or synthetic streams
+
+### Requirement: Genuine retained event peer-bound channel delivery
+
+The installer SHALL queue v129 genuine issued source/context handles bound to the exact retained event and current selected native peer, preserving distinct original source identity.
+
+#### Scenario: Random syntactically valid source handle
+
+- **WHEN** publish lacks actual source and native context store membership
+- **THEN** no channel event delivery is queued and no provenance is inferred from generated strings
+
+
+### Requirement: Source-join producers v178
+The installer SHALL implement the source-owned receipt joins and closed fixture descriptor in `plans/amendments/2026-10-10-source-join-producers-v178.md` before compiling executable native or fixture authority.
+
+#### Scenario: Genuine current source graph
+- **WHEN** the exact held setup/source/PM, selected definition/member/effect/schema/role and separately observed fixture service receipts are current
+- **THEN** the compiler SHALL consume their retained immutable projection and actual generated/materialized/discovered bytes, keeping fixture evidence separate from production and AC acceptance
+
+#### Scenario: Missing or misjoined producer
+- **WHEN** a required source/effect/member/observer/service receipt is absent, stale, altered or from another namespace
+- **THEN** affected capability remains precisely pending, no caller path or production-row relabeling fills the gap, and no denial-only callback counts as implementation
+
+
+### Requirement: Reviewed source members and boundary joins v180
+The installer SHALL apply only the exact finite reviewed source/member/role mappings and genuine producer joins in `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`.
+
+#### Scenario: Reviewed source reaches runtime
+- **WHEN** committed source pins are packaged and exact current membership/import/selection receipts are verified
+- **THEN** separate owner-overlay rows SHALL remain digest-covered through loading/invocation, standalone build driver SHALL use its dedicated held execution source and PM runtime, and each worker SHALL pass its own cgroup kernel gate before app code
+
+#### Scenario: Missing or unsupported producer
+- **WHEN** a source/member/role/schema/loaded proof is missing or kernel enforcement permits a forbidden bind
+- **THEN** startup/effect remains unavailable, no network lease or acceptance is issued, and owned cleanup SHALL be verified without weakening negative expectations
+
+
+### Requirement: Conditional Authentik and genuine local owner v181
+The installer SHALL implement the exclusive typed identity domains, finite selected capabilities, independent setup and genuine current producer joins in `plans/amendments/2026-10-10-conditional-authentik-local-owner-setup-v181.md`, preserving R0058/R0060/R0143 and all privileged Authentik/broker requirements.
+
+#### Scenario: Independent selected local capability
+- **WHEN** the installed root setup selects an observed nonroot Linux owner and reviewed local capability rows without Authentik-dependent capabilities
+- **THEN** independent prepared materialization and fully authorized local effects SHALL proceed through current owner/service/profile/view/policy/loaded-worker receipts, while missing provider or account dependencies remain precisely pending
+
+#### Scenario: Privileged dependency absent or identity stale
+- **WHEN** a local principal requests homelab/recipient authority or a current identity, selected effect, loaded proof or required Authentik dependency is missing
+- **THEN** the affected action SHALL deny before effect, preserve independent owned work, and report configure-later/resume without claiming full compliance or synthesizing Authentik authority
+
+
+### Requirement: Signed worker and active overlay producers v183
+The installer SHALL implement the exact source/type/method/output producer joins and exclusive finite scopes in `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md`.
+
+#### Scenario: Genuine source survives as current active custody
+- **WHEN** actual held worker/source/PM/native/view receipts enter signed selected recipe and tagged local-owner adoption during genuine active publication
+- **THEN** after setup expiry only independently verified current runtime source/NSS/enrollment/loaded process and one-use selected grant MAY permit its four exact owned overlay methods
+
+#### Scenario: Missing source or stale active authority
+- **WHEN** recipe/source/member/view/NSS/current choice/loaded peer proof is absent or mismatched, revoked, late-adopted or replaced
+- **THEN** app/effect SHALL deny before execution, preserve independent source readiness and never derive host/AuthentiK authority or network permission from static metadata/choice presence
+
+
+### Requirement: Acyclic finite network rows v184
+The installer SHALL use the exact closed versioned field sets, full-row canonical hashes and producer/currentness/FK rules in `plans/amendments/2026-10-10-network-row-wire-digest-boundaries-v184.md`.
+
+#### Scenario: Exact generated source rows
+- **WHEN** real signed recipe/source and held runtime/identity roots produce the finite schema2 AF_UNIX rows
+- **THEN** current runtime MAY attach the separately verified enclosing generation digest and reach its worker barrier without feeding that digest back into generated rows
+
+#### Scenario: Wire or phase proof invalid
+- **WHEN** fields/FKs/digests/versions/current source differ or only pre-READY mount custody exists for an effect
+- **THEN** startup/effect SHALL deny without inventing TCP/source/loaded authority or successful acceptance
+
+
+### Requirement: Concrete owner registration capture and RPC v185
+The installer SHALL implement the exact tagged role/registration/READY/source schema and fixed proxy/RPC joins in `plans/amendments/2026-10-10-owner-overlay-observer-capture-rpc-v185.md`.
+
+#### Scenario: Actual observed selected local call
+- **WHEN** the current loaded owner role and actual READY registrations, captured provider call/schema and root one-use selected grant all match
+- **THEN** only the four fixed local methods MAY reach current owned CAS/read through the protected RPC
+
+#### Scenario: Registration or captured authority absent
+- **WHEN** source/role/READY/peer/schema/choice/invocation proof is synthetic, stale or absent
+- **THEN** the effect SHALL deny before side effect without skipping backend checks or fabricating local observer/provider provenance
+
+
+### Requirement: Genuine preactive listener custody v186
+The installer SHALL resolve the endpoint source phase through actual root-held listener custody and current authenticated active transfer in `plans/amendments/2026-10-10-preactive-authority-listener-custody-v186.md`.
+
+#### Scenario: Endpoint observed before recipe
+- **WHEN** the current prepared owned account/root and installed root custodian bind and observe the exact fixed socket
+- **THEN** source recipe MAY retain actual prepared socket custody while every effect remains unavailable until verified active adoption and re-observation
+
+#### Scenario: Custody or phase invalid
+- **WHEN** socket/root/actor/account/transfer/publication identity changes or adoption is absent/expired
+- **THEN** worker start/effect SHALL deny, preserve foreign conflicts and verify only owned cleanup without claiming future target proof

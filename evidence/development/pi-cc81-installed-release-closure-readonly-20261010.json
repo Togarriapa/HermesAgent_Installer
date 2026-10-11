@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "record_kind": "operator_reported_pi_installed_release_read_only_verification",
+  "state": "installed_release_closure_and_currentness_verified_read_only",
+  "authenticated_acceptance_result": false,
+  "acceptance_record_emitted": false,
+  "accepted_target_result": false,
+  "change_ids": ["installer-bootstrap-desktop", "verification-documentation"],
+  "task_ids": ["VD-T205.3", "VD-T180.6", "VD-T232.2"],
+  "target": {
+    "target_id": "48dfbc75-8877-40bb-b391-9b08301911ad",
+    "target_name": "PI-HERMES",
+    "interface": "user-supplied Pi remote-shell browser URL",
+    "executor_euid": 0
+  },
+  "candidate": {
+    "commit": "cc81abffe3cbb1df447889bca269d1e6c0be77ea",
+    "tree": "74dca3566f212e185cbdada7a2d401cf0d63f6e9",
+    "release_closure_sha256": "a8c2e34d62710087877f549828bc14c7d086493a274ff87b892cb406e946d40b",
+    "verified_member_count": 5315
+  },
+  "read_only_invocation": {
+    "argv": [
+      "/usr/bin/env", "-i", "PATH=/usr/bin:/bin",
+      "/usr/lib/hermes-installer/releases/cc81abffe3cbb1df447889bca269d1e6c0be77ea/runtime/bin/python",
+      "-B", "-I", "-S", "-"
+    ],
+    "interpreter": "/usr/lib/hermes-installer/releases/cc81abffe3cbb1df447889bca269d1e6c0be77ea/runtime/bin/python",
+    "flags": ["-B", "-I", "-S", "-"],
+    "stdin_program_summary": "Inserted only the cc81 installed lib/python path in sys.path; called InstalledRootReleaseVerifier.verify_installed_release(), then receipt.verify_current(), and closed the receipt in finally.",
+    "stdin_program_original_path": "/private/tmp/hermes-pi-installed-readonly-stdin-20261010.py",
+    "stdin_program_retained_artifact": "pi-cc81-installed-release-readonly-stdin-20261010.py",
+    "stdin_program_bytes": 641,
+    "stdin_program_sha256": "3f30394b446f66f7b8631713fabc97baf52a138118bcd5f2def72742ca418b4b",
+    "timestamp": null,
+    "stdout_marker": "PI_INSTALLED_RELEASE_FULL_READONLY_PASS",
+    "terminal_outcome": "root prompt returned"
+  },
+  "verified_scope": [
+    "InstalledRootReleaseVerifier verified the complete installed release closure.",
+    "The returned release receipt passed verify_current() for the current installation state.",
+    "The read-only receipt was closed in a finally block."
+  ],
+  "not_verified": [
+    "RootActorObservation or caller/process attestation",
+    "Running daemon, live application or native/plugin effect",
+    "Current account enrollment or provider authorization",
+    "The newer candidate 18029cc87ea3ca36f45168f9e7edfb48e57576c3",
+    "Any acceptance criterion or Resources deletion safety"
+  ],
+  "acceptance_assertions": {
+    "AC01": null, "AC02": null, "AC03": null, "AC04": null, "AC05": null,
+    "AC06": null, "AC07": null, "AC08": null, "AC09": null, "AC10": null,
+    "AC11": null, "AC12": null, "AC13": null, "AC14": null, "AC15": null,
+    "AC16": null, "AC17": null, "AC18": null
+  },
+  "resource_delete_safe": false,
+  "claim_limit": "This is a root-run, read-only verification of the installed cc81 release closure and receipt currentness. It does not verify the root actor, daemon, active runtime operation, accounts, newer candidate deployment, or acceptance. All AC01-AC18 remain open."
+}

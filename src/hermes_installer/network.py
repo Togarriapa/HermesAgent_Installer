@@ -24,15 +24,20 @@ def _urllib_request(url, method, headers, body, socket_timeout, max_bytes):
     try:
         opener = build_opener(ProxyHandler({}), HTTPSHandler(context=ssl.create_default_context()), _NoRedirect())
         with opener.open(request, timeout=socket_timeout) as response:
-            data = response.read(max_bytes + 1)
+            # HEAD is used by read-only connectivity probes. Never consume a
+            # response body for it, including from a nonconforming peer.
+            data = b"" if method == "HEAD" else response.read(max_bytes + 1)
             if len(data) > max_bytes:
                 raise NetworkError("Response exceeded configured size limit")
             return HTTPResult(response.status, dict(response.headers.items()), data)
     except HTTPError as exc:
-        data = exc.read(max_bytes + 1)
-        if len(data) > max_bytes:
-            data = b""
-        return HTTPResult(exc.code, dict(exc.headers.items()), data)
+        try:
+            data = b"" if method == "HEAD" else exc.read(max_bytes + 1)
+            if len(data) > max_bytes:
+                data = b""
+            return HTTPResult(exc.code, dict(exc.headers.items()), data)
+        finally:
+            exc.close()
     except (URLError, TimeoutError, OSError, ssl.SSLError) as exc:
         raise NetworkError(f"HTTPS request failed ({type(exc).__name__})") from None
 
@@ -46,17 +51,20 @@ def _worker(send, fn, args):
 
 class BoundedNetwork:
     """Run work in a killable child so DNS/connect/read share one wall deadline."""
-    def __init__(self, *, deadline_seconds=8.0, socket_timeout=None, max_response_bytes=1_048_576, requester=_urllib_request):
+    def __init__(self, *, deadline_seconds=8.0, socket_timeout=None, max_response_bytes=1_048_576, requester=None):
         socket_timeout = min(4.0, deadline_seconds) if socket_timeout is None else socket_timeout
         if not 0.1 <= deadline_seconds <= 30 or not 0.1 <= socket_timeout <= deadline_seconds or not 1024 <= max_response_bytes <= 8_388_608:
             raise ValueError("Invalid network bounds")
         self.deadline_seconds, self.socket_timeout = deadline_seconds, socket_timeout
-        self.max_response_bytes, self.requester = max_response_bytes, requester
+        self.max_response_bytes = max_response_bytes
+        self.requester = _urllib_request if requester is None else requester
     def request(self, url, *, method="GET", headers=None, body=None, cancelled=None):
         if not isinstance(url, str) or not url.startswith("https://") or len(url) > 2048 or any(ord(c) < 32 for c in url):
             raise NetworkError("Only bounded HTTPS URLs are accepted")
-        if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+        if not isinstance(method, str) or method not in {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"}:
             raise NetworkError("HTTP method is not allowed")
+        if method == "HEAD" and body is not None:
+            raise NetworkError("HEAD requests cannot carry a body")
         clean = {}
         for name, value in (headers or {}).items():
             if not isinstance(name, str) or not isinstance(value, str) or len(name) > 100 or len(value) > 8192 or "\r" in name + value or "\n" in name + value:
@@ -86,7 +94,8 @@ class BoundedNetwork:
             if not ok:
                 kind, _ = result
                 raise NetworkError(f"HTTPS request failed ({kind})")
-            if not isinstance(result, HTTPResult) or len(result.body) > self.max_response_bytes:
+            if (not isinstance(result, HTTPResult) or len(result.body) > self.max_response_bytes
+                    or method == "HEAD" and result.body):
                 raise NetworkError("Invalid or oversized HTTP response")
             if cancelled is not None and cancelled():
                 raise NetworkError("HTTPS request was cancelled")

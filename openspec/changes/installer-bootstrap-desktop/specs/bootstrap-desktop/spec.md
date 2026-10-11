@@ -300,3 +300,824 @@ Runnable authority publication SHALL require actual artifact receipts; functiona
 #### Scenario: Runnable record without functional health
 - **WHEN** runnable custody exists but health has not passed
 - **THEN** functional enablement and installation acceptance remain pending.
+
+### Requirement: Concrete first-stage policy publication
+
+The installed root entrypoint SHALL compile and publish reviewed closed-template policy/catalog bytes from actual selected release/NSS/ownedroot observations before invoking the policy factory. HERMES_HOME SHALL use explicit service data root/hermes.
+
+#### Scenario: First install without policy files
+- **WHEN** no policy generation exists
+- **THEN** verified stage0 publication constructs it without an active worker or caller authority rows.
+
+### Requirement: Prepared native materialization receipt closure
+
+Root materialization SHALL occur under verified prepared transaction and exact fixed CAS output roles before runnable activation. HERMES_HOME SHALL equal selected service_home_root_id. Resources source proof SHALL remain independent from Hermes source proof.
+
+#### Scenario: Source or role substitution
+- **WHEN** a native output receipt substitutes another source or role
+- **THEN** active record publication is denied.
+
+### Requirement: Closed first-stage source template
+
+The compiler SHALL use the exact pinned closed template and finite actual root fact bindings; prepared stage SHALL not require an active worker.
+
+#### Scenario: Missing runtime or identity binding
+- **WHEN** a required root binding has not been actually verified
+- **THEN** no active record is synthesized and preparation reports exact prerequisite.
+
+### Requirement: Existing observation assembly joins
+The implementation SHALL apply the exact root registry, principal-selection and protected observation joins relevant to this change in `plans/amendments/2026-10-09-final-observation-assembly-v31.md`.
+
+#### Scenario: Static selection lacks actual runtime proof
+- **WHEN** an actual current role, display, source event or terminal execution receipt is absent
+- **THEN** the affected observation remains pending and no caller claim or catalog presence substitutes for runtime evidence
+
+### Requirement: Root observed first setup principal selection
+The compiler SHALL resolve selected authenticated principal receipt through the root setup registry before publishing concrete identity rows.
+
+#### Scenario: No active worker exists during first setup
+- **WHEN** actual selected authenticated identity and dedicated NSS allocation are verified in the root setup transaction
+- **THEN** the compiler binds the exact principal fields without requiring a previous active worker profile or fabricating a principal from operator UID
+
+### Requirement: Installed closure and native construction joins
+The implementation SHALL use the applicable exact root release and native assembly joins in the v33 amendment before activating selected runtime behavior.
+
+#### Scenario: First input precedes provider pending pair
+- **WHEN** the selected actual producer receives root observed initial input before a provider pair exists
+- **THEN** root resolves the target through actual execution custody and loader proof, without guessing a pending pair or trusting worker selectors
+
+### Requirement: Complete frozen baseline receipt digest
+The deployment verifier SHALL distinguish the complete frozen-tree SHA256 map from the original160 snapshot file manifest.
+
+#### Scenario: Frozen metadata is present
+- **WHEN** computing baseline_tree_sha256
+- **THEN** every regular frozen file including hashes.json is included, while original160 snapshot entries are checked separately against their bytes
+
+### Requirement: Noncircular root observation receipts
+The implementation SHALL use exact v35 initial identity and terminal companion joins applicable to this change.
+
+#### Scenario: Companion proof follows immutable terminal
+- **WHEN** root custody has issued the actual terminal receipt
+- **THEN** root native registry binds a separate verified companion receipt without fabricating or modifying custody evidence
+
+### Requirement: Noncircular immutable first-stage publication
+The implementation SHALL use the exact applicable v36 release roles, immutable policy publication and pre-event root ingress custody joins.
+
+#### Scenario: First ingress has no source receipt yet
+- **WHEN** root resolves selected ingress controller custody
+- **THEN** actual process/module/selected ingress proof is checked independently before atomically minting the source receipt and event handle
+
+### Requirement: Official committed PM runtime identity
+The implementation SHALL resolve the exact selected official committed PM dependency environment through the v37 root runtime receipt.
+
+#### Scenario: PM source or sync receipt alone exists
+- **WHEN** actual selected runtime executable identity and source/lock/tool joins have not been verified
+- **THEN** runtime activation and functional health remain pending, without substituting a source archive digest or system Python
+
+### Requirement: Protected native candidate index delivery
+The implementation SHALL verify the selected fixed candidate-index closure member through exact entrypoint manifest and package pins before native discovery.
+
+#### Scenario: Ordinary cache has a matching tool name
+- **WHEN** no verified selected candidate index exists
+- **THEN** native protected discovery remains pending without adopting the cache schema or caller metadata
+
+### Requirement: Root initial compilation precedes policy session
+The implementation SHALL create and verify the exact v42 internal stage0 compilation context without requiring a policy-dependent setup session.
+
+#### Scenario: No bootstrap policy exists yet
+- **WHEN** the actual installed root actor compiles initial selected policy
+- **THEN** root internal stage0 custody authorizes fixed compilation and one-use publication handoff before normal setup session creation
+
+### Requirement: Exact first selection and live input target
+The implementation SHALL enforce v43 exact first-publication predecessor and admitted-source plus actual-process target join.
+
+#### Scenario: Admission exists before process launch
+- **WHEN** no actual managed producer and loader proof exists
+- **THEN** root cannot deliver initial source context or write task stdin by guessing a PID or pending bridge
+
+### Requirement: Root initial input before single task stdin effect
+The implementation SHALL follow v46 concrete internal coordinator sequence during the single selected launch effect.
+
+#### Scenario: Initial source delivery fails
+- **WHEN** actual loader/input custody cannot produce a verified receipt before original deadline
+- **THEN** custody closes the owned unit before stdin and never infers source after EOF
+
+### Requirement: Root secure initial identity intake
+The implementation SHALL bind the exact v47 masked intake and policy selection to the actual root stage0 transaction.
+
+#### Scenario: User journal contains a credential reference
+- **WHEN** it has no verified root vault custody/scope receipt
+- **THEN** it cannot authorize identity observation or policy publication and exact secure intake remains pending
+
+### Requirement: Verified initial identity template revision
+The implementation SHALL resolve the exact v49 immutable identity template through the actual root installed deployment closure.
+
+#### Scenario: Only a session digest exists
+- **WHEN** identity policy revision is needed
+- **THEN** root resolves actual verified template bytes rather than inventing a module constant or trusting a caller revision
+
+### Requirement: Explicit root registry phases
+The implementation SHALL distinguish v50 draft/bound identity selection and evidence lookup/one-use stdin consumption.
+
+#### Scenario: Source is queued but not delivered
+- **WHEN** root validates initial input receipt
+- **THEN** queued source alone cannot permit stdin and actual producer delivery/current binding is required
+
+### Requirement: Actual native materialization output CAS
+The implementation SHALL apply v51 exact source and compiled artifact role/closure joins.
+
+#### Scenario: Compiler produces a source and compiled digest
+- **WHEN** importing actual generated output into root CAS
+- **THEN** distinct byte/tree domains and transaction roles remain verified without substituting planning or source hashes for executable output
+
+### Requirement: Actual producer initial source take
+The implementation SHALL use v52 fixed peer-authenticated no-selector source delivery before selected task stdin.
+
+#### Scenario: Initial peer does not know a receipt identifier
+- **WHEN** actual rootselected initial input has been captured
+- **THEN** protected endpoint resolves the unique matching execution input for that peer without exposing metadata in the prompt or requiring a pending provider pair
+
+### Requirement: Verified release plan and active compilation
+The implementation SHALL apply v53 exact source template/deployed plan and active receipt compilation joins.
+
+#### Scenario: Runtime outputs become available after preparation
+- **WHEN** publishing runnable active policy
+- **THEN** root active compiler verifies actual current runtime/materialization/identity receipts rather than using an initial-only claim or caller authority rows
+
+### Requirement: Live selected native health control
+The installer SHALL begin native health observation from a root-retained live selected process control before fixture input, retaining actual native events and a separate semantic health receipt.
+
+#### Scenario: Terminal-only health presentation
+- **WHEN** only stdout or exit status exists without the required live native event closure
+- **THEN** health remains incomplete and functional acceptance is not asserted
+
+### Requirement: Exact native output byte encoding
+The installer SHALL bind generated native CAS artifacts to the fixed reviewed role encoding, source/member receipts and distinct archive/member-tree digests.
+
+#### Scenario: Alternate or unverified native output
+- **WHEN** generated output uses unknown archive members, alternate encoding or mismatched source/member hashes
+- **THEN** activation is denied and native acceptance remains pending
+
+### Requirement: Distinct native closure and archive digests
+The installer SHALL preserve the canonical closure_files tree digest for compiled_closure_sha256 and use separate archive artifact digest for CAS bytes.
+
+#### Scenario: Archive hash substituted for closure tree
+- **WHEN** a package substitutes archive bytes SHA for the selected compiled tree hash
+- **THEN** mount and binder verification reject the mismatched digest domain
+
+### Requirement: Distinct native generation joins
+The installer SHALL resolve process and native package generations separately and preserve exact candidate index identity across receipts and manifest.
+
+#### Scenario: Generation domain substitution
+- **WHEN** an observer uses package generation as live process generation
+- **THEN** peer proof admission denies the inconsistent join
+
+### Requirement: Fixed selected display and loopback startup
+The installer SHALL launch only enrolled official Desktop/display/gateway recipes with exact Xauthority mount and private loopback role/port bindings.
+
+#### Scenario: Ambient display or broad network substitution
+- **WHEN** a worker supplies display credentials, arbitrary port or unenrolled network role
+- **THEN** startup or connection denies before app bytes and remote acceptance remains pending
+
+### Requirement: Actual root key and selected catalog authority
+The installer SHALL derive first-publication key identity and authenticated selected catalog reads from actual root custody/session receipts, preserving distinct source producer roles.
+
+#### Scenario: Generic bootstrap authority substituted
+- **WHEN** bootstrap enrollment authorization is presented as Composio catalog or channel effect permission
+- **THEN** the separate selected catalog authority denies the substitution
+
+### Requirement: Non-circular first source bootstrap
+The installer SHALL verify actual selected source, isolated interpreter and current root module actor before first release publication without requiring an existing deployment pointer.
+
+#### Scenario: Raw root identity or source receipt only
+- **WHEN** a bootstrap caller supplies only UID0 or source inventory without actual interpreter/module closure proof
+- **THEN** privileged release publication remains denied
+
+### Requirement: Closed prepared base and reader policy
+The installer SHALL render dormant prepared authority and catalog read policy from exact verified source templates and actual root receipt bindings.
+
+#### Scenario: Prepared authority treated as active
+- **WHEN** a dormant empty prepared policy is used to authorize runtime effects
+- **THEN** authorization denies until actual active compilation and receipts exist
+
+### Requirement: Root selected startup and predecessor custody
+The installer SHALL use actual root source CAS/predecessor proofs and finite selected startup admission with fresh role-specific child grants.
+
+#### Scenario: Unbound startup or deployment predecessor
+- **WHEN** caller state substitutes root startup admission or ignores an existing deployment pointer
+- **THEN** startup/publication denies without overwriting unowned or mismatched state
+
+### Requirement: Actual channel receipt and source selection
+The installer SHALL derive HTTP/audio input provenance from root-retained actual authenticated transport or consented device capture, and verify explicitly selected installer source before effects.
+
+#### Scenario: Caller input or status used as proof
+- **WHEN** worker input labels, microphone permission or read-only launcher status are presented as principal/effect authority
+- **THEN** admission denies the substitution
+
+Literal bootstrap receipt binding source v72: `plans/amendments/2026-10-10-literal-bootstrap-receipt-bindings-v72.md`; existing BD/HI lifecycle gates open; actual typed root receipts required.
+
+Prepared unresolved receipt rendering v74: `plans/amendments/2026-10-10-prepared-unresolved-receipt-rule-rendering-v74.md`; empty output identities remain dormant and actual active receipts required under existing BD/HI tasks.
+
+Bootstrap source projection/store correction v75: `plans/amendments/2026-10-10-bootstrap-binding-projection-store-correction-v75.md`; existing BD/HI tasks remain open.
+
+First-bootstrap pinned interpreter v76: `plans/amendments/2026-10-10-first-bootstrap-isolated-pinned-interpreter-v76.md`; existing BD/HI tasks remain open, actual isolated Linux runtime/actor proof required.
+
+Same-process bootstrap handoff v78: `plans/amendments/2026-10-10-bootstrap-same-process-sealed-runtime-handoff-v78.md`; existing BD/HI tasks open, actual trusted re-exec proof required.
+
+Existing typed candidate handoff v79: `plans/amendments/2026-10-10-bootstrap-existing-typed-candidate-handoff-v79.md`; existing BD/HI tasks open.
+
+Closed root plan template selection v81: `plans/amendments/2026-10-10-closed-root-plan-template-selection-v81.md`; existing BD/HI tasks open.
+
+Two-stage source driver interpretation v83: `plans/amendments/2026-10-10-two-stage-source-driver-interpretation-v83.md`; existing BD/HI tasks open.
+
+Selected lifecycle stop canonical payload v85: `plans/amendments/2026-10-10-selected-lifecycle-stop-canonical-payload-v85.md`; existing HI-T09/HI-T13/SK-T01 remain open.
+
+Native request observation domain v86: `plans/amendments/2026-10-10-native-request-observation-domain-v86.md`; existing HI-T11/SK-T01 remain open.
+
+Pre-active native assembly selection v84: `plans/amendments/2026-10-10-pre-active-native-assembly-selection-v84.md`; HI-T08/HI-T09/RB-T09 remain open.
+
+Bootstrap action and derived store ownership v87: `plans/amendments/2026-10-10-bootstrap-action-derived-store-ownership-v87.md`; existing BD/HI/RB tasks remain open.
+
+Selected resource materialization and task route v88: `plans/amendments/2026-10-10-selected-resource-materialization-task-route-v88.md`; RB-T08/HI-T09/HI-T12 remain open.
+
+Nonrecursive selections and private source ceilings v90: `plans/amendments/2026-10-10-nonrecursive-selection-private-source-ceilings-v90.md`; existing original implementation and acceptance tasks remain open.
+
+Reviewed native capability selection v91: `plans/amendments/2026-10-10-reviewed-native-capability-selection-v91.md`; HI-T03 remains open.
+
+MCP derived schema CAS closure v92: `plans/amendments/2026-10-10-mcp-derived-schema-cas-closure-v92.md`; existing MC-F01/HI-T08 remain open.
+
+Resource task proof DTO and custody v93: `plans/amendments/2026-10-10-resource-task-proof-dto-custody-v93.md`; RB-T08/HI-T09/HI-T12 remain open.
+
+HTTP and audio observed event schemas v94: `plans/amendments/2026-10-10-http-audio-observed-event-schemas-v94.md`; original RG-F03/R0060/native-input obligations remain open.
+
+Resource task authority module and seal v95: `plans/amendments/2026-10-10-resource-task-authority-module-seal-v95.md`; RB-T08/HI-T09/HI-T12 remain open.
+
+Root turn transcript encoding v96: `plans/amendments/2026-10-10-root-turn-transcript-encoding-v96.md`; SK-T01/HI-T08/HI-T11 remain open.
+
+Private loopback enforcement choice v97: `plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97.md`; existing original implementation/acceptance obligations remain open.
+
+Memory capture enablement consent v98: `plans/amendments/2026-10-10-memory-capture-enablement-consent-v98.md`; existing SK-T01/SK-F02/SK01 obligations remain open.
+
+Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected-runtime-profile-currentness-v102.md`; actual independent Resources choice/PM journal root/current consent and recipe-bound application limits; existing implementation/acceptance tasks open.
+
+### Requirement: Prepared setup build subject selection
+The system SHALL use the v115 exact root setup build service template and actual dedicated NSS/root/current controller receipts for the finite Xpra managed build without requiring an active native service generation. It SHALL preserve empty prepared active service records and distinguish the controller from the actual launched build child.
+
+#### Scenario: First setup lacks active worker profile
+- **WHEN** a valid root prepared transaction selects the finite build
+- **THEN** its sealed setup-only subject is independently validated without manufacturing an active worker identity.
+
+### Requirement: Scoped pinned runtime asset redirect
+The system SHALL apply only the v116 exact publicCPython artifact redirect policy, enforcing one302 to the exact officialasset authority with TLS, no credential forwarding, redacted signedquery and actual finalsize/hash. All other artifact NoRedirect defaults SHALL remain unchanged.
+
+#### Scenario: Unexpected redirect destination
+- **WHEN** the response redirects to an unlisted authority, protocol, port or a second hop
+- **THEN** acquisition denies without publishing any runtime artifactreceipt.
+
+### Requirement: Exact pinned PyYAML compatibility package
+The system SHALL permit the v131 exact `_yaml/` and `_yaml/__init__.py` members only for the unchanged pinned installer PyYAML wheel, preserving complete RECORD, archive bounds, isolated site directory and actual import/extension checks.
+
+#### Scenario: Additional unreviewed compatibility member
+- **WHEN** a wheel adds another `_yaml` descendant or fails the exact artifact or RECORD checks
+- **THEN** materialization denies without publishing a runtime receipt.
+
+### Requirement: Distinct runtime member and public input evidence v149
+The installer SHALL preserve unique interpreter identity, exact runtime member closure and distinct prepared/live role proofs, and SHALL require actual per-input root disclosure for first public egress.
+
+#### Scenario: Persistent public config has no disclosed input
+- **WHEN** a public web request has no actual root-observed per-input disclosure and ancestry proof
+- **THEN** no PUBLIC receipt is issued merely from profile configuration or missing parents
+
+### Requirement: Prepared source module layout v154
+The installer SHALL bind the two reviewed worker source members with source-module role and the root-imported definition adapter with its distinct module identity.
+
+#### Scenario: Prepared worker source is available before worker launch
+- **WHEN** a verified held release includes the exact source-module bytes
+- **THEN** the factory may prove source membership without claiming root import or live worker origin, and later worker evidence remains independently required
+
+### Requirement: Root native health start v159
+The installer SHALL admit health only from genuine committed runnable enrollment and bind the root-selected service grant, transaction, fixture and live control before authenticated input.
+
+#### Scenario: Only a prepared generation is available
+- **WHEN** health is requested without a current committed runnable enrollment receipt
+- **THEN** health start denies and ordinary enablement stays withheld until actual same-generation semantic health succeeds
+
+### Requirement: Installed local qualification v160
+The installer SHALL dispatch only fixed source-reviewed local qualification suites under its genuine installed actor and execute production authority paths with actual owned fixture receipts.
+
+#### Scenario: Qualification caller supplies arbitrary test code or policy JSON
+- **WHEN** input exceeds the finite installed suite selector
+- **THEN** dispatch denies and no actor/session/grant shortcut is created
+
+### Requirement: Qualification root adapter v162
+The installer SHALL isolate fixture publication/session/key authority under the exact observed recipe-owned run root while preserving production constants and source/kernel effect validation.
+
+#### Scenario: Fixture handle is presented to production consumer
+- **WHEN** a qualification session or signed fixture receipt targets production authority
+- **THEN** production denies the distinct namespace/type/key and no arbitrary path override is accepted
+
+### Requirement: Health input source delivery v163
+The installer SHALL bind selected health fixture input to the actual started native peer, PRIVATE source context and distinct actual capture/write/EOF/take receipts.
+
+#### Scenario: Captured health source has no completed stdin delivery
+- **WHEN** native input take lacks exact successful write and EOF receipts for the current health peer
+- **THEN** delivery denies and no health success is recorded
+
+### Requirement: Qualification envelope v164
+The installer SHALL verify the exact fixture-only canonical authority/catalog envelope and current owned namespace before parsing enrollment.
+
+#### Scenario: Fixture catalog is swapped
+- **WHEN** catalog bytes disagree with the signed envelope or current fixture pointer
+- **THEN** the dedicated loader denies before creating any authority service
+
+### Requirement: Runtime role publication join v165
+The installer SHALL activate from the same genuine PM and native CAS receipt closure used by strict active compilation and SHALL freshly verify current committed enrollment for runtime health.
+
+#### Scenario: Generated native receipt is presented as static source receipt
+- **WHEN** activation receives a generated output through unrelated static artifact lookup
+- **THEN** it denies until the exact typed producer/CAS/source role projection is resolved
+
+### Requirement: Qualification key signer v166
+The installer SHALL sign only the exact fixture envelope with the genuine held fixture key before constructing its actual authority service.
+
+#### Scenario: Caller requests another signature domain
+- **WHEN** a fixture signer is used for unrelated data or production authority
+- **THEN** the restricted facade denies
+
+### Requirement: Qualification session storage v167
+The installer SHALL retain live fixture session authority only in its current sealed registry and SHALL treat any session file as historical metadata.
+
+#### Scenario: Historical session file is reopened
+- **WHEN** no current genuine fixture lease and session registry membership exist
+- **THEN** the historical file cannot authorize an effect
+
+### Requirement: Native precompile reservation v169
+The installer SHALL authorize and reserve actual generated outputs from genuine current setup source selection before compiling their strict active rows.
+
+#### Scenario: Prepared native package catalog is empty
+- **WHEN** genuine source-backed assembly has produced five valid selected outputs
+- **THEN** authorization resolves the sealed setup selection and never requires future active package policy
+
+### Requirement: Native output role correction v170
+The installer SHALL use exact source-established native output roles and output kinds.
+
+#### Scenario: Unknown overlay role is supplied
+- **WHEN** a receipt uses native-overlay-archive rather than native-boundary-overlay
+- **THEN** reservation and projection deny the unknown literal
+
+### Requirement: Selected window input observation v177
+The installer SHALL verify actual press and release on the selected owned window before accepting display input qualification.
+
+#### Scenario: Focus changes or only injector success exists
+- **WHEN** same-window delivery cannot be independently verified
+- **THEN** qualification remains incomplete and any partial effect is reported truthfully
+
+
+### Requirement: Source-join producers v178
+The installer SHALL implement the source-owned receipt joins and closed fixture descriptor in `plans/amendments/2026-10-10-source-join-producers-v178.md` before compiling executable native or fixture authority.
+
+#### Scenario: Genuine current source graph
+- **WHEN** the exact held setup/source/PM, selected definition/member/effect/schema/role and separately observed fixture service receipts are current
+- **THEN** the compiler SHALL consume their retained immutable projection and actual generated/materialized/discovered bytes, keeping fixture evidence separate from production and AC acceptance
+
+#### Scenario: Missing or misjoined producer
+- **WHEN** a required source/effect/member/observer/service receipt is absent, stale, altered or from another namespace
+- **THEN** affected capability remains precisely pending, no caller path or production-row relabeling fills the gap, and no denial-only callback counts as implementation
+
+
+### Requirement: Reviewed source members and boundary joins v180
+The installer SHALL apply only the exact finite reviewed source/member/role mappings and genuine producer joins in `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`.
+
+#### Scenario: Reviewed source reaches runtime
+- **WHEN** committed source pins are packaged and exact current membership/import/selection receipts are verified
+- **THEN** separate owner-overlay rows SHALL remain digest-covered through loading/invocation, standalone build driver SHALL use its dedicated held execution source and PM runtime, and each worker SHALL pass its own cgroup kernel gate before app code
+
+#### Scenario: Missing or unsupported producer
+- **WHEN** a source/member/role/schema/loaded proof is missing or kernel enforcement permits a forbidden bind
+- **THEN** startup/effect remains unavailable, no network lease or acceptance is issued, and owned cleanup SHALL be verified without weakening negative expectations
+
+
+### Requirement: Conditional Authentik and genuine local owner v181
+The installer SHALL implement the exclusive typed identity domains, finite selected capabilities, independent setup and genuine current producer joins in `plans/amendments/2026-10-10-conditional-authentik-local-owner-setup-v181.md`, preserving R0058/R0060/R0143 and all privileged Authentik/broker requirements.
+
+#### Scenario: Independent selected local capability
+- **WHEN** the installed root setup selects an observed nonroot Linux owner and reviewed local capability rows without Authentik-dependent capabilities
+- **THEN** independent prepared materialization and fully authorized local effects SHALL proceed through current owner/service/profile/view/policy/loaded-worker receipts, while missing provider or account dependencies remain precisely pending
+
+#### Scenario: Privileged dependency absent or identity stale
+- **WHEN** a local principal requests homelab/recipient authority or a current identity, selected effect, loaded proof or required Authentik dependency is missing
+- **THEN** the affected action SHALL deny before effect, preserve independent owned work, and report configure-later/resume without claiming full compliance or synthesizing Authentik authority
+
+
+### Requirement: Concrete active network generation owner v182
+The installer SHALL implement the exact finite compiler projection, post-setup owner and helper manager custody/revalidation lifecycle in `plans/amendments/2026-10-10-active-network-generation-owner-v182.md`, with no bare currentness callback or setup receipt substitution.
+
+#### Scenario: Valid adoption after setup expiry
+- **WHEN** a signed native policy choice was adopted before its original deadline and current active release/actor/key/publication/source/revocation/journal/worker row proofs all match
+- **THEN** only its exact selected helper/worker MAY reach the own-cgroup kernel start barrier, and app release requires fresh current owner and actual enforcement evidence
+
+#### Scenario: Active proof changes or enforcement unavailable
+- **WHEN** revocation/CAS/code/actor/journal/profile currentness changes or a forbidden kernel bind succeeds
+- **THEN** app startup SHALL deny with no network lease, owned cleanup SHALL be verified, and unsupported enforcement SHALL remain unavailable without acceptance
+
+
+### Requirement: Signed worker and active overlay producers v183
+The installer SHALL implement the exact source/type/method/output producer joins and exclusive finite scopes in `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md`.
+
+#### Scenario: Genuine source survives as current active custody
+- **WHEN** actual held worker/source/PM/native/view receipts enter signed selected recipe and tagged local-owner adoption during genuine active publication
+- **THEN** after setup expiry only independently verified current runtime source/NSS/enrollment/loaded process and one-use selected grant MAY permit its four exact owned overlay methods
+
+#### Scenario: Missing source or stale active authority
+- **WHEN** recipe/source/member/view/NSS/current choice/loaded peer proof is absent or mismatched, revoked, late-adopted or replaced
+- **THEN** app/effect SHALL deny before execution, preserve independent source readiness and never derive host/AuthentiK authority or network permission from static metadata/choice presence
+
+
+### Requirement: Acyclic finite network rows v184
+The installer SHALL use the exact closed versioned field sets, full-row canonical hashes and producer/currentness/FK rules in `plans/amendments/2026-10-10-network-row-wire-digest-boundaries-v184.md`.
+
+#### Scenario: Exact generated source rows
+- **WHEN** real signed recipe/source and held runtime/identity roots produce the finite schema2 AF_UNIX rows
+- **THEN** current runtime MAY attach the separately verified enclosing generation digest and reach its worker barrier without feeding that digest back into generated rows
+
+#### Scenario: Wire or phase proof invalid
+- **WHEN** fields/FKs/digests/versions/current source differ or only pre-READY mount custody exists for an effect
+- **THEN** startup/effect SHALL deny without inventing TCP/source/loaded authority or successful acceptance
+
+
+### Requirement: Concrete owner registration capture and RPC v185
+The installer SHALL implement the exact tagged role/registration/READY/source schema and fixed proxy/RPC joins in `plans/amendments/2026-10-10-owner-overlay-observer-capture-rpc-v185.md`.
+
+#### Scenario: Actual observed selected local call
+- **WHEN** the current loaded owner role and actual READY registrations, captured provider call/schema and root one-use selected grant all match
+- **THEN** only the four fixed local methods MAY reach current owned CAS/read through the protected RPC
+
+#### Scenario: Registration or captured authority absent
+- **WHEN** source/role/READY/peer/schema/choice/invocation proof is synthetic, stale or absent
+- **THEN** the effect SHALL deny before side effect without skipping backend checks or fabricating local observer/provider provenance
+
+
+### Requirement: Genuine preactive listener custody v186
+The installer SHALL resolve the endpoint source phase through actual root-held listener custody and current authenticated active transfer in `plans/amendments/2026-10-10-preactive-authority-listener-custody-v186.md`.
+
+#### Scenario: Endpoint observed before recipe
+- **WHEN** the current prepared owned account/root and installed root custodian bind and observe the exact fixed socket
+- **THEN** source recipe MAY retain actual prepared socket custody while every effect remains unavailable until verified active adoption and re-observation
+
+#### Scenario: Custody or phase invalid
+- **WHEN** socket/root/actor/account/transfer/publication identity changes or adoption is absent/expired
+- **THEN** worker start/effect SHALL deny, preserve foreign conflicts and verify only owned cleanup without claiming future target proof
+
+
+### Requirement: Actual supervised listener activation v187
+The installer SHALL implement the actual both-process supervisor/peer/activation channel and current one-use FD custody in `plans/amendments/2026-10-10-supervised-listener-activation-channel-v187.md`.
+
+#### Scenario: Exact installed daemon handoff
+- **WHEN** independently current setup actor and supervised installed daemon join the protected activation record, real peer PIDFD/unit/launch and current publication/source/socket
+- **THEN** only that daemon MAY adopt the held listener after one-use FD transfer and verified acknowledgment
+
+#### Scenario: Cross-process proof invalid
+- **WHEN** remote actor is treated as local, only UID0 or same-process channel is known, or peer/unit/source/CAS/FD differs
+- **THEN** adoption/startup SHALL deny and owned cleanup/conflict preservation remain mandatory with all acceptance pending
+
+
+### Requirement: Two-actor same-generation functional health v191
+The installer SHALL enforce the independent daemon commit/source proof and fixed authenticated setup health intent in `plans/amendments/2026-10-10-two-actor-health-commit-custody-v191.md`, without transferring live setup authority.
+
+#### Scenario: Real daemon health completion
+- **WHEN** the actual selected source/native run produces passed same-generation semantic health and verified terminal cleanup
+- **THEN** only its concrete root consumer MAY issue the current committed journal witness used for functional enablement
+
+#### Scenario: Transport or copied setup proof only
+- **WHEN** only ACK, copied DTO, wrong generation/source, stale intent or incomplete observer/terminal evidence exists
+- **THEN** functional enablement SHALL remain pending with one-use reconciliation and owned cleanup
+
+
+## ADDED Requirements
+
+### Requirement: Final coherent source tuple application
+The installer SHALL apply only the exact committed source/member/catalog/role/import closure tuple list in `plans/amendments/2026-10-10-final-coherent-source-pin-review-v195.md` and `planning/final-coherent-source-pin-review-v195.json`, preserving independent source, installed import, loaded native and current effect/health evidence.
+
+#### Scenario: Exact finite pin application
+- **WHEN** Luna applies the reviewed source0add8c33 batch after specification publication
+- **THEN** exact byte hashes/sizes, canonical member roles/modes, required PlanResolver aliases and actual import closure SHALL agree, with no source metadata self-hash cycle or caller-derived pin
+
+#### Scenario: Source evidence does not activate runtime
+- **WHEN** source review or fixture tests pass but actual loaded/current source, helper, invocation, health or target evidence is absent
+- **THEN** affected execution SHALL remain denied or unavailable and all original AC01..AC18 acceptance SHALL remain OPEN
+
+
+## ADDED Requirements
+
+### Requirement: Safe finite bootstrap failure diagnosis
+The installer SHALL report bootstrap OS failures only through the exact finite step/errno contract and reviewed source rows in `plans/amendments/2026-10-10-safe-bootstrap-diagnostics-source-review-v196.md`, preserving all source/actor/runtime custody guards.
+
+#### Scenario: Private or malformed failure detail
+- **WHEN** an OS failure has a private filename/message, unknown errno, mutated fields or a hostile diagnostic subclass
+- **THEN** public output SHALL contain only revalidated finite step/errno strings or a fixed category and SHALL expose no raw detail or authority waiver
+
+#### Scenario: Exact source application remains separate from target success
+- **WHEN** the two reviewed source tuples are applied and source tests pass
+- **THEN** actual candidate publication, installed execution and all original runtime/target acceptance SHALL still require their genuine evidence
+
+
+### Requirement: Fixed release-store publication custody
+
+The installer SHALL create missing fixed release-store children only under the v200 verified root ancestor/predecessor/lock and identity-preserving conflict rules, using actual candidate-held publisher source metadata.
+
+#### Scenario: Fresh fixed publication store
+
+- **WHEN** the actual selected publisher holds current source/build/predecessor custody and only fixed safe release-store children are absent
+- **THEN** it creates and fsyncs those children and continues existing pointer-last publication without changing unrelated paths
+
+#### Scenario: Conflicting or replaced directory
+
+- **WHEN** a fixed ancestor/child is unsafe, linked, foreign or replaced during creation/rollback
+- **THEN** publication denies and preserves the conflict rather than normalizing or deleting a foreign identity
+
+
+### Requirement: Current publication-owned protected core
+
+The installer SHALL use the v201 actual active compiler-produced protected core member and concrete publication owner proof, and preserve distinct fixed acquisition and effect deadlines.
+
+#### Scenario: Current core and acquisition authority
+
+- **WHEN** actual typed source selections produce a schema2 active publication or a new fixed-suite controller issues its original acquisition lease
+- **THEN** the concrete consumer validates the complete protected core and original deadline without copying process-local authority or widening effect leases
+
+#### Scenario: Historical snapshot or renewed lease substituted
+
+- **WHEN** fixed /etc or schema1 bytes are relabelled as published core, caller proof is supplied, or an expired acquisition deadline is renewed
+- **THEN** the operation denies and remains incomplete without runtime acceptance
+
+
+### Requirement: Genuine selected remote role source inputs
+
+The installer SHALL issue the v202 root-TTY choice and exactly three source-backed startup role receipts through concrete retained source/runtime/build/NSS owners before compiling protected remote startup authority.
+
+#### Scenario: Actual selected sources form role inputs
+
+- **WHEN** the current fixed choice, principal, source/toolchain/dependency/runtime and build receipts are genuine
+- **THEN** the exact producer may issue compiler inputs, with Xpra patch adoption after core publication and before intent, preserving independent account/native readiness
+
+#### Scenario: Declared identity is substituted for runtime proof
+
+- **WHEN** source archives, future handles, caller rows, missing ARM64 dependencies or unowned Cloudflare configuration are relabelled as ready role receipts
+- **THEN** admission denies without disabling sandbox or wrong-port enforcement or claiming acceptance
+
+### Requirement: Typed finite bootstrap RuntimeError diagnostics v203
+The installer SHALL expose only a reviewed constant stage for exact source-owned typed bootstrap failures while preserving ordinary type-only trust errors and fail-closed behavior.
+
+#### Scenario: Arbitrary RuntimeError or subclass reaches formatter
+- **WHEN** the exception is not the exact validated new diagnostic type
+- **THEN** the previous safe type-only failure behavior remains and no arbitrary message/path/secret is emitted
+
+## ADDED Requirements
+
+### Requirement: Exact typed diagnostic source cohort v204
+The installer SHALL apply only the reviewed fd09b11d leaf tuples from planning/typed-bootstrap-diagnostic-source-review-v204.json while preserving v203 fail-closed diagnostics and all other source rows.
+
+#### Scenario: Old expected leaf rejects new source
+- **WHEN** the old pin test rejects the reviewed new bytes
+- **THEN** the exact two leaf rows are applied and the complete unexcluded checks remain required before source enrollment, without claiming target acceptance
+
+## ADDED Requirements
+
+### Requirement: Jarvis sole native user entry
+The installer SHALL provide Jarvis as the sole user-facing default profile while preserving all208 imported Resources source profiles as native usable identities through the protected isolated-home mapping in planning/jarvis-sole-user-profile-contract-v205.json.
+
+#### Scenario: Pinned backend lists primary profiles
+- **WHEN** the Jarvis Desktop backend lists its selected owned HERMES_HOME
+- **THEN** only canonical default labelled Jarvis is listed, specialists resolve separately through protected coordinator routing, and no presentation-only filtering claim is used
+
+#### Scenario: Existing unowned identity conflicts
+- **WHEN** migration encounters an unowned Jarvis identity or modified owned state
+- **THEN** it preserves data and secrets, refuses unsafe overwrite and provides exact recovery without deleting internal profiles
+
+
+## ADDED Requirements
+
+### Requirement: Exact Raspberry Pi vendor dependency evidence
+The installer SHALL admit vendor provenance only for the v207 exact libc6/u3/arm64 tuple in the reviewed Debian nft closure, using the pinned existing keyring and exact signed index/package/control/installed ELF chain. It SHALL preserve other package provenance, bounded metadata time and concrete per-archive keyring currentness, without mutating packages or trust.
+
+#### Scenario: Exact retained signed vendor row
+- **WHEN** the fixed live or protected cache witnesses verify with the exact primary key and still-valid signed complete index digest, selecting the exact installed package and matching all held ELF bytes
+- **THEN** the registry may issue only the existing short selected host-tool observation, subject to unchanged actual kernel/network proof
+
+#### Scenario: Current metadata selects a different libc package
+- **WHEN** only u4, an unsigned u3 package, expired cache, changed trust anchor or mismatched control/installed bytes is available
+- **THEN** selected network capability remains unavailable without version substitution, host package change or acceptance promotion
+
+## ADDED Requirements
+
+### Requirement: Fresh root TTY handoff after acquisition
+The installer SHALL require the independent explicit same-candidate foreground TTY observation in planning/bootstrap-handoff-tty-reconfirmation-v208.json before delayed bootstrap handoff, without extending an expired proof or widening authority.
+
+#### Scenario: Acquisition outlasts initial TTY proof
+- **WHEN** fixed selected source/runtime staging outlasts the initial60s observation
+- **THEN** a new explicit exact-SHA re-entry and same-controller current proof are required before one-use handoff; original expired lineage is not current authorization
+
+#### Scenario: Reconfirmation drifts or repeats
+- **WHEN** candidate/action/controller/TTY changes or the transition proof is expired or consumed
+- **THEN** handoff fails closed and preserves owned staged data without acquiring service authority
+
+## ADDED Requirements
+
+### Requirement: Exact reconfirmation source leaf v211
+The installer SHALL apply only the root_setup source tuple in planning/bootstrap-handoff-reconfirmation-source-review-v211.json, preserving all other reviewed members and v208 authority boundaries.
+
+#### Scenario: Previous root setup source pin differs
+- **WHEN** the previous expected tuple rejects committed reconfirmation bytes
+- **THEN** only the reviewed root_setup leaf is replaced and full unexcluded verification remains required without target acceptance inference
+
+## ADDED Requirements
+
+### Requirement: Dedicated official Desktop acquisition authority
+The installer SHALL use planning/official-desktop-build-acquisition-v218.json for Desktop-specific locked source acquisition and offline build toolchain receipts without relabelling application consent.
+
+#### Scenario: Existing Node bytes selected for Desktop
+- **WHEN** the exact reviewed Node archive is reused by the Desktop builder
+- **THEN** only current selected Desktop phase/sourcepolicy may issue receipts and npm/native lifecycle/network effects remain independently bounded
+
+## ADDED Requirements
+
+### Requirement: Fixed sealed descriptor exec inheritance
+The installer SHALL carry only its previously authorized sealedFD3 through existingfixedexec using the reviewed inheritance readback in planning/sealed-bootstrap-fd3-source-review-v220.json while retaining allsource/controller/oneuse/expiry/seal checks.
+
+#### Scenario: Sealed memfd is already descriptor three
+- **WHEN** the selected sealedmemfd already occupiesFD3 with CLOEXEC
+- **THEN** the fixedhelper explicitly clears CLOEXEC and verifies inheritance before existingexec without renewing authority or changing installed memberpins
+
+
+## ADDED Requirements
+
+### Requirement: Qualification compiler and terminal custody
+The installer SHALL follow planning/qualification-compiler-terminal-custody-v217.json for internally compiled current fixture policy, actual task outcomes, parent-owned installed journal/unit custody and retained signed terminal evidence without restoring child authority.
+
+#### Scenario: Child has cleaned its live fixture
+- **WHEN** the parent consumes the predetermined result after the actual installed child terminates
+- **THEN** it verifies current parent source/journal/unit custody and signed historical task/publication/cleanup evidence without reconstructing child seals or treating exit as pass
+
+#### Scenario: Genuine native task route is missing
+- **WHEN** discovery/materialization succeeds but no approved real native task route exists
+- **THEN** the child returns a concrete incomplete outcome without provider grants, substituted execution or fabricated terminal/native receipts
+
+
+## ADDED Requirements
+
+### Requirement: Finite qualification protected rows
+The installer SHALL apply planning/qualification-protected-row-serializer-v224.json using exact current privately issued source/NSS/task recipe/member proofs and a fixture-only process policy, preserving generic production authority/catalog validation.
+
+#### Scenario: Resource indexing silently omits a malformed job
+- **WHEN** the internally serialized fixture documents parse but their selected job is absent from the strict index
+- **THEN** compilation fails instead of issuing a ready policy or claiming native task success
+
+#### Scenario: Fixture has no Authentik or native task proof
+- **WHEN** only genuine fixture NSS/materialization exists
+- **THEN** no Authentik identity or runnable package is fabricated and missing task source produces an explicit incomplete outcome
+
+
+## ADDED Requirements
+
+### Requirement: Qualification source precedes process custody
+The installer SHALL observe a current source-only owned fixture lease before acquiring source-session PM/NSS/home inputs, and SHALL deny process effects until exact genuine fixture runtime bindings attach once under v230.
+
+#### Scenario: Source lease has no process handler
+- **WHEN** the current installed actor and controller observe the fixed owned fixture
+- **THEN** source acquisition MAY proceed under original bounds while process effects remain denied
+
+#### Scenario: Prepared custody becomes current
+- **WHEN** the same lease has genuine current source, PM, NSS, roots, task recipe and authenticated fixture runtime bindings
+- **THEN** one-time attachment MAY admit only existing selected effects while preserving original deadlines and cleanup
+### Requirement: Bounded initial pending stage observation
+The installer SHALL apply `planning/typed-initial-pending-diagnostics-v232.json` to annotate only exact base pending failures at its fixed initial compilation source boundaries, preserving every original authority check and pending exit behavior.
+
+#### Scenario: Actor check fails before compilation begins
+- **WHEN** the current actor check at begin_install raises an exact base pending failure
+- **THEN** the safe formatter emits the fixed actor_current stage and no original exception content
+
+#### Scenario: Nested account diagnostic or hostile pending subclass
+- **WHEN** account resolution is already tagged or a pending subclass supplies arbitrary diagnostic getters
+- **THEN** the outer wrapper leaves the subclass untouched and formatting reads only the exact authorized diagnostic type with a valid catalog stage
+
+#### Scenario: Diagnostic field changed after construction
+- **WHEN** the step is non-string or absent from the finite catalog
+- **THEN** formatting returns the existing fixed generic pending message without secrets or authority relaxation
+## ADDED Requirements
+
+### Requirement: Actual core bytes in active compiler claim
+The installer SHALL consume only the issuer-current v231 active authority aggregate, bind its actual canonical core bytes/hash/size and reuse its exact generation at activation according to planning/active-authority-receipt-aggregate-v231.json.
+
+#### Scenario: Current source receipts join active compilation
+- **WHEN** the current sealed aggregate and exact native precompile reservation have been validated
+- **THEN** the compiler binds the real core and distinct crosswalk members without resolving an already published policy to obtain its own inputs
+
+
+## ADDED Requirements
+
+### Requirement: Exact Jarvis cohort source closure
+The installer SHALL apply the finite source membership and byte tuples in `planning/jarvis-runtime-source-pin-review-v228.json`, preserving the immutable selected source snapshot, held module custody and unchanged execution authority.
+
+#### Scenario: Delayed module is absent or comes from a checkout
+- **WHEN** any of the three selected fixed module members cannot be imported from the sealed installed release
+- **THEN** staging or actor verification fails without source fallback or expanded module-prefix authority
+
+#### Scenario: Materialization or direct mount fixture succeeds
+- **WHEN** exact source profiles/skills or isolated bind effects pass
+- **THEN** evidence retains that phase and does not promote task/provider/runtime/Pi acceptance
+
+## ADDED Requirements
+
+### Requirement: Retained oneshot terminal evidence
+The installer SHALL accept literal active/exited for its retained qualification oneshot only under the complete v233 exit/invocation/PIDFD/cgroup predicate, preserving original custody and deadlines.
+
+#### Scenario: Retained child has exited successfully
+- **WHEN** the exact launched invocation has MainPID zero, recorded normal successful exit, dead retained PIDFD and empty owned cgroup
+- **THEN** the parent MAY consume independently validated signed result evidence and collect only that quiescent owned unit
+
+#### Scenario: Active unit is not the retained terminal
+- **WHEN** substate, exit tuple, invocation, cgroup or live-process checks disagree
+- **THEN** terminal admission and collection SHALL deny without relabeling state or renewing authority
+
+### Requirement: Verified predecessor-bound installer candidate update
+The installer SHALL implement planning/predecessor-bound-candidate-update-v235.json using actual current old release and exact candidate source/runtime/build receipts, atomic owned pointer CAS and conditional rollback; candidate distribution publication SHALL remain distinct from verified compatible active runtime update.
+
+#### Scenario: Existing verified installer selects a new candidate
+- **WHEN** the root controlling TTY selects an exact compatible descendant candidate while an owned installed predecessor is verified
+- **THEN** the same predecessor is bound before staging and carried through sealed exec/build/publication, the new candidate launcher is verified and reexecuted, and the old release/data/active generation remain recoverable
+
+#### Scenario: Failed or concurrent publication
+- **WHEN** predecessor/source/controller drift or candidate verification/exec fails
+- **THEN** the old pointer remains intact before CAS and a post-CAS failure restores only the issuer-owned verified predecessor if the exact candidate pointer is still current; unrelated pointer changes and data remain untouched
+
+
+## ADDED Requirements
+
+### Requirement: Exact reviewed update source application
+The installer SHALL apply only the finite source pin mapping in `planning/candidate-update-source-review-v241.json` while retaining v235 admission, preservation, one-use transition and rollback authority.
+
+#### Scenario: Pointer replace succeeds before fsync reports failure
+- **WHEN** the update publication fails after its exact owned pointer CAS
+- **THEN** the transaction conditionally restores the independently verified predecessor and preserves any newer foreign pointer
+
+#### Scenario: Cold recovery adopts an expired original intent
+- **WHEN** a unique durable transaction matches actual current candidate and retained prior closure
+- **THEN** only fresh samecandidate/sameprior TTY authority may issue a distinct current one-use installed entry, without restoring the old seal or changing its deadline
+
+#### Scenario: Partial replacement fixture passes
+- **WHEN** mocked authority with actual filesystem replacement and rollback succeeds
+- **THEN** evidence remains partial and does not claim genuine complete update or Pi acceptance
+
+
+## ADDED Requirements
+
+### Requirement: Genuine preinstalled source update entry
+The installer SHALL provide only the finite source-update bridge in `planning/preinstalled-source-update-entry-v242.json`, retaining the verified installed predecessor and obtaining current root TTY source selection before isolated source-actor custody gates publication.
+
+#### Scenario: Pre-v235 installed dispatcher cannot select update
+- **WHEN** a reviewed new source launcher receives exactly source-update with a genuine present predecessor
+- **THEN** it uses the separate stage-only source bridge and never claims checkout code is the old installed actor
+
+#### Scenario: Old pointer or source authority fails verification
+- **WHEN** predecessor, selected source, controller or transition proof is absent, changed or foreign
+- **THEN** no update publication occurs and no old immutable release or pointer is removed to force source bootstrap
+
+
+## ADDED Requirements
+
+### Requirement: Exact reviewed source update entry leaf
+The installer SHALL apply only the reviewed root_setup tuple bytes in `planning/source-update-entry-source-review-v247.json`, retaining v242 genuine predecessor/current TTY/source actor boundaries and separate evidence states.
+
+#### Scenario: Source entry guard or predecessor proof is unavailable
+- **WHEN** source-update lacks current root TTY, has foreign FD3 or lacks a fully verified present predecessor
+- **THEN** it performs no publication and never falls back to deleting the old pointer or claiming checkout installed-actor authority
+
+#### Scenario: Source entry contract fixtures pass
+- **WHEN** mocked admission or branch tests pass
+- **THEN** genuine full publication and actual Pi acceptance remain unproven
+
+## ADDED Requirements
+
+### Requirement: Installed predecessor verification is version-aware and actor-separated
+The system SHALL verify an old installed predecessor with an internally selected independently reviewed whole historical source cohort and a dedicated predecessor-only receipt while retaining full pointer/closed-tree/owner/hash/baseline custody and newest pins for ordinary installed actors.
+
+#### Scenario: Historical release is update custody only
+- **WHEN** the exact reviewed cc81 cohort and complete immutable original release pass current pointer and file verification
+- **THEN** update may retain predecessor byte custody without importing old code or admitting it as current actor
+
+#### Scenario: Unknown or mixed historical cohort is denied
+- **WHEN** a caller supplies a trustbundle, an unknown candidate or a release mixing historical/current pins
+- **THEN** predecessor verification denies before candidate effects and preserves the original pointer
+
+## ADDED Requirements
+
+### Requirement: Visible Jarvis MVP staging v259
+The installer SHALL prioritize verified official native Jarvis Desktop visibility, real eligible zero-additional-budget chat, Access OTP app-only domain and owned durable restart. Broader scope remains deferred OPEN. Provenance, sandbox, privacy, currentness and existing data/conflict protections remain mandatory.
+
+#### Scenario: Actual MVP end-to-end operation
+- **WHEN** all four v259 milestones have actual correlated owned Pi/browser/chat/restart evidence
+- **THEN** record MVP staging separately and leave original full installer/model/Coral/profile/plugin/account AC OPEN
+
+#### Scenario: Retained diagnostic artifact only
+- **WHEN** official AppDir build or local visibility exists without current installation custody, eligible chat, Access enforcement or durable restart
+- **THEN** preserve it as partial evidence and finish only the concrete missing deployment joins without claiming stage completion or weakening security

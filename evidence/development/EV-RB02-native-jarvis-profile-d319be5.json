@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "evidence_id": "EV-RB02-JARVIS-D319BE5",
+  "acceptance_id": "AC16",
+  "state": "fixture_observation_only",
+  "acceptance_record_emitted": false,
+  "candidate_sha": "d319be50534bbbe602b8a2a98e4cc41e8ab895c5",
+  "pinned_hermes_source": {
+    "commit": "7085fbf7753266fc4943c55ac04926186bc90005",
+    "checkout": "reported clean"
+  },
+  "runtime": {
+    "python": "3.14.7",
+    "scope": "temporary unprivileged local fixture"
+  },
+  "requirements_and_tasks": [
+    "direct-user-2026-10-10-jarvis-sole-user-profile",
+    "RB-T205.1",
+    "RB-T205.2",
+    "VD-T205.3"
+  ],
+  "primary_jarvis_probe": {
+    "test_node_id": "tests/contracts/test_native_install_handoff.py::test_primary_jarvis_is_the_only_pinned_default_home_profile",
+    "result": "1 passed",
+    "duration_seconds": 2.61,
+    "source_profile_id": "hermes",
+    "native_profile_key": "default",
+    "display_name": "Jarvis",
+    "sole_profile_required": true,
+    "profile_identity_loaded": true,
+    "pinned_native_apis": [
+      "hermes_cli.profiles.list_profiles",
+      "agent.prompt_builder.load_soul_md"
+    ],
+    "desktop_window_rendered": false,
+    "physical_pi_tested": false
+  },
+  "full_bundle_probe": {
+    "test_node_id": "tests/contracts/test_native_install_handoff.py::test_complete_vendored_profiles_and_skills_load_through_pinned_hermes_apis",
+    "result": "1 passed",
+    "duration_seconds": 282.77,
+    "profiles_discovered_and_identity_loaded": 208,
+    "skills_listed_and_individually_loaded_with_skill_view": 396,
+    "content_and_digest_checks": true,
+    "profile_aliases_checked": true
+  },
+  "earlier_timeout_observations": [
+    {
+      "result": "9 passed, 1 failed",
+      "duration_seconds": 312.45,
+      "failure": "full-bundle native subprocess exceeded its 300-second timeout"
+    },
+    {
+      "result": "timeout reported by parent",
+      "duration_seconds": 314.33,
+      "failure": "full-bundle native subprocess timeout"
+    }
+  ],
+  "timing_interpretation": "Overlapping duplicate audits were observed around the earlier runs. Contention is a plausible explanation for the timing difference, but no profiler proved it caused the timeouts.",
+  "not_observed": [
+    "rendered or manually inspected Hermes Desktop window",
+    "physical Pi or privileged installation",
+    "protected enrollment or live acceptance",
+    "delegate launch or current task custody",
+    "model inference",
+    "provider or account operation"
+  ],
+  "claim_limit": "Fixture-only pinned API and content loading evidence. It does not pass AC16 or any other acceptance criterion; RB-T205.1, RB-T205.2, VD-T205.3, and AC01-AC18 remain open."
+}

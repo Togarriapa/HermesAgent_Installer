@@ -5,6 +5,7 @@ Dependencies: installer-bootstrap-desktop, resource-registry-import, providers-c
 ## 1. Foundation with tests and documentation
 
 - [ ] 1.1 `MC-F01` Implement supported Hermes MCP config adapter and bounded protocol/auth/tool allowlist lifecycle; verify initialization/tool discovery/functional call/reconnect/timeout/revocation fixtures; document setup contract. Evidence: `tests/contracts/test_mcp_lifecycle.py`.
+  - Partial lifecycle evidence (MC-F01; native discovery subtask HI-T171.1): `tests/contracts/test_native_runtime_observer.py::test_mcp_discovery_receipts_prune_only_expired_lineage_and_bound_admission` covers expiry pruning, no eviction of live ancestry at capacity, capacity recovery after expiry, and close cleanup. MC-F01 remains unchecked pending its complete protocol/auth/tool allowlist evidence.
 - [ ] 1.2 `MC-F02` Implement selectable official external MCP account/service adapters and labeled Google community alternative; verify read-only selected-resource scope and eligibility fixtures; document official setup links. Evidence: `tests/contracts/test_mcp_accounts.py`.
 - [ ] 1.3 `MC-F03` Implement pinned Playwright ARM64 browser setup and sandboxed local navigation/accessibility/screenshot workflow; verify browser fixtures and target screenshot artifacts; document platform resolution. Evidence: `tests/contracts/test_playwright.py`.
 
@@ -30,3 +31,40 @@ Dependencies: installer-bootstrap-desktop, resource-registry-import, providers-c
 - Review code against every requirement/scenario and actual evidence; do not archive incomplete hardware/account tasks.
 - Run strict pinned OpenSpec validation and coverage; archive only verified completed changes using the installed documented workflow, preserving dated history and canonical specs.
 - Sol must approve refinement via append-only amendment; keep plans/2026-10-09-v1 immutable.
+
+### v24 native MCP handler binding
+
+MC-F01/MC-F02 and HI-T04/08/09 use native-package-binding-contract.json native_mcp_dispatch exact source-backed in-process hook/catalog/RPC/result joins. All original native/account acceptance remains pending.
+
+### v25 MCP lexical/config mapping
+
+Use native_mcp_dispatch row_types/invocation_mapping/native_config exact records, same one-use lexical binding and root-backed native candidate registration. MC/HI acceptance remains pending.
+
+Installed release/native assembly v33: `plans/amendments/2026-10-09-installed-release-native-assembly-v33.md`; exact root receipt and construction joins preserve existing task IDs and pending evidence.
+
+Native candidate index delivery v38: `plans/amendments/2026-10-09-native-candidate-index-delivery-v38.md`; exact compiled member/receipt joins preserve open tasks.
+
+Native schema artifact joins v39: `plans/amendments/2026-10-09-native-schema-artifact-joins-v39.md`; exact selected schema source mapping, original tasks remain pending.
+
+Candidate toolset envelope v41: `plans/amendments/2026-10-09-native-candidate-toolset-envelope-v41.md`; exact source-backed owner/envelope metadata, tasks stay open.
+
+Native registration/source snapshot v44: `plans/amendments/2026-10-09-native-registration-source-snapshot-v44.md`; exact existing task join, target gates open.
+
+Actual EOF/schema derivation v54: `plans/amendments/2026-10-09-stdin-eof-schema-derivation-v54.md`; exact root receipt joins in planning contracts, existing task IDs remain unchecked.
+
+MCP derived schema CAS closure v92: `plans/amendments/2026-10-10-mcp-derived-schema-cas-closure-v92.md`; existing MC-F01/HI-T08 remain open.
+
+Private loopback enforcement choice v97: `plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97.md`; existing original implementation/acceptance obligations remain open.
+
+Native registration projection v99: `plans/amendments/2026-10-10-native-registration-projection-v99.md`; exact source registration/selector/local-family coverage required; existing implementation and acceptance tasks remain open.
+
+- [ ] MC-R0101.1 HA/factory/vault/compiler/composer: actual root instance credential/source selection, bounded grant discovery/read and strict publication/adoption.
+- [ ] MC-R0101.2 HA: protected transport/vault/publication fixtures, reconnect/revoke/write-denial/TLS/schema/CAS/redaction and separate actual-target evidence.
+
+- [ ] MC-R0101.3 HA/factory/consent/parser/broker: actual typed choice/exposure/current scope/schema/result/grant joins.
+- [ ] MC-R0101.4 HA: real-schema Assist read fixtures, ambiguity/new exposure/unfiltered/action/revoke/TLS denial and distinct actual-target acceptance.
+
+- [ ] MC-R0101.5: Implement v210 source-owned fixed HA WS metadata transport plus exact complete-filter or whole-context mode, actual root choice/grant and genuine MCP functional read.
+- [ ] MC-R0101.6: Validate protocol/dependency/TLS/DNS/auth/admin/metadata/scope/currentness failures and actual protected GetLiveContext semantic result separately from setup/acceptance.
+
+- [ ] MC-R0101.5 / MC-R0101.6 (v216): Implement exact live HA setup observation signer/journal/private transport capture, real discovery schema receipt and one-use functional call; verify effects/failures without forged SourceReceipt/HostContext or raw secret/body persistence.

@@ -3,8 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import fcntl
 import base64
-import sys
+import pwd
 import sys
 import tempfile
 import time
@@ -16,16 +17,205 @@ import pytest
 from hermes_installer.authority.build_execution import (
     BuildOutputSpec, ContentAddressedBuildStore, LinuxBuildOutputFactInspector,
     ManagedBuildResult, ProtectedBuildArtifactRootResolver, RootBuildExecutionService,
-    managed_process_identity_digest,
+    managed_process_identity_digest, _resolve_argv_recipe,
 )
 from hermes_installer.authority.types import (
     AuthorityDenied, EffectAuthorization, HostContext, Sensitivity, canonical_digest,
 )
+from hermes_installer.managed_process_custodian import ManagedBuildJobRunner
+
+
+def test_application_only_mount_ids_do_not_expand_generic_build_grammar():
+    recipe = (
+        {"build_path": {"mount_id": "builder", "relative_path": ""}},
+        {"build_path": {"mount_id": "packages", "relative_path": ""}},
+    )
+    with pytest.raises(AuthorityDenied):
+        _resolve_argv_recipe(recipe)
+    assert _resolve_argv_recipe(recipe, additional_mount_ids=("packages",)) == recipe
+    with pytest.raises(AuthorityDenied):
+        _resolve_argv_recipe(recipe, additional_mount_ids=("caller-path",))
+
+
+def test_application_pm_symlink_closure_requires_in_tree_target_members():
+    regular = SimpleNamespace(kind="file", relative_path="lib/python3.14/os.py")
+    safe_link = SimpleNamespace(kind="symlink", relative_path="lib64", link_target="lib")
+    ManagedBuildJobRunner._validate_application_symlink_closure(
+        {regular.relative_path: regular, safe_link.relative_path: safe_link},
+        {safe_link.relative_path: safe_link})
+
+    escaping = SimpleNamespace(kind="symlink", relative_path="lib64", link_target="../../outside")
+    with pytest.raises(AuthorityDenied):
+        ManagedBuildJobRunner._validate_application_symlink_closure(
+            {regular.relative_path: regular, escaping.relative_path: escaping},
+            {escaping.relative_path: escaping})
+
+    missing = SimpleNamespace(kind="symlink", relative_path="lib64", link_target="missing")
+    with pytest.raises(AuthorityDenied):
+        ManagedBuildJobRunner._validate_application_symlink_closure(
+            {regular.relative_path: regular, missing.relative_path: missing},
+            {missing.relative_path: missing})
+
+
+def test_application_pm_symlink_closure_rejects_cycles_and_symlink_parents():
+    left = SimpleNamespace(kind="symlink", relative_path="lib/a", link_target="b")
+    right = SimpleNamespace(kind="symlink", relative_path="lib/b", link_target="a")
+    with pytest.raises(AuthorityDenied):
+        ManagedBuildJobRunner._validate_application_symlink_closure(
+            {left.relative_path: left, right.relative_path: right},
+            {left.relative_path: left, right.relative_path: right})
+
+    parent = SimpleNamespace(kind="symlink", relative_path="lib", link_target="real")
+    child = SimpleNamespace(kind="symlink", relative_path="lib/alias", link_target="target")
+    with pytest.raises(AuthorityDenied):
+        ManagedBuildJobRunner._validate_application_symlink_closure(
+            {parent.relative_path: parent, child.relative_path: child},
+            {parent.relative_path: parent, child.relative_path: child})
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="root-owned held descriptor staging is required")
+def test_application_held_member_staging_rehashes_and_rejects_mutated_bytes(tmp_path):
+    source = tmp_path / "held.whl"
+    payload = b"root-held application wheel fixture"
+    source.write_bytes(payload)
+    source.chmod(0o444)
+    fd = os.open(source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        info = os.fstat(fd)
+        if info.st_uid != 0:
+            pytest.skip("root-owned descriptor fixture is unavailable")
+        member = SimpleNamespace(relative_path="wheels/example.whl", fd=fd,
+            sha256=hashlib.sha256(payload).hexdigest(), size_bytes=len(payload), executable=False)
+        destination = tmp_path / "staged"
+        rows = ManagedBuildJobRunner._stage_application_held_members((member,), destination)
+        assert rows[0].path == "wheels/example.whl"
+        assert (destination / "wheels/example.whl").read_bytes() == payload
+        assert (destination / "wheels/example.whl").stat().st_mode & 0o222 == 0
+
+        changed = SimpleNamespace(relative_path="changed.whl", fd=fd,
+            sha256="0" * 64, size_bytes=len(payload), executable=False)
+        with pytest.raises(AuthorityDenied):
+            ManagedBuildJobRunner._stage_application_held_members((changed,), tmp_path / "denied")
+
+        if hasattr(os, "memfd_create") and hasattr(fcntl, "F_ADD_SEALS"):
+            memfd = os.memfd_create("sealed-app-member", os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING)
+            try:
+                os.write(memfd, payload)
+                os.fsync(memfd)
+                fcntl.fcntl(memfd, fcntl.F_ADD_SEALS,
+                    fcntl.F_SEAL_SEAL | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_GROW | fcntl.F_SEAL_WRITE)
+                sealed = SimpleNamespace(relative_path="sealed.whl", fd=memfd,
+                    sha256=hashlib.sha256(payload).hexdigest(), size_bytes=len(payload), executable=False)
+                sealed_rows = ManagedBuildJobRunner._stage_application_held_members(
+                    (sealed,), tmp_path / "staged-sealed")
+                assert sealed_rows[0].sha256 == sealed.sha256
+            finally:
+                os.close(memfd)
+    finally:
+        os.close(fd)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux") or os.geteuid() != 0,
+                    reason="root-owned O_PATH symlink receipt staging is Linux-only")
+def test_application_pm_runtime_stages_only_held_in_tree_symlinks(tmp_path):
+    runtime = tmp_path / "runtime"
+    (runtime / "lib" / "python3.14").mkdir(parents=True)
+    body = b"root-held runtime member"
+    member_path = runtime / "lib" / "python3.14" / "os.py"
+    member_path.write_bytes(body)
+    member_path.chmod(0o444)
+    link_path = runtime / "lib64"
+    link_path.symlink_to("lib", target_is_directory=True)
+    member_fd = os.open(member_path, os.O_RDONLY | os.O_NOFOLLOW)
+    link_fd = os.open(link_path, os.O_PATH | os.O_NOFOLLOW)
+    try:
+        if os.fstat(member_fd).st_uid != 0 or os.fstat(link_fd).st_uid != 0:
+            pytest.skip("root-owned runtime members are unavailable")
+        file_member = SimpleNamespace(relative_path="lib/python3.14/os.py", fd=member_fd,
+            sha256=hashlib.sha256(body).hexdigest(), size_bytes=len(body), executable=False,
+            receipt_handle="runtime-file-receipt-" + "f" * 32, kind="file", link_target=None)
+        link_bytes = b"lib"
+        symlink_member = SimpleNamespace(relative_path="lib64", fd=link_fd,
+            sha256=hashlib.sha256(link_bytes).hexdigest(), size_bytes=len(link_bytes), executable=False,
+            receipt_handle="runtime-link-receipt-" + "e" * 32, kind="symlink", link_target="lib")
+        destination = tmp_path / "staged-runtime"
+        rows = ManagedBuildJobRunner._stage_application_held_members(
+            (file_member, symlink_member), destination, allow_symlinks=True)
+        assert (destination / "lib64").is_symlink()
+        assert os.readlink(destination / "lib64") == "lib"
+        assert (destination / "lib64" / "python3.14" / "os.py").read_bytes() == body
+        assert {row.path for row in rows} == {"lib64", "lib/python3.14/os.py"}
+    finally:
+        os.close(member_fd)
+        os.close(link_fd)
+
+
+def test_application_input_fingerprint_binds_receipt_and_held_inode(tmp_path):
+    first_path = tmp_path / "first"
+    second_path = tmp_path / "second"
+    first_path.write_bytes(b"same bytes, distinct held artifact")
+    second_path.write_bytes(first_path.read_bytes())
+    first_fd = os.open(first_path, os.O_RDONLY)
+    duplicate_fd = os.dup(first_fd)
+    second_fd = os.open(second_path, os.O_RDONLY)
+    try:
+        member = SimpleNamespace(relative_path="runtime/member", sha256="a" * 64,
+            size_bytes=4, executable=False, receipt_handle="receipt-" + "a" * 40,
+            kind="file", link_target=None)
+        scalar_names = (
+            "selection_handle application_id build_profile_id target_id operation_id "
+            "runtime_preparation_selection_handle plan_sha256 setup_session_id transaction_handle "
+            "prepared_generation_id prepared_generation_digest source_receipt_handle source_manifest_sha256 "
+            "pm_runtime_closure_sha256 lock_receipt_handle lock_sha256 package_closure_receipt_handle "
+            "build_backend_closure_receipt_handle recipe_sha256 builder_receipt_handle builder_sha256 "
+            "builder_size_bytes driver_receipt_handle driver_sha256 driver_size_bytes recipe_config_sha256 "
+            "output_root_id output_owner_uid output_owner_gid build_service_id build_service_selection_handle "
+            "build_service_generation runtime_toolchain_receipt_handles controller_binding_handle "
+            "controller_pid controller_start_ticks controller_uid controller_gid uv_sha256 uv_size_bytes "
+            "uv_source_receipt_handle uv_artifact_id"
+        ).split()
+
+        def projection(fd):
+            member.fd = fd
+            values = {name: "fixed" for name in scalar_names}
+            values.update(recipe_config_bytes=b"config", builder_fd=fd, uv_fd=fd, driver_fd=fd,
+                output_root_fd=fd, controller_pidfd=fd, source_members=(member,),
+                package_members=(), backend_members=(), python_runtime_members=(),
+                recipe_member=member, python_executable_member=member)
+            return SimpleNamespace(**values)
+
+        same_artifact = ManagedBuildJobRunner._application_inputs_fingerprint(projection(duplicate_fd))
+        first_artifact = ManagedBuildJobRunner._application_inputs_fingerprint(projection(first_fd))
+        second_artifact = ManagedBuildJobRunner._application_inputs_fingerprint(projection(second_fd))
+        assert same_artifact == first_artifact
+        assert first_artifact != second_artifact
+    finally:
+        os.close(first_fd)
+        os.close(duplicate_fd)
+        os.close(second_fd)
+
+
+def test_application_wheel_config_joins_root_level_held_wheel_filenames():
+    package = SimpleNamespace(relative_path="example_pkg-1.0-py3-none-any.whl",
+        sha256="a" * 64, size_bytes=11)
+    backend = SimpleNamespace(relative_path="build_backend-1.0-py3-none-any.whl",
+        sha256="b" * 64, size_bytes=22)
+    config = {
+        "packages": [{"name": "example-pkg", "version": "1.0",
+            "filename": package.relative_path, "sha256": package.sha256, "size_bytes": package.size_bytes}],
+        "backend_packages": [{"name": "build-backend", "version": "1.0",
+            "filename": backend.relative_path, "sha256": backend.sha256, "size_bytes": backend.size_bytes}],
+    }
+    ManagedBuildJobRunner._validate_application_wheel_config(config, (package,), (backend,))
+
+    config["packages"][0]["filename"] = "../" + package.relative_path
+    with pytest.raises(AuthorityDenied):
+        ManagedBuildJobRunner._validate_application_wheel_config(config, (package,), (backend,))
 
 
 def _test_temp_parent() -> str:
-    # Linux root-owned fixtures use /tmp's root-owned sticky parent; Darwin
-    # exposes the equivalent through its /private alias.
+    # Darwin exposes its root-owned sticky temp directory at /private/tmp; Linux
+    # uses /tmp. Never make Linux tests depend on a Darwin-only alias.
     return "/private/tmp" if sys.platform == "darwin" else "/tmp"
 
 
@@ -45,12 +235,11 @@ def _test_builder_uid() -> int:
 def _owned_output_root(path: Path) -> Path:
     path.mkdir(mode=0o700, exist_ok=True)
     owner_uid = _test_builder_uid()
-    if path.stat().st_uid != owner_uid:
-        os.chown(path, owner_uid, -1)
+    owner_gid = pwd.getpwuid(owner_uid).pw_gid
+    if (path.stat().st_uid, path.stat().st_gid) != (owner_uid, owner_gid):
+        os.chown(path, owner_uid, owner_gid)
     path.chmod(0o700)
     return path
-
-
 def constraints():
     return {
         "bin/colibri": BuildOutputSpec(
@@ -84,6 +273,7 @@ class Profile:
     max_lifetime_seconds = 600
     output_root_id = "build-output"
     output_owner_uid = _test_builder_uid()
+    output_owner_gid = pwd.getpwuid(output_owner_uid).pw_gid
     output_specs = constraints()
 
     def __init__(self, output_root: Path):
@@ -185,7 +375,7 @@ def test_fixed_build_handler_materializes_root_pins_runs_terminal_job_and_return
                 return profile, SimpleNamespace(
                     enrollment_id=profile.build_service_enrollment_id,
                     generation=profile.build_service_generation,
-                    service_uid=profile.output_owner_uid, service_gid=os.getgid())
+                    service_uid=profile.output_owner_uid, service_gid=profile.output_owner_gid)
 
         class Launcher:
             seen = False

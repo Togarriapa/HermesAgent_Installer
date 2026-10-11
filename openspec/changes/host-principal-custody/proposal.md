@@ -137,3 +137,267 @@ Use installed_selection_catalog artifact_catalog/artifact_store joins, root task
 ### v20 exact root peer/controller DTOs
 
 Use pending_pair_DTO and task_runner_protocol.RootTaskController exact records/role mapping/PIDFD ownership. Existing HI/RB tasks remain pending.
+
+### v23 root resource controller enrollment
+
+Use active resource_controller_roles and root_controller_role_catalog exact actual daemon/module/source/backend/operation joins; current handler module SHA and stricter effective result bounds apply. HI/RB tasks remain pending.
+
+### v24 native MCP handler binding
+
+MC-F01/MC-F02 and HI-T04/08/09 use native-package-binding-contract.json native_mcp_dispatch exact source-backed in-process hook/catalog/RPC/result joins. All original native/account acceptance remains pending.
+
+### v25 MCP lexical/config mapping
+
+Use native_mcp_dispatch row_types/invocation_mapping/native_config exact records, same one-use lexical binding and root-backed native candidate registration. MC/HI acceptance remains pending.
+
+### v29 native task and credential joins
+
+Use separate result generation_api domains, task_runner_protocol.native_execution_receipt and backend_enrollments.credential_bindings exact active joins. Existing HI/RB tasks remain pending.
+
+Root-selected lifecycle authority v80: `plans/amendments/2026-10-10-root-selected-service-lifecycle-authority-v80.md`; existing HI/RT/SK tasks open, separate actual controller and selected subject proof required.
+
+Native registration projection v99: `plans/amendments/2026-10-10-native-registration-projection-v99.md`; exact source registration/selector/local-family coverage required; existing implementation and acceptance tasks remain open.
+
+Private input recipient consent v100: `plans/amendments/2026-10-10-private-input-recipient-consent-v100.md`; actual root observed private-route choice/current input binding/epoch required, no capture-consent substitution; existing implementation/acceptance gates open.
+
+Verified Xpra source pin v101: `plans/amendments/2026-10-10-xpra-verified-source-pin-v101.md`; exact source tree/finite links/actual transform and runtime proof required; no source-only acceptance or missing native-family waiver. Existing tasks open.
+
+Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected-runtime-profile-currentness-v102.md`; actual independent Resources choice/PM journal root/current consent and recipe-bound application limits; existing implementation/acceptance tasks open.
+
+Private loopback host tool pins v103: `plans/amendments/2026-10-10-private-loopback-host-tool-pins-v103.md`; finite actual package/executable/dependency/namespace proof, no source-only or target acceptance; existing tasks remain open.
+
+Application owned execution receipts v104: `plans/amendments/2026-10-10-application-owned-execution-receipts-v104.md`; actual distinct selected grant/controller/probe/manager terminal/artifact result producer required, no ResourceTask/RuntimeReview substitutes; existing implementation/acceptance tasks open.
+
+Host tool observation v105: `plans/amendments/2026-10-10-host-tool-observation-v105.md`; finite network-owned host package producer, actual held installed dependency closure/currentness, no Coral receipt substitute. Existing implementation and acceptance tasks remain open.
+
+Xpra managed transform v106: `plans/amendments/2026-10-10-xpra-managed-transform-v106.md`; finite managed target and actual PM/module/source/terminal/CAS receipts required. Existing HI-T09/HI-T13 implementation and acceptance remain open.
+
+Xpra regular source build pin v109: `plans/amendments/2026-10-10-xpra-regular-source-build-pin-v109.md`; exact module/source topology, file builder root and data output role. Existing managed proof/acceptance tasks open.
+
+Native local result bounds v110: `plans/amendments/2026-10-10-native-local-result-bounds-v110.md`; actual eight local schemas/recursive transport budget and unchanged protected result gates, no all18 omission. Implementation/acceptance tasks remain open.
+
+Xpra link target source pin v111: `plans/amendments/2026-10-10-xpra-link-target-source-pin-v111.md`; final committed module and exact five link target byte hashes/sizes; managed proof/acceptance still required.
+
+Native local schema artifacts v112: `plans/amendments/2026-10-10-native-local-schema-artifacts-v112.md`; eight literal source schema IDs/hashes and actual packaged receipt/validator/generation join. Existing all18 implementation/acceptance tasks remain open.
+
+Protected native registration records v113: `plans/amendments/2026-10-10-protected-native-registration-records-v113.md`; separate42 registration/61action protected arrays from actual preactive source selections, typed workflows/observers/schemas, bounded backend-data wrappers. Existing HI-T08/HI-T11/HI-T12 and all18 acceptance remain open.
+
+Native schema catalog identities v114: `plans/amendments/2026-10-10-native-schema-catalog-identities-v114.md`; exact eight literal catalog-compatible IDs, sourcebytes unchanged; actual receipt/assembly/acceptance still open.
+
+Prepared build service selection v115: `plans/amendments/2026-10-10-prepared-build-service-selection-v115.md`; source-owned setup-only exact build subject/current NSS/root selection before activeprofile, no fabricated worker. Existing build/setup/acceptance tasks remain open.
+
+Native financial/web bounded results v120: `plans/amendments/2026-10-10-native-financial-web-results-v120.md`; HI-T08/HI-T11 implementation and actual acceptance remain open.
+
+Financial alias source bound v121: `plans/amendments/2026-10-10-financial-alias-source-bound-v121.md`; source128-character alias domain preserved, HI-T120 obligations open.
+
+Native process role association v123: `plans/amendments/2026-10-10-native-process-role-association-v123.md`; actual role/source/loaded observer joins and acceptance remain open.
+
+Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-receipt-v126.md`; actual bounded captured source/CAS/handler proof required; HI-T08/HI-T11 acceptance open.
+
+Setup selectors/private profile v133: `plans/amendments/2026-10-10-setup-selector-private-profile-v133.md`; persistent root intent versus fresh actual identity/namespace snapshots, genuine v91 source-bound purpose profile choice. No authority lease extension or Resources alias; all AC remain open.
+
+Native process-role delivery v134: `plans/amendments/2026-10-10-native-process-role-delivery-v134.md`; exact manifest role rows/digest and actual loader import observations with independently verified root custody, not adapter inference or catalog-only loaded proof. All AC open.
+
+Initial native policy source v137: `plans/amendments/2026-10-10-native-policy-preparation-source-v137.md`; root TTY setup-owned actual target/effect/role/observer selection feeds first assembly, no active-before-selection, static-source authority or live proof inference. All eighteen obligations/AC remain open.
+
+Public input/web permission v138: `plans/amendments/2026-10-10-public-input-web-permission-v138.md`; actual PUBLIC input plus purpose-specific finite scope permission, zero budget and per-retry currentness; no private consent widening or profile-based classification. All AC remain open.
+
+Web registration source cohort v140: `plans/amendments/2026-10-10-web-registration-source-pin-v140.md`; actual current module pins/receipts and renewed register-call capture, historical source inventory unchanged, all AC open.
+
+Finance registration source cohort v141: `plans/amendments/2026-10-10-finance-registration-source-pin-v141.md`; actual held current module and refreshed finite registration/schema source joins, bounded data distinct account/execution authority; all AC open.
+
+Protected public web scope source v142: `plans/amendments/2026-10-10-protected-public-web-scopes-v142.md`; actual root configuration/source selection projects into nonrecursive active scopes independently of per-input PUBLIC egress permission. All AC open.
+
+Durable setup choice signing v143: `plans/amendments/2026-10-10-durable-setup-choice-signing-v143.md`; actual same-key custody normal-session bridge and held release member source replace nonexistent pre-active AuthorityService. Publisher adoption distinct fresh runtime permissions. All AC open.
+
+Source choice identity/order v146: `plans/amendments/2026-10-10-model-choice-observation-order-v146.md`; actual held root observation, completed TTY/source choice and later model verification, correctly named release digest and canonical public scope source. All AC open.
+
+Concrete bootstrap/source/public disclosure v149: `plans/amendments/2026-10-10-runtime-member-role-public-disclosure-v149.md`; exact runtime member layout, prepared held source distinct live import, genuine per-input public disclosure. All AC open.
+
+Runtime public choice currentness v153: `plans/amendments/2026-10-10-runtime-public-choice-currentness-v153.md`; durable adopted preference/current signed source epoch distinct fresh runtime effect/input proof, no setupTTL extension. All AC open.
+
+Prepared source module layout v154: `plans/amendments/2026-10-10-prepared-source-module-layout-v154.md`; exact source-module members distinct root-imported module and later worker evidence. All AC open.
+
+Runtime choice revocation source v156: `plans/amendments/2026-10-10-runtime-choice-revocation-source-v156.md`; genuine current installed actor/one-use displayed-choice TTY action, no expired setup authority.
+
+Native capture profiles v158: `plans/amendments/2026-10-10-native-capture-profiles-v158.md`; genuine raw root input/result source and exact selected validator/action/role joins, separate presentation evidence.
+
+Root native health start v159: `plans/amendments/2026-10-10-root-native-health-start-v159.md`; actual committed runnable authority then root health admission/control before fixture input, normal enablement withheld.
+
+Installed local qualification v160: `plans/amendments/2026-10-10-installed-local-qualification-v160.md`; finite installed source-owned fixture dispatcher with genuine production actor/receipts and cleanup, distinct Pi acceptance.
+
+Application build admission v161: `plans/amendments/2026-10-10-application-build-admission-v161.md`; finite actual setup managed app profile/input/output/grant and fixed source driver recipe, post-terminal output/probe evidence.
+
+Qualification root adapter v162: `plans/amendments/2026-10-10-qualification-root-adapter-v162.md`; dedicated source-bound held root/publication/session/key namespace, actual core authority validation and untouched production constants.
+
+Health input source delivery v163: `plans/amendments/2026-10-10-health-input-source-delivery-v163.md`; root-resolved PRIVATE fixture context, actual observer/source membership and distinct write/EOF/one-use take; no task-origin substitution.
+
+Qualification envelope v164: `plans/amendments/2026-10-10-qualification-envelope-v164.md`; exact scoped envelope/generation/pointer/session bytes verified through held run-root FD and unchanged strict core validators.
+
+Runtime role publication join v165: `plans/amendments/2026-10-10-runtime-role-publication-join-v165.md`; typed PM/native CAS closure and single strict atomic activation, fresh runtime committed observation independent expired setup.
+
+Qualification key signer v166: `plans/amendments/2026-10-10-qualification-key-signer-v166.md`; genuine held key signs only exact fixture enrollment envelope before service adoption.
+
+Qualification session storage v167: `plans/amendments/2026-10-10-qualification-session-storage-v167.md`; live session sealed/current only, retained file historical metadata without signature or authority.
+
+Application Python entrypoint relocation v168: `plans/amendments/2026-10-10-application-python-entrypoint-relocation-v168.md`; exact held PM interpreter and finite source script normalization bound final observed tree, no ambient PATH.
+
+Native precompile reservation v169: `plans/amendments/2026-10-10-native-precompile-reservation-v169.md`; source-backed preactive output authorization and same reservation through strict compilation/atomic publication.
+
+Native output role correction v170: `plans/amendments/2026-10-10-native-output-role-correction-v170.md`; exact existing native-boundary-overlay/boundary-overlay, no alias or new role.
+
+MCP discovery capture v171: `plans/amendments/2026-10-10-mcp-discovery-capture-v171.md`; genuine retained tools/list witness distinct selected tools/call result schema.
+
+Owner overlay operations v172: `plans/amendments/2026-10-10-owner-overlay-operations-v172.md`; separate genuine4local operation rows from61backend actions, preserve42source roster/fullscope and precise pending states.
+
+Fixture resource materialization v173: `plans/amendments/2026-10-10-fixture-resource-materialization-v173.md`; actual separately generated fixture source/materialization/discovery, never production-row relabeling.
+
+Initial public TTY source v174: `plans/amendments/2026-10-10-initial-public-tty-source-v174.md`; actual fresh root foreground input/disclosure/source precedes admission, never promotes PRIVATE task input.
+
+Application effect sources v175: `plans/amendments/2026-10-10-application-effect-sources-v175.md`; measured finite source members and exact stage counts remain distinct from ABI and provider acceptance.
+
+Python config relocation v176: `plans/amendments/2026-10-10-python-runtime-config-relocation-v176.md`; actual uv-generated config and held PM base closure constrain normalization.
+
+Selected window input v177: `plans/amendments/2026-10-10-selected-window-input-observation-v177.md`; actual focus-stable F24 events/current receipt, no aggregate bool proof.
+
+
+Source-join producers v178: `plans/amendments/2026-10-10-source-join-producers-v178.md`. Exact retained setup/source/PM/native definition/member, finite fixture descriptor/service observation and local overlay invocation producers; all AC01..18 OPEN, baseline unchanged. Producer ownership/order and acceptance remain in HI-T178.1..5.
+
+Selected native executable closure v179: `plans/amendments/2026-10-10-selected-native-executable-closure-v179.md`. Exact selected completeness, full42/61/2 inventory and18 obligations preserved; unavailable effects pending, preactive declarations distinct from loaded proof; all AC01..18 OPEN.
+
+
+Reviewed source members and boundary joins v180: `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`; finite exact merged module pins, corrected standalone builder role,21-field separate local-operation publication and per-worker kernel start barrier. Producer ownership/order/evidence tasks remain OPEN; baseline and all AC01..18 unchanged.
+
+
+## Conditional Authentik and local-owner setup v181
+
+Restore original R0058/R0060/R0143 conditional capability scope. Contract and sequential producer/evidence details: `plans/amendments/2026-10-10-conditional-authentik-local-owner-setup-v181.md`. No runtime implementation or acceptance is claimed; all AC01..18 OPEN.
+
+
+## Active network generation owner v182
+
+Use the concrete RootActiveNetworkGenerationOwner/runtime signed-choice and active-publication composition in `plans/amendments/2026-10-10-active-network-generation-owner-v182.md`. Replace ambiguous active_enrollment with exact current generation projection; preserve original adoption deadline and fresh revocation, release/actor/key/journal/CAS checks independently of expired setup. Own-worker kernel gate and cleanup remain mandatory, all AC01..18 OPEN.
+
+
+## Concrete signed worker and active overlay producers v183
+
+Follow `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md`: exact held recipe→signed choice→service-generation producer→active PM/native custody, and signed local-owner/source/view adoption→current NSS/loaded invocation/one-use four-method grant. No setup object or static metadata becomes active authority. Source pins pending committed review, all AC01..18 OPEN.
+
+
+## Network wire/digest clarification v184
+
+Exact field sets/FKs/source and lifecycle mapping: `plans/amendments/2026-10-10-network-row-wire-digest-boundaries-v184.md` / `planning/network-row-wire-v184.json`. Generated AF_UNIX rows stay separate from existing TCP private-loopback rows; enclosing digest exists only on runtime projection. Pre-READY mount permits loader binding; effects require later actual READY/source/invocation/grant proof. All AC01..18 OPEN.
+
+
+## Owner observer/source/RPC clarification v185
+
+Exact typed registration/READY/module/source-capture and worker proxy→native.owner-overlay.execute→observed invocation→one-use grant contract: `plans/amendments/2026-10-10-owner-overlay-observer-capture-rpc-v185.md` / `planning/owner-overlay-observer-wire-v185.json`. Backend61 action schemas unchanged, no synthetic observer/source authority, all AC01..18 OPEN.
+
+
+## Preactive listener phase clarification v186
+
+Actual fixed root-owned listener before recipe signing and exact authenticated active FD adoption/re-observation: `plans/amendments/2026-10-10-preactive-authority-listener-custody-v186.md`. No future path/socketpair or prepared receipt substitutes for active authority; no effects before adoption. Source pins pending, all AC01..18 OPEN.
+
+
+## Cross-process listener activation v187
+
+Exact supervised installed daemon/private pathname control/peer PIDFD/unit/release/source/current publication binding and one-use SCM_RIGHTS adoption: `plans/amendments/2026-10-10-supervised-listener-activation-channel-v187.md` / `planning/listener-activation-channel-v187.json`. Each actor verifies only itself locally; UID0/same-process/socketpair does not prove handoff. Source pins/acceptance OPEN.
+
+
+Owner result source v188: `plans/amendments/2026-10-10-owner-result-source-selector-v188.md` adds exact separately signed tool-result enrollment/issuer/channel/root-handler member, paired to the invocation and consumed grant. Generic backend observer matching is insufficient; all acceptance/source pins remain pending.
+
+Finite native worker mode v188 also resolves the fixed reviewed Hermes -m recipe versus generic child-script matcher contradiction through a private current active worker launch proof; generic interpreter rules remain unchanged.
+
+
+Committed PM identity v189: `plans/amendments/2026-10-10-committed-pm-executable-identity-v189.md` supplies exact independently verified venv executable metadata to the selected native worker parser/runtime consumer, preserving generic static catalog checks and base/venv distinction. No source pin approval or acceptance.
+
+
+Same-worker namespace handshake v190: `plans/amendments/2026-10-10-same-worker-namespace-handshake-v190.md` fixes schema2 helper-only initial launch, real owned MainPID namespace observation, authenticated namespace gate then actual probes and separate one-use app release. No future namespace/skip/source pin approval.
+
+
+Two-actor health v191: `plans/amendments/2026-10-10-two-actor-health-commit-custody-v191.md` replaces unsafe setup-session aliasing with independently current daemon commit/source proof, actual fixed source run/events and one-use authenticated setup health intent. Only consumer-completed same-generation journal witness may enable; ACK is insufficient. All acceptance/source pins remain OPEN.
+
+
+Selected view paths v192: `plans/amendments/2026-10-10-native-worker-selected-view-paths-v192.md` separates host source executable custody from fixed worker argv/path, retains byte-identical full PM venv/base closure and actual native output/package/helper views, and requires postmount inode/hash proof before release. No caller paths or broad host exposure; pins/acceptance remain OPEN.
+
+
+Selected member custody v193: `plans/amendments/2026-10-10-native-worker-view-member-bind-custody-v193.md` permits only exact five native-output file binds into a separately owned readable target tree, preserving original protected root/member proof and empty hidden source parents; exact private selected/observed APIs distinguish source and target identity. All pins/acceptance OPEN.
+
+
+Health causal ancestry v194: `plans/amendments/2026-10-10-health-event-causal-ancestry-v194.md` retains each native event digest meaning and real causal source relations, replaces impossible uniform run equality with observed authenticated DAG proof, and binds schema2 receipt/completion to final result closure plus health_run_proof_sha256. No fixture ancestry substitution; all acceptance/pins OPEN.
+
+
+## Final coherent source review v195
+
+Exact closed source/member/catalog/preload application under existing VD-T180.6/VD-T183.5: `plans/amendments/2026-10-10-final-coherent-source-pin-review-v195.md` and `planning/final-coherent-source-pin-review-v195.json`. Source0add8c33 follows reviewed nested leaf corrections; metadata self-pinning is excluded. All original implementation/acceptance tasks and AC01..AC18 remain OPEN.
+
+
+## Installed startup and qualification custody v197
+
+Actual daemon/setup process separation requires a closed source-issued startup intent and concrete tagged admission; installed qualification must construct its own real fixture source/publication/session/runtime graph. Exact finite contract/order/failures: `plans/amendments/2026-10-10-installed-startup-qualification-custody-v197.md` / `planning/installed-startup-qualification-custody-v197.json`. No private store copy, production relabel or BPF relaxation; all original AC and future source pins OPEN.
+
+
+Durable Xpra startup adoption v198: `plans/amendments/2026-10-10-durable-xpra-startup-adoption-v198.md`. Existing HI-T197.1/.2 and VD-T197.4 require schema2 actual build/CAS/catalog reopening under a separate overlay signing domain, and admission-to-active lifecycle ownership. All acceptance remains OPEN.
+
+Home Assistant MC-R0101 root enrollment: `plans/amendments/2026-10-10-home-assistant-root-enrollment-mc-r0101.md`; actual root vault/instance/source probe and finite strict publication/adoption, preserving existing HA configuration and all pending acceptance.
+
+Finite actual setup/fixture source producers v199: `plans/amendments/2026-10-10-setup-startup-and-fixture-source-producers-v199.md`. Existing HI197/173/178 tasks require genuine setup protected selection/role producer and distinct child-owned qualification acquisition; no copied stores, caller rows or publication cycle. All acceptance OPEN.
+
+HA Assist actual resource scope: `plans/amendments/2026-10-10-home-assistant-assist-scope-mc-r0101.md`; exact typed home-assistant-assist-read choice and conditional current exposure/resource filter proofs.
+
+Actual publication core/acquisition compatibility v201: `plans/amendments/2026-10-10-publication-core-and-fixture-acquisition-v201.md`. Existing HI160/197 compiler emits authenticated core member; workload consumes exact published proof. New fixed acquisition original bound is separate from unchanged short effect leases. All acceptance OPEN.
+
+
+Finite real remote choice/three-role source producer v202: `plans/amendments/2026-10-10-selected-remote-role-source-inputs-v202.md`. Workload owns actual TTY/source/runtime/NSS/build inputs; compiler consumes exact sealed inputs; original source/account/ARM64/sandbox/network acceptance remains OPEN.
+
+Typed finite bootstrap diagnostics v203: `plans/amendments/2026-10-10-typed-bootstrap-runtime-diagnostics-v203.md`; exact source boundary RuntimeError only, no dynamic trust error text or behavior change.
+
+Typed diagnostic source review v204: exact fd09b11d leaf replacements are in planning/typed-bootstrap-diagnostic-source-review-v204.json under BD-T203.1 / VD-T203.2. Pin application/unexcluded suite/target evidence remain open; all acceptance open.
+
+
+Finite fixture-owned NSS subject v206: `plans/amendments/2026-10-10-fixture-subject-nss-custody-v206.md`. Existing HI173/178/197 source session issues genuine actual NSS receipt under its own fixture transaction/controller; no normal session scan/production marker authority. All acceptance OPEN.
+
+Bootstrap handoff TTY reconfirmation v208: new explicit same-SHA observation after slow acquisition, same original controller/action/source/runtime joins, unchanged60s proof TTL and one-use transition. planning/bootstrap-handoff-tty-reconfirmation-v208.json; BD-T208.1/VD-T208.2 OPEN.
+
+Handoff reconfirmation source review v211: exact26cf root_setup sole leaf replacement in planning/bootstrap-handoff-reconfirmation-source-review-v211.json; all other source rows unchanged, no wider runtime cohort. BD-T208.1/VD-T208.2 pin application/unexcluded checks/target evidence OPEN.
+
+Jarvis selected task home custody v213: planning/jarvis-selected-task-home-custody-v213.json; current active held home→existing consumed task grant→fixed/hermes unprivileged mount. Root discovery not usability; all208/source/toolpolicy/namespace/private-public boundaries preserved. RB-T213.1/HI-T213.2/VD-T213.3 OPEN.
+
+RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member readback and post-setup restart/current active home registry; setup-only maps cannot complete Jarvis delegate scope.
+
+Jarvis214 corrects213 source-home/live-task field split: exact16 published facts; task process/resource/profilegen/context epochs are joined only at actual grant. Core/restart/207delegates/mount scope unchanged; planning/jarvis-published-home-live-task-split-v214.json.
+
+Jarvis source-profile task identity v215: distinct protected source_profile_id/home_binding_id mapping, actual serviceprofile_id unchanged; typed live admission deadlines/currentgrant and prepared-vs-published16facts in planning/jarvis-source-profile-task-identity-v215.json.
+
+OfficialDesktop build acquisition218: dedicated rootDesktopchoice-bound phase/sourceobserver/Node npm Electron/native lockedclosure, no Hyperframesconsent or blanketlifecycle scripts. planning/official-desktop-build-acquisition-v218.json; BD-T218.1/.2 VD-T218.3 OPEN.
+
+SealedFD3source review220: exact482386c7 structuralbuilder bytes/effectproof in planning/sealed-bootstrap-fd3-source-review-v220.json; explicitfixedFDinheritance readback, installedmemberpins/authority/TTLs unchanged. AllacceptanceOPEN.
+
+FD3 handoff verification: the fixed re-exec must explicitly clear and read back close-on-exec after descriptor placement, including the source-already-3 case, before passing the sealed transition to the same process image.
+Officialremote roledefinition222: source-only held3roledescriptor→currentchoice/transaction-generated identityselection→actualNSS/roots/runtime/network→strictactiveadoption. planning/official-remote-role-definition-producer-v222.json; no preparedrecords/futureaccountauthority.
+
+CurrentpublishedPMhome runtime221: reuseexistingfreshcommittedPMresolver, exact11keyprojection/currentcore/receipt/venvFDproof; noexpiredsetupseal/newdurablehandle. planning/current-published-pm-home-runtime-v221.json HI-T221.1/.2 VD-T221.3 OPEN.
+
+Active authority aggregate v231: planning/active-authority-receipt-aggregate-v231.json requires retain actual service NSS, principal/namespace, PM/native closure, source/effect policy and native generation receipts in the sealed v231 aggregate; validate strict identity-domain active core before publication. HI-T231.1 and VD-T231.3 remain OPEN; all AC OPEN.
+
+
+## Retained qualification terminal v233
+
+See `planning/retained-qualification-oneshot-terminal-v233.json`: literal active/exited is terminal only with exact retained invocation/exit tuple, zero MainPID, dead PIDFD and empty owned cgroup. Result proof remains independent; collect only the verified quiescent owned unit after consumption, without lease renewal.
+Root service process lane v236: planning/root-service-process-authority-lane-v236.json requires actual selected6operation source declaration, separate strict protected root service binding and genuine resource-task/health admission issuer/consume; local user overlay ceiling and allow_effect remain unchanged. No weakened process validators/fakecaps or launchproof-as-grant. HI-T236.1/.2/VD-T236.3 OPEN; all AC OPEN.
+
+Root process proof joins v236b: planning/root-service-process-proof-joins-v236b.json requires actual primaryhermes/default health-home FD/PM/currentcore binding, runtime service epoch/current adapter revision, distinct published declaration source proof and schema4 preserving exact v225schema3. No inferred profile field, claimdigest alias or restored setupseal. Existing236tasks/allACOPEN.
+
+Cold process custody v236b: planning/root-service-process-cold-source-custody-v236b.json supersedes post-compose-only declaration construction with independent verification-only selected-key/journal/core/heldsource custody before strict parsing, then genuine dormant runtime ordinary adoptedchoice revalidation before all serving/effects. Existing tasks/allAC OPEN.
+
+
+## Remote output receipt pipeline v239
+
+See `planning/preactive-remote-build-output-receipts-v239.json`: executor-owned terminal membership precedes exact adapter observation, immutable CAS/attestation and root-held data-root materialization. Only genuine typed proofs mint v209/v202 runtime receipts; v225 owns publication/restart adoption. Existing scopes/deadlines and all AC remain open.
+
+The v239 aggregate also consumes exact root-issued enrollment reservation and prepared source/NSS network policy selection; actual postpublication kernel/network lease is separate and mandatory. No caller ID or future generation is inferred.
+
+
+## Gateway source and wheel issuer refinement v244
+
+Preserve AC13..15 and v202/v209/v239. Consume the exact finite source-only held release and selected Gateway locked-wheel CAS issuer in `planning/gateway-source-wheel-issuers-v244.json`. Public rows/raw bodies do not authorize; actual retained source/PM/choice/FD/license/currentness proofs precede offline build. No source pins or acceptance declared.

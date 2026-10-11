@@ -312,7 +312,9 @@ def build_hyperframes_render_fixture(
     return ComponentInvocation(
         "hyperframes",
         runtime.rstrip("/") + "/bin/hyperframes",
-        ("render", "-c", fixture.rstrip("/") + "/composition.html", "-o", work.rstrip("/") + "/rendered.mp4"),
+        ("render", "-c", fixture.rstrip("/") + "/composition.html", "-o", work.rstrip("/") + "/rendered.mp4",
+         "--format", "mp4", "--fps", "24", "--quality", "draft", "--workers", "1",
+         "--no-browser-gpu"),
         work,
         (),
         (),
@@ -334,8 +336,8 @@ def build_hyperframes_probe_invocation(
     output = work.rstrip("/") + "/rendered.mp4"
     return ComponentInvocation(
         "hyperframes", ffprobe,
-        ("-v", "error", "-count_frames", "-show_entries",
-         "stream=codec_type,codec_name,width,height,nb_read_frames:format=duration",
+        ("-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries",
+         "stream=index,codec_type,codec_name,width,height,pix_fmt,avg_frame_rate,nb_read_frames:format=duration,size",
          "-of", "json", output),
         work, (), (), ("component.hyperframes.read-private-work",),
         "PRIVATE", "deny", 30, 256,

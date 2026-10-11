@@ -47,6 +47,8 @@
       "resource_scope_bindings",
       "resource_validators",
       "root_journal_roots",
+      "resource_controller_roles",
+      "native_mcp_tool_bindings",
       "generation_digest"
     ],
     "types": "single selected generation record; each catalog is bounded list<=1024 strict existing inner source-backed records, duplicates/unknown fields rejected. generation_id opaque rootissued string. Empty lists valid only affected actions explicitly unavailable.",
@@ -82,7 +84,9 @@
       "resolution": "Root-owned installed setup selection supplies path before first snapshot; create/validate root0700 directory with held nofollow ancestor walk, then record actual fstat device/inode and root-issued journal generation. Entire strict row in active digest. Only root path resolver consumes absolute_path; workers receive root_id only. No service/caller data root aliases, symlink, group/worldwrite/ACL access or nonzero production UID. Custom root requires explicit reviewed root selection before creation, never worker request.",
       "calls": "resolve_root_journal(root_id,expected_active_generation_digest)->RootJournalSelection(root_id,path) after actual path owner/mode/dev/inode/generation checks. Memory authority_state_root_id exact row root_id; bootstrap receipt/session stores use child bootstrap-receipts/setup-sessions; neither hardcoded separate root nor mutable mapping fallback.",
       "state": "First root-local setup may use verified initial selection before authority file exists, then includes observed row in prepared snapshot. Initial constructor root trust is not an active worker rule. Later daemon uses active digest-bound row only."
-    }
+    },
+    "resource_controller_roles": "Exact root_controller_role_catalog rows from protected-resource-job-contract.json; entire active list generation_digest bound, current actual daemon kernel/module/source-observer/backend joins mandatory.",
+    "native_mcp_tool_bindings": "Exact native_mcp_dispatch rows in native-package-binding-contract.json; full active generation digest and current native/schema/backend/resource/handler joins mandatory."
   },
   "device_kernel_enforcement": {
     "profile_fields": [
@@ -463,5 +467,192 @@
       "predicate": "resolve_source_target_peer(observer,parent_context) resolves unique actual pending pair by full context index; finds exactly one observer_delivery_bindings row matching observer.observer_enrollment_id, selects that exact role peer, verifies observer current protected enrollment/event relation and selected peer current PIDFD/cgroup/exe/profile/gen. observer.role_id identifies source observer role, not destination. Neither target_id nor recipient is treated as destination role authority.",
       "ownership": "Broker retains originals; each resolve duplicates both PIDFDs. Selector transfers selected peer duplicate to SourceObserverRegistry and closes unselected duplicate immediately. Registry closes selected duplicate on pending event/delivery completion/cancel/expiry. Exception closes all duplicates. Repeated proof lookup never consumes original pair/PIDFD."
     }
+  },
+  "installer_target_result_verifier": {
+    "tasks": "VD-F02/VD-F04 and original AC01..18 exact evidence mappings; no external account/foreign registry or new approval gate.",
+    "constructor": "InstallerTrustedTargetAuthorizer.from_root_runtime(root_runtime_composition,verified_setup_or_active_enrollment_receipt,installed_candidate_receipt_registry)->TrustedTargetAuthorizer. Uses actual installed Linux target identity/machine ID/ARM64/kernel facts, selected current root enrollment/profile/catalog digest and actual candidate commit/module/artifact receipt. Constructor only actual root runtime/session, not fixture callback/env/candidate label or unspecified external target registry.",
+    "authorize": "authorize_workflow(candidate_git_sha,acceptance_id)->RootTargetWorkflowAdmission; fixed enrolled target/current candidate and original mapped acceptance action. Root resolves actual authoritative principal/target/service/resource/account scope, actual consent/runtime prerequisites and zero additional budget. Existing user-authorized install/verify intent permits routine read-only/owned diagnostics; does not infer external writes/spend. Missing account/prerequisite is honest incomplete, not demand another routine permission.",
+    "admission_fields": [
+      "schema=1",
+      "workflow_handle",
+      "acceptance_id",
+      "target_id",
+      "target_machine_identity_sha256",
+      "candidate_git_sha",
+      "candidate_artifact_closure_sha256",
+      "enrollment_generation_id",
+      "service_generation_digest",
+      "principal_id",
+      "intent_id",
+      "run_nonce",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "runner": "InstallerOwnedTargetWorkflowRunner.from_root_runtime(authorizer,root_workflow_adapter_registry,root_observation_receipt_registry)->existing TargetWorkflowRunner. Exact AC/EV profile selects static reviewed adapter, current candidate artifacts and actual native/backend effect. No generic arbitrary command/user shell/HTTP/callback test boolean. Root registration only concrete implementation; absent adapter is incomplete with exact original task/resume, not placeholder success.",
+    "verifier": "InstallerTrustedResultVerifier.from_root_receipts(root_observation_receipt_registry,installed_candidate_receipt_registry,current_active_catalog)->TrustedResultVerifier. verify_result(workflow_handle,structured_result_receipt_handle)->verified workflow result; root-private lookup/signed durable rootjournal receipts and actual observed origins, full candidate/target/nonce/action/digest/generation binding. Actual structured observations and per-AC assertion dimensions must match the installer-owned exact profile; mere stdout/count/caller success flag or signature over caller data cannot satisfy them.",
+    "receipt_fields": [
+      "schema=1",
+      "result_receipt_handle",
+      "workflow_handle",
+      "acceptance_id",
+      "evidence_ids",
+      "target_id",
+      "candidate_git_sha",
+      "candidate_artifact_closure_sha256",
+      "service_generation_digest",
+      "run_nonce",
+      "assertion_receipt_handles",
+      "observed_result_sha256",
+      "observed_monotonic",
+      "terminal_state"
+    ],
+    "truth": "Assertions resolve actual source/ownership/kernel/native/provider/JWT/session/account receipts as applicable, independently of fixture tests. Runtime/task receipts must carry actual observed origin registered by concrete root collector; fixture provenance never promoted. Candidate/target/generation drift/expiredadmission/replay/ambiguous terminal/partial assertions denies accepted. Success requires every original profile assertion; all18 AC remain pending until actual proof. CI/bodyfixture coverage separate.",
+    "root_only": "Local firstsetup uses same root runtime actual deployed candidate receipt and selected prepared/active context; no privileged Mac verifier/installer execution or claim of Pi enrollment from baseline. Physical Pi verifier commands remain assigned authorized browser owner only."
+  },
+  "xpra_managed_transform_v106": {
+    "schema": 1,
+    "operation_id": "xpra-root-xauthority-transform-v1",
+    "target_id": "xpra-root-xauthority-transform:start",
+    "parameter_schema_id": "no-caller-parameters-v1",
+    "parameters": {},
+    "profile_id": "xpra-root-xauthority-transform-v1",
+    "service_join": "RootSelectedInstallationBinding resolves dedicated build_service_enrollment_id/build_service_generation/current UID/GID from held setup transaction and protected build profile; output_owner_uid is that dedicated build UID. No active native package/display profile prerequisite. Source/runtime/compiler receipts current under same setup transaction.",
+    "root_selection_api": "RootSelectedInstallationBinding.resolve_xpra_transform(source_receipt_handle,pm_runtime_receipt_handle) -> sealed RootSelectedXpraBuildSelection",
+    "selection_fields": [
+      "selection_handle",
+      "setup_session_id",
+      "transaction_handle",
+      "prepared_generation_id",
+      "prepared_generation_digest",
+      "build_service_enrollment_id",
+      "build_service_generation",
+      "source_artifact_id",
+      "source_sha256",
+      "source_receipt_handle",
+      "source_manifest_sha256",
+      "compiled_source_manifest_sha256",
+      "pm_runtime_receipt_handle",
+      "builder_artifact_id",
+      "builder_sha256",
+      "toolchain_artifact_id",
+      "toolchain_sha256",
+      "output_root_id",
+      "recipe_sha256",
+      "controller_binding_handle",
+      "expires_monotonic"
+    ],
+    "builder": "Root PM receipt resolver reopens exact committed official PM CPython3.14 interpreter/runtime closure. builder_artifact_id and builder_sha256 are actual receipt-derived executable artifact identity/hash, NOT Python archive artifact/hash, assumed member or ambient system Python. RootBuildExecutionService resolves private executable directly through current PM receipt. Duplicate held runtime descriptors/mounts remain root-owned.",
+    "toolchain": {
+      "artifact_id": "installer-xpra-root-xauthority-transform-module-v1",
+      "installed_release_role": "xpra-root-xauthority-transform-module",
+      "source_relative_path": "src/hermes_installer/remote/xpra_root_xauthority.py",
+      "sha256": "3342afa5311fef5008a35317a526c75b3d1531d21e92d1f8aae87dba38b0a7d1",
+      "size_bytes": 59621,
+      "member": "xpra_root_xauthority.py",
+      "imports": "stdlib only from exact PM runtime closure; installed release verifies actual module/origin pin, no caller code"
+    },
+    "argv_recipe": [
+      {
+        "build_path": {
+          "mount_id": "builder",
+          "relative_path": ""
+        }
+      },
+      {
+        "literal": "-I"
+      },
+      {
+        "build_path": {
+          "mount_id": "toolchain",
+          "relative_path": "xpra_root_xauthority.py"
+        }
+      }
+    ],
+    "environment": {},
+    "max_lifetime_seconds": 300,
+    "output_root": "Held root journal child builds/xpra/<SHA256(selection_handle)>; distinct service-owned mutable work/output, fixed mount paths per existing build contract, root retains parent nofollow identity. No caller root/path.",
+    "source": "Exact v101 xpra archive/full manifest is root consumed into verified build source. For generic regular-only mount, stage only full manifest regular files/modes into distinct compiled source tree, retain original full manifest SHA separately. Fixed module copies to private mutable work and reconstructs ONLY the five v101 source manifest symlink path/target/target-byte-SHA/size rows; all are within verified tree, then checks full original regular tree digest. No generic symlink permission or substitution of compiled staging digest for original source identity.",
+    "source_link_rules": "Exactly the five mode120000 rows in v101 committed tree manifest; compiled_source_tree_files and compiled_source_manifest_sha256 are separately observed canonical regular tree rows, bound in selection/ResolvedBuildInputs/recipe/result.",
+    "output_specs": [
+      {
+        "relative_path": "xpra-overlay.tar",
+        "kind": "file",
+        "maximum_bytes": 134217728,
+        "executable_role": "data",
+        "target_facts": {
+          "encoding": "deterministic tar emitted by pinned module",
+          "source_commit": "521b0d2e762c770b2641d258b93d23575fa9cbea",
+          "source_manifest_sha256": "108ab4e20dc62160fa3617f1622054b8b1ff3784ec2916f4a0e051aa961cec63",
+          "manifest_member": "hermes-installer-xpra-root-xauthority-overlay-v1.json",
+          "required_observed_facts": [
+            "source_tree_digest",
+            "transform_module_sha256",
+            "patched_file_sha256s",
+            "transformed_tree_sha256",
+            "output_archive_sha256",
+            "patch_manifest_sha256"
+          ]
+        }
+      }
+    ],
+    "authority": "Existing root build execution admission consumes sealed current RootSelectedXpraBuildSelection once; issues independent finite process.start setup build effect, verifies separate retained root setup controller PIDFD/current actor/transaction and dedicated selected build subject. Reuse existing root-selected build custody issuer; do not impersonate setup PID as build worker, use display service grant or generic worker delegated RPC. Fixed parameters {} and exact recipe digest only. Terminal bookkeeping root manager internal; parent consumed grant audit-only, no reuse.",
+    "result": "Actual ManagedBuildResult/BuildAttestation terminal plus held ContentAddressedBuildStore.publish observation. Dynamic BuildOutput ID build-output:<actual archive SHA>:file:d and current source/toolchain/builder/recipe/generation/manifest facts join; no preknown output SHA. Overlay patch receipt consumes actual attestation and archive manifest. Local f964 fixture output is measurement only, not managed success.",
+    "status": "Implementation and actual ARM build/runtime/display/kernel acceptance pending; all18ACopen",
+    "source_regular_staging_v109": "Exact v101 regular files and required original directories, including empty fs/share/doc parent. Reconstruct only five original verified links in private work. Builder is a mounted executable file: argv0 mount_id builder relative_path empty. Non-executable output role data (file:d), not null. Actual managed proof still required.",
+    "source_target_bytes_v111": "Before reconstructing any of five links, verify UTF8 target string SHA256 and size exactly against original v101 full manifest mode120000 rows. No target-string-only match. Current source committed b50c291e; actual full source staging/overlay verifier exercised, managed attestation still mandatory."
+  },
+  "prepared_build_service_selection_v115": {
+    "schema": 1,
+    "artifact_id": "installer-prepared-build-service-template-v1",
+    "template_path": "plans/amendments/2026-10-10-prepared-build-service-selection-v115/prepared-build-service-template-v1.json",
+    "template_sha256": "0d98bdabf27185d769f55de12e9242d5286e07d11e5d62369c2eeedf1fa4b967",
+    "template_size_bytes": 1235,
+    "location": "VerifiedRootBootstrapPolicy.catalog_selections.prepared_build_service_records, root compiled from exact installed template and actual setup NSS/root receipts. RootSelectedInstallationBinding retains sealed typed copy in current setup transaction. Prepared service_generations.service_records remains empty; this row is setup-only build subject, NOT active worker/app/native service or product authority. Do not derive it from absent ProtectedEnrollmentCatalog.",
+    "row_fields": [
+      "id",
+      "profile_id",
+      "generation",
+      "setup_session_id",
+      "transaction_handle",
+      "prepared_generation_id",
+      "prepared_generation_digest",
+      "template_artifact_id",
+      "template_sha256",
+      "service_account_name",
+      "exclusive_group_name",
+      "service_uid",
+      "service_gid",
+      "nss_identity_receipt_handle",
+      "root_selection_receipt_handle",
+      "allowed_operation_ids",
+      "allowed_targets",
+      "expires_monotonic"
+    ],
+    "ids": "id=setup-build:<transaction_handle>:hermes-installer-build-v1; generation=SHA256 canonical row immutable fields excluding expires_monotonic and generation, with actual NSS/root/template/prepared selection receipts. Transaction private sealed registry, never enclosing snapshot fixedpoint. Profile fixed hermes-installer-build-v1. Runtime active build profiles remain existing service_records joins; this exception only current root setup Xpra build.",
+    "producer": "RootSetupPolicyFactory.prepare creates/revalidates actual dedicated build NSS/root receipts and compiles exact template row into prepared private selection after actual prepared receipt. Public factory arguments contain no row/UID/group/rootpaths. RootSelectedInstallationBinding.resolve_prepared_build_service(build_profile_id)->RootPreparedBuildServiceSelection accepts only finite xpra-root-xauthority-transform-v1, independently reopens current template/NSS/heldroots/setupcontroller.",
+    "dto_fields": [
+      "service_selection_handle",
+      "id",
+      "profile_id",
+      "generation",
+      "setup_session_id",
+      "transaction_handle",
+      "prepared_generation_id",
+      "prepared_generation_digest",
+      "template_artifact_id",
+      "template_sha256",
+      "service_uid",
+      "service_gid",
+      "nss_identity_receipt_handle",
+      "root_selection_receipt_handle",
+      "allowed_operation_ids",
+      "allowed_targets",
+      "expires_monotonic"
+    ],
+    "build_catalog_adapter": "RootBuildExecutionService.from_root_setup(selected_installation_binding,managed_build_launcher,root_effect_authority) consumes RootPreparedBuildServiceSelection and exact v111 RootSelectedXpraBuildSelection. ProtectedBuildCatalog.resolve_service() active path unchanged; setup adapter supplies independently verified typed service subject/current constraints directly. output_owner_uid==actual service_uid; root actualNSS gid/exclusivegroup validated. No fake active HostServiceProfile/grant or setupPID relabeling.",
+    "grant": "Finite existing root setup build selected-start issuer signs separate controller proof plus selected build service subject UID/GID/profile/generation/template/source/PM/recipe/target/{} request digest/nonce/deadline; RootBuildExecutionService verifies/consumes once before manager launch. Setup controller remains actualrootTTY/PIDFD actor; resulting actualchild PIDFD/cgroup/executable proof produced after launch. No worker HostContext authorization reused or synthetic worker currentpeer; human principal/account permission not inferred from buildservice identity. This gives only reviewed installer artifact build capability, not System membership/product write permission.",
+    "roots": "Root journal child prepared-build-services/SHA256(transaction_handle), root-owned0700 heldnofollow parent; private job work/output child service UID/GID0700, sealed root output afterterminal. Exact root receipt ID/pins selected by factory, no pathcrossing into caller.",
+    "currentness": "Original setup session/prepared selection/template/NSS/exclusivegroup/roots/controller/PM/source current; lease<=setupselection and originalbuilddeadline. Revocation/cancellation stopsownedchild, rejects lateruse; restart reload actualrootjournal receipt and currentactor before fresh admission, no stale bearer grant. Activepublication never treats setupbuild record as native capability.",
+    "status": "Existing HI-T09/HI-T13 factory/build producer tasks open, actualLinuxmanagedbuild/ARM/display/acceptance pending. No privilegedMac or host account effects inplanning."
   }
 }

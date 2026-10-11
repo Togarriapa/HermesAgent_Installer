@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "requirements": [
+    "R0029",
+    "R0055",
+    "R0148",
+    "R0151",
+    "R0153",
+    "R0172",
+    "R0190"
+  ],
+  "refines": [
+    "planning/preinstalled-source-update-entry-v242.json",
+    "planning/candidate-update-source-review-v241.json"
+  ],
+  "tasks": [
+    "BD-T242.1",
+    "VD-T242.2",
+    "BD-T235.1",
+    "LC-T235.2",
+    "VD-T235.3"
+  ],
+  "source": {
+    "commit": "7b7f402800b378d9420a6b8da09680cce430a40e",
+    "tree": "31125884c61a9e3ebbe81d63d2e0e926bcda4729",
+    "implementation_parent": "5c9118ec8f4483b3bcd68236668d825963f1ee9b",
+    "implementation_parent_tree": "70fb255c0053595d34fd85c29a5f5166635b6ff5",
+    "source_path": "src/hermes_installer/root_setup.py",
+    "module_name": "hermes_installer.root_setup",
+    "installed_artifact_id": "installer-module:hermes_installer.root_setup",
+    "installed_member": "lib/python/hermes_installer/root_setup.py",
+    "sha256": "0b7d7203b41d3496ebb14d6997fa3e3aaef58aafa98bb8c498004aaf31960616",
+    "size_bytes": 71543,
+    "role": "module",
+    "mode": 292
+  },
+  "pin_application": {
+    "owner": "Luna updater after root publishes source review",
+    "old_sha256": "34a5f30b6ef67d5a0ad8af7e2f4ae137c86957bcca2f4ca622aa301d20e4e74f",
+    "old_size_bytes": 67923,
+    "tables": [
+      "src/hermes_installer/authority/installer_release_build.py::REVIEWED_SOURCE_MODULES",
+      "src/hermes_installer/authority/installer_release.py::REVIEWED_SOURCE_MODULES"
+    ],
+    "edits": "Only replace the root_setup SHA and size in these two existing tuples. Preserve module/ID/source/member/role identities and every unrelated row. v241 approval remains historical for exact old bytes; it cannot authorize the new source leaf.",
+    "aliases": "No native recipe or downloaded artifact catalog member refers to root_setup; no recipe parent/source pin, catalog URL/version/hash/size/max_bytes, parser or new artifact row is needed.",
+    "metadata": "Pin application changes structural builder/verifier bytes, which remain actual candidate-held source/import metadata; no self-pin or fabricated future digest. Existing unchanged builder/publisher v241 source observations are not broadened or reapproved."
+  },
+  "review": [
+    "Exact single source-update command branches before installed lifecycle dispatcher, rejects extra arguments and does not add a new RootSetupAction. Its source-only preexec path does not call from_current_root_process to pretend checkout code is the old installed actor.",
+    "Current Linux root and stdin/stderr TTY checks precede all staging. An open FD3 causes pending without consuming/closing foreign descriptor. Existing verified current predecessor observer must return present-verified with actual retained release receipt; full old immutable closure is verified and held before current UPDATE TTY selection.",
+    "Actual RootBootstrapCandidateSelectionRegistry produces the choice; existing bootstrap_selected_release receives the actual verified predecessor object. Original pointer/full closure, fixed origin ancestry/SHA/tree/baseline/interpreter/actor/FD3 checks are unchanged. Staging cannot directly admit build/publication or service/policy effects.",
+    "Only after isolated source-runtime reexec does existing RootSourceBootstrapActorVerifier authorize builder/publication; actual new installed entry then verifies current new pointer/actor before runtime. Existing postCAS rollback/cold recovery/one-use entry semantics remain unchanged.",
+    "On returned failures the owned selection registry and retained old release close in finally; original pointer/old release are never removed or edited to force source bootstrap. EOF/pending/OS/trust failures use existing bounded safe reasons.",
+    "Pending source entry prints only fixed source-launcher retry guidance without dynamic source path, argv or credential interpolation. The generic result API already defaulted resume_allowed=False; prior source did not print a misleading installed update command. The final followup makes the source retry explicit."
+  ],
+  "evidence": {
+    "independent_host": "Three focused source-update contract tests passed on dedicated Python3.14 against exact final7b7f source, including fixed retry output;29 unrelated tests deselected for this bounded independent check.",
+    "owner_arm64": "Reported114 passed/2 skipped with1 stale source-pin test deselected before pin application. This is not an unexcluded suite pass.",
+    "limitations": "Tests exercise branch/guard/call/cleanup/output using mocked predecessor/bootstrap proofs; they are not a genuine complete old+candidate publication or actual source actor/installed actor positive.",
+    "remaining": "Root must run unexcluded focused/full coherent narrow candidate and genuine pre-v235 Pi predecessor/source/publication/installed entry/failure evidence. Existing source/runtime/Pi acceptance stays OPEN."
+  },
+  "order": [
+    "Root independently confirms exact source SHA/size/tree and publishes this specification review",
+    "Luna applies only two root_setup tuple replacements",
+    "Root independently checks resulting structural source metadata and all exact leaf bytes",
+    "Run unexcluded narrow candidate checks and genuine target update without broader unreviewed authority/remote source cohorts"
+  ],
+  "acceptance": "All AC01..18 and existing tasks OPEN. Frozen baseline160/tag and prior appendices untouched. No runtime code/pins/push or broader source approval in this commit."
+}

@@ -9,15 +9,19 @@ from __future__ import annotations
 import base64
 import contextlib
 import ctypes
+import fcntl
 import hashlib
 import hmac
 import json
 import math
 import os
+import posixpath
 import pwd
 import re
 import select
+import secrets
 import shutil
+import secrets
 import stat
 import subprocess
 import sys
@@ -25,10 +29,12 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field, replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from types import SimpleNamespace
 from typing import Any, Callable, Mapping
 
 from hermes_installer.authority.types import AuthorityDenied, EffectAuthorization, HostContext, canonical_digest
+from hermes_installer.registry.resource_jobs import RootAdmittedTask
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +69,9 @@ class ManagedProfileCustody:
     parameter_schemas: Mapping[str, Mapping[str, Any]] | None = None
     # Root-materialized protected package binding; never supplied in an RPC.
     native_package: Any | None = None
+    # Digest of the active protected service_generations snapshot. It is
+    # supplied by the enrollment catalog and is never derived from this row.
+    service_generation_digest: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +110,20 @@ class NativePackageMountReceipt:
 
 
 @dataclass(frozen=True, slots=True)
+class XauthorityMountReceipt:
+    """Root-observed fixed display credential mount; no cookie bytes escape."""
+
+    mount_path: str
+    mount_source_device: int
+    mount_source_inode: int
+    source_sha256: str
+    source_size_bytes: int
+    owner_gid: int
+    verified_mount_options: tuple[str, ...] = ("ro", "nosuid", "nodev", "noexec")
+    private_propagation: bool = True
+
+
+@dataclass(frozen=True, slots=True)
 class LoadedNativePackageProof:
     """Root-observed package mount joined to the active registered process."""
 
@@ -114,6 +137,62 @@ class LoadedNativePackageProof:
     executable_sha256: str
     mount: NativePackageMountReceipt
     observed_monotonic: float
+
+
+@dataclass(frozen=True, slots=True)
+class RootSelectedHealthLoadedPackageProof:
+    """Health-specific package identity joined to the manager's kernel mount receipt."""
+
+    process_id: str
+    profile_id: str
+    generation: str
+    kernel_uid: int
+    package_id: str
+    compiled_closure_sha256: str
+    service_generation_digest: str
+    mount_proof: LoadedNativePackageProof
+    observed_monotonic: float
+
+    @property
+    def proof_id(self) -> str:
+        """Stable identity for this freshly observed package mount.
+
+        ``observed_monotonic`` is deliberately excluded: callers reobserve the
+        same kernel mount at each health boundary, so a fresh observation must
+        retain the same source identity without pretending it is the old
+        observation.  The underlying receipt and live process identity remain
+        part of the digest.
+        """
+        mount = self.mount_proof.mount
+        return canonical_digest({
+            "schema": 1,
+            "process_id": self.process_id,
+            "profile_id": self.profile_id,
+            "generation": self.generation,
+            "kernel_uid": self.kernel_uid,
+            "package_id": self.package_id,
+            "compiled_closure_sha256": self.compiled_closure_sha256,
+            "service_generation_digest": self.service_generation_digest,
+            "pid_start_ticks": self.mount_proof.pid_start_ticks,
+            "cgroup_identity": self.mount_proof.cgroup_identity,
+            "namespace_identity": self.mount_proof.namespace_identity,
+            "executable_sha256": self.mount_proof.executable_sha256,
+            "mount": {
+                "package_id": mount.package_id,
+                "profile_id": mount.profile_id,
+                "generation": mount.generation,
+                "service_mount_id": mount.service_mount_id,
+                "compiled_closure_sha256": mount.compiled_closure_sha256,
+                "entrypoint_sha256": mount.entrypoint_sha256,
+                "resolver_sha256": mount.resolver_sha256,
+                "mount_path": mount.mount_path,
+                "mount_source_device": mount.mount_source_device,
+                "mount_source_inode": mount.mount_source_inode,
+                "manifest_sha256": mount.manifest_sha256,
+                "verified_mount_options": mount.verified_mount_options,
+                "private_propagation": mount.private_propagation,
+            },
+        })
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,6 +274,329 @@ class ManagedNamespaceLease:
 
 
 @dataclass(slots=True)
+class ManagedProcessIdentityLease:
+    """Root-only duplicated PIDFD plus freshly revalidated process identity."""
+
+    process_id: str
+    profile_id: str
+    generation: str
+    uid: int
+    gid: int
+    pid: int
+    start_ticks: int
+    executable_device: int
+    executable_inode: int
+    executable_sha256: str
+    cgroup_identity: str
+    mount_namespace_inode: int
+    network_namespace_inode: int
+    expires_monotonic: float
+    pidfd: int
+    _closed: bool = False
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            os.close(self.pidfd)
+        except OSError:
+            pass
+
+
+@dataclass(frozen=True, slots=True)
+class RootSelectedServiceProcessReceipt:
+    """Root-only reference to a process admitted by one sealed service effect.
+
+    The receipt deliberately carries no PID, path, or descriptor.  Those facts
+    are re-resolved from the manager's exact retained handle on demand.
+    """
+
+    schema: int
+    receipt_handle: str
+    process_id: str
+    role: str
+    action: str
+    enrollment_id: str
+    profile_id: str
+    generation: str
+    selected_principal_id: str
+    selected_namespace_identity: str
+    selected_subject_uid: int
+    selected_subject_gid: int
+    operation_id: str
+    target: str
+    service_generation_digest: str
+    process_identity_digest: str
+    issued_monotonic: float
+    expires_monotonic: float
+
+
+@dataclass(frozen=True, slots=True)
+class RootSelectedServiceStatusReceipt:
+    """Typed manager observation joined to the exact retained start receipt."""
+
+    schema: int
+    receipt_handle: str
+    process_receipt: RootSelectedServiceProcessReceipt = field(repr=False)
+    state: str
+    exit_code: int | None
+    observed_monotonic: float
+    process_identity_digest: str
+    service_generation_digest: str
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootSelectedHealthControl:
+    """Opaque root-owned control for one actual enrolled Hermes health run."""
+
+    schema: int
+    control_handle: str
+    managed_process_handle: str
+    process_id: str
+    operation_id: str
+    enrollment_id: str
+    profile_id: str
+    process_generation: str
+    service_generation_digest: str
+    bootstrap_transaction_handle: str
+    committed_enrollment_receipt_id: str
+    health_fixture_artifact_id: str
+    health_fixture_sha256: str
+    issued_monotonic: float
+    expires_monotonic: float
+    _manager: Any = field(repr=False, compare=False)
+    _seal: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if (type(self.schema) is not int or self.schema != 1
+                or self.operation_id != "hermes-agent-health-v1"
+                or any(not isinstance(getattr(self, name), str) or not getattr(self, name)
+                       for name in ("control_handle", "managed_process_handle", "process_id",
+                                    "enrollment_id", "profile_id", "process_generation",
+                                    "bootstrap_transaction_handle", "committed_enrollment_receipt_id",
+                                    "health_fixture_artifact_id"))
+                or any(not isinstance(getattr(self, name), str)
+                       or not re.fullmatch(r"[0-9a-f]{64}", getattr(self, name))
+                       for name in ("service_generation_digest", "health_fixture_sha256"))
+                or isinstance(self.issued_monotonic, bool)
+                or not isinstance(self.issued_monotonic, (int, float))
+                or isinstance(self.expires_monotonic, bool)
+                or not isinstance(self.expires_monotonic, (int, float))
+                or not math.isfinite(self.issued_monotonic)
+                or not math.isfinite(self.expires_monotonic)
+                or self.issued_monotonic >= self.expires_monotonic
+                or self._manager is None or self._seal is None):
+            raise ValueError("root-selected health control is malformed")
+
+    def is_current(self) -> bool:
+        check = getattr(self._manager, "_health_control_current", None)
+        return bool(callable(check) and check(self, self._seal))
+
+    def __repr__(self) -> str:
+        return "RootSelectedHealthControl(<root-private>)"
+
+
+@dataclass(frozen=True, slots=True)
+class RootSelectedHealthTerminalReceipt:
+    """Root-observed native health process terminal and verified cleanup."""
+
+    schema: int
+    terminal_receipt_handle: str
+    control_handle: str
+    process_id: str
+    profile_id: str
+    generation: str
+    service_generation_digest: str
+    process_uid: int
+    process_gid: int
+    unit: str
+    cgroup: str
+    start_ticks: int
+    exit_code: int | None
+    timed_out: bool
+    cancelled: bool
+    started_monotonic: float
+    finished_monotonic: float
+    stdout_size_bytes: int
+    stderr_size_bytes: int
+    stdout_sha256: str
+    stderr_sha256: str
+    output_overflow: bool
+    loader_ready_event_id: str
+    cgroup_empty: bool
+    main_pidfd_gone: bool
+    launcher_reaped: bool
+    cleanup_verified: bool
+    observed_monotonic: float
+
+    def __post_init__(self) -> None:
+        if (type(self.schema) is not int or self.schema != 1
+                or any(not isinstance(getattr(self, name), str) or not getattr(self, name)
+                       for name in ("terminal_receipt_handle", "control_handle", "process_id",
+                                    "profile_id", "generation", "unit", "cgroup",
+                                    "loader_ready_event_id"))
+                or not re.fullmatch(r"[0-9a-f]{64}", self.service_generation_digest)
+                or not re.fullmatch(r"[0-9a-f]{64}", self.stdout_sha256)
+                or not re.fullmatch(r"[0-9a-f]{64}", self.stderr_sha256)
+                or type(self.process_uid) is not int or self.process_uid <= 0
+                or type(self.process_gid) is not int or self.process_gid < 0
+                or type(self.start_ticks) is not int or self.start_ticks <= 0
+                or (self.exit_code is not None and type(self.exit_code) is not int)
+                or type(self.timed_out) is not bool or type(self.cancelled) is not bool
+                or type(self.output_overflow) is not bool
+                or any(type(getattr(self, name)) is not int or getattr(self, name) < 0
+                       for name in ("stdout_size_bytes", "stderr_size_bytes"))
+                or any(type(getattr(self, name)) not in (int, float)
+                       or not math.isfinite(getattr(self, name))
+                       for name in ("started_monotonic", "finished_monotonic", "observed_monotonic"))
+                or self.finished_monotonic < self.started_monotonic
+                or type(self.cgroup_empty) is not bool or type(self.main_pidfd_gone) is not bool
+                or type(self.launcher_reaped) is not bool or type(self.cleanup_verified) is not bool
+                or not self.cleanup_verified or not self.cgroup_empty
+                or not self.main_pidfd_gone or not self.launcher_reaped):
+            raise ValueError("selected health terminal receipt is malformed or lacks cleanup proof")
+
+
+@dataclass(frozen=True, slots=True)
+class RootSelectedHealthInputWriteReceipt:
+    """Actual single write of one source-issued selected health request."""
+
+    schema: int
+    receipt_handle: str
+    control_handle: str
+    input_event_id: str
+    observation_handle: str
+    loader_ready_event_id: str
+    process_id: str
+    process_generation: str
+    payload_sha256: str
+    payload_size_bytes: int
+    written_monotonic: float
+
+    def __post_init__(self) -> None:
+        if (self.schema != 1
+                or not re.fullmatch(r"[0-9a-f]{32}", self.receipt_handle)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.control_handle)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", self.input_event_id)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.observation_handle)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", self.loader_ready_event_id)
+                or not re.fullmatch(r"[0-9a-f]{32}", self.process_id)
+                or not isinstance(self.process_generation, str) or not self.process_generation
+                or not re.fullmatch(r"[0-9a-f]{64}", self.payload_sha256)
+                or type(self.payload_size_bytes) is not int
+                or not 0 < self.payload_size_bytes <= 262144
+                or isinstance(self.written_monotonic, bool)
+                or not isinstance(self.written_monotonic, (int, float))
+                or not math.isfinite(self.written_monotonic)):
+            raise ValueError("selected health input write receipt is malformed")
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RootCompletedSelectedHealthTerminalProof:
+    """Historical selected-health facts joined to manager-proved cleanup.
+
+    This proof is intentionally postmortem: it preserves the exact admission,
+    launch, loaded-package and process identity observed for the selected run,
+    plus the manager's stopped-unit receipt. It never asserts that a dead PID,
+    package mount, or launch proof is still live.
+    """
+
+    schema: int
+    control_handle: str
+    control: RootSelectedHealthControl = field(repr=False, compare=False)
+    admission: Any = field(repr=False, compare=False)
+    source_material: Any = field(repr=False, compare=False)
+    terminal_receipt: RootSelectedHealthTerminalReceipt = field(repr=False, compare=False)
+    launch_proof: Any = field(repr=False, compare=False)
+    observed_worker_view: Any = field(repr=False, compare=False)
+    process_identity: LivePeerIdentity
+    loaded_package_proof: Any = field(repr=False, compare=False)
+    loaded_package_proof_id: str
+    loader_ready_event_id: str
+    process_id: str
+    process_pid: int
+    process_start_ticks: int
+    process_uid: int
+    process_gid: int
+    profile_id: str
+    process_generation: str
+    service_generation_digest: str
+    unit: str
+    invocation_id: str
+    cgroup_identity: str
+    mount_namespace_inode: int
+    network_namespace_inode: int
+    executable_sha256: str
+    expires_monotonic: float
+    _manager: Any = field(repr=False, compare=False)
+    _seal: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        receipt = self.terminal_receipt
+        if (type(self.schema) is not int or self.schema != 1
+                or type(self.control) is not RootSelectedHealthControl
+                or type(receipt) is not RootSelectedHealthTerminalReceipt
+                or not isinstance(self.control_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.control_handle)
+                or self.control.control_handle != self.control_handle
+                or receipt.control_handle != self.control_handle
+                or receipt.process_id != self.process_id
+                or receipt.profile_id != self.profile_id
+                or receipt.generation != self.process_generation
+                or receipt.service_generation_digest != self.service_generation_digest
+                or receipt.process_uid != self.process_uid or receipt.process_gid != self.process_gid
+                or receipt.unit != self.unit or receipt.start_ticks != self.process_start_ticks
+                or receipt.loader_ready_event_id != self.loader_ready_event_id
+                or not receipt.cleanup_verified or not receipt.cgroup_empty
+                or not receipt.main_pidfd_gone or not receipt.launcher_reaped
+                or receipt.exit_code != 0 or receipt.timed_out or receipt.cancelled
+                or receipt.output_overflow
+                or self.admission is None or self.source_material is None
+                or getattr(self.admission, "_source_material", None) is not self.source_material
+                or self.launch_proof is None or self.observed_worker_view is None
+                or self.process_identity is None or self.loaded_package_proof is None
+                or getattr(self.loaded_package_proof, "proof_id", None) != self.loaded_package_proof_id
+                or not re.fullmatch(r"[0-9a-f]{64}", self.loaded_package_proof_id)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", self.loader_ready_event_id)
+                or not re.fullmatch(r"[0-9a-f]{32}", self.process_id)
+                or type(self.process_pid) is not int or self.process_pid <= 0
+                or type(self.process_start_ticks) is not int or self.process_start_ticks <= 0
+                or type(self.process_uid) is not int or self.process_uid <= 0
+                or type(self.process_gid) is not int or self.process_gid < 0
+                or not all(isinstance(getattr(self, name), str) and getattr(self, name)
+                           for name in ("profile_id", "process_generation", "unit", "invocation_id",
+                                        "cgroup_identity"))
+                or not re.fullmatch(r"[0-9a-f]{32}", self.invocation_id)
+                or not self.cgroup_identity.startswith("/system.slice/")
+                or type(self.mount_namespace_inode) is not int or self.mount_namespace_inode <= 0
+                or type(self.network_namespace_inode) is not int or self.network_namespace_inode <= 0
+                or not re.fullmatch(r"[0-9a-f]{64}", self.service_generation_digest)
+                or not re.fullmatch(r"[0-9a-f]{64}", self.executable_sha256)
+                or any(type(getattr(self.process_identity, name)) is not expected
+                       for name, expected in (("kernel_uid", int), ("start_ticks", int)))
+                or self.process_identity.profile_id != self.profile_id
+                or self.process_identity.generation != self.process_generation
+                or self.process_identity.kernel_uid != self.process_uid
+                or self.process_identity.start_ticks != self.process_start_ticks
+                or self.process_identity.cgroup_identity != self.cgroup_identity
+                or self.process_identity.executable_sha256 != self.executable_sha256
+                or self.process_identity.namespace_identity != (
+                    f"mnt:{self.mount_namespace_inode};net:{self.network_namespace_inode}")
+                or isinstance(self.expires_monotonic, bool)
+                or type(self.expires_monotonic) not in (int, float)
+                or not math.isfinite(self.expires_monotonic)
+                or self._manager is None or self._seal is None):
+            raise ValueError("completed selected-health proof is malformed or lacks exact cleanup joins")
+
+    def is_current(self) -> bool:
+        verify = getattr(self._manager, "_completed_selected_health_terminal_current", None)
+        return bool(callable(verify) and verify(self, self._seal) is self)
+
+    def __repr__(self) -> str:
+        return "RootCompletedSelectedHealthTerminalProof(<root-private historical proof>)"
+
+@dataclass(slots=True)
 class _Handle:
     process_id: str
     profile: ManagedProfileCustody
@@ -214,6 +616,8 @@ class _Handle:
     artifact_mount_dir: Path
     native_mount_source: Path | None = None
     native_mount_receipt: NativePackageMountReceipt | None = None
+    xauthority_mount_source: Path | None = None
+    xauthority_mount_receipt: XauthorityMountReceipt | None = None
     network_namespace_fd: int | None = None
     child_artifact_identities: tuple[tuple[str, int, int], ...] = ()
     stdin_cursor: int = 0
@@ -226,41 +630,13 @@ class _Handle:
     # derived record selecting one exact enrolled operation executable.
     registered_profile: ManagedProfileCustody | None = None
     task_owned: bool = False
-
-
-@dataclass(frozen=True, slots=True)
-class RootAdmittedTask:
-    """Root-only snapshot minted after consuming a resource child admission.
-
-    This DTO is never accepted from an authority RPC payload. The root task
-    executor creates it from its consumed admission handle and supplies it
-    directly to ``start_selected_task``.
-    """
-
-    handle_id: str
-    job_id: str
-    node_id: str
-    child_admission_id: str
-    attempt_index: int
-    backend_enrollment_id: str
-    resource_generation: str
-    profile_id: str
-    profile_generation: str
-    native_package_id: str
-    native_package_generation: str
-    process_enrollment_id: str
-    process_generation: str
-    operation_id: str
-    child_target_id: str
-    child_capability: str
-    task_body_recipe_id: str
-    task_request_schema_id: str
-    task_payload: bytes
-    task_payload_sha256: str
-    parent_closure_digest: str
-    expires_monotonic: float
-    stdin_sha256: str
-    stdin_size_bytes: int
+    native_loader_observation_handle: str | None = None
+    native_loader_ready_event_id: str | None = None
+    native_worker_launch_proof: Any | None = None
+    native_worker_observed_view: Any | None = None
+    unit_invocation_id: str | None = None
+    native_health_process_identity: Any | None = None
+    native_health_loaded_package_proof: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,23 +645,117 @@ class ManagedTaskHandle:
 
     handle_id: str
     generation: str
+    process_id: str
+    _stdin_write_receipt: list[str | None] = field(default_factory=lambda: [None],
+                                                  repr=False, compare=False)
+
+    @property
+    def stdin_write_receipt_handle(self) -> str | None:
+        """Manager-backed receipt handle, absent until the actual write/EOF."""
+        return self._stdin_write_receipt[0]
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _NativeWorkerViewMaterializationContext:
+    """One-use manager-owned inputs for the exact fixed worker view."""
+
+    proof: Any
+    profile: ManagedProfileCustody
+    process_id: str
+    helper_path: Path
+    interpreter_path: Path
+    native_mount_source: Path
+    native_mount_receipt: NativePackageMountReceipt
+    contract_path: Path
+    contract_sha256: str
+    issuer: object = field(repr=False, compare=False)
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedApplicationHandle:
+    """Opaque manager-owned reference to a selected application process."""
+    handle_id: str
+    process_id: str
+    profile_generation: str
+
+
+@dataclass(slots=True)
+class _ManagedApplicationState:
+    handle: _Handle
+    verified_start: Any
+    step: Any
+    selection_payload: bytes
+    deadline: float
+    cancelled: Callable[[], bool]
+    stdout: bytearray = field(default_factory=bytearray)
+    stderr: bytearray = field(default_factory=bytearray)
+    stdout_eof: bool = False
+    stderr_eof: bool = False
+    output_overflow: bool = False
+    consumed: bool = False
+    lock: threading.RLock = field(default_factory=threading.RLock)
+
+
+@dataclass(frozen=True, slots=True)
+class RootApplicationTerminalReceipt:
+    """Immutable bounded terminal facts from the selected-app process manager."""
+    schema: int
+    receipt_handle: str
+    application_handle: str
+    admission_handle: str
+    application_id: str
+    workload_id: str
+    step_id: str
+    sequence: int
+    profile_id: str
+    profile_generation: str
+    service_generation_digest: str
+    operation_id: str
+    request_sha256: str
+    source_receipt_handle: str
+    runtime_receipt_handle: str
+    process_id: str
+    process_generation: str
+    process_start_ticks: int
+    executable_sha256: str
+    cgroup_id: str
+    namespace_digest: str
+    exit_code: int | None
+    stdin_eof: bool
+    stdout_sha256: str
+    stdout_size_bytes: int
+    stderr_sha256: str
+    stderr_size_bytes: int
+    output_observation_handle: str
+    reaped: bool
+    cancelled: bool
+    timed_out: bool
+    state: str
+    issued_monotonic: float
+    expires_monotonic: float
+    signature: str
+
+    def claims(self) -> dict[str, Any]:
+        return {name: getattr(self, name) for name in self.__dataclass_fields__ if name != "signature"}
 
 
 @dataclass(frozen=True, slots=True)
 class RootTaskTerminalReceipt:
     """Root-observed bounded task completion and cleanup facts."""
 
-    handle_id: str
-    task_handle_id: str
-    terminal_receipt_id: str
+    task_handle: str
+    terminal_receipt_handle: str
     job_id: str
     node_id: str
-    child_admission_id: str
-    attempt_index: int
+    admission_id: str
+    admission_handle_id: str
     backend_enrollment_id: str
+    operation_id: str
+    task_body_recipe_id: str
+    task_request_schema_id: str
     resource_generation: str
     profile_id: str
-    profile_generation: str
+    process_generation: str
     process_id: str
     exit_code: int | None
     timed_out: bool
@@ -309,6 +779,25 @@ class RootTaskTerminalReceipt:
     stdout_size_bytes: int
     stderr_size_bytes: int
     parent_closure_digest: str
+    native_loader_ready_event_id: str | None
+    # Native execution observations are issued by the companion registry and
+    # remain separate from this immutable custody terminal receipt.
+    native_execution_receipt_handle: str | None = None
+    stdin_write_receipt_handle: str | None = None
+
+    @property
+    def task_handle_id(self) -> str:
+        """Compatibility accessor for internal journal adapters."""
+        return self.task_handle
+
+    @property
+    def terminal_receipt_id(self) -> str:
+        """Compatibility accessor for internal journal adapters."""
+        return self.terminal_receipt_handle
+
+    @property
+    def profile_generation(self) -> str:
+        return self.process_generation
 
 
 @dataclass(slots=True)
@@ -318,6 +807,13 @@ class _ManagedTaskState:
     deadline: float
     stdin_deadline: float
     cancelled: Callable[[], bool]
+    selection_payload: bytes
+    admission_handle_id: str
+    initial_input_receipt_handle: str | None = None
+    initial_input_expires_monotonic: float | None = None
+    service_generation_digest: str | None = None
+    root_handle: ManagedTaskHandle | None = None
+    stdin_write_receipt: Any | None = None
     input_closed: bool = False
     stdout: bytearray = field(default_factory=bytearray)
     stderr: bytearray = field(default_factory=bytearray)
@@ -335,7 +831,7 @@ _LAUNCH_FIELDS = {
 }
 _ALLOWED_ENV = {
     "HOME", "PATH", "LANG", "LC_ALL", "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR",
-    "XDG_CONFIG_HOME", "XDG_DATA_HOME", "HERMES_HOME", "TMPDIR",
+    "XDG_CONFIG_HOME", "XDG_DATA_HOME", "HERMES_HOME", "TMPDIR", "XAUTHORITY",
 }
 
 
@@ -707,7 +1203,12 @@ class ManagedProcessEffectHandler:
                  systemctl: Path = Path("/usr/bin/systemctl"),
                  artifact_resolver: Callable[[str, str], Any] | None = None,
                  native_package_resolver: Callable[[str, str], ManagedNativePackageMount | None] | None = None,
-                 task_admission_current: Callable[[RootAdmittedTask], bool] | None = None,
+                 native_loader_observation_store: Any | None = None,
+                 _committed_pm_executable_resolver: Any | None = None,
+                 _committed_pm_executable_identity: Any | None = None,
+                 task_input_coordinator: Any | None = None,
+                 task_admission_current: Callable[[RootAdmittedTask, bytes], bool] | None = None,
+                 native_health_start_authority: Any | None = None,
                  monotonic: Callable[[], float] = time.monotonic):
         if not profiles or any(key != item.profile_id for key, item in profiles.items()):
             raise ValueError("root process custody requires an explicit profile registry")
@@ -717,11 +1218,48 @@ class ManagedProcessEffectHandler:
         self.monotonic = monotonic
         self.artifact_resolver = artifact_resolver
         self.native_package_resolver = native_package_resolver
+        self.native_loader_observation_store = native_loader_observation_store
+        self._committed_pm_executable_resolver: Any | None = None
+        self._committed_pm_executable_identity: Any | None = None
+        self._native_worker_profile_id: str | None = None
+        self._native_worker_executable_binding: tuple[Any, ...] | None = None
+        self._native_worker_launch_owner: Any | None = None
+        self.task_input_coordinator = None
+        self._systemd_openfile_supported: bool | None = None
         self.task_admission_current = task_admission_current
         self._handles: dict[str, _Handle] = {}
         self._task_handles: dict[str, _ManagedTaskState] = {}
         self._finished: dict[str, tuple[str, float, ProcessCleanupProof]] = {}
         self._starting: set[str] = set()
+        self._task_terminal_receipts: dict[str, tuple[str, RootTaskTerminalReceipt, float]] = {}
+        self._application_handles: dict[str, _ManagedApplicationState] = {}
+        self._application_terminal_receipts: dict[str, tuple[str, RootApplicationTerminalReceipt, float]] = {}
+        self._application_outputs: dict[str, tuple[bytes, bytes, float]] = {}
+        self._task_stdin_write_receipts: dict[str, tuple[ManagedTaskHandle, Any, float, str]] = {}
+        self._root_selected_process_receipts: dict[
+            str, tuple[RootSelectedServiceProcessReceipt, _Handle]
+        ] = {}
+        self._root_selected_status_receipts: dict[
+            str, tuple[RootSelectedServiceStatusReceipt, RootSelectedServiceProcessReceipt, float]
+        ] = {}
+        self._health_controls: dict[str, tuple[RootSelectedHealthControl, _Handle, Any, object]] = {}
+        self._health_observation_handles: dict[str, str] = {}
+        self._health_terminal_receipts: dict[
+            str, tuple[RootSelectedHealthTerminalReceipt, float]
+        ] = {}
+        self._health_completed_terminals: dict[
+            str, tuple[RootCompletedSelectedHealthTerminalProof, float]
+        ] = {}
+        self._health_terminal_seal = object()
+        self._native_worker_view_contexts: dict[str, _NativeWorkerViewMaterializationContext] = {}
+        self._native_worker_view_seal = object()
+        self._health_input_write_receipts: dict[
+            str, tuple[RootSelectedHealthInputWriteReceipt, float]
+        ] = {}
+        self._health_input_write_pending: set[str] = set()
+        self.native_health_start_authority: Any | None = None
+        self._protected_enrollment_catalog: Any | None = None
+        self._private_loopback_endpoint_leases: dict[str, tuple[Any, Any, Any]] = {}
         self._lock = threading.RLock()
         self._member_key = os.urandom(32)
         # Root-only test harness may capture bounded manager diagnostics. This
@@ -729,6 +1267,2245 @@ class ManagedProcessEffectHandler:
         self._diagnostic_sink: Callable[[bytes], None] | None = None
         for profile in self.profiles.values():
             self._validate_profile(profile)
+        self._bind_committed_pm_constructor_custody(
+            _committed_pm_executable_resolver, _committed_pm_executable_identity)
+        if task_input_coordinator is not None:
+            self.set_task_input_coordinator(task_input_coordinator)
+        if native_health_start_authority is not None:
+            self.bind_native_health_start_authority(native_health_start_authority)
+
+    def _bind_committed_pm_constructor_custody(self, resolver: Any | None,
+                                               identity: Any | None) -> None:
+        """Pin only the selected native profile from a verified active PM receipt.
+
+        Generic profile validation above intentionally remains byte-for-byte
+        strict.  The private pair addresses the composition cycle in which
+        the active PM executable has to be resolved before the profile and
+        this manager can be built; it does not admit process effects.
+        """
+        if resolver is None and identity is None:
+            return
+        from hermes_installer.authority.committed_pm_executable import (
+            RootActiveCommittedPMExecutableResolver,
+            RootVerifiedCommittedPMExecutableIdentity,
+        )
+        if (type(resolver) is not RootActiveCommittedPMExecutableResolver
+                or type(identity) is not RootVerifiedCommittedPMExecutableIdentity):
+            raise AuthorityDenied(
+                "native_worker.pm_executable",
+                "exact committed PM executable resolver and identity are required")
+        try:
+            if resolver.verify_current(identity) is not identity:
+                raise ValueError("PM executable identity is not current")
+            matches = [profile for profile in self.profiles.values()
+                       if profile.profile_id == identity.profile_id]
+            if len(matches) != 1:
+                raise ValueError("selected native profile is absent or ambiguous")
+            profile = matches[0]
+            executable = profile.executable
+            info = executable.stat(follow_symlinks=False)
+            binding = (
+                identity.profile_id, identity.service_generation,
+                identity.service_generation_digest, identity.publication_receipt_handle,
+                identity.publication_sha256, identity.runtime_record_id,
+                identity.runtime_record_sha256, identity.pm_runtime_receipt_handle,
+                identity.pm_receipt_sha256, identity.pm_generation,
+                identity.runtime_closure_sha256, identity.executable_sha256,
+                identity.executable_device, identity.executable_inode,
+                identity.executable_uid, identity.executable_gid,
+                identity.executable_mode,
+            )
+            if (profile.generation != identity.service_generation
+                    or profile.service_generation_digest != identity.service_generation_digest
+                    or executable != identity.executable_path
+                    or profile.artifact_sha256 != identity.executable_sha256
+                    or (info.st_dev, info.st_ino, info.st_uid, info.st_gid,
+                        stat.S_IMODE(info.st_mode))
+                       != (identity.executable_device, identity.executable_inode,
+                           identity.executable_uid, identity.executable_gid,
+                           identity.executable_mode)
+                    or hashlib.sha256(executable.read_bytes()).hexdigest()
+                       != identity.executable_sha256):
+                raise ValueError("selected profile does not match the committed PM executable")
+        except Exception:
+            raise AuthorityDenied(
+                "native_worker.pm_executable",
+                "selected native profile lacks current committed PM executable custody") from None
+        self._committed_pm_executable_resolver = resolver
+        self._committed_pm_executable_identity = identity
+        self._native_worker_profile_id = identity.profile_id
+        self._native_worker_executable_binding = binding
+
+    def close(self) -> None:
+        """Stop selected native workers before retiring their source custody."""
+        native_profile_id = self._native_worker_profile_id
+        if native_profile_id is not None:
+            with self._lock:
+                workers = tuple(handle for handle in self._handles.values()
+                                if handle.profile.profile_id == native_profile_id
+                                and not handle.stopped)
+            for handle in workers:
+                try:
+                    proof = self._stop(handle, timeout=5.0)
+                except Exception as exc:
+                    # Keep the launch/source owner alive when cleanup could
+                    # not establish a stopped MainPID/cgroup. Closing its
+                    # custody first would make later recovery unverifiable.
+                    raise AuthorityDenied(
+                        "native_worker.cleanup",
+                        "selected native worker could not be retired before source custody") from exc
+                if not proof.cleanup_verified:
+                    raise AuthorityDenied(
+                        "native_worker.cleanup",
+                        "selected native worker stop did not verify the owned unit and cgroup")
+        launch_owner = self._native_worker_launch_owner
+        if launch_owner is not None:
+            launch_owner.close()
+            self._native_worker_launch_owner = None
+        resolver = self._committed_pm_executable_resolver
+        if resolver is not None:
+            resolver.close()
+            self._committed_pm_executable_resolver = None
+            self._committed_pm_executable_identity = None
+
+    def bind_native_worker_launch_owner(self, runtime: Any, listener_receiver: Any,
+                                        listener_receipt: Any) -> Any:
+        """Attach the one active launch owner from protected daemon composition."""
+        from hermes_installer.authority.native_worker_launch import (
+            RootActiveNativeHermesWorkerLaunchOwner,
+            NativeHermesWorkerLaunchUnavailable,
+        )
+        with self._lock:
+            if self._native_worker_launch_owner is not None:
+                raise NativeHermesWorkerLaunchUnavailable(
+                    "native worker launch owner cannot be replaced")
+            resolver = self._committed_pm_executable_resolver
+            identity = self._committed_pm_executable_identity
+            if resolver is None or identity is None:
+                raise NativeHermesWorkerLaunchUnavailable(
+                    "fresh committed PM source resolver is unavailable")
+            # Validate the short constructor observation, then let the owner
+            # resolve a fresh PM identity for every actual launch proof.
+            if resolver.verify_current(identity) is not identity:
+                raise NativeHermesWorkerLaunchUnavailable(
+                    "committed PM constructor custody is no longer current")
+            return RootActiveNativeHermesWorkerLaunchOwner.from_root_runtime(
+                runtime, listener_receiver, listener_receipt, resolver)
+
+    def select_native_worker(self, network_id: str, profile_id: str) -> Any:
+        owner = self._native_worker_launch_owner
+        if owner is None:
+            raise AuthorityDenied("native_worker.launch", "active native worker owner is unavailable")
+        return owner.select_worker(network_id, profile_id)
+
+    def select_unique_native_worker_for_profile(self, profile_id: str) -> Any:
+        owner = self._native_worker_launch_owner
+        if owner is None:
+            raise AuthorityDenied("native_worker.launch", "active native worker owner is unavailable")
+        return owner.select_unique_worker_for_profile(profile_id)
+
+    def resolve_selected_native_worker_launch(self, worker_selection: Any) -> Any:
+        owner = self._native_worker_launch_owner
+        if owner is None:
+            raise AuthorityDenied("native_worker.launch", "active native worker owner is unavailable")
+        return owner.resolve_selected_native_worker_launch(worker_selection)
+
+    def verify_current_native_worker_launch(self, proof: Any) -> Any:
+        owner = self._native_worker_launch_owner
+        if owner is None:
+            raise AuthorityDenied("native_worker.launch", "active native worker owner is unavailable")
+        return owner.verify_current_native_worker_launch(proof)
+
+    def _private_native_worker_gate_barrier(
+            self, proof: Any, channel: Any, *, unit: str, contract_sha256: str,
+            nonce: str, helper_path: Path, interpreter_path: Path,
+            contract_path: Path,
+            cancelled: Callable[[], bool], deadline: float,
+            allowed_bind: bool, allowed_connect: bool
+            ) -> tuple[int, int, int, str, int, int, int, str, str, str]:
+        """Observe, probe, and release only the exact systemd MainPID helper.
+
+        The helper is already waiting on the named activated AF_UNIX channel.
+        This method owns both observation boundaries around the actual
+        kernel-authenticated probes; receipt callbacks and peer-supplied PID
+        or namespace facts are not accepted.
+        """
+        from hermes_installer.authority.private_loopback_worker_gate import (
+            namespace_observation_frame, validate_awaiting_namespace,
+        )
+        if (not isinstance(unit, str) or not re.fullmatch(r"hermes-installer-[0-9a-f]{32}\.service", unit)
+                or not callable(cancelled) or isinstance(deadline, bool)
+                or not isinstance(deadline, (int, float)) or not math.isfinite(deadline)
+                or not re.fullmatch(r"[0-9a-f]{64}", contract_sha256)
+                or not isinstance(nonce, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", nonce)):
+            raise AuthorityDenied("native_worker.gate", "fixed helper gate transaction is malformed")
+        pidfd = namespace_fd = -1
+        try:
+            _peer, initial, _initial_digest = channel.accept_helper(
+                expected_uid=self.profiles[proof.profile_id].owner_uid,
+                deadline=deadline, cancelled=cancelled)
+            if (channel.nonce != nonce
+                    or initial.get("nonce") != nonce
+                    or initial.get("launch_contract_sha256") != contract_sha256):
+                raise AuthorityDenied("native_worker.gate", "helper initial frame differs from manager contract")
+            selected = validate_awaiting_namespace(
+                initial, nonce=nonce, contract_sha256=contract_sha256,
+                expected_uid=self.profiles[proof.profile_id].owner_uid,
+                expected_gid=self.profiles[proof.profile_id].owner_gid)
+            self.verify_current_native_worker_launch(proof)
+            observed = self._observe_native_gate_mainpid(
+                unit, expected_pid=selected["pid"], helper_path=helper_path,
+                interpreter_path=interpreter_path, contract_path=contract_path,
+                expected_uid=selected["uid"], expected_gid=selected["gid"])
+            pidfd, namespace_fd = observed["pidfd"], observed["namespace_fd"]
+            self._verify_selected_native_worker_view(observed["pid"], proof)
+            namespace = os.fstat(namespace_fd)
+            if (observed["start_ticks"] != selected["start_ticks"]
+                    or observed["pid"] != selected["pid"]
+                    or (namespace.st_dev, namespace.st_ino)
+                       != (observed["namespace_device"], observed["namespace_inode"])):
+                raise AuthorityDenied("native_worker.gate", "systemd MainPID changed before namespace observation")
+            from hermes_installer.authority.private_loopback_worker_gate import (
+                _process_capability_identity,
+            )
+            expected_identity = {
+                "pid": observed["pid"], "uid": observed["uid"], "gid": observed["gid"],
+                "start_ticks": observed["start_ticks"], "cgroup": observed["cgroup"],
+                "namespace_device": observed["namespace_device"],
+                "namespace_inode": observed["namespace_inode"],
+                "capabilities": _process_capability_identity(observed["pid"]),
+            }
+            if any(expected_identity["capabilities"].values()):
+                raise AuthorityDenied("native_worker.gate", "helper retains process capabilities")
+            gate_frame = namespace_observation_frame(
+                nonce=nonce, contract_sha256=contract_sha256,
+                service_generation_digest=proof.service_generation_digest,
+                projection_handle=proof._network_projection.projection_handle,
+                unit_invocation_id=observed["invocation_id"],
+                pid=observed["pid"], start_ticks=observed["start_ticks"],
+                cgroup=observed["cgroup"], namespace_device=namespace.st_dev,
+                namespace_inode=namespace.st_ino)
+            channel.send_namespace_observation(gate_frame)
+            channel.receive_and_validate_gate_result(
+                expected_identity=expected_identity,
+                allowed_bind=allowed_bind, allowed_connect=allowed_connect)
+            if cancelled() or self.monotonic() >= deadline:
+                raise AuthorityDenied("native_worker.gate", "native worker gate expired before application release")
+            self.verify_current_native_worker_launch(proof)
+            current = self._observe_native_gate_mainpid(
+                unit, expected_pid=observed["pid"], helper_path=helper_path,
+                interpreter_path=interpreter_path, contract_path=contract_path,
+                expected_uid=observed["uid"], expected_gid=observed["gid"])
+            try:
+                self._verify_selected_native_worker_view(observed["pid"], proof)
+                namespace_now = os.fstat(namespace_fd)
+                if (current["start_ticks"] != observed["start_ticks"]
+                        or current["cgroup"] != observed["cgroup"]
+                        or current["invocation_id"] != observed["invocation_id"]
+                        or current["fragment_path"] != observed["fragment_path"]
+                        or current["exec_start"] != observed["exec_start"]
+                        or (namespace_now.st_dev, namespace_now.st_ino)
+                           != (observed["namespace_device"], observed["namespace_inode"])
+                        or _pidfd_exited(pidfd)):
+                    raise AuthorityDenied("native_worker.gate", "MainPID or namespace changed before release")
+                channel.send_application_release(
+                    service_generation_digest=proof.service_generation_digest,
+                    projection_handle=proof._network_projection.projection_handle)
+            finally:
+                os.close(current["pidfd"])
+                os.close(current["namespace_fd"])
+            result = (observed["pid"], observed["start_ticks"], pidfd,
+                      observed["cgroup"], namespace.st_dev, namespace.st_ino,
+                      namespace_fd, observed["invocation_id"],
+                      observed["fragment_path"], observed["exec_start"])
+            pidfd = namespace_fd = -1
+            return result
+        except BaseException:
+            raise
+        finally:
+            for fd in (pidfd, namespace_fd):
+                if fd >= 0:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+
+    def _observe_native_gate_mainpid(self, unit: str, *, expected_pid: int,
+                                    helper_path: Path, interpreter_path: Path,
+                                    contract_path: Path,
+                                    expected_uid: int, expected_gid: int) -> dict[str, Any]:
+        """Read exact fixed-unit/process facts and retain fresh kernel handles."""
+        properties = {name: self._show(unit, name) for name in (
+            "LoadState", "ActiveState", "MainPID", "InvocationID", "ControlGroup",
+            "FragmentPath", "ExecStart", "Environment", "EnvironmentFiles", "User",
+            "Group", "KillMode", "RuntimeMaxUSec", "SocketBindDeny",
+            "IPAddressDeny", "PrivateNetwork", "RestrictAddressFamilies",
+            "ProtectSystem", "ProtectHome", "PrivateMounts",
+            "TemporaryFileSystem", "InaccessiblePaths",
+        )}
+        try:
+            pid = int(properties["MainPID"])
+            invocation = properties["InvocationID"]
+            cgroup = properties["ControlGroup"]
+            fragment = Path(properties["FragmentPath"])
+            fragment_info = fragment.lstat()
+            exec_start = properties["ExecStart"]
+            if (properties["LoadState"] != "loaded"
+                    or properties["ActiveState"] not in {"activating", "active"}
+                    or pid != expected_pid or not re.fullmatch(r"[0-9a-f]{32}", invocation)
+                    or not cgroup.startswith("/system.slice/")
+                    or Path(cgroup).name != unit
+                    or fragment.parent != Path("/run/systemd/transient")
+                    or fragment.name != unit
+                    or properties["ProtectSystem"] != "strict"
+                    or properties["ProtectHome"] != "tmpfs"
+                    or properties["PrivateMounts"] != "yes"
+                    or set(properties["TemporaryFileSystem"].split()) != {
+                        "/var/lib/hermes-installer:ro,nosuid,nodev",
+                        "/run/hermes-installer:ro,nosuid,nodev",
+                        "/hermes/.native-output:ro,noexec,nosuid,nodev,mode=0711,uid=0,gid=0",
+                    }
+                    or set(properties["InaccessiblePaths"].split()) != {
+                        "/etc/hermes-installer", "/etc/ssh", "/etc/ssl/private",
+                    }
+                    or not stat.S_ISREG(fragment_info.st_mode) or fragment_info.st_uid != 0
+                    or fragment_info.st_mode & 0o022
+                    or exec_start.count(str(interpreter_path)) != 1
+                    or exec_start.count(str(helper_path)) != 1
+                    or "-I" not in exec_start
+                    or properties["EnvironmentFiles"] not in {"", "-"}
+                    or properties["User"] != self.profiles[self._native_worker_profile_id].service_user
+                    or properties["KillMode"] != "control-group"
+                    or not 0 < int(properties["RuntimeMaxUSec"]) <= 30_000_000
+                    or properties["SocketBindDeny"] != "any"
+                    or properties["IPAddressDeny"] not in {"0.0.0.0/0 ::/0", "any"}
+                    or properties["PrivateNetwork"] != "yes"
+                    or set(properties["RestrictAddressFamilies"].split()) != {"AF_UNIX"}):
+                raise ValueError("unit properties differ from fixed private worker gate")
+            if fragment.read_bytes().count(str(helper_path).encode()) != 1:
+                raise ValueError("transient unit fragment does not pin the helper ExecStart")
+            ticks, proc_cgroup, device, inode = _pid_identity(pid)
+            status_lines = Path(f"/proc/{pid}/status").read_text(encoding="ascii").splitlines()
+            uid_fields = next(line for line in status_lines if line.startswith("Uid:")).split()[1:]
+            gid_fields = next(line for line in status_lines if line.startswith("Gid:")).split()[1:]
+            exe_info = os.stat(interpreter_path, follow_symlinks=False)
+            if (len(uid_fields) != 4 or any(int(value) != expected_uid for value in uid_fields)
+                    or len(gid_fields) != 4 or any(int(value) != expected_gid for value in gid_fields)
+                    or proc_cgroup != cgroup
+                    or os.readlink(f"/proc/{pid}/exe") != str(interpreter_path)
+                    or (device, inode) != (exe_info.st_dev, exe_info.st_ino)):
+                raise ValueError("MainPID executable, UID/GID, or cgroup differs from unit")
+            command = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+            command = [item.decode("utf-8", "strict") for item in command if item]
+            if command != [str(interpreter_path), "-I", str(helper_path)]:
+                raise ValueError("MainPID argv is not the fixed isolated gate helper")
+            self._verify_process_elf_dependencies(pid, interpreter_path,
+                                                  expected_uid, expected_gid)
+            environment = self._read_environment(pid)
+            if (environment.get("LISTEN_PID") != str(pid)
+                    or environment.get("LISTEN_FDS") != "2"
+                    or environment.get("LISTEN_FDNAMES")
+                       != "hermes-private-loopback-gate:hermes-loader-progress"
+                    or environment.get("HERMES_NATIVE_WORKER_CONTRACT_PATH")
+                       != str(contract_path)
+                    or any(key not in {"HOME", "HERMES_HOME", "PATH", "LANG", "LISTEN_PID",
+                                       "LISTEN_FDS", "LISTEN_FDNAMES",
+                                       "HERMES_NATIVE_WORKER_CONTRACT_PATH"} for key in environment)
+                    or environment.get("HOME") != "/hermes"
+                    or environment.get("HERMES_HOME") != "/hermes"
+                    or environment.get("PATH") != "/usr/bin:/bin"
+                    or environment.get("LANG") != "C"):
+                raise ValueError("MainPID environment differs from the fixed gate contract")
+            pidfd = os.pidfd_open(pid, 0)
+            namespace_fd = os.open(f"/proc/{pid}/ns/net", os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+            namespace = os.fstat(namespace_fd)
+            if (_pid_identity(pid) != (ticks, cgroup, device, inode)
+                    or _pidfd_exited(pidfd)
+                    or (namespace.st_dev, namespace.st_ino)
+                       != (os.stat(f"/proc/{pid}/ns/net").st_dev,
+                           os.stat(f"/proc/{pid}/ns/net").st_ino)):
+                raise ValueError("MainPID or namespace changed while retaining kernel handles")
+            return {"pid": pid, "start_ticks": ticks, "cgroup": cgroup,
+                    "uid": expected_uid, "gid": expected_gid,
+                    "namespace_device": namespace.st_dev,
+                    "namespace_inode": namespace.st_ino,
+                    "invocation_id": invocation, "fragment_path": str(fragment),
+                    "exec_start": exec_start, "pidfd": pidfd,
+                    "namespace_fd": namespace_fd}
+        except Exception:
+            for key in ("pidfd", "namespace_fd"):
+                fd = locals().get(key)
+                if isinstance(fd, int) and fd >= 0:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+            raise AuthorityDenied("native_worker.gate", "systemd MainPID identity is not fixed and current") from None
+
+    @staticmethod
+    def _verify_process_elf_dependencies(pid: int, executable: Path,
+                                         expected_uid: int, expected_gid: int) -> None:
+        """Prove PT_INTERP and loaded DT_NEEDED members resolve in this mount ns."""
+        from hermes_installer.authority.host_tool_observation import _elf_dynamic
+        proc_root = Path(f"/proc/{pid}/root")
+        interp, _needed = _elf_dynamic(executable)
+        if not isinstance(interp, str) or not interp.startswith("/"):
+            raise ValueError("ELF interpreter path is not absolute")
+        interpreter = os.stat(str(proc_root / interp.lstrip("/")), follow_symlinks=True)
+        readable = 0o400 if interpreter.st_uid == expected_uid else (
+            0o040 if interpreter.st_gid == expected_gid else 0o004)
+        if (not stat.S_ISREG(interpreter.st_mode) or interpreter.st_uid != 0
+                or interpreter.st_gid != 0 or interpreter.st_mode & 0o022
+                or not interpreter.st_mode & readable):
+            raise ValueError("ELF interpreter is not a regular file in worker namespace")
+        try:
+            raw_maps = Path(f"/proc/{pid}/maps").read_text(encoding="utf-8", errors="strict")
+        except OSError:
+            raise ValueError("worker ELF mappings are unavailable") from None
+        if len(raw_maps) > 1024 * 1024:
+            raise ValueError("worker ELF mapping table exceeds bound")
+        mapped: dict[tuple[int, int], tuple[Path, os.stat_result]] = {}
+        for line in raw_maps.splitlines():
+            fields = line.split(maxsplit=5)
+            if len(fields) != 6 or not fields[5].startswith("/"):
+                continue
+            name = fields[5]
+            if name.endswith(" (deleted)"):
+                raise ValueError("worker has a deleted mapped ELF member")
+            path = Path(name)
+            try:
+                info = os.stat(str(proc_root / name.lstrip("/")), follow_symlinks=True)
+            except OSError:
+                raise ValueError("worker mapped ELF path cannot be re-opened") from None
+            mapped[(info.st_dev, info.st_ino)] = (path, info)
+            if len(mapped) > 512:
+                raise ValueError("worker mapped ELF member count exceeds bound")
+        if (interpreter.st_dev, interpreter.st_ino) not in mapped:
+            raise ValueError("worker PT_INTERP inode is not actually mapped")
+
+        needed_names: set[str] = set()
+        inspected: set[tuple[int, int]] = set()
+        for mapped_path, info in tuple(mapped.values()):
+            if not (mapped_path.name.endswith(".so") or ".so." in mapped_path.name):
+                continue
+            identity = (info.st_dev, info.st_ino)
+            if identity in inspected:
+                continue
+            inspected.add(identity)
+            try:
+                _loader, needed = _elf_dynamic(proc_root / mapped_path.relative_to("/"))
+            except Exception:
+                raise ValueError("mapped ELF dependency could not be inspected") from None
+            needed_names.update(needed)
+        try:
+            _loader, direct_needed = _elf_dynamic(executable)
+        except Exception:
+            raise ValueError("selected executable dependencies could not be inspected") from None
+        needed_names.update(direct_needed)
+
+        for name in needed_names:
+            if (not isinstance(name, str) or not name or "/" in name or "\x00" in name):
+                raise ValueError("ELF dependency name is malformed")
+            resolved = False
+            for mapped_path, info in mapped.values():
+                candidate = proc_root / mapped_path.parent.relative_to("/") / name
+                try:
+                    candidate_info = os.stat(candidate, follow_symlinks=True)
+                except OSError:
+                    continue
+                if (candidate_info.st_dev, candidate_info.st_ino) != (info.st_dev, info.st_ino):
+                    continue
+                if (info.st_uid != 0 or info.st_gid != 0 or info.st_mode & 0o022
+                        or not info.st_mode & (0o400 if info.st_uid == expected_uid else
+                                               0o040 if info.st_gid == expected_gid else 0o004)):
+                    raise ValueError("mapped ELF dependency is not immutable root-owned readable source")
+                resolved = True
+                break
+            if not resolved:
+                raise ValueError("DT_NEEDED member did not resolve to a loaded inode")
+
+    def _materialize_selected_native_worker_view(
+            self, profile: ManagedProfileCustody, proof: Any, process_id: str,
+            helper_path: Path, interpreter_path: Path,
+            native_mount_source: Path, native_mount_receipt: NativePackageMountReceipt,
+            contract_path: Path, contract_sha256: str,
+            ) -> Any:
+        """Issue the exact v192 closed source view; incomplete visibility denies."""
+        from hermes_installer.authority.native_worker_launch import (
+            RootSelectedNativeWorkerView, RootSelectedNativeWorkerViewMount,
+        )
+        owner = self._native_worker_launch_owner
+        if (owner is None or self.verify_current_native_worker_launch(proof) is not proof
+                or not re.fullmatch(r"[0-9a-f]{32}", process_id)):
+            raise AuthorityDenied("native_worker.view", "current selected view owner is unavailable")
+        runtime = proof._runtime_projection
+        identity = proof._pm_identity
+        release = owner.runtime.controller_release_receipt
+        release.verify_current()
+
+        def access_bits(info: os.stat_result, *, directory: bool) -> bool:
+            bit = 0o1 if directory else 0o4
+            if info.st_uid == profile.owner_uid:
+                bit <<= 6
+            elif info.st_gid == profile.owner_gid:
+                bit <<= 3
+            return bool(info.st_mode & bit)
+
+        def exact_source(path: Path, expected: tuple[int, int] | None,
+                         *, directory: bool) -> os.stat_result:
+            info = path.lstat()
+            if (stat.S_ISLNK(info.st_mode)
+                    or (directory and not stat.S_ISDIR(info.st_mode))
+                    or (not directory and not stat.S_ISREG(info.st_mode))
+                    or info.st_uid != 0 or info.st_gid != 0
+                    or info.st_mode & 0o022
+                    or not access_bits(info, directory=directory)
+                    or expected is not None and (info.st_dev, info.st_ino) != expected):
+                raise AuthorityDenied(
+                    "native_worker.view_visibility",
+                    "selected root source is not held, immutable, or readable by the worker UID")
+            return info
+
+        mounts: list[RootSelectedNativeWorkerViewMount] = []
+
+        def add(kind: str, handle: str, source: Path, expected: tuple[int, int] | None,
+                closure: str, target: str, *, directory: bool, noexec: bool) -> None:
+            if (not isinstance(handle, str) or not handle
+                    or not re.fullmatch(r"[0-9a-f]{64}", closure)
+                    or not target.startswith("/") or "\x00" in target):
+                raise AuthorityDenied("native_worker.view", "selected source view row is malformed")
+            info = exact_source(source, expected, directory=directory)
+            mounts.append(RootSelectedNativeWorkerViewMount(
+                schema=1, view_kind=kind, source_root_receipt_handle=handle,
+                source_host_root_path=source, source_root_device=info.st_dev,
+                source_root_inode=info.st_ino, source_closure_sha256=closure,
+                worker_mount_path=target, read_only=True, noexec=noexec,
+            ))
+
+        row = proof._network_projection.runtime_record
+        output_rows = row.get("native_output_member_records")
+        if (not isinstance(output_rows, (list, tuple)) or len(output_rows) != 5):
+            raise AuthorityDenied("native_worker.view", "selected native output member set is incomplete")
+        add("pm-venv", identity.pm_runtime_receipt_handle,
+            runtime.pm_venv_root_path,
+            (runtime.pm_venv_root_device, runtime.pm_venv_root_inode),
+            identity.runtime_closure_sha256, "/hermes/.native/pm",
+            directory=True, noexec=False)
+        add("pm-base", identity.pm_runtime_receipt_handle,
+            runtime.pm_base_root_path,
+            (runtime.pm_base_root_device, runtime.pm_base_root_inode),
+            row["pm_base_closure_sha256"], str(runtime.pm_base_root_path),
+            directory=True, noexec=False)
+        output_root_info = runtime.native_output_root_path.lstat()
+        if ((output_root_info.st_dev, output_root_info.st_ino)
+                != (runtime.native_output_root_device, runtime.native_output_root_inode)):
+            raise AuthorityDenied("native_worker.view", "selected native output root inode changed")
+        output_seen: set[str] = set()
+        for item in output_rows:
+            relative = item.get("relative_path") if isinstance(item, Mapping) else None
+            if (not isinstance(relative, str) or not relative
+                    or relative.startswith("/") or "\\" in relative
+                    or any(part in {"", ".", ".."} for part in relative.split("/"))
+                    or relative in output_seen):
+                raise AuthorityDenied("native_worker.view", "selected native output member path is malformed")
+            output_seen.add(relative)
+            member_path = runtime.native_output_root_path.joinpath(*relative.split("/"))
+            member_info = exact_source(member_path, (item["device"], item["inode"]), directory=False)
+            if (item.get("kind") != "regular-file" or item.get("owner_uid") != 0
+                    or item.get("owner_gid") != 0 or not access_bits(member_info, directory=False)
+                    or hashlib.sha256(member_path.read_bytes()).hexdigest() != item.get("sha256")):
+                raise AuthorityDenied("native_worker.view_visibility",
+                                      "selected native output member is not readable or current")
+            target = "/hermes/.native-output/" + relative
+            mounts.append(RootSelectedNativeWorkerViewMount(
+                1, "native-runtime-output-member", runtime.native_output_root_receipt_handle,
+                member_path, member_info.st_dev, member_info.st_ino, item["sha256"],
+                target, True, True))
+        add("native-package", native_mount_receipt.service_mount_id,
+            native_mount_source,
+            (native_mount_receipt.mount_source_device, native_mount_receipt.mount_source_inode),
+            native_mount_receipt.compiled_closure_sha256,
+            native_mount_receipt.mount_path, directory=True, noexec=True)
+
+        runtime_root = release.release_root / "runtime"
+        runtime_info = exact_source(runtime_root, None, directory=True)
+        release_rows = sorted((item.relative_path, item.sha256, item.size_bytes, item.mode)
+                              for item in release.files if item.relative_path.startswith("runtime/"))
+        if not release_rows:
+            raise AuthorityDenied("native_worker.view", "installed interpreter runtime closure is empty")
+        runtime_digest = hashlib.sha256(json.dumps(
+            release_rows, separators=(",", ":"), ensure_ascii=True).encode("ascii")).hexdigest()
+        mounts.append(RootSelectedNativeWorkerViewMount(
+            1, "gate-interpreter-runtime", release.deployment_receipt_sha256,
+            runtime_root, runtime_info.st_dev, runtime_info.st_ino, runtime_digest,
+            str(runtime_root), True, False))
+        helper_info = exact_source(helper_path, None, directory=False)
+        helper_row = next((item for item in release.files
+                           if item.relative_path == "helpers/private-loopback-worker-gate.py"
+                           and item.roles == ("network-startup-helper",)), None)
+        if helper_row is None:
+            raise AuthorityDenied("native_worker.view", "installed fixed helper role is unavailable")
+        mounts.append(RootSelectedNativeWorkerViewMount(
+            1, "gate-helper", release.deployment_receipt_sha256,
+            helper_path, helper_info.st_dev, helper_info.st_ino, helper_row.sha256,
+            str(helper_path), True, False))
+        contract_info = exact_source(contract_path, None, directory=False)
+        if (stat.S_IMODE(contract_info.st_mode) != 0o444
+                or hashlib.sha256(contract_path.read_bytes()).hexdigest() != contract_sha256):
+            raise AuthorityDenied("native_worker.view", "selected worker contract changed before view issue")
+        mounts.append(RootSelectedNativeWorkerViewMount(
+            1, "gate-contract", "contract-" + process_id,
+            contract_path, contract_info.st_dev, contract_info.st_ino, contract_sha256,
+            str(contract_path), True, True))
+        release.verify_current()
+        rows = [{
+            "schema": item.schema, "view_kind": item.view_kind,
+            "source_root_receipt_handle": item.source_root_receipt_handle,
+            "source_host_root_path": str(item.source_host_root_path),
+            "source_root_device": item.source_root_device,
+            "source_root_inode": item.source_root_inode,
+            "source_closure_sha256": item.source_closure_sha256,
+            "worker_mount_path": item.worker_mount_path,
+            "read_only": item.read_only, "noexec": item.noexec,
+        } for item in mounts]
+        view_sha = hashlib.sha256(json.dumps(rows, sort_keys=True, separators=(",", ":"),
+                                             ensure_ascii=True).encode("ascii")).hexdigest()
+        view = RootSelectedNativeWorkerView(
+            process_id=process_id, worker_executable_path=proof.worker_executable_path,
+            worker_argv=proof.worker_argv, worker_environment=proof.worker_environment,
+            selected_view_sha256=view_sha, mounts=tuple(mounts),
+            _launch_handle=proof.launch_handle, _issuer=owner._issuer,
+        )
+        owner.attach_selected_worker_view(proof, view)
+        return view
+
+    def materialize_root_selected_native_worker_view(
+            self, proof: Any, process_id: str) -> Any:
+        """Consume one manager-created source context and issue its exact view.
+
+        This is a concrete manager operation, not a caller path resolver: the
+        context is installed only by the fixed native-worker launch path and
+        holds the already verified PM/runtime/package/helper/contract sources.
+        The opaque proof and transaction are each consumed by identity.
+        """
+        from hermes_installer.authority.native_worker_launch import (
+            RootSelectedNativeWorkerView, RootVerifiedNativeHermesWorkerLaunch,
+        )
+        if (type(proof) is not RootVerifiedNativeHermesWorkerLaunch
+                or not isinstance(process_id, str)
+                or not re.fullmatch(r"[0-9a-f]{32}", process_id)):
+            raise AuthorityDenied("native_worker.view", "selected view request is malformed")
+        with self._lock:
+            context = self._native_worker_view_contexts.pop(process_id, None)
+        owner = self._native_worker_launch_owner
+        if (context is None or context.issuer is not self._native_worker_view_seal
+                or context.proof is not proof or context.process_id != process_id
+                or self.profiles.get(context.profile.profile_id) is not context.profile
+                or owner is None or self.verify_current_native_worker_launch(proof) is not proof):
+            raise AuthorityDenied("native_worker.view", "manager-owned selected view transaction is stale")
+        view = self._materialize_selected_native_worker_view(
+            context.profile, proof, process_id, context.helper_path,
+            context.interpreter_path, context.native_mount_source,
+            context.native_mount_receipt, context.contract_path,
+            context.contract_sha256,
+        )
+        if (type(view) is not RootSelectedNativeWorkerView
+                or owner.resolve_selected_native_worker_view(proof) is not view
+                or view.process_id != process_id):
+            raise AuthorityDenied("native_worker.view", "owner did not retain the exact selected worker view")
+        return view
+
+    def _start_native_worker_gate(self, profile: ManagedProfileCustody, proof: Any, *,
+                                  selection: Any, operation_recipe: Mapping[str, Any],
+                                  cwd: Path, payload: bytes, timeout: float,
+                                  cancelled: Callable[[], bool],
+                                  start_guard: Callable[[], bool] | None,
+                                  parent_liveness_fd: int,
+                                  lifecycle_deadline: float,
+                                  process_deadline: float,
+                                  selected_principal: str,
+                                  selected_namespace: str) -> Mapping[str, Any]:
+        """Start the fixed helper, prove its own worker namespace, then same-PID exec.
+
+        This is the only process-start route for the selected native Hermes
+        profile.  The generic artifact/child recipe path never gains an
+        exception for a Python module command.
+        """
+        from hermes_installer.authority.native_custody_proof import create_native_loader_channel
+        from hermes_installer.authority.private_loopback_worker_gate import (
+            create_root_private_loopback_gate_channel,
+        )
+
+        owner = self._native_worker_launch_owner
+        if (owner is None or proof.profile_id != profile.profile_id
+                or proof._selection is not selection
+                or self.profiles.get(profile.profile_id) is not profile
+                or not isinstance(operation_recipe, Mapping)
+                or not callable(cancelled) or not isinstance(selected_principal, str)
+                or not selected_principal or not isinstance(selected_namespace, str)
+                or not selected_namespace):
+            raise AuthorityDenied("native_worker.launch", "fixed current native manager proof is unavailable")
+        now = self.monotonic()
+        launch_deadline = min(now + min(float(timeout), 30.0), float(lifecycle_deadline),
+                              proof.expires_monotonic)
+        process_expiry = min(float(process_deadline), now + min(float(profile.max_lifetime_seconds), 30.0))
+        if (launch_deadline <= now or process_expiry <= now
+                or process_expiry - now > 30.0
+                or not isinstance(proof.argv, tuple) or not proof.argv
+                or proof.worker_executable_path != "/hermes/.native/pm/" +
+                   Path(proof._pm_identity.runtime_relative).relative_to(
+                       Path(proof._pm_identity.runtime_venv_relative)).as_posix()
+                or proof.worker_argv[0] != proof.worker_executable_path
+                or tuple(proof.worker_argv[1:]) != (
+                    "-m", "hermes_cli.main", "chat", "--query-file", "-", "--oneshot", "--quiet")
+                or dict(proof.worker_environment) != {"HOME": "/hermes", "HERMES_HOME": "/hermes"}
+                or operation_recipe.get("stdin_mode") != "bounded-typed-bytes"
+                or isinstance(operation_recipe.get("max_lifetime_seconds"), bool)
+                or not isinstance(operation_recipe.get("max_lifetime_seconds"), int)
+                or not 0 < operation_recipe["max_lifetime_seconds"] <= profile.max_lifetime_seconds):
+            raise AuthorityDenied("native_worker.recipe", "native worker start recipe is not the fixed bounded CLI mode")
+        process_id = uuid.uuid4().hex
+        unit = "hermes-installer-" + uuid.uuid4().hex + ".service"
+        parent_fd = child_fd = namespace_fd = -1
+        artifact_mount_dir: Path | None = None
+        native_mount_source: Path | None = None
+        native_mount_receipt: NativePackageMountReceipt | None = None
+        channel = None
+        loader_channel = None
+        contract_path: Path | None = None
+        launcher: subprocess.Popen[bytes] | None = None
+        unit_may_exist = False
+
+        def require_live_start() -> None:
+            if (cancelled() or self.monotonic() >= launch_deadline
+                    or self.profiles.get(profile.profile_id) is not profile
+                    or start_guard is not None and not start_guard()
+                    or _pidfd_exited(parent_fd)):
+                raise AuthorityDenied("native_worker.start_expired", "selected launch authority expired before effect release")
+            self.verify_current_native_worker_launch(proof)
+
+        try:
+            self._require_systemd_openfile()
+            helper_path, interpreter_path, _helper_digest, _interpreter_digest = owner.resolve_gate_runtime()
+            # Native module execution consumes only the package closure selected
+            # by the registered profile resolver.  It uses the same verified,
+            # staged mount path and loader observer as the ordinary native
+            # package path; the fixed gate never invents a second package view.
+            native_mount_source, native_mount_receipt = self._prepare_native_package_mount(
+                profile, process_id)
+            if native_mount_receipt is None or native_mount_source is None:
+                raise AuthorityDenied("native.mount", "selected native worker package closure is unavailable")
+            parent_fd = os.dup(parent_liveness_fd)
+            if _pidfd_exited(parent_fd):
+                raise AuthorityDenied("native_worker.parent", "root daemon lifetime anchor is not live")
+            artifact_mount_dir = _artifact_mount_slot(profile.owner_uid, process_id)
+            contract_parent = Path("/run/hermes-installer/native-worker-contracts")
+            self._ensure_root_runtime_directory(contract_parent, 0o711)
+            contract_directory = contract_parent / process_id
+            contract_directory.mkdir(mode=0o711)
+            os.chown(contract_directory, 0, 0)
+            os.chmod(contract_directory, 0o711)
+            contract_path = contract_directory / "contract.json"
+            self._ensure_root_runtime_directory(Path("/run/hermes-installer/private-loopback"), 0o700)
+            channels_root = Path("/run/hermes-installer/private-loopback/channels")
+            self._ensure_root_runtime_directory(channels_root, 0o700)
+            channel = create_root_private_loopback_gate_channel(channels_root)
+            network = proof._network_projection.network_record
+            if (network.get("role") != "af-unix"
+                    or network.get("worker_profile_id") != profile.profile_id
+                    or network.get("worker_enrollment_id") != profile.enrollment_id
+                    or network.get("endpoint_receipt_handle") != proof._selection._network_projection.network_record.get("endpoint_receipt_handle")):
+                raise AuthorityDenied("native_worker.network", "active AF_UNIX worker network row changed")
+            contract = {
+                "schema": 2, "purpose": "private-loopback-worker-start",
+                "nonce": channel.nonce, "network_id": proof.network_id,
+                "service_generation_digest": proof.service_generation_digest,
+                "enrollment_id": profile.enrollment_id, "profile_id": profile.profile_id,
+                "generation": profile.generation, "uid": profile.owner_uid,
+                "gid": profile.owner_gid, "role": "af-unix",
+                "allowed_bind_port": None, "allowed_connect_port": None,
+                "denied_port": 14500,
+                "application_executable": proof.worker_executable_path,
+                "application_argv": list(proof.worker_argv),
+                "application_environment": dict(proof.worker_environment),
+            }
+            contract_bytes = json.dumps(contract, sort_keys=True, separators=(",", ":"),
+                                        ensure_ascii=True, allow_nan=False).encode("ascii")
+            if len(contract_bytes) > 16 * 1024:
+                raise AuthorityDenied("native_worker.contract", "fixed worker contract exceeds its bound")
+            self._write_native_file(contract_path, contract_bytes, 0o444)
+            contract_info = contract_path.lstat()
+            if (not stat.S_ISREG(contract_info.st_mode) or contract_info.st_uid != 0
+                    or stat.S_IMODE(contract_info.st_mode) != 0o444
+                    or contract_info.st_nlink != 1
+                    or hashlib.sha256(contract_path.read_bytes()).hexdigest()
+                       != hashlib.sha256(contract_bytes).hexdigest()):
+                raise AuthorityDenied("native_worker.contract", "root-owned fixed contract changed")
+            view_context = _NativeWorkerViewMaterializationContext(
+                proof=proof, profile=profile, process_id=process_id,
+                helper_path=helper_path, interpreter_path=interpreter_path,
+                native_mount_source=native_mount_source,
+                native_mount_receipt=native_mount_receipt,
+                contract_path=contract_path,
+                contract_sha256=hashlib.sha256(contract_bytes).hexdigest(),
+                issuer=self._native_worker_view_seal,
+            )
+            with self._lock:
+                if process_id in self._native_worker_view_contexts:
+                    raise AuthorityDenied("native_worker.view", "worker view transaction already exists")
+                self._native_worker_view_contexts[process_id] = view_context
+            view = self.materialize_root_selected_native_worker_view(proof, process_id)
+            self._ensure_root_runtime_directory(Path("/run/hermes-installer/native-loader"), 0o700)
+            loader_channel = create_native_loader_channel(Path("/run/hermes-installer/native-loader"))
+            socket_root = profile.authority_socket or Path(
+                f"/run/hermes-installer/authority/{profile.owner_uid}.sock")
+            if socket_root != Path(f"/run/hermes-installer/authority/{profile.owner_uid}.sock"):
+                raise AuthorityDenied("native_worker.authority_socket", "worker control endpoint is not the fixed UID socket")
+            socket_parent = socket_root.parent.lstat()
+            authority_socket = socket_root.lstat()
+            if (not stat.S_ISDIR(socket_parent.st_mode) or socket_parent.st_uid != 0
+                    or socket_parent.st_mode & 0o022 or not stat.S_ISSOCK(authority_socket.st_mode)
+                    or authority_socket.st_uid != 0 or authority_socket.st_gid != profile.owner_gid
+                    or stat.S_IMODE(authority_socket.st_mode) != 0o660):
+                raise AuthorityDenied("native_worker.authority_socket", "fixed AF_UNIX authority endpoint is unavailable")
+            self._ensure_root_runtime_directory(Path("/run/hermes-installer/authority"), 0o711)
+            properties = [
+                "--property=Type=exec", "--property=RuntimeMaxSec=30s",
+                "--property=KillMode=control-group",
+                f"--property=Description=HermesInstaller native-worker {profile.profile_id} {profile.generation}",
+                "--property=ProtectSystem=strict", "--property=ProtectHome=tmpfs",
+                "--property=ProtectProc=invisible", "--property=ProcSubset=pid",
+                "--property=PrivateTmp=yes", "--property=PrivateDevices=yes",
+                "--property=NoNewPrivileges=yes", "--property=CapabilityBoundingSet=",
+                "--property=AmbientCapabilities=", f"--property=User={profile.service_user}",
+                "--property=SupplementaryGroups=", "--property=ProtectKernelTunables=yes",
+                "--property=ProtectKernelModules=yes", "--property=ProtectControlGroups=yes",
+                "--property=RestrictSUIDSGID=yes", "--property=RestrictNamespaces=user",
+                "--property=RestrictAddressFamilies=AF_UNIX", "--property=PrivateNetwork=yes",
+                "--property=IPAddressDeny=any", "--property=SocketBindDeny=any",
+                "--property=" + channel.systemd_open_file_property,
+                "--property=" + loader_channel.systemd_open_file_property,
+                "--property=PrivateMounts=yes", "--property=MountFlags=private",
+                "--property=InaccessiblePaths=/etc/hermes-installer /etc/ssh /etc/ssl/private",
+                "--property=TemporaryFileSystem=/var/lib/hermes-installer:ro,nosuid,nodev",
+                "--property=TemporaryFileSystem=/run/hermes-installer:ro,nosuid,nodev",
+                "--property=TemporaryFileSystem=/hermes/.native-output:ro,noexec,nosuid,nodev,mode=0711,uid=0,gid=0",
+                "--property=BindPaths=" + str(profile.data_root)
+                    + f":/hermes/profiles/{profile.profile_id}",
+                "--property=BindPaths=" + str(profile.home_root) + ":/hermes",
+                "--property=BindPaths=" + str(profile.work_root) + ":/workspace",
+                "--property=BindPaths=" + str(socket_root) + ":" + str(socket_root),
+            ]
+            for mount in view.mounts:
+                properties.append("--property=BindReadOnlyPaths="
+                                  + str(mount.source_host_root_path) + ":" + mount.worker_mount_path)
+                if mount.noexec:
+                    properties.append("--property=NoExecPaths=" + mount.worker_mount_path)
+            if profile.memory_max_bytes is not None:
+                properties.append(f"--property=MemoryMax={profile.memory_max_bytes}")
+            if profile.cpu_quota_percent is not None:
+                properties.append(f"--property=CPUQuota={profile.cpu_quota_percent}%")
+            if profile.io_weight is not None:
+                properties.append(f"--property=IOWeight={profile.io_weight}")
+            environment = {"HOME": "/hermes", "HERMES_HOME": "/hermes",
+                           "PATH": "/usr/bin:/bin", "LANG": "C",
+                           "HERMES_NATIVE_WORKER_CONTRACT_PATH": str(contract_path)}
+            command = [str(self.systemd_run), "--system", "--unit=" + unit,
+                       "--service-type=exec", "--wait", "--collect", "--pipe", "--quiet",
+                       "--working-directory=/hermes", *properties,
+                       *("--setenv=" + key + "=" + value for key, value in sorted(environment.items())),
+                str(interpreter_path), "-I", str(helper_path)]
+            require_live_start()
+            if (not contract_path.is_file()
+                    or hashlib.sha256(contract_path.read_bytes()).hexdigest()
+                       != hashlib.sha256(contract_bytes).hexdigest()):
+                raise AuthorityDenied("native_worker.contract", "fixed contract changed before systemd launch")
+            unit_may_exist = True
+            launcher = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, env={"PATH": "/usr/bin:/bin", "LANG": "C"},
+                close_fds=True, shell=False)
+            for stream in (launcher.stdin, launcher.stdout, launcher.stderr):
+                if stream is not None:
+                    os.set_blocking(stream.fileno(), False)
+            allowed_bind = allowed_connect = False
+            observed = self._private_native_worker_gate_barrier(
+                proof, channel, unit=unit,
+                contract_sha256=hashlib.sha256(contract_bytes).hexdigest(),
+                nonce=channel.nonce, helper_path=helper_path,
+                interpreter_path=interpreter_path, contract_path=contract_path,
+                cancelled=cancelled,
+                deadline=launch_deadline, allowed_bind=allowed_bind,
+                allowed_connect=allowed_connect)
+            (pid, ticks, child_fd, cgroup, net_dev, net_ino, namespace_fd,
+             invocation_id, fragment_path, exec_start) = observed
+            ready_deadline = min(process_expiry, self.monotonic() + 5.0)
+            while self.monotonic() < ready_deadline:
+                require_live_start()
+                try:
+                    props = {name: self._show(unit, name) for name in (
+                        "MainPID", "InvocationID", "ControlGroup", "FragmentPath", "ExecStart",
+                        "EnvironmentFiles", "KillMode", "RuntimeMaxUSec", "SocketBindDeny",
+                        "PrivateNetwork", "RestrictAddressFamilies", "User", "IPAddressDeny",
+                        "ProtectSystem", "ProtectHome", "PrivateMounts",
+                        "TemporaryFileSystem", "InaccessiblePaths")}
+                    ticks_now, cgroup_now, device_now, inode_now = _pid_identity(pid)
+                    commandline = [item.decode("utf-8", "strict") for item in
+                                   Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0") if item]
+                    exe_path = os.readlink(f"/proc/{pid}/exe")
+                    environment_now = self._read_environment(pid)
+                    if (props["MainPID"] == str(pid) and props["InvocationID"] == invocation_id
+                            and props["ControlGroup"] == cgroup
+                            and props["FragmentPath"] == fragment_path
+                            and props["ExecStart"] == exec_start
+                            and props["EnvironmentFiles"] in {"", "-"}
+                            and props["KillMode"] == "control-group"
+                            and 0 < int(props["RuntimeMaxUSec"]) <= 30_000_000
+                            and props["SocketBindDeny"] == "any"
+                            and props["PrivateNetwork"] == "yes"
+                            and props["RestrictAddressFamilies"].split() == ["AF_UNIX"]
+                            and props["IPAddressDeny"] in {"0.0.0.0/0 ::/0", "any"}
+                            and props["User"] == profile.service_user
+                            and props["ProtectSystem"] == "strict"
+                            and props["ProtectHome"] == "tmpfs"
+                            and props["PrivateMounts"] == "yes"
+                            and set(props["TemporaryFileSystem"].split()) == {
+                                "/var/lib/hermes-installer:ro,nosuid,nodev",
+                                "/run/hermes-installer:ro,nosuid,nodev",
+                                "/hermes/.native-output:ro,noexec,nosuid,nodev,mode=0711,uid=0,gid=0",
+                            }
+                            and set(props["InaccessiblePaths"].split()) == {
+                                "/etc/hermes-installer", "/etc/ssh", "/etc/ssl/private",
+                            }
+                            and (ticks_now, cgroup_now, device_now, inode_now)
+                                == (ticks, cgroup, proof.executable_device, proof.executable_inode)
+                            and exe_path == proof.worker_executable_path
+                            and commandline == list(proof.worker_argv)
+                            and environment_now == {
+                                **dict(proof.worker_environment),
+                                "LISTEN_PID": str(pid), "LISTEN_FDS": "1",
+                                "LISTEN_FDNAMES": "hermes-loader-progress",
+                            }
+                            and self._verify_selected_native_worker_view(pid, proof)
+                            and self._verify_native_package_mount(pid, native_mount_receipt)
+                            and self._verify_process_elf_dependencies(
+                                pid, proof.executable_path,
+                                profile.owner_uid, profile.owner_gid) is None
+                            and not _pidfd_exited(child_fd)):
+                        break
+                except (OSError, UnicodeError, ValueError, AuthorityDenied):
+                    pass
+                if launcher.poll() is not None:
+                    raise AuthorityDenied("native_worker.gate", "fixed helper exited before native application admission")
+                time.sleep(.025)
+            else:
+                raise AuthorityDenied("native_worker.gate", "same-PID native application exec was not observed")
+            require_live_start()
+            if (_pid_identity(pid) != (ticks, cgroup, proof.executable_device, proof.executable_inode)
+                    or _pidfd_exited(child_fd)
+                    or (os.fstat(namespace_fd).st_dev, os.fstat(namespace_fd).st_ino)
+                       != (net_dev, net_ino)
+                    or self._pids(cgroup) != (pid,)):
+                raise AuthorityDenied("native_worker.identity", "native worker changed after gate release")
+            mnt = os.stat(f"/proc/{pid}/ns/mnt").st_ino
+            net = os.stat(f"/proc/{pid}/ns/net").st_ino
+            if (mnt == os.stat("/proc/self/ns/mnt").st_ino
+                    or net == os.stat("/proc/self/ns/net").st_ino
+                    or net != net_ino):
+                raise AuthorityDenied("native_worker.namespace", "private worker namespaces are unavailable")
+            status = Path(f"/proc/{pid}/status").read_text(encoding="ascii").splitlines()
+            uids = next(line for line in status if line.startswith("Uid:")).split()[1:]
+            gids = next(line for line in status if line.startswith("Gid:")).split()[1:]
+            if (len(uids) != 4 or any(int(value) != profile.owner_uid for value in uids)
+                    or len(gids) != 4 or any(int(value) != profile.owner_gid for value in gids)):
+                raise AuthorityDenied("native_worker.identity", "same-PID application UID/GID changed")
+            limits = self._limits(cgroup)
+            if (profile.memory_max_bytes is not None
+                    and limits["memory.max"] != str(profile.memory_max_bytes)):
+                raise AuthorityDenied("process.limits", "native worker memory.max differs from enrolled bound")
+            if profile.cpu_quota_percent is not None:
+                quota, period = limits["cpu.max"].split()
+                if quota == "max" or int(quota) * 100 != profile.cpu_quota_percent * int(period):
+                    raise AuthorityDenied("process.limits", "native worker cpu.max differs from enrolled bound")
+            if profile.io_weight is not None:
+                fields = limits["io.weight"].split()
+                if not fields or int(fields[-1]) != profile.io_weight:
+                    raise AuthorityDenied("process.limits", "native worker io.weight differs from enrolled bound")
+            handle = _Handle(
+                process_id, profile, unit, cgroup, launcher, parent_fd, child_fd, pid, ticks,
+                f"mnt:{mnt};net:{net}", selected_principal, selected_namespace,
+                self.monotonic(), process_expiry, int(operation_recipe["max_output_bytes"]),
+                artifact_mount_dir, native_mount_source=native_mount_source,
+                native_mount_receipt=native_mount_receipt,
+                network_namespace_fd=namespace_fd,
+                lock=threading.RLock(), registered_profile=profile,
+                native_worker_launch_proof=proof, unit_invocation_id=invocation_id)
+            child_fd = namespace_fd = parent_fd = -1
+            with self._lock:
+                self._handles[process_id] = handle
+            self._verify_native_package_mount(pid, native_mount_receipt)
+            if not loader_channel._transferred:
+                binding = getattr(profile.native_package, "binding", profile.native_package)
+                entrypoint_artifact_id = getattr(binding, "entrypoint_artifact_id", None)
+                entrypoint_sha256 = getattr(binding, "entrypoint_sha256", None)
+                if (not isinstance(entrypoint_artifact_id, str) or not entrypoint_artifact_id
+                        or not isinstance(entrypoint_sha256, str)
+                        or not re.fullmatch(r"[0-9a-f]{64}", entrypoint_sha256)):
+                    raise AuthorityDenied("native.loader", "selected native loader role is unavailable")
+                observation = self.register_native_loader_channel(
+                    process_id, loader_channel,
+                    expected_loader_role_artifact_id=entrypoint_artifact_id,
+                    expected_loader_role_sha256=entrypoint_sha256,
+                    deadline_monotonic=min(handle.expires, self.monotonic() + 10.0))
+                if not loader_channel._transferred:
+                    raise AuthorityDenied("native.loader", "system manager did not retain the loader activation FD")
+                handle.native_loader_observation_handle = observation
+            handle.native_loader_ready_event_id = self.receive_native_loader_progress(
+                process_id, cancelled=lambda: cancelled() or _pidfd_exited(handle.parent_pidfd))
+            if not handle.native_loader_ready_event_id:
+                raise AuthorityDenied("native.loader", "fixed app process did not report actual loader READY")
+            handle.native_worker_observed_view = self.observe_native_worker_view(
+                pid, handle.child_pidfd, proof)
+            threading.Thread(target=self._watch_parent, args=(handle,), daemon=True,
+                             name="hermes-native-worker-watch").start()
+            return _response(200, {"schema": 1, "process_id": process_id, "pid": pid,
+                "uid": profile.owner_uid, "namespace_id": handle.kernel_namespace_id,
+                "gid": profile.owner_gid, "unit": unit, "generation": profile.generation,
+                "started_at_monotonic": handle.started, "stdout_cursor": 0,
+                "stderr_cursor": 0, "expires_at_monotonic": handle.expires,
+                "cgroup": cgroup, "start_ticks": ticks,
+                "executable_device": proof.executable_device,
+                "executable_inode": proof.executable_inode,
+                "mount_namespace_inode": mnt, "network_namespace_inode": net,
+                "kernel_limits": limits})
+        except BaseException:
+            with self._lock:
+                retained_handle = self._handles.get(process_id)
+            if retained_handle is not None and not retained_handle.stopped:
+                try:
+                    self._stop(retained_handle, timeout=5.0)
+                except Exception as exc:
+                    raise AuthorityDenied("native_worker.cleanup_ambiguous",
+                        "failed native worker admission could not prove its exact unit stopped") from exc
+            elif unit_may_exist and launcher is not None:
+                try:
+                    self._stop_partial(unit, launcher)
+                except Exception as exc:
+                    raise AuthorityDenied("native_worker.cleanup_ambiguous",
+                        "failed native worker admission could not prove its exact unit stopped") from exc
+            if artifact_mount_dir is not None:
+                try:
+                    _remove_artifact_mount(artifact_mount_dir)
+                except Exception:
+                    pass
+            if native_mount_source is not None:
+                try:
+                    self._remove_native_staging(native_mount_source)
+                except Exception:
+                    pass
+            raise
+        finally:
+            if contract_path is not None:
+                try:
+                    contract_info = contract_path.lstat()
+                    if contract_info.st_uid == 0 and stat.S_ISREG(contract_info.st_mode):
+                        contract_path.unlink()
+                except OSError:
+                    pass
+                try:
+                    contract_path.parent.rmdir()
+                except OSError:
+                    pass
+            for resource in (channel, loader_channel):
+                if resource is not None:
+                    try:
+                        resource.close()
+                    except Exception:
+                        pass
+            for fd in (parent_fd, child_fd, namespace_fd):
+                if fd >= 0:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+
+    def bind_native_health_start_authority(self, authority: Any) -> None:
+        """Bind the one concrete root health admission issuer to this manager."""
+        from hermes_installer.authority.native_health_observer import RootNativeHealthStartAuthority
+        if type(authority) is not RootNativeHealthStartAuthority:
+            raise AuthorityDenied("native.health.authority", "concrete root health start authority is required")
+        with self._lock:
+            if self.native_health_start_authority is not None and self.native_health_start_authority is not authority:
+                raise AuthorityDenied("native.health.authority", "root health authority cannot be replaced")
+            if authority.managed_process_custody is not self:
+                raise AuthorityDenied("native.health.authority", "root health authority is bound to another manager")
+            self.native_health_start_authority = authority
+
+    def start_selected_health_operation(self, verified_effect: Any,
+                                        admission_handle: str) -> RootSelectedHealthControl:
+        """Launch the one committed native-health recipe under sealed root authority.
+
+        This path accepts no worker HostContext, EffectAuthorization, peer PID,
+        argv, or filesystem path.  The sealed health authority supplies the
+        current committed receipt, selected profile/recipe, fixture, source
+        closure and controller lease; this manager independently revalidates
+        those objects before launching the immutable profile recipe.
+        """
+        from hermes_installer.authority.types import VerifiedRootSelectedServiceEffect
+        authority = self.native_health_start_authority
+        if (authority is None or type(verified_effect) is not VerifiedRootSelectedServiceEffect
+                or not isinstance(admission_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", admission_handle)):
+            raise AuthorityDenied("native.health.authority", "root health start authority is unavailable")
+        from hermes_installer.authority.native_health_observer import (
+            RootNativeHealthStartAdmission,
+        )
+        admission = authority.resolve_current_health_admission(admission_handle)
+        if (type(admission) is not RootNativeHealthStartAdmission
+                or admission.admission_handle != admission_handle
+                or authority.verify_consumed_start_effect(verified_effect, admission) is not True
+                or not authority.is_current(admission)):
+            raise AuthorityDenied("native.health.admission", "consumed health start proof is stale")
+        profile = admission._service_profile
+        operation = admission._process_operation
+        controller = admission._controller_lease
+        authority_branch = getattr(admission, "authority_branch", "setup-local")
+        if authority_branch not in {"setup-local", "daemon-committed"}:
+            raise AuthorityDenied("native.health.controller", "health admission authority branch is unavailable")
+        if (type(profile) is not ManagedProfileCustody
+                or self.profiles.get(profile.profile_id) is not profile
+                or profile.profile_id != admission.profile_id
+                or profile.enrollment_id != admission.enrollment_id
+                or profile.generation != admission.process_generation
+                or profile.owner_uid != verified_effect.selected_subject_uid
+                or profile.owner_gid != verified_effect.selected_subject_gid
+                or profile.service_generation_digest != admission.service_generation_digest
+                or operation.operation_id != admission.operation_id
+                or operation.target != verified_effect.target
+                or verified_effect.profile_id != profile.profile_id
+                or verified_effect.generation != profile.generation
+                or verified_effect.enrollment_id != profile.enrollment_id
+                or verified_effect.service_generation_digest != admission.service_generation_digest
+                or verified_effect.role != "health" or verified_effect.action != "start"
+                or verified_effect.admission_kind != "health"
+                or verified_effect.operation != "process.start"
+                or verified_effect.capability != "hermes-profile-invoke"
+                or verified_effect.selected_namespace_identity != getattr(
+                    admission, "_namespace_identity", verified_effect.selected_namespace_identity)
+                or verified_effect.request_sha256 != hashlib.sha256(
+                    json.dumps({"schema": 1, "enrollment_id": profile.enrollment_id,
+                                "generation": profile.generation,
+                                "operation_id": admission.operation_id, "parameters": {}},
+                               sort_keys=True, separators=(",", ":"),
+                               ensure_ascii=True).encode("ascii")).hexdigest()
+                or verified_effect.recipe_sha256 != admission.recipe_sha256
+                or verified_effect.source_closure_sha256 != admission._source_binding.source_closure_sha256
+                or verified_effect.controller_proof_handle != admission.controller_binding_handle
+                or getattr(controller, "proof_sha256", None) != verified_effect.controller_proof_sha256
+                or not controller.is_current()):
+            raise AuthorityDenied("native.health.binding", "health start proof differs from the selected profile")
+        if authority_branch == "daemon-committed":
+            self._verify_root_daemon_health_controller(controller, verified_effect)
+        elif type(controller).__name__ == "RootDaemonHealthControllerLease":
+            raise AuthorityDenied("native.health.controller", "daemon controller cannot back a setup-local admission")
+        operation_recipe = (profile.operation_recipes or {}).get(admission.operation_id)
+        if (not isinstance(operation_recipe, Mapping)
+                or operation_recipe.get("target") not in (None, verified_effect.target)
+                or hashlib.sha256(json.dumps(dict(operation_recipe), sort_keys=True,
+                    separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode("ascii")).hexdigest()
+                    != admission.recipe_sha256
+                or type(operation_recipe.get("max_lifetime_seconds")) is not int
+                or not 0 < operation_recipe["max_lifetime_seconds"] <= profile.max_lifetime_seconds):
+            raise AuthorityDenied("native.health.recipe", "fixed health recipe has no bounded lifetime")
+        now = self.monotonic()
+        process_deadline = now + min(float(operation_recipe["max_lifetime_seconds"]),
+                                     float(profile.max_lifetime_seconds))
+        with self._lock:
+            if (profile.profile_id in self._starting
+                    or any(item.profile.profile_id == profile.profile_id for item in self._handles.values())):
+                raise AuthorityDenied("process.generation", "health profile already has a managed process")
+            self._starting.add(profile.profile_id)
+        parent_pidfd = None
+        process_id = None
+        try:
+            parent_pidfd = os.pidfd_open(os.getpid(), 0)
+            if _pidfd_exited(parent_pidfd):
+                raise AuthorityDenied("native.health.parent", "custody process lifetime anchor is not live")
+            self._verify_root_controller_identity(controller, verified_effect)
+            payload = json.dumps({"schema": 1, "enrollment_id": profile.enrollment_id,
+                                  "generation": profile.generation,
+                                  "operation_id": admission.operation_id, "parameters": {}},
+                                 sort_keys=True, separators=(",", ":"),
+                                 ensure_ascii=True).encode("ascii")
+
+            def launch_current() -> bool:
+                return (authority.is_current(admission)
+                        and authority.verify_consumed_start_effect(verified_effect, admission) is True
+                        and controller.is_current() and verified_effect.is_current()
+                        and self.profiles.get(profile.profile_id) is profile)
+
+            # Internal root recipe execution shares only the lower-level
+            # selected-recipe resolver.  It deliberately has no worker grant
+            # or peer identity and is admitted by this dedicated health proof.
+            response = self.start_selected_operation(
+                profile, None, None, payload, timeout=min(30.0, max(.1, admission.expires_monotonic - now)),
+                peer_pid=None, peer_pidfd=None,
+                cancelled=lambda: (not authority.is_current(admission)
+                                   or not controller.is_current()),
+                _start_guard=launch_current, _root_selected_effect=verified_effect,
+                _root_selected_health_admission=admission,
+                _root_selected_lifecycle_deadline=process_deadline,
+                _daemon_liveness_pidfd=parent_pidfd,
+            )
+            body = response.get("body") if isinstance(response, Mapping) else None
+            decoded = json.loads(body.decode("ascii")) if isinstance(body, bytes) else None
+            process_id = decoded.get("process_id") if isinstance(decoded, dict) else None
+            if not isinstance(process_id, str):
+                raise AuthorityDenied("native.health.launch", "manager did not retain a health process")
+            with self._lock:
+                handle = self._handles.get(process_id)
+            if (handle is None or handle.stopped or handle.profile is not profile
+                    or handle.profile.generation != admission.process_generation
+                    or not authority.is_current(admission)
+                    or not controller.is_current()):
+                raise AuthorityDenied("native.health.identity", "started health process is no longer current")
+            lease = self.resolve_owned_process_handle(handle)
+            if lease is None:
+                raise AuthorityDenied("native.health.identity", "started health PIDFD identity is unavailable")
+            try:
+                # Verify the selected executable, user, cgroup and namespaces
+                # against the manager's live retained child PIDFD before minting
+                # a control object.
+                if (lease.process_id != process_id or lease.profile_id != profile.profile_id
+                        or lease.generation != profile.generation or lease.uid != profile.owner_uid
+                        or lease.gid != profile.owner_gid or _pidfd_exited(lease.pidfd)):
+                    raise AuthorityDenied("native.health.identity", "health child identity changed")
+                issued = self.monotonic()
+                control = RootSelectedHealthControl(
+                    1, secrets.token_urlsafe(32), secrets.token_urlsafe(32), process_id,
+                    admission.operation_id, admission.enrollment_id, admission.profile_id,
+                    admission.process_generation, admission.service_generation_digest,
+                    admission.bootstrap_transaction_handle, admission.committed_enrollment_receipt_id,
+                    admission.health_fixture_artifact_id, admission.health_fixture_sha256,
+                    issued, handle.expires, self, object(),
+                )
+                with self._lock:
+                    self._health_controls[control.control_handle] = (control, handle, admission,
+                                                                      control._seal)
+                # The observer must bind actual live PIDFD and loaded closure
+                # before the health fixture is delivered by its authority.
+                observer = authority.health_observer
+                observation_handle = observer.begin_selected_health(control.control_handle)
+                if (not isinstance(observation_handle, str)
+                        or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", observation_handle)):
+                    raise AuthorityDenied("native.health.observer", "health observer returned no retained run handle")
+                with self._lock:
+                    self._health_observation_handles[control.control_handle] = observation_handle
+                return control
+            finally:
+                lease.close()
+        except BaseException:
+            if process_id is not None:
+                failed_observations: list[str] = []
+                with self._lock:
+                    handle = self._handles.get(process_id)
+                    for key, value in tuple(self._health_controls.items()):
+                        if value[1] is handle:
+                            self._health_controls.pop(key, None)
+                            observation = self._health_observation_handles.pop(key, None)
+                            if observation is not None:
+                                failed_observations.append(observation)
+                for observation in failed_observations:
+                    try:
+                        self.native_health_start_authority.health_observer.cancel_selected_health(observation)
+                    except Exception:
+                        pass
+                if handle is not None and not handle.stopped:
+                    self._stop(handle, timeout=5.0)
+            raise
+        finally:
+            if parent_pidfd is not None:
+                os.close(parent_pidfd)
+            with self._lock:
+                self._starting.discard(profile.profile_id)
+
+    def start_selected_native_health(self, admission_handle: str) -> RootSelectedHealthControl:
+        """Consume the root health admission and start its one fixed native run.
+
+        This is the daemon-side entrypoint for an authenticated selected-health
+        intent.  The caller supplies only the opaque admission handle; the
+        bound health authority creates and consumes the exact start effect.
+        """
+        from hermes_installer.authority.native_health_observer import RootNativeHealthStartAuthority
+        authority = self.native_health_start_authority
+        if (type(authority) is not RootNativeHealthStartAuthority
+                or authority.managed_process_custody is not self
+                or not isinstance(admission_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", admission_handle)):
+            raise AuthorityDenied("native.health.authority", "fixed root health authority is unavailable")
+        control = authority.start_selected_health(admission_handle)
+        if (type(control) is not RootSelectedHealthControl
+                or control._manager is not self
+                or not control.is_current()):
+            raise AuthorityDenied("native.health.control", "root health start returned no current process control")
+        return control
+
+    def _health_control_current(self, control: RootSelectedHealthControl,
+                                seal: object) -> bool:
+        with self._lock:
+            retained = self._health_controls.get(control.control_handle)
+        if (retained is None or retained[0] is not control or retained[3] is not seal
+                or retained[1].stopped or control._seal is not seal
+                or self.monotonic() >= control.expires_monotonic):
+            return False
+        handle = retained[1]
+        if (self._handles.get(handle.process_id) is not handle
+                or self.profiles.get(handle.profile.profile_id) is not handle.profile
+                or handle.profile.generation != control.process_generation):
+            return False
+        lease = self.resolve_owned_process_handle(handle)
+        if lease is None:
+            return False
+        try:
+            return bool(lease.process_id == control.process_id
+                        and lease.profile_id == control.profile_id
+                        and lease.generation == control.process_generation
+                        and lease.uid == handle.profile.owner_uid
+                        and lease.gid == handle.profile.owner_gid
+                        and not _pidfd_exited(lease.pidfd))
+        finally:
+            lease.close()
+
+    def resolve_selected_health_control(self, control_handle: str) -> RootSelectedHealthControl:
+        with self._lock:
+            retained = self._health_controls.get(control_handle)
+        if retained is None or not retained[0].is_current():
+            raise AuthorityDenied("native.health.control", "selected health control is stale")
+        return retained[0]
+
+    def resolve_selected_health_admission(self, control_handle: str) -> Any:
+        """Borrow the exact current sealed start admission retained by this control."""
+        control = self.resolve_selected_health_control(control_handle)
+        with self._lock:
+            retained = self._health_controls.get(control_handle)
+        authority = self.native_health_start_authority
+        if (retained is None or retained[0] is not control or authority is None
+                or not authority.is_current(retained[2])
+                or not control.is_current()):
+            raise AuthorityDenied("native.health.admission", "selected health admission is no longer current")
+        return retained[2]
+
+    def resolve_selected_health_run(self, control_handle: str) -> Any:
+        """Build the observer's run DTO from one exact committed daemon admission.
+
+        The returned descriptor is borrowed for the duration of observer
+        ``begin_selected_health``; its PIDFD is a temporary duplicate that the
+        caller must close after the observer takes its own retained duplicate.
+        No ancestry digest is inferred here.  The v194 observer receives
+        ``parent_closure_digest=None`` and validates each event's own source
+        receipt ancestry before issuing the aggregate run proof.
+        """
+        from hermes_installer.authority.native_health_observer import (
+            RootDaemonHealthControllerLease,
+            RootNativeHealthStartAdmission,
+            RootSelectedNativeHealthRun,
+        )
+        from hermes_installer.authority.native_health_daemon import RootDaemonNativeHealthStartMaterial
+
+        control = self.resolve_selected_health_control(control_handle)
+        admission = self.resolve_selected_health_admission(control_handle)
+        if (type(admission) is not RootNativeHealthStartAdmission
+                or getattr(admission, "authority_branch", None) != "daemon-committed"
+                or type(admission._controller_lease) is not RootDaemonHealthControllerLease
+                or not admission._controller_lease.is_current()
+                or not control.is_current()
+                or not self.native_health_start_authority.is_current(admission)):
+            raise AuthorityDenied("native.health.run", "current daemon-committed health admission is unavailable")
+        material = getattr(admission, "_source_material", None)
+        if type(material) is not RootDaemonNativeHealthStartMaterial:
+            raise AuthorityDenied("native.health.run", "typed current daemon health source material is unavailable")
+        definition = getattr(material, "_health_definition", None)
+        if (not isinstance(definition, Mapping)
+                or not isinstance(definition.get("health_action_id"), str)
+                or not isinstance(definition.get("health_result_schema_id"), str)
+                or not definition["health_action_id"]
+                or definition["health_result_schema_id"] != material.health_result_schema_id
+                or type(material.health_provider_required) is not bool
+                or material.profile_id != control.profile_id
+                or material.process_generation != control.process_generation
+                or material.enrollment_id != control.enrollment_id
+                or material.service_generation_digest != control.service_generation_digest
+                or material.operation_id != control.operation_id
+                or material.health_fixture_artifact_id != control.health_fixture_artifact_id
+                or material.health_fixture_sha256 != control.health_fixture_sha256):
+            raise AuthorityDenied("native.health.run", "source-defined health action or result schema is unavailable")
+
+        process_lease = self.resolve_selected_health_process(control_handle)
+        try:
+            with self._lock:
+                retained = self._health_controls.get(control_handle)
+            if retained is None or retained[0] is not control or retained[1].stopped:
+                raise AuthorityDenied("native.health.run", "selected health manager handle is stale")
+            managed = retained[1]
+            if (process_lease.process_id != control.process_id
+                    or process_lease.profile_id != control.profile_id
+                    or process_lease.generation != control.process_generation
+                    or process_lease.uid != managed.profile.owner_uid
+                    or process_lease.gid != managed.profile.owner_gid
+                    or _pidfd_exited(process_lease.pidfd)):
+                raise AuthorityDenied("native.health.run", "manager process lease differs from committed admission")
+            process_identity = self.resolve_live_peer(
+                process_lease.pid, process_lease.pidfd,
+                profile_id=control.profile_id, generation=control.process_generation)
+            loaded_package = self.resolve_selected_health_loaded_package(control_handle)
+            proof = self.resolve_selected_health_launch_proof(control_handle)
+            observed_view = self._handles[control.process_id].native_worker_observed_view
+            if (process_identity is None or loaded_package is None
+                    or loaded_package.profile_id != control.profile_id
+                    or loaded_package.generation != control.process_generation
+                    or loaded_package.kernel_uid != process_lease.uid
+                    or observed_view is None
+                    or self.verify_current_native_worker_view(proof, observed_view) is not observed_view
+                    or not self.native_health_start_authority.is_current(admission)
+                    or not admission._controller_lease.is_current()
+                    or not control.is_current()):
+                raise AuthorityDenied("native.health.run", "same worker, package, or selected view is no longer current")
+            if (not isinstance(handle.unit_invocation_id, str)
+                    or not re.fullmatch(r"[0-9a-f]{32}", handle.unit_invocation_id)
+                    or handle.native_loader_ready_event_id is None):
+                raise AuthorityDenied("native.health.run", "fixed unit or loader READY binding is unavailable")
+            with self._lock:
+                current_control = self._health_controls.get(control.control_handle)
+                if current_control is None or current_control[0] is not control or current_control[1] is not handle:
+                    raise AuthorityDenied("native.health.run", "health run control changed during resolution")
+                handle.native_health_process_identity = process_identity
+                handle.native_health_loaded_package_proof = loaded_package
+            run_fields = getattr(RootSelectedNativeHealthRun, "__dataclass_fields__", {})
+            if "intent_handle" not in run_fields or "parent_closure_digest" not in run_fields:
+                # Older observers collapsed distinct source event ancestry
+                # into one closure.  They cannot safely consume v194 material.
+                raise AuthorityDenied("native.health.run", "v194 event-specific health observer is required")
+            run_pidfd = os.dup(process_lease.pidfd)
+            try:
+                return RootSelectedNativeHealthRun(
+                    operation_id=control.operation_id,
+                    enrollment_id=control.enrollment_id,
+                    profile_id=control.profile_id,
+                    process_generation=control.process_generation,
+                    service_generation_digest=control.service_generation_digest,
+                    bootstrap_transaction_handle=control.bootstrap_transaction_handle,
+                    committed_enrollment_receipt_id=control.committed_enrollment_receipt_id,
+                    intent_handle=admission.admission_handle,
+                    process_id=control.process_id,
+                    process_pid=process_lease.pid,
+                    process_pidfd=run_pidfd,
+                    process_uid=process_lease.uid,
+                    process_identity=process_identity,
+                    package_id=material.native_package_id,
+                    compiled_closure_sha256=material.native_closure_sha256,
+                    loaded_package_proof=loaded_package,
+                    fixture_artifact_id=control.health_fixture_artifact_id,
+                    fixture_sha256=control.health_fixture_sha256,
+                    health_action_id=definition["health_action_id"],
+                    result_schema_id=definition["health_result_schema_id"],
+                    provider_required=bool(material.health_provider_required),
+                    parent_closure_digest=None,
+                    expires_monotonic=min(
+                        control.expires_monotonic, admission.expires_monotonic,
+                        admission._controller_lease.expires_monotonic,
+                        process_lease.expires_monotonic, proof.expires_monotonic,
+                        observed_view.expires_monotonic, self.monotonic() + 30.0),
+                )
+            except BaseException:
+                os.close(run_pidfd)
+                raise
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("native.health.run", "selected health run DTO could not be constructed") from None
+        finally:
+            process_lease.close()
+
+    def resolve_selected_health_process(self, control_handle: str) -> ManagedProcessIdentityLease:
+        """Return an owned duplicate PIDFD for the exact health-control child."""
+        control = self.resolve_selected_health_control(control_handle)
+        with self._lock:
+            retained = self._health_controls.get(control_handle)
+        if retained is None or retained[0] is not control:
+            raise AuthorityDenied("native.health.control", "selected health process handle is stale")
+        lease = self.resolve_owned_process_handle(retained[1])
+        if (lease is None or lease.process_id != control.process_id
+                or lease.profile_id != control.profile_id
+                or lease.generation != control.process_generation):
+            if lease is not None:
+                lease.close()
+            raise AuthorityDenied("native.health.identity", "selected health PIDFD identity is unavailable")
+        return lease
+
+    def resolve_selected_health_loaded_package(
+            self, control_handle: str) -> RootSelectedHealthLoadedPackageProof:
+        """Reobserve the exact package mount selected by current health source material."""
+        control = self.resolve_selected_health_control(control_handle)
+        admission = self.resolve_selected_health_admission(control_handle)
+        with self._lock:
+            retained = self._health_controls.get(control_handle)
+        if retained is None or retained[0] is not control:
+            raise AuthorityDenied("native.health.package", "selected health process is stale")
+        handle = retained[1]
+        material = getattr(admission, "_source_material", None)
+        package = getattr(handle.registered_profile, "native_package", None)
+        binding = getattr(package, "binding", package)
+        if (material is None or handle.stopped or handle.native_worker_launch_proof is None
+                or not self.native_health_start_authority.is_current(admission)
+                or not control.is_current() or binding is None
+                or getattr(binding, "package_id", None) != material.native_package_id
+                or getattr(binding, "generation", None) != material.native_package_generation
+                or getattr(binding, "compiled_closure_sha256", None) != material.native_closure_sha256
+                or handle.profile.service_generation_digest != control.service_generation_digest):
+            raise AuthorityDenied("native.health.package", "selected committed package binding is unavailable")
+        proof = self.resolve_loaded_native_package(control.process_id, control.process_generation)
+        if (proof is None or proof.profile_id != control.profile_id
+                or proof.generation != control.process_generation
+                or proof.kernel_uid != handle.profile.owner_uid
+                or proof.mount.package_id != material.native_package_id
+                or proof.mount.compiled_closure_sha256 != material.native_closure_sha256
+                or proof.mount.service_mount_id != binding.service_mount_id
+                or not self.native_health_start_authority.is_current(admission)
+                or not control.is_current()):
+            raise AuthorityDenied("native.health.package", "loaded native package mount differs from selected source")
+        return RootSelectedHealthLoadedPackageProof(
+            process_id=proof.process_id, profile_id=proof.profile_id,
+            generation=proof.generation, kernel_uid=proof.kernel_uid,
+            package_id=material.native_package_id,
+            compiled_closure_sha256=material.native_closure_sha256,
+            service_generation_digest=control.service_generation_digest,
+            mount_proof=proof, observed_monotonic=proof.observed_monotonic,
+        )
+
+    def resolve_loaded_selected_health_package(
+            self, process_id: str, generation: str) -> RootSelectedHealthLoadedPackageProof:
+        """Resolve loaded health package by the exact observer's run identity."""
+        if (not isinstance(process_id, str) or not re.fullmatch(r"[0-9a-f]{32}", process_id)
+                or not isinstance(generation, str) or not generation):
+            raise AuthorityDenied("native.health.package", "health run package selector is malformed")
+        with self._lock:
+            matches = [control_handle for control_handle, (control, handle, _admission, _seal)
+                       in self._health_controls.items()
+                       if control.process_id == process_id
+                       and control.process_generation == generation
+                       and handle.process_id == process_id and not handle.stopped]
+        if len(matches) != 1:
+            raise AuthorityDenied("native.health.package", "health run does not identify one retained process")
+        return self.resolve_selected_health_loaded_package(matches[0])
+
+    def resolve_selected_health_observation_handle(self, control_handle: str) -> str:
+        """Resolve the actual observer run handle for the exact live health control."""
+        control = self.resolve_selected_health_control(control_handle)
+        with self._lock:
+            retained = self._health_controls.get(control_handle)
+            observation = self._health_observation_handles.get(control_handle)
+        if (retained is None or retained[0] is not control
+                or not isinstance(observation, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", observation)
+                or not control.is_current()):
+            raise AuthorityDenied("native.health.observer", "selected health observer run is stale")
+        return observation
+
+    def resolve_selected_health_loader_ready_event(self, control_handle: str) -> str:
+        """Return the exact manager-observed loader READY event for a live run."""
+        control = self.resolve_selected_health_control(control_handle)
+        with self._lock:
+            retained = self._health_controls.get(control_handle)
+        if (retained is None or retained[0] is not control
+                or not control.is_current()):
+            raise AuthorityDenied("native.health.loader", "selected health control is stale")
+        event_id = retained[1].native_loader_ready_event_id
+        if (not isinstance(event_id, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", event_id)):
+            raise AuthorityDenied("native.health.loader", "actual manager loader READY event is unavailable")
+        return event_id
+
+    def write_selected_health_input(self, control_handle: str, delivery: Any,
+                                    delivery_registry: Any
+                                    ) -> RootSelectedHealthInputWriteReceipt:
+        """Reserve one bounded receipt slot before consuming the source event."""
+        self.resolve_selected_health_control(control_handle)
+        with self._lock:
+            now = self.monotonic()
+            for key, (_receipt, expiry) in tuple(self._health_input_write_receipts.items()):
+                if expiry <= now:
+                    self._health_input_write_receipts.pop(key, None)
+            if (any(receipt.control_handle == control_handle
+                    for receipt, _expiry in self._health_input_write_receipts.values())
+                    or control_handle in self._health_input_write_pending
+                    or len(self._health_input_write_receipts) + len(self._health_input_write_pending) >= 256):
+                raise AuthorityDenied("native.health.input", "selected input already consumed or receipt capacity is full")
+            self._health_input_write_pending.add(control_handle)
+        try:
+            return self._write_selected_health_input_reserved(
+                control_handle, delivery, delivery_registry)
+        finally:
+            with self._lock:
+                self._health_input_write_pending.discard(control_handle)
+
+    def _write_selected_health_input_reserved(self, control_handle: str, delivery: Any,
+                                             delivery_registry: Any
+                                             ) -> RootSelectedHealthInputWriteReceipt:
+        """Consume one source-issued request and write it once to the live worker."""
+        from hermes_installer.authority.native_health_daemon import (
+            RootHealthInputDeliveryRegistry, RootSelectedHealthInputDelivery,
+        )
+        from hermes_installer.authority.native_input_observer import RootNativeInputEvent
+
+        control = self.resolve_selected_health_control(control_handle)
+        if (type(delivery_registry) is not RootHealthInputDeliveryRegistry
+                or type(delivery) is not RootSelectedHealthInputDelivery
+                or delivery.control_handle != control_handle
+                or type(delivery.input_event) is not RootNativeInputEvent):
+            raise AuthorityDenied("native.health.input", "selected input delivery is foreign or malformed")
+        with self._lock:
+            if any(receipt.control_handle == control_handle
+                   for receipt, _expiry in self._health_input_write_receipts.values()):
+                raise AuthorityDenied("native.health.input", "selected health input was already consumed")
+            retained = self._health_controls.get(control_handle)
+        if retained is None or retained[0] is not control:
+            raise AuthorityDenied("native.health.input", "selected health process control is stale")
+        handle, admission = retained[1], retained[2]
+        if (handle.stopped or handle.launcher.stdin is None
+                or delivery.observation_handle != self.resolve_selected_health_observation_handle(control_handle)
+                or delivery.loader_ready_event_id != self.resolve_selected_health_loader_ready_event(control_handle)
+                or type(delivery.payload_size_bytes) is not int
+                or not 0 < delivery.payload_size_bytes <= 262144
+                or not re.fullmatch(r"[0-9a-f]{64}", delivery.payload_sha256)
+                or not control.is_current()
+                or not self.native_health_start_authority.is_current(admission)):
+            raise AuthorityDenied("native.health.input", "selected request, READY, or source admission is stale")
+        owner = self._native_worker_launch_owner
+        proof = handle.native_worker_launch_proof
+        if (owner is None or proof is None
+                or owner.verify_current_native_worker_launch(proof) is not proof
+                or proof.profile_id != control.profile_id
+                or proof.profile_generation != control.process_generation):
+            raise AuthorityDenied("native.health.input", "same-worker launch proof is no longer current")
+        try:
+            payload = delivery_registry.consume_for_manager(control_handle, delivery)
+        except Exception:
+            raise AuthorityDenied("native.health.input", "source request event was not consumable") from None
+        if (type(payload) is not bytes or len(payload) != delivery.payload_size_bytes
+                or hashlib.sha256(payload).hexdigest() != delivery.payload_sha256
+                or not control.is_current()
+                or not self.native_health_start_authority.is_current(admission)
+                or owner.verify_current_native_worker_launch(proof) is not proof):
+            try:
+                handle.launcher.stdin.close()
+            except Exception:
+                pass
+            try:
+                self._stop(handle, timeout=5.0, preserve_health_observation=True)
+            except Exception:
+                pass
+            raise AuthorityDenied("native.health.input", "consumed request differs from current source custody")
+        digest = hashlib.sha256(payload).hexdigest()
+        stream = handle.launcher.stdin
+        deadline = min(control.expires_monotonic, handle.expires, self.monotonic() + 5.0)
+        offset = 0
+        try:
+            fd = stream.fileno()
+            while offset < len(payload):
+                if (self.monotonic() >= deadline or not control.is_current()
+                        or not self.native_health_start_authority.is_current(admission)
+                        or owner.verify_current_native_worker_launch(proof) is not proof
+                        or _pidfd_exited(handle.child_pidfd)):
+                    raise AuthorityDenied("native.health.input", "selected request expired during write")
+                _readable, writable, _errors = select.select([], [fd], [],
+                    min(.05, max(.001, deadline - self.monotonic())))
+                if not writable:
+                    continue
+                try:
+                    count = os.write(fd, payload[offset:offset + 65536])
+                except BlockingIOError:
+                    continue
+                if count <= 0:
+                    raise OSError("selected request pipe made no write progress")
+                offset += count
+            stream.close()  # EOF is part of the one-turn request framing.
+        except Exception:
+            try:
+                stream.close()
+            except Exception:
+                pass
+            try:
+                self._stop(handle, timeout=5.0, preserve_health_observation=True)
+            except Exception:
+                pass
+            raise AuthorityDenied("native.health.input", "selected request write or EOF could not be proved") from None
+        event_id = delivery.input_event.input_event_id
+        receipt = RootSelectedHealthInputWriteReceipt(
+            schema=1, receipt_handle=uuid.uuid4().hex, control_handle=control_handle,
+            input_event_id=event_id, observation_handle=delivery.observation_handle,
+            loader_ready_event_id=delivery.loader_ready_event_id,
+            process_id=handle.process_id, process_generation=handle.profile.generation,
+            payload_sha256=digest, payload_size_bytes=len(payload), written_monotonic=self.monotonic(),
+        )
+        with self._lock:
+            now = self.monotonic()
+            for key, (_old, expiry) in tuple(self._health_input_write_receipts.items()):
+                if expiry <= now:
+                    self._health_input_write_receipts.pop(key, None)
+            if len(self._health_input_write_receipts) >= 256:
+                raise AuthorityDenied("native.health.input", "selected input receipt registry is full")
+            self._health_input_write_receipts[receipt.receipt_handle] = (receipt, now + 30.0)
+        return receipt
+
+    def resolve_selected_health_launch_proof(self, control_handle: str) -> Any:
+        """Borrow the exact retained current launch proof without transferring custody."""
+        control = self.resolve_selected_health_control(control_handle)
+        with self._lock:
+            retained = self._health_controls.get(control_handle)
+            owner = self._native_worker_launch_owner
+        if (retained is None or retained[0] is not control or owner is None
+                or not control.is_current()):
+            raise AuthorityDenied("native.health.launch", "selected health native launch is stale")
+        proof = retained[1].native_worker_launch_proof
+        if proof is None or owner.verify_current_native_worker_launch(proof) is not proof:
+            raise AuthorityDenied("native.health.launch", "current manager-held native launch proof is unavailable")
+        # Borrowed in-process only. The manager remains the proof/FD issuer and
+        # closes it after exact process cleanup; consumers must not call close.
+        return proof
+
+    def wait_selected_health_terminal(self, control_handle: str, *,
+                                      deadline_monotonic: float,
+                                      cancelled: Callable[[], bool]) -> RootSelectedHealthTerminalReceipt:
+        """Observe exact native health exit, drain bounded output, and prove cleanup.
+
+        Semantic request/tool/result facts remain the health event registry's
+        job. This receipt supplies only the manager's actual terminal and
+        stopped-cgroup/PIDFD evidence.
+        """
+        control = self.resolve_selected_health_control(control_handle)
+        if (isinstance(deadline_monotonic, bool)
+                or not isinstance(deadline_monotonic, (int, float))
+                or not math.isfinite(deadline_monotonic)
+                or not callable(cancelled)):
+            raise AuthorityDenied("native.health.terminal", "health terminal deadline or cancellation is invalid")
+        with self._lock:
+            retained = self._health_controls.get(control_handle)
+            input_receipts = [receipt for receipt, expiry in self._health_input_write_receipts.values()
+                              if receipt.control_handle == control_handle and expiry > self.monotonic()]
+        if retained is None or retained[0] is not control or len(input_receipts) != 1:
+            raise AuthorityDenied("native.health.terminal", "health process control or one-use input receipt is stale")
+        handle, admission = retained[1], retained[2]
+        launch_proof = handle.native_worker_launch_proof
+        observed_view = handle.native_worker_observed_view
+        process_identity = handle.native_health_process_identity
+        loaded_package_proof = handle.native_health_loaded_package_proof
+        if (launch_proof is None or observed_view is None or process_identity is None
+                or loaded_package_proof is None
+                or getattr(loaded_package_proof, "proof_id", None) is None
+                or handle.native_loader_ready_event_id is None
+                or not isinstance(handle.unit_invocation_id, str)):
+            raise AuthorityDenied("native.health.terminal", "pre-stop authenticated worker facts were not retained")
+        deadline = min(float(deadline_monotonic), control.expires_monotonic, handle.expires)
+        if deadline <= self.monotonic():
+            raise AuthorityDenied("native.health.terminal", "health process lifetime already expired")
+        streams = {"stdout": handle.launcher.stdout, "stderr": handle.launcher.stderr}
+        eof = {name: stream is None for name, stream in streams.items()}
+        digests = {"stdout": hashlib.sha256(), "stderr": hashlib.sha256()}
+        sizes = {"stdout": 0, "stderr": 0}
+        overflow = False
+        timed_out = False
+        was_cancelled = False
+
+        def drain(readable: list[int]) -> None:
+            nonlocal overflow
+            for name, stream in streams.items():
+                if stream is None or eof[name] or stream.fileno() not in readable:
+                    continue
+                try:
+                    chunk = os.read(stream.fileno(), 65536)
+                except BlockingIOError:
+                    continue
+                except OSError:
+                    chunk = b""
+                if not chunk:
+                    eof[name] = True
+                    continue
+                sizes[name] += len(chunk)
+                if sizes["stdout"] + sizes["stderr"] > handle.output_cap:
+                    overflow = True
+                    continue
+                digests[name].update(chunk)
+
+        while handle.launcher.poll() is None:
+            try:
+                if cancelled() or _pidfd_exited(handle.parent_pidfd):
+                    was_cancelled = True
+                    break
+                if (self.monotonic() >= deadline
+                        or self.native_health_start_authority is None
+                        or not self.native_health_start_authority.is_current(admission)
+                        or not admission._controller_lease.is_current()):
+                    was_cancelled = True
+                    timed_out = self.monotonic() >= deadline
+                    break
+                proof = handle.native_worker_launch_proof
+                owner = self._native_worker_launch_owner
+                if proof is None or owner is None:
+                    was_cancelled = True
+                    break
+                owner.verify_current_native_worker_launch(proof)
+            except Exception:
+                was_cancelled = True
+                break
+            fds = [stream.fileno() for name, stream in streams.items()
+                   if stream is not None and not eof[name]]
+            if fds:
+                readable, _, _ = select.select(fds, [], [], min(.05, max(.001, deadline - self.monotonic())))
+                drain(readable)
+            else:
+                time.sleep(min(.025, max(.001, deadline - self.monotonic())))
+            if overflow:
+                was_cancelled = True
+                break
+
+        if handle.launcher.poll() is None and not was_cancelled and self.monotonic() >= deadline:
+            timed_out = True
+        # Natural exit still requires a bounded final drain before cgroup
+        # cleanup; a stream that never reaches EOF remains incomplete.
+        for _ in range(32):
+            if all(eof.values()) or overflow:
+                break
+            fds = [stream.fileno() for name, stream in streams.items()
+                   if stream is not None and not eof[name]]
+            if not fds:
+                break
+            readable, _, _ = select.select(fds, [], [], .01)
+            if not readable:
+                if handle.launcher.poll() is None:
+                    break
+                continue
+            drain(readable)
+        if overflow:
+            was_cancelled = True
+        cleanup = self._stop(handle, timeout=5.0, preserve_health_observation=True)
+        finished = self.monotonic()
+        digest_value = lambda name: digests[name].hexdigest()
+        receipt = RootSelectedHealthTerminalReceipt(
+            schema=1, terminal_receipt_handle=uuid.uuid4().hex,
+            control_handle=control.control_handle, process_id=handle.process_id,
+            profile_id=handle.profile.profile_id, generation=handle.profile.generation,
+            service_generation_digest=control.service_generation_digest,
+            process_uid=handle.profile.owner_uid, process_gid=handle.profile.owner_gid,
+            unit=handle.unit, cgroup=handle.cgroup, start_ticks=handle.start_ticks,
+            exit_code=handle.launcher.returncode, timed_out=timed_out, cancelled=was_cancelled,
+            started_monotonic=handle.started, finished_monotonic=finished,
+            stdout_size_bytes=sizes["stdout"], stderr_size_bytes=sizes["stderr"],
+            stdout_sha256=digest_value("stdout"), stderr_sha256=digest_value("stderr"),
+            output_overflow=overflow,
+            loader_ready_event_id=handle.native_loader_ready_event_id or "",
+            cgroup_empty=cleanup.cgroup_empty, main_pidfd_gone=cleanup.main_pidfd_gone,
+            launcher_reaped=cleanup.launcher_reaped,
+            cleanup_verified=cleanup.cleanup_verified, observed_monotonic=finished,
+        )
+        with self._lock:
+            now = self.monotonic()
+            for key, (_old, expiry) in tuple(self._health_terminal_receipts.items()):
+                if expiry <= now:
+                    self._health_terminal_receipts.pop(key, None)
+                    self._health_completed_terminals.pop(_old.control_handle, None)
+            if len(self._health_terminal_receipts) >= 256:
+                raise AuthorityDenied("native.health.terminal", "health terminal receipt registry is full")
+            receipt_expiry = now + 30.0
+            self._health_terminal_receipts[receipt.terminal_receipt_handle] = (receipt, receipt_expiry)
+            namespace = process_identity.namespace_identity
+            namespace_match = re.fullmatch(r"mnt:([1-9][0-9]*);net:([1-9][0-9]*)", namespace)
+            if (receipt.exit_code == 0 and not receipt.timed_out and not receipt.cancelled
+                    and not receipt.output_overflow and receipt.cleanup_verified
+                    and receipt.cgroup_empty and receipt.main_pidfd_gone and receipt.launcher_reaped
+                    and namespace_match is not None):
+                try:
+                    from hermes_installer.authority.native_worker_launch import (
+                        RootObservedNativeWorkerView, RootVerifiedNativeHermesWorkerLaunch,
+                    )
+                    from hermes_installer.authority.native_health_observer import RootNativeHealthStartAdmission
+                    if (type(admission) is not RootNativeHealthStartAdmission
+                            or type(launch_proof) is not RootVerifiedNativeHermesWorkerLaunch
+                            or type(observed_view) is not RootObservedNativeWorkerView
+                            or not getattr(admission, "admission_handle", None)
+                            or getattr(admission, "_source_material", None) is None):
+                        raise ValueError("terminal source join is not the root-selected native health admission")
+                    expiry = min(receipt_expiry, admission.expires_monotonic,
+                                 admission._controller_lease.expires_monotonic)
+                    if expiry <= now:
+                        raise ValueError("health admission or controller lease expired before terminal capture")
+                    completed = RootCompletedSelectedHealthTerminalProof(
+                        schema=1, control_handle=control_handle, control=control,
+                        admission=admission, source_material=admission._source_material,
+                        terminal_receipt=receipt, launch_proof=launch_proof,
+                        observed_worker_view=observed_view,
+                        process_identity=process_identity,
+                        loaded_package_proof=loaded_package_proof,
+                        loaded_package_proof_id=loaded_package_proof.proof_id,
+                        loader_ready_event_id=handle.native_loader_ready_event_id,
+                        process_id=handle.process_id, process_pid=handle.pid,
+                        process_start_ticks=handle.start_ticks,
+                        process_uid=handle.profile.owner_uid, process_gid=handle.profile.owner_gid,
+                        profile_id=handle.profile.profile_id,
+                        process_generation=handle.profile.generation,
+                        service_generation_digest=control.service_generation_digest,
+                        unit=handle.unit, invocation_id=handle.unit_invocation_id,
+                        cgroup_identity=handle.cgroup,
+                        mount_namespace_inode=int(namespace_match.group(1)),
+                        network_namespace_inode=int(namespace_match.group(2)),
+                        executable_sha256=process_identity.executable_sha256,
+                        expires_monotonic=expiry, _manager=self,
+                        _seal=self._health_terminal_seal,
+                    )
+                    if (self._completed_selected_health_terminal_current(
+                            completed, self._health_terminal_seal) is not completed):
+                        raise ValueError("manager rejected its completed terminal record")
+                    self._health_completed_terminals[control_handle] = (completed, expiry)
+                except Exception:
+                    self._health_terminal_receipts.pop(receipt.terminal_receipt_handle, None)
+                    raise AuthorityDenied(
+                        "native.health.terminal", "completed health cleanup did not retain exact source identity") from None
+        return receipt
+
+    def resolve_selected_health_terminal_receipt(
+            self, control_handle: str, terminal_receipt_handle: str
+            ) -> RootSelectedHealthTerminalReceipt:
+        if (not isinstance(control_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", control_handle)
+                or not isinstance(terminal_receipt_handle, str)
+                or not re.fullmatch(r"[0-9a-f]{32}", terminal_receipt_handle)):
+            raise AuthorityDenied("native.health.terminal", "health terminal receipt selector is malformed")
+        with self._lock:
+            entry = self._health_terminal_receipts.get(terminal_receipt_handle)
+            if entry is None:
+                raise AuthorityDenied("native.health.terminal", "health terminal receipt is unavailable")
+            receipt, expiry = entry
+            if expiry <= self.monotonic():
+                self._health_terminal_receipts.pop(terminal_receipt_handle, None)
+                raise AuthorityDenied("native.health.terminal", "health terminal receipt is stale or mismatched")
+            if (receipt.control_handle != control_handle
+                    or receipt.terminal_receipt_handle != terminal_receipt_handle):
+                raise AuthorityDenied("native.health.terminal", "health terminal receipt is mismatched")
+            return receipt
+
+    def resolve_completed_selected_health_terminal(
+            self, control_handle: str,
+            terminal_receipt_handle: str) -> RootCompletedSelectedHealthTerminalProof:
+        """Resolve the exact successful, manager-cleaned health run historically.
+
+        The result preserves facts observed while the PID was live and binds
+        them to the stopped-unit receipt. It makes no current PID, package or
+        launch assertion; all effect admission and live-source calls still use
+        the normal currentness APIs.
+        """
+        receipt = self.resolve_selected_health_terminal_receipt(
+            control_handle, terminal_receipt_handle)
+        with self._lock:
+            retained = self._health_completed_terminals.get(control_handle)
+            if retained is None:
+                raise AuthorityDenied("native.health.terminal", "successful completed health proof is unavailable")
+            proof, expiry = retained
+            if (proof.terminal_receipt is not receipt
+                    or proof.terminal_receipt.terminal_receipt_handle != terminal_receipt_handle
+                    or expiry <= self.monotonic()
+                    or self._completed_selected_health_terminal_current(
+                        proof, self._health_terminal_seal) is not proof):
+                self._health_completed_terminals.pop(control_handle, None)
+                raise AuthorityDenied("native.health.terminal", "completed health proof is stale or mismatched")
+            return proof
+
+    def _completed_selected_health_terminal_current(
+            self, proof: RootCompletedSelectedHealthTerminalProof,
+            seal: object) -> RootCompletedSelectedHealthTerminalProof | None:
+        if (type(proof) is not RootCompletedSelectedHealthTerminalProof
+                or seal is not self._health_terminal_seal
+                or proof._manager is not self or proof._seal is not seal):
+            return None
+        with self._lock:
+            retained = self._health_completed_terminals.get(proof.control_handle)
+            terminal = self._health_terminal_receipts.get(proof.terminal_receipt.terminal_receipt_handle)
+            if (retained is None or retained[0] is not proof or terminal is None
+                    or terminal[0] is not proof.terminal_receipt
+                    or retained[1] != proof.expires_monotonic
+                    or retained[1] > terminal[1]
+                    or retained[1] <= self.monotonic()
+                    or terminal[1] <= self.monotonic()):
+                return None
+        receipt = proof.terminal_receipt
+        control = proof.control
+        material = getattr(proof.admission, "_source_material", None)
+        authority = self.native_health_start_authority
+        try:
+            from hermes_installer.authority.native_health_observer import RootNativeHealthStartAuthority
+            authority_current = (type(authority) is RootNativeHealthStartAuthority
+                                 and authority.is_current(proof.admission))
+        except Exception:
+            authority_current = False
+        launch = proof.launch_proof
+        observed = proof.observed_worker_view
+        if (not authority_current
+                or control.control_handle != proof.control_handle
+                or getattr(proof.admission, "admission_handle", None) is None
+                or material is not proof.source_material
+                or getattr(material, "verified_commit", None)
+                   is not getattr(proof.admission, "_verified_commit", None)
+                or getattr(material, "source_binding", None)
+                   is not getattr(proof.admission, "_source_binding", None)
+                or getattr(material, "enrollment_id", None) != proof.admission.enrollment_id
+                or getattr(material, "profile_id", None) != proof.profile_id
+                or getattr(material, "process_generation", None) != proof.process_generation
+                or getattr(material, "service_generation_digest", None) != proof.service_generation_digest
+                or getattr(material, "health_fixture_artifact_id", None)
+                   != proof.admission.health_fixture_artifact_id
+                or getattr(material, "health_fixture_sha256", None)
+                   != proof.admission.health_fixture_sha256
+                or getattr(material, "health_result_schema_id", None)
+                   != proof.admission.health_result_schema_id
+                or getattr(material, "native_package_id", None) != proof.admission.native_package_id
+                or getattr(material, "native_package_generation", None)
+                   != proof.admission.native_package_generation
+                or getattr(material, "native_closure_sha256", None)
+                   != proof.admission.native_closure_sha256
+                or receipt.control_handle != control.control_handle
+                or receipt.process_id != proof.process_id
+                or receipt.profile_id != proof.profile_id
+                or receipt.generation != proof.process_generation
+                or receipt.service_generation_digest != proof.service_generation_digest
+                or receipt.unit != proof.unit or receipt.start_ticks != proof.process_start_ticks
+                or receipt.loader_ready_event_id != proof.loader_ready_event_id
+                or not receipt.cleanup_verified or not receipt.cgroup_empty
+                or not receipt.main_pidfd_gone or not receipt.launcher_reaped
+                or receipt.exit_code != 0 or receipt.timed_out or receipt.cancelled
+                or receipt.output_overflow
+                or getattr(launch, "launch_handle", None) != getattr(observed, "launch_handle", None)
+                or getattr(launch, "profile_id", None) != proof.profile_id
+                or getattr(launch, "profile_generation", None) != proof.process_generation
+                or getattr(launch, "service_generation_digest", None) != proof.service_generation_digest
+                or getattr(proof.loaded_package_proof, "proof_id", None) != proof.loaded_package_proof_id
+                or getattr(proof.loaded_package_proof, "process_id", None) != proof.process_id
+                or getattr(proof.loaded_package_proof, "profile_id", None) != proof.profile_id
+                or getattr(proof.loaded_package_proof, "generation", None) != proof.process_generation
+                or getattr(proof.loaded_package_proof, "kernel_uid", None) != proof.process_uid
+                or getattr(proof.loaded_package_proof, "service_generation_digest", None)
+                   != proof.service_generation_digest
+                or getattr(proof.loaded_package_proof, "mount_proof", None) is None
+                or getattr(proof.loaded_package_proof, "package_id", None)
+                   != getattr(material, "native_package_id", None)
+                or getattr(proof.loaded_package_proof, "compiled_closure_sha256", None)
+                   != getattr(material, "native_closure_sha256", None)
+                or getattr(observed, "process_id", None) != proof.process_id
+                or getattr(observed, "process_pid", None) != proof.process_pid
+                or getattr(observed, "process_start_ticks", None) != proof.process_start_ticks
+                or getattr(observed, "cgroup_identity", None) != proof.cgroup_identity
+                or getattr(observed, "process_uid", None) != proof.process_uid
+                or getattr(observed, "process_gid", None) != proof.process_gid
+                or getattr(observed, "mount_namespace_inode", None) != proof.mount_namespace_inode
+                or getattr(observed, "network_namespace_inode", None) != proof.network_namespace_inode
+                or getattr(observed, "selected_view_sha256", None)
+                   != getattr(launch, "selected_view_sha256", None)
+                or proof.control.process_id != proof.process_id
+                or proof.control.profile_id != proof.profile_id
+                or proof.control.process_generation != proof.process_generation
+                or proof.control.service_generation_digest != proof.service_generation_digest
+                or proof.process_identity.start_ticks != proof.process_start_ticks
+                or proof.process_identity.kernel_uid != proof.process_uid
+                or proof.process_identity.cgroup_identity != proof.cgroup_identity
+                or proof.process_identity.executable_sha256 != proof.executable_sha256
+                or proof.process_identity.namespace_identity != (
+                    f"mnt:{proof.mount_namespace_inode};net:{proof.network_namespace_inode}")):
+            return None
+        return proof
+
+    def set_task_input_coordinator(self, coordinator: Any) -> None:
+        """Install the concrete root-native pre-stdin coordinator once."""
+        from hermes_installer.authority.native_observer_wiring import RootTaskInputCoordinator
+        if type(coordinator) is not RootTaskInputCoordinator:
+            raise ValueError("task input coordinator must be the concrete root runtime coordinator")
+        with self._lock:
+            if self.task_input_coordinator is not None:
+                raise ValueError("task input coordinator is already installed")
+            if getattr(coordinator, "process_custody", None) is not self:
+                raise ValueError("task input coordinator is bound to another process manager")
+        self.task_input_coordinator = coordinator
+
+    def bind_private_memory_enrollment_catalog(self, catalog: Any) -> None:
+        """Bind the exact protected catalog used to resolve endpoint selection rows."""
+        from hermes_installer.protected_enrollment import ProtectedEnrollmentCatalog
+        if type(catalog) is not ProtectedEnrollmentCatalog:
+            raise AuthorityDenied("private_network.catalog", "root protected enrollment catalog is required")
+        with self._lock:
+            if self._protected_enrollment_catalog is not None and self._protected_enrollment_catalog is not catalog:
+                raise AuthorityDenied("private_network.catalog", "process manager catalog cannot be replaced")
+            self._protected_enrollment_catalog = catalog
+
+    def retain_private_loopback_network_lease(self, endpoint_binding: Any, network: Any, lease: Any) -> None:
+        """Retain a live namespace lease against its exact protected endpoint/network rows."""
+        from hermes_installer.authority.private_loopback_network import (
+            RootPrivateLoopbackNetworkLease, verify_root_network_lease,
+        )
+        from hermes_installer.protected_enrollment import (
+            PrivateLoopbackNetworkEnrollment, RootSelectedPrivateMemoryEndpointBinding,
+        )
+        if (type(endpoint_binding) is not RootSelectedPrivateMemoryEndpointBinding
+                or type(network) is not PrivateLoopbackNetworkEnrollment
+                or type(lease) is not RootPrivateLoopbackNetworkLease):
+            raise AuthorityDenied("private_network.binding", "typed protected endpoint/network and live lease are required")
+        with self._lock:
+            catalog = self._protected_enrollment_catalog
+        if catalog is None:
+            raise AuthorityDenied("private_network.catalog", "protected endpoint catalog is not bound")
+        try:
+            current = catalog.resolve_private_memory_endpoint_binding(endpoint_binding.binding_id)
+            verify_root_network_lease(lease)
+            profile = self.profiles.get(endpoint_binding.process_profile_id)
+            identities = [row for row in lease.network.member_identities
+                          if row.profile_id == endpoint_binding.process_profile_id
+                          and row.generation == endpoint_binding.process_profile_generation]
+            service = catalog.resolve(endpoint_binding.service_enrollment_id, endpoint_binding.service_generation)
+            if (current is not endpoint_binding or network.id != endpoint_binding.network_binding_handle
+                    or network.service_generation_digest != endpoint_binding.service_generation_digest
+                    or endpoint_binding.service_enrollment_id not in network.member_enrollment_ids
+                    or service.namespace_identity != network.namespace_identity
+                    or lease.network.network_id != network.id
+                    or lease.network.generation != network.generation
+                    or lease.network.members != network.member_enrollment_ids
+                    or lease.network.service_generation_digest
+                    != endpoint_binding.service_generation_digest
+                    or lease.network.namespace_identity != endpoint_binding.namespace_id
+                    or profile is None or profile.generation != endpoint_binding.process_profile_generation
+                    or profile.service_generation_digest != endpoint_binding.service_generation_digest
+                    or len(identities) != 1 or identities[0].uid != profile.owner_uid):
+                raise ValueError("endpoint and network membership differ")
+        except Exception:
+            raise AuthorityDenied("private_network.binding", "selected endpoint does not join a current private network lease") from None
+        with self._lock:
+            previous = self._private_loopback_endpoint_leases.get(endpoint_binding.network_binding_handle)
+            if previous is not None:
+                if previous[0] is endpoint_binding and previous[1] == network and previous[2] is lease:
+                    return
+                raise AuthorityDenied("private_network.binding", "network binding handle is already retained")
+            self._private_loopback_endpoint_leases[endpoint_binding.network_binding_handle] = (
+                endpoint_binding, network, lease,
+            )
+
+    def resolve_private_loopback_network_lease(self, endpoint_binding: Any) -> Any:
+        """Resolve the exact retained lease by a root-resolved endpoint DTO, never a raw handle."""
+        from hermes_installer.authority.private_loopback_network import (
+            RootPrivateLoopbackNetworkLease, verify_root_network_lease,
+        )
+        from hermes_installer.protected_enrollment import RootSelectedPrivateMemoryEndpointBinding
+        if type(endpoint_binding) is not RootSelectedPrivateMemoryEndpointBinding:
+            raise AuthorityDenied("private_network.binding", "root-resolved endpoint binding is required")
+        with self._lock:
+            retained = self._private_loopback_endpoint_leases.get(endpoint_binding.network_binding_handle)
+            catalog = self._protected_enrollment_catalog
+        if retained is None or catalog is None or retained[0] is not endpoint_binding:
+            raise AuthorityDenied("private_network.binding", "no exact retained lease exists for this protected endpoint")
+        try:
+            if catalog.resolve_private_memory_endpoint_binding(endpoint_binding.binding_id) is not endpoint_binding:
+                raise ValueError("endpoint selection changed")
+            network, lease = retained[1], retained[2]
+            from hermes_installer.protected_enrollment import PrivateLoopbackNetworkEnrollment
+            if type(network) is not PrivateLoopbackNetworkEnrollment:
+                raise ValueError("protected network selection type changed")
+            service = catalog.resolve(endpoint_binding.service_enrollment_id, endpoint_binding.service_generation)
+            if type(lease) is not RootPrivateLoopbackNetworkLease:
+                raise ValueError("lease type changed")
+            verify_root_network_lease(lease)
+            profile = self.profiles.get(endpoint_binding.process_profile_id)
+            identities = [row for row in lease.network.member_identities
+                          if row.profile_id == endpoint_binding.process_profile_id
+                          and row.generation == endpoint_binding.process_profile_generation]
+            if (network.id != endpoint_binding.network_binding_handle
+                    or endpoint_binding.service_enrollment_id not in network.member_enrollment_ids
+                    or service.namespace_identity != network.namespace_identity
+                    or lease.network.network_id != network.id
+                    or lease.network.generation != network.generation
+                    or lease.network.members != network.member_enrollment_ids
+                    or profile is None or profile.generation != endpoint_binding.process_profile_generation
+                    or profile.service_generation_digest != endpoint_binding.service_generation_digest
+                    or lease.network.service_generation_digest != endpoint_binding.service_generation_digest
+                    or lease.network.namespace_identity != endpoint_binding.namespace_id
+                    or len(identities) != 1 or identities[0].uid != profile.owner_uid):
+                raise ValueError("lease member or selected process changed")
+            return lease
+        except Exception:
+            raise AuthorityDenied("private_network.lease", "retained endpoint network lease is stale or mismatched") from None
+
+    def set_native_loader_observation_store(self, store: Any) -> None:
+        """Install the root-owned loader observer after manager construction.
+
+        The observer is constructed with this manager as its custody resolver;
+        workers cannot call or replace this hook.
+        """
+        if (store is None or not callable(getattr(store, "register_launch", None))
+                or not callable(getattr(store, "receive_loader_progress", None))
+                or not callable(getattr(store, "revoke_process", None))):
+            raise ValueError("native loader observer must implement the fixed root API")
+        with self._lock:
+            if self.native_loader_observation_store is not None:
+                raise ValueError("native loader observer is already installed")
+            self.native_loader_observation_store = store
+
+    def register_native_loader_channel(self, process_id: str, channel: Any, *,
+                                       expected_loader_role_artifact_id: str,
+                                       expected_loader_role_sha256: str,
+                                       deadline_monotonic: float) -> str:
+        """Attach one channel to the currently owned process registry entry."""
+        with self._lock:
+            handle = self._handles.get(process_id)
+            store = self.native_loader_observation_store
+            if handle is None or handle.stopped or store is None:
+                raise AuthorityDenied("native.loader", "selected process or observer is unavailable")
+            if self.monotonic() >= handle.expires or _pidfd_exited(handle.child_pidfd):
+                raise AuthorityDenied("native.loader", "selected process is no longer active")
+            if not self.is_owned_active_process_handle(handle):
+                raise AuthorityDenied("native.loader", "selected process is not current custody state")
+            observation = store.register_launch(
+                handle, channel, expected_loader_role_artifact_id,
+                expected_loader_role_sha256, channel.launch_nonce,
+                deadline_monotonic,
+            )
+            handle.native_loader_observation_handle = observation
+            return observation
+
+    def receive_native_loader_progress(self, process_id: str, *,
+                                       cancelled: Callable[[], bool]) -> str:
+        """Wait for the selected loader's root-authenticated three-frame ready event."""
+        with self._lock:
+            handle = self._handles.get(process_id)
+            store = self.native_loader_observation_store
+            observation = (handle.native_loader_observation_handle if handle is not None else None)
+            if (handle is None or handle.stopped or store is None or observation is None
+                    or not self.is_owned_active_process_handle(handle)):
+                raise AuthorityDenied("native.loader", "selected loader observation is not active")
+        ready_event_id = store.receive_loader_progress(observation, cancelled)
+        with self._lock:
+            current = self._handles.get(process_id)
+            if current is not handle or current.stopped or self.monotonic() >= current.expires:
+                store.revoke_process(process_id, handle.profile.generation)
+                raise AuthorityDenied("native.loader", "process changed during loader observation")
+            current.native_loader_ready_event_id = ready_event_id
+        return ready_event_id
+
+    def _require_systemd_openfile(self) -> None:
+        if self._systemd_openfile_supported is None:
+            try:
+                result = subprocess.run([str(self.systemctl), "--version"],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                    env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
+                    timeout=2.0, check=False)
+                first = result.stdout.splitlines()[0].decode("ascii", "strict") if result.stdout else ""
+                match = re.match(r"systemd\s+(\d+)(?:\s|$)", first)
+                self._systemd_openfile_supported = bool(
+                    result.returncode == 0 and match is not None and int(match.group(1)) >= 253)
+            except (OSError, subprocess.TimeoutExpired, UnicodeError, ValueError):
+                self._systemd_openfile_supported = False
+        if not self._systemd_openfile_supported:
+            raise AuthorityDenied("native.loader", "systemd v253 OpenFile support is required")
 
     def _prepare_native_package_mount(self, profile: ManagedProfileCustody,
                                       process_id: str) -> tuple[Path | None, NativePackageMountReceipt | None]:
@@ -901,6 +3678,95 @@ class ManagedProcessEffectHandler:
             binding.entrypoint_sha256, binding.resolver_sha256, str(target),
             source_info.st_dev, source_info.st_ino, hashlib.sha256(manifest_bytes).hexdigest())
         return source, receipt
+
+    def _prepare_xauthority_mount(
+            self, profile: ManagedProfileCustody, binding: Any, registry: Any,
+    ) -> tuple[Path, XauthorityMountReceipt, Any]:
+        """Stage a registry-held Xauthority FD at the one protected display path."""
+        from hermes_installer.authority.native_display_startup import (
+            XauthorityMountBinding, XauthoritySourceLease,
+        )
+        if (type(binding) is not XauthorityMountBinding
+                or not callable(getattr(registry, "open_mount_source", None))
+                or not callable(getattr(registry, "verify_mount_source", None))
+                or not registry.verify_mount_binding(binding)
+                or str(binding.target_path) != "/run/hermes-installer/display/Xauthority"):
+            raise AuthorityDenied("process.xauthority", "Xauthority binding is not current in its root registry")
+        lease = registry.open_mount_source(binding)
+        try:
+            if (type(lease) is not XauthoritySourceLease
+                    or not registry.verify_mount_source(lease, binding)
+                    or lease.display_profile_id != profile.profile_id
+                    or lease.display_generation != profile.generation
+                    or lease.owner_gid != profile.owner_gid
+                    or lease.size_bytes <= 0 or lease.size_bytes > 65536
+                    or lease.file_fd < 0):
+                raise AuthorityDenied("process.xauthority", "Xauthority source lease is not bound to the selected display")
+            fd = lease.file_fd
+            info = os.fstat(fd)
+            access = fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_ACCMODE
+            if (not stat.S_ISREG(info.st_mode) or access != os.O_RDONLY
+                    or (info.st_dev, info.st_ino) != (lease.device, lease.inode)
+                    or info.st_uid != lease.owner_uid or info.st_gid != lease.owner_gid
+                    or stat.S_IMODE(info.st_mode) != lease.mode
+                    or info.st_size != lease.size_bytes or info.st_nlink != 1):
+                raise AuthorityDenied("process.xauthority", "held Xauthority source identity changed")
+            content = bytearray()
+            offset = 0
+            while offset < info.st_size:
+                chunk = os.pread(fd, min(8192, info.st_size - offset), offset)
+                if not chunk:
+                    raise AuthorityDenied("process.xauthority", "held Xauthority source was truncated")
+                content.extend(chunk)
+                offset += len(chunk)
+            source_digest = hashlib.sha256(content).hexdigest()
+            if source_digest != lease.content_sha256 or source_digest != binding.source_sha256:
+                raise AuthorityDenied("process.xauthority", "held Xauthority source digest changed")
+            if not registry.verify_mount_source(lease, binding):
+                raise AuthorityDenied("process.xauthority", "Xauthority source lease expired during staging")
+            base = Path("/run/hermes-installer/native-staging")
+            self._ensure_root_runtime_directory(base, 0o711)
+            stage = base / ("xauthority-" + uuid.uuid4().hex)
+            stage.mkdir(mode=0o700)
+            os.chown(stage, 0, 0)
+            source = stage / "Xauthority"
+            out_fd = os.open(source, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                             | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o600)
+            try:
+                view = memoryview(content)
+                while view:
+                    written = os.write(out_fd, view)
+                    if written <= 0:
+                        raise OSError("short Xauthority staging write")
+                    view = view[written:]
+                os.fchown(out_fd, 0, profile.owner_gid)
+                os.fchmod(out_fd, 0o440)
+                os.fsync(out_fd)
+            finally:
+                os.close(out_fd)
+                for index in range(len(content)):
+                    content[index] = 0
+            self._make_native_tree_readonly(stage)
+            self._protect_native_staging_mount(stage)
+            staged = source.stat(follow_symlinks=False)
+            receipt = XauthorityMountReceipt(
+                "/run/hermes-installer/display/Xauthority", staged.st_dev, staged.st_ino,
+                source_digest, info.st_size, profile.owner_gid,
+            )
+            return stage, receipt, lease
+        except BaseException:
+            # Staging is root-owned and contains credential material.  Even a
+            # failed copy or mount preparation must remove it before returning.
+            try:
+                if "stage" in locals() and stage.exists():
+                    self._remove_native_staging(stage)
+            except Exception:
+                pass
+            try:
+                lease.close()
+            except Exception:
+                pass
+            raise
 
     def _stage_native_package(self, process_id: str, target: Path, manifest: bytes,
                               closure: Path, resolver_path: Path,
@@ -1096,7 +3962,12 @@ class ManagedProcessEffectHandler:
     def _remove_native_staging(stage: Path) -> None:
         if stage.parent != Path("/run/hermes-installer/native-staging"):
             raise AuthorityDenied("native.cleanup", "native staging path is outside fixed custody")
-        info = stage.lstat()
+        try:
+            info = stage.lstat()
+        except FileNotFoundError:
+            # Several bounded preparation failures unwind through both their
+            # local exception branch and the outer launch-finally block.
+            return
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0:
             raise AuthorityDenied("native.cleanup", "native staging tree custody changed")
         ManagedProcessEffectHandler._umount_native_staging(stage)
@@ -1159,12 +4030,216 @@ class ManagedProcessEffectHandler:
                 # this bounded code is sufficient to diagnose kernel proof.
                 self._diagnostic_sink(("native-mount-verification-failed:" + failure_code).encode("ascii"))
             raise AuthorityDenied("native.mount_effect", "kernel did not establish the exact private read-only package mount") from None
+        return True
+
+    def _verify_selected_native_worker_view(self, pid: int, proof: Any) -> bool:
+        """Reobserve every selected v192 root inside this exact worker mount ns."""
+        from hermes_installer.authority.native_worker_launch import RootSelectedNativeWorkerView
+        owner = self._native_worker_launch_owner
+        view = (owner.resolve_selected_native_worker_view(proof) if owner is not None else None)
+        if (type(view) is not RootSelectedNativeWorkerView
+                or view._launch_handle != proof.launch_handle
+                or view.selected_view_sha256 != proof.selected_view_sha256
+                or not view.mounts or len(view.mounts) > 16):
+            raise AuthorityDenied("native_worker.view", "issuer-held selected worker view is unavailable")
+        try:
+            raw = Path(f"/proc/{pid}/mountinfo").read_text(encoding="ascii")
+            if len(raw) > 4 * 1024 * 1024:
+                raise ValueError("worker mount table exceeds bound")
+            parsed = []
+            for line in raw.splitlines():
+                fields = line.split()
+                if "-" not in fields:
+                    continue
+                separator = fields.index("-")
+                mountpoint = re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), fields[4])
+                parsed.append((mountpoint, fields, separator))
+            targets = [mount.worker_mount_path for mount in view.mounts]
+            if len(set(targets)) != len(targets):
+                raise ValueError("selected mount target is duplicated")
+            for mount in view.mounts:
+                candidates = [(fields, sep) for target, fields, sep in parsed
+                              if target == mount.worker_mount_path]
+                if len(candidates) != 1:
+                    raise ValueError("selected root mount is absent or ambiguous")
+                fields, separator = candidates[0]
+                options = set(fields[5].split(","))
+                propagation = fields[6:separator]
+                if ({"ro", "nosuid", "nodev"} - options
+                        or mount.noexec and "noexec" not in options
+                        or not mount.noexec and "noexec" in options
+                        or any(item.startswith(("shared:", "master:", "propagate_from:"))
+                               for item in propagation)):
+                    raise ValueError("selected root mount options changed")
+                source_info = mount.source_host_root_path.lstat()
+                target_info = os.stat(f"/proc/{pid}/root{mount.worker_mount_path}",
+                                      follow_symlinks=False)
+                if ((source_info.st_dev, source_info.st_ino)
+                        != (mount.source_root_device, mount.source_root_inode)
+                        or (target_info.st_dev, target_info.st_ino)
+                        != (mount.source_root_device, mount.source_root_inode)):
+                    raise ValueError("selected root source or worker target inode changed")
+                if mount.view_kind == "native-runtime-output-member":
+                    if (not stat.S_ISREG(target_info.st_mode)
+                            or hashlib.sha256(Path(
+                                f"/proc/{pid}/root{mount.worker_mount_path}").read_bytes()).hexdigest()
+                               != mount.source_closure_sha256):
+                        raise ValueError("selected generated member bytes changed in worker view")
+            if any(mount.view_kind == "native-runtime-output-member" for mount in view.mounts):
+                target_rows = [(fields, separator) for target, fields, separator in parsed
+                               if target == "/hermes/.native-output"]
+                if len(target_rows) != 1:
+                    raise ValueError("synthetic generated-output root mount is absent or ambiguous")
+                target_fields, target_separator = target_rows[0]
+                target_options = set(target_fields[5].split(","))
+                if (target_fields[target_separator + 1] != "tmpfs"
+                        or {"ro", "nosuid", "nodev", "noexec"} - target_options):
+                    raise ValueError("synthetic generated-output root is not a private read-only tmpfs")
+                output_root = os.stat(f"/proc/{pid}/root/hermes/.native-output",
+                                      follow_symlinks=False)
+                if (not stat.S_ISDIR(output_root.st_mode) or output_root.st_uid != 0
+                        or output_root.st_gid != 0 or stat.S_IMODE(output_root.st_mode) != 0o711):
+                    raise ValueError("synthetic generated-output target root is not private root custody")
+            return True
+        except (OSError, ValueError, IndexError, UnicodeError):
+            raise AuthorityDenied(
+                "native_worker.view_effect",
+                "kernel did not establish the exact selected private read-only view") from None
+
+    def observe_native_worker_view(self, pid: int, pidfd: int, proof: Any) -> Any:
+        """Issue a manager-held observation only for the actual selected worker."""
+        owner = self._native_worker_launch_owner
+        if owner is None or self.verify_current_native_worker_launch(proof) is not proof:
+            raise AuthorityDenied("native_worker.view", "selected native worker owner is unavailable")
+        with self._lock:
+            matches = [handle for handle in self._handles.values()
+                       if handle.native_worker_launch_proof is proof
+                       and handle.pid == pid and handle.child_pidfd >= 0
+                       and not handle.stopped]
+        if (len(matches) != 1 or type(pid) is not int or pid <= 0
+                or type(pidfd) is not int or pidfd < 0
+                or self._pidfd_target(pidfd) != pid or _pidfd_exited(pidfd)):
+            raise AuthorityDenied("native_worker.view", "selected worker PIDFD is not manager-held")
+        handle = matches[0]
+        try:
+            ticks, cgroup, _device, _inode = _pid_identity(pid)
+            if (ticks != handle.start_ticks or cgroup != handle.cgroup
+                    or self._pids(cgroup) != (pid,)):
+                raise ValueError("selected process changed cgroup or start identity")
+            status = Path(f"/proc/{pid}/status").read_text(encoding="ascii").splitlines()
+            uid_fields = next(item for item in status if item.startswith("Uid:")).split()[1:]
+            gid_fields = next(item for item in status if item.startswith("Gid:")).split()[1:]
+            if (len(uid_fields) != 4 or any(int(value) != handle.profile.owner_uid for value in uid_fields)
+                    or len(gid_fields) != 4 or any(int(value) != handle.profile.owner_gid for value in gid_fields)):
+                raise ValueError("selected worker UID/GID changed")
+            mnt = os.stat(f"/proc/{pid}/ns/mnt").st_ino
+            net = os.stat(f"/proc/{pid}/ns/net").st_ino
+            if (mnt == os.stat("/proc/self/ns/mnt").st_ino
+                    or net == os.stat("/proc/self/ns/net").st_ino):
+                raise ValueError("selected worker namespaces are not private")
+            self._verify_selected_native_worker_view(pid, proof)
+            observed = owner.issue_observed_native_worker_view(
+                proof, process_id=handle.process_id, process_pid=pid,
+                process_start_ticks=ticks, cgroup_identity=cgroup,
+                process_uid=handle.profile.owner_uid, process_gid=handle.profile.owner_gid,
+                mount_namespace_inode=mnt, network_namespace_inode=net,
+                observed_monotonic=self.monotonic())
+            handle.native_worker_observed_view = observed
+            return observed
+        except Exception:
+            raise AuthorityDenied("native_worker.view", "current selected worker view could not be observed") from None
+
+    def verify_current_native_worker_view(self, proof: Any, observed_view: Any) -> Any:
+        """Recheck typed mount observation against the same live worker PIDFD."""
+        from hermes_installer.authority.native_worker_launch import RootObservedNativeWorkerView
+        owner = self._native_worker_launch_owner
+        if (owner is None or type(observed_view) is not RootObservedNativeWorkerView
+                or self.verify_current_native_worker_launch(proof) is not proof):
+            raise AuthorityDenied("native_worker.view", "observed native view is foreign or stale")
+        owner.verify_current_observed_native_worker_view(proof, observed_view)
+        with self._lock:
+            handle = self._handles.get(observed_view.process_id)
+        if (handle is None or handle.native_worker_launch_proof is not proof
+                or handle.native_worker_observed_view is not observed_view
+                or handle.stopped or handle.pid != observed_view.process_pid
+                or self._pidfd_target(handle.child_pidfd) != handle.pid
+                or _pidfd_exited(handle.child_pidfd)):
+            raise AuthorityDenied("native_worker.view", "observed native view no longer belongs to a live worker")
+        try:
+            ticks, cgroup, _device, _inode = _pid_identity(handle.pid)
+            status = Path(f"/proc/{handle.pid}/status").read_text(encoding="ascii").splitlines()
+            uids = next(line for line in status if line.startswith("Uid:")).split()[1:]
+            gids = next(line for line in status if line.startswith("Gid:")).split()[1:]
+            mnt = os.stat(f"/proc/{handle.pid}/ns/mnt").st_ino
+            net = os.stat(f"/proc/{handle.pid}/ns/net").st_ino
+            self._verify_selected_native_worker_view(handle.pid, proof)
+            if (ticks != observed_view.process_start_ticks
+                    or cgroup != observed_view.cgroup_identity
+                    or len(uids) != 4 or any(int(uid) != observed_view.process_uid for uid in uids)
+                    or len(gids) != 4 or any(int(gid) != observed_view.process_gid for gid in gids)
+                    or mnt != observed_view.mount_namespace_inode
+                    or net != observed_view.network_namespace_inode
+                    or self._pids(cgroup) != (handle.pid,)):
+                raise ValueError("selected worker process, namespace, or cgroup changed")
+        except Exception:
+            raise AuthorityDenied("native_worker.view", "observed native view changed during recheck") from None
+        return observed_view
+
+    def _verify_xauthority_mount(self, pid: int, receipt: XauthorityMountReceipt) -> None:
+        failure_code = "procfs"
+        try:
+            raw = Path(f"/proc/{pid}/mountinfo").read_text()
+            if len(raw) > 4 * 1024 * 1024:
+                raise ValueError("mount table oversized")
+            candidates = []
+            for line in raw.splitlines():
+                fields = line.split()
+                if "-" not in fields:
+                    continue
+                separator = fields.index("-")
+                mountpoint = re.sub(r"\\([0-7]{3})", lambda match: chr(int(match.group(1), 8)), fields[4])
+                if mountpoint == receipt.mount_path:
+                    candidates.append((fields, separator))
+            if len(candidates) != 1:
+                failure_code = "target"
+                raise ValueError("credential target absent or ambiguous")
+            fields, separator = candidates[0]
+            options = set(fields[5].split(","))
+            propagation = fields[6:separator]
+            if {"ro", "nosuid", "nodev", "noexec"} - options:
+                failure_code = "mount_flags"
+                raise ValueError("credential mount flags are not constrained")
+            if any(item.startswith(("shared:", "master:", "propagate_from:")) for item in propagation):
+                failure_code = "propagation"
+                raise ValueError("credential mount propagation is not private")
+            observed = os.stat(f"/proc/{pid}/root{receipt.mount_path}", follow_symlinks=False)
+            if (observed.st_dev, observed.st_ino) != (
+                    receipt.mount_source_device, receipt.mount_source_inode):
+                failure_code = "source_identity"
+                raise ValueError("credential mount does not bind the staged inode")
+            if (not stat.S_ISREG(observed.st_mode) or observed.st_size != receipt.size_bytes
+                    or observed.st_gid != receipt.owner_gid or stat.S_IMODE(observed.st_mode) != 0o440):
+                failure_code = "file_metadata"
+                raise ValueError("credential mount metadata changed")
+            mounted_digest = hashlib.sha256(
+                Path(f"/proc/{pid}/root{receipt.mount_path}").read_bytes()).hexdigest()
+            if mounted_digest != receipt.source_sha256:
+                failure_code = "file_digest"
+                raise ValueError("credential mount bytes changed")
+        except (OSError, ValueError, IndexError):
+            if self._diagnostic_sink is not None:
+                self._diagnostic_sink(("xauthority-mount-verification-failed:" + failure_code).encode("ascii"))
+            raise AuthorityDenied("process.xauthority_mount", "kernel did not establish the exact protected credential mount") from None
 
     @staticmethod
     def _validate_profile(profile: ManagedProfileCustody) -> None:
         if (not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", profile.profile_id)
                 or profile.owner_uid <= 0 or profile.owner_gid <= 0):
             raise ValueError("protected process profile identity is invalid")
+        if (profile.service_generation_digest is not None
+                and (not isinstance(profile.service_generation_digest, str)
+                     or not re.fullmatch(r"[0-9a-f]{64}", profile.service_generation_digest))):
+            raise ValueError("managed process service generation digest is invalid")
         expected_user = "hermes-" + hashlib.sha256(profile.profile_id.encode()).hexdigest()[:16]
         account = pwd.getpwnam(profile.service_user)
         if (profile.service_user != expected_user or account.pw_uid != profile.owner_uid
@@ -1251,7 +4326,15 @@ class ManagedProcessEffectHandler:
                     payload: bytes, timeout: float, peer_pid: int,
                     peer_pidfd: int | None,
                     cancelled: Callable[[], bool]) -> Mapping[str, Any]:
-            return self.dispatch(profile, operation, context=context, authorization=authorization,
+            # Resolve the current immutable enrollment row for this handler ID.
+            # A refreshed row with the same effect target must be used for
+            # admission; a changed target remains unreachable through this
+            # already-registered handler key and is rejected by dispatch.
+            with self._lock:
+                current_profile = self.profiles.get(profile.profile_id)
+            if current_profile is None:
+                raise AuthorityDenied("process.profile", "enrolled process profile is no longer active")
+            return self.dispatch(current_profile, operation, context=context, authorization=authorization,
                                  payload=payload, timeout=timeout, peer_pid=peer_pid,
                                  peer_pidfd=peer_pidfd,
                                  cancelled=cancelled)
@@ -1277,11 +4360,39 @@ class ManagedProcessEffectHandler:
                 or peer_pid <= 0 or canonical_digest(payload) != authorization.request_digest):
             raise AuthorityDenied("process.binding", "process grant does not match the enrolled profile effect")
         if operation == "process.start":
-            return self._start(profile, context, authorization, payload, timeout, peer_pid,
-                               peer_pidfd, cancelled)
+            try:
+                return self._start(profile, context, authorization, payload, timeout, peer_pid,
+                                   peer_pidfd, cancelled)
+            except Exception as exc:
+                self._record_test_diagnostic("start-deny", exc)
+                raise
         if operation == "process.inspect":
-            return self._inspect(profile, context, payload, timeout, cancelled)
+            try:
+                return self._inspect(profile, context, payload, timeout, cancelled)
+            except Exception as exc:
+                self._record_test_diagnostic("inspect-deny", exc)
+                raise
         return self._control(profile, context, operation, payload, timeout, cancelled)
+
+    def _record_test_diagnostic(self, prefix: str, exc: Exception) -> None:
+        """Emit only bounded exception class/code/line into root-only test evidence."""
+        sink = self._diagnostic_sink
+        if sink is None:
+            return
+        code = getattr(exc, "code", "internal")
+        if not isinstance(code, str) or not re.fullmatch(r"[a-z0-9_.-]{1,64}", code):
+            code = "internal"
+        exception_type = type(exc).__name__
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,63}", exception_type):
+            exception_type = "Exception"
+        import traceback
+        frames = traceback.extract_tb(exc.__traceback__)[-5:] if exc.__traceback__ else []
+        frame_path = ",".join(f"{frame.name}:{frame.lineno}" for frame in frames)
+        # Function names and source line numbers contain no request values or
+        # host paths, and make root-only fixture failures actionable.
+        if not re.fullmatch(r"[A-Za-z0-9_.,:< >-]{0,384}", frame_path):
+            frame_path = "unavailable"
+        sink((prefix + ":" + code + ":" + exception_type + ":frames=" + frame_path).encode("ascii"))
 
     @staticmethod
     def _json(payload: bytes) -> dict[str, Any]:
@@ -1301,9 +4412,15 @@ class ManagedProcessEffectHandler:
 
     def _start(self, profile: ManagedProfileCustody, context: HostContext,
                authorization: EffectAuthorization, payload: bytes, timeout: float,
-               peer_pid: int, peer_pidfd: int | None,
+               peer_pid: int | None, peer_pidfd: int | None,
                cancelled: Callable[[], bool], *,
-               start_guard: Callable[[], bool] | None = None) -> Mapping[str, Any]:
+               start_guard: Callable[[], bool] | None = None,
+               task_admission: RootAdmittedTask | None = None,
+               daemon_liveness_pidfd: int | None = None,
+               root_resource_start: Any | None = None,
+               root_resource_home_binding: Any | None = None,
+               root_resource_selection: Any | None = None,
+               root_application_start: Any | None = None) -> Mapping[str, Any]:
         with self._lock:
             if (profile.profile_id in self._starting
                     or any(item.profile.profile_id == profile.profile_id for item in self._handles.values())):
@@ -1314,27 +4431,74 @@ class ManagedProcessEffectHandler:
                 return self.start_selected_operation(
                     profile, context, authorization, payload, timeout=timeout,
                     peer_pid=peer_pid, peer_pidfd=peer_pidfd, cancelled=cancelled,
-                    _start_guard=start_guard,
+                    _start_guard=start_guard, _task_admission=task_admission,
+                    _daemon_liveness_pidfd=daemon_liveness_pidfd,
+                    _root_resource_start=root_resource_start,
+                    _root_resource_home_binding=root_resource_home_binding,
+                    _root_resource_selection=root_resource_selection,
+                    _root_application_start=root_application_start,
                 )
             return self._start_reserved(profile, context, authorization, payload, timeout,
-                                        peer_pid, peer_pidfd, cancelled, start_guard=start_guard)
+                                        peer_pid, peer_pidfd, cancelled, start_guard=start_guard,
+                                        daemon_liveness_pidfd=daemon_liveness_pidfd)
         finally:
             with self._lock:
                 self._starting.discard(profile.profile_id)
 
     def start_selected_operation(self, profile: ManagedProfileCustody, context: HostContext,
                                  authorization: EffectAuthorization, payload: bytes, *,
-                                 timeout: float, peer_pid: int, peer_pidfd: int | None,
+                                 timeout: float, peer_pid: int | None, peer_pidfd: int | None,
                                  cancelled: Callable[[], bool],
-                                 _start_guard: Callable[[], bool] | None = None) -> Mapping[str, Any]:
+                                 _start_guard: Callable[[], bool] | None = None,
+                                 _task_admission: RootAdmittedTask | None = None,
+                                 _root_selected_effect: Any | None = None,
+                                 _root_selected_health_admission: Any | None = None,
+                                 _root_selected_lifecycle_deadline: float | None = None,
+                                 _xauthority_mount_source: Path | None = None,
+                                 _daemon_liveness_pidfd: int | None = None,
+                                 _root_resource_start: Any | None = None,
+                                 _root_resource_home_binding: Any | None = None,
+                                 _root_resource_selection: Any | None = None,
+                                 _root_application_start: Any | None = None) -> Mapping[str, Any]:
         """Resolve a selection-only worker request to one immutable root recipe.
 
         This method is called only after dispatch has checked the consumed
         process.start grant against these exact selection bytes. No path, argv,
         executable, environment, PID, namespace, or socket comes from the peer.
         """
+        if _root_selected_effect is not None:
+            from hermes_installer.authority.types import VerifiedRootSelectedServiceEffect
+            if (type(_root_selected_effect) is not VerifiedRootSelectedServiceEffect
+                    or not _root_selected_effect.is_current()):
+                raise AuthorityDenied("root-selected.authority", "sealed current root service effect is required")
+        if _root_selected_health_admission is not None:
+            from hermes_installer.authority.native_health_observer import RootNativeHealthStartAdmission
+            authority = self.native_health_start_authority
+            if (type(_root_selected_health_admission) is not RootNativeHealthStartAdmission
+                    or authority is None
+                    or not authority.is_current(_root_selected_health_admission)
+                    or context is not None or authorization is not None
+                    or peer_pid is not None or peer_pidfd is not None
+                    or _daemon_liveness_pidfd is None
+                    or _root_selected_effect is None
+                    or _root_selected_effect.role != "health"
+                    or _root_selected_effect.action != "start"):
+                raise AuthorityDenied("native.health.admission", "current root health admission is required")
         request = self._json(payload)
-        if (set(request) != {"schema", "enrollment_id", "generation", "operation_id", "parameters"}
+        if (_root_selected_effect is not None
+                and _root_selected_effect.role in {
+                    "memory-openviking", "memory-agentmemory", "memory-claude-mem"}
+                and (context is not None or authorization is not None
+                     or peer_pid is not None or peer_pidfd is not None
+                     or _daemon_liveness_pidfd is None)):
+            raise AuthorityDenied("root-selected.authority", "memory lifecycle launch must use the typed root admission path")
+        expected_fields = {"schema", "enrollment_id", "generation", "operation_id", "parameters"}
+        if _task_admission is not None:
+            expected_fields |= {"admission_handle", "node_id", "task_payload_sha256",
+                                "stdin_sha256", "stdin_size_bytes"}
+        if _root_application_start is not None:
+            expected_fields |= {"application_admission_handle", "application_step_id"}
+        if (set(request) != expected_fields
                 or type(request.get("schema")) is not int or request["schema"] != 1
                 or request.get("enrollment_id") != profile.enrollment_id
                 or request.get("generation") != profile.generation):
@@ -1349,14 +4513,125 @@ class ManagedProcessEffectHandler:
         parameters = request.get("parameters")
         if not isinstance(parameters, dict):
             raise AuthorityDenied("process.parameters", "operation parameters must be a bounded object")
+        if _root_application_start is not None:
+            from hermes_installer.authority.application_workload_execution import VerifiedRootApplicationStart
+            proof = _root_application_start
+            service = getattr(getattr(proof, "_issuer", None), "service", None)
+            verify = getattr(service, "verify_consumed_application_start", None)
+            if (type(proof) is not VerifiedRootApplicationStart or proof.selected_profile is not profile
+                    or not callable(verify)
+                    or verify(proof, payload, selected_step_handle=proof.selected_step.handle) is not True
+                    or request.get("application_admission_handle") != proof.context.admission_handle
+                    or request.get("application_step_id") != proof.context.step_id
+                    or profile.profile_id != proof.context.profile_id
+                    or profile.generation != proof.context.profile_generation):
+                raise AuthorityDenied("application.start_proof", "consumed root application proof is stale")
+        if _task_admission is not None and (
+                request.get("node_id") != _task_admission.node_id
+                or request.get("task_payload_sha256") != _task_admission.task_payload_sha256
+                or request.get("stdin_sha256") != _task_admission.stdin_sha256
+                or request.get("stdin_size_bytes") != _task_admission.stdin_size_bytes
+                or not isinstance(request.get("admission_handle"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", request["admission_handle"])):
+            raise AuthorityDenied("resource.task_selection", "internal task selection differs from its admission")
         schema_id = recipe["parameter_schema_id"]
         schema = (profile.parameter_schemas or {}).get(schema_id)
         if not isinstance(schema, Mapping):
             raise AuthorityDenied("process.parameters", "operation parameter schema is unavailable")
         normalized = self._validate_operation_parameters(parameters, schema)
 
-        if cancelled() or self.monotonic() >= authorization.monotonic_expires_at:
+        grant_expiry = (float(_root_application_start.authorization.expires_monotonic)
+                        if _root_application_start is not None else
+                        float(_root_selected_effect.expires_monotonic)
+                        if _root_selected_effect is not None else
+                        float(_root_resource_start.authorization.expires_monotonic)
+                        if _root_resource_start is not None else
+                        float(authorization.monotonic_expires_at))
+        if (cancelled() or isinstance(grant_expiry, bool)
+                or not isinstance(grant_expiry, (int, float))
+                or self.monotonic() >= grant_expiry):
             raise AuthorityDenied("process.start_expired", "operation grant expired before recipe resolution")
+        native_worker_profile_id = getattr(self, "_native_worker_profile_id", None)
+        if (native_worker_profile_id is not None
+                and profile.profile_id == native_worker_profile_id):
+            health_admission = _root_selected_health_admission
+            resource_start = _root_resource_start
+            if health_admission is None and (_task_admission is None or resource_start is None):
+                raise AuthorityDenied(
+                    "native_worker.admission",
+                    "selected native worker starts require root health or resource-task admission")
+            if (parameters or recipe.get("child_artifact_refs") != {}
+                    or recipe.get("stdin_mode") != "bounded-typed-bytes"
+                    or type(recipe.get("max_output_bytes")) is not int
+                    or not 1 <= recipe["max_output_bytes"] <= 4 * 1024 * 1024
+                    or type(recipe.get("max_lifetime_seconds")) is not int
+                    or not 0 < recipe["max_lifetime_seconds"] <= profile.max_lifetime_seconds
+                    or schema.get("fields") not in ([], ())):
+                raise AuthorityDenied(
+                    "native_worker.recipe",
+                    "native worker admits only the exact empty-parameter bounded stdin recipe")
+            if health_admission is not None:
+                authority = self.native_health_start_authority
+                if (authority is None or not authority.is_current(health_admission)
+                        or _root_selected_effect is None
+                        or not authority.verify_consumed_start_effect(
+                            _root_selected_effect, health_admission)):
+                    raise AuthorityDenied("native_worker.admission", "health admission is no longer current")
+                selected_principal = health_admission.principal_id
+                selected_namespace = _root_selected_effect.selected_namespace_identity
+                deadline = min(float(grant_expiry), float(health_admission.expires_monotonic))
+                process_deadline = float(_root_selected_lifecycle_deadline or (
+                    self.monotonic() + float(recipe["max_lifetime_seconds"])))
+            else:
+                if (type(resource_start).__name__ != "VerifiedRootResourceTaskStart"
+                        or not self._root_resource_start_current(
+                            resource_start, _task_admission, payload, profile)
+                        or not self._task_admission_is_current(_task_admission, payload)):
+                    raise AuthorityDenied("native_worker.admission", "resource task start proof is no longer current")
+                selected_principal = resource_start.context.selected_principal_id
+                selected_namespace = resource_start.context.selected_namespace_identity
+                deadline = min(float(grant_expiry), float(_task_admission.deadline_monotonic))
+                process_deadline = min(float(_task_admission.deadline_monotonic),
+                    self.monotonic() + float(recipe["max_lifetime_seconds"]))
+            parent_liveness_fd = (_daemon_liveness_pidfd if _daemon_liveness_pidfd is not None
+                                  else peer_pidfd)
+            if parent_liveness_fd is None:
+                raise AuthorityDenied("native_worker.parent", "root daemon PIDFD is required for native start")
+            owner = self._native_worker_launch_owner
+            if owner is None:
+                raise AuthorityDenied("native_worker.launch", "current active worker source owner is unavailable")
+            selection = owner.select_unique_worker_for_profile(profile.profile_id)
+            proof = None
+            try:
+                proof = owner.resolve_selected_native_worker_launch(selection)
+                if (proof.profile_generation != profile.generation
+                        or proof.service_generation_digest != profile.service_generation_digest
+                        or proof.executable_path != Path(profile.executable)
+                        or proof.executable_sha256 != profile.artifact_sha256
+                        or proof.argv[0] != str(proof.executable_path)
+                        or tuple(proof.argv[1:]) != (
+                            "-m", "hermes_cli.main", "chat", "--query-file", "-", "--oneshot", "--quiet")):
+                    raise AuthorityDenied("native_worker.recipe", "active source recipe differs from the selected profile")
+                return self._start_native_worker_gate(
+                    profile, proof, selection=selection, operation_recipe=recipe,
+                    cwd=profile.home_root, payload=payload, timeout=timeout,
+                    cancelled=cancelled, start_guard=_start_guard,
+                    parent_liveness_fd=parent_liveness_fd, lifecycle_deadline=deadline,
+                    process_deadline=process_deadline,
+                    selected_principal=selected_principal,
+                    selected_namespace=selected_namespace)
+            except BaseException:
+                if proof is not None:
+                    with self._lock:
+                        retained = any(handle.native_worker_launch_proof is proof
+                                       and not handle.stopped for handle in self._handles.values())
+                    if not retained:
+                        proof.close()
+                        try:
+                            owner.release_selection(selection)
+                        except Exception:
+                            pass
+                raise
         executable_id = recipe["executable_artifact_id"]
         executable_digest = recipe["executable_sha256"]
         executable_ref = (executable_id if executable_id.startswith("artifact:")
@@ -1393,25 +4668,72 @@ class ManagedProcessEffectHandler:
                        or len(value) > 1024 for value in environment.values())
                 or environment.get("HOME") != "/hermes" or environment.get("HERMES_HOME") != "/hermes"):
             raise AuthorityDenied("process.environment", "enrolled operation environment is invalid")
-        cwd_root_id = recipe["cwd_root_id"]
-        root_by_id = {profile.home_id: profile.home_root, profile.work_id: profile.work_root,
-                      profile.data_id: profile.data_root}
-        root_path = root_by_id.get(cwd_root_id)
-        if root_path is None:
-            raise AuthorityDenied("process.cwd", "operation working root is not enrolled")
-        relative = recipe["cwd_subpath"]
-        cwd = root_path if relative in {"", "."} else root_path / relative
-        try:
-            resolved_cwd = cwd.resolve(strict=True)
-            if not resolved_cwd.is_dir() or not resolved_cwd.is_relative_to(root_path):
-                raise ValueError("working directory escapes enrolled root")
-            cursor = root_path
-            for part in Path(relative).parts if relative not in {"", "."} else ():
-                cursor /= part
-                if stat.S_ISLNK(cursor.lstat().st_mode):
-                    raise ValueError("working directory traverses a symlink")
-        except (OSError, ValueError):
-            raise AuthorityDenied("process.cwd", "operation working directory is unavailable") from None
+        if _root_selected_effect is not None:
+            if _root_selected_effect.role == "display":
+                if _xauthority_mount_source is None:
+                    raise AuthorityDenied("root-selected.mount", "selected display lacks its fixed role mount")
+                environment["XAUTHORITY"] = "/run/hermes-installer/display/Xauthority"
+            elif _root_selected_health_admission is not None:
+                from hermes_installer.authority.native_health_observer import RootNativeHealthStartAdmission
+                admission = _root_selected_health_admission
+                authority = self.native_health_start_authority
+                operation = admission._process_operation
+                if (type(admission) is not RootNativeHealthStartAdmission
+                        or authority is None or not authority.is_current(admission)
+                        or not authority.verify_consumed_start_effect(_root_selected_effect, admission)
+                        or self.profiles.get(profile.profile_id) is not profile
+                        or profile is not admission._service_profile
+                        or profile.profile_id != admission.profile_id
+                        or profile.enrollment_id != admission.enrollment_id
+                        or profile.generation != admission.process_generation
+                        or profile.service_generation_digest != admission.service_generation_digest
+                        or operation is not admission._process_operation
+                        or operation.operation_id != admission.operation_id
+                        or operation.target != _root_selected_effect.target
+                        or _root_selected_effect.operation != "process.start"
+                        or _root_selected_effect.capability != "hermes-profile-invoke"
+                        or _root_selected_effect.selected_principal_id != admission.principal_id
+                        or _root_selected_effect.selected_subject_uid != profile.owner_uid
+                        or _root_selected_effect.selected_subject_gid != profile.owner_gid):
+                    raise AuthorityDenied("native.health.binding", "health effect differs from the current selected recipe")
+            elif (_root_selected_effect.role not in {
+                    "memory-openviking", "memory-agentmemory", "memory-claude-mem"}
+                    or _root_selected_effect.admission_kind != "memory"
+                    or _root_selected_effect.action != "start"
+                    or _xauthority_mount_source is not None):
+                raise AuthorityDenied("root-selected.mount", "selected operation has no fixed supported role binding")
+        resource_home_binding = _root_resource_home_binding
+        if _task_admission is not None:
+            from hermes_installer.authority.native_profile_task_homes import RootSelectedResourceTaskHomeBinding
+            if (type(resource_home_binding) is not RootSelectedResourceTaskHomeBinding
+                    or _root_resource_selection is None
+                    or not resource_home_binding.verify_current(_root_resource_selection)):
+                raise AuthorityDenied("resource.home_binding", "selected task home binding is stale")
+            environment["HOME"] = "/hermes"
+            environment["HERMES_HOME"] = "/hermes"
+            resolved_cwd = Path("/hermes")
+            cwd_root = resolved_cwd
+            cwd_target = "/hermes"
+        else:
+            cwd_root_id = recipe["cwd_root_id"]
+            root_by_id = {profile.home_id: profile.home_root, profile.work_id: profile.work_root,
+                          profile.data_id: profile.data_root}
+            root_path = root_by_id.get(cwd_root_id)
+            if root_path is None:
+                raise AuthorityDenied("process.cwd", "operation working root is not enrolled")
+            relative = recipe["cwd_subpath"]
+            cwd = root_path if relative in {"", "."} else root_path / relative
+            try:
+                resolved_cwd = cwd.resolve(strict=True)
+                if not resolved_cwd.is_dir() or not resolved_cwd.is_relative_to(root_path):
+                    raise ValueError("working directory escapes enrolled root")
+                cursor = root_path
+                for part in Path(relative).parts if relative not in {"", "."} else ():
+                    cursor /= part
+                    if stat.S_ISLNK(cursor.lstat().st_mode):
+                        raise ValueError("working directory traverses a symlink")
+            except (OSError, ValueError):
+                raise AuthorityDenied("process.cwd", "operation working directory is unavailable") from None
         recipe_argv = tuple([str(executable), *(
             "{child_artifact}" if token in children else token for token in executable_tokens[1:]
         )])
@@ -1429,16 +4751,596 @@ class ManagedProcessEffectHandler:
             "stdin_mode": "pipe" if recipe["stdin_mode"] == "bounded-typed-bytes" else "closed",
         }
         launch_bytes = json.dumps(launch, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+        lifecycle_deadline = (float(grant_expiry) if _root_selected_lifecycle_deadline is None
+                              else _root_selected_lifecycle_deadline)
+        if (isinstance(lifecycle_deadline, bool) or not isinstance(lifecycle_deadline, (int, float))
+                or not math.isfinite(lifecycle_deadline) or lifecycle_deadline <= self.monotonic()):
+            raise AuthorityDenied("process.start_expired", "root-selected service lifetime deadline is invalid")
         return self._start_reserved(derived, context, authorization, launch_bytes, timeout,
                                    peer_pid, peer_pidfd, cancelled, registered_profile=profile,
-                                   start_guard=_start_guard)
+                                   start_guard=_start_guard,
+                                   lease_expires_monotonic=float(lifecycle_deadline),
+                                   process_expires_monotonic=_root_selected_lifecycle_deadline,
+                                   root_selected_effect=_root_selected_effect,
+                                   root_resource_home_binding=resource_home_binding,
+                                   root_resource_selection=_root_resource_selection,
+                                   xauthority_mount_source=_xauthority_mount_source,
+                                   daemon_liveness_pidfd=_daemon_liveness_pidfd)
+
+    def perform_root_selected_service_effect(
+            self, profile: ManagedProfileCustody, verified_effect: Any,
+            canonical_payload_bytes: bytes, *, controller_proof: Any | None = None,
+            memory_admission: Any | None = None,
+            timeout: float, cancelled: Callable[[], bool],
+            xauthority_binding: Any | None = None,
+            xauthority_registry: Any | None = None) -> RootSelectedServiceProcessReceipt | RootSelectedServiceStatusReceipt | Mapping[str, Any]:
+        """Launch one sealed root-selected service operation from its fixed recipe.
+
+        The controller PIDFD is verified as provenance, while the manager owns
+        the launched process lifetime. No worker context, caller path, argv, or
+        synthetic ordinary grant is created for this root-only path.
+        """
+        from hermes_installer.authority.types import VerifiedRootSelectedServiceEffect
+        from hermes_installer.authority.selected_startup_authority import (
+            RootControllerProcessIdentityLease,
+        )
+        if cancelled is None:
+            cancelled = lambda: False
+        if type(verified_effect) is not VerifiedRootSelectedServiceEffect:
+            raise AuthorityDenied("root-selected.effect", "sealed selected-service effect is required")
+        if (type(profile) is not ManagedProfileCustody
+                or self.profiles.get(profile.profile_id) is not profile
+                or not isinstance(canonical_payload_bytes, bytes)
+                or not callable(cancelled)
+                or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout) or not 0 < timeout <= 600):
+            raise AuthorityDenied("root-selected.binding", "selected service launch binding is malformed")
+        request = self._json(canonical_payload_bytes)
+        effect = verified_effect
+        action = effect.action
+        memory_role = effect.role in {
+            "memory-openviking", "memory-agentmemory", "memory-claude-mem",
+        }
+        if memory_role:
+            from hermes_installer.memory.lifecycle_authority import RootVerifiedMemoryLifecycleAdmission
+            if type(memory_admission) is not RootVerifiedMemoryLifecycleAdmission:
+                raise AuthorityDenied("root-selected.memory", "sealed current memory lifecycle admission is required")
+            if controller_proof is None:
+                controller_proof = memory_admission._controller_lease
+            if (type(controller_proof) is not RootControllerProcessIdentityLease
+                    or controller_proof is not memory_admission._controller_lease
+                    or not memory_admission.is_current(now=self.monotonic())
+                    or effect.admission_handle != memory_admission.admission_handle
+                    or effect.admission_kind != "memory"
+                    or effect.role != memory_admission.role
+                    or effect.profile_id != memory_admission.profile_id
+                    or effect.enrollment_id != memory_admission.service_enrollment_id
+                    or effect.generation != memory_admission.generation
+                    or effect.selected_principal_id != memory_admission.principal_id
+                    or effect.selected_namespace_identity != memory_admission.namespace_identity
+                    or effect.selected_subject_uid != memory_admission.subject_uid
+                    or effect.selected_subject_gid != memory_admission.subject_gid
+                    or effect.service_generation_digest != memory_admission.service_generation_digest
+                    or effect.source_closure_sha256 != memory_admission.source_closure_sha256):
+                raise AuthorityDenied("root-selected.memory", "memory effect differs from its current lifecycle admission")
+            try:
+                selected_action = memory_admission.action(action, now=self.monotonic())
+            except Exception:
+                raise AuthorityDenied("root-selected.memory", "memory lifecycle action is not current") from None
+            if (selected_action.operation_id != effect.operation_id
+                    or selected_action.target != effect.target
+                    or selected_action.operation != effect.operation
+                    or selected_action.capability != effect.capability):
+                raise AuthorityDenied("root-selected.memory", "memory effect differs from its protected lifecycle action")
+        if type(controller_proof) is not RootControllerProcessIdentityLease:
+            raise AuthorityDenied("root-selected.controller", "root controller PIDFD lease is required")
+        if memory_role:
+            if effect.admission_kind != "memory":
+                raise AuthorityDenied("root-selected.role", "memory operation requires a memory lifecycle admission")
+            operation_id = effect.operation_id
+            expected_operation = {"start": "process.start", "status": "process.status",
+                                  "stop": "process.stop"}.get(action)
+            expected_capability = ("hermes-profile-invoke" if action == "start"
+                                   else "hermes-process-control")
+            expected_target = (process_start_target(profile) if action == "start"
+                               else process_control_target(profile, expected_operation or ""))
+            if action == "start":
+                expected_payload_fields = {"schema", "enrollment_id", "generation", "operation_id", "parameters"}
+                process_id = None
+            else:
+                expected_payload_fields = {"schema", "process_id", "generation"}
+                if action == "stop":
+                    expected_payload_fields |= {"reason", "grace_seconds"}
+                process_id = request.get("process_id")
+            if (set(request) != expected_payload_fields or request.get("schema") != 1
+                    or request.get("generation") != profile.generation
+                    or (action == "start" and (
+                        request.get("enrollment_id") != profile.enrollment_id
+                        or request.get("operation_id") != operation_id
+                        or request.get("parameters") != {}))
+                    or (action != "start" and (
+                        not isinstance(process_id, str) or not re.fullmatch(r"[0-9a-f]{32}", process_id)))
+                    or (action == "stop" and (
+                        request.get("reason") not in {"shutdown", "cancel", "rollback"}
+                        or type(request.get("grace_seconds")) is not int
+                        or request.get("grace_seconds") != 5))):
+                raise AuthorityDenied("root-selected.payload", "memory lifecycle payload is malformed")
+        else:
+            operation_id = request.get("operation_id")
+            expected_operation = "process.start"
+            expected_capability = "hermes-profile-invoke"
+            expected_target = process_start_target(profile)
+            if set(request) != {"schema", "enrollment_id", "generation", "operation_id", "parameters"}:
+                raise AuthorityDenied("root-selected.payload", "selected startup payload is malformed")
+        profile_digest = profile.service_generation_digest
+        if (not isinstance(operation_id, str)
+                or effect.operation != expected_operation
+                or effect.capability != expected_capability
+                or effect.profile_id != profile.profile_id
+                or effect.enrollment_id != profile.enrollment_id
+                or effect.generation != profile.generation
+                or effect.selected_subject_uid != profile.owner_uid
+                or effect.selected_subject_gid != profile.owner_gid
+                or effect.service_generation_digest != profile_digest
+                or effect.operation_id != operation_id
+                or effect.target != expected_target
+                or not isinstance(profile.operation_recipes, Mapping)
+                or (action == "start" and operation_id not in profile.operation_recipes)
+                or (action != "start" and operation_id != "managed-process-" + action + "-v1")
+                or hashlib.sha256(canonical_payload_bytes).hexdigest() != effect.request_sha256
+                or (action != "start" and hashlib.sha256(json.dumps({
+                    "operation": expected_operation, "target": expected_target,
+                    "enrollment_id": profile.enrollment_id, "generation": profile.generation,
+                }, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")).hexdigest()
+                    != effect.recipe_sha256)
+                or action == "start" and hashlib.sha256(json.dumps(dict(profile.operation_recipes[operation_id]),
+                    sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+                    allow_nan=False).encode("ascii")).hexdigest() != effect.recipe_sha256
+                or not isinstance(effect.controller_proof_sha256, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", effect.controller_proof_sha256)
+                or getattr(controller_proof, "proof_handle", None) != effect.controller_proof_handle
+                or getattr(controller_proof, "proof_sha256", None) != effect.controller_proof_sha256
+                or not callable(getattr(controller_proof, "is_current", None))
+                or not controller_proof.is_current()
+                or not effect.is_current()
+                or self.monotonic() >= min(float(effect.expires_monotonic),
+                                           float(controller_proof.expires_monotonic))):
+            raise AuthorityDenied("root-selected.binding", "selected service effect is stale or mismatched")
+        if effect.role not in {"display", "gateway", "desktop",
+                               "memory-openviking", "memory-agentmemory", "memory-claude-mem"}:
+            raise AuthorityDenied("root-selected.role", "selected service role is unavailable")
+        if memory_role:
+            return self._perform_root_selected_memory_effect(
+                profile, effect, controller_proof, memory_admission,
+                canonical_payload_bytes, request,
+                timeout=timeout, cancelled=cancelled,
+            )
+        if effect.role == "display":
+            if (xauthority_binding is None or xauthority_registry is None
+                    or not callable(getattr(xauthority_registry, "verify_mount_binding", None))
+                    or not xauthority_registry.verify_mount_binding(xauthority_binding)):
+                raise AuthorityDenied("root-selected.xauthority", "verified Xauthority mount binding is required")
+            if effect.action != "start":
+                raise AuthorityDenied("root-selected.action", "selected display action is not start")
+            with self._lock:
+                if (profile.profile_id in self._starting
+                        or any(item.profile.profile_id == profile.profile_id
+                               for item in self._handles.values())):
+                    raise AuthorityDenied("process.generation", "a managed process is already active for this profile")
+                self._starting.add(profile.profile_id)
+            stage = None
+            source_lease = None
+            parent_pidfd = None
+            launched_process_id = None
+            try:
+                stage, mount_receipt, source_lease = self._prepare_xauthority_mount(
+                    profile, xauthority_binding, xauthority_registry)
+                parent_pidfd = os.pidfd_open(os.getpid(), 0)
+                if (_pidfd_exited(parent_pidfd)
+                        or not controller_proof.is_current()
+                        or not effect.is_current()):
+                    raise AuthorityDenied("root-selected.currentness", "selected startup proof expired")
+                self._verify_root_controller_identity(controller_proof, effect)
+                # This metadata object is created inside the root custodian;
+                # it is not a worker identity or authority grant.  The
+                # verified effect supplies its expiry and all selection facts.
+                root_context = SimpleNamespace(
+                    principal_id=effect.selected_principal_id,
+                    namespace_id=effect.selected_namespace_identity,
+                )
+                root_auth = SimpleNamespace(monotonic_expires_at=effect.expires_monotonic)
+                launch_guard = lambda: (effect.is_current() and controller_proof.is_current()
+                                        and self.monotonic() < min(effect.expires_monotonic,
+                                                                   controller_proof.expires_monotonic))
+                remaining = min(float(timeout), float(effect.expires_monotonic) - self.monotonic())
+                if remaining <= 0:
+                    raise AuthorityDenied("root-selected.deadline", "selected service effect expired")
+                response = self.start_selected_operation(
+                    profile, root_context, root_auth, canonical_payload_bytes,
+                    timeout=remaining,
+                    peer_pid=os.getpid(), peer_pidfd=parent_pidfd, cancelled=cancelled,
+                    _start_guard=launch_guard, _root_selected_effect=effect,
+                    _xauthority_mount_source=stage)
+                body = response.get("body") if isinstance(response, Mapping) else None
+                decoded = json.loads(body.decode("ascii")) if isinstance(body, bytes) else None
+                process_id = decoded.get("process_id") if isinstance(decoded, dict) else None
+                if not isinstance(process_id, str):
+                    raise AuthorityDenied("root-selected.launch", "manager did not return an admitted process")
+                launched_process_id = process_id
+                lease = self.resolve_active_process_handle(profile.profile_id, profile.generation)
+                if lease is None:
+                    raise AuthorityDenied("root-selected.identity", "selected process is no longer live")
+                try:
+                    digest = self._selected_service_identity_digest(lease)
+                    issued = self.monotonic()
+                    receipt = RootSelectedServiceProcessReceipt(
+                        1, uuid.uuid4().hex, lease.process_id, effect.role, effect.action,
+                        effect.enrollment_id, effect.profile_id, effect.generation,
+                        effect.selected_principal_id, effect.selected_namespace_identity,
+                        effect.selected_subject_uid, effect.selected_subject_gid,
+                        effect.operation_id, effect.target, effect.service_generation_digest,
+                        digest, issued, lease.expires_monotonic,
+                    )
+                    with self._lock:
+                        current_handle = self._handles.get(lease.process_id)
+                        if (current_handle is None or current_handle.stopped
+                                or current_handle.profile.generation != effect.generation
+                                or current_handle.xauthority_mount_receipt is None
+                                or current_handle.xauthority_mount_receipt != mount_receipt):
+                            raise AuthorityDenied("root-selected.identity", "selected process custody changed")
+                        self._root_selected_process_receipts[receipt.receipt_handle] = (receipt, current_handle)
+                    return receipt
+                finally:
+                    lease.close()
+            except BaseException:
+                if launched_process_id is not None:
+                    with self._lock:
+                        failed_handle = self._handles.get(launched_process_id)
+                    if failed_handle is not None and not failed_handle.stopped:
+                        try:
+                            proof = self._stop(failed_handle, timeout=5.0)
+                            if not proof.cleanup_verified:
+                                raise AuthorityDenied("process.cleanup_ambiguous",
+                                    "failed selected launch cleanup is unproven")
+                        except Exception as cleanup_error:
+                            raise AuthorityDenied("process.cleanup_ambiguous",
+                                "failed selected launch cleanup is unproven") from cleanup_error
+                if stage is not None:
+                    try:
+                        self._remove_native_staging(stage)
+                    except Exception:
+                        pass
+                raise
+            finally:
+                if source_lease is not None:
+                    source_lease.close()
+                if parent_pidfd is not None:
+                    os.close(parent_pidfd)
+                effect.close()
+                with self._lock:
+                    self._starting.discard(profile.profile_id)
+        if effect.role == "desktop":
+            raise AuthorityDenied("root-selected.xauthority", "desktop startup requires a sealed display-start receipt")
+        if effect.role == "gateway":
+            # The generic process unit is deny-all. Gateway must use the
+            # separately reviewed role-scoped loopback enforcement adapter.
+            raise AuthorityDenied("root-selected.network", "selected loopback network custody is unavailable")
+        raise AuthorityDenied("root-selected.role", "selected service launch is unavailable")
+
+    def _perform_root_selected_memory_effect(
+            self, profile: ManagedProfileCustody, effect: Any, controller_proof: Any,
+            memory_admission: Any,
+            payload: bytes, request: Mapping[str, Any], *, timeout: float,
+            cancelled: Callable[[], bool]) -> RootSelectedServiceProcessReceipt | RootSelectedServiceStatusReceipt | Mapping[str, Any]:
+        """Execute one finite memory lifecycle action against its retained process."""
+        if (effect.role not in {"memory-openviking", "memory-agentmemory", "memory-claude-mem"}
+                or effect.admission_kind != "memory" or effect.action not in {"start", "status", "stop"}
+                or effect.source_closure_sha256 is None):
+            raise AuthorityDenied("root-selected.memory", "memory lifecycle binding is unavailable")
+        if (not memory_admission.is_current(now=self.monotonic())
+                or not controller_proof.is_current()
+                or self.monotonic() >= min(effect.expires_monotonic, controller_proof.expires_monotonic)):
+            raise AuthorityDenied("root-selected.currentness", "memory lifecycle authorization expired")
+        self._verify_root_controller_identity(controller_proof, effect)
+        if effect.action == "start":
+            with self._lock:
+                if (profile.profile_id in self._starting
+                        or any(item.profile.profile_id == profile.profile_id for item in self._handles.values())):
+                    raise AuthorityDenied("process.generation", "selected memory service is already active")
+                self._starting.add(profile.profile_id)
+            parent_pidfd = None
+            launched_process_id = None
+            try:
+                parent_pidfd = os.pidfd_open(os.getpid(), 0)
+                if (_pidfd_exited(parent_pidfd) or cancelled() or not effect.is_current()
+                        or not controller_proof.is_current()):
+                    raise AuthorityDenied("root-selected.currentness", "memory start admission became stale")
+                guard = lambda: (memory_admission.is_current(now=self.monotonic())
+                                 and controller_proof.is_current()
+                                 and self.monotonic() < memory_admission.original_deadline)
+                remaining = min(float(timeout), float(memory_admission.original_deadline) - self.monotonic())
+                if remaining <= 0:
+                    raise AuthorityDenied("root-selected.deadline", "memory start grant expired")
+                response = self.start_selected_operation(
+                    profile, None, None, payload, timeout=remaining,
+                    peer_pid=None, peer_pidfd=None, cancelled=cancelled,
+                    _start_guard=guard, _root_selected_effect=effect,
+                    _root_selected_lifecycle_deadline=memory_admission.original_deadline,
+                    _daemon_liveness_pidfd=parent_pidfd,
+                )
+                body = response.get("body") if isinstance(response, Mapping) else None
+                decoded = json.loads(body.decode("ascii")) if isinstance(body, bytes) else None
+                process_id = decoded.get("process_id") if isinstance(decoded, dict) else None
+                if (not isinstance(process_id, str) or not re.fullmatch(r"[0-9a-f]{32}", process_id)
+                        or decoded.get("generation") != profile.generation):
+                    raise AuthorityDenied("root-selected.launch", "memory service did not return an admitted process")
+                launched_process_id = process_id
+                lease = self.resolve_active_process_handle(profile.profile_id, profile.generation)
+                if lease is None:
+                    raise AuthorityDenied("root-selected.identity", "selected memory service is no longer live")
+                try:
+                    digest = self._selected_service_identity_digest(lease)
+                    receipt = RootSelectedServiceProcessReceipt(
+                        1, uuid.uuid4().hex, lease.process_id, effect.role, "start",
+                        effect.enrollment_id, effect.profile_id, effect.generation,
+                        effect.selected_principal_id, effect.selected_namespace_identity,
+                        effect.selected_subject_uid, effect.selected_subject_gid,
+                        effect.operation_id, effect.target, effect.service_generation_digest,
+                        digest, self.monotonic(), lease.expires_monotonic,
+                    )
+                    with self._lock:
+                        handle = self._handles.get(lease.process_id)
+                        if (handle is None or handle.stopped or handle.profile is not profile
+                                or handle.profile.generation != effect.generation):
+                            raise AuthorityDenied("root-selected.identity", "memory service process custody changed")
+                        self._root_selected_process_receipts[receipt.receipt_handle] = (receipt, handle)
+                    return receipt
+                finally:
+                    lease.close()
+            except BaseException:
+                if launched_process_id is not None:
+                    with self._lock:
+                        failed = self._handles.get(launched_process_id)
+                    if failed is not None and not failed.stopped:
+                        proof = self._stop(failed, timeout=5.0)
+                        if not proof.cleanup_verified:
+                            raise AuthorityDenied("process.cleanup_ambiguous", "failed memory start cleanup is unproven")
+                raise
+            finally:
+                if parent_pidfd is not None:
+                    os.close(parent_pidfd)
+                effect.close()
+                with self._lock:
+                    self._starting.discard(profile.profile_id)
+
+        process_id = request.get("process_id")
+        with self._lock:
+            candidates = [receipt for receipt, _handle in self._root_selected_process_receipts.values()
+                          if receipt.process_id == process_id and receipt.role == effect.role
+                          and receipt.profile_id == profile.profile_id
+                          and receipt.generation == effect.generation and receipt.action == "start"]
+        if len(candidates) != 1:
+            raise AuthorityDenied("root-selected.process", "memory action lacks one exact retained start receipt")
+        process_receipt = candidates[0]
+        if (process_receipt.enrollment_id != memory_admission.service_enrollment_id
+                or process_receipt.generation != memory_admission.generation
+                or process_receipt.profile_id != memory_admission.profile_id
+                or process_receipt.selected_principal_id != memory_admission.principal_id
+                or process_receipt.selected_namespace_identity != memory_admission.namespace_identity
+                or process_receipt.service_generation_digest != memory_admission.service_generation_digest
+                or process_receipt.selected_subject_uid != memory_admission.subject_uid
+                or process_receipt.selected_subject_gid != memory_admission.subject_gid):
+            raise AuthorityDenied("root-selected.process", "memory process receipt differs from its retained admission")
+        lease = self.resolve_selected_service_process(process_receipt)
+        if lease is None:
+            raise AuthorityDenied("root-selected.identity", "retained memory service process is no longer current")
+        try:
+            if (cancelled() or not memory_admission.is_current(now=self.monotonic())
+                    or not effect.is_current() or not controller_proof.is_current()):
+                raise AuthorityDenied("root-selected.currentness", "memory control admission became stale")
+            with self._lock:
+                retained = self._root_selected_process_receipts.get(process_receipt.receipt_handle)
+                handle = retained[1] if retained is not None and retained[0] is process_receipt else None
+            if (handle is None or handle.stopped or handle.profile is not profile
+                    or handle.process_id != process_receipt.process_id
+                    or handle.profile.generation != memory_admission.generation
+                    or self.monotonic() >= min(memory_admission.original_deadline, handle.expires)
+                    or _pidfd_exited(handle.child_pidfd) or cancelled()):
+                raise AuthorityDenied("root-selected.process", "memory lifecycle process is stale or outside its admission")
+            if effect.action == "stop":
+                proof = self._stop(handle, timeout=min(float(timeout), 5.0))
+                if not proof.cleanup_verified:
+                    raise AuthorityDenied("process.cleanup_ambiguous", "memory service stop cleanup is unproven")
+                with self._lock:
+                    for handle, (receipt, _owned) in tuple(self._root_selected_process_receipts.items()):
+                        if receipt is process_receipt:
+                            self._root_selected_process_receipts.pop(handle, None)
+                return _response(200, {"schema": 1, "process_id": process_receipt.process_id,
+                    "generation": process_receipt.generation, "operation": "process.stop",
+                    "state": "stopped", "result": {"closed": True, "reap_state": "reaped"}})
+            exit_code = handle.launcher.poll()
+            if exit_code is not None and type(exit_code) is not int:
+                raise AuthorityDenied("root-selected.status", "memory service exit status is malformed")
+            state = "running" if exit_code is None else "exited"
+            status = RootSelectedServiceStatusReceipt(
+                1, uuid.uuid4().hex, process_receipt, state, exit_code, self.monotonic(),
+                process_receipt.process_identity_digest, effect.service_generation_digest,
+            )
+            with self._lock:
+                self._root_selected_status_receipts[status.receipt_handle] = (
+                    status, process_receipt, min(effect.expires_monotonic, lease.expires_monotonic),
+                )
+            return status
+        finally:
+            lease.close()
+            effect.close()
+
+    def _verify_root_daemon_health_controller(self, proof: Any, effect: Any) -> None:
+        """Reobserve the exact installed daemon lease used for v191 health admission."""
+        from hermes_installer.authority import native_health_observer
+        RootDaemonHealthControllerLease = getattr(
+            native_health_observer, "RootDaemonHealthControllerLease", None)
+        try:
+            if (RootDaemonHealthControllerLease is None
+                    or type(proof) is not RootDaemonHealthControllerLease
+                    or effect.role != "health" or effect.admission_kind != "health"
+                    or proof.proof_handle != effect.controller_proof_handle
+                    or proof.proof_sha256 != effect.controller_proof_sha256
+                    or not isinstance(proof.unit_id, str)
+                    or not re.fullmatch(r"hermes-installer-[0-9a-f]{32}\.service", proof.unit_id)
+                    or not isinstance(proof.invocation_id, str)
+                    or not re.fullmatch(r"[0-9a-f]{32}", proof.invocation_id)
+                    or proof.uid != 0 or proof.gid != 0
+                    or proof.expires_monotonic <= self.monotonic()
+                    or not proof.is_current()):
+                raise ValueError("daemon controller lease is stale")
+            pid, pidfd = proof.pid, proof.pidfd
+            if (type(pid) is not int or pid <= 0 or type(pidfd) is not int or pidfd < 0
+                    or self._pidfd_target(pidfd) != pid or _pidfd_exited(pidfd)):
+                raise ValueError("daemon controller PIDFD changed")
+            ticks, cgroup, _device, _inode = _pid_identity(pid)
+            status = Path(f"/proc/{pid}/status").read_text(encoding="ascii").splitlines()
+            uids = next(line for line in status if line.startswith("Uid:")).split()[1:]
+            gids = next(line for line in status if line.startswith("Gid:")).split()[1:]
+            observed_namespaces = tuple(
+                os.stat(f"/proc/{pid}/ns/{name}").st_ino for name in ("mnt", "net"))
+            unit = proof.unit_id
+            values = {name: self._show(unit, name) for name in (
+                "LoadState", "ActiveState", "MainPID", "InvocationID", "ControlGroup")}
+            if (len(uids) != 4 or any(int(uid) != 0 for uid in uids)
+                    or len(gids) != 4 or any(int(gid) != 0 for gid in gids)
+                    or ticks != proof.start_ticks or cgroup != proof.cgroup_identity
+                    or cgroup != "/system.slice/" + unit
+                    or observed_namespaces != (proof.mount_namespace_inode,
+                                               proof.network_namespace_inode)
+                    or values["LoadState"] != "loaded"
+                    or values["ActiveState"] not in {"active", "activating"}
+                    or values["MainPID"] != str(pid)
+                    or values["InvocationID"] != proof.invocation_id
+                    or values["ControlGroup"] != proof.cgroup_identity):
+                raise ValueError("daemon systemd unit or process identity changed")
+            executable_fd = os.open(f"/proc/{pid}/exe", os.O_RDONLY | os.O_CLOEXEC)
+            try:
+                executable_info = os.fstat(executable_fd)
+                digest = hashlib.sha256()
+                offset = 0
+                if not stat.S_ISREG(executable_info.st_mode) or executable_info.st_size > 256 * 1024 * 1024:
+                    raise ValueError("daemon executable exceeds its observation bound")
+                while offset < executable_info.st_size:
+                    block = os.pread(executable_fd, min(1024 * 1024,
+                                                       executable_info.st_size - offset), offset)
+                    if not block:
+                        raise ValueError("daemon executable was truncated")
+                    digest.update(block)
+                    offset += len(block)
+                if digest.hexdigest() != proof.executable_sha256:
+                    raise ValueError("daemon executable digest changed")
+            finally:
+                os.close(executable_fd)
+            if (self._pidfd_target(pidfd) != pid or _pidfd_exited(pidfd)
+                    or _pid_identity(pid)[:2] != (ticks, cgroup)
+                    or not proof.is_current()):
+                raise ValueError("daemon controller changed during re-observation")
+        except (OSError, ValueError, StopIteration, TypeError, AttributeError):
+            raise AuthorityDenied(
+                "native.health.controller", "current daemon health controller identity is unavailable") from None
+
+    def _verify_root_controller_identity(self, proof: Any, effect: Any) -> None:
+        """Compare the authority-retained setup actor with live kernel identity."""
+        from hermes_installer.authority import native_health_observer
+        RootDaemonHealthControllerLease = getattr(
+            native_health_observer, "RootDaemonHealthControllerLease", None)
+        if RootDaemonHealthControllerLease is not None and type(proof) is RootDaemonHealthControllerLease:
+            return self._verify_root_daemon_health_controller(proof, effect)
+        try:
+            pid = int(proof.pid)
+            pidfd = int(proof.pidfd)
+            if (pid <= 0 or pidfd < 0 or self._pidfd_target(pidfd) != pid
+                    or _pidfd_exited(pidfd) or not proof.is_current()
+                    or proof.proof_handle != effect.controller_proof_handle
+                    or (effect.admission_kind not in {"memory", "health"}
+                        and proof.startup_authorization_handle != effect.admission_handle)
+                    or proof.proof_sha256 != effect.controller_proof_sha256):
+                raise ValueError("controller lease stale")
+            ticks, cgroup, _device, _inode = _pid_identity(pid)
+            namespaces = tuple(os.stat(f"/proc/{pid}/ns/{name}").st_ino for name in ("mnt", "net"))
+            status = Path(f"/proc/{pid}/status").read_text().splitlines()
+            uids = next(line for line in status if line.startswith("Uid:")).split()[1:]
+            if (ticks != proof.start_ticks or cgroup != proof.cgroup_identity
+                    or namespaces != (proof.mount_namespace_inode, proof.network_namespace_inode)
+                    or proof.uid != 0 or len(uids) != 4 or any(int(uid) != 0 for uid in uids)
+                    or self._pidfd_target(pidfd) != pid or _pidfd_exited(pidfd)
+                    or not proof.is_current()):
+                raise ValueError("controller identity changed")
+        except (OSError, ValueError, StopIteration, TypeError, AttributeError):
+            raise AuthorityDenied("root-selected.controller", "root controller process identity is stale") from None
+
+    @staticmethod
+    def _selected_service_identity_digest(lease: ManagedProcessIdentityLease) -> str:
+        body = {
+            "process_id": lease.process_id, "profile_id": lease.profile_id,
+            "generation": lease.generation, "uid": lease.uid, "gid": lease.gid,
+            "pid": lease.pid, "start_ticks": lease.start_ticks,
+            "executable_device": lease.executable_device,
+            "executable_inode": lease.executable_inode,
+            "executable_sha256": lease.executable_sha256,
+            "cgroup_identity": lease.cgroup_identity,
+            "mount_namespace_inode": lease.mount_namespace_inode,
+            "network_namespace_inode": lease.network_namespace_inode,
+        }
+        return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":"),
+                                         ensure_ascii=True).encode("ascii")).hexdigest()
+
+    def resolve_selected_service_process(
+            self, receipt: RootSelectedServiceProcessReceipt,
+    ) -> ManagedProcessIdentityLease | None:
+        """Re-resolve the exact root-retained selected start receipt to a PIDFD lease."""
+        if type(receipt) is not RootSelectedServiceProcessReceipt:
+            return None
+        with self._lock:
+            entry = self._root_selected_process_receipts.get(receipt.receipt_handle)
+            if (entry is None or entry[0] is not receipt
+                    or self.profiles.get(receipt.profile_id) is not entry[1].registered_profile
+                    or entry[1].process_id != receipt.process_id
+                    or entry[1].profile.generation != receipt.generation
+                    or entry[1].stopped or entry[1].expires <= self.monotonic()):
+                return None
+        lease = self.resolve_active_process_handle(receipt.profile_id, receipt.generation)
+        if lease is None:
+            return None
+        if (lease.process_id != receipt.process_id
+                or lease.uid != receipt.selected_subject_uid
+                or lease.gid != receipt.selected_subject_gid
+                or self._selected_service_identity_digest(lease) != receipt.process_identity_digest
+                or receipt.expires_monotonic <= self.monotonic()):
+            lease.close()
+            return None
+        return lease
 
     def start_selected_task(self, profile: ManagedProfileCustody, context: HostContext,
+                            authorization: EffectAuthorization, selection_payload: bytes, **kwargs: Any
+                            ) -> ManagedTaskHandle:
+        """Compatibility entry for already-admitted internal task callers.
+
+        Root resource tasks use ``start_selected_resource_task`` and enter the
+        shared custody core directly with the sealed resource proof.
+        """
+        return self._start_selected_task_core(
+            profile, context, authorization, selection_payload, **kwargs)
+
+    def _start_selected_task_core(self, profile: ManagedProfileCustody, context: Any,
                             authorization: EffectAuthorization, selection_payload: bytes, *,
-                            task_admission: RootAdmittedTask, exact_stdin: bytes,
-                            expected_stdin_sha256: str, peer_pid: int,
-                            peer_pidfd: int, timeout: float,
-                            cancelled: Callable[[], bool]) -> ManagedTaskHandle:
+                            task_admission: RootAdmittedTask,
+                            admission_handle: Any, node_id: str, admitted_source: Any,
+                            exact_stdin: bytes,
+                            expected_stdin_sha256: str, peer_pid: int | None,
+                            peer_pidfd: int | None, timeout: float,
+                            cancelled: Callable[[], bool],
+                            selected_home_binding: Any | None = None,
+                            selected_task_execution: Any | None = None,
+                            _verified_resource_start: Any | None = None,
+                            initial_input_coordinator: Any | None = None,
+                            daemon_liveness_pidfd: int | None = None) -> ManagedTaskHandle:
         """Start one admitted task and write/EOF its prompt before returning.
 
         This is an internal root call, not a worker RPC. The resource ledger
@@ -1446,103 +5348,164 @@ class ManagedProcessEffectHandler:
         admission. The request carries only a selected recipe id; executable,
         argv, environment and roots are resolved from the protected profile.
         """
-        if (not isinstance(task_admission, RootAdmittedTask)
+        task_handle = task_admission
+        if (not isinstance(task_handle, RootAdmittedTask)
                 or not isinstance(exact_stdin, bytes) or len(exact_stdin) > 262144
                 or not isinstance(expected_stdin_sha256, str)
                 or not re.fullmatch(r"[0-9a-f]{64}", expected_stdin_sha256)
                 or hashlib.sha256(exact_stdin).hexdigest() != expected_stdin_sha256
-                or task_admission.stdin_sha256 != expected_stdin_sha256
-                or task_admission.stdin_size_bytes != len(exact_stdin)
-                or not isinstance(task_admission.task_payload, bytes)
-                or len(task_admission.task_payload) > 262144
-                or hashlib.sha256(task_admission.task_payload).hexdigest()
-                   != task_admission.task_payload_sha256
-                or self.task_admission_current is None
-                or not self.task_admission_current(task_admission)):
+                or task_handle.stdin_sha256 != expected_stdin_sha256
+                or task_handle.stdin_size_bytes != len(exact_stdin)
+                or not isinstance(task_handle.task_payload_bytes, bytes)
+                or len(task_handle.task_payload_bytes) > 262144
+                or hashlib.sha256(task_handle.task_payload_bytes).hexdigest()
+                   != task_handle.task_payload_sha256
+                or (_verified_resource_start is None
+                    and not self._task_admission_is_current(task_handle, selection_payload))):
             raise AuthorityDenied("resource.task_admission", "root task admission or prompt digest is invalid")
-        if (profile.profile_id != task_admission.profile_id
-                or profile.generation != task_admission.profile_generation
-                or profile.enrollment_id != task_admission.process_enrollment_id
-                or profile.generation != task_admission.process_generation
-                or self.profiles.get(profile.profile_id) is not profile
+        if (profile.generation != task_handle.process_generation
+                or profile.enrollment_id != task_handle.process_enrollment_id
+                or self.profiles.get(profile.profile_id) != profile
                 or not isinstance(profile.operation_recipes, Mapping)
-                or task_admission.task_body_recipe_id not in profile.operation_recipes
-                or task_admission.expires_monotonic <= self.monotonic()
-                or task_admission.operation_id != authorization.operation
-                or task_admission.child_target_id != authorization.target
-                or task_admission.child_capability != authorization.capability
-                or context.profile_id != profile.profile_id
-                or context.enrollment_id != profile.enrollment_id
-                or context.generation != profile.generation
-                or context.operation != authorization.operation
-                or authorization.profile_id != profile.profile_id
-                or authorization.enrollment_id != profile.enrollment_id
-                or authorization.generation != profile.generation
-                or authorization.request_digest != canonical_digest(selection_payload)
-                or context.final_payload_digest != authorization.request_digest
-                or authorization.final_payload_digest != authorization.request_digest
-                or context.principal_id != authorization.principal_id
-                or context.namespace_id != authorization.namespace_id
-                or context.trace_id != authorization.trace_id
-                or context.intent_id != authorization.intent_id
-                or context.purpose != authorization.purpose
-                or context.sensitivity != authorization.sensitivity
-                or context.lineage_hash != authorization.lineage_hash
-                or context.policy_revision != authorization.policy_revision
-                or context.uid != authorization.uid
-                or peer_pid <= 0 or peer_pidfd < 0 or _pidfd_exited(peer_pidfd)
-                or self._pidfd_target(peer_pidfd) != peer_pid
+                or task_handle.operation_id not in profile.operation_recipes
+                or task_handle.deadline_monotonic <= self.monotonic()
+                or task_handle.operation_id != "hermes-resource-profile-task-v1"
+                or authorization.operation != "process.start"
+                or authorization.target != process_start_target(profile)
+                or authorization.capability not in {"hermes-profile-invoke", "hermes-resource-task-invoke"}
+                or ( _verified_resource_start is None and (
+                    context.profile_id != profile.profile_id
+                    or context.enrollment_id != profile.enrollment_id
+                    or context.generation != profile.generation
+                    or context.operation != "process.start"
+                    or authorization.profile_id != profile.profile_id
+                    or authorization.enrollment_id != profile.enrollment_id
+                    or authorization.generation != profile.generation
+                    or authorization.request_digest != canonical_digest(selection_payload)
+                    or context.final_payload_digest != authorization.request_digest
+                    or authorization.final_payload_digest != authorization.request_digest
+                    or context.principal_id != authorization.principal_id
+                    or context.namespace_id != authorization.namespace_id
+                    or context.trace_id != authorization.trace_id
+                    or context.intent_id != authorization.intent_id
+                    or context.purpose != authorization.purpose
+                    or context.sensitivity != authorization.sensitivity
+                    or context.lineage_hash != authorization.lineage_hash
+                    or context.policy_revision != authorization.policy_revision
+                    or context.uid != authorization.uid
+                ))
+                or (_verified_resource_start is None and (
+                    peer_pid is None or peer_pid <= 0 or peer_pidfd is None or peer_pidfd < 0
+                    or _pidfd_exited(peer_pidfd) or self._pidfd_target(peer_pidfd) != peer_pid))
+                or (_verified_resource_start is not None and (
+                    peer_pid is not None or peer_pidfd is not None
+                    or daemon_liveness_pidfd is None or daemon_liveness_pidfd < 0
+                    or _pidfd_exited(daemon_liveness_pidfd)
+                    or self._pidfd_target(daemon_liveness_pidfd) != os.getpid()))
                 or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
                 or not math.isfinite(timeout) or not 0 < timeout <= 600):
             raise AuthorityDenied("resource.task_binding", "selected task, grant, profile or parent is stale")
-        identifier_fields = ("handle_id", "job_id", "node_id", "child_admission_id",
-            "backend_enrollment_id", "resource_generation", "profile_id", "profile_generation",
-            "native_package_id", "native_package_generation", "process_enrollment_id",
-            "process_generation", "operation_id", "child_target_id", "child_capability",
-            "task_body_recipe_id", "task_request_schema_id")
-        if (any(not isinstance(getattr(task_admission, name), str)
-                    or not getattr(task_admission, name)
-                    or len(getattr(task_admission, name)) > 256
-                    or any(ord(char) < 32 or ord(char) == 127 for char in getattr(task_admission, name))
-                    for name in identifier_fields)
-                or type(task_admission.attempt_index) is not int or task_admission.attempt_index < 0
-                or not re.fullmatch(r"[0-9a-f]{64}", task_admission.parent_closure_digest)
-                or not math.isfinite(task_admission.expires_monotonic)):
-            raise AuthorityDenied("resource.task_admission", "root task admission fields are malformed")
+        if _verified_resource_start is not None:
+            from hermes_installer.authority.resource_task_authority import VerifiedRootResourceTaskStart
+            service = getattr(getattr(_verified_resource_start, "_issuer", None), "service", None)
+            verify = getattr(service, "verify_consumed_resource_task_start", None)
+            if (type(_verified_resource_start) is not VerifiedRootResourceTaskStart
+                    or _verified_resource_start.selected_profile is not profile
+                    or not callable(verify)
+                    or verify(_verified_resource_start, selection_payload,
+                              task_admission=task_handle, selected_profile=profile) is not True
+                    or _verified_resource_start.selected_home_binding is not selected_home_binding
+                    or _verified_resource_start.authorization.expires_monotonic
+                       != authorization.expires_monotonic
+                    or _verified_resource_start.context.selected_principal_id != context.principal_id
+                    or _verified_resource_start.context.selected_namespace_identity != context.namespace_id
+                    or _verified_resource_start.context.selected_subject_uid != profile.owner_uid
+                    or _verified_resource_start.context.selected_subject_gid != profile.owner_gid):
+                raise AuthorityDenied("resource.task_start_proof", "consumed root resource proof is invalid")
+        coordinator = (self.task_input_coordinator if initial_input_coordinator is None
+                       else initial_input_coordinator)
+        if coordinator is not self.task_input_coordinator:
+            raise AuthorityDenied("resource.task_input", "initial-input coordinator is not the root runtime instance")
+        if coordinator is None:
+            raise AuthorityDenied("resource.task_input", "root pre-stdin input coordinator is unavailable")
         try:
-            if len(task_admission.task_payload) > 262144:
+            if len(task_handle.task_payload_bytes) > 262144:
                 raise ValueError("task body exceeds its bound")
-            task_request = json.loads(task_admission.task_payload.decode("ascii"))
-            if json.dumps(task_request, sort_keys=True, separators=(",", ":"),
-                           ensure_ascii=True, allow_nan=False).encode("ascii") != task_admission.task_payload:
+            task_request = json.loads(task_handle.task_payload_bytes.decode("utf-8"))
+            from hermes_installer.registry.resource_jobs import _canonical as canonical_task_json
+            if canonical_task_json(task_request) != task_handle.task_payload_bytes:
                 raise ValueError("task body is not canonical JSON")
             prompt_value = task_request.get("prompt")
-            if (set(task_request) != {"prompt"} or not isinstance(prompt_value, str)
+            if (set(task_request) != {"prompt"} or not isinstance(prompt_value, str) or not prompt_value
                     or prompt_value.encode("utf-8") != exact_stdin):
                 raise ValueError("task body does not resolve to the exact stdin bytes")
-        except (AuthorityDenied, UnicodeError, ValueError):
+        except (AuthorityDenied, UnicodeError, ValueError, TypeError):
             raise AuthorityDenied("resource.task_payload", "admitted task prompt is malformed or mismatched") from None
         selection = self._json(selection_payload)
-        if (set(selection) != {"schema", "enrollment_id", "generation", "operation_id", "parameters"}
+        if (set(selection) != {"schema", "enrollment_id", "generation", "operation_id", "parameters",
+                               "admission_handle", "node_id", "task_payload_sha256",
+                               "stdin_sha256", "stdin_size_bytes", "source_profile_id",
+                               "home_binding_id", "home_binding_handle", "home_binding_sha256"}
                 or selection.get("schema") != 1
                 or selection.get("enrollment_id") != profile.enrollment_id
                 or selection.get("generation") != profile.generation
-                or selection.get("operation_id") != task_admission.task_body_recipe_id
-                or selection.get("parameters") != {}):
+                or selection.get("operation_id") != task_handle.operation_id
+                or selection.get("parameters") != {}
+                or selection.get("node_id") != task_handle.node_id
+                or selection.get("task_payload_sha256") != task_handle.task_payload_sha256
+                or selection.get("stdin_sha256") != task_handle.stdin_sha256
+                or selection.get("stdin_size_bytes") != task_handle.stdin_size_bytes):
             raise AuthorityDenied("resource.task_selection", "task recipe selection is not the admitted fixed operation")
-        recipe = profile.operation_recipes[task_admission.task_body_recipe_id]
+        from hermes_installer.authority.native_profile_task_homes import RootSelectedResourceTaskHomeBinding
+        from hermes_installer.registry.resource_backends import SelectedResourceProfileTask
+        if (type(selected_home_binding) is not RootSelectedResourceTaskHomeBinding
+                or type(selected_task_execution) is not SelectedResourceProfileTask
+                or not selected_home_binding.verify_current(selected_task_execution)
+                or selected_task_execution.profile_id != profile.profile_id
+                or selection.get("source_profile_id") != selected_task_execution.source_profile_id
+                or selection.get("home_binding_id") != selected_task_execution.home_binding_id
+                or selection.get("home_binding_handle") != selected_home_binding.binding_handle
+                or selection.get("home_binding_sha256") != selected_home_binding.binding_sha256
+                or selected_task_execution.source_profile_id != selected_home_binding.source_profile_id
+                or selected_task_execution.home_binding_id != selected_home_binding.home_binding_id):
+            raise AuthorityDenied("resource.home_binding", "selected source home is not bound to this admitted task")
+        from hermes_installer.registry.resource_jobs import (
+            RootResourceJobAdmissionHandle, RootAdmittedTaskSource, RootTaskInitialInputReceipt,
+        )
+        if (type(admission_handle) is not RootResourceJobAdmissionHandle
+                or type(admitted_source) is not RootAdmittedTaskSource
+                or node_id != task_handle.node_id
+                or admission_handle.handle_id != selection.get("admission_handle")
+                or admission_handle.child_admission_id != task_handle.admission_id
+                or admission_handle.node_id != node_id
+                or admission_handle.process_enrollment_id != profile.enrollment_id
+                or admission_handle.process_generation != profile.generation
+                or admission_handle.task_payload_sha256 != task_handle.task_payload_sha256
+                or admission_handle.parent_closure_digest != task_handle.parent_closure_digest):
+            raise AuthorityDenied("resource.task_admission", "root task admission source binding is invalid")
+        recipe = profile.operation_recipes[task_handle.operation_id]
         if not isinstance(recipe, Mapping) or recipe.get("stdin_mode") != "bounded-typed-bytes":
             raise AuthorityDenied("resource.task_stdin", "selected recipe does not admit one bounded stdin frame")
-        launch_deadline = min(float(task_admission.expires_monotonic),
-                              float(authorization.monotonic_expires_at), self.monotonic() + timeout)
+        grant_expiry = (float(_verified_resource_start.authorization.expires_monotonic)
+                        if _verified_resource_start is not None
+                        else float(authorization.monotonic_expires_at))
+        launch_deadline = min(float(task_handle.deadline_monotonic),
+                              grant_expiry, self.monotonic() + timeout)
         if launch_deadline <= self.monotonic() or cancelled():
             raise AuthorityDenied("resource.task_expired", "task expired before process admission")
         response = self._start(profile, context, authorization, selection_payload,
                                launch_deadline - self.monotonic(),
                                peer_pid, peer_pidfd, cancelled,
-                               start_guard=lambda: bool(self.task_admission_current
-                                   and self.task_admission_current(task_admission)
-                                   and self.monotonic() < task_admission.expires_monotonic
+                               task_admission=task_handle,
+                               daemon_liveness_pidfd=daemon_liveness_pidfd,
+                               root_resource_start=_verified_resource_start,
+                               root_resource_home_binding=selected_home_binding,
+                               root_resource_selection=selected_task_execution,
+                               start_guard=lambda: bool(self._task_admission_is_current(task_handle, selection_payload)
+                                   and self.monotonic() < task_handle.deadline_monotonic
+                               and (_verified_resource_start is None or self._root_resource_start_current(
+                                       _verified_resource_start, task_handle, selection_payload, profile))
+                                   and selected_home_binding.verify_current(selected_task_execution)
                                    and not cancelled()))
         try:
             body = json.loads(response["body"].decode("ascii"))
@@ -1553,28 +5516,377 @@ class ManagedProcessEffectHandler:
                     or handle.profile.generation != profile.generation or handle.stopped):
                 raise AuthorityDenied("resource.task_start", "selected process did not remain registered")
             handle.task_owned = True
-            task_deadline = min(float(task_admission.expires_monotonic),
+            task_deadline = min(float(task_handle.deadline_monotonic),
                                 self.monotonic() + timeout, handle.expires)
-            state = _ManagedTaskState(handle, task_admission, task_deadline,
-                                      min(task_deadline, float(authorization.monotonic_expires_at)),
-                                      cancelled)
+            state = _ManagedTaskState(handle, task_handle, task_deadline,
+                                      min(task_deadline, grant_expiry),
+                                      cancelled, selection_payload,
+                                      selection["admission_handle"])
             opaque_id = uuid.uuid4().hex
             with self._lock:
                 self._task_handles[opaque_id] = state
-            root_handle = ManagedTaskHandle(opaque_id, profile.generation)
+            root_handle = ManagedTaskHandle(opaque_id, profile.generation, handle.process_id)
+            state.root_handle = root_handle
+            receipt = coordinator.prepare_initial_input(
+                task_admission=task_handle, admission_handle=admission_handle,
+                node_id=node_id, source=admitted_source, managed_task_handle=root_handle,
+                exact_stdin=exact_stdin,
+                timeout=max(0.001, min(task_deadline - self.monotonic(), timeout)),
+                cancelled=cancelled,
+            )
+            if type(receipt) is not RootTaskInitialInputReceipt:
+                raise AuthorityDenied("resource.task_input", "coordinator returned an invalid input receipt")
+            resolved_receipt = coordinator.resolve_initial_input_receipt(
+                receipt.receipt_handle, task_handle=root_handle,
+                stdin_sha256=expected_stdin_sha256,
+                stdin_size_bytes=len(exact_stdin),
+            )
+            if (resolved_receipt is not receipt
+                    or receipt.task_handle != root_handle.handle_id
+                    or receipt.admission_id != task_handle.admission_id
+                    or receipt.node_id != node_id
+                    or receipt.process_id != handle.process_id
+                    or receipt.process_generation != profile.generation
+                    or receipt.stdin_sha256 != expected_stdin_sha256
+                    or receipt.stdin_size_bytes != len(exact_stdin)
+                    or receipt.parent_closure_digest != task_handle.parent_closure_digest
+                    or receipt.resource_generation != task_handle.resource_generation
+                    or receipt.native_loader_ready_event_id != handle.native_loader_ready_event_id
+                    or receipt.issued_monotonic > self.monotonic()
+                    or receipt.expires_monotonic <= self.monotonic()
+                    or cancelled()
+                    or not self._task_admission_is_current(task_handle, selection_payload)):
+                raise AuthorityDenied("resource.task_input", "initial input receipt does not bind this live task")
+            state.initial_input_receipt_handle = receipt.receipt_handle
+            state.initial_input_expires_monotonic = receipt.expires_monotonic
+            state.service_generation_digest = receipt.service_generation_digest
+            consumed_receipt = coordinator.consume_initial_input_receipt(
+                receipt.receipt_handle, task_handle=root_handle,
+                stdin_sha256=expected_stdin_sha256,
+                stdin_size_bytes=len(exact_stdin),
+            )
+            if (consumed_receipt is not receipt or cancelled()
+                    or self.monotonic() >= state.deadline
+                    or not self._task_admission_is_current(task_handle, selection_payload)):
+                raise AuthorityDenied("resource.task_input", "initial input receipt expired before stdin")
             self.write_initial_task_stdin_and_close(root_handle, exact_stdin)
-            if (not self.task_admission_current(task_admission)
+            if (not self._task_admission_is_current(task_handle, selection_payload)
                     or self.monotonic() >= state.deadline or cancelled()):
                 raise AuthorityDenied("resource.task_expired", "task admission expired while receiving stdin")
             return root_handle
-        except BaseException:
+        except BaseException as start_error:
+            # The coordinator owns any captured source/input observation. If
+            # custody rejects it before the one-time write completes, revoke
+            # that exact receipt before stopping the process so no pre-input
+            # observer lease survives an aborted launch.
+            if "receipt" in locals() and "root_handle" in locals():
+                revoke = getattr(coordinator, "revoke_initial_input_receipt", None)
+                if callable(revoke):
+                    try:
+                        revoke(receipt.receipt_handle, task_handle=root_handle)
+                    except Exception:
+                        pass
             if "opaque_id" in locals():
                 with self._lock:
                     self._task_handles.pop(opaque_id, None)
             if "handle" in locals() and handle is not None:
-                with contextlib.suppress(Exception):
-                    self._stop(handle, timeout=5.0)
+                try:
+                    proof = self._stop(handle, timeout=5.0)
+                except Exception:
+                    raise AuthorityDenied(
+                        "resource.task_cleanup_ambiguous",
+                        "failed task start could not prove owned-process cleanup",
+                    ) from start_error
+                if not (proof.cleanup_verified and proof.cgroup_empty
+                        and proof.main_pidfd_gone and proof.launcher_reaped):
+                    raise AuthorityDenied(
+                        "resource.task_cleanup_ambiguous",
+                        "failed task start could not prove owned-process cleanup",
+                    ) from start_error
             raise
+
+    def start_selected_resource_task(
+            self, selected_profile: ManagedProfileCustody, verified_start: Any,
+            selection_payload: bytes, *, task_admission: RootAdmittedTask,
+            admission_handle: Any, node_id: str, admitted_source: Any,
+            exact_stdin: bytes, expected_stdin_sha256: str, timeout: float,
+            cancelled: Callable[[], bool], initial_input_coordinator: Any,
+            selected_home_binding: Any, selected_task_execution: Any,
+    ) -> ManagedTaskHandle:
+        """Start a task under the distinct consumed root-resource effect proof.
+
+        The controller is never passed as the selected child peer. The root
+        daemon PIDFD retains the unit; the sealed proof and jobs registry keep
+        the external controller/source/admission current through EOF.
+        """
+        from hermes_installer.authority.resource_task_authority import VerifiedRootResourceTaskStart
+        from hermes_installer.registry.resource_jobs import RootResourceJobAdmissionHandle, RootAdmittedTaskSource
+        if (type(verified_start) is not VerifiedRootResourceTaskStart
+                or type(selected_profile) is not ManagedProfileCustody
+                or self.profiles.get(selected_profile.profile_id) is not selected_profile
+                or type(admission_handle) is not RootResourceJobAdmissionHandle
+                or type(admitted_source) is not RootAdmittedTaskSource
+                or initial_input_coordinator is not self.task_input_coordinator
+                or verified_start.selected_profile is not selected_profile
+                or verified_start.selected_home_binding is not selected_home_binding
+                or not isinstance(selection_payload, bytes)
+                or verified_start.authorization.request_sha256 != hashlib.sha256(selection_payload).hexdigest()
+                or verified_start.context.selected_profile_id != selected_profile.profile_id
+                or verified_start.context.selected_generation != selected_profile.generation
+                or verified_start.context.selected_subject_uid != selected_profile.owner_uid
+                or verified_start.context.selected_subject_gid != selected_profile.owner_gid
+                or verified_start.context.admission_handle != admission_handle.handle_id
+                or verified_start.context.node_id != node_id
+                or verified_start.context.stdin_sha256 != expected_stdin_sha256
+                or verified_start.context.stdin_size_bytes != len(exact_stdin)):
+            raise AuthorityDenied("resource.task_start_proof", "selected resource task binding is malformed")
+        service = getattr(verified_start._issuer, "service", None)
+        verify = getattr(service, "verify_consumed_resource_task_start", None)
+        if (not callable(verify)
+                or verify(verified_start, selection_payload, task_admission=task_admission,
+                          selected_profile=selected_profile) is not True):
+            raise AuthorityDenied("resource.task_start_proof", "consumed resource task proof is stale")
+        if (cancelled() or self.monotonic() >= verified_start.authorization.expires_monotonic
+                or self.monotonic() >= task_admission.deadline_monotonic):
+            raise AuthorityDenied("resource.task_expired", "resource task proof expired before launch")
+        daemon_pid = os.getpid()
+        try:
+            daemon_liveness_pidfd = os.pidfd_open(daemon_pid, 0)
+        except (AttributeError, OSError):
+            raise AuthorityDenied("resource.task_parent", "custody daemon lifetime PIDFD is unavailable") from None
+        try:
+            return self._start_selected_task_core(
+                selected_profile, verified_start.context, verified_start.authorization,
+                selection_payload,
+                task_admission=task_admission, admission_handle=admission_handle,
+                node_id=node_id, admitted_source=admitted_source, exact_stdin=exact_stdin,
+                expected_stdin_sha256=expected_stdin_sha256, peer_pid=None,
+                peer_pidfd=None, timeout=timeout, cancelled=cancelled,
+                _verified_resource_start=verified_start,
+                selected_home_binding=selected_home_binding,
+                selected_task_execution=selected_task_execution,
+                initial_input_coordinator=initial_input_coordinator,
+                daemon_liveness_pidfd=daemon_liveness_pidfd,
+            )
+        finally:
+            os.close(daemon_liveness_pidfd)
+
+    def start_selected_application(self, profile_id: str, verified_start: Any,
+                                   canonical_selection_payload: bytes, *,
+                                   selected_step_handle: str, timeout: float,
+                                   cancelled: Callable[[], bool]) -> ManagedApplicationHandle:
+        """Start one selected app recipe through the existing PIDFD/systemd core.
+
+        This root-only path accepts a consumed app-specific one-use grant and
+        an opaque journal step. It never accepts argv, paths, environment or a
+        caller-created process context.
+        """
+        from hermes_installer.authority.application_workload_execution import (
+            RootApplicationSelectedStep, VerifiedRootApplicationStart,
+        )
+        if (type(verified_start) is not VerifiedRootApplicationStart
+                or not isinstance(cancelled, Callable)
+                or not isinstance(canonical_selection_payload, bytes)
+                or not isinstance(selected_step_handle, str)
+                or verified_start.selected_step.handle != selected_step_handle
+                or verified_start.selected_profile.profile_id != profile_id
+                or self.profiles.get(profile_id) is not verified_start.selected_profile
+                or type(verified_start.selected_step) is not RootApplicationSelectedStep
+                or hashlib.sha256(canonical_selection_payload).hexdigest()
+                   != verified_start.authorization.request_sha256):
+            raise AuthorityDenied("application.start_proof", "selected application start proof is malformed")
+        service = getattr(getattr(verified_start, "_issuer", None), "service", None)
+        verify = getattr(service, "verify_consumed_application_start", None)
+        if (not callable(verify)
+                or verify(verified_start, canonical_selection_payload,
+                          selected_step_handle=selected_step_handle) is not True):
+            raise AuthorityDenied("application.start_proof", "selected application start proof is stale")
+        step = verified_start.selected_step
+        profile = verified_start.selected_profile
+        try:
+            selection = self._json(canonical_selection_payload)
+        except AuthorityDenied:
+            raise
+        expected = {"schema", "enrollment_id", "generation", "operation_id", "parameters",
+                    "application_admission_handle", "application_step_id"}
+        if (set(selection) != expected or selection.get("schema") != 1
+                or selection.get("enrollment_id") != profile.enrollment_id
+                or selection.get("generation") != profile.generation
+                or selection.get("operation_id") != step.operation_id
+                or not isinstance(selection.get("parameters"), dict)
+                or selection.get("application_admission_handle") != step.admission_handle
+                or selection.get("application_step_id") != step.step_id):
+            raise AuthorityDenied("application.selection", "selection does not match the root-owned app recipe")
+        if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout) or not 0 < timeout <= 600
+                or verified_start.authorization.expires_monotonic <= self.monotonic()
+                or step.deadline_monotonic <= self.monotonic() or cancelled()):
+            raise AuthorityDenied("application.expired", "selected application start is expired or cancelled")
+        daemon_pid = os.getpid()
+        try:
+            daemon_fd = os.pidfd_open(daemon_pid, 0)
+        except (AttributeError, OSError):
+            raise AuthorityDenied("application.parent", "custody daemon PIDFD is unavailable") from None
+        try:
+            response = self._start(
+                profile, verified_start.context, verified_start.authorization,
+                canonical_selection_payload, min(float(timeout),
+                    verified_start.authorization.expires_monotonic - self.monotonic()),
+                None, None, cancelled, daemon_liveness_pidfd=daemon_fd,
+                root_application_start=verified_start,
+                start_guard=lambda: bool(verify(
+                    verified_start, canonical_selection_payload,
+                    selected_step_handle=selected_step_handle) is True and not cancelled()),
+            )
+            body = json.loads(response["body"].decode("ascii"))
+            process_id = body.get("process_id")
+            with self._lock:
+                handle = self._handles.get(process_id)
+                if handle is None or handle.profile is not profile:
+                    raise AuthorityDenied("application.handle", "custody returned no retained application process")
+                opaque = secrets.token_urlsafe(32)
+                app_handle = ManagedApplicationHandle(opaque, process_id, profile.generation)
+                deadline = min(handle.expires, step.deadline_monotonic,
+                               self.monotonic() + float(timeout))
+                self._application_handles[opaque] = _ManagedApplicationState(
+                    handle, verified_start, step, canonical_selection_payload,
+                    deadline, cancelled,
+                )
+                return app_handle
+        finally:
+            os.close(daemon_fd)
+
+    def wait_owned_application_terminal(self, application_handle: ManagedApplicationHandle, *,
+                                        timeout: float, cancelled: Callable[[], bool]
+                                        ) -> RootApplicationTerminalReceipt:
+        """Wait, drain bounded output, reap and retain the actual process terminal."""
+        if type(application_handle) is not ManagedApplicationHandle:
+            raise AuthorityDenied("application.handle", "application handle is malformed")
+        with self._lock:
+            state = self._application_handles.get(application_handle.handle_id)
+        if (state is None or state.handle.process_id != application_handle.process_id
+                or state.handle.profile.generation != application_handle.profile_generation):
+            raise AuthorityDenied("application.handle", "application handle is stale")
+        if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout) or timeout <= 0 or not callable(cancelled)):
+            raise AuthorityDenied("application.deadline", "application wait bounds are invalid")
+        state.deadline = min(state.deadline, self.monotonic() + float(timeout))
+        handle, proof, step = state.handle, state.verified_start, state.step
+        issuer = proof._issuer
+        was_cancelled = False
+        timed_out = False
+        with state.lock:
+            if state.consumed:
+                raise AuthorityDenied("application.handle", "application terminal was already consumed")
+            while True:
+                current = issuer._current(step)
+                if (cancelled() or state.cancelled() or not current
+                        or _pidfd_exited(handle.parent_pidfd)):
+                    was_cancelled = True
+                    break
+                if self.monotonic() >= state.deadline:
+                    timed_out = True
+                    break
+                self._drain_task_streams(state, [stream.fileno() for stream, eof in (
+                    (handle.launcher.stdout, state.stdout_eof),
+                    (handle.launcher.stderr, state.stderr_eof)) if stream is not None and not eof], timeout=.05)
+                if state.output_overflow:
+                    break
+                if handle.launcher.poll() is not None and state.stdout_eof and state.stderr_eof:
+                    break
+            for _ in range(16):
+                fds = [stream.fileno() for stream, eof in (
+                    (handle.launcher.stdout, state.stdout_eof),
+                    (handle.launcher.stderr, state.stderr_eof)) if stream is not None and not eof]
+                if not fds:
+                    break
+                self._drain_task_streams(state, fds, timeout=.01)
+                if handle.launcher.poll() is None:
+                    break
+            cleanup = self._stop(handle, timeout=5.0)
+            exit_code = handle.launcher.returncode
+            reaped = bool(cleanup.cleanup_verified and cleanup.cgroup_empty
+                          and cleanup.main_pidfd_gone and cleanup.launcher_reaped
+                          and not self._pids(handle.cgroup))
+            if not reaped:
+                raise AuthorityDenied("application.cleanup_ambiguous", "application descendants were not reaped")
+            output_id = secrets.token_urlsafe(32)
+            now = self.monotonic()
+            state_name = ("cancelled" if was_cancelled else "failed" if timed_out or state.output_overflow
+                          or exit_code != 0 or not (state.stdout_eof and state.stderr_eof) else "completed")
+            fields = dict(
+                schema=1, receipt_handle=secrets.token_urlsafe(32),
+                application_handle=application_handle.handle_id,
+                admission_handle=step.admission_handle, application_id=step.application_id,
+                workload_id=step.workload_id, step_id=step.step_id, sequence=step.sequence,
+                profile_id=handle.profile.profile_id, profile_generation=handle.profile.generation,
+                service_generation_digest=step.service_generation_digest,
+                operation_id=step.operation_id, request_sha256=step.request_sha256,
+                source_receipt_handle=step.source_receipt_handle,
+                runtime_receipt_handle=step.runtime_receipt_handle,
+                process_id=handle.process_id, process_generation=handle.profile.generation,
+                process_start_ticks=handle.start_ticks, executable_sha256=handle.profile.artifact_sha256,
+                cgroup_id=handle.cgroup,
+                namespace_digest=hashlib.sha256(handle.kernel_namespace_id.encode("ascii")).hexdigest(),
+                exit_code=exit_code, stdin_eof=True,
+                stdout_sha256=hashlib.sha256(state.stdout).hexdigest(), stdout_size_bytes=len(state.stdout),
+                stderr_sha256=hashlib.sha256(state.stderr).hexdigest(), stderr_size_bytes=len(state.stderr),
+                output_observation_handle=output_id, reaped=True, cancelled=was_cancelled,
+                timed_out=timed_out, state=state_name, issued_monotonic=now,
+                expires_monotonic=min(step.deadline_monotonic, now + 30.0), signature="pending")
+            terminal = RootApplicationTerminalReceipt(**fields)
+            terminal = RootApplicationTerminalReceipt(**{**terminal.claims(), "signature":
+                issuer.service._sign_root_selected("root-application-terminal-v1", terminal.claims())})
+            with self._lock:
+                if len(self._application_terminal_receipts) >= 4096:
+                    raise AuthorityDenied("application.receipts", "application terminal store is full")
+                self._application_terminal_receipts[terminal.receipt_handle] = (
+                    application_handle.handle_id, terminal, now + 30.0)
+                self._application_outputs[output_id] = (bytes(state.stdout), bytes(state.stderr), now + 30.0)
+                self._application_handles.pop(application_handle.handle_id, None)
+                state.consumed = True
+            return terminal
+
+    def resolve_application_terminal(self, receipt_handle: str) -> RootApplicationTerminalReceipt:
+        if not isinstance(receipt_handle, str):
+            raise AuthorityDenied("application.terminal", "terminal handle is malformed")
+        with self._lock:
+            entry = self._application_terminal_receipts.get(receipt_handle)
+            if entry is None:
+                raise AuthorityDenied("application.terminal", "terminal receipt is unavailable")
+            _handle_id, receipt, expiry = entry
+            if expiry <= self.monotonic() or receipt.receipt_handle != receipt_handle:
+                self._application_terminal_receipts.pop(receipt_handle, None)
+                raise AuthorityDenied("application.terminal", "terminal receipt is stale")
+            return receipt
+
+    def resolve_application_output(self, output_handle: str) -> tuple[bytes, bytes]:
+        with self._lock:
+            entry = self._application_outputs.get(output_handle)
+            if entry is None or entry[2] <= self.monotonic():
+                self._application_outputs.pop(output_handle, None)
+                raise AuthorityDenied("application.output", "bounded application output is unavailable")
+            return entry[0], entry[1]
+
+    def _root_resource_start_current(self, proof: Any, task: RootAdmittedTask,
+                                     payload: bytes, profile: ManagedProfileCustody) -> bool:
+        service = getattr(getattr(proof, "_issuer", None), "service", None)
+        verify = getattr(service, "verify_consumed_resource_task_start", None)
+        try:
+            return bool(callable(verify) and verify(
+                proof, payload, task_admission=task, selected_profile=profile) is True)
+        except Exception:
+            return False
+
+    def _task_admission_is_current(self, admission: RootAdmittedTask,
+                                   selection_payload: bytes) -> bool:
+        callback = self.task_admission_current
+        if callback is None:
+            return False
+        try:
+            return callback(admission, selection_payload) is True
+        except Exception:
+            return False
 
     def write_initial_task_stdin_and_close(self, task_handle: ManagedTaskHandle,
                                            exact_bytes: bytes) -> int:
@@ -1586,16 +5898,20 @@ class ManagedProcessEffectHandler:
                 or len(exact_bytes) != state.admission.stdin_size_bytes):
             raise AuthorityDenied("resource.task_stdin", "stdin differs from the consumed admission")
         with state.lock:
-            if state.input_closed or handle.launcher.stdin is None or handle.stopped:
+            if (state.input_closed or handle.launcher.stdin is None or handle.stopped
+                    or state.initial_input_receipt_handle is None
+                    or state.initial_input_expires_monotonic is None
+                    or state.service_generation_digest is None
+                    or state.root_handle is not task_handle):
                 raise AuthorityDenied("resource.task_stdin", "task stdin is already closed or unavailable")
             fd = handle.launcher.stdin.fileno()
             offset = 0
             while offset < len(exact_bytes):
                 if (state.cancelled() or self.monotonic() >= state.stdin_deadline
+                        or self.monotonic() >= state.initial_input_expires_monotonic
                         or _pidfd_exited(handle.parent_pidfd)
                         or _pidfd_exited(handle.child_pidfd)
-                        or not self.task_admission_current
-                        or not self.task_admission_current(state.admission)):
+                        or not self._task_admission_is_current(state.admission, state.selection_payload)):
                     raise AuthorityDenied("resource.task_expired", "task admission expired during stdin delivery")
                 writable = []
                 reads = [stream.fileno() for stream, eof in (
@@ -1615,8 +5931,47 @@ class ManagedProcessEffectHandler:
                     offset += count
                 if state.output_overflow:
                     raise AuthorityDenied("resource.task_output", "task exceeded its bounded output before stdin EOF")
+            # Perform one final nonblocking drain before closing stdin. This
+            # keeps output backpressure bounded while making EOF a distinct,
+            # observed custody transition.
+            pending_reads = [stream.fileno() for stream, eof in (
+                (handle.launcher.stdout, state.stdout_eof),
+                (handle.launcher.stderr, state.stderr_eof)) if stream is not None and not eof]
+            self._drain_task_streams(state, pending_reads, timeout=0)
+            if state.output_overflow:
+                raise AuthorityDenied("resource.task_output", "task exceeded its bounded output before stdin EOF")
             handle.launcher.stdin.close()
             state.input_closed = True
+            from hermes_installer.registry.resource_jobs import RootTaskStdinWriteReceipt
+            issued = self.monotonic()
+            receipt = RootTaskStdinWriteReceipt(
+                schema=1, receipt_handle=uuid.uuid4().hex,
+                task_handle=task_handle.handle_id, process_id=handle.process_id,
+                process_generation=state.admission.process_generation,
+                initial_input_receipt_handle=state.initial_input_receipt_handle,
+                stdin_sha256=state.admission.stdin_sha256,
+                stdin_size_bytes=offset, sequence=0,
+                write_complete=(offset == len(exact_bytes)), drained=True,
+                stdin_closed=handle.launcher.stdin.closed,
+                service_generation_digest=state.service_generation_digest,
+                issued_monotonic=issued,
+                expires_monotonic=min(state.deadline, handle.expires,
+                                      state.initial_input_expires_monotonic, issued + 30.0),
+            )
+            if (not receipt.write_complete or not receipt.stdin_closed
+                    or len(exact_bytes) != receipt.stdin_size_bytes):
+                raise AuthorityDenied("resource.task_stdin", "stdin write or EOF proof is incomplete")
+            with self._lock:
+                for receipt_id, (_task_handle, _receipt, expires, _profile_id) in tuple(
+                        self._task_stdin_write_receipts.items()):
+                    if expires <= issued:
+                        self._task_stdin_write_receipts.pop(receipt_id, None)
+                if len(self._task_stdin_write_receipts) >= 4096:
+                    raise AuthorityDenied("resource.task_receipts", "stdin write receipt registry is full")
+                self._task_stdin_write_receipts[receipt.receipt_handle] = (
+                    task_handle, receipt, receipt.expires_monotonic, handle.profile.profile_id)
+            state.stdin_write_receipt = receipt
+            task_handle._stdin_write_receipt[0] = receipt.receipt_handle
             return offset
 
     def wait_owned_task_terminal(self, task_handle: ManagedTaskHandle, *,
@@ -1626,6 +5981,8 @@ class ManagedProcessEffectHandler:
         state = self._resolve_task_handle(task_handle)
         if not state.input_closed:
             raise AuthorityDenied("resource.task_stdin", "task has not received its one stdin frame and EOF")
+        if state.stdin_write_receipt is None:
+            raise AuthorityDenied("resource.task_stdin", "task has no root-issued stdin write receipt")
         if (isinstance(deadline_monotonic, bool) or not isinstance(deadline_monotonic, (int, float))
                 or not math.isfinite(deadline_monotonic)):
             raise AuthorityDenied("resource.task_deadline", "task wait deadline is invalid")
@@ -1640,8 +5997,9 @@ class ManagedProcessEffectHandler:
                 raise AuthorityDenied("resource.task_handle", "task terminal handle is already consumed")
             try:
                 while True:
-                    current = bool(self.task_admission_current and self.task_admission_current(admission))
-                    if cancelled() or _pidfd_exited(handle.parent_pidfd) or not current:
+                    current = self._task_admission_is_current(admission, state.selection_payload)
+                    if (cancelled() or state.cancelled() or _pidfd_exited(handle.parent_pidfd)
+                            or not current):
                         was_cancelled = True
                         break
                     if self.monotonic() >= state.deadline:
@@ -1671,14 +6029,17 @@ class ManagedProcessEffectHandler:
                              and proof.main_pidfd_gone and proof.launcher_reaped
                              and not self._pids(handle.cgroup))
                 result = RootTaskTerminalReceipt(
-                    handle_id=admission.handle_id, task_handle_id=task_handle.handle_id,
-                    terminal_receipt_id=uuid.uuid4().hex,
+                    task_handle=task_handle.handle_id,
+                    terminal_receipt_handle=uuid.uuid4().hex,
                     job_id=admission.job_id,
-                    node_id=admission.node_id, child_admission_id=admission.child_admission_id,
-                    attempt_index=admission.attempt_index,
+                    node_id=admission.node_id, admission_id=admission.admission_id,
+                    admission_handle_id=state.admission_handle_id,
                     backend_enrollment_id=admission.backend_enrollment_id,
+                    operation_id=admission.operation_id,
+                    task_body_recipe_id=admission.task_body_recipe_id,
+                    task_request_schema_id=admission.task_request_schema_id,
                     resource_generation=admission.resource_generation,
-                    profile_id=admission.profile_id, profile_generation=admission.profile_generation,
+                    profile_id=handle.profile.profile_id, process_generation=admission.process_generation,
                     process_id=handle.process_id, exit_code=exit_code,
                     timed_out=timed_out, cancelled=was_cancelled,
                     started_monotonic=handle.started, finished_monotonic=self.monotonic(),
@@ -1691,25 +6052,90 @@ class ManagedProcessEffectHandler:
                     output_complete=(not state.output_overflow and state.stdout_eof and state.stderr_eof),
                     schema=1,
                     state=("cancelled" if was_cancelled else
-                           "failed" if timed_out or exit_code != 0 or state.output_overflow else "completed"),
+                           "failed" if timed_out or exit_code != 0 or state.output_overflow
+                           or not (state.stdout_eof and state.stderr_eof) else "completed"),
                     observed_monotonic=self.monotonic(),
                     stdout_size_bytes=len(state.stdout), stderr_size_bytes=len(state.stderr),
-                    parent_closure_digest=admission.parent_closure_digest)
+                    parent_closure_digest=admission.parent_closure_digest,
+                    native_loader_ready_event_id=handle.native_loader_ready_event_id,
+                    stdin_write_receipt_handle=state.stdin_write_receipt.receipt_handle)
                 if not clean:
                     raise AuthorityDenied("resource.task_cleanup", "task terminal cleanup was not proven")
                 state.consumed = True
                 with self._lock:
                     self._task_handles.pop(task_handle.handle_id, None)
+                    now = self.monotonic()
+                    for receipt_id, (_task_id, _receipt, expires) in tuple(self._task_terminal_receipts.items()):
+                        if expires <= now:
+                            self._task_terminal_receipts.pop(receipt_id, None)
+                    if len(self._task_terminal_receipts) >= 4096:
+                        raise AuthorityDenied("resource.task_receipts", "terminal receipt registry is full")
+                    self._task_terminal_receipts[result.terminal_receipt_handle] = (
+                        task_handle.handle_id, result, now + 30.0)
                 return result
             except BaseException:
                 raise
+
+    def resolve_task_terminal(self, task_handle_id: str,
+                              terminal_receipt_handle: str) -> RootTaskTerminalReceipt:
+        """Resolve the exact recent terminal object produced by this manager.
+
+        This root-internal lookup lets the task-native observer join terminal
+        facts without reconstructing them or accepting a caller-produced DTO.
+        Its consumer owns one-use semantics; the bounded receipt remains
+        available only until its short resolver lease or profile generation
+        ends.
+        """
+        if (not isinstance(task_handle_id, str) or not re.fullmatch(r"[0-9a-f]{32}", task_handle_id)
+                or not isinstance(terminal_receipt_handle, str)
+                or not re.fullmatch(r"[0-9a-f]{32}", terminal_receipt_handle)):
+            raise AuthorityDenied("resource.task_receipt", "task terminal receipt selector is malformed")
+        with self._lock:
+            entry = self._task_terminal_receipts.get(terminal_receipt_handle)
+            if entry is None:
+                raise AuthorityDenied("resource.task_receipt", "task terminal receipt is unavailable")
+            bound_task_id, receipt, expires = entry
+            profile = self.profiles.get(receipt.profile_id)
+            if (bound_task_id != task_handle_id or expires <= self.monotonic()
+                    or profile is None or profile.generation != receipt.process_generation
+                    or receipt.task_handle != task_handle_id
+                    or receipt.terminal_receipt_handle != terminal_receipt_handle):
+                self._task_terminal_receipts.pop(terminal_receipt_handle, None)
+                raise AuthorityDenied("resource.task_receipt", "task terminal receipt is stale or mismatched")
+            return receipt
+
+    def resolve_task_stdin_write(self, task_handle: ManagedTaskHandle,
+                                 receipt_handle: str) -> Any:
+        """Return the exact retained successful write/EOF receipt object."""
+        from hermes_installer.registry.resource_jobs import RootTaskStdinWriteReceipt
+        if (type(task_handle) is not ManagedTaskHandle
+                or not isinstance(receipt_handle, str)
+                or not re.fullmatch(r"[0-9a-f]{32}", receipt_handle)):
+            raise AuthorityDenied("resource.task_stdin_receipt", "stdin write receipt selector is malformed")
+        with self._lock:
+            entry = self._task_stdin_write_receipts.get(receipt_handle)
+            if entry is None:
+                raise AuthorityDenied("resource.task_stdin_receipt", "stdin write receipt is unavailable")
+            retained_task_handle, receipt, expires, profile_id = entry
+            profile = self.profiles.get(profile_id)
+            if (retained_task_handle is not task_handle or expires <= self.monotonic()
+                    or profile is None or profile.generation != task_handle.generation
+                    or type(receipt) is not RootTaskStdinWriteReceipt
+                    or receipt.task_handle != task_handle.handle_id
+                    or receipt.process_id != task_handle.process_id
+                    or receipt.process_generation != task_handle.generation
+                    or task_handle.stdin_write_receipt_handle != receipt_handle):
+                self._task_stdin_write_receipts.pop(receipt_handle, None)
+                raise AuthorityDenied("resource.task_stdin_receipt", "stdin write receipt is stale or mismatched")
+            return receipt
 
     def _resolve_task_handle(self, task_handle: ManagedTaskHandle) -> _ManagedTaskState:
         if not isinstance(task_handle, ManagedTaskHandle):
             raise AuthorityDenied("resource.task_handle", "root task handle has the wrong type")
         with self._lock:
             state = self._task_handles.get(task_handle.handle_id)
-        if (state is None or state.consumed or task_handle.generation != state.admission.profile_generation
+        if (state is None or state.consumed or task_handle.generation != state.admission.process_generation
+                or state.root_handle is not task_handle
                 or state.handle.process_id not in self._handles
                 or state.handle.stopped):
             raise AuthorityDenied("resource.task_handle", "root task handle is stale or consumed")
@@ -1793,21 +6219,78 @@ class ManagedProcessEffectHandler:
 
     def _start_reserved(self, profile: ManagedProfileCustody, context: HostContext,
                         authorization: EffectAuthorization, payload: bytes, timeout: float,
-                        peer_pid: int, peer_pidfd: int | None,
+                        peer_pid: int | None, peer_pidfd: int | None,
                         cancelled: Callable[[], bool], *,
                         registered_profile: ManagedProfileCustody | None = None,
-                        start_guard: Callable[[], bool] | None = None) -> Mapping[str, Any]:
-        launch_deadline = min(self.monotonic() + max(0.0, timeout),
-                              authorization.monotonic_expires_at)
+                        start_guard: Callable[[], bool] | None = None,
+                        lease_expires_monotonic: float | None = None,
+                        process_expires_monotonic: float | None = None,
+                        root_selected_effect: Any | None = None,
+                        root_resource_home_binding: Any | None = None,
+                        root_resource_selection: Any | None = None,
+                        xauthority_mount_source: Path | None = None,
+                        daemon_liveness_pidfd: int | None = None) -> Mapping[str, Any]:
+        if (self._native_worker_profile_id is not None
+                and profile.profile_id == self._native_worker_profile_id):
+            # The generic process.start surface cannot admit the selected
+            # Hermes module recipe. It remains denied until the dedicated
+            # same-PID private-loopback gate owns the launch and its release.
+            raise AuthorityDenied(
+                "native_worker.gate",
+                "selected Hermes worker requires its typed current launch and same-process kernel gate")
+        if root_selected_effect is None:
+            if authorization is None:
+                raise AuthorityDenied("process.authority", "ordinary process start authority is malformed")
+            effect_expiry = (authorization.monotonic_expires_at if lease_expires_monotonic is None
+                             else lease_expires_monotonic)
+        else:
+            memory_root = root_selected_effect.role in {
+                "memory-openviking", "memory-agentmemory", "memory-claude-mem"}
+            health_root = root_selected_effect.role == "health"
+            if (root_selected_effect.action != "start"
+                    or (memory_root and (context is not None or authorization is not None
+                                         or lease_expires_monotonic is None))
+                    or (health_root and (context is not None or authorization is not None
+                                         or lease_expires_monotonic is None))
+                    or (not memory_root and not health_root
+                        and (context is None or authorization is None))):
+                raise AuthorityDenied("root-selected.authority", "root-selected launch must use its typed admission")
+            effect_expiry = (lease_expires_monotonic if lease_expires_monotonic is not None
+                             else getattr(authorization, "monotonic_expires_at", None))
+            if not isinstance(effect_expiry, (int, float)) or isinstance(effect_expiry, bool):
+                raise AuthorityDenied("root-selected.authority", "root-selected launch deadline is malformed")
+        launch_deadline = min(self.monotonic() + max(0.0, timeout), effect_expiry)
 
         def require_live_start(parent_fd: int | None = None) -> None:
-            if (cancelled() or self.monotonic() >= launch_deadline
-                    or self.profiles.get(profile.profile_id) is not (registered_profile or profile)
-                    or (start_guard is not None and not start_guard())
-                    or (parent_fd is not None and _pidfd_exited(parent_fd))):
+            reason = None
+            if cancelled():
+                reason = "cancelled"
+            elif self.monotonic() >= launch_deadline:
+                reason = "deadline"
+            elif self.profiles.get(profile.profile_id) != (registered_profile or profile):
+                reason = "profile-generation"
+            elif start_guard is not None and not start_guard():
+                reason = "admission-currentness"
+            elif parent_fd is not None and _pidfd_exited(parent_fd):
+                reason = "parent-pidfd"
+            if reason is not None:
+                sink = self._diagnostic_sink
+                if sink is not None:
+                    # Test-only root diagnostics expose a finite reason enum,
+                    # never paths, credentials, payloads, or process data.
+                    details = ""
+                    if reason == "profile-generation":
+                        current = self.profiles.get(profile.profile_id)
+                        expected = registered_profile or profile
+                        names = getattr(type(expected), "__dataclass_fields__", {})
+                        differing = [name for name in names
+                                     if getattr(current, name, object()) != getattr(expected, name, object())]
+                        details = ":fields=" + ",".join(differing[:24])
+                    sink(("prelaunch-deny:" + reason + details).encode("ascii", "backslashreplace")[:512])
                 raise AuthorityDenied("process.start_expired", "start grant, profile enrollment or caller expired before launch")
 
-        if peer_pidfd is None:
+        parent_liveness_fd = daemon_liveness_pidfd if daemon_liveness_pidfd is not None else peer_pidfd
+        if parent_liveness_fd is None:
             raise AuthorityDenied("process.parent", "authority did not retain the peer pidfd")
         require_live_start()
         request = self._json(payload)
@@ -1872,6 +6355,10 @@ class ManagedProcessEffectHandler:
                 or any(any(marker in k.casefold() for marker in ("token", "secret", "password", "credential", "api_key")) for k in env)
                 or env.get("HOME") != "/hermes" or env.get("HERMES_HOME") != "/hermes"):
             raise AuthorityDenied("process.environment", "environment is not the sanitized profile allowlist")
+        if (("XAUTHORITY" in env) != (xauthority_mount_source is not None)
+                or ("XAUTHORITY" in env
+                    and env["XAUTHORITY"] != "/run/hermes-installer/display/Xauthority")):
+            raise AuthorityDenied("process.xauthority", "credential environment is not bound to the fixed root mount")
         if "PATH" in env:
             for raw_path in env["PATH"].split(":"):
                 try:
@@ -1882,16 +6369,36 @@ class ManagedProcessEffectHandler:
             value = env.get(key)
             if value is not None and not (value == "/hermes" or value.startswith("/hermes/")):
                 raise AuthorityDenied("process.environment", "profile writable path escapes its private mount")
-        cwd = Path(request["cwd"]).resolve(strict=True)
-        roots = [(profile.data_root.resolve(strict=True), f"/hermes/profiles/{profile.profile_id}")]
-        if profile.home_root is not None:
-            roots.append((profile.home_root.resolve(strict=True), "/hermes"))
-        if profile.work_root is not None:
-            roots.append((profile.work_root.resolve(strict=True), "/workspace"))
-        cwd_binding = next(((root, target) for root, target in roots if cwd.is_relative_to(root)), None)
-        if cwd_binding is None:
-            raise AuthorityDenied("process.cwd", "working directory is outside the enrolled private roots")
-        cwd_root, cwd_target = cwd_binding
+        if root_resource_home_binding is not None:
+            from hermes_installer.authority.native_profile_task_homes import RootSelectedResourceTaskHomeBinding
+            if (type(root_resource_home_binding) is not RootSelectedResourceTaskHomeBinding
+                    or root_resource_selection is None
+                    or not root_resource_home_binding.verify_current(root_resource_selection)
+                    or request["cwd"] != "/hermes"):
+                raise AuthorityDenied("resource.home_binding", "fixed task home mount is stale or malformed")
+            held_fd = getattr(root_resource_home_binding, "_home_fd", None)
+            if type(held_fd) is not int:
+                raise AuthorityDenied("resource.home_binding", "retained task home descriptor is unavailable")
+            held_stat = os.fstat(held_fd)
+            if ((held_stat.st_dev, held_stat.st_ino, held_stat.st_uid, held_stat.st_gid,
+                 stat.S_IMODE(held_stat.st_mode)) !=
+                    (root_resource_home_binding.home_device, root_resource_home_binding.home_inode,
+                     root_resource_home_binding.home_owner_uid, root_resource_home_binding.home_owner_gid,
+                     root_resource_home_binding.home_mode)):
+                raise AuthorityDenied("resource.home_binding", "retained task home descriptor identity changed")
+            cwd = Path("/hermes")
+            cwd_root, cwd_target = cwd, "/hermes"
+        else:
+            cwd = Path(request["cwd"]).resolve(strict=True)
+            roots = [(profile.data_root.resolve(strict=True), f"/hermes/profiles/{profile.profile_id}")]
+            if profile.home_root is not None:
+                roots.append((profile.home_root.resolve(strict=True), "/hermes"))
+            if profile.work_root is not None:
+                roots.append((profile.work_root.resolve(strict=True), "/workspace"))
+            cwd_binding = next(((root, target) for root, target in roots if cwd.is_relative_to(root)), None)
+            if cwd_binding is None:
+                raise AuthorityDenied("process.cwd", "working directory is outside the enrolled private roots")
+            cwd_root, cwd_target = cwd_binding
         lifetime, output_cap = request["max_lifetime_seconds"], request["max_output_bytes"]
         if (isinstance(lifetime, bool) or not isinstance(lifetime, (int, float))
                 or not 0 < lifetime <= min(profile.max_lifetime_seconds, 600)
@@ -1900,7 +6407,7 @@ class ManagedProcessEffectHandler:
             raise AuthorityDenied("process.bounds", "process lifetime or stream mode is invalid")
         require_live_start()
         try:
-            parent_fd = os.dup(peer_pidfd)
+            parent_fd = os.dup(parent_liveness_fd)
         except OSError:
             raise AuthorityDenied("process.parent", "pidfd is required for parent-death custody") from None
         process_id = uuid.uuid4().hex
@@ -1908,6 +6415,8 @@ class ManagedProcessEffectHandler:
         artifact_target: Path | None = None
         native_mount_source: Path | None = None
         native_mount_receipt: NativePackageMountReceipt | None = None
+        xauthority_mount_receipt: XauthorityMountReceipt | None = None
+        native_loader_channel: Any | None = None
         artifact_path: Path | None = resolved_children.get(selected_child_ref) if selected_child_ref else None
         if selected_child_ref is not None and artifact_path is None:
             os.close(parent_fd)
@@ -1934,7 +6443,10 @@ class ManagedProcessEffectHandler:
             "--property=InaccessiblePaths=/etc/hermes-installer -/var/lib/hermes-installer /etc/ssh /etc/ssl/private",
         ]
         bind_paths = [f"{profile.data_root}:{mount}"]
-        if profile.home_root is not None:
+        if root_resource_home_binding is not None:
+            held_fd = root_resource_home_binding._home_fd
+            bind_paths.append(f"/proc/{os.getpid()}/fd/{held_fd}:/hermes")
+        elif profile.home_root is not None:
             bind_paths.append(f"{profile.home_root}:/hermes")
         if profile.work_root is not None:
             bind_paths.append(f"{profile.work_root}:/workspace")
@@ -1952,21 +6464,80 @@ class ManagedProcessEffectHandler:
             os.close(parent_fd)
             raise AuthorityDenied("process.authority_socket", "per-UID authority socket ACL is not protected")
         properties.append(f"--property=BindPaths={authority_socket}:{authority_socket}")
+        if xauthority_mount_source is not None:
+            xauthority_source_file = xauthority_mount_source / "Xauthority"
+            source_info = xauthority_source_file.stat(follow_symlinks=False)
+            if (not stat.S_ISREG(source_info.st_mode) or source_info.st_uid != 0
+                    or source_info.st_gid != profile.owner_gid
+                    or stat.S_IMODE(source_info.st_mode) != 0o440 or source_info.st_nlink != 1
+                    or not 0 < source_info.st_size <= 65536):
+                os.close(parent_fd)
+                raise AuthorityDenied("process.xauthority", "staged credential source is not immutable and private")
+            xauthority_mount_receipt = XauthorityMountReceipt(
+                "/run/hermes-installer/display/Xauthority", source_info.st_dev,
+                source_info.st_ino, hashlib.sha256(xauthority_source_file.read_bytes()).hexdigest(),
+                source_info.st_size, profile.owner_gid,
+            )
+            properties.extend((
+                "--property=BindReadOnlyPaths=" + str(xauthority_source_file) + ":/run/hermes-installer/display/Xauthority",
+                "--property=RuntimeDirectory=hermes-installer/display",
+                "--property=RuntimeDirectoryMode=0755",
+                "--property=PrivateMounts=yes", "--property=MountFlags=private",
+                # The source stage is already a private self-bind with the
+                # kernel-enforced ro,nosuid,nodev,noexec flags. The readonly
+                # file bind inherits those per-mount flags; systemd exposes
+                # no per-path properties for the remaining mount flags.
+                "--property=NoExecPaths=/run/hermes-installer/display/Xauthority",
+            ))
         if profile.memory_max_bytes is not None:
             properties.append(f"--property=MemoryMax={profile.memory_max_bytes}")
         if profile.cpu_quota_percent is not None:
             properties.append(f"--property=CPUQuota={profile.cpu_quota_percent}%")
         if profile.io_weight is not None:
             properties.append(f"--property=IOWeight={profile.io_weight}")
+        try:
+            native_mount_source, native_mount_receipt = self._prepare_native_package_mount(profile, process_id)
+            if native_mount_receipt is not None:
+                if self.native_loader_observation_store is None:
+                    raise AuthorityDenied("native.loader", "root loader observation store is unavailable")
+                self._require_systemd_openfile()
+                binding = getattr(profile.native_package, "binding", profile.native_package)
+                role_artifact_id = getattr(binding, "entrypoint_artifact_id", None)
+                role_sha256 = getattr(binding, "entrypoint_sha256", None)
+                if (not isinstance(role_artifact_id, str) or not role_artifact_id
+                        or not isinstance(role_sha256, str)
+                        or not re.fullmatch(r"[0-9a-f]{64}", role_sha256)):
+                    raise AuthorityDenied("native.loader", "selected loader role pin is unavailable")
+                runtime_dir = Path("/run/hermes-installer/native-loader")
+                self._ensure_root_runtime_directory(runtime_dir.parent, 0o711)
+                self._ensure_root_runtime_directory(runtime_dir, 0o700)
+                from hermes_installer.authority.native_custody_proof import create_native_loader_channel
+                native_loader_channel = create_native_loader_channel(runtime_dir)
+                properties.append("--property=OpenFile=" + native_loader_channel.systemd_open_file_property)
+        except BaseException:
+            os.close(parent_fd)
+            if native_loader_channel is not None:
+                native_loader_channel.close()
+            if native_mount_source is not None:
+                self._remove_native_staging(native_mount_source)
+            raise
         env_args = ["--setenv=" + key + "=" + value for key, value in sorted(env.items())]
         try:
             require_live_start(parent_fd)
         except BaseException:
             os.close(parent_fd)
+            if native_loader_channel is not None:
+                native_loader_channel.close()
+            if native_mount_source is not None:
+                self._remove_native_staging(native_mount_source)
             raise
         remaining = launch_deadline - self.monotonic()
         if remaining <= 0:
             os.close(parent_fd)
+            if native_loader_channel is not None:
+                native_loader_channel.close()
+            if native_mount_source is not None:
+                self._remove_native_staging(native_mount_source)
             raise AuthorityDenied("process.start_expired", "start lease ended during preparation")
         try:
             manager_env = subprocess.run([str(self.systemctl), "--system", "show-environment"],
@@ -1975,19 +6546,30 @@ class ManagedProcessEffectHandler:
                 timeout=min(2.0, remaining), check=False)
         except (OSError, subprocess.TimeoutExpired):
             os.close(parent_fd)
+            if native_loader_channel is not None:
+                native_loader_channel.close()
+            if native_mount_source is not None:
+                self._remove_native_staging(native_mount_source)
             raise AuthorityDenied("process.environment", "system manager environment could not be bounded") from None
         try:
             require_live_start(parent_fd)
         except BaseException:
             os.close(parent_fd)
+            if native_loader_channel is not None:
+                native_loader_channel.close()
+            if native_mount_source is not None:
+                self._remove_native_staging(native_mount_source)
             raise
         if manager_env.returncode != 0 or len(manager_env.stdout) > 65536:
             if self._diagnostic_sink is not None:
                 self._diagnostic_sink(
                     f"manager-environment-failed:returncode={manager_env.returncode}:bytes={len(manager_env.stdout)}".encode("ascii"))
             os.close(parent_fd)
+            if native_loader_channel is not None:
+                native_loader_channel.close()
+            if native_mount_source is not None:
+                self._remove_native_staging(native_mount_source)
             raise AuthorityDenied("process.environment", "system manager environment cannot be safely cleared")
-        import re
         manager_keys = {line.split("=", 1)[0] for line in manager_env.stdout.decode("utf-8", "replace").splitlines()
                         if "=" in line and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", line.split("=", 1)[0])}
         manager_keys.update({"INVOCATION_ID", "JOURNAL_STREAM", "NOTIFY_SOCKET", "WATCHDOG_USEC",
@@ -1995,9 +6577,15 @@ class ManagedProcessEffectHandler:
                              "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "USER", "LOGNAME",
                              "SHELL", "PWD", "SYSTEMD_EXEC_PID", "MEMORY_PRESSURE_WATCH",
                              "MEMORY_PRESSURE_WRITE"})
-        unset_keys = sorted(manager_keys - set(env))
+        activation_keys = ({"LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES"}
+                           if native_loader_channel is not None else set())
+        unset_keys = sorted(manager_keys - set(env) - activation_keys)
         if sum(len(key) + 1 for key in unset_keys) > 60000:
             os.close(parent_fd)
+            if native_loader_channel is not None:
+                native_loader_channel.close()
+            if native_mount_source is not None:
+                self._remove_native_staging(native_mount_source)
             raise AuthorityDenied("process.environment", "system manager environment exceeds its safe bound")
         if unset_keys:
             properties.append("--property=UnsetEnvironment=" + " ".join(unset_keys))
@@ -2016,7 +6604,6 @@ class ManagedProcessEffectHandler:
                     os.close(fd)
                 argv[artifact_args[0]] = str(artifact_target)
                 properties.append(f"--property=BindReadOnlyPaths={artifact_path}:{artifact_target}")
-            native_mount_source, native_mount_receipt = self._prepare_native_package_mount(profile, process_id)
             if native_mount_source is not None and native_mount_receipt is not None:
                 properties.append(
                     "--property=BindReadOnlyPaths=" + str(native_mount_source) + ":"
@@ -2033,6 +6620,8 @@ class ManagedProcessEffectHandler:
                 _remove_artifact_mount(artifact_mount_dir)
             if native_mount_source is not None:
                 self._remove_native_staging(native_mount_source)
+            if native_loader_channel is not None:
+                native_loader_channel.close()
             raise
         command = [str(self.systemd_run), "--system", "--unit=" + unit, "--service-type=exec",
                    "--wait", "--collect", "--pipe", "--quiet", "--working-directory=" + target_cwd,
@@ -2072,6 +6661,8 @@ class ManagedProcessEffectHandler:
                 _remove_artifact_mount(artifact_mount_dir)
             if native_mount_source is not None:
                 self._remove_native_staging(native_mount_source)
+            if native_loader_channel is not None:
+                native_loader_channel.close()
             raise AuthorityDenied("process.launcher_start", "root process manager could not start the enrolled service") from None
         except BaseException:
             os.close(parent_fd)
@@ -2079,6 +6670,8 @@ class ManagedProcessEffectHandler:
                 _remove_artifact_mount(artifact_mount_dir)
             if native_mount_source is not None:
                 self._remove_native_staging(native_mount_source)
+            if native_loader_channel is not None:
+                native_loader_channel.close()
             raise
         started = self.monotonic()
         deadline = min(launch_deadline, started + 10.0)
@@ -2125,13 +6718,15 @@ class ManagedProcessEffectHandler:
                 if launcher.poll() is not None:
                     sink = self._diagnostic_sink
                     if sink is not None:
-                        parts = [f"launcher-exit={launcher.returncode}".encode("ascii")]
+                        parts = [f"unit={unit} launcher-exit={launcher.returncode}".encode("ascii")]
                         for name, stream in ((b"stdout", launcher.stdout), (b"stderr", launcher.stderr)):
                             if stream is None:
                                 continue
                             try:
                                 output = stream.read(1024)
                             except (OSError, ValueError):
+                                output = b""
+                            if not isinstance(output, bytes):
                                 output = b""
                             parts.append(name + b"=" + output[:1024])
                         # `systemd-run --quiet --wait --collect` intentionally
@@ -2145,7 +6740,9 @@ class ManagedProcessEffectHandler:
                             (b"unit-properties", [str(self.systemctl), "--system", "show", unit,
                                 "-p", "Result", "-p", "ExecMainCode", "-p", "ExecMainStatus",
                                 "-p", "StatusText", "-p", "ControlGroup", "-p", "PrivateNetwork",
-                                "-p", "RestrictAddressFamilies"]),
+                                "-p", "RestrictAddressFamilies", "-p", "RuntimeDirectory",
+                                "-p", "RuntimeDirectoryMode", "-p", "PrivateMounts",
+                                "-p", "MountFlags", "-p", "NoExecPaths"]),
                             (b"unit-journal", ["/usr/bin/journalctl", "--system", "--no-pager",
                                 "-n", "8", "-o", "cat", "--unit", unit]),
                         ):
@@ -2165,6 +6762,8 @@ class ManagedProcessEffectHandler:
             pid, ticks, dev, ino = identity
             if native_mount_receipt is not None:
                 self._verify_native_package_mount(pid, native_mount_receipt)
+            if xauthority_mount_receipt is not None:
+                self._verify_xauthority_mount(pid, xauthority_mount_receipt)
             if Path(cgroup).name != unit or ".." in Path(cgroup).parts:
                 raise AuthorityDenied("process.cgroup", "service did not receive its exact cgroup")
             expected_props = {
@@ -2176,6 +6775,9 @@ class ManagedProcessEffectHandler:
                 "PrivateNetwork": "yes", "RestrictAddressFamilies": "AF_UNIX", "ProtectHome": "tmpfs",
                 "ProtectProc": "invisible", "ProcSubset": "pid", "User": profile.service_user,
             }
+            if xauthority_mount_receipt is not None:
+                expected_props["RuntimeDirectory"] = "hermes-installer/display"
+                expected_props["RuntimeDirectoryMode"] = "0755"
             for key, value in expected_props.items():
                 actual_value = self._show(unit, key)
                 matches = (set(actual_value.split()) == {"0.0.0.0/0", "::/0"}
@@ -2190,13 +6792,19 @@ class ManagedProcessEffectHandler:
             if self._show(unit, "SupplementaryGroups") not in {"", "-"}:
                 raise AuthorityDenied("process.groups", "worker has unexpected supplemental groups")
             actual_environment = self._read_environment(pid)
-            if actual_environment != env:
+            expected_environment = dict(env)
+            if native_loader_channel is not None:
+                expected_environment.update({
+                    "LISTEN_PID": str(pid), "LISTEN_FDS": "1",
+                    "LISTEN_FDNAMES": "hermes-loader-progress",
+                })
+            if actual_environment != expected_environment:
                 if self._diagnostic_sink is not None:
                     # Keep values out of the diagnostic path: only the
                     # variable names needed to identify manager injection are
                     # included in this root-only test sink.
                     actual_keys = sorted(actual_environment)
-                    expected_keys = sorted(env)
+                    expected_keys = sorted(expected_environment)
                     self._diagnostic_sink(
                         ("child-environment-mismatch:actual_keys=" + ",".join(actual_keys)
                          + ":expected_keys=" + ",".join(expected_keys)).encode("ascii", "backslashreplace")[:1024])
@@ -2234,11 +6842,25 @@ class ManagedProcessEffectHandler:
                     raise AuthorityDenied("process.limits", "kernel io.weight does not match enrolled bound")
             if artifact_mount_dir is None:
                 raise AuthorityDenied("process.artifact", "artifact mount directory was not established")
+            process_expiry = started + float(lifetime)
+            if process_expires_monotonic is not None:
+                if (isinstance(process_expires_monotonic, bool)
+                        or not isinstance(process_expires_monotonic, (int, float))
+                        or not math.isfinite(process_expires_monotonic)
+                        or process_expires_monotonic <= started):
+                    raise AuthorityDenied("process.start_expired", "selected process lifetime deadline is invalid")
+                process_expiry = min(process_expiry, float(process_expires_monotonic))
+            selected_principal = (root_selected_effect.selected_principal_id
+                                  if root_selected_effect is not None else context.principal_id)
+            selected_namespace = (root_selected_effect.selected_namespace_identity
+                                  if root_selected_effect is not None else context.namespace_id)
             handle = _Handle(process_id, profile, unit, cgroup, launcher, parent_fd, child_fd, pid,
-                ticks, f"mnt:{mnt};net:{net}", context.principal_id, context.namespace_id,
-                started, started + float(lifetime), output_cap, artifact_mount_dir,
+                ticks, f"mnt:{mnt};net:{net}", selected_principal, selected_namespace,
+                started, process_expiry, output_cap, artifact_mount_dir,
                 native_mount_source=native_mount_source,
                 native_mount_receipt=native_mount_receipt,
+                xauthority_mount_source=xauthority_mount_source,
+                xauthority_mount_receipt=xauthority_mount_receipt,
                 network_namespace_fd=network_namespace_fd,
                 child_artifact_identities=child_artifact_identities,
                 lock=threading.RLock(),
@@ -2247,6 +6869,21 @@ class ManagedProcessEffectHandler:
             network_namespace_fd = None
             with self._lock:
                 self._handles[process_id] = handle
+            if native_loader_channel is not None:
+                binding = getattr(profile.native_package, "binding", profile.native_package)
+                observation = self.register_native_loader_channel(
+                    process_id, native_loader_channel,
+                    expected_loader_role_artifact_id=binding.entrypoint_artifact_id,
+                    expected_loader_role_sha256=binding.entrypoint_sha256,
+                    deadline_monotonic=min(handle.expires, self.monotonic() + 10.0),
+                )
+                if not native_loader_channel._transferred:
+                    raise AuthorityDenied("native.loader", "system manager did not transfer the loader channel")
+                handle.native_loader_observation_handle = observation
+                handle.native_loader_ready_event_id = self.receive_native_loader_progress(
+                    process_id,
+                    cancelled=lambda: cancelled() or _pidfd_exited(handle.parent_pidfd),
+                )
             threading.Thread(target=self._watch_parent, args=(handle,), daemon=True,
                              name="hermes-custody-watch").start()
             return _response(200, {"schema": 1, "process_id": process_id, "pid": pid,
@@ -2259,7 +6896,23 @@ class ManagedProcessEffectHandler:
                 "network_namespace_inode": net, "kernel_limits": limits})
         except BaseException:
             try:
-                self._stop_partial(unit, launcher)
+                with self._lock:
+                    registered_handle = self._handles.get(process_id)
+                if registered_handle is not None:
+                    try:
+                        proof = self._stop(registered_handle, timeout=5.0)
+                    except Exception as cleanup_error:
+                        raise AuthorityDenied(
+                            "process.cleanup_ambiguous",
+                            "failed process admission could not prove owned-process cleanup",
+                        ) from cleanup_error
+                    if not proof.cleanup_verified:
+                        raise AuthorityDenied(
+                            "process.cleanup_ambiguous",
+                            "failed process admission could not prove owned-process cleanup",
+                        )
+                else:
+                    self._stop_partial(unit, launcher)
             finally:
                 try:
                     if artifact_mount_dir is not None:
@@ -2269,6 +6922,8 @@ class ManagedProcessEffectHandler:
                         if native_mount_source is not None:
                             self._remove_native_staging(native_mount_source)
                     finally:
+                        if native_loader_channel is not None:
+                            native_loader_channel.close()
                         for fd in (parent_fd, child_fd, network_namespace_fd):
                             if fd is not None:
                                 try:
@@ -2304,8 +6959,8 @@ class ManagedProcessEffectHandler:
             raise AuthorityDenied("process.inspect", "inspection request is malformed or stale")
         with self._lock:
             handle = self._handles.get(item["process_id"])
-        if (handle is None or handle.registered_profile is not profile
-                or self.profiles.get(profile.profile_id) is not profile or handle.stopped
+        if (handle is None or handle.registered_profile != profile
+                or self.profiles.get(profile.profile_id) != profile or handle.stopped
                 or context.principal_id != handle.principal_id
                 or context.namespace_id != handle.authority_namespace_id
                 or cancelled() or self.monotonic() >= handle.expires
@@ -2482,10 +7137,45 @@ class ManagedProcessEffectHandler:
         namespace_identity = getattr(binding, "namespace_identity", None)
         if not isinstance(profile_id, str) or not isinstance(generation, str) or not isinstance(namespace_identity, str):
             return None
+        return self._resolve_profile_namespace_lease(profile_id, generation, namespace_identity)
+
+    def resolve_observer_namespace_lease(self, profile_id: str, generation: str,
+                                         expected_namespace_identity: str
+                                         ) -> ManagedNamespaceLease | None:
+        """Return a short-lived namespace FD for one exact enrolled live process.
+
+        This is the bounded root-only seam for observers that must inspect a
+        protected service namespace. It selects no process or namespace from a
+        caller PID/path and requires the supplied identity to equal both the
+        current profile enrollment and its live manager-owned handle.
+        """
+        if (not isinstance(profile_id, str) or not profile_id
+                or not isinstance(generation, str) or not generation
+                or not isinstance(expected_namespace_identity, str)
+                or not re.fullmatch(r"mnt:[1-9][0-9]*;net:[1-9][0-9]*",
+                                    expected_namespace_identity)):
+            return None
+        registered = self.profiles.get(profile_id)
+        if registered is None or registered.generation != generation:
+            return None
+        return self._resolve_profile_namespace_lease(
+            profile_id, generation, expected_namespace_identity,
+            registered_profile=registered,
+        )
+
+    def _resolve_profile_namespace_lease(self, profile_id: str, generation: str,
+                                         namespace_identity: str, *,
+                                         registered_profile: ManagedProfileCustody | None = None
+                                         ) -> ManagedNamespaceLease | None:
         with self._lock:
+            registered = registered_profile or self.profiles.get(profile_id)
+            if (registered is None or registered.profile_id != profile_id
+                    or registered.generation != generation):
+                return None
             matches = [handle for handle in self._handles.values()
                        if handle.profile.profile_id == profile_id
                        and handle.profile.generation == generation
+                       and handle.registered_profile is registered
                        and handle.kernel_namespace_id == namespace_identity]
         if len(matches) != 1:
             return None
@@ -2493,6 +7183,7 @@ class ManagedProcessEffectHandler:
         with handle.lock:
             if (handle.stopped or handle.network_namespace_fd is None
                     or self.monotonic() >= handle.expires or _pidfd_exited(handle.child_pidfd)
+                    or handle.registered_profile is not registered
                     or handle.pid not in self._pids(handle.cgroup)):
                 return None
             expected_net = int(namespace_identity.rsplit("net:", 1)[1])
@@ -2575,6 +7266,9 @@ class ManagedProcessEffectHandler:
                     or handle.expires <= self.monotonic()):
                 return False
         try:
+            launch_proof = handle.native_worker_launch_proof
+            if launch_proof is not None:
+                self.verify_current_native_worker_launch(launch_proof)
             pid = self._pidfd_target(handle.child_pidfd)
             return (pid == handle.pid and not _pidfd_exited(handle.child_pidfd)
                     and pid in self._pids(handle.cgroup))
@@ -2665,6 +7359,241 @@ class ManagedProcessEffectHandler:
             if pidfd is not None:
                 os.close(pidfd)
 
+    def resolve_active_process_handle(
+        self, profile_id: str, generation: str,
+    ) -> ManagedProcessIdentityLease | None:
+        """Return a duplicated PIDFD lease for the unique active enrolled process.
+
+        Selection is exclusively through the manager's current registry. The
+        identity is re-read from procfs and compared with the retained PIDFD,
+        cgroup, executable pin, and namespace identity immediately before the
+        lease is returned. Callers own and must close the returned PIDFD.
+        """
+        proof = self.inspect_enrolled_process(profile_id, generation)
+        if proof is None:
+            return None
+        with self._lock:
+            handle = self._handles.get(proof.process_id)
+            registered = self.profiles.get(profile_id)
+            if (handle is None or handle.stopped or registered is None
+                    or registered.generation != generation
+                    or handle.registered_profile is not registered
+                    or handle.profile.profile_id != profile_id
+                    or handle.profile.generation != generation
+                    or handle.expires <= self.monotonic()):
+                return None
+            try:
+                lease_fd = os.dup(handle.child_pidfd)
+            except OSError:
+                return None
+        transferred = False
+        try:
+            pid = self._pidfd_target(lease_fd)
+            if pid != proof.pid or pid != handle.pid or _pidfd_exited(lease_fd):
+                return None
+            ticks, cgroup, device, inode = _pid_identity(pid)
+            mount_ns, network_ns = (os.stat(f"/proc/{pid}/ns/{name}").st_ino
+                                    for name in ("mnt", "net"))
+            executable = handle.profile.executable.stat(follow_symlinks=False)
+            if (ticks != proof.pid_starttime_ticks or ticks != handle.start_ticks
+                    or cgroup != proof.cgroup_id or cgroup != handle.cgroup
+                    or (device, inode) != (proof.executable_device, proof.executable_inode)
+                    or (device, inode) != (executable.st_dev, executable.st_ino)
+                    or mount_ns != proof.mount_namespace_inode
+                    or network_ns != proof.network_namespace_inode
+                    or f"mnt:{mount_ns};net:{network_ns}" != handle.kernel_namespace_id
+                    or pid not in self._pids(handle.cgroup)
+                    or _pidfd_exited(handle.child_pidfd)
+                    or self._pidfd_target(handle.child_pidfd) != pid):
+                return None
+            with self._lock:
+                if (self._handles.get(proof.process_id) is not handle or handle.stopped
+                        or self.profiles.get(profile_id) is not registered
+                        or handle.registered_profile is not registered
+                        or handle.expires <= self.monotonic()):
+                    return None
+            lease = ManagedProcessIdentityLease(
+                process_id=proof.process_id, profile_id=profile_id,
+                generation=generation, uid=proof.uid, gid=proof.gid,
+                pid=pid, start_ticks=ticks, executable_device=device,
+                executable_inode=inode, executable_sha256=proof.executable_sha256,
+                cgroup_identity=cgroup, mount_namespace_inode=mount_ns,
+                network_namespace_inode=network_ns,
+                expires_monotonic=min(proof.expires_monotonic, handle.expires),
+                pidfd=lease_fd,
+            )
+            transferred = True
+            return lease
+        except (OSError, ValueError):
+            return None
+        finally:
+            if not transferred:
+                try:
+                    os.close(lease_fd)
+                except OSError:
+                    pass
+
+    def resolve_managed_task_process_handle(
+        self, task_handle: ManagedTaskHandle,
+    ) -> ManagedProcessIdentityLease | None:
+        """Resolve one exact active root task to a duplicated PIDFD lease."""
+        if not isinstance(task_handle, ManagedTaskHandle):
+            return None
+        try:
+            state = self._resolve_task_handle(task_handle)
+        except AuthorityDenied:
+            return None
+        handle = state.handle
+        with self._lock:
+            if (self._task_handles.get(task_handle.handle_id) is not state
+                    or self._handles.get(task_handle.process_id) is not handle
+                    or handle.process_id != task_handle.process_id
+                    or handle.profile.generation != task_handle.generation
+                    or handle.stopped or state.consumed
+                    or state.deadline <= self.monotonic()):
+                return None
+            try:
+                lease_fd = os.dup(handle.child_pidfd)
+            except OSError:
+                return None
+        transferred = False
+        try:
+            pid = self._pidfd_target(lease_fd)
+            if pid != handle.pid or _pidfd_exited(lease_fd):
+                return None
+            ticks, cgroup, device, inode = _pid_identity(pid)
+            executable = handle.profile.executable.stat(follow_symlinks=False)
+            mount_ns, network_ns = (os.stat(f"/proc/{pid}/ns/{name}").st_ino
+                                    for name in ("mnt", "net"))
+            if (ticks != handle.start_ticks or cgroup != handle.cgroup
+                    or (device, inode) != (executable.st_dev, executable.st_ino)
+                    or pid not in self._pids(handle.cgroup)
+                    or f"mnt:{mount_ns};net:{network_ns}" != handle.kernel_namespace_id
+                    or _pidfd_exited(handle.child_pidfd)
+                    or self._pidfd_target(handle.child_pidfd) != pid):
+                return None
+            digest = hashlib.sha256()
+            exe_fd = os.open(f"/proc/{pid}/exe", os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+            try:
+                observed = os.fstat(exe_fd)
+                if (observed.st_dev, observed.st_ino) != (device, inode):
+                    return None
+                while True:
+                    chunk = os.read(exe_fd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+            finally:
+                os.close(exe_fd)
+            exe_sha256 = digest.hexdigest()
+            if exe_sha256 != handle.profile.artifact_sha256:
+                return None
+            with self._lock:
+                if (self._task_handles.get(task_handle.handle_id) is not state
+                        or self._handles.get(task_handle.process_id) is not handle
+                        or handle.stopped or state.consumed
+                        or state.deadline <= self.monotonic()):
+                    return None
+            lease = ManagedProcessIdentityLease(
+                process_id=handle.process_id, profile_id=handle.profile.profile_id,
+                generation=handle.profile.generation, uid=handle.profile.owner_uid,
+                gid=handle.profile.owner_gid, pid=pid, start_ticks=ticks,
+                executable_device=device, executable_inode=inode,
+                executable_sha256=exe_sha256, cgroup_identity=cgroup,
+                mount_namespace_inode=mount_ns,
+                network_namespace_inode=network_ns,
+                expires_monotonic=min(handle.expires, state.deadline), pidfd=lease_fd)
+            transferred = True
+            return lease
+        except (OSError, ValueError, AuthorityDenied):
+            return None
+        finally:
+            if not transferred:
+                try:
+                    os.close(lease_fd)
+                except OSError:
+                    pass
+
+    def resolve_owned_process_handle(
+        self, handle: _Handle,
+    ) -> ManagedProcessIdentityLease | None:
+        """Resolve a root-held active manager handle without profile selection.
+
+        This is for root registries that already selected and retained the
+        exact manager handle. It deliberately rejects structurally similar or
+        stale handles by object identity against this manager's live registry.
+        """
+        if not isinstance(handle, _Handle):
+            return None
+        with self._lock:
+            registered = self.profiles.get(handle.profile.profile_id)
+            if (self._handles.get(handle.process_id) is not handle or handle.stopped
+                    or registered is None or handle.registered_profile is not registered
+                    or handle.profile.generation != handle.registered_profile.generation
+                    or handle.expires <= self.monotonic()):
+                return None
+            try:
+                lease_fd = os.dup(handle.child_pidfd)
+            except OSError:
+                return None
+        transferred = False
+        try:
+            pid = self._pidfd_target(lease_fd)
+            if pid != handle.pid or _pidfd_exited(lease_fd):
+                return None
+            ticks, cgroup, device, inode = _pid_identity(pid)
+            executable = handle.profile.executable.stat(follow_symlinks=False)
+            mount_ns, network_ns = (os.stat(f"/proc/{pid}/ns/{name}").st_ino
+                                    for name in ("mnt", "net"))
+            if (ticks != handle.start_ticks or cgroup != handle.cgroup
+                    or (device, inode) != (executable.st_dev, executable.st_ino)
+                    or pid not in self._pids(handle.cgroup)
+                    or f"mnt:{mount_ns};net:{network_ns}" != handle.kernel_namespace_id
+                    or _pidfd_exited(handle.child_pidfd)
+                    or self._pidfd_target(handle.child_pidfd) != pid):
+                return None
+            digest = hashlib.sha256()
+            exe_fd = os.open(f"/proc/{pid}/exe", os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+            try:
+                observed = os.fstat(exe_fd)
+                if (observed.st_dev, observed.st_ino) != (device, inode):
+                    return None
+                while True:
+                    chunk = os.read(exe_fd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+            finally:
+                os.close(exe_fd)
+            exe_sha256 = digest.hexdigest()
+            if exe_sha256 != handle.profile.artifact_sha256:
+                return None
+            with self._lock:
+                registered = self.profiles.get(handle.profile.profile_id)
+                if (self._handles.get(handle.process_id) is not handle or handle.stopped
+                        or registered is None or handle.registered_profile is not registered
+                        or handle.expires <= self.monotonic()):
+                    return None
+            lease = ManagedProcessIdentityLease(
+                process_id=handle.process_id, profile_id=handle.profile.profile_id,
+                generation=handle.profile.generation, uid=handle.profile.owner_uid,
+                gid=handle.profile.owner_gid, pid=pid, start_ticks=ticks,
+                executable_device=device, executable_inode=inode,
+                executable_sha256=exe_sha256, cgroup_identity=cgroup,
+                mount_namespace_inode=mount_ns,
+                network_namespace_inode=network_ns,
+                expires_monotonic=handle.expires, pidfd=lease_fd)
+            transferred = True
+            return lease
+        except (OSError, ValueError, AuthorityDenied):
+            return None
+        finally:
+            if not transferred:
+                try:
+                    os.close(lease_fd)
+                except OSError:
+                    pass
+
     def resolve_process_operation(self, process_id: str, generation: str, operation: str, *,
                                   peer_uid: int, peer_pid: int,
                                   peer_pidfd: int) -> tuple[ManagedProfileCustody, str] | None:
@@ -2716,7 +7645,7 @@ class ManagedProcessEffectHandler:
         with self._lock:
             handle = self._handles.get(process_id)
         if (handle is None or handle.profile.generation != generation or handle.stopped
-                or self.profiles.get(handle.profile.profile_id) is not handle.registered_profile
+                or self.profiles.get(handle.profile.profile_id) != handle.registered_profile
                 or handle.native_mount_receipt is None or handle.native_mount_source is None
                 or self.monotonic() >= handle.expires or _pidfd_exited(handle.child_pidfd)
                 or handle.pid not in self._pids(handle.cgroup)):
@@ -2906,7 +7835,10 @@ class ManagedProcessEffectHandler:
         allowed = {"ControlGroup", "Description", "KillMode", "ProtectSystem", "PrivateTmp", "PrivateDevices",
             "NoNewPrivileges", "IPAddressDeny", "PrivateNetwork", "RestrictAddressFamilies", "ProtectHome",
             "ProtectProc", "ProcSubset", "User", "SupplementaryGroups", "RuntimeMaxUSec", "MemoryMax",
-            "CPUQuotaPerSecUSec", "IOWeight"}
+            "CPUQuotaPerSecUSec", "IOWeight", "LoadState", "ActiveState", "MainPID", "InvocationID",
+            "FragmentPath", "ExecStart", "Environment", "EnvironmentFiles", "SocketBindDeny",
+            "ProtectSystem", "ProtectHome", "PrivateMounts",
+            "TemporaryFileSystem", "InaccessiblePaths"}
         if prop not in allowed or not unit.startswith("hermes-installer-") or not unit.endswith(".service"):
             raise AuthorityDenied("process.manager", "manager property or unit is outside the fixed set")
         result = subprocess.run([str(self.systemctl), "--system", "show", "--property=" + prop, "--value", unit],
@@ -2955,7 +7887,8 @@ class ManagedProcessEffectHandler:
                 out[name] = "unavailable"
         return out
 
-    def _stop(self, handle: _Handle, *, timeout: float) -> ProcessCleanupProof:
+    def _stop(self, handle: _Handle, *, timeout: float,
+              preserve_health_observation: bool = False) -> ProcessCleanupProof:
         with handle.lock:
             if handle.stopped:
                 with self._lock:
@@ -3000,8 +7933,21 @@ class ManagedProcessEffectHandler:
             if not main_gone:
                 raise AuthorityDenied("process.cleanup", "main process pidfd remained live after cgroup cleanup")
             handle.stopped = True
+            health_observations: list[str] = []
             with self._lock:
                 self._handles.pop(handle.process_id, None)
+                for control_handle, retained in tuple(self._health_controls.items()):
+                    if retained[1] is handle:
+                        self._health_controls.pop(control_handle, None)
+                        observation = self._health_observation_handles.pop(control_handle, None)
+                        if observation is not None and not preserve_health_observation:
+                            health_observations.append(observation)
+            if self.native_health_start_authority is not None:
+                for observation in health_observations:
+                    try:
+                        self.native_health_start_authority.health_observer.cancel_selected_health(observation)
+                    except Exception:
+                        pass
             for stream in (handle.launcher.stdin, handle.launcher.stdout, handle.launcher.stderr):
                 if stream:
                     stream.close()
@@ -3013,11 +7959,38 @@ class ManagedProcessEffectHandler:
                 raise AuthorityDenied("process.cleanup", "root service launcher did not reap") from None
             if handle.launcher.returncode is None:
                 raise AuthorityDenied("process.cleanup", "root service launcher was not reaped")
+            if handle.native_loader_observation_handle is not None:
+                store = self.native_loader_observation_store
+                if store is None:
+                    raise AuthorityDenied("native.loader", "loader observer disappeared during cleanup")
+                store.revoke_process(handle.process_id, handle.profile.generation)
+            native_proof = handle.native_worker_launch_proof
+            observed_view = handle.native_worker_observed_view
+            handle.native_worker_observed_view = None
+            if observed_view is not None:
+                owner = self._native_worker_launch_owner
+                if owner is not None:
+                    owner.retire_observed_native_worker_view(observed_view)
             try:
                 _remove_artifact_mount(handle.artifact_mount_dir)
             finally:
-                if handle.native_mount_source is not None:
-                    self._remove_native_staging(handle.native_mount_source)
+                try:
+                    if handle.native_mount_source is not None:
+                        self._remove_native_staging(handle.native_mount_source)
+                finally:
+                    if handle.xauthority_mount_source is not None:
+                        self._remove_native_staging(handle.xauthority_mount_source)
+            handle.native_worker_launch_proof = None
+            if native_proof is not None:
+                try:
+                    native_proof.close()
+                    owner = self._native_worker_launch_owner
+                    if owner is not None:
+                        owner.release_selection(native_proof._selection)
+                except Exception:
+                    # A stale issuer cannot authorize a replacement start;
+                    # currentness remains denied and the source close is idempotent.
+                    pass
             parent_gone = _pidfd_exited(handle.parent_pidfd)
             evidence = {
                 "process_id": handle.process_id, "generation": handle.profile.generation,
@@ -3074,6 +8047,72 @@ def create_managed_process_handler(profiles: Mapping[str, ManagedProfileCustody]
     return ManagedProcessEffectHandler(profiles, **kwargs)
 
 
+@dataclass(frozen=True, slots=True)
+class _RootPreparedBuildRuntime:
+    """Private kernel limits projected from the prepared setup template."""
+    profile_id: str
+    owner_uid: int
+    owner_gid: int
+    service_user: str
+    generation: str
+    max_lifetime_seconds: float
+    memory_max_bytes: int
+    cpu_quota_percent: int | None
+    io_weight: int | None
+    tasks_max: int
+
+
+@dataclass(frozen=True, slots=True)
+class _RootApplicationBuildInputs:
+    """Private path projection for the shared kernel build executor.
+
+    This is data assembled from the sealed descriptor bundle by the app-only
+    adapter. It is not an authority context or a substitute admission DTO.
+    """
+    target_id: str
+    generation: str
+    service_generation_digest: str
+    build_service_enrollment_id: str
+    build_service_generation: str
+    enrollment_id: str
+    operation_id: str
+    selection_digest: str
+    source_artifact_id: str
+    source_sha256: str
+    source_root: Path
+    source_tree_files: tuple[Any, ...]
+    source_tree_manifest_sha256: str
+    toolchain_artifact_id: str
+    toolchain_sha256: str
+    toolchain_root: Path
+    toolchain_tree_files: tuple[Any, ...]
+    toolchain_tree_manifest_sha256: str
+    builder_artifact_id: str
+    builder_sha256: str
+    builder_executable: Path
+    argv_recipe: tuple[Any, ...]
+    environment: Mapping[str, str]
+    output_specs: Mapping[str, Any]
+    output_root: Path
+    output_root_id: str
+    output_owner_uid: int
+    output_owner_gid: int
+    max_lifetime_seconds: int
+    output_root_fd: int
+
+
+@dataclass(frozen=True, slots=True)
+class _ApplicationHeldMember:
+    relative_path: str
+    fd: int
+    sha256: str
+    size_bytes: int
+    executable: bool
+    receipt_handle: str
+    kind: str = "file"
+    link_target: str | None = None
+
+
 class ManagedBuildJobRunner:
     """Run one root-selected build recipe in a private transient systemd unit.
 
@@ -3086,12 +8125,23 @@ class ManagedBuildJobRunner:
     """
 
     _LOG_LIMIT = 1024 * 1024
+    _MOUNT_RESERVATION = ("__fixed-build-mounts__", "__root__")
     _MOUNTS = {
         "builder": "/run/hermes-installer/build/builder",
         "source": "/run/hermes-installer/build/source",
         "toolchain": "/run/hermes-installer/build/toolchain",
         "work": "/run/hermes-installer/build/work",
         "output": "/run/hermes-installer/build/output",
+    }
+    # These targets are reserved for the finite application-environment build
+    # adapter. They are intentionally absent from the generic/Xpra recipe
+    # grammar and are supplied only by that adapter after selection recheck.
+    _APPLICATION_MOUNTS = {
+        "packages": "/run/hermes-installer/build/packages",
+        "backend": "/run/hermes-installer/build/backend",
+        "uv": "/run/hermes-installer/build/uv",
+        "recipe": "/run/hermes-installer/build/recipe",
+        "python-runtime": "/run/hermes-installer/build/python-runtime",
     }
 
     def __init__(self, manager: ManagedProcessEffectHandler, *,
@@ -3107,6 +8157,634 @@ class ManagedBuildJobRunner:
         self._active: set[tuple[str, str]] = set()
         self._records: dict[str, Mapping[str, Any]] = {}
         self._lock = threading.RLock()
+        self._setup_build_grant_issuer: Any | None = None
+        self._application_build_grant_issuer: Any | None = None
+
+    def bind_application_build_grant_issuer(self, issuer: Any) -> None:
+        """Bind the one root app-setup admission issuer for the fixed runner."""
+        from hermes_installer.authority.application_build_admission import RootApplicationSetupBuildGrantIssuer
+        if (os.geteuid() != 0 or type(issuer) is not RootApplicationSetupBuildGrantIssuer
+                or not callable(getattr(getattr(issuer, "admission", None), "verify_current", None))):
+            raise ValueError("application setup build grant issuer is unavailable")
+        with self._lock:
+            if self._application_build_grant_issuer not in (None, issuer):
+                raise ValueError("a different root application build issuer is already bound")
+            self._application_build_grant_issuer = issuer
+
+    def run_selected_application_runtime_build(self, inputs: Any, *, selection: Any,
+                                               grant: Any, timeout: float,
+                                               cancelled: Callable[[], bool]):
+        """Run a fixed application environment build from root-held input FDs.
+
+        This app-only route consumes the sealed application setup grant and
+        stages verified descriptors into private root-owned trees. It never
+        accepts a worker effect, host path, caller argv, or generic profile
+        lookup. The shared executor provides the transient-unit/PIDFD/cgroup,
+        namespace, mount, deadline and cleanup proof.
+        """
+        from hermes_installer.authority.application_build_admission import (
+            RootApplicationBuildInputMember, RootApplicationSetupBuildGrant, RootResolvedApplicationBuildInputs,
+            RootSelectedApplicationBuildSelection,
+        )
+        from hermes_installer.authority.build_execution import (
+            BUILD_MOUNT_TARGETS, ManagedBuildResult, _BuildInputTreeFile,
+            managed_process_identity_digest,
+        )
+        from hermes_installer.authority.types import AuthorityDenied
+        from hermes_installer.protected_enrollment import FixedBuildProfile
+
+        with self._lock:
+            issuer = self._application_build_grant_issuer
+        if (os.geteuid() != 0 or not sys.platform.startswith("linux")
+                or issuer is None or type(selection) is not RootSelectedApplicationBuildSelection
+                or type(grant) is not RootApplicationSetupBuildGrant
+                or type(inputs) is not RootResolvedApplicationBuildInputs
+                or inputs._selection is not selection or inputs._registry is not issuer.admission
+                or selection._registry is not issuer.admission
+                or not callable(cancelled) or isinstance(timeout, bool)
+                or not isinstance(timeout, (int, float)) or not math.isfinite(timeout)
+                or not 0 < timeout <= 600):
+            raise AuthorityDenied("build.application", "selected application build admission is unavailable")
+
+        registry = issuer.admission
+        profile = selection.build_profile
+        build_service = selection.build_service
+        fixed_profiles = {
+            "application-graphify-runtime-prepare-v1": ("graphify", "qualify-graphify-v1",
+                "application-graphify-runtime-prepare:start"),
+            "application-browser-use-runtime-prepare-v1": ("browser-use", "qualify-browser-use-v1",
+                "application-browser-use-runtime-prepare:start"),
+            "application-scrapegraph-ai-runtime-prepare-v1": ("scrapegraph-ai", "qualify-scrapegraph-v1",
+                "application-scrapegraph-ai-runtime-prepare:start"),
+            "application-hyperframes-runtime-prepare-v1": ("hyperframes", "qualify-hyperframes-v1",
+                "application-hyperframes-runtime-prepare:start"),
+        }
+        finite = fixed_profiles.get(selection.build_profile_id)
+        if (type(profile) is not FixedBuildProfile or finite is None
+                or selection.application_id != finite[0] or selection.workflow_id != finite[1]
+                or selection.target_id != finite[2] or selection.operation_id != selection.build_profile_id
+                or selection.application_id == "hyperframes"
+                or profile.target_id != selection.target_id or profile.generation.startswith("app-setup-") is False
+                or profile.build_service_enrollment_id != selection.build_service_enrollment_id
+                or profile.build_service_generation != selection.build_service_generation
+                or profile.output_root_id != selection.output_root_receipt_handle
+                or profile.output_owner_uid != inputs.output_owner_uid
+                or selection.recipe_sha256 != grant.recipe_sha256
+                or selection.controller_binding_handle != grant.controller_binding_handle
+                or selection.builder_module.relative_path
+                    != "lib/python/hermes_installer/authority/application_environment_builder.py"
+                or selection.pm_uv.relative_path != "uv"):
+            raise AuthorityDenied("build.application_binding", "application selection differs from its finite protected recipe")
+        expected_argv = (
+            {"build_path": {"mount_id": "builder", "relative_path": ""}},
+            {"literal": "-I"},
+            {"build_path": {"mount_id": "toolchain", "relative_path":
+                             "hermes_installer/authority/application_environment_builder.py"}},
+        )
+        if (tuple(profile.argv_recipe) != expected_argv or dict(profile.environment)
+                or set(profile.output_specs) != {"runtime-environment.tar"}
+                or profile.output_specs["runtime-environment.tar"].relative_path != "runtime-environment.tar"
+                or profile.output_specs["runtime-environment.tar"].kind != "file"):
+            raise AuthorityDenied("build.application_recipe", "application build recipe is not the fixed offline driver")
+        if (selection.pm_runtime_closure_sha256 != getattr(selection.pm_projection, "base_closure_sha256", None)
+                or selection.pm_runtime_closure_sha256 != getattr(inputs, "pm_runtime_closure_sha256", None)
+                or not inputs.python_runtime_members
+                or len(inputs.runtime_toolchain_receipt_handles) != 2
+                or inputs.uv_fd is None or inputs.uv_sha256 is None
+                or inputs.uv_size_bytes is None):
+            raise AuthorityDenied("build.application_runtime", "complete current PM runtime closure is unavailable")
+
+        expected_pairs = (
+            (inputs.selection_handle, selection.selection_handle),
+            (inputs.application_id, selection.application_id),
+            (inputs.build_profile_id, selection.build_profile_id),
+            (inputs.runtime_preparation_selection_handle, selection.runtime_preparation_selection_handle),
+            (inputs.plan_sha256, selection.plan_sha256),
+            (inputs.target_id, selection.target_id), (inputs.operation_id, selection.operation_id),
+            (inputs.setup_session_id, selection.setup_session_id),
+            (inputs.transaction_handle, selection.transaction_handle),
+            (inputs.prepared_generation_id, selection.prepared_generation_id),
+            (inputs.prepared_generation_digest, selection.prepared_generation_digest),
+            (inputs.source_receipt_handle, selection.source_receipt_handle),
+            (inputs.source_manifest_sha256, selection.source_manifest_sha256),
+            (inputs.pm_runtime_closure_sha256, selection.pm_runtime_closure_sha256),
+            (inputs.lock_receipt_handle, selection.lock_receipt_handle),
+            (inputs.lock_sha256, selection.lock_sha256),
+            (inputs.package_closure_receipt_handle, selection.package_closure_receipt_handle),
+            (inputs.build_backend_closure_receipt_handle, selection.build_backend_closure_receipt_handle),
+            (inputs.recipe_sha256, selection.recipe_sha256),
+            (inputs.builder_sha256, profile.builder_sha256),
+            (inputs.builder_receipt_handle, selection.pm_runtime.receipt_handle),
+            (inputs.driver_receipt_handle, selection.builder_module_receipt_handle),
+            (inputs.driver_sha256, selection.builder_module_sha256),
+            (inputs.driver_size_bytes, selection.builder_module.size_bytes),
+            (inputs.runtime_toolchain_receipt_handles, selection.runtime_toolchain_receipt_handles),
+            (inputs.uv_source_receipt_handle, selection.pm_uv.source_receipt_handle),
+            (inputs.uv_artifact_id, selection.pm_uv.artifact_id),
+            (inputs.build_service_id, selection.build_service_enrollment_id),
+            (inputs.build_service_selection_handle, selection.build_service_selection_handle),
+            (inputs.build_service_generation, selection.build_service_generation),
+            (inputs.output_root_id, selection.output_root_receipt_handle),
+            (inputs.controller_binding_handle, selection.controller_binding_handle),
+            (inputs.output_owner_uid, build_service.service_uid),
+            (inputs.output_owner_gid, build_service.service_gid),
+        )
+        if any(left != right for left, right in expected_pairs):
+            raise AuthorityDenied("build.application_binding", "held application inputs differ from their sealed selection")
+        python_executable_member = inputs.python_executable_member
+        if (type(python_executable_member) is not RootApplicationBuildInputMember
+                or python_executable_member.relative_path != "bin/python3.14"
+                or python_executable_member.kind != "file" or python_executable_member.link_target is not None
+                or python_executable_member.fd != inputs.builder_fd
+                or python_executable_member.receipt_handle != inputs.builder_receipt_handle
+                or python_executable_member.sha256 != inputs.builder_sha256
+                or python_executable_member.size_bytes != inputs.builder_size_bytes
+                or python_executable_member.executable is not True):
+            raise AuthorityDenied("build.application_runtime", "PM interpreter member differs from its held executable")
+        if (len(inputs.runtime_toolchain_receipt_handles) != 2
+                or inputs.runtime_toolchain_receipt_handles[0] != inputs.builder_receipt_handle
+                or inputs.runtime_toolchain_receipt_handles[1] != selection.pm_uv.receipt_handle):
+            raise AuthorityDenied("build.application_runtime", "PM Python/uv receipts differ from the prepared toolchain")
+        all_members = (inputs.source_members + inputs.package_members + inputs.backend_members
+                       + inputs.python_runtime_members + (inputs.recipe_member,))
+        if any(type(member) is not RootApplicationBuildInputMember for member in all_members):
+            raise AuthorityDenied("build.application_input", "application input includes an unissued member descriptor")
+
+        selection_digest = hashlib.sha256(json.dumps({
+            "selection_handle": selection.selection_handle,
+            "recipe_sha256": selection.recipe_sha256,
+            "grant_id": grant.grant_id,
+            "operation_id": selection.operation_id,
+            "parameters": {},
+        }, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+        if (grant.selection_handle != selection.selection_handle
+                or grant.target != selection.target_id or grant.operation_id != selection.operation_id
+                or grant.parameters_digest != hashlib.sha256(b"{}").hexdigest()
+                or grant.selection_handle != inputs.selection_handle):
+            raise AuthorityDenied("build.application_grant", "one-use application setup grant does not bind this selection")
+
+        # Check every controller fact from the registry-issued descriptor bundle.
+        controller_fd = -1
+        daemon_fd = -1
+        output_fd = -1
+        staging_root: Path | None = None
+        active_key = (selection.target_id, profile.generation)
+        try:
+            controller_fd = os.dup(inputs.controller_pidfd)
+            if (inputs.controller_pid != os.getpid() or inputs.controller_uid != 0
+                    or self.manager._pidfd_target(controller_fd) != inputs.controller_pid
+                    or _pidfd_exited(controller_fd)
+                    or _pid_identity(inputs.controller_pid)[0] != inputs.controller_start_ticks):
+                raise AuthorityDenied("build.application_controller", "selected setup controller identity is stale")
+            status = Path(f"/proc/{inputs.controller_pid}/status").read_text().splitlines()
+            uids = next(line for line in status if line.startswith("Uid:")).split()[1:]
+            gids = next(line for line in status if line.startswith("Gid:")).split()[1:]
+            if (not uids or not gids or any(int(value) != inputs.controller_uid for value in uids)
+                    or any(int(value) != inputs.controller_gid for value in gids)):
+                raise AuthorityDenied("build.application_controller", "selected setup controller credentials changed")
+            if (build_service.verify_current() is not build_service
+                    or profile.build_service_generation != build_service.generation
+                    or profile.service_generation_digest != selection.prepared_generation_digest):
+                raise AuthorityDenied("build.application_service", "prepared application build service is stale")
+            try:
+                account = pwd.getpwuid(inputs.output_owner_uid)
+                groups = os.getgrouplist(account.pw_name, account.pw_gid)
+            except (KeyError, OSError):
+                raise AuthorityDenied("build.application_service", "dedicated application build account is unavailable") from None
+            if (account.pw_gid != inputs.output_owner_gid or set(groups) != {inputs.output_owner_gid}
+                    or inputs.output_owner_uid <= 0):
+                raise AuthorityDenied("build.application_service", "application build service account is not exclusive")
+
+            fresh = registry.verify_current(selection)
+            try:
+                if (type(fresh) is not RootResolvedApplicationBuildInputs
+                        or fresh.selection_handle != selection.selection_handle
+                        or fresh._registry is not registry
+                        or fresh._selection is not selection
+                        or fresh.controller_pid != inputs.controller_pid
+                        or fresh.controller_start_ticks != inputs.controller_start_ticks
+                        or fresh.controller_uid != inputs.controller_uid
+                        or fresh.controller_gid != inputs.controller_gid
+                        or self._application_inputs_fingerprint(fresh)
+                            != self._application_inputs_fingerprint(inputs)):
+                    raise AuthorityDenied("build.application_current", "current application input projection changed")
+            finally:
+                fresh.close()
+
+            # Stage into a unique root-only input root. These files are copied
+            # exclusively from sealed/readonly root-held FDs by digest.
+            parent = Path("/run/hermes-installer/application-build-inputs")
+            self.manager._ensure_root_runtime_directory(parent, 0o700)
+            staging_root = parent / secrets.token_hex(24)
+            staging_root.mkdir(mode=0o700)
+            os.chown(staging_root, 0, 0)
+            os.chmod(staging_root, 0o700)
+            source_root = staging_root / "source"
+            toolchain_root = staging_root / "toolchain"
+            package_root = staging_root / "packages"
+            backend_root = staging_root / "backend"
+            uv_root = staging_root / "uv"
+            recipe_root = staging_root / "recipe"
+            python_root = staging_root / "python-runtime"
+            source_rows = self._stage_application_held_members(inputs.source_members, source_root)
+            package_rows = self._stage_application_held_members(inputs.package_members, package_root)
+            backend_rows = self._stage_application_held_members(inputs.backend_members, backend_root)
+            if not backend_rows and inputs.build_backend_closure_receipt_handle is not None:
+                raise AuthorityDenied("build.application_backend", "selected backend closure has no held members")
+            if not package_rows or not backend_rows:
+                raise AuthorityDenied("build.application_closure", "complete offline app/backend wheels are unavailable")
+            toolchain_root.mkdir(mode=0o700)
+            driver_member = _ApplicationHeldMember(
+                "hermes_installer/authority/application_environment_builder.py", inputs.driver_fd,
+                inputs.driver_sha256, inputs.driver_size_bytes, False, selection.builder_module_receipt_handle)
+            toolchain_rows = self._stage_application_held_members((driver_member,), toolchain_root)
+            uv_member = _ApplicationHeldMember("uv", inputs.uv_fd, inputs.uv_sha256,
+                                               inputs.uv_size_bytes, True, inputs.runtime_toolchain_receipt_handles[1])
+            uv_rows = self._stage_application_held_members((uv_member,), uv_root)
+            if len(uv_rows) != 1 or uv_rows[0].path != "uv":
+                raise AuthorityDenied("build.application_uv", "selected uv executable staging failed")
+            recipe_root.mkdir(mode=0o700)
+            recipe_member = inputs.recipe_member
+            if (recipe_member.relative_path != "application-build-input.json"
+                    or hashlib.sha256(inputs.recipe_config_bytes).hexdigest() != inputs.recipe_config_sha256
+                    or recipe_member.sha256 != inputs.recipe_config_sha256
+                    or recipe_member.size_bytes != len(inputs.recipe_config_bytes)):
+                raise AuthorityDenied("build.application_recipe", "held application build config differs from recipe receipt")
+            try:
+                config = json.loads(inputs.recipe_config_bytes.decode("utf-8"),
+                                    object_pairs_hook=_reject_duplicate_json_keys)
+            except (UnicodeError, ValueError, json.JSONDecodeError):
+                raise AuthorityDenied("build.application_recipe", "held application config is not strict JSON") from None
+            config_fields = {
+                "schema", "application_id", "source_manifest_sha256", "lock_sha256",
+                "package_closure_sha256", "backend_closure_sha256", "packages",
+                "backend_packages", "recipe_sha256", "uv_executable_sha256",
+                "python_executable_sha256", "python_runtime_closure_sha256",
+                "python_runtime_executable_relative_path",
+            }
+            if (not isinstance(config, dict) or set(config) != config_fields
+                    or type(config.get("schema")) is not int or config["schema"] != 1
+                    or config.get("application_id") != selection.application_id
+                    or config.get("source_manifest_sha256") != selection.source_manifest_sha256
+                    or config.get("lock_sha256") != selection.lock_sha256
+                    or config.get("package_closure_sha256") != selection.package_closure.package_closure_sha256
+                    or config.get("backend_closure_sha256") != getattr(selection.backend_closure, "backend_closure_sha256", None)
+                    or config.get("recipe_sha256") != selection.recipe_sha256
+                    or config.get("uv_executable_sha256") != inputs.uv_sha256
+                    or config.get("python_executable_sha256") != inputs.builder_sha256
+                    or config.get("python_runtime_closure_sha256") != selection.pm_runtime_closure_sha256
+                    or config.get("python_runtime_executable_relative_path") != "bin/python3.14"):
+                raise AuthorityDenied("build.application_recipe", "held application config differs from exact selected inputs")
+            self._validate_application_wheel_config(config, inputs.package_members,
+                                                    inputs.backend_members)
+            recipe_rows = self._stage_application_held_members((recipe_member,), recipe_root)
+
+            # PM interpreter is both argv[0] and a receipt-bound runtime member.
+            runtime_members = tuple(inputs.python_runtime_members) + (inputs.python_executable_member,)
+            python_root.mkdir(mode=0o700)
+            python_rows = self._stage_application_held_members(
+                runtime_members, python_root, allow_symlinks=True)
+            if not any(row.path == "bin/python3.14" and row.sha256 == inputs.builder_sha256
+                       for row in python_rows):
+                raise AuthorityDenied("build.application_runtime", "PM base interpreter is absent from staged closure")
+
+            builder_dir = staging_root / "builder"
+            builder_dir.mkdir(mode=0o700)
+            builder_file = builder_dir / "python3.14"
+            self._copy_application_held_file(inputs.builder_fd, inputs.builder_sha256,
+                                              inputs.builder_size_bytes, builder_file, executable=True)
+            output_fd = os.dup(inputs.output_root_fd)
+            output_info = os.fstat(output_fd)
+            output_cap_fd = selection.output_root.open_current()
+            try:
+                output_cap_info = os.fstat(output_cap_fd)
+            finally:
+                os.close(output_cap_fd)
+            if ((output_info.st_dev, output_info.st_ino) != (output_cap_info.st_dev, output_cap_info.st_ino)
+                    or not stat.S_ISDIR(output_info.st_mode) or output_info.st_uid != inputs.output_owner_uid
+                    or output_info.st_gid != inputs.output_owner_gid or stat.S_IMODE(output_info.st_mode) != 0o700
+                    or os.listdir(output_fd)):
+                raise AuthorityDenied("build.application_output", "held application output root is stale or nonempty")
+
+            internal_inputs = _RootApplicationBuildInputs(
+                target_id=selection.target_id, generation=profile.generation,
+                service_generation_digest=profile.service_generation_digest,
+                build_service_enrollment_id=selection.build_service_enrollment_id,
+                build_service_generation=selection.build_service_generation,
+                enrollment_id=selection.setup_session_id, operation_id=selection.operation_id,
+                selection_digest=selection_digest, source_artifact_id=profile.source_artifact_id,
+                source_sha256=profile.source_sha256, source_root=source_root,
+                source_tree_files=source_rows,
+                source_tree_manifest_sha256=self._application_tree_manifest(source_rows),
+                toolchain_artifact_id=profile.toolchain_artifact_id,
+                toolchain_sha256=profile.toolchain_sha256, toolchain_root=toolchain_root,
+                toolchain_tree_files=toolchain_rows,
+                toolchain_tree_manifest_sha256=self._application_tree_manifest(toolchain_rows),
+                builder_artifact_id=profile.builder_artifact_id,
+                builder_sha256=profile.builder_sha256, builder_executable=builder_file,
+                argv_recipe=profile.argv_recipe, environment=profile.environment,
+                # The shared transient-unit core needs a mount source string;
+                # it is anchored to this still-open descriptor, never a
+                # selection or caller path. The core separately validates
+                # output_root_fd identity and contents before and after run.
+                output_specs=profile.output_specs,
+                output_root=Path(f"/proc/self/fd/{output_fd}"),
+                output_root_id=inputs.output_root_id, output_owner_uid=inputs.output_owner_uid,
+                output_owner_gid=inputs.output_owner_gid,
+                max_lifetime_seconds=profile.max_lifetime_seconds, output_root_fd=output_fd)
+
+            additional_mounts = {
+                "packages": package_root, "backend": backend_root, "uv": uv_root,
+                "recipe": recipe_root, "python-runtime": python_root,
+            }
+            root_profile = _RootPreparedBuildRuntime(
+                profile_id=selection.build_profile_id, owner_uid=inputs.output_owner_uid,
+                owner_gid=inputs.output_owner_gid, service_user=account.pw_name,
+                generation=profile.generation,
+                max_lifetime_seconds=float(profile.max_lifetime_seconds),
+                memory_max_bytes=536_870_912, cpu_quota_percent=100, io_weight=100,
+                tasks_max=64)
+            daemon_fd = os.pidfd_open(os.getpid(), 0)
+
+            def revalidate_app() -> bool:
+                if cancelled() or _pidfd_exited(daemon_fd) or _pidfd_exited(controller_fd):
+                    return False
+                try:
+                    now_inputs = registry.verify_current(selection)
+                    try:
+                        same = (type(now_inputs) is RootResolvedApplicationBuildInputs
+                            and now_inputs._selection is selection
+                            and self._application_inputs_fingerprint(now_inputs)
+                                == self._application_inputs_fingerprint(inputs)
+                            and now_inputs.controller_pidfd >= 0
+                            and self.manager._pidfd_target(now_inputs.controller_pidfd) == inputs.controller_pid
+                            and not _pidfd_exited(now_inputs.controller_pidfd))
+                    finally:
+                        now_inputs.close()
+                    return (same and build_service.verify_current() is build_service
+                            and self.manager._pidfd_target(controller_fd) == inputs.controller_pid
+                            and _pid_identity(inputs.controller_pid)[0] == inputs.controller_start_ticks)
+                except Exception:
+                    return False
+
+            reservation = (selection.target_id, profile.generation)
+            with self._lock:
+                if reservation in self._active or self._MOUNT_RESERVATION in self._active:
+                    raise AuthorityDenied("build.application", "fixed app build mounts are already reserved")
+                self._active.update((reservation, self._MOUNT_RESERVATION))
+            try:
+                consumed = False
+                def launch_admission_current() -> bool:
+                    nonlocal consumed
+                    if not revalidate_app() or issuer.monotonic() >= grant.expires_monotonic:
+                        return False
+                    if not consumed:
+                        try:
+                            issuer.consume(grant, selection)
+                        except Exception:
+                            return False
+                        consumed = True
+                    return (issuer._issued.get(grant.grant_id) is grant
+                            and grant.grant_id in issuer._spent)
+                return self._run_one(
+                    internal_inputs, root_profile, None, None, os.getpid(), daemon_fd,
+                    float(timeout), cancelled, ManagedBuildResult, managed_process_identity_digest,
+                    BUILD_MOUNT_TARGETS,
+                    root_currentness=revalidate_app,
+                    root_selection_digest=selection_digest,
+                    root_effect_check=launch_admission_current,
+                    output_root_fd=output_fd,
+                    additional_readonly_mounts=additional_mounts,
+                    require_root_effect=True)
+            finally:
+                with self._lock:
+                    self._active.discard(reservation)
+                    self._active.discard(self._MOUNT_RESERVATION)
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("build.application", "root application build admission failed closed") from None
+        finally:
+            for fd in (output_fd, controller_fd, daemon_fd):
+                if type(fd) is int and fd >= 0:
+                    with contextlib.suppress(OSError):
+                        os.close(fd)
+            with contextlib.suppress(Exception):
+                inputs.close()
+            if staging_root is not None:
+                with contextlib.suppress(Exception):
+                    shutil.rmtree(staging_root)
+
+    def bind_setup_build_grant_issuer(self, issuer: Any) -> None:
+        """Bind the one root setup issuer used by the fixed Xpra build path."""
+        from hermes_installer.authority.xpra_build_selection import RootXpraSetupBuildGrantIssuer
+        if (os.geteuid() != 0 or type(issuer) is not RootXpraSetupBuildGrantIssuer
+                or not callable(getattr(getattr(issuer, "producer", None), "revalidate", None))):
+            raise ValueError("setup build grant issuer is unavailable")
+        with self._lock:
+            if self._setup_build_grant_issuer not in (None, issuer):
+                raise ValueError("a different root setup build issuer is already bound")
+            self._setup_build_grant_issuer = issuer
+
+    def run_selected_setup_build(self, inputs: Any, *, selection: Any, grant: Any,
+                                 controller_pidfd: int, timeout: float,
+                                 cancelled: Callable[[], bool]):
+        """Run only the prepared Xpra setup recipe under its distinct sealed grant.
+
+        This path never fabricates a worker HostContext or EffectAuthorization,
+        and never resolves or registers an active worker process profile. The
+        setup selection, one-use issuer, held output directory FD and live
+        setup-controller PIDFD form a separate root-owned admission.
+        """
+        from hermes_installer.authority.bootstrap_runtime_factory import RootPreparedBuildServiceSelection
+        from hermes_installer.authority.build_execution import (
+            BUILD_MOUNT_TARGETS, ManagedBuildResult, _canonical, managed_process_identity_digest,
+        )
+        from hermes_installer.authority.xpra_build_selection import (
+            BUILD_OPERATION_ID, BUILD_TARGET, RootSelectedXpraBuildSelection,
+            RootXpraSetupBuildGrant, XpraBuildSelectionDenied,
+        )
+
+        manager = self.manager
+        with self._lock:
+            issuer = self._setup_build_grant_issuer
+        if (os.geteuid() != 0 or not sys.platform.startswith("linux")
+                or type(selection) is not RootSelectedXpraBuildSelection
+                or type(grant) is not RootXpraSetupBuildGrant
+                or issuer is None or type(getattr(selection, "setup_build_subject", None))
+                    is not RootPreparedBuildServiceSelection
+                or type(controller_pidfd) is not int or controller_pidfd < 0
+                or not callable(cancelled) or isinstance(timeout, bool)
+                or not isinstance(timeout, (int, float)) or not math.isfinite(timeout)
+                or not 0 < timeout <= 300):
+            raise AuthorityDenied("build.setup", "root setup build admission is unavailable")
+        subject = selection.setup_build_subject
+        profile = selection.build_profile
+        expected_input_fields = (
+            "target_id", "generation", "service_generation_digest", "build_service_enrollment_id",
+            "build_service_generation", "operation_id", "selection_digest", "source_artifact_id",
+            "source_sha256", "source_root", "source_tree_files", "source_tree_manifest_sha256",
+            "toolchain_artifact_id", "toolchain_sha256", "toolchain_root", "toolchain_tree_files",
+            "toolchain_tree_manifest_sha256", "builder_artifact_id", "builder_sha256",
+            "builder_executable", "argv_recipe", "environment", "output_specs", "output_root",
+            "output_root_fd", "output_root_id", "output_owner_uid", "output_owner_gid",
+            "max_lifetime_seconds",
+        )
+        if any(not hasattr(inputs, name) for name in expected_input_fields):
+            raise AuthorityDenied("build.inputs", "selected setup build inputs are incomplete")
+        if (inputs.target_id != BUILD_TARGET or inputs.operation_id != BUILD_OPERATION_ID
+                or inputs.output_root is not None or type(inputs.output_root_fd) is not int
+                or inputs.output_root_fd < 0 or inputs.output_root_id != selection.output_root_id
+                or inputs.build_service_enrollment_id != subject.id
+                or inputs.build_service_generation != subject.generation
+                or inputs.output_owner_uid != subject.service_uid
+                or inputs.output_owner_gid != subject.service_gid
+                or inputs.generation != profile.generation
+                or inputs.service_generation_digest != profile.service_generation_digest
+                or inputs.builder_artifact_id != selection.builder_artifact_id
+                or inputs.builder_sha256 != selection.builder_sha256
+                or inputs.source_artifact_id != selection.source_artifact_id
+                or inputs.source_sha256 != selection.source_sha256
+                or inputs.toolchain_artifact_id != selection.toolchain_artifact_id
+                or inputs.toolchain_sha256 != selection.toolchain_sha256
+                or inputs.source_tree_manifest_sha256 != selection.compiled_source_manifest_sha256
+                or inputs.original_source_manifest_sha256 != selection.source_manifest_sha256
+                or inputs.builder_executable != selection.pm_runtime.python_path
+                or inputs.max_lifetime_seconds > profile.max_lifetime_seconds
+                or tuple(inputs.argv_recipe) != tuple(profile.argv_recipe)
+                or dict(inputs.environment) != dict(profile.environment)
+                or not isinstance(inputs.selection_digest, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", inputs.selection_digest)
+                or type(inputs.max_lifetime_seconds) is not int
+                or not 1 <= inputs.max_lifetime_seconds <= 300):
+            raise AuthorityDenied("build.setup_binding", "setup build inputs differ from the sealed Xpra selection")
+        source_rows = tuple(getattr(selection.source.tree, "tree_files", ()))
+        expected_source_files = {
+            item.path: item for item in source_rows if getattr(item, "kind", "file") == "file"
+        }
+        provided_source_files = {getattr(item, "path", None): item for item in inputs.source_tree_files}
+        if (set(provided_source_files) != set(expected_source_files)
+                or any((getattr(provided_source_files[name], "sha256", None),
+                        getattr(provided_source_files[name], "size_bytes", None),
+                        getattr(provided_source_files[name], "executable", None))
+                       != (expected_source_files[name].sha256, expected_source_files[name].size_bytes,
+                           expected_source_files[name].executable)
+                       for name in expected_source_files)):
+            raise AuthorityDenied("build.setup_source", "staged source projection differs from the selected archive")
+        module_receipt = selection.module_receipt
+        toolchain_rows = tuple(inputs.toolchain_tree_files)
+        if (len(toolchain_rows) != 1
+                or getattr(toolchain_rows[0], "path", None) != module_receipt.relative_path
+                or getattr(toolchain_rows[0], "sha256", None) != module_receipt.sha256
+                or getattr(toolchain_rows[0], "size_bytes", None) != module_receipt.size_bytes
+                or getattr(toolchain_rows[0], "executable", None) is not False):
+            raise AuthorityDenied("build.setup_toolchain", "staged transform module differs from its installed receipt")
+        expected_specs = set(profile.output_specs)
+        if set(inputs.output_specs) != expected_specs or any(
+                getattr(inputs.output_specs[name], "relative_path", None)
+                    != profile.output_specs[name].relative_path
+                or getattr(inputs.output_specs[name], "kind", None) != profile.output_specs[name].kind
+                or getattr(inputs.output_specs[name], "maximum_bytes", None)
+                    != profile.output_specs[name].maximum_bytes
+                or getattr(inputs.output_specs[name], "executable_role", None)
+                    != profile.output_specs[name].executable_role
+                or getattr(inputs.output_specs[name], "target_facts", None)
+                    != profile.output_specs[name].target_facts
+                for name in expected_specs):
+            raise AuthorityDenied("build.setup_outputs", "setup output specification differs from the fixed recipe")
+        expected_digest = hashlib.sha256(_canonical({
+            "selection_handle": selection.selection_handle,
+            "recipe_sha256": selection.recipe_sha256,
+            "grant_id": grant.grant_id,
+            "operation_id": BUILD_OPERATION_ID,
+            "parameters": {},
+        })).hexdigest()
+        if inputs.selection_digest != expected_digest:
+            raise AuthorityDenied("build.setup_binding", "setup build request digest is not canonical")
+
+        output_fd = controller_fd = -1
+        daemon_lifetime_fd = -1
+        try:
+            output_fd = os.dup(inputs.output_root_fd)
+            controller_fd = os.dup(controller_pidfd)
+            output_stat = os.fstat(output_fd)
+            capability_fd = selection.output_root.open_current()
+            try:
+                capability_stat = os.fstat(capability_fd)
+            finally:
+                os.close(capability_fd)
+            if ((output_stat.st_dev, output_stat.st_ino) != (capability_stat.st_dev, capability_stat.st_ino)
+                    or not stat.S_ISDIR(output_stat.st_mode) or output_stat.st_uid != subject.service_uid
+                    or output_stat.st_gid != subject.service_gid or stat.S_IMODE(output_stat.st_mode) != 0o700
+                    or os.listdir(output_fd)):
+                raise AuthorityDenied("build.output", "prepared output-root descriptor is stale or not fresh")
+            if manager._pidfd_target(controller_fd) != selection._session._factory.session_store._live(
+                    selection._session._handle).record["root_actor_identity"]["pid"] or _pidfd_exited(controller_fd):
+                raise AuthorityDenied("build.controller", "selected setup controller PIDFD is not current")
+            daemon_lifetime_fd = os.pidfd_open(os.getpid(), 0)
+            producer = getattr(issuer, "producer", None)
+            if (producer is None or getattr(producer, "session", None) is not selection._session
+                    or subject.verify_current() != subject):
+                raise AuthorityDenied("build.setup_subject", "prepared build subject is no longer current")
+
+            # Grant consumption is the one-use start admission. All checks that
+            # can run before it are complete; after it, only this method owns
+            # the terminal lifecycle and output descriptor.
+            issuer.consume(grant, selection)
+            root_profile = _RootPreparedBuildRuntime(
+                profile_id=subject.profile_id, owner_uid=subject.service_uid,
+                owner_gid=subject.service_gid, service_user=pwd.getpwuid(subject.service_uid).pw_name,
+                generation=subject.generation, max_lifetime_seconds=min(300.0, float(inputs.max_lifetime_seconds)),
+                memory_max_bytes=536_870_912, cpu_quota_percent=None, io_weight=None,
+                tasks_max=64,
+            )
+            groups = os.getgrouplist(root_profile.service_user, subject.service_gid)
+            if pwd.getpwuid(subject.service_uid).pw_gid != subject.service_gid or set(groups) != {subject.service_gid}:
+                raise AuthorityDenied("build.setup_subject", "prepared build service account changed")
+            output_path = Path(f"/proc/self/fd/{output_fd}")
+            fd_inputs = replace(inputs, output_root=output_path)
+
+            def revalidate_setup() -> bool:
+                if cancelled() or _pidfd_exited(controller_fd) or _pidfd_exited(daemon_lifetime_fd):
+                    return False
+                try:
+                    producer.revalidate(selection)
+                    current_subject = subject.verify_current()
+                    current_live = selection._session._factory.session_store._live(selection._session._handle)
+                    return (current_subject == subject
+                            and current_live.record.get("root_actor_identity", {}).get("pid")
+                                == manager._pidfd_target(controller_fd))
+                except Exception:
+                    return False
+
+            reservation = (BUILD_TARGET, subject.generation)
+            with self._lock:
+                if reservation in self._active or self._MOUNT_RESERVATION in self._active:
+                    raise AuthorityDenied("build.setup", "fixed setup build mounts are already reserved")
+                self._active.update((reservation, self._MOUNT_RESERVATION))
+            try:
+                return self._run_one(
+                    fd_inputs, root_profile, None, None, os.getpid(), daemon_lifetime_fd,
+                    float(timeout), cancelled, ManagedBuildResult, managed_process_identity_digest,
+                    BUILD_MOUNT_TARGETS, root_currentness=revalidate_setup,
+                    root_selection_digest=inputs.selection_digest, output_root_fd=output_fd,
+                    root_effect_check=lambda: (issuer._issued.get(grant.grant_id) is grant
+                        and grant.grant_id in issuer._spent
+                        and issuer.monotonic() < grant.expires_monotonic
+                        and revalidate_setup()),
+                    require_root_effect=True,
+                )
+            finally:
+                with self._lock:
+                    self._active.discard(reservation)
+                    self._active.discard(self._MOUNT_RESERVATION)
+        except (OSError, XpraBuildSelectionDenied):
+            raise AuthorityDenied("build.setup", "prepared Xpra setup build admission failed") from None
+        finally:
+            for fd in (output_fd, controller_fd, daemon_lifetime_fd):
+                if type(fd) is int and fd >= 0:
+                    with contextlib.suppress(OSError):
+                        os.close(fd)
 
     def run_selected_build(self, inputs: Any, *, context: HostContext,
                            authorization: EffectAuthorization, peer_pid: int,
@@ -3132,7 +8810,7 @@ class ManagedBuildJobRunner:
             "toolchain_tree_files", "toolchain_tree_manifest_sha256", "builder_artifact_id",
             "builder_sha256", "builder_executable", "argv_recipe", "environment",
             "output_root", "output_root_id", "output_owner_uid", "max_lifetime_seconds",
-            "output_specs",
+            "output_owner_gid", "output_specs",
         )
         if any(not hasattr(inputs, name) for name in required_input_fields):
             raise AuthorityDenied("build.inputs", "root build catalog returned an incomplete immutable recipe")
@@ -3142,6 +8820,7 @@ class ManagedBuildJobRunner:
                 or not isinstance(service_generation, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", service_generation)
                 or type(inputs.max_lifetime_seconds) is not int or not 1 <= inputs.max_lifetime_seconds <= 600
                 or type(inputs.output_owner_uid) is not int or inputs.output_owner_uid <= 0
+                or type(inputs.output_owner_gid) is not int or inputs.output_owner_gid <= 0
                 or any(not isinstance(getattr(inputs, field), str)
                        or not re.fullmatch(r"[0-9a-f]{64}", getattr(inputs, field))
                        for field in ("service_generation_digest", "selection_digest", "source_sha256",
@@ -3178,6 +8857,7 @@ class ManagedBuildJobRunner:
                 or profile.operation_targets is None
                 or profile.operation_targets.get("process.start") != inputs.target_id
                 or profile.owner_uid != inputs.output_owner_uid
+                or profile.owner_gid != inputs.output_owner_gid
                 or profile.owner_uid <= 0 or profile.owner_uid == context.uid
                 or profile.owner_uid == 0
                 or type(profile.memory_max_bytes) is not int
@@ -3195,9 +8875,10 @@ class ManagedBuildJobRunner:
 
         target_generation = (inputs.target_id, service_generation)
         with self._lock:
-            if target_generation in self._active:
-                raise AuthorityDenied("build.generation", "this enrolled build generation already has an active job")
+            if target_generation in self._active or self._MOUNT_RESERVATION in self._active:
+                raise AuthorityDenied("build.generation", "fixed build mount targets already have an active job")
             self._active.add(target_generation)
+            self._active.add(self._MOUNT_RESERVATION)
         try:
             return self._run_one(inputs, profile, context, authorization, peer_pid,
                                  peer_pidfd, float(timeout), cancelled,
@@ -3206,11 +8887,386 @@ class ManagedBuildJobRunner:
         finally:
             with self._lock:
                 self._active.discard(target_generation)
+                self._active.discard(self._MOUNT_RESERVATION)
 
-    def _run_one(self, inputs: Any, profile: ManagedProfileCustody, context: HostContext,
-                 authorization: EffectAuthorization, peer_pid: int, peer_pidfd: int,
+    def run_attested_cpython39_probe(self, inputs: Any, build_result: Any, *,
+                                     timeout: float,
+                                     cancelled: Callable[[], bool]):
+        """Run the sole enrolled-output ABI probe as root-private build bookkeeping.
+
+        This is not a public process effect. It can only follow a successful
+        build terminal receipt retained by this runner, and all executable,
+        mount, UID/GID, argv and output limits are constants selected here.
+        """
+        from hermes_installer.authority.build_execution import managed_process_identity_digest
+        from hermes_installer.authority.build_probe import (
+            ManagedBuildProbeResult, _PROBE_ARGV, _read_selected_executable,
+        )
+
+        manager = self.manager
+        if (not callable(cancelled) or isinstance(timeout, bool)
+                or not isinstance(timeout, (int, float)) or not math.isfinite(timeout)
+                or not 0 < timeout <= 15 or not sys.platform.startswith("linux") or os.geteuid() != 0):
+            raise AuthorityDenied("build.python_probe", "fixed root CPython probe inputs are unavailable")
+        if (getattr(inputs, "target_id", None) != "coral-cpython-build:start"
+                or getattr(inputs, "operation_id", None) != "coral-cpython39-source-build-v1"
+                or getattr(inputs, "build_service_enrollment_id", None) is None
+                or getattr(inputs, "build_service_generation", None) is None
+                or type(getattr(inputs, "output_owner_uid", None)) is not int
+                or type(getattr(inputs, "output_owner_gid", None)) is not int):
+            raise AuthorityDenied("build.python_probe", "probe is not bound to the fixed CPython build selection")
+        terminal_id = getattr(build_result, "terminal_success_record_id", None)
+        if (not terminal_id or getattr(build_result, "exit_code", None) != 0
+                or getattr(build_result, "timed_out", True) or getattr(build_result, "cancelled", True)
+                or getattr(build_result, "cleanup_verified", False) is not True):
+            raise AuthorityDenied("build.python_probe", "probe requires a clean successful build terminal")
+        with self._lock:
+            record = self._records.get(terminal_id)
+            if record is None:
+                raise AuthorityDenied("build.python_probe", "build terminal is not owned by this root runner")
+            record = dict(record)
+        try:
+            profile = self.process_profile_resolver(inputs.target_id, inputs.generation)
+        except Exception:
+            raise AuthorityDenied("build.service_join", "selected build service generation is unavailable") from None
+        if (not isinstance(profile, ManagedProfileCustody)
+                or self.manager.profiles.get(profile.profile_id) is not profile
+                or record.get("target") != inputs.target_id
+                or record.get("generation") != inputs.generation
+                or record.get("selection_digest") != inputs.selection_digest
+                or record.get("service_generation") != inputs.build_service_generation
+                or profile.enrollment_id != inputs.build_service_enrollment_id
+                or profile.generation != inputs.build_service_generation
+                or profile.operation_targets is None
+                or profile.operation_targets.get("process.start") != inputs.target_id
+                or profile.owner_uid != inputs.output_owner_uid
+                or profile.owner_gid != inputs.output_owner_gid
+                or record.get("uid") != profile.owner_uid or record.get("gid") != profile.owner_gid
+                or record.get("uid") != getattr(build_result, "uid", None)
+                or record.get("generation") != getattr(build_result, "generation", None)
+                or record.get("cleanup") is not True
+                or record.get("exit_code") != 0 or record.get("timed_out") is not False
+                or record.get("cancelled") is not False
+                or record.get("exit_code") != getattr(build_result, "exit_code", None)
+                or record.get("timed_out") != getattr(build_result, "timed_out", None)
+                or record.get("cancelled") != getattr(build_result, "cancelled", None)
+                or record.get("cleanup") != getattr(build_result, "cleanup_verified", None)
+                or record.get("process_identity_digest") != build_result.process_identity_digest
+                or record.get("process_id") != build_result.process_id
+                or record.get("pid") != build_result.pid
+                or record.get("start_ticks") != build_result.start_ticks
+                or record.get("cgroup") != build_result.cgroup_id
+                or record.get("mount_ns") != build_result.mount_namespace_inode
+                or record.get("network_ns") != build_result.network_namespace_inode
+                or record.get("limits") != getattr(build_result, "kernel_limits", None)
+                or record.get("log_digest") != getattr(build_result, "bounded_log_digest", None)
+                or record.get("log_bytes") != getattr(build_result, "log_bytes", None)
+                or record.get("output_root_id") != inputs.output_root_id
+                or record.get("output_root_path") != str(Path(inputs.output_root))):
+            raise AuthorityDenied("build.python_probe", "build receipt does not match the protected current profile")
+        if (type(profile.memory_max_bytes) is not int or type(profile.cpu_quota_percent) is not int
+                or type(profile.io_weight) is not int or profile.owner_uid <= 0
+                or profile.owner_gid <= 0 or isinstance(profile.max_lifetime_seconds, bool)
+                or not isinstance(profile.max_lifetime_seconds, (int, float))
+                or not math.isfinite(profile.max_lifetime_seconds) or profile.max_lifetime_seconds <= 0):
+            raise AuthorityDenied("build.service_identity", "selected build resource identity is incomplete")
+        try:
+            account = pwd.getpwuid(profile.owner_uid)
+            groups = os.getgrouplist(account.pw_name, account.pw_gid)
+        except (KeyError, OSError):
+            raise AuthorityDenied("build.service_identity", "selected build service account is unavailable") from None
+        if account.pw_gid != profile.owner_gid or set(groups) != {profile.owner_gid}:
+            raise AuthorityDenied("build.service_identity", "selected build group is no longer exclusive")
+
+        executable = Path(inputs.output_root) / "runtime/bin/python3.9"
+        executable_sha256, executable_size, executable_info, output_info = _read_selected_executable(
+            inputs, executable)
+        if (record.get("output_root_device") != output_info.st_dev
+                or record.get("output_root_inode") != output_info.st_ino
+                or record.get("output_root_path") != str(Path(inputs.output_root))):
+            raise AuthorityDenied("build.python_probe", "selected output root changed after build completion")
+        if cancelled():
+            raise AuthorityDenied("build.expired", "fixed CPython probe was cancelled before launch")
+        reservation = (inputs.target_id, profile.generation)
+        with self._lock:
+            if reservation in self._active or self._MOUNT_RESERVATION in self._active:
+                raise AuthorityDenied("build.generation", "another build action owns the fixed build mount namespace")
+            self._active.add(reservation)
+            self._active.add(self._MOUNT_RESERVATION)
+
+        job_id = uuid.uuid4().hex
+        unit = "hermes-installer-build-probe-" + job_id + ".service"
+        cgroup = "/system.slice/" + unit
+        probe_lifetime = min(float(timeout), 15.0, float(profile.max_lifetime_seconds))
+        deadline = manager.monotonic() + probe_lifetime
+        job_root = Path("/run/hermes-installer/build-jobs") / ("probe-" + job_id)
+        work = job_root / "work"
+        empty_source = job_root / "source"
+        empty_toolchain = job_root / "toolchain"
+        launcher: subprocess.Popen[bytes] | None = None
+        selector = None
+        main_pidfd: int | None = None
+        main_pid: int | None = None
+        start_ticks = mount_ns = network_ns = 0
+        observed_cgroup = ""
+        limits: dict[str, str] = {}
+        cgroup_limits: dict[str, str] = {}
+        log = bytearray()
+        stderr_output = bytearray()
+        timed_out = False
+        was_cancelled = False
+        cgroup_empty = pidfd_gone = launcher_reaped = False
+        unit_started = False
+        startup_gate_verified = False
+        ready_marker = b"HERMES_BUILD_PROBE_READY_V1\n"
+        combined_output_bytes = 0
+        try:
+            current = self.process_profile_resolver(inputs.target_id, inputs.generation)
+            if (current is not profile or manager.profiles.get(profile.profile_id) is not profile
+                    or manager.monotonic() >= deadline or cancelled()):
+                raise AuthorityDenied("build.generation", "build profile changed before the fixed probe")
+            self._prepare_mount_targets()
+            manager._ensure_root_runtime_directory(Path("/run/hermes-installer/build-jobs"), 0o700)
+            job_root.mkdir(mode=0o700)
+            os.chown(job_root, 0, 0)
+            os.chmod(job_root, 0o700)
+            for directory in (work, empty_source, empty_toolchain):
+                directory.mkdir(mode=0o700)
+                os.chown(directory, profile.owner_uid, profile.owner_gid)
+                os.chmod(directory, 0o700)
+            mount_targets = dict(self._MOUNTS)
+            argv = [mount_targets["builder"], *_PROBE_ARGV]
+            properties = [
+                "--property=Type=exec", f"--property=RuntimeMaxSec={probe_lifetime:.3f}s",
+                "--property=KillMode=control-group", "--property=ProtectSystem=strict",
+                "--property=ProtectHome=tmpfs", "--property=PrivateTmp=yes",
+                "--property=ProtectProc=invisible", "--property=ProcSubset=pid",
+                "--property=PrivateDevices=yes", "--property=NoNewPrivileges=yes",
+                "--property=ProtectKernelTunables=yes", "--property=ProtectKernelModules=yes",
+                "--property=ProtectControlGroups=yes", "--property=RestrictSUIDSGID=yes",
+                "--property=RestrictNamespaces=user", "--property=RestrictAddressFamilies=AF_UNIX",
+                "--property=PrivateNetwork=yes", "--property=IPAddressDeny=any",
+                "--property=MountFlags=private", "--property=PrivateMounts=yes",
+                f"--property=User={profile.service_user}", "--property=SupplementaryGroups=",
+                "--property=Description=HermesInstaller CPython probe " + job_id,
+                "--property=WorkingDirectory=" + mount_targets["work"],
+                "--property=BindReadOnlyPaths=" + str(executable) + ":" + mount_targets["builder"],
+                "--property=BindReadOnlyPaths=" + str(empty_source) + ":" + mount_targets["source"],
+                "--property=BindReadOnlyPaths=" + str(empty_toolchain) + ":" + mount_targets["toolchain"],
+                "--property=BindPaths=" + str(work) + ":" + mount_targets["work"],
+                "--property=BindReadOnlyPaths=" + str(inputs.output_root) + ":" + mount_targets["output"],
+                "--property=InaccessiblePaths=-/etc/hermes-installer -/var/lib/hermes-installer -/etc/ssh -/etc/ssl/private",
+            ]
+            if profile.memory_max_bytes is not None:
+                properties.append(f"--property=MemoryMax={profile.memory_max_bytes}")
+            if profile.cpu_quota_percent is not None:
+                properties.append(f"--property=CPUQuota={profile.cpu_quota_percent}%")
+            if profile.io_weight is not None:
+                properties.append(f"--property=IOWeight={profile.io_weight}")
+            manager_env = subprocess.run([str(manager.systemctl), "--system", "show-environment"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
+                timeout=min(1.0, max(.1, deadline-manager.monotonic())), check=False)
+            if manager_env.returncode or len(manager_env.stdout) > 65536:
+                raise AuthorityDenied("build.environment", "system manager environment could not be cleared")
+            manager_keys = {line.split("=", 1)[0] for line in manager_env.stdout.decode("utf-8", "replace").splitlines()
+                            if "=" in line and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", line.split("=", 1)[0])}
+            manager_keys.update({"INVOCATION_ID", "JOURNAL_STREAM", "NOTIFY_SOCKET", "WATCHDOG_USEC",
+                "WATCHDOG_PID", "LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES", "XDG_RUNTIME_DIR",
+                "DBUS_SESSION_BUS_ADDRESS", "USER", "LOGNAME", "SHELL", "PWD", "SYSTEMD_EXEC_PID",
+                "MEMORY_PRESSURE_WATCH", "MEMORY_PRESSURE_WRITE", "LC_CTYPE"})
+            if sum(len(key) + 1 for key in manager_keys) > 60000:
+                raise AuthorityDenied("build.environment", "manager environment exceeds the fixed probe clear bound")
+            if manager_keys:
+                properties.append("--property=UnsetEnvironment=" + " ".join(sorted(manager_keys)))
+            command = [str(manager.systemd_run), "--system", "--unit=" + unit,
+                "--quiet", "--service-type=exec", "--wait", "--pipe", *properties,
+                "--setenv=LANG=C", "--setenv=LC_ALL=C", "--setenv=HOME=/tmp",
+                "--setenv=TMPDIR=/tmp", "--setenv=PATH=/usr/bin:/bin", *argv]
+            launcher = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, env={"PATH": "/usr/bin:/bin", "LANG": "C"},
+                close_fds=True, shell=False)
+            unit_started = True
+            import selectors as selectors_module
+            selector = selectors_module.DefaultSelector()
+            assert launcher.stdout is not None and launcher.stderr is not None
+            os.set_blocking(launcher.stdout.fileno(), False)
+            os.set_blocking(launcher.stderr.fileno(), False)
+            selector.register(launcher.stdout, selectors_module.EVENT_READ, "stdout")
+            selector.register(launcher.stderr, selectors_module.EVENT_READ, "stderr")
+            capture_inputs = SimpleNamespace(builder_executable=executable, builder_sha256=executable_sha256)
+            while launcher.poll() is None:
+                if cancelled() or manager.monotonic() >= deadline:
+                    was_cancelled = cancelled()
+                    timed_out = not was_cancelled
+                    break
+                if manager.profiles.get(profile.profile_id) is not profile:
+                    raise AuthorityDenied("build.generation", "build service profile changed during probe")
+                if self.process_profile_resolver(inputs.target_id, inputs.generation) is not profile:
+                    raise AuthorityDenied("build.generation", "build service generation changed during probe")
+                if main_pid is None:
+                    observed = self._capture_build_identity(
+                        unit, cgroup, capture_inputs, profile, output_readonly=True)
+                    if observed is not None:
+                        main_pid = observed["pid"]
+                        start_ticks = observed["ticks"]
+                        observed_cgroup = observed["cgroup"]
+                        mount_ns = observed["mount_ns"]
+                        network_ns = observed["network_ns"]
+                        limits = observed["limits"]
+                        cgroup_limits = observed["cgroup_limits"]
+                        main_pidfd = observed["pidfd"]
+                for key, _ in selector.select(.02):
+                    chunk = os.read(key.fileobj.fileno(), 4096)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    destination = log if key.data == "stdout" else stderr_output
+                    combined_output_bytes += len(chunk)
+                    if combined_output_bytes > 4096:
+                        raise AuthorityDenied("build.python_probe", "CPython probe output exceeded its bound")
+                    destination.extend(chunk)
+                if not startup_gate_verified and bytes(stderr_output).startswith(ready_marker):
+                    if bytes(stderr_output) != ready_marker:
+                        raise AuthorityDenied("build.python_probe", "CPython startup marker was not exact")
+                    if main_pid is not None and main_pidfd is not None:
+                        if launcher.stdin is None:
+                            raise AuthorityDenied("build.python_probe", "CPython startup gate has no owned input")
+                        launcher.stdin.write(b"\x01")
+                        launcher.stdin.flush()
+                        launcher.stdin.close()
+                        startup_gate_verified = True
+            if was_cancelled or timed_out:
+                self._terminate_unit(unit, cgroup, launcher)
+            if launcher.poll() is None:
+                try:
+                    launcher.wait(timeout=max(.1, min(2.0, deadline-manager.monotonic()+2.0)))
+                except subprocess.TimeoutExpired:
+                    launcher.kill()
+                    launcher.wait(timeout=1.0)
+            if selector is not None:
+                for key in list(selector.get_map().values()):
+                    while True:
+                        try:
+                            chunk = os.read(key.fileobj.fileno(), 4096)
+                        except BlockingIOError:
+                            break
+                        if not chunk:
+                            break
+                        destination = log if key.data == "stdout" else stderr_output
+                        combined_output_bytes += len(chunk)
+                        if combined_output_bytes > 4096:
+                            raise AuthorityDenied("build.python_probe", "CPython probe output exceeded its bound")
+                        destination.extend(chunk)
+            exit_code = launcher.returncode
+            launcher_reaped = exit_code is not None
+            if manager._pids(cgroup):
+                self._terminate_unit(unit, cgroup, launcher)
+            cgroup_empty = not manager._pids(cgroup)
+            if main_pidfd is not None:
+                end = time.monotonic() + 2.0
+                while not _pidfd_exited(main_pidfd) and time.monotonic() < end:
+                    select.select([main_pidfd], [], [], .02)
+                pidfd_gone = _pidfd_exited(main_pidfd)
+            if (not cgroup_empty or not pidfd_gone or not launcher_reaped or not main_pid
+                    or not observed_cgroup or not start_ticks or not mount_ns or not network_ns
+                    or not limits or not cgroup_limits or not startup_gate_verified):
+                raise AuthorityDenied("build.python_probe", "probe terminal cleanup or process identity is unproven")
+            if timed_out or was_cancelled or exit_code != 0 or bytes(stderr_output) != ready_marker:
+                raise AuthorityDenied("build.python_probe", "isolated CPython ABI probe did not exit cleanly")
+            after_sha, after_size, after_executable, after_root = _read_selected_executable(inputs, executable)
+            if ((after_sha, after_size, after_executable.st_dev, after_executable.st_ino,
+                 after_root.st_dev, after_root.st_ino)
+                    != (executable_sha256, executable_size, executable_info.st_dev, executable_info.st_ino,
+                        output_info.st_dev, output_info.st_ino)):
+                raise AuthorityDenied("build.python_probe", "CPython output changed during isolated probing")
+            identity = managed_process_identity_digest(
+                process_id=job_id, generation=inputs.generation, uid=profile.owner_uid,
+                pid=main_pid, start_ticks=start_ticks, cgroup_id=observed_cgroup,
+                mount_namespace_inode=mount_ns, network_namespace_inode=network_ns)
+            probe_terminal_id = uuid.uuid4().hex
+            stdout = bytes(log)
+            probe_evidence = {
+                "terminal_success_record_id": probe_terminal_id,
+                "build_terminal_success_record_id": terminal_id,
+                "build_process_identity_digest": build_result.process_identity_digest,
+                "process_identity_digest": identity, "process_id": job_id,
+                "target": inputs.target_id, "generation": inputs.generation,
+                "service_generation": profile.generation, "output_root_id": inputs.output_root_id,
+                "output_root_path": str(Path(inputs.output_root)),
+                "output_root_device": output_info.st_dev, "output_root_inode": output_info.st_ino,
+                "executable_sha256": executable_sha256, "executable_size_bytes": executable_size,
+                "uid": profile.owner_uid, "gid": profile.owner_gid,
+                "pid": main_pid, "start_ticks": start_ticks, "cgroup": observed_cgroup,
+                "mount_ns": mount_ns, "network_ns": network_ns, "exit_code": 0,
+                "cleanup": True, "limits": limits, "cgroup_limits": cgroup_limits,
+                "log_digest": hashlib.sha256(stdout).hexdigest(), "log_bytes": len(stdout),
+                "startup_gate_verified": startup_gate_verified,
+            }
+            with self._lock:
+                self._records[probe_terminal_id] = probe_evidence
+            return ManagedBuildProbeResult(
+                terminal_success_record_id=probe_terminal_id,
+                build_terminal_success_record_id=terminal_id,
+                build_process_identity_digest=build_result.process_identity_digest,
+                process_identity_digest=identity,
+                process_id=job_id, generation=inputs.generation,
+                uid=profile.owner_uid, gid=profile.owner_gid, pid=main_pid,
+                start_ticks=start_ticks, exit_code=0, cleanup_verified=True,
+                cgroup_id=observed_cgroup, mount_namespace_inode=mount_ns,
+                network_namespace_inode=network_ns, output_root_id=inputs.output_root_id,
+                output_root_device=output_info.st_dev, output_root_inode=output_info.st_ino,
+                executable_sha256=executable_sha256, executable_size_bytes=executable_size,
+                bounded_log_digest=hashlib.sha256(stdout).hexdigest(), log_bytes=len(stdout),
+                startup_gate_verified=startup_gate_verified,
+                stdout=stdout)
+        except BaseException:
+            if unit_started and launcher is not None:
+                with contextlib.suppress(Exception):
+                    self._terminate_unit(unit, cgroup, launcher)
+            raise
+        finally:
+            if selector is not None:
+                with contextlib.suppress(Exception):
+                    selector.close()
+            if launcher is not None:
+                for stream in (launcher.stdout, launcher.stderr):
+                    if stream is not None:
+                        with contextlib.suppress(Exception):
+                            stream.close()
+                if launcher.poll() is None:
+                    with contextlib.suppress(Exception):
+                        launcher.kill()
+                with contextlib.suppress(Exception):
+                    launcher.wait(timeout=1.0)
+            if main_pidfd is not None:
+                with contextlib.suppress(OSError):
+                    os.close(main_pidfd)
+            if job_root.exists():
+                shutil.rmtree(job_root)
+            if unit_started:
+                subprocess.run([str(manager.systemctl), "--system", "stop", unit],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
+                    timeout=1.0, check=False)
+                subprocess.run([str(manager.systemctl), "--system", "reset-failed", unit],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True,
+                    timeout=1.0, check=False)
+            with self._lock:
+                self._active.discard(reservation)
+                self._active.discard(self._MOUNT_RESERVATION)
+
+    def _run_one(self, inputs: Any, profile: Any, context: HostContext | None,
+                 authorization: EffectAuthorization | None, peer_pid: int, peer_pidfd: int,
                  timeout: float, cancelled: Callable[[], bool], result_type: Any,
-                 identity_digest: Callable[..., str], mount_targets: Mapping[str, str]):
+                 identity_digest: Callable[..., str], mount_targets: Mapping[str, str], *,
+                 root_currentness: Callable[[], bool] | None = None,
+                 root_selection_digest: str | None = None,
+                 root_effect_check: Callable[[], bool] | None = None,
+                 output_root_fd: int | None = None,
+                 additional_readonly_mounts: Mapping[str, Path] | None = None,
+                 require_root_effect: bool = False):
         manager = self.manager
         job_id = uuid.uuid4().hex
         service_generation = profile.generation
@@ -3235,6 +9291,7 @@ class ManagedBuildJobRunner:
         kernel_limits: dict[str, str] = {}
         cgroup_limits: dict[str, str] = {}
         mounted: list[Path] = []
+        output_root_info: os.stat_result | None = None
         job_root = Path("/run/hermes-installer/build-jobs") / job_id
         log = bytearray()
         selector = None
@@ -3250,8 +9307,16 @@ class ManagedBuildJobRunner:
 
         def require_active() -> None:
             nonlocal last_generation_check
-            if (cancelled() or manager.monotonic() >= deadline or _pidfd_exited(parent_fd)
-                    or self.manager.profiles.get(profile.profile_id) is not profile):
+            if cancelled() or manager.monotonic() >= deadline or _pidfd_exited(parent_fd):
+                raise AuthorityDenied("build.expired", "build lease, caller or service generation expired")
+            if root_currentness is not None:
+                now = manager.monotonic()
+                if now - last_generation_check >= 0.25:
+                    if not root_currentness():
+                        raise AuthorityDenied("build.generation", "root setup selection or controller is no longer current")
+                    last_generation_check = now
+                return
+            if self.manager.profiles.get(profile.profile_id) is not profile:
                 raise AuthorityDenied("build.expired", "build lease, caller or service generation expired")
             now = manager.monotonic()
             if now - last_generation_check >= 0.25:
@@ -3266,8 +9331,22 @@ class ManagedBuildJobRunner:
         try:
             require_active()
             self._verify_inputs(inputs)
-            self._validate_output_root(Path(inputs.output_root), profile.owner_uid)
-            self._prepare_mount_targets()
+            if output_root_fd is None:
+                self._validate_output_root(Path(inputs.output_root), profile.owner_uid, profile.owner_gid)
+                output_root_info = Path(inputs.output_root).lstat()
+            else:
+                output_root_info = os.fstat(output_root_fd)
+                self._validate_output_root_fd(output_root_info, profile.owner_uid, profile.owner_gid)
+                if os.listdir(output_root_fd):
+                    raise AuthorityDenied("build.output", "selected output directory is not empty")
+            extra_mounts = dict(additional_readonly_mounts or {})
+            if (set(extra_mounts) - set(self._APPLICATION_MOUNTS)
+                    or any(key not in mount_targets or mount_targets[key] != self._APPLICATION_MOUNTS[key]
+                           for key in extra_mounts)):
+                raise AuthorityDenied("build.mount", "application build mount set is outside its fixed allowlist")
+            if set(mount_targets) != set(self._MOUNTS) | set(extra_mounts):
+                raise AuthorityDenied("build.mount", "build mount targets differ from the selected fixed recipe")
+            self._prepare_mount_targets(mount_targets)
             manager._ensure_root_runtime_directory(Path("/run/hermes-installer/build-jobs"), 0o700)
             job_root.mkdir(mode=0o700)
             os.chown(job_root, 0, 0)
@@ -3290,9 +9369,10 @@ class ManagedBuildJobRunner:
                 "work": work,
                 "output": Path(inputs.output_root),
             }
+            mount_inputs.update({name: Path(path) for name, path in extra_mounts.items()})
             self._verify_file(mount_inputs["builder"], inputs.builder_sha256, executable=True)
             for name, path in mount_inputs.items():
-                if name in {"source", "toolchain", "builder"}:
+                if name in {"source", "toolchain", "builder", *extra_mounts}:
                     self._protect_build_mount(path, readonly=True)
                 else:
                     self._protect_build_mount(path, readonly=False)
@@ -3320,17 +9400,25 @@ class ManagedBuildJobRunner:
                 "--property=BindReadOnlyPaths=" + str(inputs.source_root) + ":" + mount_targets["source"],
                 "--property=BindReadOnlyPaths=" + str(inputs.toolchain_root) + ":" + mount_targets["toolchain"],
                 "--property=BindPaths=" + str(work) + ":" + mount_targets["work"],
-                "--property=BindPaths=" + str(inputs.output_root) + ":" + mount_targets["output"],
+                "--property=BindPaths=" + (
+                    f"/proc/{os.getpid()}/fd/{output_root_fd}" if output_root_fd is not None
+                    else str(inputs.output_root)) + ":" + mount_targets["output"],
                 # Every mask is optional on a clean development host: systemd
                 # rejects the namespace if an unprefixed masked path is absent.
                 "--property=InaccessiblePaths=-/etc/hermes-installer -/var/lib/hermes-installer -/etc/ssh -/etc/ssl/private",
             ]
+            properties.extend(
+                "--property=BindReadOnlyPaths=" + str(mount_inputs[name]) + ":" + mount_targets[name]
+                for name in sorted(extra_mounts)
+            )
             if profile.memory_max_bytes is not None:
                 properties.append(f"--property=MemoryMax={profile.memory_max_bytes}")
             if profile.cpu_quota_percent is not None:
                 properties.append(f"--property=CPUQuota={profile.cpu_quota_percent}%")
             if profile.io_weight is not None:
                 properties.append(f"--property=IOWeight={profile.io_weight}")
+            if getattr(profile, "tasks_max", None) is not None:
+                properties.append(f"--property=TasksMax={profile.tasks_max}")
             env_args = ["--setenv=" + name + "=" + value for name, value in sorted(env.items())]
             # Drop manager/user-session variables before setting the closed build environment.
             manager_env = subprocess.run([str(manager.systemctl), "--system", "show-environment"],
@@ -3358,8 +9446,12 @@ class ManagedBuildJobRunner:
                 "--service-type=exec", "--wait", "--pipe",
                 "--working-directory=" + mount_targets["work"], *properties, *env_args, *argv]
             require_active()
-            if manager.monotonic() >= authorization.monotonic_expires_at:
-                raise AuthorityDenied("build.expired", "start authorization expired before the unit launch effect")
+            if authorization is not None:
+                if manager.monotonic() >= authorization.monotonic_expires_at:
+                    raise AuthorityDenied("build.expired", "start authorization expired before the unit launch effect")
+            elif require_root_effect:
+                if root_effect_check is None or not root_effect_check():
+                    raise AuthorityDenied("build.expired", "root setup build admission expired before launch")
             launcher = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, env={"PATH": "/usr/bin:/bin", "LANG": "C"},
                 close_fds=True, shell=False)
@@ -3381,7 +9473,8 @@ class ManagedBuildJobRunner:
                         break
                     raise
                 if main_pid is None:
-                    observed = self._capture_build_identity(unit, cgroup, inputs, profile)
+                    observed = self._capture_build_identity(unit, cgroup, inputs, profile,
+                                                            mount_targets=mount_targets)
                     if observed is not None:
                         main_pid = observed["pid"]
                         start_ticks = observed["ticks"]
@@ -3450,6 +9543,15 @@ class ManagedBuildJobRunner:
             if launcher.poll() is None:
                 launcher.wait(timeout=1.0)
             launcher_reaped = launcher.returncode is not None
+            if root_currentness is not None:
+                # A setup build is not allowed to publish artifacts after its
+                # prepared selection/controller has gone stale, even when the
+                # child happened to exit cleanly at that boundary.
+                require_active()
+            output_root_after = os.fstat(output_root_fd) if output_root_fd is not None else Path(inputs.output_root).lstat()
+            if (output_root_info is None or (output_root_info.st_dev, output_root_info.st_ino)
+                    != (output_root_after.st_dev, output_root_after.st_ino)):
+                raise AuthorityDenied("build.output", "selected output root changed before terminal attestation")
             missing_proof = [name for name, valid in (
                 ("cgroup_empty", cgroup_empty), ("pidfd_gone", pidfd_gone),
                 ("launcher_reaped", launcher_reaped), ("cgroup_identity", bool(observed_cgroup)),
@@ -3513,9 +9615,15 @@ class ManagedBuildJobRunner:
             evidence = {
                 "terminal_success_record_id": terminal_id, "target": inputs.target_id,
                 "generation": inputs.generation, "service_generation": service_generation,
-                "selection_digest": authorization.request_digest, "process_identity_digest": identity,
+                "selection_digest": (authorization.request_digest if authorization is not None
+                                     else root_selection_digest), "process_identity_digest": identity,
                 "output_root_id": inputs.output_root_id,
-                "process_id": proc_id, "uid": profile.owner_uid, "pid": main_pid,
+                "output_root_path": ("<held-output-root-fd>" if output_root_fd is not None
+                                     else str(Path(inputs.output_root))),
+                "output_root_device": output_root_info.st_dev,
+                "output_root_inode": output_root_info.st_ino,
+                "process_id": proc_id, "uid": profile.owner_uid, "gid": profile.owner_gid,
+                "pid": main_pid,
                 "start_ticks": start_ticks, "cgroup": observed_cgroup,
                 "mount_ns": mount_ns, "network_ns": network_ns, "exit_code": exit_code,
                 "timed_out": timed_out, "cancelled": was_cancelled, "cleanup": cgroup_empty and pidfd_gone and launcher_reaped,
@@ -3582,7 +9690,9 @@ class ManagedBuildJobRunner:
                 timeout=1.0, check=False)
 
     def _capture_build_identity(self, unit: str, cgroup: str, inputs: Any,
-                                profile: ManagedProfileCustody) -> Mapping[str, Any] | None:
+                                profile: ManagedProfileCustody, *,
+                                output_readonly: bool = False,
+                                mount_targets: Mapping[str, str] | None = None) -> Mapping[str, Any] | None:
         manager = self.manager
         pidfd: int | None = None
         def reject(reason: str) -> None:
@@ -3625,6 +9735,9 @@ class ManagedBuildJobRunner:
             uid_fields = next(line for line in status if line.startswith("Uid:")).split()[1:]
             if len(uid_fields) != 4 or any(int(uid) != profile.owner_uid for uid in uid_fields):
                 return reject("uid_mismatch")
+            gid_fields = next(line for line in status if line.startswith("Gid:")).split()[1:]
+            if len(gid_fields) != 4 or any(int(gid) != profile.owner_gid for gid in gid_fields):
+                return reject("gid_mismatch")
             status_map = {line.split(":", 1)[0]: line.split(":", 1)[1].strip()
                           for line in status if ":" in line}
             if status_map.get("NoNewPrivs") != "1":
@@ -3665,7 +9778,8 @@ class ManagedBuildJobRunner:
                     pidfd = None
                     return reject("unit_property")
                 readback[key] = actual
-            self._verify_build_mountinfo(pid, self._MOUNTS)
+            self._verify_build_mountinfo(pid, mount_targets or self._MOUNTS,
+                                        output_readonly=output_readonly)
             if (_pidfd_exited(pidfd) or _pid_identity(pid) != (ticks, cgroup, device, inode)):
                 os.close(pidfd)
                 pidfd = None
@@ -3684,7 +9798,8 @@ class ManagedBuildJobRunner:
             return reject("proc_observation")
 
     @staticmethod
-    def _verify_build_mountinfo(pid: int, targets: Mapping[str, str]) -> None:
+    def _verify_build_mountinfo(pid: int, targets: Mapping[str, str], *,
+                                output_readonly: bool = False) -> None:
         rows: dict[str, tuple[set[str], set[str]]] = {}
         for line in Path(f"/proc/{pid}/mountinfo").read_text().splitlines():
             parts = line.split()
@@ -3705,14 +9820,23 @@ class ManagedBuildJobRunner:
             if "nosuid" not in options or "nodev" not in options or {"shared", "master"} & {
                     key.split(":", 1)[0] for key in propagation}:
                 raise AuthorityDenied("build.mount", "fixed build mount flags or propagation are unsafe")
-            readonly = target not in {targets["work"], targets["output"]}
+            writable_targets = {targets["work"]}
+            if not output_readonly:
+                writable_targets.add(targets["output"])
+            readonly = target not in writable_targets
             if (readonly and "ro" not in options) or (not readonly and "rw" not in options):
                 raise AuthorityDenied("build.mount", "fixed build mount access mode differs from policy")
 
-    def _prepare_mount_targets(self) -> None:
+    def _prepare_mount_targets(self, targets: Mapping[str, str] | None = None) -> None:
         root = Path("/run/hermes-installer/build")
         self.manager._ensure_root_runtime_directory(root, 0o755)
-        for key, raw in self._MOUNTS.items():
+        targets = self._MOUNTS if targets is None else targets
+        if (not isinstance(targets, Mapping) or targets.get("builder") != self._MOUNTS["builder"]
+                or targets.get("output") != self._MOUNTS["output"]
+                or any(value not in {*self._MOUNTS.values(), *self._APPLICATION_MOUNTS.values()}
+                       for value in targets.values())):
+            raise AuthorityDenied("build.mount", "fixed build target map is malformed")
+        for key, raw in targets.items():
             target = Path(raw)
             parent = target.parent
             if parent != root:
@@ -3808,14 +9932,20 @@ class ManagedBuildJobRunner:
             raise AuthorityDenied("build.artifact", "selected build executable differs from its immutable root pin")
 
     @staticmethod
-    def _validate_output_root(path: Path, uid: int) -> None:
+    def _validate_output_root(path: Path, uid: int, gid: int) -> None:
         if not path.is_absolute() or path != path.resolve(strict=True):
             raise AuthorityDenied("build.output", "selected output root is not canonical")
         info = path.lstat()
         if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
-                or info.st_uid != uid or stat.S_IMODE(info.st_mode) != 0o700
+                or info.st_uid != uid or info.st_gid != gid or stat.S_IMODE(info.st_mode) != 0o700
                 or any(path.iterdir())):
             raise AuthorityDenied("build.output", "selected output root is not a fresh private directory")
+
+    @staticmethod
+    def _validate_output_root_fd(info: os.stat_result, uid: int, gid: int) -> None:
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != uid or info.st_gid != gid
+                or stat.S_IMODE(info.st_mode) != 0o700):
+            raise AuthorityDenied("build.output", "held output root is not a private selected directory")
 
     @staticmethod
     def _copy_build_tree(source: Path, destination: Path, tree_files: Any, uid: int, gid: int) -> None:
@@ -3863,6 +9993,366 @@ class ManagedBuildJobRunner:
                 os.close(fd)
 
     @staticmethod
+    def _application_inputs_fingerprint(inputs: Any) -> tuple[Any, ...]:
+        """Bind every registry projection field/member to retained descriptor identity."""
+        scalar_names = (
+            "selection_handle", "application_id", "build_profile_id", "target_id", "operation_id",
+            "runtime_preparation_selection_handle", "plan_sha256", "setup_session_id",
+            "transaction_handle", "prepared_generation_id", "prepared_generation_digest",
+            "source_receipt_handle", "source_manifest_sha256", "pm_runtime_closure_sha256",
+            "lock_receipt_handle", "lock_sha256", "package_closure_receipt_handle",
+            "build_backend_closure_receipt_handle", "recipe_sha256", "builder_receipt_handle",
+            "builder_sha256", "builder_size_bytes", "driver_receipt_handle", "driver_sha256",
+            "driver_size_bytes", "recipe_config_sha256", "output_root_id", "output_owner_uid",
+            "output_owner_gid", "build_service_id", "build_service_selection_handle",
+            "build_service_generation", "runtime_toolchain_receipt_handles", "controller_binding_handle",
+            "controller_pid", "controller_start_ticks", "controller_uid", "controller_gid",
+            "uv_sha256", "uv_size_bytes",
+            "uv_source_receipt_handle", "uv_artifact_id",
+        )
+        try:
+            scalars = tuple(getattr(inputs, name) for name in scalar_names)
+            scalars += (hashlib.sha256(inputs.recipe_config_bytes).hexdigest(),)
+            descriptor_fields = (
+                ("builder_fd",), ("uv_fd",), ("driver_fd",), ("output_root_fd",),
+                ("controller_pidfd",),
+            )
+            descriptors = []
+            for group in descriptor_fields:
+                fd = getattr(inputs, group[0])
+                if fd is None:
+                    descriptors.append(None)
+                    continue
+                info = os.fstat(fd)
+                descriptors.append((info.st_dev, info.st_ino, info.st_mode, info.st_size,
+                                    info.st_uid, info.st_gid))
+            members = []
+            for group_name in ("source_members", "package_members", "backend_members",
+                               "python_runtime_members", "recipe_member", "python_executable_member"):
+                value = getattr(inputs, group_name)
+                group = value if isinstance(value, (tuple, list)) else (value,)
+                rows = []
+                for item in group:
+                    info = os.fstat(item.fd)
+                    rows.append((item.relative_path, item.sha256, item.size_bytes, item.executable,
+                                 item.receipt_handle, item.kind, item.link_target,
+                                 info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_uid, info.st_gid))
+                members.append((group_name, tuple(rows)))
+            return scalars + (tuple(descriptors), tuple(members))
+        except (AttributeError, OSError, TypeError, ValueError):
+            raise AuthorityDenied("build.application_current", "application descriptor projection is stale") from None
+
+    @staticmethod
+    def _stage_application_held_members(members: Any, destination: Path, *,
+                                        allow_symlinks: bool = False) -> tuple[Any, ...]:
+        """Copy a bounded held-member closure into a fresh private tree.
+
+        Entries are internal resolved observations with ``relative_path``,
+        ``fd``, ``sha256``, ``size_bytes`` and ``executable`` members. No path
+        from an entry is opened; every byte comes from its already-held
+        descriptor and is rehashed while copied. Symlinks are accepted only
+        for the PM-runtime mount, where an O_PATH|O_NOFOLLOW descriptor,
+        exact link text digest, in-tree target closure, and acyclic resolution
+        are all checked before the link is created.
+        """
+        from hermes_installer.authority.build_execution import _BuildInputTreeFile
+
+        if (os.geteuid() != 0 or not isinstance(members, (tuple, list))
+                or not members or len(members) > 20_000):
+            raise AuthorityDenied("build.application_input", "held application input closure is unavailable")
+        try:
+            destination.mkdir(mode=0o700)
+        except OSError:
+            raise AuthorityDenied("build.application_input", "application input staging root is not fresh") from None
+        root_info = destination.lstat()
+        if (not stat.S_ISDIR(root_info.st_mode) or stat.S_ISLNK(root_info.st_mode)
+                or root_info.st_uid != 0 or stat.S_IMODE(root_info.st_mode) != 0o700):
+            raise AuthorityDenied("build.application_input", "application input staging root is unsafe")
+
+        rows: list[_BuildInputTreeFile] = []
+        seen: set[str] = set()
+        entries: dict[str, Any] = {}
+        total = 0
+        for entry in members:
+            relative = getattr(entry, "relative_path", None)
+            fd = getattr(entry, "fd", None)
+            digest = getattr(entry, "sha256", None)
+            size = getattr(entry, "size_bytes", None)
+            executable = getattr(entry, "executable", None)
+            if (not isinstance(relative, str) or not relative or "\\" in relative or "\x00" in relative
+                    or Path(relative).is_absolute()
+                    or any(part in {"", ".", ".."} for part in relative.split("/"))
+                    or PurePosixPath(relative).as_posix() != relative or relative in seen
+                    or type(fd) is not int or fd < 0
+                    or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                    or not isinstance(getattr(entry, "receipt_handle", None), str)
+                    or not 32 <= len(entry.receipt_handle) <= 128
+                    or type(size) is not int or not 0 <= size <= 512 * 1024 * 1024
+                    or type(executable) is not bool):
+                raise AuthorityDenied("build.application_input", "held application member is malformed")
+            seen.add(relative)
+            entries[relative] = entry
+            total += size
+            if total > 2 * 1024**3:
+                raise AuthorityDenied("build.application_input", "held application input closure exceeds its byte bound")
+            try:
+                source_info = os.fstat(fd)
+            except OSError:
+                raise AuthorityDenied("build.application_input", "held application member FD is stale") from None
+            sealed = False
+            immutable = not (source_info.st_mode & 0o222)
+            if hasattr(fcntl, "F_GET_SEALS"):
+                try:
+                    seals = fcntl.fcntl(fd, fcntl.F_GET_SEALS)
+                    required_seals = (fcntl.F_SEAL_SEAL | fcntl.F_SEAL_SHRINK
+                                      | fcntl.F_SEAL_GROW | fcntl.F_SEAL_WRITE)
+                    sealed = seals & required_seals == required_seals
+                    immutable = immutable or sealed
+                except OSError:
+                    pass
+            kind = getattr(entry, "kind", "file")
+            link_target = getattr(entry, "link_target", None)
+            if kind == "symlink":
+                if not allow_symlinks:
+                    raise AuthorityDenied("build.application_input", "symlink is not allowed in this application mount")
+                target_bytes = ManagedBuildJobRunner._read_held_symlink(fd)
+                if (not stat.S_ISLNK(source_info.st_mode) or source_info.st_uid != 0
+                        or source_info.st_size != size or not isinstance(link_target, str)
+                        or target_bytes != link_target.encode("utf-8", "strict")
+                        or hashlib.sha256(target_bytes).hexdigest() != digest
+                        or size != len(target_bytes) or executable):
+                    raise AuthorityDenied("build.application_input", "held PM symlink identity or target digest changed")
+                continue
+            if (kind != "file" or link_target is not None
+                    or not stat.S_ISREG(source_info.st_mode) or source_info.st_uid != 0
+                    or not immutable
+                    or (source_info.st_nlink != 1 and not (sealed and source_info.st_nlink == 0))
+                    or source_info.st_size != size):
+                raise AuthorityDenied("build.application_input", "held application member is not immutable root data")
+
+            target = destination
+            parts = relative.split("/")
+            for part in parts[:-1]:
+                target = target / part
+                try:
+                    target.mkdir(mode=0o700)
+                except FileExistsError:
+                    pass
+                info = target.lstat()
+                if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
+                        or info.st_uid != 0 or info.st_mode & 0o022):
+                    raise AuthorityDenied("build.application_input", "held application member has unsafe parent path")
+            target = target / parts[-1]
+            out = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                          | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o600)
+            hasher = hashlib.sha256()
+            count = 0
+            try:
+                while count < size:
+                    chunk = os.pread(fd, min(128 * 1024, size - count), count)
+                    if not chunk:
+                        raise AuthorityDenied("build.application_input", "held application member ended early")
+                    hasher.update(chunk)
+                    view = memoryview(chunk)
+                    while view:
+                        written = os.write(out, view)
+                        if written <= 0:
+                            raise AuthorityDenied("build.application_input", "application member staging write stalled")
+                        view = view[written:]
+                    count += len(chunk)
+                if os.pread(fd, 1, size) or hasher.hexdigest() != digest:
+                    raise AuthorityDenied("build.application_input", "held application member bytes changed")
+                mode = 0o555 if executable else 0o444
+                os.fchown(out, 0, 0)
+                os.fchmod(out, mode)
+            finally:
+                os.close(out)
+            rows.append(_BuildInputTreeFile(relative, digest, size, executable))
+        symlink_entries = {name: item for name, item in entries.items()
+                           if getattr(item, "kind", "file") == "symlink"}
+        if symlink_entries:
+            if not allow_symlinks:
+                raise AuthorityDenied("build.application_input", "symlink is not allowed in this application mount")
+            ManagedBuildJobRunner._validate_application_symlink_closure(entries, symlink_entries)
+            for relative, entry in sorted(symlink_entries.items()):
+                target = entry.link_target
+                path = destination.joinpath(*relative.split("/"))
+                path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                os.symlink(target, path)
+                rows.append(_BuildInputTreeFile(relative, entry.sha256, entry.size_bytes,
+                                                False, kind="symlink", link_target=target))
+        # Reject file/directory aliasing (for example a member named `a` plus
+        # another member `a/b`) before the staged tree can be mounted.
+        for name in seen:
+            parts = name.split("/")
+            if any("/".join(parts[:index]) in seen for index in range(1, len(parts))):
+                raise AuthorityDenied("build.application_input", "application member tree has a path collision")
+        return tuple(sorted(rows, key=lambda row: row.path))
+
+    @staticmethod
+    def _read_held_symlink(fd: int) -> bytes:
+        """Read link text from an O_PATH symlink FD using readlinkat(AT_EMPTY_PATH)."""
+        if not sys.platform.startswith("linux"):
+            raise AuthorityDenied("build.application_input", "held symlink verification requires Linux")
+        libc = ctypes.CDLL(None, use_errno=True)
+        readlinkat = libc.readlinkat
+        readlinkat.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t)
+        readlinkat.restype = ctypes.c_ssize_t
+        buffer = ctypes.create_string_buffer(4097)
+        size = readlinkat(fd, b"", buffer, 4096)
+        if size < 0 or size > 4095:
+            raise AuthorityDenied("build.application_input", "held symlink text could not be verified")
+        return bytes(buffer.raw[:size])
+
+    @staticmethod
+    def _validate_application_symlink_closure(entries: Mapping[str, Any],
+                                               symlinks: Mapping[str, Any]) -> None:
+        """Require every PM symlink to resolve through the staged manifest in-root."""
+        names = set(entries)
+        for name in symlinks:
+            parts = name.split("/")
+            if any("/".join(parts[:index]) in symlinks for index in range(1, len(parts))):
+                raise AuthorityDenied("build.application_input", "PM symlink has a symlink parent path")
+        for link_path, entry in symlinks.items():
+            target = getattr(entry, "link_target", None)
+            if (not isinstance(target, str) or not target or target.startswith("/")
+                    or "\\" in target or "\x00" in target or len(target.encode("utf-8")) > 4095):
+                raise AuthorityDenied("build.application_input", "PM symlink target is not a bounded relative path")
+            resolved = posixpath.normpath(posixpath.join(posixpath.dirname(link_path), target))
+            if resolved in {"", ".", ".."} or resolved.startswith("../"):
+                raise AuthorityDenied("build.application_input", "PM symlink escapes the held runtime root")
+            pending = resolved.split("/")
+            visited: set[str] = set()
+            hops = 0
+            while True:
+                prefix = ""
+                replaced = False
+                for index, component in enumerate(pending):
+                    prefix = component if not prefix else prefix + "/" + component
+                    target_entry = symlinks.get(prefix)
+                    if target_entry is None:
+                        continue
+                    if prefix in visited:
+                        raise AuthorityDenied("build.application_input", "PM symlink closure contains a cycle")
+                    visited.add(prefix)
+                    hops += 1
+                    if hops > 40:
+                        raise AuthorityDenied("build.application_input", "PM symlink closure exceeds its resolution bound")
+                    tail = pending[index + 1:]
+                    replacement = posixpath.normpath(posixpath.join(posixpath.dirname(prefix),
+                                                                      target_entry.link_target))
+                    candidate = posixpath.normpath(posixpath.join(replacement, *tail)) if tail else replacement
+                    if candidate in {"", ".", ".."} or candidate.startswith("../"):
+                        raise AuthorityDenied("build.application_input", "PM symlink chain escapes the held runtime root")
+                    pending = candidate.split("/")
+                    replaced = True
+                    break
+                if replaced:
+                    continue
+                final = "/".join(pending)
+                # Directory rows are implicit in a regular-file projection.
+                if final not in names and not any(name.startswith(final.rstrip("/") + "/") for name in names):
+                    raise AuthorityDenied("build.application_input", "PM symlink target has no receipt-bound member")
+                break
+
+    @staticmethod
+    def _copy_application_held_file(fd: int, digest: str, size: int, destination: Path, *,
+                                    executable: bool) -> None:
+        if (type(fd) is not int or fd < 0 or not isinstance(digest, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                or type(size) is not int or size <= 0):
+            raise AuthorityDenied("build.application_input", "held executable is malformed")
+        info = os.fstat(fd)
+        sealed = False
+        if hasattr(fcntl, "F_GET_SEALS"):
+            with contextlib.suppress(OSError):
+                seals = fcntl.fcntl(fd, fcntl.F_GET_SEALS)
+                sealed = seals & (fcntl.F_SEAL_SEAL | fcntl.F_SEAL_SHRINK
+                                  | fcntl.F_SEAL_GROW | fcntl.F_SEAL_WRITE) == (
+                                      fcntl.F_SEAL_SEAL | fcntl.F_SEAL_SHRINK
+                                      | fcntl.F_SEAL_GROW | fcntl.F_SEAL_WRITE)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_size != size
+                or (info.st_mode & 0o222 and not sealed)
+                or (info.st_nlink != 1 and not (sealed and info.st_nlink == 0))):
+            raise AuthorityDenied("build.application_input", "held executable is not immutable root data")
+        destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        out = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                      | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o700)
+        hasher = hashlib.sha256()
+        offset = 0
+        try:
+            while offset < size:
+                block = os.pread(fd, min(128 * 1024, size - offset), offset)
+                if not block:
+                    raise AuthorityDenied("build.application_input", "held executable ended early")
+                hasher.update(block)
+                view = memoryview(block)
+                while view:
+                    written = os.write(out, view)
+                    if written <= 0:
+                        raise AuthorityDenied("build.application_input", "executable staging write stalled")
+                    view = view[written:]
+                offset += len(block)
+            if os.pread(fd, 1, size) or hasher.hexdigest() != digest:
+                raise AuthorityDenied("build.application_input", "held executable bytes differ from selected digest")
+            os.fchown(out, 0, 0)
+            os.fchmod(out, 0o555 if executable else 0o444)
+        finally:
+            os.close(out)
+
+    @staticmethod
+    def _application_tree_manifest(rows: tuple[Any, ...]) -> str:
+        serialized = []
+        for row in sorted(rows, key=lambda value: value.path):
+            serialized.append({"path": row.path, "sha256": row.sha256,
+                               "size_bytes": row.size_bytes, "executable": row.executable})
+        return hashlib.sha256(json.dumps(serialized, sort_keys=True, separators=(",", ":"),
+                                         ensure_ascii=False).encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _validate_application_wheel_config(config: Mapping[str, Any], packages: Any,
+                                           backend: Any) -> None:
+        """Join driver wheel pins to the exact held artifact member rows."""
+        def check(key: str, members: Any) -> None:
+            rows = config.get(key)
+            if (not isinstance(rows, list) or not rows or len(rows) > 8192
+                    or not isinstance(members, (tuple, list)) or len(rows) != len(members)):
+                raise AuthorityDenied("build.application_recipe", "offline wheel configuration is incomplete")
+            by_name = {}
+            for member in members:
+                relative = getattr(member, "relative_path", None)
+                if (not isinstance(relative, str)
+                        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.+-]{0,199}\.whl", relative)):
+                    raise AuthorityDenied("build.application_recipe", "wheel member path is outside its fixed closure")
+                name = relative
+                if name in by_name:
+                    raise AuthorityDenied("build.application_recipe", "wheel closure contains a duplicate filename")
+                by_name[name] = member
+            seen: set[str] = set()
+            for row in rows:
+                if (not isinstance(row, dict)
+                        or set(row) != {"name", "version", "filename", "sha256", "size_bytes"}
+                        or not isinstance(row.get("name"), str) or not row["name"]
+                        or not isinstance(row.get("version"), str) or not row["version"]
+                        or not isinstance(row.get("filename"), str)
+                        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.+-]{0,199}\.whl", row["filename"])
+                        or not isinstance(row.get("sha256"), str)
+                        or not re.fullmatch(r"[0-9a-f]{64}", row["sha256"])
+                        or type(row.get("size_bytes")) is not int or row["size_bytes"] <= 0
+                        or row["filename"] in seen):
+                    raise AuthorityDenied("build.application_recipe", "offline wheel pin is malformed or duplicated")
+                seen.add(row["filename"])
+                member = by_name.get(row["filename"])
+                if (member is None or member.sha256 != row["sha256"]
+                        or member.size_bytes != row["size_bytes"]):
+                    raise AuthorityDenied("build.application_recipe", "offline wheel pin differs from held bytes")
+            if seen != set(by_name):
+                raise AuthorityDenied("build.application_recipe", "offline wheel pin set differs from held artifacts")
+
+        check("packages", packages)
+        check("backend_packages", backend)
+
+    @staticmethod
     def _protect_build_mount(path: Path, *, readonly: bool) -> None:
         flags_bind, flags_rec = 4096, 16384
         flags_private = 1 << 18
@@ -3892,7 +10382,10 @@ class ManagedBuildJobRunner:
     @classmethod
     def _resolve_build_argv(cls, recipe: Any, targets: Mapping[str, str]) -> list[str]:
         from hermes_installer.authority.build_execution import _resolve_argv_recipe
-        normalized = _resolve_argv_recipe(recipe)
+        additional = tuple(sorted(set(targets) - set(cls._MOUNTS)))
+        if set(additional) - set(cls._APPLICATION_MOUNTS):
+            raise AuthorityDenied("build.argv", "build recipe requested an unknown app-only mount")
+        normalized = _resolve_argv_recipe(recipe, additional_mount_ids=additional)
         argv = []
         for index, node in enumerate(normalized):
             if "literal" in node:

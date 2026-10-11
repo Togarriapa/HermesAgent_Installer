@@ -1,0 +1,156 @@
+{
+  "schema": 1,
+  "id": "root-service-process-authority-lane-v236",
+  "status": "specified; implementation/acceptance OPEN",
+  "refines": [
+    "planning/active-authority-receipt-aggregate-v231.json",
+    "planning/jarvis-source-profile-task-identity-v215.json"
+  ],
+  "requirements": [
+    "R0029",
+    "R0055",
+    "R0056",
+    "R0058",
+    "R0060",
+    "direct-user-2026-10-10-jarvis-sole-user-profile"
+  ],
+  "audit": {
+    "enrollment": "_verify_active_process_rules requires exact service/profile/principal/namespace/UID/GID/generation join, all six process rules and binding capabilities. This requirement remains mandatory.",
+    "user_lane": "LocalOwnerPrincipalRecord eight fields derives exact owner-overlay selected capability ceiling. No actual source producer currently grants hermes-profile-invoke/hermes-process-control in that user ceiling; do not insert them. _authorize_process_start and legacy perform_admitted_resource_process_start gate on user binding; local allow_effect remains false.",
+    "source_defect": "v30 closed bootstrap template declares only process.start/status/read/write/stop, missing process.inspect required by validator. Must add separately reviewed source declaration and held source receipt; no implicit sixth target.",
+    "root_lane": "Existing RootResourceTaskAuthority has typed issue_root_resource_task_start/consume_root_resource_task_start with child/task/source/controller/home retained joins, but issue calls service.policy.allow_effect. RootNativeHealthStartAdmission/RootSelectedHealthStartBinding provide genuine root health admission. RootVerifiedNativeHermesWorkerLaunch is source/runtime/kernel proof, explicitly not effect authority."
+  },
+  "process_definition": {
+    "producer": "RootPreparedNativeServiceProcessDeclarationRegistry.from_root_setup(binding, worker_recipe_registry) -> registry; resolve_selected(native_policy_selection) -> RootPreparedNativeServiceProcessDeclaration. Require actual signed selected worker recipe handles, source reviewed fixed process handler definitions, parameter schemas and corresponding installed release member receipts. Explicitly configure selection, no automatic authority from recipe discovery.",
+    "new_source": "New append-only reviewed native-service-process-declaration-v1 JSON source under plans/amendments/v236 implementation cohort, staged as finite protected source member and pin reviewed only after actual code/effect tests. Must declare the six operation/capability/target identities and implementation handler path/role/limits; unreviewed/missing source keeps process lane unavailable. This specification is not a fabricated runtime receipt or source pin.",
+    "six_operations": [
+      {
+        "capability": "hermes-profile-invoke",
+        "operation": "process.start"
+      },
+      {
+        "capability": "hermes-process-control",
+        "operation": "process.status"
+      },
+      {
+        "capability": "hermes-process-control",
+        "operation": "process.read"
+      },
+      {
+        "capability": "hermes-process-control",
+        "operation": "process.write"
+      },
+      {
+        "capability": "hermes-process-control",
+        "operation": "process.stop"
+      },
+      {
+        "capability": "hermes-process-control",
+        "operation": "process.inspect"
+      }
+    ],
+    "target": "Exact selected service operation_targets from current reviewed declaration, equal actual managed handler registration targets. Existing5 targets preserved; process.inspect requires explicit source declaration/handler test. No filename/profile concatenation inference. process.start operation recipe is exact health or selected admitted resource task recipe, never arbitrary shell/argv.",
+    "projection": "Retain actual source receipt/byte digest, signed native choice handle/epoch/selected recipe digest, current prepared generation, observed worker NSS/profile/principal/namespace, parameter schema and actual operation handler source joins. Separate setup prepared receipt remains nonactive."
+  },
+  "catalog": {
+    "name": "service_generations.root_service_process_authorities",
+    "bounds": "Closed list <=256 records, entire generation_digest covered, separate from user principals/capabilities; required schema extension with explicit empty array when no source-reviewed root process lane selected. Preserve v225 schema3 selected remote extension; no unsigned sidecar.",
+    "row_keys": [
+      "schema",
+      "id",
+      "profile_id",
+      "principal_id",
+      "namespace_id",
+      "service_uid",
+      "service_gid",
+      "service_user",
+      "profile_generation",
+      "service_enrollment_id",
+      "process_declaration_sha256",
+      "process_declaration_source_receipt_handle",
+      "selected_worker_recipe_sha256",
+      "source_choice_selection_handle",
+      "source_choice_signed_record_sha256",
+      "operations"
+    ],
+    "operation_keys": [
+      "capability",
+      "operation",
+      "target",
+      "recipient",
+      "operation_recipe_ids",
+      "parameter_schema_ids",
+      "allowed_admission_kinds"
+    ],
+    "rules": "Exactly six records; recipient null; unique operation/target; recipe and parameter schema IDs exact current service catalog; allowed_admission_kinds closed root-health/root-resource-task for start, same-task-control for other5. Complete actual service/profile identity and source declaration joins mandatory. Never put container generation digest inside its own hashed row.",
+    "private_binding": "RootServiceProcessBinding is parsed only from validated current protected catalog and same declaration/source claim; same service/principal/namespace/UID/GID/profile generation, but is a ROOT PRIVATE process policy binding, never PrincipalBinding returned by _binding(uid), never installed into bindings_by_uid or user capability ceiling. No new fake principal/user/207 service profiles."
+  },
+  "validation": {
+    "enrollment": "Keep _verify_active_process_rules full six-rule and exact identity checks. Split input ownership explicitly: ordinary socket/user binding retains capabilities and existing validator semantics; selected source-proven root service process lane supplies separately parsed RootServiceProcessBinding to a dedicated equally strict verifier for those registered process handlers. Every profile must resolve exactly one process authority domain; overlapping/ambiguous fallback denied. Missing any actual rule/source/admission policy denies active parse. Do not toggle require_process_capability=False, skip validation, union root capabilities into user binding or reinterpret empty local caps as unrestricted.",
+    "root_local_policy": "Local owner allow_effect remains false for process. A RootServiceProcessPolicy verifies exact typed current admitted task/health/control issuer proofs + current protected root process binding; no generic bool root, uid0 or parameterless allow. User overlay path keeps exact local selected effects/current localowner snapshot/oneuse grant.",
+    "worker_rpc": "_authorize_process_start/_authorize_process_control and generic authorize_effect remain user capability governed; local owner cannot invoke process operations via socket/context labels. Do not expose root process admission handles through workers, socket RPC, caller callback or capability list."
+  },
+  "api": {
+    "composition": "RootServiceProcessAuthority.from_root_runtime(runtime, resource_task_authority, native_health_observer) -> one retained issuer; exact same runtime/service/core/catalog/current jobs/controller/health/manager instances, no callersupplied factories. Attach before selected worker/task/health start; absent issuer keeps those unavailable.",
+    "selection": "resolve_current_process_binding(service_enrollment_id, process_generation) -> RootServiceProcessBinding, rootprivate selector verifies current protected published core/generation/source declaration and exact manager handler; caller selectors never supply binding facts.",
+    "resource": "Reuse RootResourceTaskAuthority.issue_root_resource_task_start actual retained child_admission/task_source/task_admission/selected_execution/task_handle/controller/selected_home_binding. Replace local user policy call only for this rootprivate issuer with authorize_admitted_resource_process_start(issuer, exact retained objects) -> RootServiceProcessAdmission. No legacy usercontext grant fallback. Existing consume_root_resource_task_start then manager consumed proof/kernel gate required; admission does not start process.",
+    "health": "authorize_admitted_health_process_start(native_health_observer, admission: RootNativeHealthStartAdmission, binding: RootSelectedHealthStartBinding) -> RootServiceProcessAdmission; exact observer-retained admission/committed enrollment/current controller/fixture/source/recipe/schema joined; source-backed health loader controls unchanged. Health proof type/private member membership checked, not arbitrary dataclass constructor.",
+    "control": "authorize_admitted_process_control(existing ManagedTaskHandle, current root issuer-owned task/health control receipt, operation) -> RootServiceProcessAdmission; bind exact same admitted process PIDFD/start/cgroup/unit/current generation/namespace and immutable task identity, selected finite operation and bounded payload. status/inspect no host-wide enumeration; read/write bounded same admitted stream; stop verified task only. No independent arbitraryPID/target/argv control.",
+    "consume": "consume_process_admission(admission, *, current retained root resource/health/control proof) -> RootConsumedServiceProcessProof; issuer-owned object identity/signature/currentness/oneuse journal and payload checks before manager sideeffects; existing task/health custodian kernel checks remain mandatory."
+  },
+  "admission": {
+    "type": "RootServiceProcessAdmission frozen/reprhidden, issuer-sealed, exact retained object membership; new root process domain distinct from EffectAuthorization/user HostContext",
+    "fields": [
+      "schema",
+      "admission_handle",
+      "issuer_kind",
+      "process_authority_id",
+      "profile_id",
+      "principal_id",
+      "namespace_id",
+      "service_uid",
+      "profile_generation",
+      "service_generation_digest",
+      "publication_receipt_handle",
+      "authority_epoch",
+      "policy_revision",
+      "operation",
+      "target",
+      "recipient",
+      "operation_recipe_id",
+      "parameter_schema_sha256",
+      "request_sha256",
+      "source_lineage_sha256",
+      "controller_binding_sha256",
+      "selected_home_binding_sha256",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "issuer_kind": "Literal root-resource-task/root-health/same-task-control. No caller-selected issuer labels.",
+    "request": "Root serializes canonical payload from actual admitted stdin/request/task recipe and selected protected target; root resource task uses existing canonical selection/body digest. Receipt commits original task/controller/source/publication/recipe/home lineage; no caller digest/source flags or copied user context as authority.",
+    "lifetime": "min(now+30seconds, original task/health/controller/source/native launch/runtime/namespace/home leases); current published core/service generation/policy revision/source revocation/PIDFD and consumed grant rechecked immediately before every sideeffect; never extend original deadlines.",
+    "replay": "One admission per exact process verb/request, oneuse consumed protected journal nonce; grant proof and root process binding are not reusable bearer capabilities. Failure/retry requires new genuine reduced child grant from same stillcurrent original admission."
+  },
+  "preserved": "All208 native sourcehomes/207 delegates/sole Jarvis and actual serviceprofile identity unchanged; fixed/hermes heldhome mount/grant and current PM/runtime/kernel gate remain separate proofs. Process launch does not authorize tool/provider/device/network/account effects; they still need their own real fresh child grants/authorizers. Root worker source selection does not widen localuser/privatepublic/data policy. Native profiles are not host sandbox.",
+  "failure_tests": [
+    "Genuine actual localowner overlay ceiling + separately source-selected6operation root service declaration/current aggregate -> strict core parse; user capabilities unchanged, process root binding exact current service identity.",
+    "Actual RootResourceTaskAuthority/current child/task/source/controller/home admission issues and consumes fresh root process proof, reaches real manager fixture/kernel gate; generic local user socket process request denied.",
+    "Actual retained RootNativeHealthStartAdmission/current committed source/controller/recipe/fixture joins start and same-task control only; launch proof alone/madeup admission no grant.",
+    "Missing process.inspect/source receipt/handler/schema/recipe, duplicate or mixed process authority domain, altered serviceUID/GID/namespace/source choice => no active parse/start.",
+    "Changing local user capabilities by unioning processcaps or allow_effect true forbidden; Authentik-dependent/resource/provider effects still unavailable absent actual source permissions.",
+    "Foreign/copied issuer/admission/controller/consumed proof, expired source/task/controller deadline, stale core/generation/revocation, digest changed stdin/home selection => deny before sideeffect.",
+    "Repeated use and concurrent duplicate consume denied; same-task controls cannot inspect/read/write/stop siblings/primary or arbitraryPID; cleanup requires verifiedowned/dead task.",
+    "Positive source-based fixture composition/full pipeline before pins; target loaded-worker/native kernel/207delegate/physicalPi acceptance separately OPEN."
+  ],
+  "owners": {
+    "HI-T236.1": "Luna aggregate/source recipe owner: actual selected reviewed6operation declaration and strict separate root process binding catalog; keep user ceiling exact.",
+    "HI-T236.2": "Luna root process/task/health issuer owner: typed current root process policy/admission/consume and manager integration, no worker RPC bypass.",
+    "VD-T236.3": "Luna local policy/compiler/integration: strict dual domain parse and genuine pipeline/replay/currentness/isolation failures."
+  },
+  "tasks": [
+    "HI-T236.1",
+    "HI-T236.2",
+    "VD-T236.3"
+  ],
+  "acceptance": "All AC01..18 OPEN. Source/API audit+specification only; no implemented producer/sourcepin/runtimeclaim, no baseline/tag or target mutation."
+}

@@ -1,0 +1,70 @@
+{
+  "amendment": "plans/amendments/2026-10-10-conditional-authentik-local-owner-setup-v181.md",
+  "source_parent": "2bb743e6da07d51c6e6f670b4d93b1b335a71af9",
+  "baseline_requirements": [
+    "R0058",
+    "R0060",
+    "R0143"
+  ],
+  "owner": "GPT-6 Luna",
+  "implementation_complete": false,
+  "target_acceptance_complete": false,
+  "acceptance": "AC01..AC18 OPEN",
+  "identity_domains": [
+    "linux-local-owner-v1",
+    "existing-authentik-subject-domain"
+  ],
+  "local_resource_methods": [
+    "read",
+    "history",
+    "write",
+    "delete"
+  ],
+  "scope": "exact selected v172 owner-overlay rows only; text provider separately enrolled; no homelab/recipient/account authority inferred",
+  "tasks": {
+    "HI-T181.1": {
+      "description": "Observe genuine local owner and issue separate typed current principal/snapshot; retain strict Authentik receipt domain.",
+      "depends_on": [],
+      "implementation_complete": false,
+      "target_acceptance_complete": false
+    },
+    "HI-T181.2": {
+      "description": "Select finite local overlay capabilities and preserve identity domain through active policy/native publication/loaded invocation.",
+      "depends_on": [
+        "HI-T181.1",
+        "HI-T180.3"
+      ],
+      "implementation_complete": false,
+      "target_acceptance_complete": false
+    },
+    "BD-T181.3": {
+      "description": "Choose selected capabilities before credentials; implement genuine independent fresh local-owner setup entry point.",
+      "depends_on": [
+        "HI-T181.1",
+        "HI-T181.2"
+      ],
+      "implementation_complete": false,
+      "target_acceptance_complete": false
+    },
+    "LC-T181.4": {
+      "description": "Persist configure-later and resume independent readiness without identity-domain or ownership widening.",
+      "depends_on": [
+        "BD-T181.3"
+      ],
+      "implementation_complete": false,
+      "target_acceptance_complete": false
+    },
+    "VD-T181.5": {
+      "description": "Verify positive loaded local effects and privileged Authentik denial/revocation plus exact source pin handoff.",
+      "depends_on": [
+        "HI-T181.2",
+        "BD-T181.3",
+        "LC-T181.4",
+        "HI-T180.5"
+      ],
+      "implementation_complete": false,
+      "target_acceptance_complete": false
+    }
+  },
+  "source_pins": "pending exact committed implementation and Sol review; v180 pin ledger unchanged"
+}

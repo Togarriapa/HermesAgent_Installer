@@ -275,3 +275,75 @@ The installer SHALL resolve source observers from explicit selected adapter join
 #### Scenario: Composite tool requests an unselected child
 - **WHEN** worker code invokes a different action/digest or claims response metadata without exact root lookup
 - **THEN** root denies before effects and executes only its reviewed finite selected workflow under fresh per-step grants
+
+Nonrecursive selections and private source ceilings v90: `plans/amendments/2026-10-10-nonrecursive-selection-private-source-ceilings-v90.md`; existing original implementation and acceptance tasks remain open.
+
+Private input recipient consent v100: `plans/amendments/2026-10-10-private-input-recipient-consent-v100.md`; actual root observed private-route choice/current input binding/epoch required, no capture-consent substitution; existing implementation/acceptance gates open.
+
+### Requirement: Purpose-bound PUBLIC input web permission v138
+The installer SHALL authorize public web egress only from genuine root-observed PUBLIC input and current exact selected public web permission; PRIVATE or UNKNOWN source ancestry SHALL remain denied even when a public scope is configured.
+
+#### Scenario: Private input requests an enrolled public website
+- **WHEN** any retained parent/input source is PRIVATE or UNKNOWN or the public permission is absent/revoked/expired
+- **THEN** public web dispatch and retries are denied without dropping ancestry, widening private consent or adding budget
+
+### Requirement: Distinct runtime member and public input evidence v149
+The installer SHALL preserve unique interpreter identity, exact runtime member closure and distinct prepared/live role proofs, and SHALL require actual per-input root disclosure for first public egress.
+
+#### Scenario: Persistent public config has no disclosed input
+- **WHEN** a public web request has no actual root-observed per-input disclosure and ancestry proof
+- **THEN** no PUBLIC receipt is issued merely from profile configuration or missing parents
+
+### Requirement: Stable private binding and current observation separation v151
+The installer SHALL select private endpoint/model binding IDs before startup and resolve genuine current runtime observations only after actual listener/load/source proof.
+
+#### Scenario: Configured private endpoint has no live process
+- **WHEN** only the protected endpoint binding exists
+- **THEN** no runtime route or deployment receipt is fabricated from that configured identity
+
+### Requirement: Durable adopted public choice currentness v153
+The installer SHALL verify current signed source choice/revocation and active adoption beyond setup closure while requiring separate fresh per-input installed-root TTY disclosure and effect authority.
+
+#### Scenario: Original signed choice is revoked under unchanged active pointer
+- **WHEN** the root journal choice epoch/revocation changes
+- **THEN** the adoption/current permission denies despite an unchanged policy pointer and never extends an expired setup or runtime lease
+
+### Requirement: Runtime choice revocation source v156
+The installer SHALL consume genuine current installed actor and one-use foreground TTY revocation observation tied to the displayed adopted choice before signing a durable revoked epoch.
+
+#### Scenario: Revocation request carries caller epoch or expired setup proof
+- **WHEN** no genuine current runtime revocation observation exists
+- **THEN** the registry denies without changing the signed choice or restoring an expired lease
+
+### Requirement: Native capture profiles v158
+The installer SHALL validate raw root-observed result bytes against the exact selected protected result schema before source capture and deliver only genuine current peer-bound handles.
+
+#### Scenario: Worker supplies a ToolMessage without a completed root result
+- **WHEN** no matching current root invocation/result/schema observation exists
+- **THEN** source capture denies and no worker message or generic object schema supplies authority
+
+### Requirement: MCP discovery capture v171
+The installer SHALL separately validate and retain actual selected MCP discovery responses before deriving schemas, without treating metadata as tool execution.
+
+#### Scenario: Tools call is labelled discovery
+- **WHEN** actual retained request method is tools/call
+- **THEN** the selected tool result schema gate applies and discovery profile cannot bypass it
+
+### Requirement: Initial public TTY source v174
+The installer SHALL require actual fresh foreground input and per-input public disclosure before initial public source issuance.
+
+#### Scenario: Existing task input is private
+- **WHEN** task stdin already has PRIVATE source ancestry
+- **THEN** the initial public TTY producer SHALL NOT relabel it or issue a public source receipt
+
+
+### Requirement: Visible Jarvis MVP staging v259
+The installer SHALL prioritize verified official native Jarvis Desktop visibility, real eligible zero-additional-budget chat, Access OTP app-only domain and owned durable restart. Broader scope remains deferred OPEN. Provenance, sandbox, privacy, currentness and existing data/conflict protections remain mandatory.
+
+#### Scenario: Actual MVP end-to-end operation
+- **WHEN** all four v259 milestones have actual correlated owned Pi/browser/chat/restart evidence
+- **THEN** record MVP staging separately and leave original full installer/model/Coral/profile/plugin/account AC OPEN
+
+#### Scenario: Retained diagnostic artifact only
+- **WHEN** official AppDir build or local visibility exists without current installation custody, eligible chat, Access enforcement or durable restart
+- **THEN** preserve it as partial evidence and finish only the concrete missing deployment joins without claiming stage completion or weakening security

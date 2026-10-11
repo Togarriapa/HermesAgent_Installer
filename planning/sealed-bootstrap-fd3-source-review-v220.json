@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "requirements": [
+    "BD-F02",
+    "HI-T149.1",
+    "BD-T208.1",
+    "VD-T208.2"
+  ],
+  "source_commit": "482386c7ed605940a760dc6cd4dda790d8553bf5",
+  "source_tree": "ba063afddcce1c3ecd7c9270ec11856b06ace2ce",
+  "source_path": "src/hermes_installer/authority/installer_release_build.py",
+  "sha256": "bd9d22edb0aeb5604b2b60d5970c1a925b352c02a470a092b1cba591e18a607f",
+  "size_bytes": 255473,
+  "source_authority": "Exact selected candidate sourceCAS/closure and current fixed bootstrap module origin; structuralreview reference only, NOT expected installed member/selfpin. No catalogURL/modulepin invented.",
+  "replaces_only_members": [],
+  "unchanged": "All reviewed installed member tuples including v211root_setup and v204bootstrap_enrollment unchanged. No runtimecohortbatch included.",
+  "reviewed_change": "RootBootstrapRuntimeHandoffRegistry.reexec_selected_bootstrap calls fixed _install_bootstrap_transition_fd3(memfd). If memfd!=3 dup2 to3; then ALWAYS set_inheritable(3,True), F_GETFD readback rejects FD_CLOEXEC, get_inheritable true required, fstat+rewind before existingexec. Closed fixedFD3 only, no callerdescriptor/channel.",
+  "trust_preservation": "Same heldsealedmemfd/body/hash/requiredfourseals and fixedisolatedinterpreter argv/existingjournal oneuse/sameprocesscontroller/source/runtime/TTL remain. FDinheritance carries previouslyauthorizedhandoff, grants no newauthority and renews nolease. Existing postexecverification remains mandatory.",
+  "evidence": {
+    "path": "evidence/development/EV-VD-T208.2-bootstrap-fd3-exec-20261010.json",
+    "sha256": "e1fb790223b90abc8d2a17b3f9a6c5b607065369305dcc6355920a038ac9f6d4",
+    "size_bytes": 2225,
+    "runtime": "Isolated LinuxARM64 Python3.14.7",
+    "positive": "Real forkexec retains exact sealedbody+allfourrequiredseals",
+    "negative": "CLOEXEC control exec fstat(3) givesEBADF",
+    "reported_host_tests": {
+      "builder_passed": 56,
+      "builder_skipped": 8,
+      "root_setup_passed": 28
+    },
+    "limit": "Pi trace reports FD3EBADF, but allocationorder/memfd==3branch occurrence on actualtarget notobserved; ARM64 diagnostic proof is not Pi installationacceptance."
+  },
+  "tasks": [
+    "BD-T208.1",
+    "VD-T208.2"
+  ],
+  "remaining": "Integrate exact testedsourcecommit/evidence, fullcoherentsuite/checks then actual selected target handoff result. No installedpinapplicationneededforbuilder; existingcandidateCAS exactsourcebinding required.",
+  "acceptance": "Alloriginalscope/AC01..18 OPEN; baselineunchanged."
+}

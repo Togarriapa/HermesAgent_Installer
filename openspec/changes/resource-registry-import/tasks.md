@@ -34,3 +34,78 @@ Dependencies: installer-bootstrap-desktop. Full IDs and task edges: planning/dep
 - Review code against every requirement/scenario and actual evidence; do not archive incomplete hardware/account tasks.
 - Run strict pinned OpenSpec validation and coverage; archive only verified completed changes using the installed documented workflow, preserving dated history and canonical specs.
 - Sol must approve refinement via append-only amendment; keep plans/2026-10-09-v1 immutable.
+
+Audio/HTTP native input transport v40: `plans/amendments/2026-10-09-native-input-audio-http-channels-v40.md`; original5 channels retain required pending scope.
+
+Original WhatsApp authenticated trigger v45: `plans/amendments/2026-10-09-whatsapp-authenticated-trigger-enrollment-v45.md`; source-backed setup/schema acquisition, originalchannel tasks remain pending.
+
+Root channel peer delivery v48: `plans/amendments/2026-10-09-root-channel-peer-delivery-v48.md`; concrete originalchannel transport join, tasks open.
+
+Composio selected trigger derivation v77: `plans/amendments/2026-10-10-composio-trigger-artifact-exchange-derivation-v77.md`; existing RG-F03/R0060/RB-T08 gates remain open and account setup proof stays distinct.
+
+Existing resource child-attempt context v82: `plans/amendments/2026-10-10-resource-existing-child-attempt-context-v82.md`; existing RB-T08 task open.
+
+Pre-active native assembly selection v84: `plans/amendments/2026-10-10-pre-active-native-assembly-selection-v84.md`; HI-T08/HI-T09/RB-T09 remain open.
+
+Bootstrap action and derived store ownership v87: `plans/amendments/2026-10-10-bootstrap-action-derived-store-ownership-v87.md`; existing BD/HI/RB tasks remain open.
+
+Selected resource materialization and task route v88: `plans/amendments/2026-10-10-selected-resource-materialization-task-route-v88.md`; RB-T08/HI-T09/HI-T12 remain open.
+
+Nonrecursive selections and private source ceilings v90: `plans/amendments/2026-10-10-nonrecursive-selection-private-source-ceilings-v90.md`; existing original implementation and acceptance tasks remain open.
+
+Resource task proof DTO and custody v93: `plans/amendments/2026-10-10-resource-task-proof-dto-custody-v93.md`; RB-T08/HI-T09/HI-T12 remain open.
+
+HTTP and audio observed event schemas v94: `plans/amendments/2026-10-10-http-audio-observed-event-schemas-v94.md`; original RG-F03/R0060/native-input obligations remain open.
+
+Resource task authority module and seal v95: `plans/amendments/2026-10-10-resource-task-authority-module-seal-v95.md`; RB-T08/HI-T09/HI-T12 remain open.
+
+Private loopback enforcement choice v97: `plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97.md`; existing original implementation/acceptance obligations remain open.
+
+Local audio device/consent v118: `plans/amendments/2026-10-10-local-audio-device-consent-v118.md`; original RG-F03/R0060/HI-T08 obligations remain open.
+
+- [ ] RG-T118.1: audio owner retain exact device/TTY/runtime/controller proof and enforce cancellation/lease during blocking capture.
+
+- [ ] RG-T118.2: source/controller owner join selected audio v94 schema and retained one-use capture/consent artifact into genuine source issuance without fabricated identity.
+
+- [ ] RG-T118.3: test changed enumeration, default fallback, runtime closure mismatch, overflow, revocation/cancel/timeout and byte zeroization; actual device/OS/ARM acceptance remains pending.
+
+Channel retained peer delivery v129: `plans/amendments/2026-10-10-channel-retained-peer-delivery-v129.md`; genuine reduced source/context issuer/store required, real channel acceptance open.
+
+- [ ] HI-T129.1: channel owner replace placeholder publish with actual retained-event/current native peer proof and atomic reduced issuer/store queue join.
+
+- [ ] HI-T129.2: source/controller/authority/native-input owner implement fixed root delivery derivation and genuine peer-bound handles with distinct source versus target identity.
+
+- [ ] HI-T129.3: test forged syntactic handles, old peer/epoch/generation, source retarget, missing ancestry/consent/store, duplicate publication and partial issuance rollback; actual all-five channel runtime acceptance open.
+
+- [ ] `HI-T178.3` Implement and verify the exact producer ownership/order/positive and failure acceptance in `plans/amendments/2026-10-10-source-join-producers-v178.md`; fixture results never close AC01..18.
+
+- [ ] `HI-T178.4` Implement and verify the exact producer ownership/order/positive and failure acceptance in `plans/amendments/2026-10-10-source-join-producers-v178.md`; fixture results never close AC01..18.
+
+- [ ] `HI-T180.3` Implement the exact owner/order/source-member/role and positive/failure evidence contract in `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`; source review does not close runtime or AC acceptance.
+
+
+## v181 conditional identity and independent readiness
+
+- [ ] `HI-T181.2` Select finite local overlay capabilities and preserve identity domain through active policy/native publication/loaded invocation. Exact producer/order and meaningful positive/failure evidence: `plans/amendments/2026-10-10-conditional-authentik-local-owner-setup-v181.md`. Implementation and target acceptance OPEN.
+
+
+## v183 exact active effect producers
+
+- [ ] `HI-T183.3` Publish signed tagged local-owner and exact overlay source/view/target/effect adoption. Producer/type/order/evidence contract: `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md`. Implementation and acceptance OPEN.
+- [ ] `HI-T183.4` Implement independent active NSS/source/view/loaded invocation/grant four-method owner. Producer/type/order/evidence contract: `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md`. Implementation and acceptance OPEN.
+
+
+## v184 exact wire clarification
+
+- [ ] `VD-T184.3` Verify exact parser/roundtrip/hash/FK failures and pre-READY bind vs later effect-proof ordering. Exact contract: `plans/amendments/2026-10-10-network-row-wire-digest-boundaries-v184.md`; implementation/acceptance OPEN.
+
+
+## v185 owner observation and proxy
+
+- [ ] `HI-T185.1` Publish and resolve concrete tagged owner registration observer and captured-source schemas. Exact contract `plans/amendments/2026-10-10-owner-overlay-observer-capture-rpc-v185.md`; implementation/acceptance OPEN.
+- [ ] `HI-T185.2` Bind actual worker proxy/native execute RPC to observed invocation/current one-use local grant and CAS. Exact contract `plans/amendments/2026-10-10-owner-overlay-observer-capture-rpc-v185.md`; implementation/acceptance OPEN.
+
+
+## v186 endpoint source phase
+
+- [ ] `VD-T186.3` Exercise preactive no-effects, authenticated transfer/CAS/revocation/conflict cleanup and phase evidence. Exact contract `plans/amendments/2026-10-10-preactive-authority-listener-custody-v186.md`; implementation/acceptance OPEN.

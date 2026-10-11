@@ -1,6 +1,27 @@
 {
   "schema_version": 1,
   "observed_at_utc": "2026-10-09T16:41:57.813921+00:00",
+  "latest_remote_ref_observation": {
+    "observed_at_utc": "2026-10-10T14:55:44+00:00",
+    "method": "git ls-remote --heads https://github.com/Togarriapa/HermesAgent_Installer.git",
+    "historical_2026_10_09_snapshot_preserved": true,
+    "exact_remote_head_count": 3,
+    "heads": [
+      {
+        "branch": "codex/luna-installer-development",
+        "tip": "c3d59d7377f05939e9087348d8a200e4c11baf3a"
+      },
+      {
+        "branch": "codex/sol-implementation-ledger",
+        "tip": "156c218ad18d39fde7bdfbec75a9e0c2478969c9"
+      },
+      {
+        "branch": "main",
+        "tip": "5e8f56171a8bc4398e84e24a9195b7b00a796370"
+      }
+    ],
+    "scope": "remote ref inventory only; no source publish or runtime acceptance implied"
+  },
   "repository": "Togarriapa/HermesAgent_Installer",
   "governance_bindings": [
     "R0185",

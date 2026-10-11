@@ -1,0 +1,142 @@
+{
+  "schema": 1,
+  "amendment": "v249",
+  "refines": [
+    "v235",
+    "v242",
+    "v247"
+  ],
+  "baseline_requirements": [
+    "BD-F03",
+    "LC-F03",
+    "AC01",
+    "AC02"
+  ],
+  "reason": "New source-update observer uses current static reviewed source pins to verify a genuine old installed release before candidate TTY selection. This rejects old root_setup even though its old source cohort and immutable deployment custody remain valid. Old installed modules must not become a current actor.",
+  "audit": {
+    "new_source_commit": "9dd53e823058cfc7c516075572aad6fb510cfcc8",
+    "old_candidate": "cc81abffe3cbb1df447889bca269d1e6c0be77ea",
+    "old_source_tree": "74dca3566f212e185cbdada7a2d401cf0d63f6e9",
+    "old_source_blobs": [
+      {
+        "relative_path": "src/hermes_installer/authority/installer_release_roles.py",
+        "sha256": "77414427c957315b5039e4d90f75c997739d7fd3caa18014f874aa7fed7806f0",
+        "size_bytes": 1162
+      },
+      {
+        "relative_path": "src/hermes_installer/authority/application_effect_source_catalog.py",
+        "sha256": "cc77027546df592d439da36cd162f36841176cdb8a37ca12d213da2ff3666c78",
+        "size_bytes": 3150
+      },
+      {
+        "relative_path": "src/hermes_installer/authority/installer_release.py",
+        "sha256": "aceb07d75a0723ae7abc80aba68aa544056ff9eec49885b73ca0af7190a3780e",
+        "size_bytes": 80261
+      },
+      {
+        "relative_path": "src/hermes_installer/root_setup.py",
+        "sha256": "5bd49b6e0105d65d342302df953ed41f6ab0f0edd2bb90d7e7c2b4b4ada30563",
+        "size_bytes": 62517
+      },
+      {
+        "relative_path": "src/hermes_installer/authority/installer_release_build.py",
+        "sha256": "6355198dd122046469b7aba2d9c02ffae43fc17dd3b7263c1e782b560f06b12f",
+        "size_bytes": 258915
+      }
+    ],
+    "old_root_setup_sha256": "5bd49b6e0105d65d342302df953ed41f6ab0f0edd2bb90d7e7c2b4b4ada30563",
+    "source_review": "Exact authenticated Gitcc81 source cohort: root_setup5bd49b6e/62517, installer_release aceb07d7/80261, installer_release_build6355198d/258915 match actual readonly installed bytes. Oldrootsetup393447 and intermediate34a5 estimates were superseded by measured source facts; neither is an approved historical substitution. Literal constants extracted from exactcc81 Git blobs without import/exec/eval; all59 module tuples and all finite template/artifact/effect/driver/helper/role/path/required-module tables retained.",
+    "target_diagnostic": {
+      "closure_manifest_sha256": "a8c2e34d62710087877f549828bc14c7d086493a274ff87b892cb406e946d40b",
+      "manifest_size_bytes": 1043975,
+      "member_count": 5315,
+      "baseline_tree_sha256": "039a6ab93f6bd44d80df01e99368c24c4348624305b6f4d17816eed25a167ade",
+      "scope": "Readonly instance observation only; no runtime trustpins or target acceptance."
+    }
+  },
+  "historical_cohort": {
+    "artifact_id": "installed-predecessor-cc81-review-v249",
+    "source_path": "plans/amendments/2026-10-10-version-aware-predecessor-verification-v249/cc81-reviewed-predecessor-cohort-v1.json",
+    "sha256": "32aab0f5eaf5d184dfad3aa6482ee7b17b666bd32d54d180d4aad334db741f5f",
+    "size_bytes": 29545,
+    "selector": "Only current fixed deployment candidate_git_sha internally selects exact compiled source-owned cohort cc81. Map has one current reviewed historical entry; new historical candidates require separate genuine reviewed cohort. No caller cohort/path/JSON/booleans, environment override, newest-pin permissive fallback or per-file mixed cohort.",
+    "fields": [
+      "schema",
+      "cohort_id",
+      "candidate_git_sha",
+      "source_origin",
+      "source_git_tree",
+      "source_blobs",
+      "constants",
+      "semantics"
+    ],
+    "source": "Fixed authorized HermesAgent_Installer origin/source Git commit/tree and exact blob SHA/size; complete static reviewed constants in adjacent JSON. These are immutable source-reviewed data, not executable old verifier. Production implementation carries exact source-owned constants/hash with current reviewed verifier source; may factor data into fixed owned module but never load arbitrary trustbundle from old release/caller. Old release amendment copy alone cannot approve itself.",
+    "not_instance_pins": "Do not pin one Pi deployment receipt SHA/root dev/inode/manifestSHA/published_monotonic as universal cc81 metadata. Those remain freshly observed original instance CAS snapshot facts, independently checked and retained by existing update transaction.",
+    "source_cas": "Dedicated verifier internally creates exact RootInstallerDistributionRegistry and calls resolve_selected(fixed_pointer_candidate) only, never acquire_selected before candidateTTY. Freshly reopened typed VerifiedInstallerDistributionReceipt must verify_current, exact SOURCE_ORIGIN/candidate/source_git_tree/frozenbaseline/full source manifest; all five reviewed source blobs must match compiled review SHA/size, and actual oldsource root_setup/builder bytes match their fixed Git source hashes. Missing/corrupt sourceCAS remains explicit pending; no caller path/receipt/seal nor network acquisition or oldcode execution. Existing registry may reobserve durable source facts after restart through strict _load_distribution_receipt; no TTL extension or restored process seal.",
+    "algorithm": "Audit all finite _fixed_roles/_validate_fixed_layout_role dependencies listed in constants, not merely root_setup override. Historical path uses historical required roles/member tables/templates/effect catalog/driver/helper; current-only newly required artifacts must not be retroactively imposed. Shared structural owner/nofollow/hash/manifest/baseline/complete tree checks unchanged. Any historical validation branch unsupported by current parser stays denied pending reviewed finite adapter, never falls back to manifest-only acceptance."
+  },
+  "verifier": {
+    "class": "InstalledRootReleaseVerifier",
+    "entry": "verify_installed_predecessor_release() -> VerifiedInstallerPredecessorReleaseReceipt",
+    "selection": "Read only fixed /var/lib/hermes-installer/deployments/current.json with current strict schema/owner/mode/nlink/nofollow/maxbytes; get exact current candidate, select full current cohort when it is the current source cohort or exact approved historical cohort for cc81. Unknown candidate remains denied/pending; do not silently accept manifest self-declarations.",
+    "sharing": "Reuse strict receipt/root/manifest/file/full-tree/baseline/amendment helpers with private exact immutable cohort context only on predecessor path. Current verify_installed_release/from_current_root_process/current reviewed-source opens and actor checks keep newest pins/roles. No public context argument or switch skips verification.",
+    "checks": [
+      "fixed release root /usr/lib/hermes-installer/releases/<exact candidate> matches pointer root/dev/inode; immutable root-owned ancestry/directory FD",
+      "original manifest relative path/hash matches pointer; duplicate-rejecting closed sorted unique file schema, exact limits and immutable0444 root-owned nlink1 manifest",
+      "every member hash/size/mode/owner/nofollow/device/inode and complete closed physical tree including no extra paths remain checked",
+      "whole selected cohort roles/fixed launcher/interpreter/plan/catalog/templates/source modules/artifacts/build driver/effect members/helper match exact historical constants; no current requirement added retroactively and no historical row mixed with current pins",
+      "frozen baseline unique tag object/commit and full baseline tree digest unchanged; immutable amendments digest recomputed and bound",
+      "exact historical source-origin/candidate/tree/blob provenance comes from independently source-reviewed compiled cohort; actor module files named by cohort must match exact reviewed tuples, source-only rows remain source-only",
+      "pointer/root/manifest/member facts retained; reverify on each use, original predecessor deadline unchanged and bound to current process/boot/controller update admission; no old seal restoration"
+    ]
+  },
+  "receipt": {
+    "type": "VerifiedInstallerPredecessorReleaseReceipt",
+    "seal": "Distinct exact private issuer seal/type, predecessor-only. Cannot pass current actor observation/from_current_root_process/current module opens/normal setup factory; no RootActorObservation mint or lazy import of old release code.",
+    "fields": [
+      "release_root",
+      "release_commit",
+      "deployment_receipt_sha256",
+      "root_device",
+      "root_inode",
+      "closure_manifest_relative_path",
+      "closure_manifest_sha256",
+      "baseline_tag_object",
+      "baseline_commit",
+      "baseline_tree_sha256",
+      "amendment_manifest_sha256",
+      "files",
+      "selected_plan_artifact_id",
+      "selected_plan_sha256",
+      "historical_cohort_id",
+      "historical_cohort_sha256"
+    ],
+    "methods": [
+      "verify_current() rehashes exact held original closure/root and cohort; no new authority",
+      "close() closes owned retained descriptors only"
+    ],
+    "usage": "Existing VerifiedDeploymentPredecessor private registry retains exact dedicated receipt. Same projection fields support existing update/rollback snapshot, no caller parsed receipt or source-module open. It is old-byte custody evidence only; update candidate selection/source actor/new installed actor remain separate required proofs."
+  },
+  "integration": [
+    "observe_deployment_predecessor present path uses dedicated predecessor verifier and retains dedicated receipt; absence behavior unchanged, failed present never becomes absent",
+    "RootInstallerUpdateTransitionRegistry.begin_selected_update rechecks pointer/current dedicated prior receipt before retaining original current pointer byte/dev/inode/hash and root/manifest/baseline/amendment projection",
+    "_verify_update_predecessor_snapshot uses dedicated predecessor verifier after reexec/resume; compares same original pointer/closure snapshots, cannot apply current pins to old release or restore process seals",
+    "all update pointerCAS/publication/conditional rollback/recovery routes that verify retained predecessor use this dedicated exact type/cohort path, preserving current candidate verifier and new installed actor. Wrong type is denied",
+    "selected candidate ancestry from exact oldcandidate remains fixed-origin bounded Git ancestry proof after freshTTY selection; cohort is not downgrade permission or new candidate choice",
+    "current pointer changes, old file tamper, new version unknown, missing cohort/source review, mode/role/path/hash/manifest mismatch fail before publication; no editing old release/pointer/foreign cleanup or unowned service effects"
+  ],
+  "tests": [
+    "actual reviewed oldcc81 cohort+complete owned release fixture verifies only as predecessor; current ordinary verifier/actor still reject oldroot_setup",
+    "mutated historical tuple/cohort ID/candidate/manifest/file/extra path/mode/owner/baseline/launcher/interpreter/source artifact denied; spoofed callercohort and mixed current/historical rows denied",
+    "all59 tuple coherence plus imported effect/helper/source artifact data is exact static data; no importing/evaluating old verifier code",
+    "current sameversion predecessor still verifies fully without losing newest pins; unknown historicalversion denied",
+    "actual source-update with unchanged old pointer reaches fresh candidateTTY after current complete predecessor proof; failurebeforeCAS keeps pointer/oldrelease intact",
+    "reexec snapshot/currentness/rollback reopens same historicalcohort originalclosure; no lease expiry reset or old actorseal restoration; Pi positive remains separate"
+  ],
+  "tasks": [
+    "BD-T249.1",
+    "LC-T249.2",
+    "VD-T249.3"
+  ],
+  "acceptance": "All AC remain open. Historical cohort source audit/spec does not prove distribution update or new Pi/runtime acceptance; no source implementation/push in this refinement."
+}

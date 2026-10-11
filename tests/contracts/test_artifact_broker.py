@@ -21,6 +21,7 @@ from hermes_installer.artifacts import (
     load_protected_catalog,
     load_protected_package_sets,
     sign_package_set_manifest,
+    _validate_id,
 )
 from hermes_installer.authority.types import AuthorityDenied, canonical_digest
 
@@ -50,6 +51,28 @@ class ArtifactBrokerContracts(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_only_reviewed_installed_module_ids_extend_catalog_identity_syntax(self):
+        reviewed_ids = (
+            "installer-module:hermes_installer.authority.local_resource_effects",
+            "installer-module:hermes_installer.authority.native_worker_start_recipe",
+            "installer-module:hermes_installer.authority.owner_overlay_capture_schemas",
+            "installer-module:hermes_installer.native_boundary_patch",
+            "installer-module:hermes_installer.native_plugin_bindings",
+            "installer-module:hermes_installer.native_plugin_loader",
+            "installer-module:hermes_installer.registry.resource_backends",
+        )
+        for artifact_id in reviewed_ids:
+            with self.subTest(artifact_id=artifact_id):
+                _validate_id(artifact_id)
+        for artifact_id in (
+            "installer-module:hermes_installer.authority.unreviewed",
+            "installer-module:other_package.module",
+            "installer-module:hermes_installer..loader",
+            "other-prefix:hermes_installer.native_plugin_loader",
+        ):
+            with self.subTest(artifact_id=artifact_id), self.assertRaises(ValueError):
+                _validate_id(artifact_id)
+
     def spec(self, data: bytes, **kwargs) -> ArtifactSpec:
         return ArtifactSpec(
             artifact_id="fixture-source", version="1.0.0",
@@ -58,6 +81,31 @@ class ArtifactBrokerContracts(unittest.TestCase):
             max_bytes=max(1, len(data)), size_bytes=len(data), filename="source.bin",
             **kwargs,
         )
+
+    def test_vendored_resources_source_is_an_exact_offline_catalog_artifact(self):
+        catalog_file = Path(__file__).parents[2] / "src/hermes_installer/authority/artifact-catalog.json"
+        catalog_copy = self.base / "artifact-catalog.json"
+        catalog_copy.write_bytes(catalog_file.read_bytes())
+        catalog_copy.chmod(0o600)
+        catalog = load_protected_catalog(catalog_copy, expected_uid=self.uid)
+        artifact_id = "resources-source-113f42d33be9e0c8f0f47f5ca998e687323dec83"
+        digest = "b09459b609676cff30f151ac7db1fc405039b8871486b483af563ba7f63e7cd1"
+        spec = catalog._artifact(artifact_id, digest)
+        self.assertEqual(spec.size_bytes, 295368)
+        self.assertEqual(spec.version, "113f42d33be9e0c8f0f47f5ca998e687323dec83")
+        self.assertEqual(len(spec.tree_files), 739)
+        self.assertEqual(spec.archive_format, "tar.gz")
+
+        archive = Path(__file__).parents[2] / "src/hermes_installer/registry/bundle_data/hermes-agent-resources-2.3.1.tar.gz"
+        self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(), digest)
+        staged = self.root / "objects" / artifact_id / digest / spec.filename
+        staged.parent.mkdir(parents=True, mode=0o700)
+        staged.write_bytes(archive.read_bytes())
+        staged.chmod(0o444)
+        resolved = catalog.materialize_tree(artifact_id, digest, self.root, expected_uid=self.uid)
+        self.assertEqual(len(resolved.tree_files), 739)
+        self.assertEqual(resolved.tree_manifest_sha256, spec.tree_manifest_sha256)
+        self.assertTrue((resolved.path / "catalog.yaml").is_file())
 
     def request(self, spec: ArtifactSpec):
         payload = json.dumps({"schema": 1, "artifact_id": spec.artifact_id,
@@ -334,6 +382,131 @@ class ArtifactBrokerContracts(unittest.TestCase):
         self.assertEqual(len(catalog.artifacts["coral-python39-source"].tree_files), 4266)
         self.assertEqual(catalog.artifacts["hermes-pm-node-linux-arm64"].archive_format, "tar.xz")
         self.assertFalse(catalog.packages)
+
+    def test_glm_source_catalog_rows_bind_only_reviewed_metadata_license_and_readme_bytes(self):
+        repo = Path(__file__).parents[2]
+        catalog_source = repo / "src/hermes_installer/authority/artifact-catalog.json"
+        catalog_path = self.base / "glm-source-catalog.json"
+        catalog_path.write_bytes(catalog_source.read_bytes())
+        catalog_path.chmod(0o600)
+        catalog = load_protected_catalog(catalog_path, expected_uid=self.uid)
+        expected = {
+            "glm52-artifact-metadata-v1": (
+                "b42e3fa6fd5c287b95fcda4d370697bd4c0ef226767ddc08fae4e5bebcfecd1a",
+                56_232, "planning/glm52-artifact-metadata.json",
+            ),
+            "glm52-upstream-mit-license-cf457fa": (
+                "f4a18c6ae40b0a8e7d2b7667f52f6e1994e54a46430d2e172b73cb8c9b5eb0d7",
+                1_065, "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-upstream-MIT-LICENSE.txt",
+            ),
+            "glm52-quantized-readme-6bbb01e": (
+                "85fc4cf947276c376f09ad1226926ebc03eefbb99d184cd05f34412d32d8406b",
+                17_468, "plans/amendments/2026-10-10-glm-source-license-pins-v135/glm52-quantized-README.md",
+            ),
+        }
+        for artifact_id, (digest, size, relative_path) in expected.items():
+            spec = catalog.artifacts[artifact_id]
+            body = (repo / relative_path).read_bytes()
+            self.assertEqual((spec.sha256, spec.size_bytes, spec.max_bytes), (digest, size, size))
+            self.assertEqual((len(body), hashlib.sha256(body).hexdigest()), (size, digest))
+            self.assertIsNone(spec.archive_format)
+            self.assertEqual(spec.tree_files, ())
+            self.assertEqual(spec.redirect_hosts, (spec.source_url.split('/')[2],))
+        self.assertFalse(any("glm52" in row.artifact_id and "weight" in row.artifact_id
+                             for row in catalog.artifacts.values()))
+
+    def test_mcp_discovery_profile_catalog_row_is_exact_and_source_only(self):
+        repo = Path(__file__).parents[2]
+        catalog_source = repo / "src/hermes_installer/authority/artifact-catalog.json"
+        catalog_path = self.base / "mcp-profile-catalog.json"
+        catalog_path.write_bytes(catalog_source.read_bytes())
+        catalog_path.chmod(0o600)
+        catalog = load_protected_catalog(catalog_path, expected_uid=self.uid)
+        spec = catalog.artifacts["installer-native-mcp-discovery-capture-profile-v171"]
+        path = "plans/amendments/2026-10-10-mcp-discovery-capture-v171/mcp-discovery-capture-v1.json"
+        body = (repo / path).read_bytes()
+        self.assertEqual(
+            (spec.sha256, spec.size_bytes, spec.max_bytes),
+            ("bf9b3b649bf995d5743a38597415ef003928e1d67dc337ab5c7f3e7ec9643e8a", 4_601, 4_601),
+        )
+        self.assertEqual((len(body), hashlib.sha256(body).hexdigest()), (4_601, spec.sha256))
+        self.assertIsNone(spec.archive_format)
+        self.assertEqual(spec.tree_files, ())
+        self.assertEqual(spec.redirect_hosts, ("raw.githubusercontent.com",))
+
+    def test_native_module_and_hyperframes_toolchain_catalog_rows_are_finite_and_exact(self):
+        repo = Path(__file__).parents[2]
+        catalog_source = repo / "src/hermes_installer/authority/artifact-catalog.json"
+        catalog_path = self.base / "toolchain-catalog.json"
+        catalog_path.write_bytes(catalog_source.read_bytes())
+        catalog_path.chmod(0o600)
+        catalog = load_protected_catalog(catalog_path, expected_uid=self.uid)
+        expected_modules = {
+            "installer-native-plugins-source-v137": (
+                "a027311518a746a6b1bcd126fc677190f4fe0ec2ac91b941872b3cdc542a79e7", 28_259),
+            "installer-public-registries-source-v137": (
+                "c4568783265044b6b877d581c7ece596d582b003221cccb8e0b7cfe78ac8cb0f", 29_374),
+            "installer-native-invocations-module-v137": (
+                "78a3452289df5b7343e5c650ad4260d51b3aa1056e2eedea02cc3a0bff7b8226", 40_107),
+            "installer-native-boundary-module-v137": (
+                "ac18137d35fee29db635eb4f91327c3d02d5b5a563353acf60ad020085043cdb", 14_356),
+            "installer-native-source-definitions-module-v137": (
+                "4d66c49e798eb957fa77601c4dad021182b734b1eb8fe322d52ecca060223341", 32_858),
+            "installer-native-input-capture-profile-v1": (
+                "bfdf7175ee1df681b60ab4b707ffe9d314d8cc7fdc5a30a56e19d2cb1372c1d0", 837),
+            "installer-native-tool-result-capture-profile-v1": (
+                "470fcc43b3d268a6594e0d6bdf2c635ba3bf4e6cd0cfe2dfcd57840d7bee105a", 984),
+            "installer-native-provider-result-capture-profile-v1": (
+                "a2c6ae9243a7854f114ed492afd395d867f02ed58d50a3f1692fe0ea7efbd8eb", 993),
+        }
+        for artifact_id, (digest, size) in expected_modules.items():
+            spec = catalog.artifacts[artifact_id]
+            self.assertEqual((spec.sha256, spec.size_bytes, spec.max_bytes), (digest, size, size))
+            self.assertIsNone(spec.archive_format)
+            self.assertEqual(spec.tree_files, ())
+        health_fixtures = {
+            "hermes-agent-health-request-v1": ("a8ff376fd03484db8c7dc0af141e8e894671467cdc5833ee50a08571d0ee3e7c", 182),
+            "hermes-agent-health-seed-v1": ("b7cf82519f80550d09ae0ef0f183ad6be9543cc4c15873982cea91819e9a962a", 67),
+            "hermes-agent-health-expected-result-v1": ("23a5b879d3b43b985c468917f34bdd7b592ab35cfd72e767287f16764436523a", 240),
+            "hermes-agent-health-overlay-read-result-v1": ("6b89864f728e6e3e65b34d935c486bad0bc3c0a57bcee92dde5eec33fb1286f5", 526),
+            "hermes-agent-health-fixture-v1": ("ba7486d3070f725d125ed0e8c42aa986969bc8a597c2473024705d6fd8ac05a7", 845),
+        }
+        health_paths = {
+            "hermes-agent-health-request-v1": "request.txt",
+            "hermes-agent-health-seed-v1": "seed-value.txt",
+            "hermes-agent-health-expected-result-v1": "expected-tool-result.json",
+            "hermes-agent-health-overlay-read-result-v1": "tool-result.schema.json",
+            "hermes-agent-health-fixture-v1": "recipe.json",
+        }
+        for artifact_id, (digest, size) in health_fixtures.items():
+            spec = catalog.artifacts[artifact_id]
+            self.assertEqual((spec.sha256, spec.size_bytes, spec.max_bytes), (digest, size, size))
+            self.assertEqual(spec.source_url,
+                             "https://raw.githubusercontent.com/Togarriapa/HermesAgent_Installer/"
+                             "8f7178cc1e69c61536a4388a75588be8683fd1e7/src/hermes_installer/"
+                             f"native_health_fixture/{health_paths[artifact_id]}")
+            self.assertIsNone(spec.archive_format)
+            self.assertEqual(spec.tree_files, ())
+        toolchains = {
+            "application-node-26.7.0-linux-arm64": (
+                "afc7a004018485092ac8985b817b0d5684472bd9472e0b57d2ab88737e50090d", 32_581_212,
+                "https://nodejs.org/dist/v26.7.0/node-v26.7.0-linux-arm64.tar.xz", ("nodejs.org",)),
+            "application-bun-1.4.3-linux-arm64": (
+                "efa9813da5ed72423bf847f916e8d2c47c0d776add972354026a75e10da9aa21", 41_786_424,
+                "https://github.com/oven-sh/bun/releases/download/bun-v1.4.3/bun-linux-aarch64.zip",
+                ("github.com", "release-assets.githubusercontent.com")),
+            "application-bun-1.4.3-license": (
+                "056696884250b0d682365260cf1487a6501b1665a343ec60e23a1e647043c572", 5_807,
+                "https://raw.githubusercontent.com/oven-sh/bun/c6da4a4d3010e5553438c60f6bd76d981976867c/LICENSE.md",
+                ("raw.githubusercontent.com",)),
+        }
+        for artifact_id, (digest, size, url, hosts) in toolchains.items():
+            spec = catalog.artifacts[artifact_id]
+            self.assertEqual((spec.sha256, spec.size_bytes, spec.max_bytes, spec.source_url),
+                             (digest, size, size, url))
+            self.assertEqual(spec.redirect_hosts, hosts)
+            self.assertIsNone(spec.archive_format)
+            self.assertEqual(spec.tree_files, ())
 
     def test_signed_coral_package_set_binds_only_enrolled_source_runtime_and_two_wheels(self):
         seed = Path(__file__).parents[2] / "src/hermes_installer/authority/artifact-catalog.json"

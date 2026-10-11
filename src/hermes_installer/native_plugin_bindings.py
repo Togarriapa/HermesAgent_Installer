@@ -22,6 +22,7 @@ import json
 import math
 import re
 import time
+from types import MappingProxyType
 from typing import Protocol
 
 
@@ -31,7 +32,25 @@ _SHA256 = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
 _OPERATION = re.compile(r"plugin\.([A-Za-z0-9][A-Za-z0-9_.-]{0,127})\.([a-z][A-Za-z0-9_.-]{0,95})\Z", re.ASCII)
 _MAX_ADAPTERS = 692
 _MAX_RESOLVER_BYTES = 2 * 1024 * 1024
+_MAX_PROCESS_ROLE_RECORDS = 256
 _MAX_BINDING_LEASE_SECONDS = 600.0
+_OWNER_FIELDS = frozenset({
+    "registration_id", "method", "operation", "capability", "target_id", "recipient",
+    "effect_enrollment_id", "profile_id", "profile_generation", "principal_id", "namespace_id",
+    "package_id", "package_generation", "argument_schema_id", "argument_schema_sha256",
+    "argument_schema_receipt_handle", "result_schema_id", "result_schema_sha256",
+    "result_schema_receipt_handle", "handler_artifact_id", "handler_sha256",
+    "handler_source_receipt_handle", "profile_view_selection_handle", "profile_view_receipt_handle",
+    "data_root_selection_handle", "data_root_receipt_handle", "target_selection_handle",
+    "target_receipt_handle", "prepared_source_observer_selection_handle",
+    "source_observer_enrollment_ids", "process_role_id", "source_issuer_id",
+})
+_OWNER_METHODS = {
+    "resource-overlay-store:tool:resource_overlay_read": ("read", "plugin.resource-overlay-store.read"),
+    "resource-overlay-store:tool:resource_overlay_history": ("history", "plugin.resource-overlay-store.read"),
+    "resource-overlay-store:tool:resource_overlay_write": ("write", "plugin.resource-overlay-store.write"),
+    "resource-overlay-store:tool:resource_overlay_delete": ("delete", "plugin.resource-overlay-store.write"),
+}
 
 
 class NativePluginBindingUnavailable(PermissionError):
@@ -68,6 +87,70 @@ class SelectedPluginEffect:
     target_id: str
     recipient: str | None
     generation: str
+
+
+@dataclass(frozen=True, slots=True)
+class SelectedOwnerOverlayOperation:
+    """One root-published local CAS source join; never a backend action row."""
+
+    registration_id: str
+    method: str
+    operation: str
+    capability: str
+    target_id: str
+    effect_enrollment_id: str
+    profile_id: str
+    profile_generation: str
+    principal_id: str
+    namespace_id: str
+    package_id: str
+    package_generation: str
+    argument_schema_id: str
+    argument_schema_sha256: str
+    argument_schema_receipt_handle: str
+    result_schema_id: str
+    result_schema_sha256: str
+    result_schema_receipt_handle: str
+    row: Mapping[str, object]
+
+
+def _owner_overlay_from_wire(raw: object, *, package_id: str,
+                             profile_id: str,
+                             package_generation: str) -> SelectedOwnerOverlayOperation:
+    if not isinstance(raw, Mapping) or set(raw) != _OWNER_FIELDS:
+        raise NativePluginBindingUnavailable("root owner-overlay row has missing or extra fields")
+    registration = raw.get("registration_id")
+    fixed = _OWNER_METHODS.get(registration) if isinstance(registration, str) else None
+    refs = ("target_id", "effect_enrollment_id", "profile_id", "profile_generation", "principal_id",
+            "namespace_id", "package_id", "argument_schema_id", "argument_schema_receipt_handle",
+            "result_schema_id", "result_schema_receipt_handle", "handler_artifact_id",
+            "handler_source_receipt_handle", "profile_view_selection_handle", "profile_view_receipt_handle",
+            "data_root_selection_handle", "data_root_receipt_handle", "target_selection_handle",
+            "target_receipt_handle", "prepared_source_observer_selection_handle", "process_role_id",
+            "source_issuer_id")
+    digests = ("argument_schema_sha256", "result_schema_sha256", "handler_sha256")
+    observers = raw.get("source_observer_enrollment_ids")
+    if (fixed is None or (raw.get("method"), raw.get("operation")) != fixed
+            or raw.get("capability") != "plugin:resource-overlay-store" or raw.get("recipient") is not None
+            or raw.get("package_id") != package_id or raw.get("profile_id") != profile_id
+            or raw.get("package_generation") != package_generation
+            or any(not isinstance(raw.get(key), str) or not raw[key] or len(raw[key]) > 256 for key in refs)
+            or any(not isinstance(raw.get(key), str) or not _SHA256.fullmatch(raw[key]) for key in digests)
+            or not isinstance(observers, (list, tuple)) or not observers
+            or any(not isinstance(item, str) or not item for item in observers)
+            or list(observers) != sorted(set(observers))):
+        # Incomplete source/data-root/target joins are pending and must not
+        # appear as a loadable owner operation.
+        raise NativePluginBindingUnavailable("root owner-overlay row lacks a complete current source join")
+    return SelectedOwnerOverlayOperation(
+        registration, fixed[0], fixed[1], raw["capability"], raw["target_id"],
+        raw["effect_enrollment_id"], raw["profile_id"], raw["profile_generation"],
+        raw["principal_id"], raw["namespace_id"], package_id, package_generation,
+        raw["argument_schema_id"], raw["argument_schema_sha256"],
+        raw["argument_schema_receipt_handle"], raw["result_schema_id"],
+        raw["result_schema_sha256"], raw["result_schema_receipt_handle"],
+        MappingProxyType(dict(raw)),
+    )
 
 
 class SelectedPluginEffectsResolver(Protocol):
@@ -165,7 +248,9 @@ def _effect_from_wire(raw: object, *, package_generation: str) -> SelectedPlugin
 class RootSelectedPluginEffects:
     """Validated immutable projection from one active root package binding."""
 
-    __slots__ = ("_binding", "_profile_id", "_effects", "_clock")
+    __slots__ = ("_binding", "_profile_id", "_effects", "_clock",
+                 "_process_role_records_sha256", "_process_role_records",
+                 "_owner_overlay_operations")
 
     def __init__(self, authority: NativePackageAuthority, *, clock=time.monotonic) -> None:
         bind = getattr(authority, "bind_selected_native_package", None)
@@ -187,12 +272,16 @@ class RootSelectedPluginEffects:
             raise NativePluginBindingUnavailable("root native package binding is unavailable") from None
         if not isinstance(raw, Mapping) or set(raw) != {
             "schema", "package_id", "profile_id", "generation",
-            "resolver_sha256", "adapters",
+            "resolver_sha256", "process_role_records_sha256", "adapters",
+            "owner_overlay_operation_records",
         }:
             raise NativePluginBindingUnavailable("root returned an invalid native package resolver")
         try:
             digest_preimage = {
-                key: raw[key] for key in ("schema", "package_id", "profile_id", "generation", "adapters")
+                key: raw[key] for key in (
+                    "schema", "package_id", "profile_id", "generation",
+                    "process_role_records_sha256", "adapters", "owner_overlay_operation_records",
+                )
             }
             canonical_resolver = json.dumps(
                 digest_preimage, ensure_ascii=False, sort_keys=True,
@@ -203,12 +292,15 @@ class RootSelectedPluginEffects:
         if (not canonical_resolver or len(canonical_resolver) > _MAX_RESOLVER_BYTES
                 or hashlib.sha256(canonical_resolver).hexdigest() != raw["resolver_sha256"]):
             raise NativePluginBindingUnavailable("root resolver digest or byte bound is invalid")
+        process_role_digest = raw["process_role_records_sha256"]
         if (type(raw["schema"]) is not int or raw["schema"] != 1
                 or _valid_id(raw["package_id"], "resolver package ID") != binding.package_id
                 or _valid_id(raw["generation"], "resolver generation") != binding.generation
                 or not isinstance(raw["resolver_sha256"], str)
                 or raw["resolver_sha256"] != binding.resolver_digest
-                or not _SHA256.fullmatch(raw["resolver_sha256"])):
+                or not _SHA256.fullmatch(raw["resolver_sha256"])
+                or not isinstance(process_role_digest, str)
+                or not _SHA256.fullmatch(process_role_digest)):
             raise NativePluginBindingUnavailable("root resolver does not match its package binding")
         profile_id = _valid_id(raw["profile_id"], "resolver profile ID")
         if profile_id != binding.profile_id:
@@ -228,10 +320,24 @@ class RootSelectedPluginEffects:
             if previous != identity:
                 raise NativePluginBindingUnavailable("root resolver splits one adapter across source digests")
             effects[key] = effect
+        owner_rows = raw["owner_overlay_operation_records"]
+        if not isinstance(owner_rows, list) or len(owner_rows) > 4:
+            raise NativePluginBindingUnavailable("root owner-overlay lane exceeds its fixed bound")
+        owner_ids = [row.get("registration_id") if isinstance(row, Mapping) else None
+                     for row in owner_rows]
+        if owner_ids != sorted(owner_ids) or len(set(owner_ids)) != len(owner_ids):
+            raise NativePluginBindingUnavailable("root owner-overlay lane is not uniquely ordered")
+        owner_operations = tuple(_owner_overlay_from_wire(
+            row, package_id=binding.package_id, profile_id=binding.profile_id,
+            package_generation=binding.generation)
+            for row in owner_rows)
         self._binding = binding
         self._profile_id = profile_id
         self._effects = effects
         self._clock = clock
+        self._process_role_records_sha256 = process_role_digest
+        self._process_role_records: tuple[Mapping[str, object], ...] = ()
+        self._owner_overlay_operations = owner_operations
 
     @property
     def package_id(self) -> str:
@@ -268,10 +374,57 @@ class RootSelectedPluginEffects:
         return self._binding.entrypoint_sha256
 
     @property
+    def process_role_records(self) -> tuple[Mapping[str, object], ...]:
+        """Root-pinned role selection from the verified mounted entrypoint manifest.
+
+        This is loader metadata only. Root custody independently joins every
+        emitted import origin to the active role record and current process.
+        """
+        self._require_live()
+        return self._process_role_records
+
+    @property
+    def process_roles(self) -> tuple[Mapping[str, object], ...]:
+        """Loader-facing alias for the verified selected role record tuple."""
+        return self.process_role_records
+
+    @property
+    def process_role_records_sha256(self) -> str:
+        self._require_live()
+        return self._process_role_records_sha256
+
+    def _accept_verified_process_role_records(
+        self, rows: tuple[Mapping[str, object], ...], digest: str,
+    ) -> None:
+        """Attach rows only after the pinned manifest and closure were verified."""
+        self._require_live()
+        if (not isinstance(rows, tuple) or not 1 <= len(rows) <= _MAX_PROCESS_ROLE_RECORDS
+                or digest != self._process_role_records_sha256):
+            raise NativePluginBindingUnavailable("native process-role selection is unavailable")
+        if self._process_role_records:
+            if self._process_role_records != rows:
+                raise NativePluginBindingUnavailable("native process-role selection changed during its lease")
+            return
+        self._process_role_records = rows
+
+    @property
     def adapter_rows(self) -> tuple[SelectedPluginEffect, ...]:
         """Immutable presentation rows; effect authority is re-resolved per call."""
         self._require_live()
         return tuple(self._effects.values())
+
+    @property
+    def owner_overlay_operations(self) -> tuple[SelectedOwnerOverlayOperation, ...]:
+        """Complete local CAS joins kept separate from backend action rows."""
+        self._require_live()
+        return self._owner_overlay_operations
+
+    def resolve_owner_overlay(self, registration_id: str) -> SelectedOwnerOverlayOperation | None:
+        self._require_live()
+        if not isinstance(registration_id, str):
+            return None
+        return next((row for row in self._owner_overlay_operations
+                     if row.registration_id == registration_id), None)
 
     def resolve(self, adapter_id: str, action_id: str) -> SelectedPluginEffect | None:
         self._require_live()

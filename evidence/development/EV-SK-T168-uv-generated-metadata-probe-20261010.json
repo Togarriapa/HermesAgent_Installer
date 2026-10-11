@@ -1,0 +1,177 @@
+{
+  "acceptance_record_emitted": false,
+  "claim_limit": "Controlled file-format method probe only. The project wheel was a tiny synthetic offline fixture that duplicated exact upstream entry-point metadata; no Browser Use package code was built or installed, no production authority receipt was issued, and no qualification/acceptance is claimed.",
+  "commands": {
+    "complete_stdout_bytes": 2536,
+    "complete_stdout_file": "output/container-observation-final.txt",
+    "complete_stdout_sha256": "92e31067d08c310f720c4002c42a3700cabf38b648da727ee0017422e025b571",
+    "environment": {
+      "ALL_PROXY": "",
+      "HTTPS_PROXY": "",
+      "HTTP_PROXY": "",
+      "NO_PROXY": "*",
+      "PATH": "/run/hermes-installer/build/work/application/empty-path",
+      "PYTHONNOUSERSITE": "1",
+      "UV_DEFAULT_INDEX": "https://invalid.invalid/disabled",
+      "UV_INDEX_URL": "https://invalid.invalid/disabled",
+      "UV_NO_CONFIG": "1",
+      "UV_NO_PROGRESS": "1",
+      "UV_OFFLINE": "1",
+      "UV_PYTHON": "/opt/pm/python/bin/python3.14",
+      "UV_PYTHON_DOWNLOADS": "never"
+    },
+    "uv_pip_install": [
+      "/opt/uv",
+      "pip",
+      "install",
+      "--no-deps",
+      "--require-hashes",
+      "--offline",
+      "--no-index",
+      "--find-links",
+      "/run/hermes-installer/build/work/application/project-wheelhouse",
+      "--python",
+      "/run/hermes-installer/build/work/application/runtime-env/bin/python",
+      "-r",
+      "/run/hermes-installer/build/work/application/project-requirement.txt"
+    ],
+    "uv_venv": [
+      "/opt/uv",
+      "venv",
+      "--offline",
+      "--no-project",
+      "--no-seed",
+      "--python",
+      "/opt/pm/python/bin/python3.14",
+      "/run/hermes-installer/build/work/application/runtime-env"
+    ]
+  },
+  "console_scripts": [
+    {
+      "bytes_utf8": "#!/run/hermes-installer/build/work/application/runtime-env/bin/python\n# -*- coding: utf-8 -*-\nimport sys\nfrom browser_use.cli import main\nif __name__ == \"__main__\":\n    if sys.argv[0].endswith(\"-script.pyw\"):\n        sys.argv[0] = sys.argv[0][:-11]\n    elif sys.argv[0].endswith(\".exe\"):\n        sys.argv[0] = sys.argv[0][:-4]\n    sys.exit(main())\n",
+      "name": "browser-use",
+      "path": "work3/application/runtime-env/bin/browser-use",
+      "sha256": "14e2db145b6a3b8806ba53a3c63ab9fbd9cf0d0de704a42b489f47c36af7fe5c",
+      "size_bytes": 348
+    },
+    {
+      "bytes_utf8": "#!/run/hermes-installer/build/work/application/runtime-env/bin/python\n# -*- coding: utf-8 -*-\nimport sys\nfrom browser_use.cli import main\nif __name__ == \"__main__\":\n    if sys.argv[0].endswith(\"-script.pyw\"):\n        sys.argv[0] = sys.argv[0][:-11]\n    elif sys.argv[0].endswith(\".exe\"):\n        sys.argv[0] = sys.argv[0][:-4]\n    sys.exit(main())\n",
+      "name": "browseruse",
+      "path": "work3/application/runtime-env/bin/browseruse",
+      "sha256": "14e2db145b6a3b8806ba53a3c63ab9fbd9cf0d0de704a42b489f47c36af7fe5c",
+      "size_bytes": 348
+    },
+    {
+      "bytes_utf8": "#!/run/hermes-installer/build/work/application/runtime-env/bin/python\n# -*- coding: utf-8 -*-\nimport sys\nfrom browser_use.cli import main\nif __name__ == \"__main__\":\n    if sys.argv[0].endswith(\"-script.pyw\"):\n        sys.argv[0] = sys.argv[0][:-11]\n    elif sys.argv[0].endswith(\".exe\"):\n        sys.argv[0] = sys.argv[0][:-4]\n    sys.exit(main())\n",
+      "name": "bu",
+      "path": "work3/application/runtime-env/bin/bu",
+      "sha256": "14e2db145b6a3b8806ba53a3c63ab9fbd9cf0d0de704a42b489f47c36af7fe5c",
+      "size_bytes": 348
+    },
+    {
+      "bytes_utf8": "#!/run/hermes-installer/build/work/application/runtime-env/bin/python\n# -*- coding: utf-8 -*-\nimport sys\nfrom browser_use.cli import main\nif __name__ == \"__main__\":\n    if sys.argv[0].endswith(\"-script.pyw\"):\n        sys.argv[0] = sys.argv[0][:-11]\n    elif sys.argv[0].endswith(\".exe\"):\n        sys.argv[0] = sys.argv[0][:-4]\n    sys.exit(main())\n",
+      "name": "browser",
+      "path": "work3/application/runtime-env/bin/browser",
+      "sha256": "14e2db145b6a3b8806ba53a3c63ab9fbd9cf0d0de704a42b489f47c36af7fe5c",
+      "size_bytes": 348
+    },
+    {
+      "bytes_utf8": "#!/run/hermes-installer/build/work/application/runtime-env/bin/python\n# -*- coding: utf-8 -*-\nimport sys\nfrom browser_use.cli import browser_use_tui_main\nif __name__ == \"__main__\":\n    if sys.argv[0].endswith(\"-script.pyw\"):\n        sys.argv[0] = sys.argv[0][:-11]\n    elif sys.argv[0].endswith(\".exe\"):\n        sys.argv[0] = sys.argv[0][:-4]\n    sys.exit(browser_use_tui_main())\n",
+      "name": "browser-use-tui",
+      "path": "work3/application/runtime-env/bin/browser-use-tui",
+      "sha256": "b2c2e949402499607d42925d48a808b3804a6ba7e36b686783963f7a5a03d38b",
+      "size_bytes": 380
+    }
+  ],
+  "evidence_id": "EV-SK-T168-UV-VENV-WRAPPER-FORMAT-20261010",
+  "fixture": {
+    "dependency_count": 0,
+    "dependency_or_provider_model_downloads": 0,
+    "network_fetches_during_container_run": 0,
+    "wheel_filename": "uv_console_wrapper_probe-0.0.1-py3-none-any.whl",
+    "wheel_installed": true,
+    "wheel_purpose": "Tiny local wheel containing a minimal browser_use.cli module and the exact five console-script names/callables from pinned upstream project metadata, solely to measure uv file generation. It is not the Browser Use project wheel.",
+    "wheel_sha256": "f4d8646fb828e802b519d66540a71ef7f1135dbcf4925b390f1356cbfa0a1f4c",
+    "wheel_size_bytes": 1545
+  },
+  "interpretation": {
+    "observed_generated_wrapper_format": "#!/<fresh build work root>/runtime-env/bin/python followed by encoding comment, import sys, source `from module import callable`, main guard, then two sys.argv[0].endswith branches for -script.pyw and .exe and sys.exit(callable()).",
+    "pyvenv_finite_fields": "Observed only five ordered keys above. Home records selected PM base interpreter bin path. No command key was emitted. Any home relocation must replace only this measured exact home value with the selected final PM runtime bin path, preserving other exact values and LF format.",
+    "relocation_helper_current_result": "Current helper accepts the fixed build-interpreter shebang then rejects the generated browser-use body with RuntimeRelocationError: selected console script differs from its source-owned entrypoint."
+  },
+  "not_observed": [
+    "real Browser Use source-built wheel",
+    "complete dependency installation",
+    "production setup session or TTY choice",
+    "PM root artifact receipt/CAS",
+    "root runtime preparation selection/final build grant",
+    "complete application archive or install",
+    "Browser Use runtime import/functional qualification",
+    "device acceptance"
+  ],
+  "pinned_source_metadata": {
+    "PM_overlay_pyproject_sha256": "7364254e748c9b74824d9b8de04dfcfabe5bcc0593e64b1610df686a27909435",
+    "application": "browser-use",
+    "entry_points": {
+      "browser": "browser_use.cli:main",
+      "browser-use": "browser_use.cli:main",
+      "browser-use-tui": "browser_use.cli:browser_use_tui_main",
+      "browseruse": "browser_use.cli:main",
+      "bu": "browser_use.cli:main"
+    },
+    "entry_points_sha256": "4db1de91dca6559dfd9347a8eb1e6c78a25c50b499d40f4e080ec2a5e7fce29e",
+    "lock_sha256": "51a998bc09c355b39ca5979a4ffd5e05fe3daf8b6d423151df4add75b83ffeb4",
+    "upstream_pyproject_sha256": "5a61c6cc0b66c5e51972c7deeabefe00cf9a8127d7408bdbf3e573bdaf582f87",
+    "upstream_revision": "c75e8476e26d18b7617643bc2ae082fae8eae431"
+  },
+  "probe_source": {
+    "artifact_catalog_row": "hermes-pm-python314-linux-arm64",
+    "catalog_archive_sha256": "30f1cc489be654477d895b441e196bb080738bf0456da82080ad4ab66a22d80f",
+    "catalog_archive_size_bytes": 95628137,
+    "catalog_url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260901/cpython-3.14.7+20260901-aarch64-unknown-linux-gnu-install_only.tar.gz",
+    "downloaded_archive_bytes": 95628137,
+    "downloaded_archive_sha256": "30f1cc489be654477d895b441e196bb080738bf0456da82080ad4ab66a22d80f",
+    "source_producer_checkout": "/private/tmp/hermes-pm-runtime-receipt",
+    "source_producer_commit": "7e4c9138b340fc9af88247a284daa1c7d0b072da",
+    "source_receipt_or_root_cas_handle": false,
+    "uv_artifact_id": "hermes-pm-uv-linux-arm64",
+    "uv_catalog_version": "0.12.3",
+    "uv_executable_bytes": 47339352,
+    "uv_executable_sha256": "20d0be6a6bd33f55e4ceb0e52ac2f733722b1a7959498e6401ecf84bc05e48a8",
+    "uv_observed_version": "uv 0.12.3 (aarch64-unknown-linux-gnu)"
+  },
+  "pyvenv_cfg": {
+    "bytes_utf8": "home = /opt/pm/python/bin\nimplementation = CPython\nuv = 0.12.3\nversion_info = 3.14.7\ninclude-system-site-packages = false\n",
+    "keys_ordered": [
+      "home",
+      "implementation",
+      "uv",
+      "version_info",
+      "include-system-site-packages"
+    ],
+    "observed_home": "/opt/pm/python/bin",
+    "observed_implementation": "CPython",
+    "observed_include_system_site_packages": "false",
+    "observed_uv": "0.12.3",
+    "observed_version_info": "3.14.7",
+    "path": "work3/application/runtime-env/pyvenv.cfg",
+    "sha256": "0f589f4040fec92c35552c7f4083a3a6ec3c2a0f9d501eee1b152acfe5a685d1",
+    "size_bytes": 122
+  },
+  "record_kind": "development_generated_runtime_metadata_probe",
+  "requirements": [
+    "SK-T168.1"
+  ],
+  "schema_version": 1,
+  "state": "measured_fixture_only",
+  "target": {
+    "claim_limit": "The interpreter bytes come from the catalog-pinned archive but were not issued or checked through the PM root artifact receipt/CAS protocol. This is not a PM runtime receipt or application environment.",
+    "container_image": "python:3.14.7-slim-bookworm",
+    "docker_network": "none",
+    "filesystem": "container root read-only; exact Python archive and uv executable mounted read-only; only fresh probe work root writable",
+    "observed_venv_interpreter": "3.14.7 aarch64 at /run/hermes-installer/build/work/application/runtime-env/bin/python",
+    "platform": "linux/arm64",
+    "privilege": "unprivileged container uid/gid matched to invoking host account",
+    "source_archive_interpreter": "/opt/pm/python/bin/python3.14"
+  }
+}

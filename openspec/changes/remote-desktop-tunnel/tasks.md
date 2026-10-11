@@ -45,3 +45,195 @@ Resource backend/remote role v4: plans/amendments/2026-10-09-resource-backend-re
 Resource DAG/remote setup joins v5 (HI13 / EV-HI13 and original remote setup tasks): see plans/amendments/2026-10-09-resource-dag-remote-setup-joins-v5.md and the live resource/native/assembly/remote contracts. Per-node protected joins and root-observed provenance are mandatory; existing implementation and target acceptance remain open.
 
 Private origin probe connector v11: plans/amendments/2026-10-09-private-origin-probe-connector-v11.md defines separate root-private typed issuer/consumer using exact existing HI12 payload/operation authority. Public RemoteSessionBinding/Access path unchanged; all HI13/remote target tasks remain open.
+
+Additive observation assembly v31: `plans/amendments/2026-10-09-final-observation-assembly-v31.md`; preserve existing task IDs and open target gates. Selected root registries/current custody receipts supply actual observations; static catalog or caller claims do not.
+
+Selected display/loopback startup v60: `plans/amendments/2026-10-10-selected-display-loopback-startup-v60.md`; existing task/acceptance gates remain open.
+
+Bootstrap CAS/selected start grants v65: `plans/amendments/2026-10-10-bootstrap-cas-selected-start-grants-v65.md`; existing task gates unchanged.
+
+Xpra root cookie v69: `plans/amendments/2026-10-10-xpra-root-cookie-source-refinement-v69.md`; actual selected patch/startup proof required and existing gates open.
+
+Active row joins v71: `plans/amendments/2026-10-10-memory-lifecycle-xpra-overlay-row-joins-v71.md`; existing task/target gates remain open, actual retained source/runtime receipts required.
+
+Xpra root overlay receipt API v73: `plans/amendments/2026-10-10-xpra-overlay-root-receipt-api-v73.md`; existing RT/HI tasks remain open pending actual source/runtime proof.
+
+Root-selected lifecycle authority v80: `plans/amendments/2026-10-10-root-selected-service-lifecycle-authority-v80.md`; existing HI/RT/SK tasks open, separate actual controller and selected subject proof required.
+
+Selected lifecycle stop canonical payload v85: `plans/amendments/2026-10-10-selected-lifecycle-stop-canonical-payload-v85.md`; existing HI-T09/HI-T13/SK-T01 remain open.
+
+Bootstrap action and derived store ownership v87: `plans/amendments/2026-10-10-bootstrap-action-derived-store-ownership-v87.md`; existing BD/HI/RB tasks remain open.
+
+Private loopback enforcement choice v97: `plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97.md`; existing original implementation/acceptance obligations remain open.
+
+Verified Xpra source pin v101: `plans/amendments/2026-10-10-xpra-verified-source-pin-v101.md`; exact source tree/finite links/actual transform and runtime proof required; no source-only acceptance or missing native-family waiver. Existing tasks open.
+
+Private loopback host tool pins v103: `plans/amendments/2026-10-10-private-loopback-host-tool-pins-v103.md`; finite actual package/executable/dependency/namespace proof, no source-only or target acceptance; existing tasks remain open.
+
+Host tool observation v105: `plans/amendments/2026-10-10-host-tool-observation-v105.md`; actual network-owned signed host package/held dependency producer required. Existing implementation and acceptance tasks remain open.
+
+Xpra managed transform v106: `plans/amendments/2026-10-10-xpra-managed-transform-v106.md`; finite managed target and actual PM/module/source/terminal/CAS receipts required. Existing HI-T09/HI-T13 implementation and acceptance remain open.
+
+Xpra regular source build pin v109: `plans/amendments/2026-10-10-xpra-regular-source-build-pin-v109.md`; exact module/source topology, file builder root and data output role. Existing managed proof/acceptance tasks open.
+
+Xpra link target source pin v111: `plans/amendments/2026-10-10-xpra-link-target-source-pin-v111.md`; final committed module and exact five link target byte hashes/sizes; managed proof/acceptance still required.
+
+Loopback inert kernel templates v122: `plans/amendments/2026-10-10-loopback-inert-kernel-templates-v122.md`; actual nft/namespace/subject and AC13..15 proof remain open.
+
+- [ ] HI-T122.1: network owner implement exact inert fallback invariant and retained typed root link/address/route/kernel/nft/subject proof.
+
+- [ ] HI-T122.2: kernel-capable isolated test proves known DOWN templates accepted only with actual nft/capability closure, UP/address/key/route/master/unknown/veth mutation denied. Missing privileges leaves test and live acceptance pending.
+
+- [ ] `HI-T180.4` Implement the exact owner/order/source-member/role and positive/failure evidence contract in `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`; source review does not close runtime or AC acceptance.
+
+- [ ] `HI-T180.5` Implement the exact owner/order/source-member/role and positive/failure evidence contract in `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`; source review does not close runtime or AC acceptance.
+
+
+Concrete remote runtime substrate v209: `plans/amendments/2026-10-10-concrete-remote-runtime-substrate-v209.md` and `planning/concrete-remote-runtime-substrate-v209.json`; source acquisition/build/materialized runtime are distinct; v202 outer schemas, namespace ports and sandbox/TLS remain unchanged. All implementation/target gates OPEN.
+
+- [ ] `RT-T209.1` Implement retained three-role runtime registry/current source-to-role projection and root factory join under v209; source pins and target acceptance remain pending.
+
+- [ ] `RT-T209.2` Implement actual locked Xpra native acquisition and fixed runnable managed builder under v209; source pins and target acceptance remain pending.
+
+- [ ] `RT-T209.3` Implement lock-derived npm acquisition, separate Electron ARM64 payload and upstream prepared AppDir builder under v209; source pins and target acceptance remain pending.
+
+- [ ] `RT-T209.4` Implement gateway locked component runtime/fixed driver builder and finite custody execution lane under v209; source pins and target acceptance remain pending.
+
+- [ ] `VD-T209.5` Verify actual source/build/CAS/materialization/role joins and specified substitution/expiry/cancel/sandbox failures under v209; source pins and target acceptance remain pending.
+
+
+Production remote role NSS/protected roots v212: `plans/amendments/2026-10-10-production-remote-role-nss-roots-v212.md` / `planning/production-remote-role-nss-roots-v212.json`; genuine three distinct accounts/current descriptors/journal/adoption, preserved foreign state and unchanged native-worker receipt. Finite v209 AppDir target fields corrected; source pins and all AC OPEN.
+
+- [ ] `RT-T212.1` Implement actual production remote role account/shared group/protected root issuer and current root-factory joins under v212; all target acceptance remains OPEN.
+
+- [ ] `RT-T212.2` Integrate exact current publisher adoption and manager-verified-dead journaled owned rollback under v212; all target acceptance remains OPEN.
+
+- [ ] `VD-T212.3` Exercise real isolated Linux NSS/root effects and current choice/receipt/adoption plus collision/replay/cleanup failure contracts under v212; all target acceptance remains OPEN.
+
+- [ ] RT-T222.1: Implement exact helddefinition/parser/source receipt and transactionrole selections.
+- [ ] RT-T222.2: Join actual212NSS/209runtime/network and strictactivepublication/adoption.
+- [ ] VD-T222.3: Verify source/choice/identity/currentness failures and actual target effects separately.
+
+
+Xpra native build acquisition v219: `plans/amendments/2026-10-10-xpra-native-build-acquisition-v219.md` / `planning/xpra-native-build-acquisition-v219.json`; owner implements actual signed native/PM314 backend/transform receipt producers, corrected fixed offline recipe and independent qualification. New source pins and all AC OPEN.
+
+- [ ] `RT-T219.1` Implement genuine signed native package and isolated CP314 Python backend acquisition/receipt producer under v219; all acceptance OPEN.
+
+- [ ] `RT-T219.2` Wire exact source/transform/PM/member/config joins and corrected offline native build/qualification under v219; all acceptance OPEN.
+
+- [ ] `VD-T219.3` Verify isolated ARM64 real build/session and specified signature/ABI/source/currentness/RPATH/cleanup failures under v219; all acceptance OPEN.
+
+
+Tested gateway source review v223: `plans/amendments/2026-10-10-tested-gateway-source-members-v223.md` / `planning/tested-gateway-source-members-v223.json`; exact tested leaf/schema pins, eighteen-member import closure, held libpython config and gateway-only lib64 link, separate synthetic-authority ARM64 fixture/production runtime/target evidence. All AC OPEN.
+
+- [ ] `RT-T223.1` Apply exact tested gateway source/schema tuples and complete runtime import/sourcegroup closure under v223; all runtime/target acceptance OPEN.
+
+- [ ] `RT-T223.2` Complete genuine current source/PM/wheel/native config/CAS/final-runtime joins and exact gateway-only directory-link policy under v223; all runtime/target acceptance OPEN.
+
+- [ ] `VD-T223.3` Verify real sealed source/build/materialization joins and specified source/ELF/link/currentness/fake-authority failures under v223; all runtime/target acceptance OPEN.
+
+
+## Current remote identity adoption v225
+
+- [ ] `RT-T225.1` Implement actual retained source projection, compiler member/core selectors and typed signed immutable existing transaction-journal adoption writer.
+- [ ] `RT-T225.2` Implement fresh active identity/private role observations and genuine current root network lease resolver under exact v225 APIs.
+- [ ] `VD-T225.3` Verify actual publication/journal restart joins and specified missing proof/replay/signature/currentness/NSS/kernel/cleanup failures; target acceptance OPEN.
+
+
+## Official Desktop native build inputs v226
+
+- [ ] `RT-T226.1` Implement actual current official header/native/signedARM64 sysroot source acquisition and held native input registry under v226.
+- [ ] `RT-T226.2` Complete actual offline ElectronABI node-pty/helpers, original workspace typecheck/build and prepared AppDir with independent ELF/PTY/sandbox observer.
+- [ ] `VD-T226.3` Verify real isolated ARM64 build and specified header/ABI/dependency/egress/degraded/currentness/link/sandbox/cancel failures; all target acceptance OPEN.
+
+
+- [ ] `VD-T225.3` Also test exact schema3 placement/legacy validator preservation and disabled absent/null/zero versus enabled complete-member representation; reject mixed states.
+
+
+## Pre-active Xpra acquisition and managed role plan v227
+
+- [ ] `RT-T227.1` Implement actual selected fixedHTTPS request/grant/native verifier/dynamic component sourceCAS producer and root binding.
+- [ ] `RT-T227.2` Implement actual preactive transform manager/CAS/independent overlay receipt and acyclic member/config/final input digest projections.
+- [ ] `RT-T227.3` Implement sealed exact managed role plan/current output-controller custody, fixed driver argv/mounts and role-specific caps under v227.
+- [ ] `VD-T227.4` Verify genuine setup acquisition/CAS/transform/input/manager joins and specified TLS/replay/foreign/closure/expiry/revocation/network/cleanup failures; all target acceptance OPEN.
+
+
+## Official Desktop ws typecheck repair v229
+
+- [ ] `RT-T229.1` Implement exact separately admitted auxiliary declaration receipt and owned disposable workspace projection without originalsource/lock edits.
+- [ ] `RT-T229.2` Run actual original ARM64 typecheck before/after and continue genuine v226 native/workspace/AppDir build.
+- [ ] `VD-T229.3` Verify exact archive/SRI/member/dependency/currentness/foreign conflict/API rejection and real original compiler effects; all target acceptance OPEN.
+
+
+## v234 Gateway digests and owned cleanup
+
+- [ ] RT-T234.1 Implement exact Gateway member/config/output/observer digest split; independently recheck ARM64 fixture.
+- [ ] RT-T234.2 Implement private reserved creation/cleanup journal and custody; remove only original owned resources after expiry/revocation.
+- [ ] VD-T234.3 Test digest mutations, foreign resources, nonempty members, missing tool and durable phase/CAS failure preservation.
+
+Contract: `plans/amendments/2026-10-10-gateway-digests-owned-network-cleanup-v234.md` and `planning/gateway-digests-owned-network-cleanup-v234.json`; all AC OPEN.
+
+
+## v237 Preactive native manager composition
+
+- [ ] RT-T237.1 Implement source-bound native setup-only handler/runner and session hook.
+- [ ] RT-T237.2 Wire actual root choice/concrete providers/preparation/complete aggregate and verified-dead cleanup.
+- [ ] VD-T237.3 Test empty prepared composition and wrong-owner/currentness/effect/cancellation/mount journal failures.
+
+Exact contract: `planning/preactive-native-build-manager-composition-v237.json`; all AC OPEN.
+
+
+## v238 Concrete Xpra source policy
+
+- [ ] RT-T238.1 Enroll concrete policy/keyring and exact closed dependency/license verifier.
+- [ ] RT-T238.2 Acquire/build actual offline PM314/native/HTML5/session closure and observe outputs.
+- [ ] VD-T238.3 Exercise signature/version/provider/qualifier/license/hash/CP313/lazy-path failures.
+
+Exact source contract: `planning/xpra-native-source-policy-v238.json`; all AC OPEN.
+
+
+- [ ] RT-T239.1: Retain genuine remote executor terminal proof and implement narrow remote CAS/attestation package issuer.
+- [ ] RT-T239.2: Materialize exact role package through current held data-root custody and issue v209/v202 runtime receipts for v225 adoption.
+- [ ] VD-T239.4: Verify terminal forgery, source/schema/root races, expiry, cross-role and owned rollback failures plus actual pipeline effect; target acceptance separate.
+- [ ] RT-T239.3: Issue same-transaction remote enrollment reservation and current source/NSS-derived private-network policy selection; wire exact v202 aggregate and separate v225 kernel lease.
+
+## v240 Measured Desktop headers and managed interface
+
+- [ ] RT-T240.1 Implement exact held headers and truthful upstream commit-build stamp wrapper.
+- [ ] RT-T240.2 Implement fixed Desktop driver and measured plan/output/current receipts.
+- [ ] VD-T240.3 Test source/stamp/ABI/digest/caps/link failures and actual offline ARM64 effects; all AC OPEN.
+
+Exact contract: `planning/official-desktop-measured-headers-managed-plan-v240.json`.
+
+
+## Gateway source and wheel issuer refinement v244
+
+- [ ] RT-T244.1 Implement fixed held release source receipt/member projection and reviewed exact source-member cohort.
+- [ ] RT-T244.2 Implement Gateway lock/PM/choice-bound bounded acquisition, license verification, immutable CAS and retained provider/source projection integration.
+- [ ] VD-T244.3 Exercise spoofed receipts, changed lock/source/PM, stale choice, cancellation, conflicting CAS, bounded dependency/license failure and genuine ARM64 production positives; target acceptance separately open.
+
+## v246 Acyclic source and active digest
+
+- [ ] RT-T246.1: Emit exact remote source schema2 without misleading generation component hash and bind adoption to actual active_service_generation_id/digest; preserve current genuine aggregate and prepared lineage.
+- [ ] RT-T246.2: Validate immutable schema2 published member and strict current source/core/claim/receipt/adoption full active generation joins, preserving v225 absent remote and schema3/schema4.
+- [ ] VD-T246.3: Verify genuine acyclic source-to-full-generation-to-adoption pipeline, prepared/component confusion, unrelated-row fullhash changes, tamper/restart/disabled failures; target acceptance OPEN.
+
+## v245 Xpra source graph and HTML5
+
+- [ ] RT-T245.1 Implement actual signed graph/private sysroot and independent single glibc transform observer.
+- [ ] RT-T245.2 Implement held official HTML5 acquisition/license/source-data install.
+- [ ] VD-T245.3 Test exact graph/hash/license/currentness failures and managed ARM64 HTML5 session; all AC OPEN.
+
+Exact contract: `planning/xpra-sysroot-html5-v245.json`.
+
+
+- [ ] BD-T259.1: Native official app visible — Inventory identified owned Pi/current Hermes/services/artifacts without secrets. Select actually verified official native ARM64 Desktop, reuse retained AppDir or official prebuilt if eligible. Manual owned MVP may use Debian-signed distro Xpra/Xvfb/component runtime as specified; preserve Hermes PM runtime and sandbox. Sole primary/default visible label Jarvis, preserve existing home/state/source IDs and internal work. Verify actual selected app window/input, never whole-host desktop.
+- [ ] PR-T259.2: Real chat — Use an actual already configured user-authorized private-capable supported provider/model/auth or genuine existing local runtime, with zero additional metered budget. Observe one harmless real chat response in official Desktop. Do not expose/duplicate credential, silently fallback to incompatible public/free route, download huge model, infer subscription entitlement or claim GLM/Coral acceptance from another model. Missing eligible auth/model reports exact required configuration before chat milestone.
+- [ ] RT-T259.3: OTP protected domain — Configure only owned account/zone tunnel/DNS/Access app/email OTP allowlist for confirmed hostname through existing scoped secret/reference workflow. Preserve unowned conflicts. Gateway exposes official selected app only on constrained loopback/session network; validate Access JWT before any assets/pixels/input and enforce active WebSocket expiry/revocation. Cloudflare management credential never enters cloudflared/Desktop; runtime uses verified protected tunnel token file. Gateway can use concrete root-owned manual stage config as specified without fabricated installer authority.
+- [ ] LC-T259.4: Owned durable restart — Install/reuse only actual owned sustained manual stage units/connector or genuinely ready managed lifecycle. Preserve existing services/config/credentials/memory and journal backups. Verify owned stop/start plus authorized daemon/Pi restart, OTP domain reconnect and harmless chat. Manual sustained service is separate from unchanged installer finite diagnostic/start grants, with actual current JWT/session/token/boot checks; no indefinite auth lease or foreign restart.
+- [ ] VD-T259.5: Verify correlated actual visible app/chat/OTP domain/durable restart milestones; preserve full baseline/deferred AC OPEN.
+
+
+### v259b implementation detail under existing MVP tasks
+
+RT-T259.3/LC-T259.4/VD-T259.5 additionally require the separate stage adapter, production-path JWT/one-use edge probe/current unit connector tests and actual bounded revocation/restart evidence. Existing checkboxes remain OPEN.

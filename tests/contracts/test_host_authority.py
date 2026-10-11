@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 import os
 import socket
 import stat
@@ -22,7 +25,7 @@ from hermes_installer.authority.service import (
     AuthorityService, ChildDelegationRule, EffectRule, PrincipalBinding,
 )
 from hermes_installer.authority.types import (
-    AuthorityDenied, EffectAuthorization, HostContext, NativeEventHandle,
+    AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, HostContext, NativeEventHandle,
     NativeResponseMetadata, NativeToolCallBinding, Sensitivity,
     canonical_bytes, canonical_digest,
 )
@@ -61,6 +64,26 @@ class ProfileLaunchEnvelopeContracts(unittest.TestCase):
                 )
 
 
+class SourceRecipientCeilingContracts(unittest.TestCase):
+    def test_derived_tool_result_can_only_keep_the_verified_parent_intersection(self):
+        first = SimpleNamespace(recipient_ceiling=frozenset({"private-a", "private-b"}))
+        second = SimpleNamespace(recipient_ceiling=frozenset({"private-b", "private-c"}))
+        self.assertEqual(
+            AuthorityService._source_recipient_ceiling("tool-result", (first, second)),
+            frozenset({"private-b"}),
+        )
+        empty_parent = SimpleNamespace(recipient_ceiling=frozenset())
+        self.assertEqual(
+            AuthorityService._source_recipient_ceiling("provider-result", (first, empty_parent)),
+            frozenset(),
+        )
+        # Other observed source kinds cannot inherit private egress authority.
+        self.assertEqual(
+            AuthorityService._source_recipient_ceiling("native-input", (first,)),
+            frozenset(),
+        )
+
+
 class FixturePolicy:
     revision = "fixture-17"
 
@@ -90,6 +113,7 @@ class AuthentikEffectScopeContracts(unittest.TestCase):
             issued_at_monotonic=10.0, monotonic_expires_at=40.0,
             nonce="nonce:a", grant_id="grant:a", signature="signed",
         )
+
 
     @staticmethod
     def _response(body):
@@ -531,6 +555,25 @@ class HostAuthorityIPCContracts(unittest.TestCase):
         )
         return context, grant, digest
 
+    def test_native_mcp_dispatch_accepts_safe_content_type_header(self):
+        class Dispatcher:
+            def __init__(self, service):
+                self.service = service
+
+            def dispatch_native_mcp(self, **_kwargs):
+                return {"status": 200, "body": b"{}",
+                        "headers": {"content-type": "application/json"},
+                        "receipt_id": "mcp-receipt"}
+
+        self.service.attach_native_mcp_dispatcher(Dispatcher(self.service))
+        result = self.service._dispatch_native_mcp(
+            os.getuid(), os.getpid(), 0,
+            {"schema": 1, "invocation_handle": "h" * 32,
+             "canonical_arguments_b64": base64.b64encode(b"{}").decode("ascii")},
+            cancelled=lambda: False,
+        )
+        self.assertEqual(result["headers"], {"content-type": "application/json"})
+
     def test_peer_uid_issues_signed_context_and_fixed_broker_performs_effect(self):
         context, grant, digest = self._context_and_grant()
         self.assertEqual(context.uid, os.getuid())
@@ -606,6 +649,58 @@ class HostAuthorityIPCContracts(unittest.TestCase):
 
 
 class NativeEventClientContracts(unittest.TestCase):
+    def test_native_mcp_dispatch_uses_only_lexical_handle_and_canonical_args(self):
+        import base64
+
+        binding = PrincipalBinding(1234, "principal:native", "profile:native", "namespace:native",
+                                   frozenset({"mcp:fixture:read"}))
+        calls = []
+        service = AuthorityService(
+            signing_key=b"m" * 32, key_id="native-mcp-dispatch-fixture",
+            bindings_by_uid={binding.uid: binding}, rules={}, handlers={},
+        )
+
+        class Dispatcher:
+            def __init__(self, authority):
+                self.service = authority
+
+            def dispatch_native_mcp(self, **kwargs):
+                calls.append(kwargs)
+                return BrokeredEffectResponse(200, b'{"result":"ok"}', {}, "receipt-1")
+
+        dispatcher = Dispatcher(service)
+        service.attach_native_mcp_dispatcher(dispatcher)
+        arguments = b'{"query":"hello"}'
+        payload = {
+            "schema": 1, "invocation_handle": "i" * 40,
+            "canonical_arguments_b64": base64.b64encode(arguments).decode("ascii"),
+        }
+        result = service._dispatch(binding.uid, 2345, 99, "native.mcp.dispatch", payload,
+                                   cancelled=lambda: False)
+        self.assertEqual(set(result), {"status", "body", "headers", "receipt_id"})
+        self.assertEqual(base64.b64decode(result["body"]), b'{"result":"ok"}')
+        self.assertEqual(calls, [{
+            "peer_uid": binding.uid, "peer_pid": 2345, "peer_pidfd": 99,
+            "invocation_handle": "i" * 40, "canonical_arguments": arguments,
+            "cancelled": unittest.mock.ANY,
+        }])
+        with self.assertRaises(AuthorityDenied):
+            service._dispatch(binding.uid, 2345, 99, "native.mcp.dispatch", {
+                **payload, "target": "caller-selected-target",
+            }, cancelled=lambda: False)
+
+        client = AuthorityClient(Path("/unused"), server_uid=0, timeout=2)
+        requests = []
+        client._rpc = lambda operation, request, **_kwargs: (
+            requests.append((operation, request)) or result
+        )
+        response = client.dispatch_native_mcp("i" * 40, arguments)
+        self.assertEqual(response.body, b'{"result":"ok"}')
+        self.assertEqual(requests[0][0], "native.mcp.dispatch")
+        self.assertEqual(set(requests[0][1]), {"schema", "invocation_handle", "canonical_arguments_b64"})
+        with self.assertRaises(AuthorityDenied):
+            client.dispatch_native_mcp("i" * 40, b'{ "query":"hello"}')
+
     def test_preparation_and_gateway_dispatch_are_distinct_fixed_rpcs(self):
         client = AuthorityClient(Path("/unused"), server_uid=0, timeout=2)
         client.monotonic = lambda: 50.0
@@ -766,7 +861,7 @@ class NativeEventClientContracts(unittest.TestCase):
                 return NativeResponseMetadata("p" * 40, (NativeToolCallBinding(
                     observed_call_handle="c" * 40, provider_tool_call_id="call_1",
                     tool_name="selected_tool", arguments_sha256="a" * 64,
-                ),))
+                ),), "t" * 40, "f" * 40)
 
         service = AuthorityService(
             signing_key=b"n" * 32, key_id="native-response-take-fixture",
@@ -777,7 +872,10 @@ class NativeEventClientContracts(unittest.TestCase):
                    "response_body_sha256": "b" * 64, "native_request_handle": "r" * 40}
         result = service._dispatch(binding.uid, 123, 8, "native.response.take", request,
                                    cancelled=lambda: False)
-        self.assertEqual(set(result), {"producer_context_handle", "tool_call_bindings"})
+        self.assertEqual(set(result), {"producer_context_handle", "tool_call_bindings",
+                                       "turn_handle", "final_response_delivery_handle"})
+        self.assertEqual(result["turn_handle"], "t" * 40)
+        self.assertEqual(result["final_response_delivery_handle"], "f" * 40)
         self.assertEqual(calls, [(binding.uid, 123, 8, "d" * 43, "b" * 64, "r" * 40)])
         client = AuthorityClient(Path("/unused"), server_uid=0)
         requests = []
@@ -960,6 +1058,176 @@ class AuthorityRestartReplayContracts(unittest.TestCase):
                 }, cancelled=lambda: False)
         self.assertEqual(handlers_called, [])
 
+
+class ActivePrincipalSelectionContracts(unittest.TestCase):
+    def _service(self, *, active_digest="a" * 64):
+        binding = PrincipalBinding(1234, "principal:active", "profile:active", "namespace:active",
+                                   frozenset({"profile-run"}))
+        return AuthorityService(
+            signing_key=b"p" * 32, key_id="active-principal-test",
+            bindings_by_uid={binding.uid: binding}, rules={}, handlers={},
+            profile_generations={binding.profile_id: "generation-7"},
+            service_generation_digest=active_digest,
+        ), binding
+
+    def test_profile_selector_requires_exact_root_runtime_catalog(self):
+        service, binding = self._service()
+        with self.assertRaises(AuthorityDenied):
+            service.resolve_current_active_principal_binding("profile:active")
+
+    def test_profile_selector_joins_exact_root_runtime_catalog(self):
+        from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
+
+        service, binding = self._service()
+        selected = SimpleNamespace(
+            profile_id=binding.profile_id, generation="generation-7",
+            service_uid=binding.uid, principal_id=binding.principal_id,
+            namespace_identity=binding.namespace_id,
+        )
+        catalog = SimpleNamespace(
+            digest="a" * 64,
+            resolve_profile_generation=lambda profile_id, generation: (
+                selected if (profile_id, generation) == (binding.profile_id, "generation-7")
+                else (_ for _ in ()).throw(ValueError("stale"))),
+        )
+        runtime = RootRuntimeBindings(
+            enrollment_catalog=catalog, build_catalog=None, device_catalog=None,
+            process_manager=None, effect_handlers={}, native_bridges={},
+            artifact_catalog=None, build_store=None, service_connector=None,
+            protected_principal_bindings=(binding,),
+        )
+        service.attach_root_runtime_bindings(runtime)
+        self.assertIs(service.resolve_current_active_principal_binding(binding.profile_id), binding)
+
+    def test_profile_selector_rejects_unknown_and_mutated_generation(self):
+        service, binding = self._service()
+        with self.assertRaises(AuthorityDenied):
+            service.resolve_current_active_principal_binding("profile:prepared-only")
+        service.profile_generations[binding.profile_id] = "generation-next"
+        with self.assertRaises(AuthorityDenied):
+            service.resolve_current_active_principal_binding(binding.profile_id)
+
+    def test_profile_selector_rejects_unactivated_service_generation(self):
+        service, binding = self._service(active_digest=None)
+        with self.assertRaises(AuthorityDenied):
+            service.resolve_current_active_principal_binding(binding.profile_id)
+
+
+class PublicInputPermissionBoundaryContracts(unittest.TestCase):
+    def test_public_source_bridge_rejects_untyped_caller_proofs_before_signing(self):
+        binding = PrincipalBinding(1234, "principal:public", "profile:public", "namespace:public",
+                                   frozenset({"plugin.web.read"}))
+        service = AuthorityService(
+            signing_key=b"v" * 32, key_id="public-input-boundary-test",
+            bindings_by_uid={binding.uid: binding}, rules={}, handlers={},
+            profile_generations={binding.profile_id: "generation-1"},
+            service_generation_digest="a" * 64,
+        )
+        with self.assertRaises(AuthorityDenied):
+            service.issue_public_input_source({
+                "sensitivity": "PUBLIC", "recipient_ceiling": ["public-web"],
+                "profile_id": binding.profile_id,
+            }, object())
+        self.assertEqual(service._source_receipt_handles, {})
+
+
+class RootSetupChoiceSignerContracts(unittest.TestCase):
+    def _service(self):
+        binding = PrincipalBinding(
+            1234, "principal:choice", "profile:choice", "namespace:choice",
+            frozenset({"plugin.web.read"}),
+        )
+        return AuthorityService(
+            signing_key=b"k" * 32, key_id="authority-key-choice-test",
+            bindings_by_uid={binding.uid: binding}, rules={}, handlers={},
+        )
+
+    def test_setup_choice_signer_requires_composed_live_root_runtime(self):
+        service = self._service()
+        with self.assertRaises(AuthorityDenied):
+            service.root_setup_choice_signer()
+        with self.assertRaises(AuthorityDenied):
+            service.root_choice_revocation_signer()
+
+    def test_setup_choice_signer_input_is_finite_canonical_json(self):
+        from hermes_installer.authority.service import _validate_setup_choice_record_bytes
+        from hermes_installer.authority.root_setup_choices import _RECORD_FIELDS
+
+        choice_payload = {"profile_id": "profile:choice", "route_ids": ["route:one"]}
+        choice_payload_bytes = json.dumps(
+            choice_payload, sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False, allow_nan=False,
+        ).encode("utf-8")
+        record = {
+            "schema": 1,
+            "selection_handle": "choice:one",
+            "purpose": "public-free-web-read",
+            "key_id": "authority-key-choice-test",
+            "release_deployment_receipt_sha256": "a" * 64,
+            "setup_session_handle": "setup:one",
+            "transaction_handle": "transaction:one",
+            "plan_id": "plan:one",
+            "prepared_generation": "generation:one",
+            "principal_selection_handle": "principal-selection:one",
+            "namespace_selection_handle": "namespace-selection:one",
+            "private_profile_selection_handle": None,
+            "source_member_receipt_handles": ["receipt:one"],
+            "choice_payload": choice_payload,
+            "choice_payload_sha256": hashlib.sha256(choice_payload_bytes).hexdigest(),
+            "choice_epoch": 1,
+            "revocation_epoch": 1,
+            "issued_at_unix": 1000.0,
+            "setup_deadline_unix": 1200.0,
+            "adoption_publication_receipt_handle": None,
+        }
+        self.assertEqual(set(record), _RECORD_FIELDS - {"signature"})
+        raw = json.dumps(record, sort_keys=True, separators=(",", ":"),
+                         ensure_ascii=False, allow_nan=False).encode("utf-8")
+
+        self.assertEqual(
+            _validate_setup_choice_record_bytes(
+                "public-free-web-read", raw, expected_key_id="authority-key-choice-test"), raw)
+        with self.assertRaises(AuthorityDenied):
+            _validate_setup_choice_record_bytes(
+                "public-free-web-read", raw, expected_key_id="another-key")
+        signed_row = dict(record, signature="a" * 64)
+        signed_bytes = json.dumps(signed_row, sort_keys=True, separators=(",", ":"),
+                                  ensure_ascii=False, allow_nan=False).encode("utf-8")
+        with self.assertRaises(AuthorityDenied):
+            _validate_setup_choice_record_bytes(
+                "public-free-web-read", signed_bytes,
+                expected_key_id="authority-key-choice-test")
+        for purpose, payload in (
+            ("unbounded-purpose", raw),
+            ("public-free-web-read", b'{ "purpose":"public-free-web-read","schema":1}'),
+            ("public-free-web-read", b'{"purpose":"public-free-web-read","purpose":"private-input-routes","schema":1}'),
+            ("public-free-web-read", b'{"value":NaN}'),
+        ):
+            with self.subTest(purpose=purpose, payload=payload):
+                with self.assertRaises(AuthorityDenied):
+                    _validate_setup_choice_record_bytes(purpose, payload)
+
+    def test_setup_choice_key_file_identity_is_rechecked(self):
+        binding = PrincipalBinding(
+            1234, "principal:key", "profile:key", "namespace:key",
+            frozenset({"plugin.web.read"}),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "authority.key"
+            key_path.write_bytes(b"x" * 32)
+            key_path.chmod(0o600)
+            service = AuthorityService.from_key_file(
+                key_path, key_id="authority-key-file-test",
+                expected_uid=os.geteuid(), bindings_by_uid={binding.uid: binding},
+                rules={}, handlers={},
+            )
+            service._verify_setup_choice_key_file_current()
+            replacement = Path(directory) / "replacement.key"
+            replacement.write_bytes(b"y" * 32)
+            replacement.chmod(0o600)
+            replacement.replace(key_path)
+            with self.assertRaises(AuthorityDenied):
+                service._verify_setup_choice_key_file_current()
 
 if __name__ == "__main__":
     unittest.main()

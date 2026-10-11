@@ -1,0 +1,108 @@
+{
+  "schema": 1,
+  "id": "candidate-update-source-review-v241",
+  "requirements": [
+    "R0029",
+    "R0055",
+    "R0148",
+    "R0151",
+    "R0153",
+    "R0172",
+    "R0190"
+  ],
+  "refines": [
+    "planning/predecessor-bound-candidate-update-v235.json"
+  ],
+  "tasks": [
+    "BD-T235.1",
+    "LC-T235.2",
+    "VD-T235.3"
+  ],
+  "source": {
+    "commit": "ae39993068be32f22629dd529c1d36e86584d59f",
+    "tree": "fa0e16d8f96769a5d80296344cf505a5ca773635",
+    "integrated_candidate_commit": "5e88247546cfa7d31ab7869223955095f9170a0a",
+    "integrated_candidate_tree": "f71b875fdc4b380ad7f314d24df40fa1c1dfd7e3",
+    "review": "Immutable committed source and exact final corrections independently inspected; only the three update modules, relevant tests and direct pin/recipe/catalog surfaces were reviewed. No other authority/remote cohort source pins approved."
+  },
+  "observed_module_bytes": [
+    {
+      "source_path": "src/hermes_installer/authority/installer_release_build.py",
+      "sha256": "be0f8d2bbd6983e9228e278410f7fe587c70cc741903422fa0c552f9648b5375",
+      "size_bytes": 305089,
+      "source_commit": "ae39993068be32f22629dd529c1d36e86584d59f",
+      "installed_member": "lib/python/hermes_installer/authority/installer_release_build.py",
+      "role": "module",
+      "mode": 292
+    },
+    {
+      "source_path": "src/hermes_installer/authority/installed_stage_publisher.py",
+      "sha256": "3c89d4b446dc17c68ec6be96f8e29ab4bab00cbb2e0d0f706c8cbeab484800fa",
+      "size_bytes": 67106,
+      "source_commit": "ae39993068be32f22629dd529c1d36e86584d59f",
+      "installed_member": "lib/python/hermes_installer/authority/installed_stage_publisher.py",
+      "role": "module",
+      "mode": 292
+    },
+    {
+      "source_path": "src/hermes_installer/root_setup.py",
+      "sha256": "34a5f30b6ef67d5a0ad8af7e2f4ae137c86957bcca2f4ca622aa301d20e4e74f",
+      "size_bytes": 67923,
+      "source_commit": "ae39993068be32f22629dd529c1d36e86584d59f",
+      "installed_member": "lib/python/hermes_installer/root_setup.py",
+      "role": "module",
+      "mode": 292
+    }
+  ],
+  "static_pin_update": {
+    "module_name": "hermes_installer.root_setup",
+    "source_path": "src/hermes_installer/root_setup.py",
+    "installed_artifact_id": "installer-module:hermes_installer.root_setup",
+    "installed_member": "lib/python/hermes_installer/root_setup.py",
+    "role": "module",
+    "mode": 292,
+    "old_sha256": "39344727837d85224fda7cc721f2ad75521271df6c6e18f8a2cf5bd9cd1beae0",
+    "old_size_bytes": 62989,
+    "sha256": "34a5f30b6ef67d5a0ad8af7e2f4ae137c86957bcca2f4ca622aa301d20e4e74f",
+    "size_bytes": 67923,
+    "tables": [
+      "src/hermes_installer/authority/installer_release_build.py::REVIEWED_SOURCE_MODULES",
+      "src/hermes_installer/authority/installer_release.py::REVIEWED_SOURCE_MODULES"
+    ]
+  },
+  "metadata": "installer_release_build and installed_stage_publisher are captured from actual verified candidate source/import closure. Their listed committed SHA/size are source-review observations, not new static pins. Applying the root_setup tuple changes structural builder/verifier bytes; final source capture measures those actual bytes, without self-pin or guessed future hash.",
+  "aliases": {
+    "native_worker_start_recipe": "No member tuple references any of these three update modules; no recipe literal or parent hash change is required.",
+    "artifact_catalog": "No existing downloaded catalog row references any of the three source paths; no catalog URL/version/hash/size/max_bytes or new artifact row is required.",
+    "closure": "Preserve actual full candidate source/tree/baseline/import/isolated interpreter and staged installed member verification; no source fallback."
+  },
+  "semantic_review": [
+    "Present verified predecessor and explicit current root UPDATE choice bind old pointer canonical bytes/identity/full retained closure before source acquisition. Fixed origin Git ancestry and source/tree/baseline/interpreter/actor/build checks precede present CAS; no staged directory or arbitrary argument selects an update.",
+    "Same-process source transition uses sealed memfd FD3 and strict journal/controller/PID start/TTY/boot/current deadline. New installed entry reobserves exact current installed candidate and owned update transaction; UPDATE argv alone cannot recreate FD authority.",
+    "Full afterpublication installed.verify_current, launcher role/member/open/hash/inode checks and fixed launcher exec are inside the update rollback boundary, not only FD3 issuance.",
+    "Pointer replacement, possible postrename parent fsync failure, readback and candidate verification are all inside owned conditional rollback. Before CAS old pointer is retained; after CAS rollback runs only if exact candidate pointer still belongs to this transaction.",
+    "Rollback verifies owned candidate pointer canonical bytes/hash/current inode and transaction fields, then independently fully verifies original retained predecessor closure. It does not require the failed candidate closure to remain healthy. Foreign or changed pointer is never overwritten.",
+    "Cold recovery scans at most512 exact owned transaction leaves, accepts one matching current candidate pointer in publication-prepared/pointer-published, validates real candidate and predecessor closures, and reconciles postCAS prepared phase using actual observed pointer. Multiple matches or unreadable/conflicting records deny; no newest record inference.",
+    "Cold adoption requires fresh current samecandidate UPDATE TTY selection, exact retained prior confirmation and reconfirmed current controller proof. Durable adoption binds the original transaction digest and fresh snapshot without modifying expired original fields or restoring old FD/seal. New one-use FD3 entry rejects stale adoption and foreign/replayed/expired descriptors.",
+    "FD3 allocation at descriptor3 survives descriptor transfer; failed recovery entry closes its issued FD3 before owned rollback. Other active service generation and data/credential/account state remain unchanged; runtime update adapter absent remains explicit pending."
+  ],
+  "evidence": {
+    "independent_host_tests": "45 passed on dedicated Python3.14: installed stage publisher and root setup contracts against exact ae399 source.",
+    "owner_arm64_tests": "Owner reports82 passed,2 skipped,1 expected stale source-pin test deselected; this is not an unexcluded suite pass. Root must run unexcluded coherent narrow candidate after authorized pin application.",
+    "partial_effect": "Injected error after actual os.replace exercises actual pointer rollback and durable rolled-back state; predecessor verification/typed admission are mocked in this bounded fixture, so it is filesystem/control-flow evidence only. Concurrent-pointer test preserves foreign bytes.",
+    "full_positive": "Genuine full old+candidate fixed-path closure/source/interpreter/publication/installed entry positive still unproven. Real Pi predecessor test required; no mocked receipt or ordinary exit/stdout is positive authority proof.",
+    "target": "Pi runtime/update/full installer acceptance remains OPEN."
+  },
+  "application": {
+    "owner": "Luna updater after root publishes this spec-only review",
+    "edits": "Only replace root_setup old SHA/size with the listed reviewed values in both existing module tables; leave IDs/path/role and unrelated tuples unchanged. No builder/publisher self-pin, recipe, catalog, parser or authority edits.",
+    "order": [
+      "Root verifies and publishes this separate source review",
+      "Luna applies exact two table literal replacements to the narrow candidate source",
+      "Root independently confirms leaf bytes and captures resulting structural metadata",
+      "Root runs full unexcluded suite/strict specs/baseline and actual isolated Pi update with genuine predecessor"
+    ],
+    "remaining": "BD-T235.1/LC-T235.2/VD-T235.3 remain OPEN for genuine positive, failures/crash recovery and target evidence. This source approval is not completion."
+  },
+  "acceptance": "All AC01..18 OPEN. Frozen baseline160/tag and earlier amendments unchanged; no runtime code, remote branch/push, source pin application, fabricated acceptance or broader cohort approval in this commit."
+}

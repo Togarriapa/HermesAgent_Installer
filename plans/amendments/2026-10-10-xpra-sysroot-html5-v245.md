@@ -1,0 +1,11 @@
+# v245 Xpra signed source graph, private sysroot and official HTML5
+
+Refines v219/v227/v238 for baseline R0028/R0035/R0037/R0203/R0204/R0211 and AC13..15. Exact contract: `planning/xpra-sysroot-html5-v245.json`. Frozen source policies remain unchanged.
+
+The actual diagnostic ARM64 PM314 build installed43 compiled extensions, but signed DEB sources contain3052 symlinks and41 hardlinks, glibc linker-script absolute paths require an isolated transformed sysroot, and pinned Xpra source has no HTML5 tree. Sol independently reopens all399 locked archives and exact origin link observations. The fixed private sysroot retains signed origins, bounded virtual-root resolution and conflict/escape/cycle checks; only one exact291-byte glibc script token is transformed to GNU ld sysroot notation. No ambient host/container /usr alias, package installation or source mutation.
+
+Official Xpra-org/xpra-html5 v20 resolves immutable5b8898a35ef54aa919cb847b352fe2469e78c5dd, measured normal-TLS archive2396584 bytes and source manifest. Its README permits the raw html5 folder; fixed source-data installation avoids the upstream installer's ambient JavaScript/font/background probes. MPL2 project license and bundled inventory are observed, but mixed third-party license proof remains required before a positive buildable closure. The whole source and link observations do not issue runtime authority.
+
+Luna Xpra owns genuine sysroot/HTML5 acquisition/currentness producers, fixed offline driver and independent output observer. RT-T245.1/.2 and VD-T245.3 remain open. Actual managed Xvfb/seamless Desktop/HTML5 session and native closure are required; all AC OPEN, no code cohort pin/Pi acceptance.
+
+Primary source: [official immutable Xpra HTML5 tree](https://github.com/Xpra-org/xpra-html5/tree/5b8898a35ef54aa919cb847b352fe2469e78c5dd), [pinned README](https://github.com/Xpra-org/xpra-html5/blob/5b8898a35ef54aa919cb847b352fe2469e78c5dd/README.md), [pinned license](https://github.com/Xpra-org/xpra-html5/blob/5b8898a35ef54aa919cb847b352fe2469e78c5dd/LICENSE). Source and observation members are registered in the live protected source catalog; candidate archive is acquisition policy, not runtime authority.

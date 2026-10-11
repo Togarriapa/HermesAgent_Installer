@@ -2351,7 +2351,1469 @@
       "RP-T02",
       "RP-T03",
       "RP-T04"
+    ],
+    "HI-T181.1": [],
+    "HI-T181.2": [
+      "HI-T181.1",
+      "HI-T180.3"
+    ],
+    "BD-T181.3": [
+      "HI-T181.1",
+      "HI-T181.2"
+    ],
+    "LC-T181.4": [
+      "BD-T181.3"
+    ],
+    "VD-T181.5": [
+      "HI-T181.2",
+      "BD-T181.3",
+      "LC-T181.4",
+      "HI-T180.5"
+    ],
+    "HI-T182.1": [],
+    "HI-T182.2": [
+      "HI-T182.1"
+    ],
+    "HI-T182.3": [
+      "HI-T182.2",
+      "HI-T180.5"
+    ],
+    "VD-T182.4": [
+      "HI-T182.3"
+    ],
+    "HI-T183.1": [
+      "HI-T183.0",
+      "HI-T186.1"
+    ],
+    "HI-T183.2": [
+      "HI-T183.1",
+      "HI-T182.2"
+    ],
+    "HI-T183.3": [
+      "HI-T181.1",
+      "HI-T180.3"
+    ],
+    "HI-T183.4": [
+      "HI-T183.3",
+      "HI-T183.2",
+      "HI-T182.3"
+    ],
+    "VD-T183.5": [
+      "HI-T183.1",
+      "HI-T183.2",
+      "HI-T183.3",
+      "HI-T183.4"
+    ],
+    "HI-T183.0": [],
+    "HI-T184.1": [
+      "HI-T183.1"
+    ],
+    "HI-T184.2": [
+      "HI-T184.1",
+      "HI-T182.2"
+    ],
+    "VD-T184.3": [
+      "HI-T184.1",
+      "HI-T184.2"
+    ],
+    "HI-T185.1": [
+      "HI-T183.3"
+    ],
+    "HI-T185.2": [
+      "HI-T185.1",
+      "HI-T183.4"
+    ],
+    "VD-T185.3": [
+      "HI-T185.1",
+      "HI-T185.2"
+    ],
+    "HI-T186.1": [
+      "HI-T183.0"
+    ],
+    "HI-T186.2": [
+      "HI-T186.1",
+      "HI-T183.1"
+    ],
+    "VD-T186.3": [
+      "HI-T186.1",
+      "HI-T186.2"
+    ],
+    "HI-T187.1": [
+      "HI-T186.1"
+    ],
+    "HI-T187.2": [
+      "HI-T187.1",
+      "HI-T186.2"
+    ],
+    "VD-T187.3": [
+      "HI-T187.1",
+      "HI-T187.2"
+    ],
+    "MC-R0101.1": [
+      "MC-F01",
+      "HI-T143.2"
+    ],
+    "MC-R0101.2": [
+      "MC-R0101.1"
+    ],
+    "MC-R0101.3": [
+      "MC-R0101.1"
+    ],
+    "MC-R0101.4": [
+      "MC-R0101.3"
+    ],
+    "BD-T203.1": [
+      "BD-T196.1"
+    ],
+    "VD-T203.2": [
+      "BD-T203.1"
     ]
   },
-  "note": "Change gates are integration readiness, not a reason to postpone independent fixture work; task edges define precise executable order. No unverified target claim."
+  "note": "Change gates are integration readiness, not a reason to postpone independent fixture work; task edges define precise executable order. No unverified target claim. v99: HI-T08 native candidate compilation consumes the source registration projection before HI-T11 dispatch; RB-T08 and MC-F01 retain their existing native/source/schema prerequisite edges. No active-before-assembly dependency introduced. v100: HI-T11 source issuance resolves current purpose-specific private input consent before any provider egress; existing HI-T12/PR-F03 grant checks retain all parent ceilings and current revocation. v101: HI-T09/HI-T13 selected display startup requires measured Xpra source plus actual transform/output/runtime receipts; source pin is not process readiness. v102: prepared source receipt precedes Resources profile selection/native assembly; active publication follows actual PM/materialization output receipts. Dispatch current consent check is non-consuming after ingress. v104: SK-F03 selected runtime qualification probe precedes active application runtime row; actual owned application manager terminal plus artifact validation precedes functional evidence. Existing HI selected launch prerequisites retained.",
+  "host_tool_observation_v105": "HI-T09/HI-T13 network-owned host_tool_observation.py actual installed package/dependency observation before nft launch; kernel proof pending and all AC open",
+  "xpra_managed_transform_v106": "HI-T09/HI-T13 actual PM/build/source/module/terminal/CAS before overlay runtime; build owner producer, remote patch receipt, acceptance pending",
+  "application_request_source_v107": "Actual root qualification producer -> v104 admission; no existing native mapping for four fixtures, original application/AC12 still open",
+  "private_memory_endpoint_v108": "Provider actual owned private text/embed endpoint/deployment/consent -> memory exact engine registry; existing lifecycle artifacts and semantic memory proof required, allACopen",
+  "xpra_regular_source_pin_v109": "Actual frozen transform source/regular topology/file builder/data role; managed proof and allAC pending",
+  "native_local_result_bounds_v110": "Actual eight local registration schema/handler/source joins; finance/wallet/web typedbackend result remains pending; all18 obligations unchanged",
+  "xpra_source_pin_v111": "Final source committed exact target-byte pins before managed transform; actual acceptance pending",
+  "native_local_schema_artifacts_v112": "Eight actual packaged schema files -> root artifact receipt/installed validator -> pre-active assembly -> active native registration; all18 acceptance open",
+  "protected_native_registration_records_v113": "Actual release source42 + source61 effect recipes/schema/observer selections -> staged exactarrays -> nativeoutput -> atomic activepublisher; bounded toolresults data not authority; all18open",
+  "native_schema_catalog_identity_v114": "Exact eight catalog-compatible IDs -> actual root artifact source receipts -> v113 staged registrations; no aliases/allACopen",
+  "prepared_build_service_selection_v115": "Actualrootprepared NSS/root/template subject -> selectedXpraBuild -> manager/attestation -> outputactivation; no active-beforebuild cycle/allACopen",
+  "pinned_runtime_redirect_v116": "Actual ARMbootstrap acquisition exactGitHub302policy -> pinnedsizeSHA CAS -> isolatedruntime/reexec; actualruntime/acceptance pending",
+  "preactive_application_source_v117": "Actualrootchoice/localpurposeconsent -> sourcefullmanifest/locks -> runtimeprobe -> receiptactivation -> actualfixture; noactivebeforeprepare/allACopen",
+  "native_policy_preparation_v137": "Actual root choice/current principal+namespace/component target/account/permission/source role/schema observations -> sealed staged61 action42 registration/workflow/role/observer definitions -> actual output receipts -> atomic active publication -> live imported-role/PIDFD observation; all18 acceptance open",
+  "public_input_web_permission_v138": "Actual configured finite web scope+PUBLIC captured input+purpose permission -> current recipient intersection -> genuine web transport/CAS/result; PRIVATE/UNKNOWN source ancestry always denied/allACopen",
+  "existing_model_source_v135_v139": "Actual inventory/upstreamMIT/quantizer declaration catalog observations+purpose private selector+held fixed existing-store/child -> every149 member source verification -> separately owned runtime/load/deploy; no weights download/embedding inference/allACopen",
+  "application_packages_v136": "Actual root qualification acquisition phase+source/lock/toolchain/platform+integrity/origin/license evidence -> scoped dynamic packageCAS/offline supported transport -> noneditable environment/probe -> qualification, not active-before-build/allACopen",
+  "source_join_producers_v178": {
+    "amendment": "plans/amendments/2026-10-10-source-join-producers-v178.md",
+    "audited_candidate": "6432d0495b8a416f72d3cdd1dd376c98a6e794f5",
+    "audited_factory": "9b9f7c37aceb40342df4d35182b53ef6e3c69fdb",
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN",
+    "order": {
+      "HI-T178.1": [
+        "current prepared source/schema/target/effect selections"
+      ],
+      "HI-T178.2": [
+        "current source handoff + official PM runtime + held fixture lease"
+      ],
+      "HI-T178.3": [
+        "HI-T178.2",
+        "measured descriptor/release receipts",
+        "separate observed service"
+      ],
+      "HI-T178.4": [
+        "current owner-overlay producer",
+        "HI-T178.1"
+      ],
+      "HI-T178.5": [
+        "HI-T178.1",
+        "HI-T178.3",
+        "HI-T178.4"
+      ]
+    }
+  },
+  "selected_native_executable_closure_v179": {
+    "amendment": "plans/amendments/2026-10-10-selected-native-executable-closure-v179.md",
+    "implementation_complete": true,
+    "target_acceptance_complete": false,
+    "order": [
+      "current choice/source/schema/owned target/effect",
+      "preactive declaration join",
+      "retained exact selected projector",
+      "five output assembler",
+      "separate loaded-process and live acceptance"
+    ],
+    "evidence": "docs/native-selected-source-composition-v179.md"
+  },
+  "reviewed_source_members_v180": {
+    "amendment": "plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md",
+    "source_pin_ledger": "planning/reviewed-source-pin-batch-v180.json",
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN",
+    "task_order": {
+      "HI-T180.1": [
+        "exact merged3a349c72 source member review"
+      ],
+      "SK-T180.2": [
+        "corrected builderc757aec merge",
+        "exact committed driver source review",
+        "HI-T180.1"
+      ],
+      "HI-T180.3": [
+        "HI-T180.1",
+        "genuine v172 source/view/schema/effect receipts"
+      ],
+      "HI-T180.4": [
+        "exact60cdf source review",
+        "actual native dependency observation"
+      ],
+      "HI-T180.5": [
+        "new measured helper source review",
+        "active installed helper-runtime/source receipt",
+        "same-worker-cgroup enforcement before app code"
+      ],
+      "VD-T180.6": [
+        "HI-T180.1",
+        "SK-T180.2",
+        "HI-T180.3",
+        "HI-T180.4",
+        "HI-T180.5"
+      ]
+    },
+    "fixture_phase_cycle": "HI-T178.2/HI-T179.2 remains open; no fabricated custody helper/source hashes"
+  },
+  "conditional_local_owner_setup_v181": {
+    "amendment": "plans/amendments/2026-10-10-conditional-authentik-local-owner-setup-v181.md",
+    "source_parent": "2bb743e6da07d51c6e6f670b4d93b1b335a71af9",
+    "baseline_requirements": [
+      "R0058",
+      "R0060",
+      "R0143"
+    ],
+    "owner": "GPT-6 Luna",
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN",
+    "identity_domains": [
+      "linux-local-owner-v1",
+      "existing-authentik-subject-domain"
+    ],
+    "local_resource_methods": [
+      "read",
+      "history",
+      "write",
+      "delete"
+    ],
+    "scope": "exact selected v172 owner-overlay rows only; text provider separately enrolled; no homelab/recipient/account authority inferred",
+    "tasks": {
+      "HI-T181.1": {
+        "description": "Observe genuine local owner and issue separate typed current principal/snapshot; retain strict Authentik receipt domain.",
+        "depends_on": [],
+        "implementation_complete": false,
+        "target_acceptance_complete": false
+      },
+      "HI-T181.2": {
+        "description": "Select finite local overlay capabilities and preserve identity domain through active policy/native publication/loaded invocation.",
+        "depends_on": [
+          "HI-T181.1",
+          "HI-T180.3"
+        ],
+        "implementation_complete": false,
+        "target_acceptance_complete": false
+      },
+      "BD-T181.3": {
+        "description": "Choose selected capabilities before credentials; implement genuine independent fresh local-owner setup entry point.",
+        "depends_on": [
+          "HI-T181.1",
+          "HI-T181.2"
+        ],
+        "implementation_complete": false,
+        "target_acceptance_complete": false
+      },
+      "LC-T181.4": {
+        "description": "Persist configure-later and resume independent readiness without identity-domain or ownership widening.",
+        "depends_on": [
+          "BD-T181.3"
+        ],
+        "implementation_complete": false,
+        "target_acceptance_complete": false
+      },
+      "VD-T181.5": {
+        "description": "Verify positive loaded local effects and privileged Authentik denial/revocation plus exact source pin handoff.",
+        "depends_on": [
+          "HI-T181.2",
+          "BD-T181.3",
+          "LC-T181.4",
+          "HI-T180.5"
+        ],
+        "implementation_complete": false,
+        "target_acceptance_complete": false
+      }
+    },
+    "source_pins": "pending exact committed implementation and Sol review; v180 pin ledger unchanged"
+  },
+  "active_network_generation_owner_v182": {
+    "amendment": "plans/amendments/2026-10-10-active-network-generation-owner-v182.md",
+    "parent_specification": "8aa90d161570e6ee14f15dafe65d1b31fb48621c",
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN",
+    "source_purpose": "native-policy-preparation only for first finite selected-worker lane",
+    "owner_type": "RootActiveNetworkGenerationOwner",
+    "constructor": "from_root_runtime(runtime: RootAuthorityRuntime)",
+    "projection_type": "RootActiveNetworkGenerationProjection",
+    "methods": [
+      "resolve_selected_worker(network_id,profile_id)",
+      "verify_current(projection)",
+      "close()"
+    ],
+    "registry_constructor": "RootActiveNetworkHelperRuntimeRegistry.from_root_runtime(runtime,generation_owner)",
+    "source_pins": "pending exact committed implementation, no uncommitted hash review",
+    "tasks": {
+      "HI-T182.1": {
+        "description": "Compile and publish finite signed-source/network/worker/enrollment projection.",
+        "depends_on": [],
+        "implementation_complete": false,
+        "target_acceptance_complete": false
+      },
+      "HI-T182.2": {
+        "description": "Own exact post-setup active generation, signed source/revocation and actor/key/journal revalidation.",
+        "depends_on": [
+          "HI-T182.1"
+        ],
+        "implementation_complete": false,
+        "target_acceptance_complete": false
+      },
+      "HI-T182.3": {
+        "description": "Consume current active owner projections through helper spawn/stop/release/reload cleanup.",
+        "depends_on": [
+          "HI-T182.2",
+          "HI-T180.5"
+        ],
+        "implementation_complete": false,
+        "target_acceptance_complete": false
+      },
+      "VD-T182.4": {
+        "description": "Exercise post-setup positive and CAS/revocation/kernel/cleanup failures; hand off exact source measurements.",
+        "depends_on": [
+          "HI-T182.3"
+        ],
+        "implementation_complete": false,
+        "target_acceptance_complete": false
+      }
+    }
+  },
+  "active_effect_producers_v183": {
+    "amendment": "plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md",
+    "parent_specification": "4820844431bbf9f6def67c0db517a44bfadd01f4",
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN",
+    "network_first_recipe": "native-owner-overlay-worker-v1; AF_UNIX only, real source adapter required",
+    "signed_choice_fields": [
+      "selected_worker_recipe_handles",
+      "selected_worker_recipe_digests",
+      "selected_worker_recipe_records"
+    ],
+    "active_output_records": [
+      "native_worker_runtime_records",
+      "owner_overlay_adoption_records",
+      "RootPublishedLocalOwnerAdoption"
+    ],
+    "local_methods": [
+      "read",
+      "history",
+      "write",
+      "delete"
+    ],
+    "source_pins": "pending actual committed changed sources, no future hashes",
+    "tasks": {
+      "HI-T183.1": {
+        "description": "Produce concrete held worker recipes, signed choice fields and generated service/process/network output.",
+        "depends_on": [
+          "HI-T183.0"
+        ],
+        "implementation_complete": false,
+        "target_acceptance_complete": false
+      },
+      "HI-T183.2": {
+        "description": "Reconstruct current active PM/native worker runtime member custody independently of setup.",
+        "depends_on": [
+          "HI-T183.1",
+          "HI-T182.2"
+        ],
+        "implementation_complete": false,
+        "target_acceptance_complete": false
+      },
+      "HI-T183.3": {
+        "description": "Publish signed tagged local-owner and exact overlay source/view/target/effect adoption.",
+        "depends_on": [
+          "HI-T181.1",
+          "HI-T180.3"
+        ],
+        "implementation_complete": false,
+        "target_acceptance_complete": false
+      },
+      "HI-T183.4": {
+        "description": "Implement independent active NSS/source/view/loaded invocation/grant four-method owner.",
+        "depends_on": [
+          "HI-T183.3",
+          "HI-T183.2",
+          "HI-T182.3"
+        ],
+        "implementation_complete": false,
+        "target_acceptance_complete": false
+      },
+      "VD-T183.5": {
+        "description": "Exercise real source/generated/loaded/current effects and failure evidence; exact committed source review.",
+        "depends_on": [
+          "HI-T183.1",
+          "HI-T183.2",
+          "HI-T183.3",
+          "HI-T183.4"
+        ],
+        "implementation_complete": false,
+        "target_acceptance_complete": false
+      },
+      "HI-T183.0": {
+        "description": "Audit held pinned Hermes startup/native loader and implement fixed reviewed root source recipe adapter; source pins pending.",
+        "depends_on": [],
+        "implementation_complete": false,
+        "target_acceptance_complete": false
+      }
+    }
+  },
+  "network_wire_v184": {
+    "amendment": "plans/amendments/2026-10-10-network-row-wire-digest-boundaries-v184.md",
+    "wire_contract": "planning/network-row-wire-v184.json",
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
+  },
+  "owner_observer_rpc_v185": {
+    "amendment": "plans/amendments/2026-10-10-owner-overlay-observer-capture-rpc-v185.md",
+    "wire_contract": "planning/owner-overlay-observer-wire-v185.json",
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
+  },
+  "preactive_listener_v186": {
+    "amendment": "plans/amendments/2026-10-10-preactive-authority-listener-custody-v186.md",
+    "wire_contract": "planning/preactive-authority-listener-wire-v186.json",
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
+  },
+  "listener_activation_v187": {
+    "amendment": "plans/amendments/2026-10-10-supervised-listener-activation-channel-v187.md",
+    "wire_contract": "planning/listener-activation-channel-v187.json",
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
+  },
+  "owner_result_and_native_execution_v188": {
+    "amendment": "plans/amendments/2026-10-10-owner-result-source-selector-v188.md",
+    "wire_contract": "planning/owner-result-source-selector-v188.json",
+    "order": [
+      "HI-T188.1 \u2192 VD-T188.2",
+      "HI-T188.3 \u2192 VD-T188.4"
+    ],
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
+  },
+  "committed_pm_executable_identity_v189": {
+    "amendment": "plans/amendments/2026-10-10-committed-pm-executable-identity-v189.md",
+    "wire_contract": "planning/committed-pm-executable-identity-v189.json",
+    "order": "HI-T189.1 \u2192 VD-T189.2",
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
+  },
+  "same_worker_namespace_v190": {
+    "amendment": "plans/amendments/2026-10-10-same-worker-namespace-handshake-v190.md",
+    "wire_contract": "planning/same-worker-namespace-handshake-v190.json",
+    "order": "HI-T190.1 \u2192 VD-T190.2",
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
+  },
+  "two_actor_health_v191": {
+    "amendment": "plans/amendments/2026-10-10-two-actor-health-commit-custody-v191.md",
+    "wire_contract": "planning/two-actor-health-custody-v191.json",
+    "order": [
+      "HI-T191.1",
+      "HI-T191.2",
+      "HI-T191.3",
+      "VD-T191.4"
+    ],
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
+  },
+  "native_worker_views_v192": {
+    "amendment": "plans/amendments/2026-10-10-native-worker-selected-view-paths-v192.md",
+    "wire_contract": "planning/native-worker-selected-view-paths-v192.json",
+    "order": "HI-T192.1 \u2192 VD-T192.2",
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
+  },
+  "native_worker_member_views_v193": {
+    "amendment": "plans/amendments/2026-10-10-native-worker-view-member-bind-custody-v193.md",
+    "wire_contract": "planning/native-worker-view-member-custody-v193.json",
+    "order": "HI-T193.1 \u2192 VD-T193.2",
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
+  },
+  "health_event_causal_ancestry_v194": {
+    "amendment": "plans/amendments/2026-10-10-health-event-causal-ancestry-v194.md",
+    "wire_contract": "planning/health-event-causal-ancestry-v194.json",
+    "order": [
+      "HI-T194.1",
+      "HI-T194.2",
+      "VD-T194.3"
+    ],
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
+  },
+  "final_coherent_source_review_v195": {
+    "amendment": "plans/amendments/2026-10-10-final-coherent-source-pin-review-v195.md",
+    "reference_commit": "0add8c3373642b3a96781a739db710471a34db68",
+    "tasks": [
+      "VD-T180.6",
+      "VD-T183.5"
+    ],
+    "source_review_complete": true,
+    "pin_application_complete": false,
+    "implementation_acceptance_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
+  },
+  "safe_bootstrap_diagnostics_v196": {
+    "amendment": "plans/amendments/2026-10-10-safe-bootstrap-diagnostics-source-review-v196.md",
+    "reference_commit": "fff388978141a027ddb036e94b4d08b2f5346116",
+    "tasks": {
+      "BD-T196.1": [
+        "BD-F02",
+        "HI-T149.1"
+      ],
+      "VD-T196.2": [
+        "BD-T196.1",
+        "VD-T180.6"
+      ]
+    },
+    "source_review_complete": true,
+    "pin_application_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
+  },
+  "installed_startup_qualification_custody_v197": {
+    "schema": 1,
+    "amendment": "plans/amendments/2026-10-10-installed-startup-qualification-custody-v197.md",
+    "source_audit_commit": "39f60361549e9c3e4c6baa8dc117fdb05a4f791f",
+    "startup_intent_schema": 1,
+    "startup_intent_purpose": "root-selected-startup-intent-v1",
+    "startup_intent_fields": [
+      "schema",
+      "purpose",
+      "intent_handle",
+      "nonce_sha256",
+      "activation_id",
+      "daemon_unit_id",
+      "daemon_invocation_id",
+      "setup_session_id",
+      "setup_actor_witness_sha256",
+      "bootstrap_transaction_handle",
+      "committed_transaction_id",
+      "generation_id",
+      "service_generation_digest",
+      "publication_receipt_handle",
+      "publication_sha256",
+      "remote_enrollment_id",
+      "remote_startup_row_sha256",
+      "network_enrollment_id",
+      "network_row_sha256",
+      "role_recipe_records_sha256",
+      "principal_binding_sha256",
+      "original_setup_deadline_monotonic",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "wire_frames": {
+      "startup-request": [
+        "schema",
+        "operation",
+        "intent_handle",
+        "intent_sha256",
+        "nonce"
+      ],
+      "startup-accepted": [
+        "schema",
+        "operation",
+        "intent_handle",
+        "intent_sha256"
+      ],
+      "startup-completed": [
+        "schema",
+        "operation",
+        "intent_handle",
+        "outcome_handle",
+        "outcome_sha256"
+      ]
+    },
+    "wire_max_bytes": 8192,
+    "wire_fd_count": 0,
+    "admission_sources": [
+      "setup-local:RootSetupSessionStore+RootSetupSessionHandle",
+      "daemon-delegated:RootDaemonSelectedStartupIntentRegistry+RootAcceptedSelectedStartupIntent",
+      "qualification-local:RootQualificationSessionStore+RootQualificationSessionHandle"
+    ],
+    "fixed_qualification_suites": [
+      "resource-cron-task-v1",
+      "display-xauthority-v1"
+    ],
+    "new_source_hashes": "pending actual committed producer bytes; no future pins",
+    "tasks": {
+      "HI-T197.1": [
+        "HI-T09",
+        "HI-T13",
+        "HI-T160.1"
+      ],
+      "HI-T197.2": [
+        "HI-T197.1"
+      ],
+      "HI-T197.3": [
+        "HI-T160.1",
+        "HI-T173.1",
+        "HI-T178.2"
+      ],
+      "VD-T197.4": [
+        "HI-T197.2",
+        "HI-T197.3",
+        "HI-T160.2"
+      ]
+    },
+    "implementation_complete": false,
+    "target_acceptance_complete": false,
+    "acceptance": "AC01..AC18 OPEN"
+  },
+  "finite_contract_clarifications": [
+    {
+      "amendment": "plans/amendments/2026-10-10-durable-xpra-startup-adoption-v198.md",
+      "tasks": [
+        "HI-T197.1",
+        "HI-T197.2",
+        "VD-T197.4"
+      ],
+      "acceptance": "OPEN"
+    },
+    {
+      "amendment": "plans/amendments/2026-10-10-setup-startup-and-fixture-source-producers-v199.md",
+      "tasks": [
+        "HI-T197.1",
+        "HI-T197.2",
+        "HI-T197.3",
+        "HI-T173.1",
+        "HI-T178.2",
+        "VD-T197.4"
+      ],
+      "acceptance": "OPEN"
+    },
+    {
+      "amendment": "plans/amendments/2026-10-10-fixed-release-store-source-review-v200.md",
+      "tasks": [
+        "HI-T149.1",
+        "VD-T196.2"
+      ],
+      "acceptance": "OPEN"
+    },
+    {
+      "amendment": "plans/amendments/2026-10-10-publication-core-and-fixture-acquisition-v201.md",
+      "tasks": [
+        "HI-T160.1",
+        "HI-T197.2",
+        "HI-T197.3",
+        "VD-T197.4"
+      ],
+      "acceptance": "OPEN"
+    },
+    {
+      "amendment": "plans/amendments/2026-10-10-selected-remote-role-source-inputs-v202.md",
+      "tasks": [
+        "HI-T160.1",
+        "HI-T197.2",
+        "VD-T197.4"
+      ],
+      "acceptance": "OPEN"
+    },
+    {
+      "amendment": "plans/amendments/2026-10-10-fixture-subject-nss-custody-v206.md",
+      "tasks": [
+        "HI-T173.1",
+        "HI-T178.2",
+        "HI-T197.3",
+        "VD-T197.4"
+      ],
+      "acceptance": "OPEN"
+    }
+  ],
+  "home_assistant_root_enrollment_mc_r0101": {
+    "contract": "planning/home-assistant-root-enrollment-contract.json",
+    "amendment": "plans/amendments/2026-10-10-home-assistant-root-enrollment-mc-r0101.md",
+    "tasks": [
+      "MC-R0101.1",
+      "MC-R0101.2"
+    ],
+    "acceptance": "All original R0101/MC-R0101 and AC remain open; fixture/current account evidence separate."
+  },
+  "home_assistant_assist_scope": {
+    "contract": "planning/home-assistant-assist-scope-contract.json",
+    "tasks": [
+      "MC-R0101.3",
+      "MC-R0101.4"
+    ],
+    "acceptance": "All open; genuine exposed resource/current safe read only."
+  },
+  "typed_bootstrap_runtime_diagnostics_v203": {
+    "contract": "planning/typed-bootstrap-runtime-diagnostics-v203.json",
+    "tasks": [
+      "BD-T203.1",
+      "VD-T203.2"
+    ],
+    "state": "OPEN; no expected future source hash/no stage inferred"
+  },
+  "typed_bootstrap_diagnostic_source_review_v204": {
+    "contract": "planning/typed-bootstrap-diagnostic-source-review-v204.json",
+    "tasks": [
+      "BD-T203.1",
+      "VD-T203.2"
+    ],
+    "acceptance": "All AC OPEN"
+  },
+  "jarvis_sole_user_profile_v205": {
+    "contract": "planning/jarvis-sole-user-profile-contract-v205.json",
+    "tasks": {
+      "RB-T205.1": [],
+      "RB-T205.2": [
+        "RB-T205.1"
+      ],
+      "VD-T205.3": [
+        "RB-T205.1",
+        "RB-T205.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "raspberry_pi_nft_dependency_v207": {
+    "contract": "planning/raspberry-pi-nft-dependency-observation-v207.json",
+    "tasks": {
+      "HI-T207.1": [
+        "HI-T09",
+        "HI-T13"
+      ],
+      "VD-T207.2": [
+        "HI-T207.1"
+      ]
+    },
+    "acceptance": "AC01..AC18 OPEN"
+  },
+  "bootstrap_handoff_tty_reconfirmation_v208": {
+    "contract": "planning/bootstrap-handoff-tty-reconfirmation-v208.json",
+    "tasks": {
+      "BD-T208.1": [
+        "BD-T203.1"
+      ],
+      "VD-T208.2": [
+        "BD-T208.1"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "bootstrap_handoff_reconfirmation_source_review_v211": {
+    "contract": "planning/bootstrap-handoff-reconfirmation-source-review-v211.json",
+    "tasks": [
+      "BD-T208.1",
+      "VD-T208.2"
+    ],
+    "acceptance": "All AC OPEN"
+  },
+  "jarvis_selected_task_home_custody_v213": {
+    "contract": "planning/jarvis-selected-task-home-custody-v213.json",
+    "tasks": {
+      "RB-T213.1": [
+        "RB-T205.1"
+      ],
+      "HI-T213.2": [
+        "RB-T213.1"
+      ],
+      "VD-T213.3": [
+        "HI-T213.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "concrete_remote_runtime_substrate_v209": {
+    "contract": "planning/concrete-remote-runtime-substrate-v209.json",
+    "amendment": "plans/amendments/2026-10-10-concrete-remote-runtime-substrate-v209.md",
+    "tasks": {
+      "RT-T209.1": [
+        "HI-T160.1",
+        "HI-T197.2"
+      ],
+      "RT-T209.2": [
+        "RT-T209.1"
+      ],
+      "RT-T209.3": [
+        "RT-T209.1"
+      ],
+      "RT-T209.4": [
+        "RT-T209.1"
+      ],
+      "VD-T209.5": [
+        "RT-T209.1",
+        "RT-T209.2",
+        "RT-T209.3",
+        "RT-T209.4"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "production_remote_role_nss_roots_v212": {
+    "contract": "planning/production-remote-role-nss-roots-v212.json",
+    "amendment": "plans/amendments/2026-10-10-production-remote-role-nss-roots-v212.md",
+    "tasks": {
+      "RT-T212.1": [],
+      "RT-T212.2": [
+        "RT-T212.1"
+      ],
+      "VD-T212.3": [
+        "RT-T212.1",
+        "RT-T212.2"
+      ]
+    },
+    "existing_runtime_tasks": [
+      "HI-T160.1",
+      "HI-T197.2",
+      "VD-T197.4",
+      "RT-T209.3",
+      "VD-T209.5"
+    ],
+    "acceptance": "All AC OPEN"
+  },
+  "home_assistant_metadata_functional_read_v210": {
+    "contract": "planning/home-assistant-metadata-functional-read-v210.json",
+    "tasks": {
+      "MC-R0101.5": [
+        "MC-R0101.3"
+      ],
+      "MC-R0101.6": [
+        "MC-R0101.5"
+      ]
+    },
+    "acceptance": "AC01..AC18 OPEN"
+  },
+  "jarvis_published_home_live_task_split_v214": {
+    "contract": "planning/jarvis-published-home-live-task-split-v214.json",
+    "tasks": [
+      "RB-T213.1",
+      "HI-T213.2",
+      "VD-T213.3"
+    ],
+    "corrects": "v213 row field split",
+    "acceptance": "All AC OPEN"
+  },
+  "jarvis_source_profile_task_identity_v215": {
+    "contract": "planning/jarvis-source-profile-task-identity-v215.json",
+    "tasks": [
+      "RB-T213.1",
+      "HI-T213.2",
+      "VD-T213.3"
+    ],
+    "acceptance": "All AC OPEN"
+  },
+  "official_desktop_build_acquisition_v218": {
+    "contract": "planning/official-desktop-build-acquisition-v218.json",
+    "tasks": {
+      "BD-T218.1": [
+        "HI-T197.2"
+      ],
+      "BD-T218.2": [
+        "BD-T218.1"
+      ],
+      "VD-T218.3": [
+        "BD-T218.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "ha_setup_observation_receipts_v216": {
+    "contract": "planning/ha-setup-observation-receipts-v216.json",
+    "tasks": [
+      "MC-R0101.5",
+      "MC-R0101.6"
+    ],
+    "order": [
+      "current session/key/source/credential",
+      "actual transport/discovery schema",
+      "one-use exact functional call",
+      "validated receipt/choice adoption"
+    ],
+    "acceptance": "AC01..AC18 OPEN"
+  },
+  "sealed_bootstrap_fd3_source_review_v220": {
+    "contract": "planning/sealed-bootstrap-fd3-source-review-v220.json",
+    "tasks": [
+      "BD-T208.1",
+      "VD-T208.2"
+    ],
+    "acceptance": "All AC OPEN"
+  },
+  "official_remote_role_definition_producer_v222": {
+    "contract": "planning/official-remote-role-definition-producer-v222.json",
+    "tasks": {
+      "RT-T222.1": [
+        "HI-T197.2"
+      ],
+      "RT-T222.2": [
+        "RT-T222.1"
+      ],
+      "VD-T222.3": [
+        "RT-T222.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "current_published_pm_home_runtime_v221": {
+    "contract": "planning/current-published-pm-home-runtime-v221.json",
+    "tasks": {
+      "HI-T221.1": [
+        "RB-T213.1"
+      ],
+      "HI-T221.2": [
+        "HI-T221.1"
+      ],
+      "VD-T221.3": [
+        "HI-T221.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "xpra_native_build_acquisition_v219": {
+    "contract": "planning/xpra-native-build-acquisition-v219.json",
+    "amendment": "plans/amendments/2026-10-10-xpra-native-build-acquisition-v219.md",
+    "tasks": {
+      "RT-T219.1": [],
+      "RT-T219.2": [
+        "RT-T219.1"
+      ],
+      "VD-T219.3": [
+        "RT-T219.1",
+        "RT-T219.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "tested_gateway_source_members_v223": {
+    "contract": "planning/tested-gateway-source-members-v223.json",
+    "amendment": "plans/amendments/2026-10-10-tested-gateway-source-members-v223.md",
+    "tasks": {
+      "RT-T223.1": [],
+      "RT-T223.2": [
+        "RT-T223.1"
+      ],
+      "VD-T223.3": [
+        "RT-T223.1",
+        "RT-T223.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "qualification_compiler_terminal_custody_v217": {
+    "contract": "planning/qualification-compiler-terminal-custody-v217.json",
+    "tasks": {
+      "HI-T217.1": [
+        "HI-T173.1"
+      ],
+      "HI-T217.2": [
+        "HI-T217.1"
+      ],
+      "VD-T217.3": [
+        "HI-T217.2",
+        "HI-T197.3"
+      ]
+    },
+    "owners": {
+      "HI-T217.1": "luna_resource_runtime",
+      "HI-T217.2": "luna_resource_runtime",
+      "VD-T217.3": "luna_producer_cohort_integrator"
+    },
+    "order": [
+      "parent current installed journal/launch evidence custody",
+      "child current source/PM/NSS/materialization/discovery",
+      "compiler strict fixture publication/session/runtime",
+      "actual fixed task admission/input/native/terminal/capsule or explicit incomplete",
+      "retain signed typed projections",
+      "actual discovery/NSS cleanup and signed cleanup projection",
+      "child atomic no-replace evidence row",
+      "parent current source/unit/terminal/custody verification",
+      "consume result then collect unit/close key"
+    ],
+    "acceptance": "AC01..AC18 OPEN"
+  },
+  "qualification_protected_row_serializer_v224": {
+    "contract": "planning/qualification-protected-row-serializer-v224.json",
+    "tasks": [
+      "HI-T217.1",
+      "HI-T217.2",
+      "VD-T217.3"
+    ],
+    "owner": "luna_resource_runtime",
+    "order": [
+      "current v173/NSS/source",
+      "real fixed task recipe/package",
+      "finite serializer/fixture parser",
+      "strict full index",
+      "actual native task outcome",
+      "parent durable evidence"
+    ],
+    "acceptance": "All AC OPEN"
+  },
+  "current_remote_identity_adoption_v225": {
+    "contract": "planning/current-remote-identity-adoption-v225.json",
+    "tasks": {
+      "RT-T225.1": [
+        "RT-T212.1",
+        "RT-T222.2"
+      ],
+      "RT-T225.2": [
+        "RT-T225.1"
+      ],
+      "VD-T225.3": [
+        "RT-T225.1",
+        "RT-T225.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "official_desktop_native_build_inputs_v226": {
+    "contract": "planning/official-desktop-native-build-inputs-v226.json",
+    "tasks": {
+      "RT-T226.1": [
+        "BD-T218.1"
+      ],
+      "RT-T226.2": [
+        "RT-T226.1",
+        "BD-T218.2"
+      ],
+      "VD-T226.3": [
+        "RT-T226.1",
+        "RT-T226.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "preactive_xpra_acquisition_build_v227": {
+    "contract": "planning/preactive-xpra-acquisition-build-v227.json",
+    "tasks": {
+      "RT-T227.1": [
+        "RT-T219.1"
+      ],
+      "RT-T227.2": [
+        "RT-T227.1",
+        "RT-T219.2"
+      ],
+      "RT-T227.3": [
+        "RT-T227.2",
+        "RT-T223.2"
+      ],
+      "VD-T227.4": [
+        "RT-T227.1",
+        "RT-T227.2",
+        "RT-T227.3"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "official_desktop_ws_types_repair_v229": {
+    "contract": "planning/official-desktop-ws-types-repair-v229.json",
+    "tasks": {
+      "RT-T229.1": [
+        "RT-T226.1"
+      ],
+      "RT-T229.2": [
+        "RT-T229.1",
+        "RT-T226.2"
+      ],
+      "VD-T229.3": [
+        "RT-T229.1",
+        "RT-T229.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "gateway_digests_owned_network_cleanup_v234": {
+    "contract": "planning/gateway-digests-owned-network-cleanup-v234.json",
+    "tasks": {
+      "RT-T234.1": [
+        "RT-T227.3"
+      ],
+      "RT-T234.2": [
+        "RT-T225.2"
+      ],
+      "VD-T234.3": [
+        "RT-T234.1",
+        "RT-T234.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "qualification_source_before_process_custody_v230": {
+    "contract": "planning/qualification-source-before-process-custody-v230.json",
+    "tasks": [
+      "HI-T230.1",
+      "VD-T230.2"
+    ],
+    "depends_on": [
+      "HI-T197.3",
+      "HI-T217.1",
+      "HI-T217.2"
+    ],
+    "owner": "luna_resource_runtime",
+    "acceptance": "All AC OPEN"
+  },
+  "typed_initial_pending_diagnostics_v232": {
+    "contract": "planning/typed-initial-pending-diagnostics-v232.json",
+    "task_dependencies": {
+      "BD-T232.1": [
+        "BD-F02",
+        "HI-T149.1"
+      ],
+      "VD-T232.2": [
+        "BD-T232.1"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "active_authority_receipt_aggregate_v231": {
+    "contract": "planning/active-authority-receipt-aggregate-v231.json",
+    "changes": [
+      "resources-bundle-native-enrichment",
+      "host-principal-custody",
+      "installer-bootstrap-desktop"
+    ],
+    "tasks": {
+      "HI-T231.1": [
+        "HI-T09",
+        "RB-T213.1"
+      ],
+      "BD-T231.2": [
+        "HI-T231.1"
+      ],
+      "VD-T231.3": [
+        "BD-T231.2"
+      ]
+    },
+    "acceptance": "All AC01..18 OPEN; implementation and target evidence separate"
+  },
+  "jarvis_runtime_source_pin_review_v228": {
+    "contract": "planning/jarvis-runtime-source-pin-review-v228.json",
+    "source_commit": "8185a3f59f1c153f68d8889b2fce8c96c51310e6",
+    "source_tree": "9928a1ca538d629f778e1823f2867a9646bcad75",
+    "task_dependencies": {
+      "VD-T180.6": [
+        "BD-T232.1"
+      ],
+      "VD-T183.5": [
+        "VD-T180.6"
+      ],
+      "VD-T232.2": [
+        "BD-T232.1"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "retained_qualification_oneshot_terminal_v233": {
+    "contract": "planning/retained-qualification-oneshot-terminal-v233.json",
+    "tasks": {
+      "HI-T233.1": [
+        "HI-T197.3",
+        "VD-T217.3"
+      ],
+      "VD-T233.2": [
+        "HI-T233.1"
+      ]
+    },
+    "owner": "luna_linux_task_display_contracts",
+    "acceptance": "All AC OPEN"
+  },
+  "predecessor_bound_candidate_update_v235": {
+    "contract": "planning/predecessor-bound-candidate-update-v235.json",
+    "tasks": {
+      "BD-T235.1": [
+        "BD-T208.1"
+      ],
+      "LC-T235.2": [
+        "BD-T235.1",
+        "LC-F03"
+      ],
+      "VD-T235.3": [
+        "LC-T235.2"
+      ]
+    },
+    "acceptance": "All AC01..18 OPEN"
+  },
+  "root_service_process_authority_lane_v236": {
+    "contract": "planning/root-service-process-authority-lane-v236.json",
+    "tasks": {
+      "HI-T236.1": [
+        "HI-T09"
+      ],
+      "HI-T236.2": [
+        "HI-T236.1"
+      ],
+      "VD-T236.3": [
+        "HI-T236.2"
+      ]
+    },
+    "acceptance": "All AC01..18 OPEN",
+    "unblocks": [
+      "HI-T231.1",
+      "BD-T231.2"
+    ]
+  },
+  "root_service_process_proof_joins_v236b": {
+    "contract": "planning/root-service-process-proof-joins-v236b.json",
+    "tasks": [
+      "HI-T236.1",
+      "HI-T236.2",
+      "VD-T236.3"
+    ],
+    "acceptance": "All AC OPEN"
+  },
+  "root_service_process_cold_source_custody_v236b": {
+    "contract": "planning/root-service-process-cold-source-custody-v236b.json",
+    "tasks": [
+      "HI-T236.1",
+      "HI-T236.2",
+      "VD-T236.3"
+    ],
+    "sequence": [
+      "current held core/release/key/journal source verification",
+      "strict published declaration parser",
+      "genuine dormant runtime ordinary revalidation",
+      "enable exact root service lane"
+    ],
+    "acceptance": "All AC OPEN"
+  },
+  "preactive_native_build_manager_composition_v237": {
+    "contract": "planning/preactive-native-build-manager-composition-v237.json",
+    "tasks": {
+      "RT-T237.1": [
+        "RT-T227.3"
+      ],
+      "RT-T237.2": [
+        "RT-T237.1",
+        "RT-T225.1"
+      ],
+      "VD-T237.3": [
+        "RT-T237.1",
+        "RT-T237.2",
+        "RT-T234.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "xpra_native_source_policy_v238": {
+    "contract": "planning/xpra-native-source-policy-v238.json",
+    "tasks": {
+      "RT-T238.1": [
+        "RT-T227.1"
+      ],
+      "RT-T238.2": [
+        "RT-T238.1",
+        "RT-T227.2"
+      ],
+      "VD-T238.3": [
+        "RT-T238.1",
+        "RT-T238.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "preactive_remote_build_output_receipts_v239": {
+    "contract": "planning/preactive-remote-build-output-receipts-v239.json",
+    "tasks": {
+      "RT-T239.1": [
+        "RT-T209.2",
+        "RT-T237.1"
+      ],
+      "RT-T239.2": [
+        "RT-T239.1",
+        "RT-T212.1"
+      ],
+      "RT-T239.3": [
+        "RT-T239.2",
+        "RT-T222.1"
+      ],
+      "VD-T239.4": [
+        "RT-T239.1",
+        "RT-T239.2",
+        "RT-T239.3"
+      ]
+    },
+    "owner": "luna_remote_receipt_pipeline with central runtime and native executor owners",
+    "acceptance": "All AC OPEN"
+  },
+  "candidate_update_source_review_v241": {
+    "contract": "planning/candidate-update-source-review-v241.json",
+    "source_commit": "ae39993068be32f22629dd529c1d36e86584d59f",
+    "existing_task_dependencies": {
+      "VD-T235.3": [
+        "BD-T235.1",
+        "LC-T235.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "preinstalled_source_update_entry_v242": {
+    "contract": "planning/preinstalled-source-update-entry-v242.json",
+    "task_dependencies": {
+      "BD-T242.1": [
+        "BD-T235.1",
+        "LC-T235.2"
+      ],
+      "VD-T242.2": [
+        "BD-T242.1",
+        "VD-T235.3"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "official_desktop_measured_headers_managed_plan_v240": {
+    "contract": "planning/official-desktop-measured-headers-managed-plan-v240.json",
+    "tasks": {
+      "RT-T240.1": [
+        "RT-T226.1"
+      ],
+      "RT-T240.2": [
+        "RT-T240.1",
+        "RT-T237.1"
+      ],
+      "VD-T240.3": [
+        "RT-T240.1",
+        "RT-T240.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "gateway_source_wheel_issuers_v244": {
+    "amendment": "plans/amendments/2026-10-10-gateway-source-wheel-issuers-v244.md",
+    "contract": "planning/gateway-source-wheel-issuers-v244.json",
+    "tasks": {
+      "RT-T244.1": [
+        "RT-T239.1"
+      ],
+      "RT-T244.2": [
+        "RT-T244.1"
+      ],
+      "VD-T244.3": [
+        "RT-T244.1",
+        "RT-T244.2"
+      ]
+    },
+    "acceptance": "open"
+  },
+  "remote_source_active_digest_acyclic_v246": {
+    "contract": "planning/remote-source-active-digest-acyclic-v246.json",
+    "tasks": [
+      "RT-T246.1",
+      "RT-T246.2",
+      "VD-T246.3"
+    ],
+    "dependencies": [
+      "RT-T225.1",
+      "RT-T225.2",
+      "RT-T239.2",
+      "RT-T239.3",
+      "HI-T231.1"
+    ],
+    "ordering": [
+      "immutable source2",
+      "complete generation selector/full hash",
+      "active claim/publication",
+      "current signed adoption",
+      "runtime activation"
+    ],
+    "acceptance": "All AC OPEN"
+  },
+  "source_update_entry_source_review_v247": {
+    "contract": "planning/source-update-entry-source-review-v247.json",
+    "source_commit": "7b7f402800b378d9420a6b8da09680cce430a40e",
+    "existing_task_dependencies": {
+      "VD-T242.2": [
+        "BD-T242.1",
+        "VD-T235.3"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "xpra_sysroot_html5_v245": {
+    "contract": "planning/xpra-sysroot-html5-v245.json",
+    "tasks": {
+      "RT-T245.1": [
+        "RT-T238.1"
+      ],
+      "RT-T245.2": [
+        "RT-T238.1"
+      ],
+      "VD-T245.3": [
+        "RT-T245.1",
+        "RT-T245.2",
+        "RT-T238.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "version_aware_predecessor_verification_v249": {
+    "amendment": "plans/amendments/2026-10-10-version-aware-predecessor-verification-v249.md",
+    "contract": "planning/version-aware-predecessor-verification-v249.json",
+    "tasks": {
+      "BD-T249.1": [
+        "BD-T242.1"
+      ],
+      "LC-T249.2": [
+        "BD-T249.1"
+      ],
+      "VD-T249.3": [
+        "BD-T249.1",
+        "LC-T249.2"
+      ]
+    },
+    "acceptance": "open"
+  },
+  "jarvis_visible_desktop_mvp_stage_v259": {
+    "contract": "planning/jarvis-visible-desktop-mvp-stage-v259.json",
+    "amendment": "plans/amendments/2026-10-11-jarvis-visible-desktop-mvp-stage-v259.md",
+    "tasks": {
+      "BD-T259.1": [],
+      "PR-T259.2": [
+        "BD-T259.1"
+      ],
+      "RT-T259.3": [
+        "BD-T259.1"
+      ],
+      "LC-T259.4": [
+        "PR-T259.2",
+        "RT-T259.3"
+      ],
+      "VD-T259.5": [
+        "BD-T259.1",
+        "PR-T259.2",
+        "RT-T259.3",
+        "LC-T259.4"
+      ]
+    },
+    "priority": "four actual MVP milestones before unrelated extras; full baseline remains OPEN",
+    "acceptance": "MVP and full baseline tracked separately"
+  },
+  "jarvis_manual_stage_gateway_seam_v259b": {
+    "contract": "planning/jarvis-manual-stage-gateway-seam-v259b.json",
+    "amendment": "plans/amendments/2026-10-11-jarvis-manual-stage-gateway-seam-v259b.md",
+    "tasks": [
+      "RT-T259.3",
+      "LC-T259.4",
+      "VD-T259.5"
+    ],
+    "extends": "jarvis_visible_desktop_mvp_stage_v259",
+    "acceptance": "actual edge revocation/unit/connector/restart required; all AC OPEN"
+  }
 }

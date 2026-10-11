@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "evidence_id": "EV-VD-T249.3-cc81-source-cas-reconstruction-20261011",
+  "tasks": [
+    "BD-T249.1",
+    "LC-T249.2",
+    "VD-T249.3"
+  ],
+  "scope": "Development-only evidence for a genuine cc81 source-CAS and installed-release predecessor fixture. It does not establish source-update candidate publication, runtime/account setup, Pi acceptance, or any AC completion.",
+  "fixture": {
+    "environment": "Disposable Docker container, Linux ARM64, root-owned temporary filesystem; development Mac installer not run.",
+    "image": "hermes-display-arm64-python314-systemd:20261010",
+    "source_origin": "https://github.com/Togarriapa/HermesAgent_Installer.git",
+    "candidate_git_sha": "cc81abffe3cbb1df447889bca269d1e6c0be77ea",
+    "source_git_tree_sha1": "74dca3566f212e185cbdada7a2d401cf0d63f6e9",
+    "source_manifest_bytes": 559906,
+    "source_manifest_rows": 2323,
+    "source_export_validation": "Every exported source file matched its root-owned source manifest SHA-256, size, inode/mode metadata; Git blob SHA-1 values were recomputed and the canonical full tree reconstructed as 74dca3566f212e185cbdada7a2d401cf0d63f6e9.",
+    "publication": {
+      "method": "Exact public cc81 launcher, normal Linux root TTY candidate confirmation, fixed-origin source acquisition, isolated CPython 3.14 runtime, actual release builder and publisher.",
+      "pointer_sha256": "3f8caf3b97c0abfa88d769df0dbdf234223368b6a300045761bd59176805f25d",
+      "release_manifest_sha256": "641d32019b38f34476354b13954c09467da6aa7611a4992ff4589ac20849a688",
+      "first_prompt": "Stopped at the first existing non-root account prompt after current pointer and complete release publication; no account or runtime choice was entered."
+    }
+  },
+  "results": {
+    "historical_predecessor_positive": "The new exact predecessor verifier returned VerifiedInstallerPredecessorReleaseReceipt for cc81; verify_current() passed over the complete locally built release and source CAS.",
+    "current_actor_separation": "The ordinary current installed-release verifier continued to reject old cc81 root_setup with its reviewed current-source-pin error.",
+    "controlled_source_tamper": "Appending to a source-CAS member caused predecessor verification to reject with candidate source changed while sealing its file custody. The modified fixture was disposable and discarded.",
+    "unknown_mixed_and_mode_cases": "Contract tests verify exact cohort selection, mixed current/historical module-row rejection, executable-mode-sensitive Git tree reconstruction, and file/directory path collision rejection.",
+    "host_focused_tests": "94 passed, 13 skipped across predecessor cohort, installer release, release builder, and installed stage publisher contract suites.",
+    "arm64_focused_tests": "105 passed, 2 skipped for the same focused contract suites in a Linux ARM64 container with the repository source bind-mounted read-only.",
+    "openspec_specs": "npm run validate:specs passed all 13 items.",
+    "planning": "npm run validate:plan passed live coverage and frozen baseline checks; runtime acceptance remains not established."
+  },
+  "limitations": [
+    "The local old install did not proceed beyond the account prompt.",
+    "No candidate source-update publication, rollback, or cold recovery positive was run in this fixture.",
+    "No Pi filesystem was modified; Pi acceptance remains open.",
+    "The reviewed fixed origin is checked as current source policy; the exported CAS has no .git metadata, so runtime provenance is established through its root-owned receipt, rehashed complete tree, candidate/tree identity, and reviewed source blobs rather than querying a nonexistent Git remote."
+  ]
+}

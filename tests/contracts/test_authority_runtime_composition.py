@@ -1,6 +1,8 @@
 from pathlib import Path
 from dataclasses import replace
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
+import hashlib
+import json
 
 import pytest
 
@@ -8,8 +10,14 @@ from hermes_installer.artifacts import ArtifactCatalog
 from hermes_installer.authority.enrollment import ProtectedEnrollment, RootCredentialVault
 from hermes_installer.authority.runtime_bindings import RootRuntimeBindings
 from hermes_installer.authority.runtime_composition import compose_root_authority_runtime
+from hermes_installer.authority.runtime_composition import _compose_selected_resource_events
+from hermes_installer.authority.runtime_composition import _root_resource_job_ledger_path
+from hermes_installer.authority.runtime_composition import _native_json_schema_matches
+from hermes_installer.authority.runtime_composition import _ProtectedNativeActionResolver
 from hermes_installer.authority.service import AuthorityService, PrincipalBinding
+from hermes_installer.authority.source_observers import SourceObserverEnrollment
 from hermes_installer.authority.types import AuthorityDenied
+from hermes_installer.protected_enrollment import RootJournalSelection
 from hermes_installer.protected_enrollment import EnrollmentDenied
 
 
@@ -79,6 +87,17 @@ def test_composition_uses_exact_service_bindings_catalog_vault_and_epoch():
     assert dict(runtime.job_enrollments) == {}
     assert runtime.memory_runtime is None
     assert runtime.build_execution_service is None
+    assert runtime.provider_runtime_selection is None
+    assert runtime.root_tty_consent_choices is None
+    assert runtime.private_input_consent_registry is None
+    assert runtime.memory_capture_consent_registry is None
+    assert runtime.consent_unavailable_reason == (
+        "a fully attached active provider invocation and bridge graph is required for root TTY choices"
+    )
+    assert runtime.source_observer_registry is None
+    assert runtime.source_observer_unavailable_reason == (
+        "source-observer candidates are not complete typed protected joins"
+    )
     assert service.memory_step_effect_authority is None
     assert not any(operation.startswith("memory.") for operation, _target in service.handlers)
     assert runtime.source_observer_enrollments["observer-a"] is observer_candidate
@@ -113,6 +132,346 @@ def test_root_journal_resolution_is_bound_to_active_generation_and_protected_cat
         runtime.resolve_root_journal(
             "state-root", expected_active_generation_digest=enrollment.protected_enrollment_digest,
         )
+
+
+def test_resource_job_ledger_path_comes_only_from_active_journal_selection():
+    _service, enrollment, _bindings, _catalog, _vault, _connector, _candidate = _inputs()
+    selected_root = Path("/private/var/lib/hermes-installer/authority-journal")
+    bindings = type("JournalBindings", (), {
+        "resolve_root_journal": staticmethod(lambda root_id, *, expected_active_generation_digest:
+            RootJournalSelection(root_id, selected_root, 1, 2, "journal-gen",
+                                 expected_active_generation_digest))
+    })()
+
+    assert _root_resource_job_ledger_path(bindings, enrollment) == (
+        selected_root / "resource-jobs.sqlite3"
+    )
+
+    stale_bindings = type("StaleJournalBindings", (), {
+        "resolve_root_journal": staticmethod(lambda root_id, *, expected_active_generation_digest:
+            RootJournalSelection(root_id, selected_root, 1, 2, "journal-gen", "b" * 64))
+    })()
+    with pytest.raises(AuthorityDenied, match="selection is malformed"):
+        _root_resource_job_ledger_path(stale_bindings, enrollment)
+
+
+def test_resource_event_assembly_requires_the_attached_root_task_runtime():
+    service, enrollment, bindings, _catalog, _vault, _connector, _candidate = _inputs()
+    result = _compose_selected_resource_events(
+        service=service, enrollment=enrollment, bindings=bindings,
+        jobs={}, selected_resources=object(), source_observers=object(),
+        job_authority=object(), vault=object(),
+    )
+
+    assert result[:6] == (None, None, None, None, None, None)
+    assert result[10] == (
+        "selected materialized Resources, source observers, or concrete task runtime are unavailable"
+    )
+    assert service.resource_event_context_issuer is None
+    assert service.resource_task_authority is None
+
+
+def test_native_action_schema_validator_enforces_pinned_finite_schema_subset():
+    schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "minLength": 1, "maxLength": 12},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 4},
+            "mode": {"type": "string", "enum": ["read", "search"]},
+        },
+        "required": ["query", "limit", "mode"],
+        "additionalProperties": False,
+    }
+    assert _native_json_schema_matches(
+        {"query": "status", "limit": 2, "mode": "read"}, schema,
+    )
+    assert not _native_json_schema_matches(
+        {"query": "", "limit": 2, "mode": "read"}, schema,
+    )
+    assert not _native_json_schema_matches(
+        {"query": "status", "limit": True, "mode": "read"}, schema,
+    )
+    assert not _native_json_schema_matches(
+        {"query": "status", "limit": 2, "mode": "write"}, schema,
+    )
+    assert not _native_json_schema_matches(
+        {"query": "status", "limit": 2, "mode": "read", "extra": "value"}, schema,
+    )
+
+
+def test_native_action_resolver_uses_exact_selected_workflow_and_schema_bytes():
+    from hermes_installer.mcp.native_schema_catalog import NativeMCPProtectedSchemaCatalog
+
+    _service, _enrollment, bindings, _catalog, _vault, _connector, _candidate = _inputs()
+    schema = {
+        "type": "object",
+        "properties": {"query": {"type": "string", "minLength": 1, "maxLength": 8}},
+        "required": ["query"], "additionalProperties": False,
+    }
+    schema_bytes = json.dumps(schema, sort_keys=True, separators=(",", ":"),
+                              ensure_ascii=False).encode("utf-8")
+    schema_digest = hashlib.sha256(schema_bytes).hexdigest()
+    result_schema = {
+        "type": "object",
+        "properties": {"matches": {"type": "integer", "minimum": 0}},
+        "required": ["matches"], "additionalProperties": False,
+    }
+    result_schema_bytes = json.dumps(result_schema, sort_keys=True, separators=(",", ":"),
+                                     ensure_ascii=False).encode("utf-8")
+    result_schema_digest = hashlib.sha256(result_schema_bytes).hexdigest()
+    adapter = SimpleNamespace(
+        adapter_id="adapter:lookup", action_id="action:lookup",
+        operation="plugin.lookup", capability="plugins.lookup", target_id="lookup-target",
+        argument_schema_id="schema:lookup:arguments", result_schema_id="schema:lookup:result",
+        workflow_bindings=(MappingProxyType({
+            "external_tool_name": "search_records",
+            "external_action_id": "search-records",
+            "external_argument_schema_id": "schema:lookup:arguments",
+            "external_result_schema_id": "schema:lookup:result",
+            "workflow_artifact_id": "workflow:lookup",
+            "workflow_sha256": "b" * 64,
+        }),),
+        adapter_artifact_id="artifact:adapter", adapter_sha256="c" * 64,
+    )
+    action_binding_id = "binding:lookup"
+    registration_id = "registration:lookup"
+    workflow_id = "workflow-row:lookup"
+    action_record = SimpleNamespace(
+        action_binding_id=action_binding_id, adapter_id=adapter.adapter_id,
+        action_id=adapter.action_id, operation=adapter.operation,
+        capability=adapter.capability, target_id=adapter.target_id,
+        adapter_artifact_id=adapter.adapter_artifact_id,
+        adapter_sha256=adapter.adapter_sha256,
+        argument_schema_id="schema:lookup:arguments",
+        result_schema_id="schema:lookup:result",
+        generation="generation:one",
+    )
+    registration_record = SimpleNamespace(
+        registration_id=registration_id, adapter_id=adapter.adapter_id,
+        native_tool_name="search_records", handler_kind="finite-workflow",
+        registration_source_artifact_id="registration:source",
+        registration_source_sha256="a" * 64,
+        generation="generation:one",
+        action_bindings=(SimpleNamespace(workflow_id=workflow_id, action_binding_id=None),),
+    )
+    workflow_record = SimpleNamespace(
+        workflow_id=workflow_id, registration_id=registration_id,
+        external_argument_schema_id="schema:lookup:arguments",
+        external_result_schema_id="schema:lookup:result",
+        workflow_artifact_id="workflow:lookup", workflow_sha256="b" * 64,
+        step_action_binding_ids=(action_binding_id,),
+        generation="generation:one",
+    )
+    package = SimpleNamespace(
+        package_id="package:native", profile_id="profile:producer", generation="generation:one",
+        profile_generation="generation:one",
+        compiled_closure_artifact_id="artifact:closure",
+        entrypoint_artifact_id="artifact:entry", entrypoint_sha256="d" * 64,
+        resolver_artifact_id="artifact:resolver", resolver_sha256="e" * 64,
+        adapter_records=MappingProxyType({adapter.adapter_id: adapter}),
+        action_records=MappingProxyType({action_binding_id: action_record}),
+        registration_records=MappingProxyType({registration_id: registration_record}),
+        workflow_records=MappingProxyType({workflow_id: workflow_record}),
+        process_role_records=MappingProxyType({}),
+    )
+    catalog = SimpleNamespace(
+        digest="a" * 64,
+        resolve_profile_native_package=lambda profile_id, generation: package
+        if (profile_id, generation) == (package.profile_id, package.generation) else None,
+        resolve_native_package=lambda package_id, generation: package
+        if (package_id, generation) == (package.package_id, package.generation) else None,
+        resolve_native_registration_record=lambda _package_id, _generation, selected_id, **_kwargs:
+            registration_record if selected_id == registration_id else None,
+        resolve_native_action_record=lambda _package_id, _generation, selected_id, **_kwargs:
+            action_record if selected_id == action_binding_id else None,
+    )
+    artifacts = {
+        "artifact:closure": SimpleNamespace(sha256="f" * 64, tree_files=("entry.py",)),
+        "artifact:entry": SimpleNamespace(sha256="d" * 64),
+        "artifact:resolver": SimpleNamespace(sha256="e" * 64),
+        "artifact:adapter": SimpleNamespace(sha256="c" * 64),
+        "artifact:schema": SimpleNamespace(sha256=schema_digest),
+        "artifact:result-schema": SimpleNamespace(sha256=result_schema_digest),
+        "workflow:lookup": SimpleNamespace(sha256="b" * 64),
+        "registration:source": SimpleNamespace(sha256="a" * 64),
+    }
+    bridge = SimpleNamespace(
+        bridge_id="bridge:one", producer_profile_id=package.profile_id,
+        producer_generation=package.generation,
+    )
+    root_bindings = replace(
+        bindings, enrollment_catalog=catalog, artifact_catalog=SimpleNamespace(artifacts=artifacts),
+        native_bridges={"bridge:one": bridge},
+        protected_rules={(adapter.capability, adapter.operation, adapter.target_id): object()},
+        native_schema_artifact_records=({
+                "id": "schema:lookup:arguments", "artifact_id": "artifact:schema",
+                "sha256": schema_digest, "size_bytes": len(schema_bytes),
+                "derivation_receipt_handle": None, "schema_kind": "arguments",
+            "native_package_id": package.package_id,
+            "native_package_generation": package.generation,
+            "adapter_id": adapter.adapter_id, "action_id": adapter.action_id,
+            "source_receipt_handle": "source-receipt:lookup",
+        }, {
+                "id": "schema:lookup:result", "artifact_id": "artifact:result-schema",
+                "sha256": result_schema_digest, "size_bytes": len(result_schema_bytes),
+                "derivation_receipt_handle": None, "schema_kind": "result",
+            "native_package_id": package.package_id,
+            "native_package_generation": package.generation,
+            "adapter_id": adapter.adapter_id, "action_id": adapter.action_id,
+            "source_receipt_handle": "source-receipt:lookup-result",
+        }),
+    )
+    schema_records = ({
+            "id": "schema:lookup:arguments", "artifact_id": "artifact:schema",
+            "sha256": schema_digest, "size_bytes": len(schema_bytes),
+            "derivation_receipt_handle": None, "schema_kind": "arguments",
+        "native_package_id": package.package_id,
+        "native_package_generation": package.generation,
+        "adapter_id": adapter.adapter_id, "action_id": adapter.action_id,
+        "source_receipt_handle": "source-receipt:lookup",
+    }, {
+            "id": "schema:lookup:result", "artifact_id": "artifact:result-schema",
+            "sha256": result_schema_digest, "size_bytes": len(result_schema_bytes),
+            "derivation_receipt_handle": None, "schema_kind": "result",
+        "native_package_id": package.package_id,
+        "native_package_generation": package.generation,
+        "adapter_id": adapter.adapter_id, "action_id": adapter.action_id,
+        "source_receipt_handle": "source-receipt:lookup-result",
+    })
+    schema_catalog = NativeMCPProtectedSchemaCatalog.from_protected_records(
+        schema_records, read_artifact=lambda artifact_id, _digest: (
+            result_schema_bytes if artifact_id == "artifact:result-schema" else schema_bytes
+        ),
+        verify_source_receipt=lambda _handle, _identity: True,
+    )
+    assert dict(root_bindings.resolve_native_schema_record(
+        schema_records[0]["id"], package.package_id, package.generation,
+        adapter.adapter_id, adapter.action_id, "arguments",
+    )) == dict(schema_records[0])
+    schema_catalog.resolve(schema_records[0]["id"], native_package_id=package.package_id,
+                           native_package_generation=package.generation,
+                           adapter_id=adapter.adapter_id, action_id=adapter.action_id,
+                           schema_kind="arguments")
+    resolver = _ProtectedNativeActionResolver(
+        root_bindings, schema_catalog, service_generation_digest=catalog.digest,
+    )
+    identity = SimpleNamespace(profile_id=package.profile_id, generation=package.generation)
+    selected = resolver(bridge, identity, "search_records")
+    assert (selected.package_id, selected.adapter_id, selected.action_id,
+            selected.registration_id, selected.package_generation, selected.operation) == (
+        package.package_id, adapter.adapter_id, adapter.action_id, registration_id,
+        package.generation, adapter.operation,
+    )
+    assert selected.validate_arguments(b'{"query":"status"}') is True
+    assert selected.validate_arguments(b'{"query":""}') is False
+    assert selected.result_schema_id == "schema:lookup:result"
+    assert selected.result_schema_sha256 == result_schema_digest
+    assert selected.validate_result(b'{"matches":1}') is True
+    assert selected.validate_result(b'{"matches":"one"}') is False
+    with pytest.raises(AuthorityDenied, match="absent or ambiguous"):
+        resolver(bridge, identity, "unselected_tool")
+
+
+def test_runtime_closes_attached_observation_stores():
+    service, enrollment, bindings, catalog, vault, _connector, _candidate = _inputs()
+    closed = []
+
+    class LoaderObservationStore:
+        def close(self):
+            closed.append(True)
+
+    loader_store = LoaderObservationStore()
+    gateway_observer = LoaderObservationStore()
+    native_window_observer = LoaderObservationStore()
+    service.native_loader_observation_store = loader_store
+    service.gateway_boundary_observer = gateway_observer
+    service.native_window_observer = native_window_observer
+    task_observer = LoaderObservationStore()
+    invocation_registry = LoaderObservationStore()
+    bridge_broker = LoaderObservationStore()
+    mcp_dispatcher = LoaderObservationStore()
+    service.task_native_observations = task_observer
+    service.native_invocation_registry = invocation_registry
+    service.native_bridge_broker = bridge_broker
+    service.native_mcp_dispatcher = mcp_dispatcher
+    runtime = compose_root_authority_runtime(
+        service=service, enrollment=enrollment, bindings=bindings,
+        artifact_catalog=catalog, vault=vault,
+    )
+    assert runtime.native_loader_observation_store is loader_store
+    assert runtime.gateway_boundary_observer is gateway_observer
+    assert runtime.native_window_observer is native_window_observer
+    assert runtime.task_native_observations is task_observer
+    assert runtime.native_invocation_registry is invocation_registry
+    assert runtime.native_bridge_broker is bridge_broker
+    assert runtime.native_mcp_dispatcher is mcp_dispatcher
+    runtime.close()
+    assert closed == [True] * 7
+
+
+def test_runtime_closes_remaining_stores_when_one_observer_close_fails():
+    service, enrollment, bindings, catalog, vault, _connector, _candidate = _inputs()
+    closed = []
+
+    class CloseFailure:
+        def close(self):
+            closed.append("registry")
+            raise RuntimeError("fixture close failure")
+
+    class CloseStore:
+        def close(self):
+            closed.append("store")
+
+    service.source_observer_registry = CloseFailure()
+    service.native_loader_observation_store = CloseStore()
+    service.native_bridge_broker = CloseStore()
+    runtime = compose_root_authority_runtime(
+        service=service, enrollment=enrollment, bindings=bindings,
+        artifact_catalog=catalog, vault=vault,
+    )
+    with pytest.raises(RuntimeError, match="fixture close failure"):
+        runtime.close()
+    assert closed == ["store", "registry", "store"]
+
+
+def test_source_metadata_stays_unavailable_without_real_manager_and_pair_joins():
+    service, enrollment, bindings, catalog, vault, _connector, _candidate = _inputs()
+    observer = SourceObserverEnrollment(
+        observer_enrollment_id="observer.a",
+        source_kind="native-input",
+        origin_id="hermes.primary",
+        profile_id="producer.profile",
+        principal_id="producer.principal",
+        namespace_id="producer.namespace",
+        enrollment_id="producer.enrollment",
+        generation="a" * 64,
+        producer_uid=1001,
+        producer_executable_sha256="b" * 64,
+        package_id="package.a",
+        package_sha256="c" * 64,
+        role_id="adapter.a",
+        role_artifact_id="adapter.artifact",
+        role_sha256="d" * 64,
+        channel_id="chat.request",
+        capture_schema_id="request.schema",
+        source_action_id="chat.request",
+        target_id="provider.target",
+        recipient="provider.recipient",
+        allowed_parent_source_kinds=frozenset({"native-input"}),
+    )
+    bindings = replace(
+        bindings,
+        source_observer_enrollments=MappingProxyType({observer.observer_enrollment_id: observer}),
+    )
+    runtime = compose_root_authority_runtime(
+        service=service, enrollment=enrollment, bindings=bindings,
+        artifact_catalog=catalog, vault=vault,
+    )
+    assert runtime.source_observer_registry is None
+    assert runtime.native_loader_observation_store is None
+    assert runtime.source_observer_unavailable_reason == (
+        "root process manager lacks the registered native loader OpenFile custody hooks"
+    )
 
 
 def test_memory_rows_do_not_fall_back_when_protected_service_catalog_is_missing():

@@ -18,6 +18,7 @@ from typing import Any, Callable, Mapping
 from .service import (AuthorityPolicy, AuthorityService, ChildDelegationRule,
                       EffectHandler, EffectRule, PrincipalBinding)
 from .types import AuthorityDenied
+from .native_worker_endpoint_custody import RootPreparedAuthorityEndpointCustodian
 
 DEFAULT_SOCKET_DIR = Path("/run/hermes-installer/authority")
 
@@ -197,7 +198,8 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
                                      if runtime_bindings is not None else None),
         service_generation_digest=enrollment.protected_enrollment_digest,
     )
-    service.root_runtime_bindings = runtime_bindings
+    if runtime_bindings is not None:
+        service.attach_root_runtime_bindings(runtime_bindings)
     service_ref["service"] = service
     authority_runtime = None
     if runtime_bindings is not None and artifact_catalog is not None:
@@ -207,18 +209,206 @@ def build_enrolled_authority_service(*, process_handler_options: Mapping[str, An
             artifact_catalog=artifact_catalog, vault=vault,
         )
     service.root_authority_runtime = authority_runtime
-    # Memory stays unavailable until the active service-generation records
-    # join typed MemoryServiceEnrollment values to a protected root-journal
-    # resolver and the per-step HI12 effect issuer. The older memory_providers
-    # sidecar and a guessed /var/lib path are not authority to create state or
-    # register effects.
+    if authority_runtime is not None:
+        authority_runtime = _finalize_active_setup_choice_registry(
+            service=service, enrollment=enrollment, bindings=runtime_bindings,
+            runtime=authority_runtime,
+        )
+        service.root_authority_runtime = authority_runtime
+        authority_runtime = _finalize_active_memory_lifecycle(
+            service=service, enrollment=enrollment, bindings=runtime_bindings,
+            runtime=authority_runtime,
+        )
+        service.root_authority_runtime = authority_runtime
+    # The listener cannot accept effects until both post-compose finalization
+    # phases above have returned. Memory lifecycle evidence is deliberately
+    # composed only after the durable setup-choice registry is attached.
     return service, enrollment
+
+
+def _finalize_active_setup_choice_registry(*, service: AuthorityService,
+                                           enrollment: Any, bindings: Any,
+                                           runtime: Any) -> Any:
+    """Complete the durable-choice graph after its signer runtime is active.
+
+    The authority signer deliberately requires ``service.root_authority_runtime``
+    to already be the fully composed object. This is therefore a second,
+    one-time composition phase before the daemon returns the service to its
+    listener. Missing release/publication/journal evidence leaves choice-based
+    routes unavailable; a partial attachment is a startup error.
+    """
+    from dataclasses import replace
+    from .runtime_composition import RootAuthorityRuntime, _AUTHORITY_JOURNAL_ROOT_ID
+
+    if (type(runtime) is not RootAuthorityRuntime or runtime.service is not service
+            or runtime.bindings is not bindings or bindings is not service.root_runtime_bindings):
+        raise AuthorityDenied("setup.choice", "active setup-choice composition has no exact root runtime")
+    if getattr(bindings, "root_setup_choice_registry", None) is not None:
+        raise AuthorityDenied("setup.choice", "durable setup-choice registry was already attached")
+
+    release = runtime.controller_release_receipt
+    actor = runtime.controller_actor_observation
+    if release is None or actor is None:
+        try:
+            from .installer_release import InstalledRootReleaseVerifier
+            release, actor = InstalledRootReleaseVerifier.from_current_root_process()
+            runtime = replace(runtime, controller_release_receipt=release,
+                              controller_actor_observation=actor)
+            service.root_authority_runtime = runtime
+        except Exception as exc:
+            return replace(
+                runtime,
+                consent_unavailable_reason=(
+                    f"active setup-choice registry lacks the installed release/actor proof ({type(exc).__name__})"
+                ),
+            )
+
+    registry = None
+    try:
+        from .root_setup_choices import RootSetupChoiceRegistry
+        from .setup_policy_publication import PolicyPublicationReceiptResolver
+
+        if (enrollment.protected_enrollment_digest != bindings.service_generation_digest
+                or enrollment.protected_enrollment_digest != service.service_generation_digest):
+            raise AuthorityDenied("setup.choice", "active enrollment digest changed during finalization")
+        publication = PolicyPublicationReceiptResolver.resolve_current()
+        journal = bindings.resolve_root_journal(
+            _AUTHORITY_JOURNAL_ROOT_ID,
+            expected_active_generation_digest=enrollment.protected_enrollment_digest,
+        )
+        registry = RootSetupChoiceRegistry.from_root_runtime(
+            release, publication, service, journal,
+        )
+        bindings.attach_root_setup_choice_registry(registry, service)
+        from .root_runtime_foreground_tty import RootRuntimeForegroundTTYObserver
+        foreground_tty = RootRuntimeForegroundTTYObserver.from_root_runtime(
+            verified_installer_release=release,
+            current_installed_actor_verifier=actor,
+            active_bindings=bindings,
+            root_journal=journal,
+        )
+        registry.attach_foreground_tty_observer(foreground_tty)
+        runtime = replace(runtime, root_setup_choice_registry=registry,
+                          consent_unavailable_reason=None)
+        service.root_authority_runtime = runtime
+        service.active_network_generation_owner = None
+        service.active_network_generation_unavailable_reason = None
+        try:
+            from .local_resource_effects import RootActiveLocalOwnerPrincipalRegistry
+            local_owner_principal = RootActiveLocalOwnerPrincipalRegistry.from_root_runtime(runtime)
+            from .local_resource_effects import RootActiveOwnerOverlayRegistry
+            owner_overlay_registry = RootActiveOwnerOverlayRegistry.from_root_runtime(
+                runtime, local_owner_principal,
+            )
+            runtime = replace(
+                runtime, active_local_owner_principal_registry=local_owner_principal,
+                active_owner_overlay_registry=owner_overlay_registry,
+                local_owner_overlay_unavailable_reason=None,
+            )
+            service.attach_active_owner_overlay_registry(owner_overlay_registry)
+        except Exception as exc:
+            # Local-owner resources are independent of Authentik. An absent
+            # or stale local adoption disables only that exact feature lane.
+            runtime = replace(
+                runtime, active_local_owner_principal_registry=None,
+                active_owner_overlay_registry=None,
+                local_owner_overlay_unavailable_reason=(
+                    f"active local-owner principal registry is unavailable ({type(exc).__name__})"
+                ),
+            )
+        service.root_authority_runtime = runtime
+        # Network authority is independently current after setup has expired.
+        # Keep it unavailable if the exact post-setup runtime/source custody
+        # cannot be composed; no setup session or policy-property text is used
+        # as a substitute.
+        try:
+            from .active_network_generation import RootActiveNetworkGenerationOwner
+            # The service pointer is the canonical identity checked by the
+            # owner. Do not replace the runtime after owner construction.
+            service.root_authority_runtime = runtime
+            owner = RootActiveNetworkGenerationOwner.from_root_runtime(runtime)
+            service.active_network_generation_owner = owner
+            service.active_network_generation_unavailable_reason = None
+        except Exception as exc:
+            service.active_network_generation_owner = None
+            service.active_network_generation_unavailable_reason = (
+                f"active worker network generation owner is unavailable ({type(exc).__name__})"
+            )
+        return runtime
+    except Exception as exc:
+        if (registry is not None
+                or getattr(bindings, "root_setup_choice_registry", None) is not None
+                or getattr(service, "_root_setup_choice_registry", None) is not None):
+            raise AuthorityDenied(
+                "setup.choice", "durable setup-choice attachment was partial; restart the root service",
+            ) from None
+        return replace(
+            runtime,
+            consent_unavailable_reason=(
+                f"durable active setup-choice registry is unavailable ({type(exc).__name__})"
+            ),
+        )
+
+
+def _finalize_active_memory_lifecycle(*, service: AuthorityService,
+                                      enrollment: Any, bindings: Any,
+                                      runtime: Any) -> Any:
+    """Compose memory lifecycle once, after durable choices are attached.
+
+    This phase deliberately reuses the exact memory runtime and network lease
+    resolver created by core composition. It does not rebuild services,
+    listeners, or providers, and does not substitute capture consent for the
+    explicit adopted service-enable choice.
+    """
+    from dataclasses import replace
+    from .runtime_composition import RootAuthorityRuntime
+
+    if type(runtime) is not RootAuthorityRuntime or runtime.service is not service or runtime.bindings is not bindings:
+        raise AuthorityDenied("memory.lifecycle", "post-choice lifecycle composition lacks the exact active runtime")
+    if not enrollment.memory_enrollments:
+        return runtime
+    choices = runtime.root_setup_choice_registry
+    if (choices is None or bindings.root_setup_choice_registry is not choices
+            or getattr(service, "_root_setup_choice_registry", None) is not choices):
+        return replace(
+            runtime,
+            memory_lifecycle_unavailable_reason="durable adopted memory service-enable choice is unavailable",
+        )
+
+    memory_runtime = runtime.memory_runtime
+    network_resolver = None
+    if isinstance(memory_runtime, Mapping):
+        connector = memory_runtime.get("namespace_connector")
+        network_resolver = getattr(connector, "private_network_lease_resolver", None)
+    try:
+        from .memory_runtime_composition import compose_root_memory_runtime
+        composed = compose_root_memory_runtime(
+            bindings=bindings, enrollment=enrollment,
+            memory_runtime=memory_runtime, service=service,
+            root_setup_choice_registry=choices,
+            vault=runtime.vault,
+            network_lease_resolver=network_resolver,
+            monotonic=service.monotonic,
+        )
+        return replace(
+            runtime,
+            memory_runtime_composition=composed,
+            memory_lifecycle_unavailable_reason=composed.unavailable_reason,
+        )
+    except Exception as exc:
+        return replace(
+            runtime,
+            memory_lifecycle_unavailable_reason=(
+                f"post-choice root memory lifecycle composition rejected ({type(exc).__name__})"
+            ),
+        )
 
 
 def serve_authority(service: AuthorityService, *, socket_gid_by_uid: Mapping[int, int],
                     stop_event: threading.Event,
                     socket_dir: Path = DEFAULT_SOCKET_DIR,
-                    max_clients_per_uid: int = 32) -> None:
+                    max_clients_per_uid: int = 32,
+                    adopted_listener_by_uid: Mapping[int, socket.socket] | None = None) -> None:
     """Run one root-owned socket per enrolled UID, gated by each primary GID."""
     if os.geteuid() != 0:
         raise AuthorityDenied("authority.privilege", "authority daemon must run as root")
@@ -236,6 +426,11 @@ def serve_authority(service: AuthorityService, *, socket_gid_by_uid: Mapping[int
     if (any(type(gid) is not int or gid <= 0 for gid in gids)
             or len(set(gids)) != len(gids)):
         raise AuthorityDenied("authority.socket", "each profile needs a unique protected primary GID")
+    adopted = dict(adopted_listener_by_uid or {})
+    if not adopted:
+        raise AuthorityDenied("authority.activation", "authority effects require an acknowledged transferred listener")
+    if set(adopted) != enrolled_uids or len(enrolled_uids) != 1:
+        raise AuthorityDenied("authority.socket", "supervised adoption must cover the exact singleton enrolled profile")
     failures: list[BaseException] = []
     failure_lock = threading.Lock()
 
@@ -254,9 +449,20 @@ def serve_authority(service: AuthorityService, *, socket_gid_by_uid: Mapping[int
 
     def run_one(uid: int, gid: int) -> None:
         try:
-            service.serve_unix(socket_dir / f"{uid}.sock", socket_gid=gid,
-                               stop_event=stop_event, expected_uid=0,
-                               max_clients=max_clients_per_uid)
+            service.serve_unix_from_owned_listener(adopted[uid], stop_event=stop_event,
+                                                   max_clients=max_clients_per_uid)
+        except BaseException as exc:
+            with failure_lock:
+                failures.append(exc)
+            stop_event.set()
+
+    def run_resource_scheduler() -> None:
+        runtime = getattr(service, "root_authority_runtime", None)
+        scheduler = getattr(runtime, "resource_scheduler", None)
+        if scheduler is None:
+            return
+        try:
+            scheduler.run(stop_event)
         except BaseException as exc:
             with failure_lock:
                 failures.append(exc)
@@ -267,22 +473,44 @@ def serve_authority(service: AuthorityService, *, socket_gid_by_uid: Mapping[int
                for uid, gid in sorted(socket_gid_by_uid.items())]
     pruner = threading.Thread(target=prune_root_observers,
                               name="authority-observer-prune", daemon=False)
+    scheduler_thread = threading.Thread(target=run_resource_scheduler,
+                                         name="authority-resource-scheduler", daemon=False)
     pruner.start()
+    scheduler_thread.start()
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join()
     stop_event.set()
     pruner.join()
+    scheduler_thread.join()
     if failures:
         raise AuthorityDenied("authority.listener", "protected authority listener exited") from failures[0]
 
 
 def main() -> int:
-    """System-service entry point; does not mutate installation state."""
+    """The direct console entry point is deliberately unavailable without adoption."""
+    raise AuthorityDenied("authority.activation", "authority effects require the fixed supervised adoption action")
+
+
+def main_adopt(activation_id: str) -> int:
+    """Fixed installed-unit action which serves only the acknowledged transferred listener."""
+    # The installed root actor snapshots its finite module closure.  Load the
+    # complete native launch verifier before that observation, never on the
+    # first post-capture worker request.
+    from .native_worker_launch import preload_native_worker_launch_closure
+    preload_native_worker_launch_closure()
+    # The daemon health source/material and completion writers are part of the
+    # installed actor's finite import closure.  Load them before the verifier
+    # snapshots module origins below.
+    from . import native_health_daemon
+    from .functional_health_receipt_consumer import RootDaemonFunctionalHealthReceiptConsumer
+    from .native_health_observer import (
+        RootDaemonCommittedHealthEnrollmentRegistry,
+        RootNativeHealthStartAuthority,
+    )
     service, enrollment = build_enrolled_authority_service()
-    runtime = (getattr(service, "root_authority_runtime", None)
-               or getattr(service, "root_runtime_bindings", None))
+    runtime = getattr(service, "root_authority_runtime", None)
     process_manager = getattr(runtime, "process_manager", None)
     process_profiles = (process_manager.profiles if process_manager is not None
                         else enrollment.process_profiles)
@@ -292,12 +520,122 @@ def main() -> int:
         if profile is None or profile.owner_uid != uid:
             raise AuthorityDenied("authority.socket", "every socket peer must map to a root-enrolled worker profile")
         socket_gid_by_uid[uid] = profile.owner_gid
+    from .installer_release import InstalledRootReleaseVerifier
+    from .listener_activation import RootAuthorityListenerActivationReceiver
+    held_release, actor = InstalledRootReleaseVerifier.from_current_root_process()
+    receiver = RootAuthorityListenerActivationReceiver.from_current_installed_daemon(
+        runtime, activation_id, held_release, actor, service=service, enrollment=enrollment)
+    listener: socket.socket | None = None
+    active_listener: Any = None
     stop_event = threading.Event()
     signal.signal(signal.SIGTERM, lambda _signum, _frame: stop_event.set())
     signal.signal(signal.SIGINT, lambda _signum, _frame: stop_event.set())
     try:
-        serve_authority(service, socket_gid_by_uid=socket_gid_by_uid, stop_event=stop_event)
+        listener, active_listener = receiver.receive_listener()
+        # The v191 health intent and its completion share the protected
+        # authority journal with the setup transaction.  The /run activation
+        # record remains transport/currentness evidence only.
+        from .listener_activation import RootSetupHealthIntentJournal
+        root_journal = runtime.bindings.resolve_root_journal(
+            "installer-authority-journal-v1",
+            expected_active_generation_digest=runtime.enrollment.protected_enrollment_digest,
+        )
+        health_journal = RootSetupHealthIntentJournal.from_root_journal(
+            root_journal, activation_id, receiver=receiver,
+            active_receipt=receiver.current_active_receipt(),
+        )
+        receiver.attach_health_intent_journal(health_journal)
+        service.root_authority_listener_activation_receiver = receiver
+        service.root_setup_health_intent_journal = health_journal
+        native_worker_launch_bound = False
+        if process_manager is not None:
+            # This owner binds fresh active PM/source projections and the
+            # receiver's retained adopted FD. Failure leaves the native worker
+            # unavailable; the generic process path denies that profile.
+            from .native_worker_launch import NativeHermesWorkerLaunchUnavailable
+            try:
+                process_manager.bind_native_worker_launch_owner(
+                    runtime, receiver, active_listener)
+                native_worker_launch_bound = True
+            except NativeHermesWorkerLaunchUnavailable:
+                pass
+        health_consumer = None
+        if runtime is not None and process_manager is not None and native_worker_launch_bound:
+            try:
+                commit_registry = RootDaemonCommittedHealthEnrollmentRegistry.from_root_runtime(runtime)
+                material_registry = native_health_daemon.RootDaemonNativeHealthMaterialRegistry.from_root_runtime(
+                    runtime, commit_registry,
+                )
+                run_registry = native_health_daemon.RootDaemonNativeHealthRunRegistry.from_root_runtime(
+                    runtime, material_registry,
+                )
+                start_authority = RootNativeHealthStartAuthority.from_root_daemon_runtime(
+                    runtime, commit_registry, material_registry, run_registry,
+                )
+                health_consumer = RootDaemonFunctionalHealthReceiptConsumer.from_root_runtime(
+                    runtime, commit_registry, material_registry, start_authority,
+                    run_registry.observer, run_registry,
+                )
+                service.root_functional_health_receipt_consumer = health_consumer
+                service.root_daemon_native_health_run_registry = run_registry
+            except Exception:
+                # Health is an independently gated capability.  The adopted
+                # listener may still serve ordinary authority RPCs, but its
+                # setup health channel is closed below unless the full typed
+                # source/controller/event owners compose successfully.
+                health_consumer = None
+        if health_consumer is not None:
+            try:
+                _dispatch_one_functional_health_intent(
+                    receiver, health_journal, health_consumer,
+                    service.root_daemon_native_health_run_registry,
+                )
+            except Exception:
+                # Closing the private setup channel reports unavailable to the
+                # original setup actor.  The durable intent remains accepted
+                # or started and cannot be replayed as a second health run.
+                try:
+                    receiver.abort_health_exchange()
+                except Exception:
+                    pass
+        else:
+            try:
+                receiver.abort_health_exchange()
+            except Exception:
+                pass
+        socket_path = listener.getsockname()
+        if (not isinstance(socket_path, str)
+                or socket_path != str(DEFAULT_SOCKET_DIR / f"{next(iter(socket_gid_by_uid))}.sock")):
+            raise AuthorityDenied("authority.activation", "acknowledged listener path differs from the selected enrolled UID")
+        serve_authority(service, socket_gid_by_uid=socket_gid_by_uid, stop_event=stop_event,
+                        adopted_listener_by_uid={next(iter(socket_gid_by_uid)): listener})
     finally:
+        stop_event.set()
+        if listener is not None:
+            try:
+                listener.close()
+            except OSError:
+                pass
+
+            # Remove only the exact socket leaf named by the adopted journal;
+            # a pathname replacement is preserved for recovery/inspection.
+            try:
+                info = Path(socket_path).lstat()
+                if (stat.S_ISSOCK(info.st_mode) and info.st_uid == 0
+                        and info.st_gid == enrollment.process_profiles[
+                            next(iter(enrollment.bindings_by_uid.values())).profile_id].owner_gid
+                        and (info.st_dev, info.st_ino) == (
+                            active_listener.socket_device, active_listener.socket_inode)):
+                    Path(socket_path).unlink()
+            except (OSError, KeyError, StopIteration):
+                pass
+        owner = getattr(receiver, "_owner", None)
+        close_owner = getattr(owner, "close", None)
+        if callable(close_owner):
+            close_owner()
+        close_receiver = getattr(receiver, "close", None)
+        if callable(close_receiver):
+            close_receiver()
         authority_runtime = getattr(service, "root_authority_runtime", None)
         close_runtime = getattr(authority_runtime, "close", None)
         if callable(close_runtime):
@@ -311,4 +649,59 @@ def main() -> int:
         stop_watchdog = getattr(remote_authority, "stop_watchdog", None)
         if callable(stop_watchdog):
             stop_watchdog()
+        actor.close()
+        held_release.close()
     return 0
+
+
+def _dispatch_one_functional_health_intent(receiver: Any, journal: Any,
+                                           consumer: Any, run_registry: Any) -> None:
+    """Consume one authenticated setup intent through the actual daemon owners."""
+    from .functional_health_receipt_consumer import RootDaemonFunctionalHealthReceiptConsumer
+    from .listener_activation import (
+        RootAcceptedHealthIntent, RootAuthorityListenerActivationReceiver,
+        RootSetupHealthIntentJournal,
+    )
+    from .native_health_daemon import RootDaemonNativeHealthRunRegistry
+    if (type(journal) is not RootSetupHealthIntentJournal
+            or type(receiver) is not RootAuthorityListenerActivationReceiver
+            or type(consumer) is not RootDaemonFunctionalHealthReceiptConsumer
+            or type(run_registry) is not RootDaemonNativeHealthRunRegistry
+            or journal.receiver is not receiver
+            or getattr(consumer, "receiver", None) is not receiver
+            or getattr(consumer, "intent_journal", None) is not journal
+            or getattr(consumer, "run_registry", None) is not run_registry):
+        raise AuthorityDenied("authority.health", "current typed daemon health owners are unavailable")
+    accepted = None
+    control = None
+    try:
+        accepted = receiver.receive_health_intent(journal, timeout=300.0)
+        if (type(accepted) is not RootAcceptedHealthIntent or accepted._journal is not journal
+                or accepted.activation_id != receiver.activation_id):
+            raise AuthorityDenied("authority.health", "daemon accepted no current setup health intent")
+        admission = consumer.admit_daemon_selected_health(accepted.intent_handle)
+        control = run_registry.start_selected_health(admission.admission_handle)
+        health_receipt_handle = run_registry.run_selected_health(control.control_handle)
+        completion_handle, _completion_sha256 = consumer.record_daemon_functional_health(
+            accepted.intent_handle, health_receipt_handle,
+        )
+        journal.resolve_current_completed_health_proof(accepted.intent_handle, completion_handle)
+        receiver.send_health_completion(accepted, completion_handle)
+    except Exception:
+        # A post-start failure cancels the exact retained observation where
+        # possible, then durably closes the intent.  A crash between these
+        # steps still leaves `started`, which the journal refuses to replay.
+        if control is not None:
+            try:
+                observation = run_registry.manager.resolve_selected_health_observation_handle(
+                    control.control_handle,
+                )
+                run_registry.observer.cancel_selected_health(observation)
+            except Exception:
+                pass
+        if accepted is not None:
+            try:
+                journal.mark_cancelled(accepted)
+            except Exception:
+                pass
+        raise

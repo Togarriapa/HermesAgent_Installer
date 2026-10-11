@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "id": "jarvis-manual-stage-gateway-seam-v259b",
+  "status": "implementation and actual target verification OPEN",
+  "extends": "planning/jarvis-visible-desktop-mvp-stage-v259.json",
+  "tasks": [
+    "RT-T259.3",
+    "LC-T259.4",
+    "VD-T259.5"
+  ],
+  "reason": "Existing serve_selected_gateway requires genuine active RootRemoteSessionClient/RemoteSessionAuthority; standalone main rejects. Manual MVP must use a distinct finite stage path, never fabricated active rows.",
+  "apis": {
+    "launch": "StageGatewayLaunch(policy, stage_sessions: StageGatewayPolicySessionAdapter, fixed_connector: StageFixedXpraConnector); serve_stage_gateway(launch, stop). Existing managed launch/main admission unchanged.",
+    "sessions": "StageGatewayPolicySessionAdapter implements admit(access_jwt, action, route_id), challenge(handle), renew(handle, session_id, access_jwt, renewal_nonce), close(handle, session_id=None). Records and opaque handles are stage-only issuer-retained; no AuthorityClient/ProtectedEnrollment/active generation fabrication. Reuse server.create_app route/framing/origin/socket guards through an explicit typed stage branch.",
+    "verification": "StageEdgeAccessVerifier.verify(access_jwt, action, session_id) validates with existing validate_access_jwt/JWKSCache and performs the exact protected same-app edge probe below. Alternatively use actual RootRemoteAccessVerifier plus authenticated existing PolicyVerifierClient only if a genuine separately secured scoped policy-read credential exists; tunnel token is never policy credential.",
+    "connector": "StageFixedXpraConnector.open(handle) returns server-compatible bounded read/write/close stream only after adapter current session + actual root-owned stage unit/UID/executable/listener/config readback. Only numeric127.0.0.1:14500 and fixed xpra-http/xpra-websocket routes. No caller host/port/path/connector callback. A finite root-owned read-only Unix helper may check exactly selected unit and listener for the unprivileged gateway using SO_PEERCRED and existing PIDFD helpers where usable; it cannot start/kill arbitrary units or issue managed authority."
+  },
+  "stage_configuration": "Root-owned nofollow regular immutable config binds exact confirmed hostname, issuer/audience/email allowlist, JWKS origin, actual app artifact digest/unit names/UIDs/socket and boot identities. Changes invalidate sessions. These are manual configuration/readback facts, not compiled service generations. Root verifies actual ownership, app-only Xpra session and signed distro/source/license runtime evidence.",
+  "edge_probe": {
+    "url": "https://jarvis.togarriapahome.uk/__stage_access_probe?nonce=<fresh cryptographic nonce>",
+    "request": "Register one unpredictable one-use nonce with original JWT fingerprint/principal/config digest/<=5s deadline before sending original app token only as Cookie CF_Authorization. Default verified TLS/SNI, fixed hostname/path, no proxy/redirect/login/cookie replacement, fresh noncached response, <=4096 bytes, <=5s whole request. Token never URL/log/evidence. No generic remote URL.",
+    "handler": "Exact probe handler requires valid forwarded Cf-Access-Jwt-Assertion against same policy/JWKS and exact issuer-retained pending nonce, original token fingerprint/principal/config digest and deadline. Consume nonce atomically before response. Return only exact nonce and equality/config witness with Cache-Control no-store; no app/session/connector or secret bytes. Unknown/replayed nonce, direct request without legitimate pending probe, changed token/principal/config deny. Probe path does not recursively issue edge probes. Require constant-time exact assertion-byte equality to retained submitted Cookie token, not just a decoded identity match. Actual Cloudflare forwarded-assertion behavior is a live acceptance gate, never assumed.",
+    "scope": "Same owned Access application must protect this path with the same OTP policy; no bypass/service-token rule or public caching. This witnesses actual edge admission for this original app token, not all Cloudflare policy metadata. get-identity alone is not accepted as current app revocation proof.",
+    "live_gate": "Actual authorized edge positive and pre-expiry token revocation/logout/current allowlist removal denial must pass before RT-T259.3 completion. Test outage/redirect/login/cached or replay response, wrong forwarded JWT and stale nonce. If edge behavior cannot prove bounded denial, public app remains unavailable; use genuinely configured isolated policy verifier rather than weaken revocation.",
+    "method": "GET; sole query key nonce"
+  },
+  "lifetime": "One socket. Session/policy lease <=30s and min original JWT expiry/current verification deadline. Verify fresh edge admission at issue/renew and active watchdog <=5s; expiry, policy/edge failure, changed config/unit/listener closes exact session and socket before further app bytes/input. Nonces are one-use; no expired lease resurrection or JWT replacement during probe. Same-host/origin checks and CSRF/route/frame/body bounds retained. Sustained owned stage unit is separate from unchanged <=600s managed diagnostic recipe.",
+  "secrets": "No Cloudflare management token in gateway/Desktop/cloudflared. Edge probe uses only original end-user Access token transiently. Optional isolated verifier uses actual protected scoped policy-read reference in verifier only, never token callback asserting success.",
+  "evidence": "Fixture effects exercise production stage adapter/JWT/probe/session/connector guards, not fake AuthorityClient. Actual Pi unit/socket/window/input/OTP/revocation/restart evidence remains OPEN. No source pins, runtime implementation or full installer acceptance claimed.",
+  "primary_sources": [
+    {
+      "url": "https://developers.cloudflare.com/cloudflare-one/access-controls/access-settings/session-management/",
+      "finding": "Documents per-app revocation and logout token rejection after20\u201330s; exact stage propagation bound must be measured, not asserted immediate."
+    },
+    {
+      "url": "https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/application-token/",
+      "finding": "get-identity retrieves identity at team domain; no documented guarantee of fresh selected application policy/revocation, so not sufficient alone."
+    }
+  ],
+  "source_review": "Gateway owner reviewed exact separate API and edge probe as implementable; no runtime implementation or live semantics claimed."
+}

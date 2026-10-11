@@ -5,11 +5,14 @@ import hashlib
 import json
 import math
 import os
+import re
 import secrets
 import sqlite3
+import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Protocol
 
 if TYPE_CHECKING:
@@ -90,10 +93,89 @@ class PrivateEngine(Protocol):
     engine_id: str
     route_class: str
     private: bool
-    def extract(self, *, text: str, context: HostContext, timeout: float,
+    route_ids: Mapping[str, str]
+    def extract(self, *, text: str, context: HostContext, job_handle: str, timeout: float,
                 cancelled: Callable[[], bool]) -> list[str]: ...
-    def embed(self, *, facts: list[str], context: HostContext, timeout: float,
+    def embed(self, *, facts: list[str], context: HostContext, job_handle: str, timeout: float,
               cancelled: Callable[[], bool]) -> list[list[float]]: ...
+
+
+_MEMORY_JOB_RECORD_SEAL = object()
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class MemoryJobAuthorityRecord:
+    """Root-only snapshot proving a durable job is actively leased for one attempt."""
+
+    job_handle: str
+    profile_id: str
+    namespace_id: str
+    provider: str
+    owner_generation: int
+    source_context_wire: bytes = field(repr=False)
+    consent_wire: bytes = field(repr=False)
+    consent_id: str
+    attempt: int
+    lease_until: float
+    event_sha256: str
+    source_receipt_handles: tuple[str, ...]
+    source_closure_sha256: str
+    _seal: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._seal is not _MEMORY_JOB_RECORD_SEAL:
+            raise TypeError("memory job authority records are resolved by the root queue")
+        if (not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", self.job_handle)
+                or self.provider not in PROVIDERS or self.owner_generation < 1 or self.attempt < 1
+                or not re.fullmatch(r"[0-9a-f]{64}", self.event_sha256)
+                or not re.fullmatch(r"[0-9a-f]{64}", self.source_closure_sha256)
+                or not self.source_receipt_handles or len(set(self.source_receipt_handles)) != len(self.source_receipt_handles)
+                or not self.source_context_wire or not self.consent_wire):
+            raise BrokerDenied("active memory job authority record is malformed")
+
+    def __repr__(self) -> str:
+        return "MemoryJobAuthorityRecord(<root-private>)"
+
+
+def _build_private_engine_registry(
+        targets: Mapping[tuple[str, str, str], MemoryTarget],
+        resolver: Callable[[str, int], tuple[Any, Any]] | None,
+        active_generation_digest: str) -> tuple[
+            dict[tuple[str, str, str], PrivateEngine], dict[tuple[str, str, str], str]]:
+    """Resolve only complete engine selections joined to exact memory rows."""
+    engines: dict[tuple[str, str, str], PrivateEngine] = {}
+    unavailable: dict[tuple[str, str, str], str] = {}
+    if resolver is None:
+        return engines, unavailable
+    from hermes_installer.authority.types import AuthorityDenied
+    from hermes_installer.memory.private_engine import (
+        PrivateMemoryEngineUnavailable, RootPrivateMemoryEngine,
+    )
+    from hermes_installer.providers.private_memory import PrivateMemoryRouteDenied
+    for key, target in targets.items():
+        enrollment = target.enrollment
+        if enrollment is None:
+            raise ValueError("private engine resolution requires a strict selected memory enrollment")
+        try:
+            resolved = resolver(enrollment.service_enrollment_id, enrollment.memory_owner_generation)
+            if not isinstance(resolved, tuple) or len(resolved) != 2:
+                raise ValueError("private engine resolver must return selected routes and dispatcher")
+            selected_routes, dispatcher = resolved
+            if (selected_routes.profile_id != target.profile_id
+                    or selected_routes.namespace_id != target.namespace_id
+                    or selected_routes.memory_enrollment_id != enrollment.service_enrollment_id
+                    or selected_routes.memory_provider != target.provider
+                    or selected_routes.memory_owner_generation != enrollment.memory_owner_generation
+                    or selected_routes.service_generation_digest != active_generation_digest
+                    or selected_routes.extract_route_id != enrollment.private_extraction_embedding_routes.get("extract")
+                    or selected_routes.embed_route_id != enrollment.private_extraction_embedding_routes.get("embed")):
+                raise ValueError("selected private inference routes differ from protected memory enrollment")
+            engines[key] = RootPrivateMemoryEngine.from_selected_routes(selected_routes, dispatcher)
+        except (AuthorityDenied, PrivateMemoryEngineUnavailable, PrivateMemoryRouteDenied) as exc:
+            # Absent selection/consent/deployment remains unavailable. Other
+            # malformed protected joins are surfaced as startup errors above.
+            unavailable[key] = str(exc)
+    return engines, unavailable
 
 
 class OwnerState(Protocol):
@@ -377,6 +459,103 @@ class DurableMemoryQueue:
                 db.close()
         return receipt
 
+    def enqueue_completed_turn(self, *, target: MemoryTarget, context: HostContext,
+                               completed_turn: Any, transcript: bytes,
+                               consent: Any) -> str:
+        """Persist only a root-observed completed turn with its signed consent.
+
+        This method is for the attached root ``RootMemoryCaptureCoordinator``;
+        the ordinary memory RPC schema intentionally has no transcript field.
+        """
+        from hermes_installer.authority.native_turn_observation import RootCompletedNativeTurn
+        from hermes_installer.authority.service import BackgroundConsent
+        from hermes_installer.authority.types import HostContext, Sensitivity
+        if (type(completed_turn) is not RootCompletedNativeTurn
+                or not isinstance(context, HostContext)
+                or type(consent) is not BackgroundConsent
+                or not isinstance(transcript, bytes)
+                or not 1 <= len(transcript) <= MAX_EVENT):
+            raise BrokerDenied("root completed turn, signed context, consent, and bounded transcript are required")
+        try:
+            text = transcript.decode("utf-8", errors="strict")
+        except UnicodeDecodeError:
+            raise BrokerDenied("completed turn transcript is not UTF-8") from None
+        if ("\x00" in text or hashlib.sha256(transcript).hexdigest() != completed_turn.transcript_sha256
+                or len(transcript) != completed_turn.transcript_size_bytes):
+            raise BrokerDenied("completed turn bytes differ from the root transcript receipt")
+        if context.profile_id != completed_turn.profile_id:
+            raise BrokerDenied("completed turn and signed memory context profile differ")
+        if (context.profile_id != target.profile_id or context.namespace_id != target.namespace_id
+                or target.enrollment is None
+                or context.purpose != "memory-capture" or context.operation != "memory.capture"
+                or context.final_payload_digest != completed_turn.transcript_sha256
+                or context.sensitivity not in {Sensitivity.PRIVATE, Sensitivity.CONFIDENTIAL}
+                or not context.source_receipts):
+            raise BrokerDenied("memory capture context is not private, source-bound, and digest-bound")
+        required_receipts = {
+            completed_turn.input_receipt_handle,
+            *completed_turn.request_receipt_handles,
+            *completed_turn.response_receipt_handles,
+            *completed_turn.tool_result_receipt_handles,
+            *completed_turn.delegation_receipt_handles,
+        }
+        source_ids = {receipt.receipt_id for receipt in context.source_receipts}
+        if not required_receipts.issubset(source_ids):
+            raise BrokerDenied("signed memory context does not contain the full completed-turn receipt closure")
+        claims = consent.claims
+        owner, generation = self.owner_state(context.profile_id)
+        if (owner != target.provider or generation != target.enrollment.memory_owner_generation
+                or claims.get("kind") != "memory-background-consent-v1"
+                or claims.get("provider_id") != target.provider
+                or claims.get("owner_generation") != generation
+                or claims.get("principal_id") != context.principal_id
+                or claims.get("profile_id") != context.profile_id
+                or claims.get("namespace_id") != context.namespace_id
+                or claims.get("uid") != context.uid
+                or claims.get("policy_revision") != context.policy_revision
+                or not isinstance(claims.get("issued_at_unix"), (int, float))
+                or isinstance(claims.get("issued_at_unix"), bool)
+                or not isinstance(claims.get("expires_at_unix"), (int, float))
+                or isinstance(claims.get("expires_at_unix"), bool)
+                or claims.get("issued_at_unix", float("inf")) > self.clock()
+                or claims.get("expires_at_unix", 0) <= self.clock()
+                or "capture" not in claims.get("allowed_actions", ())):
+            raise BrokerDenied("background consent differs from the current selected profile owner")
+        _scope(context, target, {})
+        event = {"event": "completed-turn", "turn_id": completed_turn.turn_handle,
+                 "transcript": text, "transcript_sha256": completed_turn.transcript_sha256}
+        raw_event = canonical(event, MAX_EVENT)
+        source = canonical(context.to_wire(), 16 * 1024)
+        consent_id, consent_bytes = _consent_wire(consent)
+        receipt = secrets.token_urlsafe(24)
+        now = self.clock()
+        with memory_state_lock(self.owned, self.owned.path("memory-queue.lock")):
+            db = self._db()
+            try:
+                db.execute("BEGIN IMMEDIATE")
+                current_owner, current_generation = self.owner_state(context.profile_id)
+                if (current_owner != owner or current_generation != generation
+                        or current_owner != target.provider):
+                    raise BrokerDenied("memory owner changed before completed turn persistence")
+                n = db.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','processing')").fetchone()[0]
+                profile_n = db.execute(
+                    "SELECT COUNT(*) FROM jobs WHERE profile=? AND status IN ('queued','processing')",
+                    (context.profile_id,)).fetchone()[0]
+                if n >= 10000 or profile_n >= 1000:
+                    raise BrokerUnavailable("durable memory queue is full")
+                db.execute("INSERT INTO consents(consent_id,profile,provider,owner_generation,active,created,updated) VALUES(?,?,?,?,1,?,?)",
+                    (consent_id, context.profile_id, target.provider, generation, now, now))
+                db.execute("INSERT INTO jobs(id,profile,namespace,provider,owner_generation,source_context,consent,event,status,created,updated,consent_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (receipt, context.profile_id, context.namespace_id, target.provider,
+                     generation, source, consent_bytes, raw_event, "queued", now, now, consent_id))
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+            finally:
+                db.close()
+        return receipt
+
     def result(self, context: HostContext, receipt: str) -> dict[str, Any]:
         _text(receipt, "receipt", 128)
         if self.profile_scope is not None and context.profile_id != self.profile_scope:
@@ -397,6 +576,87 @@ class DurableMemoryQueue:
             except (UnicodeDecodeError, json.JSONDecodeError):
                 value = None
         return {"found": True, "status": row[0], "result": value, "error": row[2]}
+
+    def resolve_active_job(self, job_handle: str, *, now: float | None = None) -> MemoryJobAuthorityRecord:
+        """Resolve a currently processing job without returning its transcript bytes."""
+        if (not isinstance(job_handle, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", job_handle)):
+            raise BrokerDenied("root durable memory job handle is malformed")
+        current_time = self.clock() if now is None else now
+        if isinstance(current_time, bool) or not isinstance(current_time, (int, float)) or not math.isfinite(current_time):
+            raise BrokerDenied("memory job clock is invalid")
+        with memory_state_lock(self.owned, self.owned.path("memory-queue.lock")):
+            db = self._db()
+            try:
+                row = db.execute(
+                    "SELECT profile,namespace,provider,owner_generation,source_context,consent,event,status,attempts,lease_until,consent_id "
+                    "FROM jobs WHERE id=?", (job_handle,)).fetchone()
+                if row is None:
+                    raise BrokerDenied("memory job is not retained")
+                (profile, namespace, provider, owner_generation, source_wire,
+                 consent_wire, event_wire, status, attempt, lease_until, consent_id) = row
+                if (status != "processing" or not isinstance(lease_until, (int, float))
+                        or lease_until <= current_time or type(attempt) is not int or attempt < 1
+                        or not isinstance(consent_id, str) or not consent_id):
+                    raise BrokerDenied("memory job is not in a live processing attempt")
+                consent_row = db.execute(
+                    "SELECT profile,provider,owner_generation,active FROM consents WHERE consent_id=?",
+                    (consent_id,)).fetchone()
+                if (consent_row is None or consent_row[3] != 1
+                        or consent_row[:3] != (profile, provider, owner_generation)):
+                    raise BrokerDenied("memory job consent is not active for its owner")
+                owner, generation = self.owner_state(str(profile))
+                if owner != provider or generation != owner_generation:
+                    raise BrokerDenied("memory job owner or generation is stale")
+                source_bytes, consent_bytes, event_bytes = bytes(source_wire), bytes(consent_wire), bytes(event_wire)
+            finally:
+                db.close()
+        from hermes_installer.authority.types import HostContext
+        try:
+            source = HostContext.from_wire(json.loads(source_bytes.decode("utf-8")))
+            consent = json.loads(consent_bytes.decode("utf-8"))
+        except Exception:
+            raise BrokerDenied("memory job source or consent wire is malformed") from None
+        receipt_handles = tuple(receipt.receipt_id for receipt in source.source_receipts)
+        if (source.profile_id != profile or source.namespace_id != namespace
+                or not receipt_handles or not isinstance(consent, dict)
+                or consent.get("consent_id") != consent_id):
+            raise BrokerDenied("memory job source closure or consent differs from its durable row")
+        return MemoryJobAuthorityRecord(
+            job_handle=job_handle, profile_id=profile, namespace_id=namespace,
+            provider=provider, owner_generation=owner_generation,
+            source_context_wire=source_bytes, consent_wire=consent_bytes,
+            consent_id=consent_id, attempt=attempt, lease_until=float(lease_until),
+            event_sha256=hashlib.sha256(event_bytes).hexdigest(),
+            source_receipt_handles=receipt_handles, source_closure_sha256=source.lineage_hash,
+            _seal=_MEMORY_JOB_RECORD_SEAL,
+        )
+
+    def is_current(self, record: MemoryJobAuthorityRecord, *, now: float | None = None) -> bool:
+        """Recheck exact attempt, lease, consent and owner immediately before an effect."""
+        if type(record) is not MemoryJobAuthorityRecord or record._seal is not _MEMORY_JOB_RECORD_SEAL:
+            return False
+        current_time = self.clock() if now is None else now
+        if current_time >= record.lease_until:
+            return False
+        try:
+            resolved = self.resolve_active_job(record.job_handle, now=current_time)
+            owner, generation = self.owner_state(record.profile_id)
+        except Exception:
+            return False
+        return (owner == record.provider and generation == record.owner_generation
+                and resolved.profile_id == record.profile_id
+                and resolved.namespace_id == record.namespace_id
+                and resolved.provider == record.provider
+                and resolved.owner_generation == record.owner_generation
+                and resolved.consent_id == record.consent_id
+                and resolved.attempt == record.attempt
+                and resolved.lease_until == record.lease_until
+                and resolved.event_sha256 == record.event_sha256
+                and resolved.source_context_wire == record.source_context_wire
+                and resolved.consent_wire == record.consent_wire
+                and resolved.source_receipt_handles == record.source_receipt_handles
+                and resolved.source_closure_sha256 == record.source_closure_sha256)
 
     def claim(self, lease_seconds: int = 60) -> dict[str, Any] | None:
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 300:
@@ -543,6 +803,106 @@ class DurableMemoryQueue:
                 db.close()
 
 
+_PROFILED_MEMORY_QUEUE_SEAL = object()
+
+
+class ProfiledMemoryJobResolver:
+    """Root-sealed facade for profile-local durable memory queues.
+
+    The root runtime is the only constructor. AuthorityService can require
+    this exact type to resolve an opaque active-job handle without accepting
+    arbitrary callbacks, profile paths, or worker-supplied identity claims.
+    """
+
+    def __init__(self, queues: Mapping[str, DurableMemoryQueue], *, _seal: object):
+        if (_seal is not _PROFILED_MEMORY_QUEUE_SEAL or not queues
+                or any(not isinstance(profile, str) or not profile
+                       or type(queue) is not DurableMemoryQueue
+                       for profile, queue in queues.items())):
+            raise TypeError("a root-selected immutable profile queue map is required")
+        self._queues = MappingProxyType(dict(queues))
+        self._profiles = tuple(sorted(self._queues))
+        self._claim_cursor = 0
+        self._claim_lock = threading.Lock()
+
+    @property
+    def profiles(self) -> tuple[str, ...]:
+        return self._profiles
+
+    def enqueue(self, *, target: MemoryTarget, context: HostContext,
+                body: Mapping[str, Any]) -> str:
+        child = self._queues.get(target.profile_id)
+        if child is None:
+            raise BrokerUnavailable("profile memory queue is unavailable")
+        return child.enqueue(target=target, context=context, body=body)
+
+    def enqueue_completed_turn(self, *, target: MemoryTarget, context: HostContext,
+                               completed_turn: Any, transcript: bytes, consent: Any) -> str:
+        child = self._queues.get(target.profile_id)
+        if child is None:
+            raise BrokerUnavailable("profile memory queue is unavailable")
+        return child.enqueue_completed_turn(
+            target=target, context=context, completed_turn=completed_turn,
+            transcript=transcript, consent=consent)
+
+    def result(self, context: HostContext, receipt: str) -> Mapping[str, Any]:
+        child = self._queues.get(context.profile_id)
+        if child is None:
+            raise BrokerUnavailable("profile memory queue is unavailable")
+        return child.result(context, receipt)
+
+    def consent_active(self, consent_id: str) -> bool:
+        return any(child.consent_active(consent_id) for child in self._queues.values())
+
+    def resolve_active_job(self, job_handle: str, *, now: float | None = None) -> MemoryJobAuthorityRecord:
+        matches = []
+        for child in self._queues.values():
+            try:
+                matches.append(child.resolve_active_job(job_handle, now=now))
+            except BrokerDenied:
+                continue
+        if len(matches) != 1:
+            raise BrokerDenied("root memory job is absent or ambiguous across profile queues")
+        return matches[0]
+
+    def is_current(self, record: MemoryJobAuthorityRecord, *, now: float | None = None) -> bool:
+        if type(record) is not MemoryJobAuthorityRecord:
+            return False
+        child = self._queues.get(record.profile_id)
+        return child is not None and child.is_current(record, now=now)
+
+    def claim(self, lease_seconds: int = 60) -> dict[str, Any] | None:
+        # Each SQLite queue claims atomically. Round-robin across profiles
+        # prevents a busy profile from starving another profile's work.
+        with self._claim_lock:
+            start = self._claim_cursor
+            for offset in range(len(self._profiles)):
+                index = (start + offset) % len(self._profiles)
+                job = self._queues[self._profiles[index]].claim(lease_seconds)
+                if job is not None:
+                    self._claim_cursor = (index + 1) % len(self._profiles)
+                    return job
+        return None
+
+    def finish(self, job: Mapping[str, Any], result: Mapping[str, Any] | None,
+               error_code: str | None = None) -> None:
+        profile = job.get("profile_id")
+        child = self._queues.get(profile) if isinstance(profile, str) else None
+        if child is None:
+            raise BrokerDenied("claimed memory job is not bound to a root profile queue")
+        child.finish(job, result, error_code)
+
+    def revoke_owner(self, profile_id: str, provider_id: str, owner_generation: int,
+                     *, reason: str = "owner_changed") -> int:
+        child = self._queues.get(profile_id)
+        return 0 if child is None else child.revoke_owner(
+            profile_id, provider_id, owner_generation, reason=reason)
+
+    def revoke_profile(self, profile_id: str, *, reason: str = "capture_disabled") -> int:
+        child = self._queues.get(profile_id)
+        return 0 if child is None else child.revoke_profile(profile_id, reason=reason)
+
+
 def _result(raw: bytes) -> dict[str, Any]:
     if not isinstance(raw, bytes) or len(raw) > MAX_RESPONSE:
         raise BrokerUnavailable("memory response exceeds limit")
@@ -557,7 +917,7 @@ def _result(raw: bytes) -> dict[str, Any]:
 
 def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
              queue: DurableMemoryQueue | None, owner_state: OwnerState,
-             engines: Mapping[str, PrivateEngine],
+             engines: Mapping[tuple[str, str, str], PrivateEngine],
              eligibility: Callable[[MemoryTarget, str, HostContext], bool] | None,
              maximum_timeout: float,
              compound_executor: MemoryCompoundExecutor | None = None):
@@ -611,21 +971,41 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                     raise BrokerUnavailable("durable queue is unavailable")
                 return _reply(queue.result(context,_text(body.get("receipt_id"),"receipt",128)))
             if action in {"extract","embed"}:
+                expected_body_fields = ({"schema", "job_handle", "record"} if action == "extract"
+                                        else {"schema", "job_handle", "facts"})
+                if set(body) != expected_body_fields:
+                    raise BrokerDenied("private memory stage payload does not match its fixed schema")
+                job_handle = body.get("job_handle")
+                if not isinstance(job_handle, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", job_handle):
+                    raise BrokerDenied("root durable memory job handle is required")
                 stage = "memory-" + ("extraction" if action == "extract" else "embedding")
-                engine = engines.get(target.provider)
+                # A local engine is enrolled per concrete profile target. A
+                # provider-name key would let one profile accidentally reuse
+                # another profile's engine, model cache, or authorization.
+                engine = engines.get((target.profile_id, target.namespace_id, target.provider))
                 if eligibility is None or not eligibility(target,stage,context):
                     raise BrokerUnavailable(stage + " is not policy eligible")
                 if engine is None or engine.route_class != "private-local" or engine.private is not True:
                     raise BrokerUnavailable(stage + " private/local engine is not enrolled")
+                enrollment = target.enrollment
+                route_ids = getattr(engine, "route_ids", None)
+                expected_route = (enrollment.private_extraction_embedding_routes.get(
+                    "extract" if action == "extract" else "embed") if enrollment is not None else None)
+                if (not isinstance(route_ids, Mapping)
+                        or route_ids.get("extract" if action == "extract" else "embed") != expected_route
+                        or not isinstance(expected_route, str) or not expected_route):
+                    raise BrokerDenied("private engine route differs from the protected profile enrollment")
                 if action == "extract":
                     record = body.get("record")
-                    if not isinstance(record,dict):
-                        raise ValueError("record is required")
+                    if (not isinstance(record,dict)
+                            or set(record) != {"id", "profile", "namespace", "source", "text", "provenance"}):
+                        raise ValueError("record does not match the fixed completed-memory job schema")
                     if record.get("profile",context.profile_id) != context.profile_id or record.get("namespace",context.namespace_id) != context.namespace_id:
                         raise BrokerDenied("record scope differs from signed host scope")
                     if str(record.get("source","")).startswith("memory:"):
                         raise BrokerDenied("recursive memory ingestion denied")
                     facts = engine.extract(text=_text(record.get("text"),"record text",MAX_EVENT),
+                        job_handle=job_handle,
                         context=context,timeout=timeout,cancelled=cancelled)
                     facts = [_text(x,"fact",8192) for x in facts]
                     if not 1 <= len(facts) <= MAX_FACTS:
@@ -634,7 +1014,8 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 facts = [_text(x,"fact",8192) for x in body.get("facts",[])]
                 if not 1 <= len(facts) <= MAX_FACTS:
                     raise ValueError("facts are invalid")
-                vectors = _vectors(engine.embed(facts=facts,context=context,timeout=timeout,cancelled=cancelled),len(facts))
+                vectors = _vectors(engine.embed(facts=facts,job_handle=job_handle,
+                    context=context,timeout=timeout,cancelled=cancelled),len(facts))
                 return _reply({"embeddings":vectors,"engine":engine.engine_id})
             if action in {"capture","delete"}:
                 owner,generation = owner_state(context.profile_id)
@@ -718,12 +1099,14 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 raise BrokerUnavailable(target.provider+" "+action+" is unavailable in its pinned API")
             if route_id not in target.approved_route_ids:
                 raise BrokerDenied("memory route is not in the protected enrollment")
-            if compound_executor is not None and action in {"search", "capture"}:
+            if compound_executor is not None and action in {"doctor", "search", "capture"}:
                 enrollment = target.enrollment
                 recipe = enrollment.fixed_route_map.get(route_id) if enrollment is not None else None
                 if recipe is None:
                     raise BrokerUnavailable("selected memory action has no complete protected compound recipe")
-                if action == "search":
+                if action == "doctor":
+                    compound_body = {}
+                elif action == "search":
                     compound_body = {"query": _text(body.get("query"), "query", 16384),
                                      "limit": limit}
                 elif target.provider == "agentmemory":
@@ -740,6 +1123,37 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
                 result = dict(executed)
                 result["profile_id"] = context.profile_id
                 result["namespace_id"] = context.namespace_id
+                if action == "search":
+                    semantic_result = result.get("result")
+                    records = semantic_result.get("records") if isinstance(semantic_result, Mapping) else None
+                    if not isinstance(records, list) or len(records) > limit:
+                        raise BrokerUnavailable("memory search returned no bounded validated record set")
+                    scoped_records = []
+                    for record in records:
+                        if (not isinstance(record, Mapping) or set(record) != {"id", "source", "text"}
+                                or record.get("source") != target.provider
+                                or not isinstance(record.get("id"), str)
+                                or not isinstance(record.get("text"), str)):
+                            raise BrokerUnavailable("memory search record differs from its validated provider schema")
+                        # Scope labels are derived by the root broker after provider
+                        # response validation; upstream/caller JSON cannot choose them.
+                        scoped_records.append({**record, "profile": context.profile_id,
+                                               "namespace": context.namespace_id})
+                    result["records"] = scoped_records
+                if action == "doctor":
+                    probe = result.get("result")
+                    if not isinstance(probe, Mapping):
+                        raise BrokerUnavailable("memory doctor returned no validated probe outcome")
+                    if probe.get("service_ready") is True:
+                        status = "ready"
+                    elif probe.get("service_live") is True:
+                        status = "live_unqualified"
+                    else:
+                        status = "not_ready"
+                    result["service_status"] = status
+                    result["functional_memory_verified"] = False
+                    result["revision"] = target.source_revision
+                    result["service_generation"] = target.service_generation
                 return _reply(result)
             if ipc is None:
                 raise BrokerUnavailable("root-owned authenticated memory service connector is unavailable")
@@ -841,7 +1255,7 @@ def _handler(target: MemoryTarget, action: str, *, ipc: ServiceIPC | None,
 
 def build_memory_handlers(*, targets: Mapping[tuple[str,str,str],MemoryTarget],
         owner_state: OwnerState, queue: DurableMemoryQueue|None, ipc: ServiceIPC|None,
-        engines: Mapping[str,PrivateEngine]|None=None,
+        engines: Mapping[tuple[str,str,str],PrivateEngine]|None=None,
         eligibility: Callable[[MemoryTarget,str,HostContext],bool]|None=None,
         compound_executor: MemoryCompoundExecutor | None = None,
         maximum_timeout: float=20.0):
@@ -858,6 +1272,8 @@ def build_memory_handlers(*, targets: Mapping[tuple[str,str,str],MemoryTarget],
             raise ValueError("target map key differs from immutable enrollment")
     result={}
     engines = dict(engines or {})
+    if any(key not in table for key in engines):
+        raise ValueError("private memory engines must be keyed by an exact enrolled profile target")
     for provider in PROVIDERS:
         if not any(target.provider == provider for target in table.values()):
             continue
@@ -885,12 +1301,16 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
         expected_active_generation_digest: str | None = None,
         vault: Any = None, connector_factory: RootConnectorFactory | None = None,
         service_catalog: Any = None, process_manager: Any = None,
-        enrollment_resolver: Callable[[str, str], MemoryServiceEnrollment] | None = None) -> dict[str, Any]:
+        enrollment_resolver: Callable[[str, str], MemoryServiceEnrollment] | None = None,
+        private_engine_resolver: Callable[[str, int], tuple[Any, Any]] | None = None,
+        private_network_lease_resolver: Any | None = None) -> dict[str, Any]:
     """Assemble the root memory runtime from protected enrollment only.
 
     Fixed compound execution is composed only with the current root service
-    catalog, managed process namespace, and credential vault. The builder installs no service process/model and
-    does not enable event capture or private external extraction.
+    catalog, managed process namespace, and credential vault. A private engine
+    is constructed only from a separately injected root route resolver that
+    returns a current typed selection plus root dispatcher; absent that
+    resolver, extraction/embedding stay unavailable.
     """
     targets: dict[tuple[str, str, str], MemoryTarget] = {}
     for key, item in protected_targets.items():
@@ -901,6 +1321,10 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
         targets[key] = target
     if connector_factory is not None:
         raise ValueError("raw memory HTTP connector factories are not supported")
+    if private_network_lease_resolver is not None:
+        from hermes_installer.authority.memory_runtime_composition import RootMemoryNetworkLeaseResolver
+        if type(private_network_lease_resolver) is not RootMemoryNetworkLeaseResolver:
+            raise ValueError("memory runtime requires the exact root private-network lease resolver")
     if not callable(root_journal_resolver) or not expected_active_generation_digest:
         # A service enrollment is not authority to choose its own state path.
         # Until the protected root-journal catalog is supplied, expose no
@@ -910,10 +1334,14 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
         return {
             "targets": targets, "owner_ledger": None, "owner_state": owner_state,
             "queue": None, "ipc": None, "compound_ledger": None,
+            "job_resolver": None,
             "compound_executor": None, "engines": {},
+            "private_engine_unavailable": {},
             "eligibility": lambda *_: False, "maximum_timeout": 15.0,
             "consent_active": lambda _consent_id: False,
             "consent_ready": False, "background_effect": None,
+            "capture_coordinator": None,
+            "capture_unavailable_reason": "protected memory state-root catalog is unavailable",
             "state_directories": {}, "state_root_ready": False,
         }
     from hermes_installer.memory.root_state import resolve_memory_state_directory
@@ -978,37 +1406,33 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
     consent_ready = callable(consent_issuer) and callable(effect_runner)
     queue = None
     if consent_ready:
-        class ProfiledQueue:
-            def __init__(self):
-                self.queues = {profile: DurableMemoryQueue(
-                    state_directories[profile], owner_state=owner_state,
-                    consent_issuer=consent_issuer)
-                    for profile in state_directories}
-            def enqueue(self, *, target: MemoryTarget, context: HostContext,
-                        body: Mapping[str, Any]) -> str:
-                child = self.queues.get(target.profile_id)
-                if child is None: raise BrokerUnavailable("profile queue is unavailable")
-                return child.enqueue(target=target, context=context, body=body)
-            def result(self, context: HostContext, receipt: str) -> Mapping[str, Any]:
-                child = self.queues.get(context.profile_id)
-                if child is None: raise BrokerUnavailable("profile queue is unavailable")
-                return child.result(context, receipt)
-            def consent_active(self, consent_id: str) -> bool:
-                return any(child.consent_active(consent_id) for child in self.queues.values())
-            def revoke_owner(self, profile: str, provider: str, generation: int,
-                             *, reason: str = "owner_changed") -> int:
-                child = self.queues.get(profile)
-                return 0 if child is None else child.revoke_owner(
-                    profile, provider, generation, reason=reason)
-            def revoke_profile(self, profile: str, *, reason: str = "capture_disabled") -> int:
-                child = self.queues.get(profile)
-                return 0 if child is None else child.revoke_profile(profile, reason=reason)
-        queue = ProfiledQueue()
+        children = {profile: DurableMemoryQueue(
+            state_directories[profile], owner_state=owner_state,
+            consent_issuer=consent_issuer)
+            for profile in state_directories}
+        queue = ProfiledMemoryJobResolver(children, _seal=_PROFILED_MEMORY_QUEUE_SEAL)
     consent_active = queue.consent_active if queue is not None else (lambda _consent_id: False)
+    private_engines, private_engine_unavailable = _build_private_engine_registry(
+        targets, private_engine_resolver, expected_active_generation_digest,
+    )
+
     def eligibility(target: MemoryTarget, stage: str, context: HostContext) -> bool:
-        # Enabling this requires a fresh protected policy decision and an
-        # explicitly enrolled private-local route at every operation boundary.
-        return False
+        action = {"memory-extraction": "extract", "memory-embedding": "embed"}.get(stage)
+        key = (target.profile_id, target.namespace_id, target.provider)
+        engine = private_engines.get(key)
+        if action is None or engine is None or type(context) is not HostContext:
+            return False
+        expected_purpose = "memory-extraction" if action == "extract" else "memory-embedding"
+        expected_operation = "memory.extract" if action == "extract" else "memory.embed"
+        if (context.purpose != expected_purpose or context.operation != expected_operation
+                or context.profile_id != target.profile_id or context.namespace_id != target.namespace_id):
+            return False
+        # This precheck is only for exact selected route/scope. The root
+        # provider dispatcher independently rechecks current consent, source
+        # closure, deployment, budget, and fresh effect authority per attempt.
+        return (engine.route_class == "private-local" and engine.private is True
+                and engine.route_ids.get(action)
+                == target.enrollment.private_extraction_embedding_routes.get(action))
     service_ids = [target.service_id for target in targets.values()]
     data_roots = [target.data_root_id for target in targets.values()]
     if len(service_ids) != len(set(service_ids)) or len(data_roots) != len(set(data_roots)):
@@ -1036,7 +1460,9 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
             ledger_resolver=lambda profile: compound_ledgers[profile],
             service_catalog=service_catalog,
             process_manager=process_manager, vault=vault, owner_state=owner_state,
-            consent_active=consent_active, ledger_profiles=tuple(compound_ledgers))
+            consent_active=consent_active,
+            private_network_lease_resolver=private_network_lease_resolver,
+            ledger_profiles=tuple(compound_ledgers))
         registered = step_authority.register()
         if registered:
             # This is an in-process root callback, never a worker RPC verb.
@@ -1057,6 +1483,25 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
             ).execute(enrollment=enrollment, **kwargs)
     compound_ledger = compound_ledgers
     compound_executor = ProfiledCompoundExecutor()
+    capture_coordinator = None
+    capture_unavailable_reason = None
+    turn_registry = getattr(authority_service, "native_turn_observation_registry", None)
+    if queue is None:
+        capture_unavailable_reason = "durable memory queue or background consent authority is unavailable"
+    elif turn_registry is None:
+        capture_unavailable_reason = "root native completed-turn observer is unavailable"
+    else:
+        from hermes_installer.memory.capture import (
+            MemoryCaptureUnavailable, attach_root_memory_capture_coordinator,
+        )
+        try:
+            capture_coordinator = attach_root_memory_capture_coordinator(
+                service=authority_service, targets=targets, queue=queue,
+                owner_state=owner_state,
+                expected_active_generation_digest=expected_active_generation_digest,
+            )
+        except MemoryCaptureUnavailable as exc:
+            capture_unavailable_reason = str(exc)
     return {
         "targets": targets,
         "owner_ledger": ledger,
@@ -1065,13 +1510,19 @@ def build_memory_runtime(protected_targets: Mapping[tuple[str,str,str],MemoryTar
         "ipc": ipc,
         "compound_ledger": compound_ledger,
         "compound_executor": compound_executor,
-        "engines": {},
+        "engines": private_engines,
+        "private_engine_unavailable": private_engine_unavailable,
         "eligibility": eligibility,
         "maximum_timeout": 15.0,
         "consent_active": consent_active,
+        "job_resolver": queue,
         "consent_ready": consent_ready,
         "background_effect": effect_runner if callable(effect_runner) else None,
+        "capture_coordinator": capture_coordinator,
+        "capture_unavailable_reason": capture_unavailable_reason,
         "step_authority": step_authority,
+        "namespace_connector": (step_authority.namespace_transport
+                                if step_authority is not None else None),
         "state_directories": state_directories, "state_root_ready": True,
     }
 
@@ -1094,15 +1545,23 @@ class MemoryJobWorker:
             source=HostContext.from_wire(json.loads(source_wire.decode("utf-8")))
             if source.profile_id!=job["profile_id"] or source.namespace_id!=job["namespace_id"]:
                 raise BrokerDenied("queued signed source context scope mismatch")
-            text=("User: "+event["user_content"]+"\nAssistant: "+event["assistant_content"]
-                  if event["event"]=="turn" else event["content"])
+            if event["event"] == "completed-turn":
+                text = _text(event["transcript"], "completed turn", MAX_EVENT)
+                if hashlib.sha256(text.encode("utf-8")).hexdigest() != event.get("transcript_sha256"):
+                    raise BrokerDenied("queued completed transcript digest changed")
+            elif event["event"] == "turn":
+                text = "User: "+event["user_content"]+"\nAssistant: "+event["assistant_content"]
+            else:
+                text = event["content"]
             record={"id":job["id"],"profile":job["profile_id"],"namespace":job["namespace_id"],
                     "source":"hermes-session:"+str(event.get("session_id",job["id"])),
                     "text":_text(text,"event",MAX_EVENT),"provenance":[source.lineage_hash]}
-            extracted=self._perform(job,source_wire,"extract","memory-extraction",{"schema":1,"record":record})
+            extracted=self._perform(job,source_wire,"extract","memory-extraction",
+                {"schema":1,"job_handle":job["id"],"record":record})
             facts=[_text(x,"fact",8192) for x in extracted.get("facts",[])]
             if not 1<=len(facts)<=MAX_FACTS:raise ValueError("extraction output is invalid")
-            embedded=self._perform(job,source_wire,"embed","memory-embedding",{"schema":1,"facts":facts})
+            embedded=self._perform(job,source_wire,"embed","memory-embedding",
+                {"schema":1,"job_handle":job["id"],"facts":facts})
             vectors=_vectors(embedded.get("embeddings"),len(facts))
             stored=self._perform(job,source_wire,"capture","memory-capture",
                 {"schema":1,"record_id":job["id"],"source":record["source"],

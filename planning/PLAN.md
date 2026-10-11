@@ -47,3 +47,211 @@ The later direct Cloudflare requirement is captured separately in planning/user-
 The immutable211-requirement baseline and its original tasks remain intact. Live changes additionally include Resources RB01..06/AC16, Cloudflare read authority RP01..06/AC17 and host-principal custody HI01..06/AC18, recorded in append-only plans/amendments/ files and corresponding planning/*-amendment.json ledgers. Central dependency-graph.json now includes these additive change/task edges. Each ledger separates implementation_complete from target_acceptance_complete or equivalent pending acceptance; fixture results cannot check native/account tasks.
 
 Host custody selects actual trusted root-owned control, distinct unprivileged principals, protected IPC and kernel isolation; it refines R0054/R0058 and private/public dispatch rather than granting new homelab enrollment. Authentic System direct/indirect membership and alarm recipient authority are freshly resolved before effects. Existing AC05/06/08 remain mandatory. AC06/07/09/10/11/12 checkbox verification text is reconciled to its already precise traceability method; R0042 is corrected to Coral adapter/delegate-used evidence. No requirement is removed or weakened. All runtime changes remain active and canonical runtime specs stay unsynced until genuine verification.
+
+
+Source-join producers v178: `plans/amendments/2026-10-10-source-join-producers-v178.md` closes the implementation contract gaps for genuine native definitions/member/authority groups, setup-held Hermes/PM fixture bridge, finite descriptor/separate service process and native overlay proxy. HI-T178.1..5 remain implementation OPEN and target acceptance OPEN; all AC01..18 OPEN.
+
+Selected native executable closure v179: `plans/amendments/2026-10-10-selected-native-executable-closure-v179.md`; HI-T179.1 implementation OPEN, HI-T179.2 live acceptance OPEN, all AC01..18 OPEN.
+
+HI-T179.1 selected local source composition implemented/fixture verified: `docs/native-selected-source-composition-v179.md` (81 passed,3 skipped); full HI-T178.1 and HI-T179.2 live/runtime acceptance remain OPEN. All AC01..18 OPEN.
+
+
+Reviewed source members and boundary joins v180: `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md` and `planning/reviewed-source-pin-batch-v180.json`. Native3a349c72 and corrected builderc757aec source bytes reviewed only; descriptor application,21-field local-operation lane, actual held build driver and own-worker kernel gate remain OPEN. HI-T178.2/HI-T179.2 fixture custody cycle unchanged; all AC01..18 OPEN. Root owns final publication.
+
+
+Conditional Authentik/local-owner setup v181: `plans/amendments/2026-10-10-conditional-authentik-local-owner-setup-v181.md` and `planning/local-owner-setup-contract-v181.json`. HI-T181.1/2 → BD-T181.3 → LC-T181.4 → VD-T181.5 remain OPEN; genuine owner identity never grants Authentik homelab/recipient authority. Independent readiness/configure later restores R0058/R0060/R0143; all AC01..18 OPEN. v180 source pin checkpoint unchanged.
+
+
+Active network generation owner v182: `plans/amendments/2026-10-10-active-network-generation-owner-v182.md` and `planning/active-network-generation-owner-v182.json`; HI-T182.1→HI-T182.2→HI-T182.3→VD-T182.4 OPEN. Concrete signed source/publication/revocation/current actor/journal owner replaces ambiguous active_enrollment. Valid original adoption can survive setup expiry; no lease survives active proof change. v180 kernel gates/all AC01..18 remain OPEN.
+
+
+Signed worker/current active overlay producers v183: `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md` and `planning/active-effect-producers-v183.json`; concrete held source→signed recipe→service generation/active runtime and signed owner/view adoption→NSS/loaded invocation/four-method grant. HI-T183.0..4/VD-T183.5 OPEN; no static network authorization, setup receipt extension or host/AuthentiK scope. All AC01..18 OPEN.
+
+
+Network wire v184: `plans/amendments/2026-10-10-network-row-wire-digest-boundaries-v184.md`; exact schema2 row/FK/hash contracts in `planning/network-row-wire-v184.json`. HI-T184.1/.2/VD-T184.3 OPEN; enclosing digest only in transient runtime projection. No source pin approval/all AC01..18 OPEN.
+
+
+Owner observer/capture/RPC v185: `plans/amendments/2026-10-10-owner-overlay-observer-capture-rpc-v185.md`; HI-T185.1/.2/VD-T185.3 OPEN, actual role+READY+source call/schema/current peer→one-use local grant→CAS. No backend61 changes or source pin approval; all AC01..18 OPEN.
+
+
+Preactive listener v186: `plans/amendments/2026-10-10-preactive-authority-listener-custody-v186.md`; real prepared root no-effect socket precedes signed recipe, active FD transfer/re-observation follows publication. HI-T186.1/.2/VD-T186.3 OPEN, no future socket/active proof, all AC01..18 OPEN.
+
+
+Listener activation v187: `plans/amendments/2026-10-10-supervised-listener-activation-channel-v187.md`; actual supervised daemon/peer transaction and named private channel, each process locally verifies own actor. HI-T187.1/.2/VD-T187.3 OPEN, source pins pending, allAC01..18 OPEN.
+
+
+Owner result source v188: `plans/amendments/2026-10-10-owner-result-source-selector-v188.md`; HI-T188.1 → VD-T188.2 OPEN. Separately signed actual result observer/root handler, no backend observer substitution; all AC01..18 OPEN/source review pending.
+
+HI-T188.3 → VD-T188.4 OPEN: exact native Hermes module launch mode resolves source recipe/generic interpreter contradiction without weakening generic scripts.
+
+
+Committed PM executable v189: `plans/amendments/2026-10-10-committed-pm-executable-identity-v189.md`; HI-T189.1 → VD-T189.2 OPEN. Exact private native runtime identity, unchanged generic static catalog validation, all AC01..18 OPEN.
+
+
+Same-worker namespace v190: `plans/amendments/2026-10-10-same-worker-namespace-handshake-v190.md`; HI-T190.1 → VD-T190.2 OPEN, staged actual namespace before probes/release, all AC01..18 OPEN.
+
+
+Two-actor health v191: `plans/amendments/2026-10-10-two-actor-health-commit-custody-v191.md`; HI-T191.1 → HI-T191.2 → HI-T191.3 → VD-T191.4 OPEN. Independent daemon commit/source proof and actual source run/completion; no setup-session copy or ACK health. All AC01..18 OPEN.
+
+
+Native selected views v192: `plans/amendments/2026-10-10-native-worker-selected-view-paths-v192.md`; HI-T192.1 → VD-T192.2 OPEN, source host identity distinct from actual worker mount/argv, full PM/native closure preserved. All AC01..18 OPEN.
+
+
+Native member custody v193: `plans/amendments/2026-10-10-native-worker-view-member-bind-custody-v193.md`; HI-T193.1 → VD-T193.2 OPEN, source root/member versus actual owned target identities distinct. All AC01..18 OPEN.
+
+
+Health event ancestry v194: `plans/amendments/2026-10-10-health-event-causal-ancestry-v194.md`; HI-T194.1 → HI-T194.2 → VD-T194.3 OPEN, genuine per-event provenance and causal DAG/source proof. All AC01..18 OPEN.
+
+
+Final coherent source review v195: `plans/amendments/2026-10-10-final-coherent-source-pin-review-v195.md` / `planning/final-coherent-source-pin-review-v195.json`; exact source0add8c33, closed source/member/catalog/helper/preload application under existing VD-T180.6/VD-T183.5. Pin application, full runtime/target evidence and all AC01..AC18 OPEN; frozen160 baseline unchanged.
+
+
+Safe bootstrap diagnostics v196: `plans/amendments/2026-10-10-safe-bootstrap-diagnostics-source-review-v196.md` / `planning/safe-bootstrap-diagnostics-source-review-v196.json`; BD-T196.1/VD-T196.2 OPEN, exact fff38897 source review updates only two v195 leaves, no guard or runtime authority change. All AC01..AC18 OPEN; immutable baseline unchanged.
+
+
+Installed startup/qualification custody v197: `plans/amendments/2026-10-10-installed-startup-qualification-custody-v197.md`; HI-T197.1..3/VD-T197.4 OPEN. Closed actual two-actor startup intent, separate concrete fixture session/runtime composition and real task admission chain; no production relabel or BPF weakening. All AC01..AC18 and actual future source pins OPEN.
+
+
+Existing HI-T197.1/.2 and VD-T197.4: exact durable Xpra adoption and admission/active lifecycle clarification `plans/amendments/2026-10-10-durable-xpra-startup-adoption-v198.md`; all OPEN.
+
+Home Assistant existing-instance root enrollment: `plans/amendments/2026-10-10-home-assistant-root-enrollment-mc-r0101.md` / `planning/home-assistant-root-enrollment-contract.json`; MC-R0101.1/.2 OPEN. Current root-only instance/token-reference/source selection, harmless MCP discovery/read and strict publication/adoption; preserve HA config and all original account/target acceptance OPEN.
+
+Existing HI197/173/178 actual source producer ownership and finite APIs: `plans/amendments/2026-10-10-setup-startup-and-fixture-source-producers-v199.md`; all OPEN.
+
+Actual HA Assist resource scope/typed TTY selector: `plans/amendments/2026-10-10-home-assistant-assist-scope-mc-r0101.md`; MC-R0101.3/.4 OPEN. Source-derived filtered or explicitly observed exposed-set reads, no synthetic entity-ID API or admin/action shortcut.
+
+Exact routine publisher candidate metadata review `plans/amendments/2026-10-10-fixed-release-store-source-review-v200.md` under existing HI-T149.1; no new leaf pin row, actual target acceptance OPEN.
+
+
+Existing HI160/197 current core producer and acquisition/effect lease compatibility: `plans/amendments/2026-10-10-publication-core-and-fixture-acquisition-v201.md`; all OPEN.
+
+
+Existing HI160/197 exact remote TTY choice/3role source/build/compiler inputs: `plans/amendments/2026-10-10-selected-remote-role-source-inputs-v202.md`; all OPEN.
+
+Typed bootstrap RuntimeError boundary diagnostics v203: `plans/amendments/2026-10-10-typed-bootstrap-runtime-diagnostics-v203.md`; BD-T203.1/VD-T203.2 OPEN. Exact type/finite stage only; ordinary type-only trust failures and fail-closed exit unchanged. DD00 cause remains unassigned; all AC OPEN.
+
+Typed diagnostic source review v204: plans/amendments/2026-10-10-typed-bootstrap-diagnostic-source-review-v204.md; exact fd09b11d two-leaf replacement, BD-T203.1 / VD-T203.2 open, no DD00 diagnosis/all AC open.
+
+Jarvis sole user-facing profile v205: plans/amendments/2026-10-10-jarvis-sole-user-profile-v205.md; RB-T205.1/.2, VD-T205.3 OPEN; default/Jarvis +207 isolated native delegates, all208 source profiles preserved, no Desktop filter fiction/all AC OPEN.
+
+
+Existing HI173/178/197 actual fixture-subject NSS producer and unprivileged observation: `plans/amendments/2026-10-10-fixture-subject-nss-custody-v206.md`; all OPEN.
+
+
+Refinement v207: plans/amendments/2026-10-10-raspberry-pi-nft-dependency-observation-v207.md; HI-T207.1/VD-T207.2 exact Raspberry Pi libc6 dependency observation only, original HI-T09/HI-T13. Source/installed/kernel states separate; AC01..18 OPEN.
+
+Bootstrap handoff TTY reconfirmation v208: plans/amendments/2026-10-10-bootstrap-handoff-tty-reconfirmation-v208.md; BD-T208.1/VD-T208.2 OPEN; new explicit sameSHA/currentsamecontroller proof after staging, no blindTTLrenewal/allACOPEN.
+
+Bootstrap reconfirmation source review v211: plans/amendments/2026-10-10-bootstrap-handoff-reconfirmation-source-review-v211.md; exact26cf/root_setup sole leaf, BD-T208.1/VD-T208.2 application/tests/targetOPEN; no widercohort/allACOPEN.
+
+Jarvis selected task home custody v213: plans/amendments/2026-10-10-jarvis-selected-task-home-custody-v213.md; RB-T213.1/HI-T213.2/VD-T213.3 OPEN; actualheldhome currenttaskgrant fixed/hermes, all208/soleJarvis preserved/allACOPEN.
+
+
+Concrete remote runtime substrate v209: `plans/amendments/2026-10-10-concrete-remote-runtime-substrate-v209.md`; RT-T209.1..4 → VD-T209.5, all OPEN. Actual npm/Electron/Xpra/gateway acquisition, managed build and materialized current runtime are distinct; all AC OPEN.
+
+
+Production remote NSS/roots v212: `plans/amendments/2026-10-10-production-remote-role-nss-roots-v212.md`; RT-T212.1 → RT-T212.2 → VD-T212.3 OPEN, exact production three identities/owned roots/current adoption/verified-dead rollback; v209 AppDir finite targets corrected, all source pins/AC OPEN.
+
+
+HA v210 plans/amendments/2026-10-10-home-assistant-metadata-functional-read-v210.md extends MC-R0101/MC-F01 with MC-R0101.5/.6 actual WS metadata and genuine whole-context functional read; no HA exposure mutation, source/runtime/account evidence separate, all AC OPEN.
+
+Jarvis source-home/live-task correction v214: plans/amendments/2026-10-10-jarvis-published-home-live-task-split-v214.md; exact16publishedfacts/live taskcontextjoins, RB-T213.1/HI-T213.2/VD-T213.3 OPEN; all207/postsetup required/allACOPEN.
+
+Jarvis source-profile task identity v215: plans/amendments/2026-10-10-jarvis-source-profile-task-identity-v215.md; actualserviceprofile distinctprotectedsourcehome, typedliveadmission, prepared/publishedclaimjoins; existing213tasks/allACOPEN.
+
+OfficialDesktop buildacquisition218: plans/amendments/2026-10-10-official-desktop-build-acquisition-v218.md; BD-T218.1/.2 VD-T218.3 OPEN, dedicatedphase/currentchoice/pinnedNodeElectron/lockednpm noHyperframesalias/allACOPEN.
+
+
+HA v216 plans/amendments/2026-10-10-ha-setup-observation-receipts-v216.md refines MC-R0101.5/.6 actual setup observation→schema→functional pipeline; no forged daemon receipt/context, all AC OPEN.
+
+SealedFD3source review220: plans/amendments/2026-10-10-sealed-bootstrap-fd3-source-review-v220.md; structural482source/effectproof only, unchanged211leafpins/authority/TTLs; BD-T208.1/VD-T208.2 target/allACOPEN.
+
+Officialremote roledefinition222: plans/amendments/2026-10-10-official-remote-role-definition-producer-v222.md; RT-T222.1/.2 VD-T222.3 OPEN; exact3roleheldsource/separateidentitytransaction nofutureactiveclaims/allACOPEN.
+
+CurrentpublishedPMhome runtime221: plans/amendments/2026-10-10-current-published-pm-home-runtime-v221.md; HI-T221.1/.2 VD-T221.3 OPEN; existingfreshresolver exactprojection/FDcustody nooldseal/all207/allACOPEN.
+
+
+Xpra native source producers v219: `plans/amendments/2026-10-10-xpra-native-build-acquisition-v219.md`; RT-T219.1 → RT-T219.2 → VD-T219.3 OPEN, actual signed native+isolatedPM314 acquisition and independent session qualification; no gap-only completion/all AC OPEN.
+
+
+Gateway tested source v223: `plans/amendments/2026-10-10-tested-gateway-source-members-v223.md`; RT-T223.1 → RT-T223.2 → VD-T223.3 OPEN. Exact tested leaf/schema pins/heldlibpython/finitegatewaylink and synthetic-authorityARM64fixture distinguished; productionruntime/AC OPEN.
+
+
+Qualification v217: `plans/amendments/2026-10-10-qualification-compiler-terminal-custody-v217.md` and `planning/qualification-compiler-terminal-custody-v217.json` supply concrete compiler/task outcome, installed parent journal/unit custody and signed historical terminal evidence; no restored child seals or exit-only pass. All AC OPEN. HI-T217.1/.2 and VD-T217.3 remain OPEN.
+
+
+Qualification serializer v224: `plans/amendments/2026-10-10-qualification-protected-row-serializer-v224.md` / `planning/qualification-protected-row-serializer-v224.json` supply the finite private row serializer, fixture NSS policy/catalog and actual task recipe source joins. Existing HI-T217.1/.2 and VD-T217.3 remain OPEN; all AC OPEN.
+
+
+Current remote identity adoption v225: `plans/amendments/2026-10-10-current-remote-identity-adoption-v225.md`; RT-T225.1 → RT-T225.2 → VD-T225.3 OPEN. Actual publication/core/member + immutable signed existing journal adoption, fresh restart NSS/root/network proof; no old setup seal/all AC OPEN.
+
+
+Official Desktop native inputs v226: `plans/amendments/2026-10-10-official-desktop-native-build-inputs-v226.md`; RT-T226.1 → RT-T226.2 → VD-T226.3 OPEN. Actual official Electron headers/ABI, signedARM64 compiler/sysroot, exact workspace/native/packaging/AppDir producer and independent sandbox effects; all pins/AC OPEN.
+
+
+v225 schema clarification: `plans/amendments/2026-10-10-current-remote-identity-adoption-v225-schema-clarification.md`; authority envelope1 / service-generations3 exact schema2+selector rows, disabled absent member/null SHA+0 size; existing tasks/all AC OPEN.
+
+
+Preactive Xpra acquisition/build v227: `plans/amendments/2026-10-10-preactive-xpra-acquisition-build-v227.md`; RT-T227.1 → RT-T227.2 → RT-T227.3 → VD-T227.4 OPEN. Actual one-use fixedHTTPS/dynamic sourceCAS, preactive transform and acyclic member/recipe input digests; finite role managed plans, all pins/AC OPEN.
+
+
+Official Desktop ws types repair v229: `plans/amendments/2026-10-10-official-desktop-ws-types-repair-v229.md`; RT-T229.1 → RT-T229.2 → VD-T229.3 OPEN. Exact separately reviewed types-only auxiliary artifact and owned workspace projection, unchanged originalsource/lock; actualARM64compiler/native/AppDir/AC separate.
+## v230 Qualification source-before-custody ordering
+
+`planning/qualification-source-before-process-custody-v230.json` resolves the actual handler/lease/source-session construction cycle. HI-T230.1/VD-T230.2 remain open; source-only lease grants no effects, actual prepared custody requires current genuine bindings, and all AC remain open.
+Typed initial pending diagnostics v232: `plans/amendments/2026-10-10-typed-initial-pending-diagnostics-v232.md`; BD-T232.1 → VD-T232.2 OPEN. Fixed outer actor/nested account and initial compilation boundaries only; coherent source review v228 follows committed implementation; all AC OPEN.
+Bootstrap FD3 exec regression evidence: `evidence/development/EV-VD-T208.2-bootstrap-fd3-exec-20261010.json`. Python3.14/Linux ARM64 reproduced the CLOEXEC memfd-at-FD3 self-dup failure and verified explicit clear/readback plus sealed descriptor survival across exec. Unit/isolated-container checks pass; actual Pi handoff remains open.
+Current published PM home runtime v221: plans/amendments/2026-10-10-current-published-pm-home-runtime-v221.md; HI-T221.1/.2 VD-T221.3 OPEN; existing fresh resolver exact projection and FD custody, no restored seal, all207 required/allACOPEN.
+
+Active authority retained receipt aggregate v231: plans/amendments/2026-10-10-active-authority-receipt-aggregate-v231.md; HI-T231.1 → BD-T231.2 → VD-T231.3 OPEN. Actual source/NSS/runtime/policy aggregate renders before publication, same generation activates afterward; prepared/active, local-owner/Authentik and optional remote remain distinct; all AC OPEN.
+
+
+v228 exact8185 source review: `plans/amendments/2026-10-10-jarvis-runtime-source-pin-review-v228.md`;13 outer leaf tuples +3 exact held module members/preloads +4 existing catalog rows. Existing VD-T180.6/VD-T183.5/VD-T232.2 OPEN; coherent full checks and actual runtime evidence pending. All AC OPEN.
+## v233 Retained oneshot terminal
+
+`planning/retained-qualification-oneshot-terminal-v233.json` preserves exact active/exited evidence and permits purpose-owned quiescent unit collection only under original current custody. HI-T233.1/VD-T233.2 and all AC remain open. Installed predecessor update remains a separate unimplemented path.
+v234: `plans/amendments/2026-10-10-gateway-digests-owned-network-cleanup-v234.md` / `planning/gateway-digests-owned-network-cleanup-v234.json`; RT-T234.1 → RT-T234.2 → VD-T234.3 OPEN. Gateway acyclic field correction and original-owned journaled cleanup after expiry/revocation; no new pins/all AC OPEN.
+Existing predecessor candidate update v235: plans/amendments/2026-10-10-predecessor-bound-candidate-update-v235.md; BD-T235.1 → LC-T235.2 → VD-T235.3 OPEN. Exact old release before staging, reviewed candidate inputs, samecontroller sealed transition, present pointer CAS and owned rollback/reexec; distribution/runtime claims separate; all AC OPEN.
+Root service process lane v236: plans/amendments/2026-10-10-root-service-process-authority-lane-v236.md; HI-T236.1 → HI-T236.2 → VD-T236.3 OPEN. Actual source-selected six-operation declaration, separate root binding/current admission/consume, localuser ceiling unchanged, strict6process checks/kernel evidence preserved/allACOPEN.
+
+Root process proof joins236b: plans/amendments/2026-10-10-root-service-process-proof-joins-v236b.md; existing236tasks OPEN; actual primaryhealthhome/PM/FD, currentpolicy/serviceepoch, distinctpublisheddeclaration, schema4preserves225schema3; allACOPEN.
+
+Cold root process custody236b: plans/amendments/2026-10-10-root-service-process-cold-source-custody-v236b.md and planning/root-service-process-cold-source-custody-v236b.json; source verification before strict parser, genuine dormant runtime revalidation before effects. HI-T236.1/.2/VD-T236.3 and all AC OPEN.
+v237: `plans/amendments/2026-10-10-preactive-native-build-manager-composition-v237.md` / `planning/preactive-native-build-manager-composition-v237.json`; RT-T237.1/.2 and VD-T237.3 OPEN. Genuine preactive native manager chain breaks active-profile cycle; exact root controller sequence and owned partial-creation clarification; no pins/all AC OPEN.
+
+
+v238: `plans/amendments/2026-10-10-xpra-native-source-policy-v238.md` / `planning/xpra-native-source-policy-v238.json`; RT-T238.1/.2 and VD-T238.3 OPEN. Concrete399DEB/8Python bounded signed-source policy+keyring tuples, exact dependency/license edges; acquisition only/no native runtime/Pi acceptance.
+
+
+## v239 Remote output/CAS/materialization producer
+
+`planning/preactive-remote-build-output-receipts-v239.json` adds the genuine terminal-to-CAS/attestation-to-materialization edge required by v202/v209/v225/v237. RT-T239.1/.2/.3/VD-T239.4 and all AC remain open. No unrelated FixedBuildProfile or active service identity is inferred.
+
+
+v241 narrow update source review: `plans/amendments/2026-10-10-candidate-update-source-review-v241.md`; existing BD-T235.1/LC-T235.2/VD-T235.3 OPEN. Exact root_setup two-table tuple edit only; builder/publisher metadata, no native/catalog alias changes; full positive/unexcluded/Pi evidence pending and all AC OPEN.
+
+
+v242 genuine source-update bridge: `plans/amendments/2026-10-10-preinstalled-source-update-entry-v242.md`; BD-T242.1 → VD-T242.2 OPEN, retaining v235 tasks/source approval separately. Actual old predecessor/rootTTY/fixedoriginFD3/source actor required; all AC OPEN.
+v240: `plans/amendments/2026-10-10-official-desktop-measured-headers-managed-plan-v240.md` / `planning/official-desktop-measured-headers-managed-plan-v240.json`; RT-T240.1/.2 and VD-T240.3 OPEN. Exact observed header/member tuples and fixed Desktop managed interface; AppDir/measured caps/current receipts pending, no runtime/Pi acceptance.
+
+## Version-aware predecessor v249
+
+## Gateway source and wheel issuers v244
+
+Append-only `plans/amendments/2026-10-10-gateway-source-wheel-issuers-v244.md` / `planning/gateway-source-wheel-issuers-v244.json`; RT-T244.1/.2, VD-T244.3 open. Exact source-only held release projection plus selected Gateway locked-wheel CAS/license/FD issuer closes the source production seam; no source pins or acceptance inferred.
+Remote source active digest v246: plans/amendments/2026-10-10-remote-source-active-digest-acyclic-v246.md; RT-T246.1/.2/VD-T246.3 OPEN, exact source schema2 omits self-dependent field; actual full active receipt/core/adoption joins retain independent prepared lineage. All AC OPEN.
+
+
+v247 exact source-update leaf review: `plans/amendments/2026-10-10-source-update-entry-source-review-v247.md`; root_setup0b7d7203/71543 two-table literal update only. Existing BD-T242.1/VD-T242.2 and all AC OPEN; unexcluded/genuine positive/Pi evidence required.
+v245: `plans/amendments/2026-10-10-xpra-sysroot-html5-v245.md` / `planning/xpra-sysroot-html5-v245.json`; RT-T245.1/.2 and VD-T245.3 OPEN. Exact signed archive links/private sysroot and immutable official HTML5 source observations; mixed-license/current native/session proof pending, all AC OPEN.
+Append-only `plans/amendments/2026-10-10-version-aware-predecessor-verification-v249.md` / `planning/version-aware-predecessor-verification-v249.json`; BD-T249.1, LC-T249.2, VD-T249.3 open. Exact reviewed whole historical cohort verifies old custody only, no old actor/newest pin bypass or instance-specific allowlist.
+
+
+## Visible working MVP priority v259
+
+Confirmed jarvis.togarriapahome.uk. `planning/jarvis-visible-desktop-mvp-stage-v259.json`; native Jarvis app visible, real eligible chat, OTP protected app-only domain and owned durable restart/reconnect first. BD259.1/PR259.2/RT259.3/LC259.4/VD259.5 OPEN. Broad work preserved/deferred; full baseline AC OPEN; no provenance/security/budget shortcut.
+
+
+## Manual stage gateway seam v259b
+
+`planning/jarvis-manual-stage-gateway-seam-v259b.json`; same RT259.3/LC259.4/VD259.5 tasks OPEN. Distinct manual adapter, real JWT + same-app nonce edge proof and owned fixed connector; no counterfeit active rows or copied management credentials. Actual revocation/restart gates MVP.

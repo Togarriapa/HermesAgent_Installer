@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "record_kind": "development_fixture_observation",
+  "acceptance_id": "AC16",
+  "evidence_id": "EV-RB03",
+  "state": "fixture_observation_only",
+  "acceptance_record_emitted": false,
+  "authenticated": false,
+  "candidate": {
+    "git_sha": "34317a88345d5524d33d4a265cb8f5d9fe988540",
+    "tree_sha": "000e845a6d758078657cef8928cd3b8ae1bab1c2",
+    "checkout_path": "/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/acceptance/plugin-manager-34317a88/checkout",
+    "reported_clean": true
+  },
+  "target": {
+    "connect_device_id": "48dfbc75-8877-40bb-b391-9b08301911ad",
+    "platform": "Raspberry Pi 5 Model B Rev 1.1",
+    "architecture": "aarch64",
+    "owner": "admin",
+    "uid": 1000,
+    "gid": 1000,
+    "privilege": "unprivileged"
+  },
+  "hermes_source": {
+    "commit": "7085fbf7753266fc4943c55ac04926186bc90005",
+    "reported_clean": true
+  },
+  "runtime": {
+    "python": "3.14.7",
+    "ruamel_yaml": "0.18.16"
+  },
+  "fixtures": [
+    {
+      "scope": "selected_plugin_manager_fixture",
+      "reported_time_utc": {
+        "start": "05:44:02Z",
+        "end": "05:44:04Z",
+        "calendar_date_reported": false
+      },
+      "pytest_result": "1 passed",
+      "log": {
+        "retained_directory": "/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/acceptance/plugin-manager-34317a88/evidence",
+        "filename_reported": false,
+        "bytes": 280,
+        "sha256": "7cf1b2ebbbebd3723726243d67c91298d24c35540c0d1df6d251b140507ca1f7e",
+        "raw_log_copied": false
+      },
+      "assertions": {
+        "selected_adapter_fixture_passed": true,
+        "installer_deployment": null,
+        "native_plugin_effect": null,
+        "authenticated_target_result": null
+      }
+    },
+    {
+      "scope": "all_registered_plugin_manager_candidates_fixture",
+      "reported_time_utc": {
+        "start": "05:44:04Z",
+        "end": "05:44:05Z",
+        "calendar_date_reported": false
+      },
+      "pytest_result": "1 passed",
+      "log": {
+        "retained_directory": "/home/admin/HermesInstaller/data/devtest-luna-resource-wire-51d3883/native-resources-8b806b49/acceptance/plugin-manager-34317a88/evidence",
+        "filename_reported": false,
+        "bytes": 295,
+        "sha256": "2212120c11b59d41f208635c7f93429166f0e0b7bd86f8d609381dc8bb9b828f",
+        "raw_log_copied": false
+      },
+      "observed_fixture_checks": {
+        "registered_candidate_count": 42,
+        "captured_candidate_names": true,
+        "registration_ids": true,
+        "adapter_identity": true,
+        "toolset_identity": true,
+        "argument_schema": true,
+        "description": true,
+        "native_schema_sha256": true,
+        "schema_resolver_output": true
+      },
+      "assertions": {
+        "fixture_registry_and_schema_checks_passed": true,
+        "functional_native_plugin_invocation": null,
+        "root_effect_mediation": null,
+        "authenticated_target_result": null
+      }
+    }
+  ],
+  "not_observed": [
+    "calendar date for the reported UTC times",
+    "exact pytest node IDs and expanded argv",
+    "managed installer deployment or root custody",
+    "native plugin invocation or effects",
+    "provider/account operations",
+    "sudo authorization (sudo -n -v remains password-required)",
+    "authenticated enrolled-target Result"
+  ],
+  "claim_limit": "Two successful unprivileged Pi fixture tests only. They do not pass AC16 or any other acceptance criterion; all AC01-AC18 remain open."
+}

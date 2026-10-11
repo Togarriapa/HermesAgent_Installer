@@ -12,11 +12,13 @@ import hmac
 import json
 import os
 import re
+import secrets
 import sqlite3
 import stat
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
 
@@ -555,6 +557,296 @@ class _ProfileBoundOverlay:
         return self.store.delete(self.profile_id, record_id, expected_revision=expected_revision)
 
 
+class RootAnchoredProfileOverlayView:
+    """CAS view whose every overlay filesystem operation stays under a held root FD.
+
+    This is reserved for the root-owned native profile overlay custody path. The
+    ordinary ``ResourceOverlayStore`` remains pathname based for its existing
+    installer-owned roots. A live root resolver must still revalidate the
+    selected path/inodes before each effect; this class prevents an intervening
+    ancestor rename or symlink from redirecting that effect elsewhere.
+    """
+
+    _PROFILE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+    _RECORD = re.compile(r"^[a-z0-9][a-z0-9-]{0,95}$")
+    _MAX_VALUE = 1_048_576
+    _DIR_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+
+    def __init__(self, view_root_fd: int, profile_id: str, journal: Any):
+        if (os.geteuid() != 0 or type(view_root_fd) is not int or view_root_fd < 0
+                or not self._PROFILE.fullmatch(profile_id)):
+            raise ResourceRuntimeError("root-anchored overlay view selection is invalid")
+        info = os.fstat(view_root_fd)
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                or stat.S_IMODE(info.st_mode) != 0o700):
+            raise ResourceRuntimeError("root-anchored overlay descriptor has unsafe custody")
+        marker_fd = os.open(".hermes-installer-owned", os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=view_root_fd)
+        try:
+            marker_info = os.fstat(marker_fd)
+            marker = os.read(marker_fd, 64)
+        finally:
+            os.close(marker_fd)
+        if (not stat.S_ISREG(marker_info.st_mode) or marker_info.st_uid != 0
+                or stat.S_IMODE(marker_info.st_mode) != 0o600 or marker != b"schema=1\n"):
+            raise ResourceRuntimeError("root-anchored overlay marker is invalid")
+        self._view_root_fd = view_root_fd
+        self.profile_id = profile_id
+        self.journal = journal
+
+    @classmethod
+    def _parts(cls, profile_id: str, record_id: str) -> tuple[str, ...]:
+        if not cls._PROFILE.fullmatch(profile_id) or not cls._RECORD.fullmatch(record_id):
+            raise ResourceRuntimeError("overlay profile or record identity is invalid")
+        return "resource-overlays", profile_id, record_id
+
+    @staticmethod
+    def _check_directory(fd: int) -> None:
+        info = os.fstat(fd)
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                or stat.S_IMODE(info.st_mode) != 0o700):
+            raise ResourceRuntimeError("root-anchored overlay directory has unsafe custody")
+
+    def _open_dir(self, parts: tuple[str, ...], *, create: bool = False) -> int:
+        current = os.dup(self._view_root_fd)
+        try:
+            for part in parts:
+                if create:
+                    try:
+                        os.mkdir(part, 0o700, dir_fd=current)
+                        os.fsync(current)
+                    except FileExistsError:
+                        pass
+                child = os.open(part, self._DIR_FLAGS, dir_fd=current)
+                try:
+                    self._check_directory(child)
+                except Exception:
+                    os.close(child)
+                    raise
+                os.close(current)
+                current = child
+            result = current
+            current = -1
+            return result
+        except OSError:
+            raise ResourceRuntimeError("root-anchored overlay directory cannot be opened safely") from None
+        finally:
+            if current >= 0:
+                os.close(current)
+
+    def _read_json(self, directories: tuple[str, ...], name: str) -> dict[str, Any] | None:
+        try:
+            parent = self._open_dir(directories)
+        except ResourceRuntimeError:
+            # Missing descendants are normal for a read; any other unsafe
+            # condition remains a denial.
+            probe = os.dup(self._view_root_fd)
+            try:
+                for part in directories:
+                    try:
+                        child = os.open(part, self._DIR_FLAGS, dir_fd=probe)
+                    except FileNotFoundError:
+                        return None
+                    os.close(probe)
+                    probe = child
+                self._check_directory(probe)
+            except OSError:
+                raise ResourceRuntimeError("root-anchored overlay directory cannot be opened safely") from None
+            finally:
+                os.close(probe)
+            raise
+        try:
+            try:
+                descriptor = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), dir_fd=parent)
+            except FileNotFoundError:
+                return None
+            info = os.fstat(descriptor)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) & 0o077
+                    or info.st_size > self._MAX_VALUE + 4096):
+                os.close(descriptor)
+                raise ResourceRuntimeError("overlay revision file has unsafe ownership or mode")
+            try:
+                payload = bytearray()
+                while len(payload) <= self._MAX_VALUE + 4096:
+                    chunk = os.read(descriptor, min(65536, self._MAX_VALUE + 4097 - len(payload)))
+                    if not chunk:
+                        break
+                    payload.extend(chunk)
+            finally:
+                os.close(descriptor)
+            value = json.loads(payload)
+            if not isinstance(value, dict):
+                raise ValueError
+            return value
+        except ResourceRuntimeError:
+            raise
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            raise ResourceRuntimeError("root-anchored overlay revision file is invalid") from None
+        finally:
+            os.close(parent)
+
+    def _write_json(self, directories: tuple[str, ...], name: str, value: Mapping[str, Any]) -> None:
+        parent = self._open_dir(directories, create=True)
+        temp = f".{name}.{secrets.token_hex(8)}.tmp"
+        descriptor = -1
+        try:
+            descriptor = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o600, dir_fd=parent)
+            data = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
+            with os.fdopen(descriptor, "wb", closefd=False) as stream:
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.fchmod(descriptor, 0o600)
+            os.replace(temp, name, src_dir_fd=parent, dst_dir_fd=parent)
+            os.fsync(parent)
+        except OSError:
+            raise ResourceRuntimeError("root-anchored overlay revision write failed") from None
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            try:
+                os.unlink(temp, dir_fd=parent)
+            except FileNotFoundError:
+                pass
+            os.close(parent)
+
+    def _current(self, record_id: str) -> OverlayValue | None:
+        base = self._parts(self.profile_id, record_id)
+        pointer = self._read_json(base, "current.json")
+        if pointer is None:
+            return None
+        revision = pointer.get("revision")
+        if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{64}", revision):
+            raise ResourceRuntimeError("overlay current pointer is malformed")
+        value = self._read_json(base + ("revisions",), f"{revision}.json")
+        if (value is None or value.get("profile_id") != self.profile_id or value.get("record_id") != record_id
+                or value.get("revision") != revision or type(value.get("deleted")) is not bool):
+            raise ResourceRuntimeError("overlay current revision is missing or mismatched")
+        try:
+            import base64
+            content = base64.b64decode(value.get("value", ""), validate=True)
+        except Exception:
+            raise ResourceRuntimeError("overlay current revision content is malformed") from None
+        if len(content) > self._MAX_VALUE or hashlib.sha256(content + bytes([value["deleted"]])).hexdigest() != revision:
+            raise ResourceRuntimeError("overlay current revision digest does not match")
+        return OverlayValue(self.profile_id, record_id, revision, content, value["deleted"])
+
+    def read(self, record_id: str) -> OverlayValue | None:
+        self._parts(self.profile_id, record_id)
+        value = self._current(record_id)
+        return None if value is None or value.deleted else value
+
+    def _lock(self) -> int:
+        descriptor = os.open("resource-overlays.lock", os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o600, dir_fd=self._view_root_fd)
+        info = os.fstat(descriptor)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) & 0o077):
+            os.close(descriptor)
+            raise ResourceRuntimeError("root-anchored overlay lock has unsafe custody")
+        import fcntl
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+        except OSError:
+            os.close(descriptor)
+            raise ResourceRuntimeError("root-anchored overlay lock failed") from None
+        return descriptor
+
+    @staticmethod
+    def _unlock(descriptor: int) -> None:
+        import fcntl
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+    def _write_revision(self, record_id: str, revision: str, value: Mapping[str, Any]) -> None:
+        base = self._parts(self.profile_id, record_id)
+        relative = base + ("revisions",)
+        existing = self._read_json(relative, f"{revision}.json")
+        if existing is not None:
+            if existing != dict(value):
+                raise ResourceRuntimeError("overlay revision is immutable and its stored content conflicts")
+            return
+        self._write_json(relative, f"{revision}.json", value)
+
+    def write(self, record_id: str, value: bytes, *, expected_revision: str | None) -> str:
+        self._parts(self.profile_id, record_id)
+        key = f"resource-overlay:{self.profile_id}:{record_id}"
+        if not isinstance(value, bytes) or len(value) > self._MAX_VALUE:
+            raise ResourceRuntimeError("overlay value must be bytes no larger than one MiB")
+        lock = self._lock()
+        try:
+            current = self._current(record_id)
+            if (current.revision if current is not None else None) != expected_revision:
+                raise ResourceRuntimeError("overlay compare-and-swap revision does not match")
+            revision = hashlib.sha256(value + b"\0").hexdigest()
+            import base64
+            self.journal.checkpoint(key, "overlay_write_prepared", {"profile_id": self.profile_id, "record_id": record_id, "revision": revision})
+            self._write_revision(record_id, revision, {"profile_id": self.profile_id, "record_id": record_id, "revision": revision, "deleted": False, "value": base64.b64encode(value).decode("ascii")})
+            self._write_json(self._parts(self.profile_id, record_id), "current.json", {"revision": revision})
+            self.journal.checkpoint(key, "overlay_revision_written", {"profile_id": self.profile_id, "record_id": record_id, "revision": revision})
+            return revision
+        finally:
+            self._unlock(lock)
+
+    def history(self, record_id: str) -> tuple[str, ...]:
+        base = self._parts(self.profile_id, record_id) + ("revisions",)
+        try:
+            directory = self._open_dir(base)
+        except ResourceRuntimeError:
+            probe = os.dup(self._view_root_fd)
+            try:
+                for part in base:
+                    try:
+                        child = os.open(part, self._DIR_FLAGS, dir_fd=probe)
+                    except FileNotFoundError:
+                        return ()
+                    os.close(probe)
+                    probe = child
+                self._check_directory(probe)
+            except OSError:
+                raise ResourceRuntimeError("root-anchored overlay history directory is unsafe") from None
+            finally:
+                os.close(probe)
+            raise
+        try:
+            names = os.listdir(directory)
+        finally:
+            os.close(directory)
+        revisions = []
+        for name in names:
+            if not re.fullmatch(r"[0-9a-f]{64}\.json", name):
+                raise ResourceRuntimeError("overlay revision directory contains an unexpected entry")
+            revision = name[:-5]
+            value = self._read_json(base, name)
+            if (value is None or value.get("profile_id") != self.profile_id or value.get("record_id") != record_id
+                    or value.get("revision") != revision or type(value.get("deleted")) is not bool):
+                raise ResourceRuntimeError("overlay history contains a mismatched revision")
+            import base64
+            try:
+                content = base64.b64decode(value.get("value", ""), validate=True)
+            except Exception:
+                raise ResourceRuntimeError("overlay history contains malformed content") from None
+            if len(content) > self._MAX_VALUE or hashlib.sha256(content + bytes([value["deleted"]])).hexdigest() != revision:
+                raise ResourceRuntimeError("overlay history content digest does not match")
+            revisions.append(revision)
+        return tuple(sorted(revisions))
+
+    def delete(self, record_id: str, *, expected_revision: str) -> str:
+        self._parts(self.profile_id, record_id)
+        key = f"resource-overlay:{self.profile_id}:{record_id}"
+        lock = self._lock()
+        try:
+            current = self._current(record_id)
+            if current is None or current.deleted or current.revision != expected_revision:
+                raise ResourceRuntimeError("overlay compare-and-swap revision does not match")
+            revision = hashlib.sha256(current.value + b"\1").hexdigest()
+            import base64
+            self.journal.checkpoint(key, "overlay_delete_prepared", {"profile_id": self.profile_id, "record_id": record_id, "revision": revision})
+            self._write_revision(record_id, revision, {"profile_id": self.profile_id, "record_id": record_id, "revision": revision, "deleted": True, "value": base64.b64encode(current.value).decode("ascii")})
+            self._write_json(self._parts(self.profile_id, record_id), "current.json", {"revision": revision})
+            self.journal.checkpoint(key, "overlay_tombstoned", {"profile_id": self.profile_id, "record_id": record_id, "revision": revision})
+            return revision
+        finally:
+            self._unlock(lock)
+
+
 def create_native_plugin_handler(adapter_id: str,
                                  runtime_context: NativePluginRuntimeContext) -> Callable[[PluginRegistrationContext], None]:
     """Resolve a reviewed adapter and return the official Hermes ``register(ctx)`` hook."""
@@ -619,7 +911,7 @@ class SelectedResourceExecution:
     target: str
     operation: str
     recipient: str | None
-    delegation_id: str
+    delegation_id: str | None
     profile_id: str | None
     enabled: bool
 
@@ -642,7 +934,8 @@ class SelectedResourceExecution:
         }.get(self.identity.kind)
         if expected_operation != self.operation:
             raise ValueError("selected resource kind does not match its fixed operation")
-        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", self.delegation_id):
+        if (self.delegation_id is not None
+                and not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", self.delegation_id)):
             raise ValueError("selected root delegation identity is invalid")
         if self.profile_id is not None and not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", self.profile_id):
             raise ValueError("selected Hermes profile identity is invalid")
@@ -718,6 +1011,306 @@ class SelectedResourceRegistry:
         if row is None or row.identity.content_digest != identity.content_digest:
             return None
         return row
+
+
+def selected_resource_specs_by_generation(
+    selected_resources: SelectedResourceRegistry,
+) -> Mapping[tuple[str, str], Mapping[str, Any]]:
+    """Project protected selected specs into the root controller lookup shape.
+
+    Root source controllers key a selected spec by ``(resource_id,
+    resource_generation)``. This projection accepts only the immutable typed
+    registry loaded from protected selection and rejects collisions across
+    resource kinds or source identities instead of silently choosing one.
+    """
+    if not isinstance(selected_resources, SelectedResourceRegistry):
+        raise TypeError("typed protected selected resources are required")
+    specs: dict[tuple[str, str], Mapping[str, Any]] = {}
+    for selected in selected_resources.rows:
+        key = (selected.identity.resource_id, selected.generation_digest)
+        if key in specs:
+            raise ResourceRuntimeError("selected resource ID and generation are ambiguous")
+        specs[key] = selected.effective_spec
+    return MappingProxyType(specs)
+
+
+def selected_resource_registry_from_verified_materialization(
+    native_registry: Any,
+    discovery: Any,
+    selected_rows: Sequence[SelectedResourceExecution],
+    *,
+    expected_generation_digest: str,
+) -> SelectedResourceRegistry:
+    """Join protected selections to the effective specs from a verified source.
+
+    Selection rows carry root-issued effect authority, but their effective
+    specification is not trusted as source. This boundary reloads every row
+    from the verified ``NativeRegistry``/``NativeDiscovery`` pair, validates
+    its source identity and content digest, then copies only the canonical
+    effective spec into a fresh immutable selection registry.
+    """
+    from .native import NativeDiscovery, NativeRegistry
+
+    if (not isinstance(native_registry, NativeRegistry)
+            or not isinstance(discovery, NativeDiscovery)
+            or discovery.source_revision != native_registry.source.revision
+            or discovery.catalog_version != native_registry.source.catalog_version):
+        raise ResourceRuntimeError("verified native registry and discovery are required")
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_generation_digest):
+        raise ResourceRuntimeError("protected active resource generation digest is invalid")
+
+    canonical: dict[tuple[str, str, str], tuple[ResourceIdentity, Mapping[str, Any]]] = {}
+    for resolved in discovery.resources:
+        if not resolved.provenance_verified:
+            raise ResourceRuntimeError("native discovery contains unverified source provenance")
+        # Re-run source resolution instead of accepting the Discovery object's
+        # effective_spec, which is a convenient DTO and can be reconstructed.
+        advertised = resolved.resource
+        try:
+            source_resolved = native_registry.resolver.resolve(
+                (f"{advertised.kind.value}/{advertised.id}@={advertised.version}",)
+            )
+        except Exception:
+            raise ResourceRuntimeError("verified native source no longer resolves") from None
+        resource_match = next((entry for entry in source_resolved
+                               if (entry.resource.kind, entry.resource.id, entry.resource.version)
+                               == (advertised.kind, advertised.id, advertised.version)), None)
+        if resource_match is None or resource_match.resource.digest != advertised.digest:
+            raise ResourceRuntimeError("native discovery identity differs from verified source resolution")
+        resolved = resource_match
+        resource = resolved.resource
+        kind = resource.kind.value
+        key = (kind, resource.id, resource.version)
+        source_key = f"{kind}/{resource.id}@{resource.version}"
+        source_path = native_registry.paths.get(source_key)
+        raw = native_registry.resolver.raw.get(source_key)
+        if (not source_path or raw is None or raw.repository != native_registry.source.repository
+                or raw.selected_revision != native_registry.source.revision
+                or raw.observed_revision != native_registry.source.revision
+                or raw.content_digest != resource.digest
+                or native_registry.resolver.document_digest(raw.document) != resource.digest):
+            raise ResourceRuntimeError("native discovery identity does not match the verified source pin")
+
+        # NativeRegistry applies this one installer-owned rewrite both when it
+        # materializes the declaration and when it builds the runtime adapter.
+        spec = dict(resolved.effective_spec or resource.body)
+        if kind == "crons" and resource.id in {"resource-sync", "daily-resource-reconcile"}:
+            action = spec.get("action")
+            if not isinstance(action, Mapping):
+                raise ResourceRuntimeError("verified update cron has no selected action")
+            action = dict(action)
+            action.pop("repository", None)
+            action.pop("ref", None)
+            action.update({
+                "type": "installer-resource-candidate-assessment",
+                "source": {
+                    "kind": "installer-bundle",
+                    "path": f"resources/vendor/hermes-agent-resources-{native_registry.source.catalog_version}",
+                    "catalogVersion": native_registry.source.catalog_version,
+                    "revision": native_registry.source.revision,
+                },
+                "mode": "candidate-assessment",
+            })
+            spec["action"] = action
+        if key in canonical:
+            raise ResourceRuntimeError("verified native discovery contains a duplicate resource identity")
+        canonical[key] = (
+            ResourceIdentity(resource.id, kind, resource.version, source_path,
+                             native_registry.source.revision, resource.digest),
+            MappingProxyType(spec),
+        )
+
+    joined: list[SelectedResourceExecution] = []
+    seen: set[tuple[str, str, str]] = set()
+    for selected in selected_rows:
+        if not isinstance(selected, SelectedResourceExecution):
+            raise TypeError("root selected resource rows must use the typed execution contract")
+        key = (selected.identity.kind, selected.identity.resource_id, selected.identity.version)
+        verified = canonical.get(key)
+        if verified is None or key in seen or selected.identity != verified[0]:
+            raise ResourceRuntimeError("protected selection does not match a unique verified resource declaration")
+        seen.add(key)
+        joined.append(SelectedResourceExecution(
+            identity=verified[0], generation_digest=expected_generation_digest,
+            effective_spec=dict(verified[1]), capability=selected.capability,
+            target=selected.target, operation=selected.operation,
+            recipient=selected.recipient, delegation_id=selected.delegation_id,
+            profile_id=selected.profile_id, enabled=selected.enabled,
+        ))
+    return SelectedResourceRegistry(joined, expected_generation_digest=expected_generation_digest)
+
+
+def resolve_selected_resource_execution_from_materialization(
+    *,
+    native_materialization: Any,
+    protected_selection: Mapping[str, Any],
+    native_registry: Any,
+    discovery: Any,
+    enrollment_id: str,
+    service_generation: str,
+    service_generation_digest: str,
+) -> SelectedResourceExecution:
+    """Resolve one protected execution row against a live materialization receipt.
+
+    The protected row supplies only selected authority fields and hashes. The
+    resource identity/version/source come from the verified registry, while the
+    effective spec comes only from the transformed YAML bytes returned by the
+    root materialization receipt resolver. No runtime JSON or caller path is
+    used as proof.
+    """
+    from .native import NativeDiscovery, NativeRegistry, _yaml
+    from hermes_installer.authority.native_materialization import (
+        NativeMaterializedResourceDefinition, RootNativeMaterialization,
+    )
+
+    fields = {
+        "resource_id", "resource_kind", "source_revision", "source_manifest_sha256",
+        "resource_generation", "profile_id", "profile_generation",
+        "materialization_receipt_handle", "materialized_member_path",
+        "materialized_member_sha256", "materialized_member_size_bytes",
+        "effective_spec_sha256", "backend_enrollment_id", "operation", "capability",
+        "target_id", "recipient", "delegation_id", "enabled",
+        "consent_selection_receipt_handle",
+    }
+    if (type(native_materialization) is not RootNativeMaterialization
+            or not isinstance(protected_selection, Mapping) or set(protected_selection) != fields
+            or not isinstance(native_registry, NativeRegistry)
+            or not isinstance(discovery, NativeDiscovery)
+            or not isinstance(enrollment_id, str) or not enrollment_id
+            or not isinstance(service_generation, str) or not service_generation
+            or not re.fullmatch(r"[0-9a-f]{64}", service_generation_digest)):
+        raise ResourceRuntimeError("root selected resource materialization inputs are incomplete")
+    row = protected_selection
+    resource_id, kind, profile_id = row["resource_id"], row["resource_kind"], row["profile_id"]
+    is_sha256 = lambda value: isinstance(value, str) and bool(re.fullmatch(r"[0-9a-f]{64}", value))
+    if (not isinstance(resource_id, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,95}", resource_id)
+            or not isinstance(kind, str)
+            or kind not in {"bundles", "channels", "crons", "mcps", "plugins", "webhooks"}
+            or not isinstance(profile_id, str)
+            or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", profile_id)
+            or not is_sha256(row["resource_generation"])
+            or not is_sha256(row["profile_generation"])
+            or not is_sha256(row["source_manifest_sha256"])
+            or not is_sha256(row["materialized_member_sha256"])
+            or not is_sha256(row["effective_spec_sha256"])
+            or type(row["materialized_member_size_bytes"]) is not int
+            or row["materialized_member_size_bytes"] <= 0
+            or row["materialized_member_size_bytes"] > 1_048_576
+            or not isinstance(row["materialization_receipt_handle"], str)
+            or not row["materialization_receipt_handle"]
+            or not isinstance(row["materialized_member_path"], str)
+            or not row["materialized_member_path"]
+            or not isinstance(row["source_revision"], str) or not row["source_revision"]
+            or not isinstance(row["backend_enrollment_id"], str) or not row["backend_enrollment_id"]
+            or not isinstance(row["capability"], str)
+            or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", row["capability"])
+            or not isinstance(row["target_id"], str)
+            or not isinstance(row["operation"], str)
+            or (row["recipient"] is not None and
+                (not isinstance(row["recipient"], str) or not row["recipient"]
+                 or len(row["recipient"]) > 256 or any(ord(char) < 0x20 for char in row["recipient"])))
+            or (row["delegation_id"] is not None and
+                (not isinstance(row["delegation_id"], str)
+                 or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", row["delegation_id"])))
+            or not isinstance(row["consent_selection_receipt_handle"], str)
+            or not row["consent_selection_receipt_handle"]
+            or type(row["enabled"]) is not bool):
+        raise ResourceRuntimeError("root selected resource row is malformed")
+    if (native_registry.source.revision != row["source_revision"]
+            or native_registry.source.revision != discovery.source_revision
+            or native_registry.source.catalog_version != discovery.catalog_version):
+        raise ResourceRuntimeError("selected resource source revision is stale")
+
+    source_matches = [
+        item for item in discovery.resources
+        if item.resource.kind.value == kind and item.resource.id == resource_id
+        and item.provenance_verified
+    ]
+    if len(source_matches) != 1:
+        raise ResourceRuntimeError("selected resource is not unique in verified native discovery")
+    advertised = source_matches[0].resource
+    selector = f"{kind}/{resource_id}@={advertised.version}"
+    try:
+        resolved_rows = native_registry.resolver.resolve((selector,))
+    except Exception:
+        raise ResourceRuntimeError("selected resource source no longer resolves") from None
+    resolved = next((item for item in resolved_rows
+                     if item.resource.kind.value == kind
+                     and item.resource.id == resource_id
+                     and item.resource.version == advertised.version), None)
+    key = f"{kind}/{resource_id}@{advertised.version}"
+    raw = native_registry.resolver.raw.get(key)
+    source_path = native_registry.paths.get(key)
+    if (resolved is None or raw is None or source_path is None
+            or resolved.resource.digest != row["source_manifest_sha256"]
+            or raw.content_digest != row["source_manifest_sha256"]
+            or raw.selected_revision != native_registry.source.revision
+            or raw.observed_revision != native_registry.source.revision
+            or native_registry.resolver.document_digest(raw.document) != row["source_manifest_sha256"]):
+        raise ResourceRuntimeError("selected source declaration differs from its active protected digest")
+
+    try:
+        definition = native_materialization.resolve_resource_definition(
+            row["materialization_receipt_handle"], enrollment_id=enrollment_id,
+            service_generation=service_generation, resource_profile_id=profile_id,
+            kind=kind, resource_id=resource_id, version=advertised.version,
+        )
+        document_bytes = native_materialization.resolve_resource_definition_document(
+            row["materialization_receipt_handle"], enrollment_id=enrollment_id,
+            service_generation=service_generation, resource_profile_id=profile_id,
+            kind=kind, resource_id=resource_id, version=advertised.version,
+        )
+        document = _yaml().safe_load(document_bytes)
+    except Exception:
+        raise ResourceRuntimeError("selected materialization receipt or transformed YAML is unavailable") from None
+    if not isinstance(definition, NativeMaterializedResourceDefinition):
+        raise ResourceRuntimeError("selected materialization receipt returned an invalid definition")
+    member = next((item for item in definition.members
+                   if item.relative_path == row["materialized_member_path"]), None)
+    if (definition.kind != kind or definition.resource_id != resource_id
+            or definition.version != advertised.version
+            or definition.source_path != source_path
+            or definition.source_revision != row["source_revision"]
+            or definition.source_document_sha256 != row["source_manifest_sha256"]
+            or definition.effective_spec_sha256 != row["effective_spec_sha256"]
+            or member is None or member.relative_path != definition.source_path
+            or member.sha256 != row["materialized_member_sha256"]
+            or member.size_bytes != row["materialized_member_size_bytes"]
+            or not isinstance(document, Mapping)
+            or not isinstance(document.get("spec"), Mapping)):
+        raise ResourceRuntimeError("selected materialized member differs from its protected row")
+    metadata = document.get("metadata")
+    document_kind = {
+        "bundles": "Bundle", "channels": "Channel", "crons": "Cron",
+        "mcps": "MCP", "plugins": "Plugin", "webhooks": "Webhook",
+    }[kind]
+    if (document.get("kind") != document_kind
+            or not isinstance(metadata, Mapping)
+            or metadata.get("name") != resource_id
+            or metadata.get("version") != advertised.version):
+        raise ResourceRuntimeError("selected transformed declaration identity differs from verified source")
+    spec = dict(document["spec"])
+    try:
+        canonical_spec = json.dumps(
+            spec, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        raise ResourceRuntimeError("selected transformed YAML spec is not canonical JSON data") from None
+    if (hashlib.sha256(document_bytes).hexdigest() != member.sha256
+            or len(document_bytes) != member.size_bytes
+            or hashlib.sha256(canonical_spec).hexdigest() != row["effective_spec_sha256"]):
+        raise ResourceRuntimeError("selected transformed YAML digest does not match protected materialization")
+
+    identity = ResourceIdentity(
+        resource_id, kind, advertised.version, source_path,
+        native_registry.source.revision, row["source_manifest_sha256"],
+    )
+    return SelectedResourceExecution(
+        identity=identity, generation_digest=row["resource_generation"],
+        effective_spec=spec, capability=row["capability"], target=row["target_id"],
+        operation=row["operation"], recipient=row["recipient"],
+        delegation_id=row["delegation_id"], profile_id=profile_id, enabled=row["enabled"],
+    )
 
 
 class SelectedResourceUnavailable(ResourceRuntimeError):
@@ -854,73 +1447,18 @@ def build_cron_resource_effect_handler(
     profile_targets: SelectedHermesProfileResolver,
     authority_service: RootDelegatedEffectService,
 ) -> Callable[..., Mapping[str, Any]]:
-    """Build a root-only cron adapter for one selected resource.
+    """Reject the retired direct cron effect path.
 
-    The parent grant arrives through AuthorityService's fixed handler surface.
-    The selected ledger resolves both resource and profile identities; the
-    handler accepts no prompt, endpoint, argv, account, or profile override.
-    A second one-use child grant is issued by the root service for `process.start`.
+    Cron invocations now require a root-observed timer event, admitted resource
+    job, and per-child task receipt. This legacy function accepted a worker
+    payload containing profile/time fields and launched via the old ``-p/-z``
+    CLI path, so it must never produce an effect handler.
     """
     if identity.kind != "crons":
         raise ValueError("cron resource handler requires a cron identity")
-
-    def handle(*, context: HostContext, authorization: EffectAuthorization,
-               payload: bytes, timeout: float, peer_pid: int,
-               cancelled: Callable[[], bool]) -> Mapping[str, Any]:
-        selected = selected_resources.resolve(identity)
-        if (selected is None or not selected.enabled or selected.operation != "resource.cron.run"
-                or authorization.target != selected.target
-                or authorization.capability != selected.capability
-                or authorization.recipient != selected.recipient
-                or authorization.request_digest != hashlib.sha256(payload).hexdigest()):
-            raise SelectedResourceUnavailable("cron is not enabled in the protected selected-resource catalog")
-        try:
-            request = json.loads(payload)
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            raise ResourceRuntimeError("scheduled invocation payload is malformed") from None
-        if not isinstance(request, dict) or set(request) != {"profile_id", "scheduled_for"}:
-            raise ResourceRuntimeError("scheduled invocation accepts only its selected profile and schedule instant")
-        if request["profile_id"] != selected.profile_id:
-            raise ResourceRuntimeError("scheduled invocation profile differs from root selection")
-        scheduled_for = request["scheduled_for"]
-        if not isinstance(scheduled_for, str) or not re.fullmatch(
-            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})", scheduled_for
-        ):
-            raise ResourceRuntimeError("scheduled invocation time must be an explicit ISO-8601 instant")
-        if not _cron_instant_matches(selected.effective_spec, scheduled_for):
-            raise ResourceRuntimeError("scheduled instant does not match the selected cron expression")
-        profile_id = selected.profile_id
-        if profile_id is None:
-            raise SelectedResourceUnavailable("selected cron has no resolved Hermes profile")
-        target = profile_targets.resolve_profile(profile_id)
-        if target is None or target.profile_id != profile_id:
-            raise SelectedResourceUnavailable("selected Hermes profile has no protected custody target")
-        prompt = _cron_profile_prompt(selected, scheduled_for, target)
-        from hermes_installer.authority import canonical_bytes
-        from hermes_installer.authority.client import canonical_profile_target, profile_launch_envelope
-
-        process_target = canonical_profile_target(profile_id, target.executable, target.data_root)
-        argv = [str(target.executable.resolve(strict=True)), "-p", profile_id, "-z", prompt]
-        launch = profile_launch_envelope(
-            target=process_target, profile_id=profile_id, executable=target.executable,
-            artifact_sha256=target.artifact_sha256, artifact_root=target.artifact_root,
-            cwd=target.cwd, data_root=target.data_root, argv=argv,
-            env_allowlist=target.env_allowlist,
-            child_artifact_refs=target.child_artifact_refs,
-            max_lifetime_seconds=target.max_lifetime_seconds,
-            max_output_bytes=target.max_output_bytes, stdin_mode="closed",
-        )
-        response = authority_service.perform_delegated_effect(
-            authorization, delegation_id=selected.delegation_id,
-            payload=canonical_bytes(launch), peer_pid=peer_pid,
-            timeout=min(timeout, float(target.max_lifetime_seconds)), cancelled=cancelled,
-        )
-        if isinstance(response, Mapping):
-            return response
-        return {"status": response.status, "body": response.body,
-                "headers": dict(response.headers), "receipt_id": response.receipt_id}
-
-    return handle
+    raise SelectedResourceUnavailable(
+        "direct cron effects are retired; use the root-observed resource-job admission and task runner"
+    )
 
 
 def build_selected_resource_effect_handlers(
@@ -928,27 +1466,19 @@ def build_selected_resource_effect_handlers(
     selected_resources: SelectedResourceRegistry,
     profile_targets: SelectedHermesProfileResolver,
     authority_service: RootDelegatedEffectService,
-) -> dict[tuple[str, str], Callable[..., Mapping[str, Any]]]:
-    """Build concrete handlers for enabled root-selected cron profile runs.
+) -> Mapping[tuple[str, str], Callable[..., Mapping[str, Any]]]:
+    """Return no direct resource effects; jobs must use the protected job authority.
 
-    Call during root `AuthorityService` assembly with selection records read
-    from protected host custody. The returned map uses the service's exact
-    `(operation, protected target)` key. Unenrolled, disabled, channel, webhook,
-    bundle, plugin, and MCP records do not receive an effect handler here.
+    This helper existed before RB07. Registering its cron handler would bypass
+    root event-source admission and call the legacy direct profile launcher.
+    The actual job authority owns event, per-child grants, cancellation and
+    result-capsule dispatch; the old resource-effect map is intentionally not
+    an alternate route.
     """
-    handlers: dict[tuple[str, str], Callable[..., Mapping[str, Any]]] = {}
-    for selected in selected_resources.rows:
-        if (not selected.enabled or selected.identity.kind != "crons"
-                or not _cron_recipe_is_supported(selected)):
-            continue
-        key = (selected.operation, selected.target)
-        if key in handlers:
-            raise ValueError("multiple selected resources resolve to the same protected effect target")
-        handlers[key] = build_cron_resource_effect_handler(
-            selected.identity, selected_resources=selected_resources,
-            profile_targets=profile_targets, authority_service=authority_service,
-        )
-    return handlers
+    del selected_resources, profile_targets, authority_service
+    from types import MappingProxyType
+
+    return MappingProxyType({})
 
 
 def selected_resource_effect_blockers(
@@ -1019,6 +1549,10 @@ def invoke_fixed_resource_effect(
         raise TypeError("trusted NativePluginRuntimeContext is required")
     if not isinstance(intent, str) or not intent or len(intent) > 512:
         raise ResourceRuntimeError("resource effect intent is invalid")
+    if effect.operation.startswith("resource."):
+        raise SelectedResourceUnavailable(
+            "worker-originated resource effects are retired; use protected root event and job admission"
+        )
     if purpose not in {"native-hermes-chat", "native-hermes-cron", "native-hermes-webhook", "native-hermes-channel"}:
         raise ResourceRuntimeError("resource effect purpose is not a reviewed Hermes execution source")
     if type(retry_index) is not int or not 0 <= retry_index <= 100:
@@ -1070,20 +1604,17 @@ def invoke_scheduled_profile_run(
     retry_index: int = 0,
     cancelled: Callable[[], bool] | None = None,
 ) -> BrokeredEffectResponse:
-    """Submit a scheduled profile run through the root's fixed Hermes adapter.
+    """Reject legacy worker-originated timer invocation values.
 
-    A schedule is provenance only. The root adapter must resolve the selected
-    profile and independently authorize all work and delivery recipients.
+    Timer events must enter through the protected root controller and resource
+    job admission path; a native plugin call cannot assert a schedule, profile,
+    or due time in an effect payload.
     """
     if context.identity.kind != "crons" or effect.operation != "resource.cron.run":
         raise ResourceRuntimeError("scheduled profiles require a cron identity and fixed resource.cron.run operation")
-    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", profile_id):
-        raise ResourceRuntimeError("scheduled profile identity is invalid")
-    if not isinstance(scheduled_for, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})", scheduled_for):
-        raise ResourceRuntimeError("scheduled invocation time must be an explicit ISO-8601 instant")
-    return invoke_fixed_resource_effect(
-        context, effect, {"profile_id": profile_id, "scheduled_for": scheduled_for},
-        intent=intent, purpose="native-hermes-cron", retry_index=retry_index, cancelled=cancelled,
+    del profile_id, scheduled_for, intent, retry_index, cancelled
+    raise SelectedResourceUnavailable(
+        "worker-originated cron effects are retired; submit a root-observed event through resource-job admission"
     )
 
 
@@ -1743,7 +2274,8 @@ class WebhookVerifier:
         self.replay_window_seconds, self.now = replay_window_seconds, now
 
     def verify(self, resource_id: str, spec: Mapping[str, Any], headers: Mapping[str, str],
-               body: bytes, secret: bytes) -> WebhookReceipt:
+               body: bytes, secret: bytes, *, replay_identity: str | None = None,
+               claim_replay: bool = True) -> WebhookReceipt:
         _validate_webhook_declaration(spec)
         if not isinstance(body, bytes) or len(body) > self.max_body_bytes:
             raise ResourceRuntimeError("webhook body is malformed or exceeds its size limit")
@@ -1753,12 +2285,6 @@ class WebhookVerifier:
         expected_type = (spec.get("validation") or {}).get("contentType", "application/json")
         if not normalized.get("content-type", "").split(";", 1)[0].strip().lower() == expected_type.lower():
             raise ResourceRuntimeError("webhook content type is not allowed")
-        try:
-            decoded = json.loads(body)
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            raise ResourceRuntimeError("webhook body is not valid JSON") from None
-        if not isinstance(decoded, (dict, list)):
-            raise ResourceRuntimeError("webhook JSON root must be an object or array")
 
         authentication = spec["authentication"]
         auth_type = authentication["type"]
@@ -1774,6 +2300,42 @@ class WebhookVerifier:
             supplied = normalized.get("authorization", "")
             if not supplied.startswith("Bearer ") or not hmac.compare_digest(supplied[7:].encode(), secret):
                 raise ResourceRuntimeError("webhook bearer credential verification failed")
+
+        # Authenticate the original bytes before parsing. Python's default JSON
+        # decoder silently keeps the last duplicate object member, which can
+        # make the verifier and downstream event schema disagree about a
+        # signed request. Reject duplicates and non-finite numbers throughout
+        # the body before claiming the delivery ID.
+        def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate JSON object member")
+                result[key] = value
+            return result
+
+        def reject_constant(_value: str) -> None:
+            raise ValueError("non-finite JSON number")
+
+        try:
+            decoded = json.loads(body, object_pairs_hook=unique_object, parse_constant=reject_constant)
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError):
+            raise ResourceRuntimeError("webhook body is invalid JSON or contains duplicate fields") from None
+        if not isinstance(decoded, (dict, list)):
+            raise ResourceRuntimeError("webhook JSON root must be an object or array")
+        stack: list[tuple[Any, int]] = [(decoded, 0)]
+        member_count = 0
+        while stack:
+            current, depth = stack.pop()
+            if depth > 32:
+                raise ResourceRuntimeError("webhook JSON exceeds the protocol nesting bound")
+            if isinstance(current, Mapping):
+                member_count += len(current)
+                if member_count > 4096:
+                    raise ResourceRuntimeError("webhook JSON exceeds the protocol member bound")
+                stack.extend((value, depth + 1) for value in current.values())
+            elif isinstance(current, list):
+                stack.extend((value, depth + 1) for value in current)
 
         event = spec.get("event")
         event_type = ""
@@ -1797,7 +2359,12 @@ class WebhookVerifier:
         if not event_id or len(event_id) > 256 or any(ord(c) < 0x20 for c in event_id):
             raise ResourceRuntimeError("webhook delivery identity is missing or invalid")
         received_at = self.now()
-        if not self.replay_store.claim(resource_id, event_id, received_at + self.replay_window_seconds):
+        claimed_id = replay_identity if replay_identity is not None else event_id
+        if (not isinstance(claimed_id, str) or not 1 <= len(claimed_id) <= 256
+                or any(ord(char) < 0x21 or ord(char) > 0x7e for char in claimed_id)):
+            raise ResourceRuntimeError("webhook replay identity is malformed")
+        if claim_replay and not self.replay_store.claim(
+                resource_id, claimed_id, received_at + self.replay_window_seconds):
             raise ResourceRuntimeError("duplicate webhook delivery was rejected")
         return WebhookReceipt(resource_id, event_id, event_type, body,
                               hashlib.sha256(body).hexdigest(), received_at)

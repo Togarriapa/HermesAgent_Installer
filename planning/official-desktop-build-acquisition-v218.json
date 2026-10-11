@@ -1,0 +1,157 @@
+{
+  "schema": 1,
+  "requirements": [
+    "BD-F03",
+    "HI-T197.2"
+  ],
+  "refines": [
+    "planning/concrete-remote-runtime-substrate-v209.json",
+    "planning/production-remote-role-nss-roots-v212.json"
+  ],
+  "source_review": {
+    "hermes_revision": "7085fbf7753266fc4943c55ac04926186bc90005",
+    "hermes_archive_sha256": "592ac0b09a7130cf2f8166f039098ba4ed40fb91535c601a6a7e5b1fcf889d01",
+    "desktop_package_json": {
+      "path": "apps/desktop/package.json",
+      "sha256": "545811bd20e6c6cd38d155a8d565dca763a0439c64de9114c705e326e2a65e8b",
+      "size_bytes": 9057
+    },
+    "root_package_json": {
+      "path": "package.json",
+      "sha256": "670c58dd8afcbe09d1ba7a9b3fd600a0fc156efb6b07a5d966fc0a4492ac21c1",
+      "size_bytes": 2724
+    },
+    "root_lock": {
+      "path": "package-lock.json",
+      "sha256": "483bff2109ab28be0b90447a72596ab8f781cb9f23c031d51be173b117ce8789",
+      "size_bytes": 721704
+    },
+    "observed_node_source": "Existing application_toolchain_sources.py/toolchains.py pinsNode26.7 but issuer authorizes Hyperframes/applicationqualification only; bytes may be reused, authority must not be relabelled.",
+    "electron_primary_metadata": "Sol bounded TLS curl read of https://api.github.com/repos/electron/electron/releases/tags/v40.10.2 confirmed exactasset size/digest/officialURLs. No binary download."
+  },
+  "source_policy": {
+    "artifact_id": "official-desktop-build-source-policy-v218",
+    "role": "amendment",
+    "relative_path": "plans/amendments/2026-10-10-official-desktop-build-acquisition-v218/official-desktop-build-acquisition-v1.json",
+    "authority": "Held verified installer release member/current selected plan includes this exactpolicy; exact policy SHA/size computed from final bytes by source broker before catalog enrollment, no caller table."
+  },
+  "fixed_sources": [
+    {
+      "id": "application-node-26.7.0-linux-arm64",
+      "version": "26.7.0",
+      "url": "https://nodejs.org/dist/v26.7.0/node-v26.7.0-linux-arm64.tar.xz",
+      "sha256": "afc7a004018485092ac8985b817b0d5684472bd9472e0b57d2ab88737e50090d",
+      "size_bytes": 32581212,
+      "kind": "tar.xz",
+      "executable_member": "bin/node",
+      "permission": "Desktop-specific issuer only; existing exactcatalog bytes not Hyperframesconsentreceipt"
+    },
+    {
+      "id": "official-desktop-electron-40.10.2-linux-arm64",
+      "version": "40.10.2",
+      "url": "https://github.com/electron/electron/releases/download/v40.10.2/electron-v40.10.2-linux-arm64.zip",
+      "sha256": "b9725dd7a387960e778b66700836d178528ba2235c6b14135fb57ce4d3826257",
+      "size_bytes": 115561834,
+      "kind": "zip",
+      "executable_member": "electron"
+    },
+    {
+      "id": "official-desktop-electron-40.10.2-shasums",
+      "version": "40.10.2",
+      "url": "https://github.com/electron/electron/releases/download/v40.10.2/SHASUMS256.txt",
+      "sha256": "12083374e3cd46e1fd281c7ff62e80962fc8097dee30ecdec5914d2c3e2d6668",
+      "size_bytes": 7680,
+      "kind": "blob"
+    }
+  ],
+  "selection": {
+    "class": "RootSelectedOfficialDesktopAcquisitionSelection",
+    "fields": [
+      "selection_handle",
+      "choice_handle",
+      "build_selection_handle",
+      "setup_session_id",
+      "transaction_handle",
+      "prepared_generation_id",
+      "prepared_generation_digest",
+      "principal_selection_handle",
+      "namespace_selection_handle",
+      "source_receipt_handle",
+      "source_revision",
+      "source_closure_sha256",
+      "lock_sha256",
+      "source_policy_artifact_id",
+      "source_policy_sha256",
+      "phase_id",
+      "controller_proof_sha256",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "source": "Current typed RootSetupSelectedRemoteStartupChoice +RootSelectedRemoteRoleBuildInputs(role=desktop)/209212 actual setup service/source/output selection; existing remote choice durable signer/adoption purpose remains, no application-qualification alias.",
+    "phase_id": "acquire-official-desktop-build-inputs",
+    "consent": "Same root explicit selected official Desktop setup choice records this finite publicfree acquisition/build phase and zeroadditionalbudget. Fresh current <=30s phase projection auto-resolves durablechoice/currentcontroller/source/session before eachconnect/redirect/commit; no repeated routine prompt, no privateinput/provider/captureconsent reuse."
+  },
+  "api": {
+    "module": "hermes_installer.authority.official_desktop_acquisition",
+    "class": "RootSelectedOfficialDesktopAcquisition",
+    "factory": "from_root_setup(binding, choice_registry, remote_build_registry, release_source_observer, journal)",
+    "observe": "observe_selected_inputs(choice_handle, build_selection_handle) -> opaque retained receipt handle",
+    "verify": "verify_current(handle, choice_handle, build_selection_handle) -> bool",
+    "open": "open_member(handle, member_id) -> duplicated held verified FD; member_id onlyexactselected finite member/lockrow, no callerpath",
+    "receipt_fields": [
+      "receipt_handle",
+      "selection_handle",
+      "source_policy_sha256",
+      "source_receipt_handle",
+      "lock_sha256",
+      "toolchain_members",
+      "dependency_members",
+      "license_receipt_handles",
+      "closure_sha256",
+      "transaction_handle",
+      "prepared_generation_id",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "member_fields": [
+      "artifact_id",
+      "version",
+      "origin_url_sha256",
+      "integrity_algorithm",
+      "integrity_value",
+      "sha256",
+      "size_bytes",
+      "member_path",
+      "member_sha256",
+      "member_size_bytes",
+      "file_device",
+      "file_inode",
+      "file_owner_uid",
+      "file_mode"
+    ],
+    "currentness": "Private issuing registry membership/rootjournal/current signedchoice+sourcepolicy+actualFD observations; setuporiginaldeadline bounds retainedclosure, per-effect shortphase projections independent; noexpiredproofextension."
+  },
+  "transport": "TLS verified HTTPS only, no userinfo/credential/auth header/cookie forwarding. Node exactnodejs.org URL no redirects; npm exact registry.npmjs.org lock URLs no redirects. Only exact pinned ElectronGitHubassets may redirect max2hops to release-assets.githubusercontent.com sameHTTPS; no arbitrarydestination/downgrade, signedquery neverlogs/retainedpublicevidence. Bounded content length/read max exactsize, finalhash/size exact. Sourcepolicy observer specificlargefiniteassets; generic smallobserver not widened.",
+  "dependency_closure": "1165 auditgraph rows are NOT approved LinuxARM64 closure. Actual source-reviewed deterministic npm lockresolver must honor exact root/workspace graph, linux/arm64/platform/optional semantics, exactselectedversions/registryURLs/SHA512-SRI. Every selected tgz actualsize/SHA256 observed plus lockSRIverified, license metadata/source receipt retained. Missingintegrity/license/architecture/lifecycle recipe denies capability. No lockrewrite/npm ambientcache proof/unpinned latest.",
+  "build_toolchain": "Node executable and bundled npm version/entrypoint/import closure must be observed from SAME heldNodearchive on genuine ARM64Linux root, complete membermanifest/hash and executablemode. npm independently downloaded version forbidden. Complete native compiler/buildtoolchain/systemheaders/runtime deps require current rootheld proofs; no hostPATH/globalNode or installerPythondowngrade. Existing209212 dedicatedselected3role grant remains sole buildexecution authority, networkdenied offlinefixed recipe/heldsource/toolchain/deps/outputFD; acquisitionreceipt not runnable output.",
+  "lifecycle_scripts": "All lock hasInstallScript entries defaultdenied. electron binary setup may use exactpinnedZIP/manifest localcache only with reviewed recipe. node-pty native ElectronABI ARM64 build needs fixedsource/header/toolchain/argv and actual outputABI attestation; esbuild exactlocked linuxarm64binary/SRI or verifiedsource build +actual version. Crossplatform electron-winstaller/get-windows rows excluded onlyby reviewedtargetresolver, no blanketscriptallow. Remaining unicode-animations/native hooks reviewedindividually or pending. No npm ci unrestricted scriptnetwork/autodownload.",
+  "licenses": "Node containedLICENSE member/sha/size rootobserved; Electron license/toolchain/runtime components actualsource/containedmember proofs; npm lockpackage licensemetadata plus verifiedartifact source evidence. No inventedlicensepins or no-sig=>signedprovenance claim; exact primary release API/digest is pin source, not package signature.",
+  "tasks": [
+    {
+      "id": "BD-T218.1",
+      "owner": "OfficialDesktop source builder/broker",
+      "work": "Implement Desktop-specific choice phase/sourcepolicy/finite largeasset+locked npmclosure observer and genuine Node/npm/Electron member/license receipts; no Hyperframesconsent reuse."
+    },
+    {
+      "id": "BD-T218.2",
+      "owner": "OfficialDesktop runtime builder",
+      "work": "Consume held closure in209212 lockedoffline build, finite native scripts/toolchain/ABI proofs +actual selected rolegrant/outputreceipt."
+    },
+    {
+      "id": "VD-T218.3",
+      "owner": "verification/source review",
+      "work": "Test wrongchoice/source/phase/lock/TLSredirect/integrity/license/script/platform/replay/currentness failures; review testedsourcepins then actual ARM64Desktop/sandbox/functional evidence separate."
+    }
+  ],
+  "acceptance": "All original nativeDesktop/Jarvis/remote/token/budget/sandbox/TLS scope and AC01..18 OPEN. No binarydownload/build/installedDesktop evidence inferred; source implementationpins pending."
+}

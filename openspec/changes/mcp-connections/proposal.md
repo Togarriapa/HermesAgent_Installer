@@ -23,3 +23,39 @@ None; no runtime capability is currently implemented in this greenfield reposito
 ## Impact
 
 Planned modules: src/hermes_installer/mcp/. Depends on installer-bootstrap-desktop, resource-registry-import, providers-credentials-budgets-privacy. All implementation belongs to GPT-6 Luna; specification/refinement belongs to GPT-6.1 Sol. See design.md and explicit task/evidence DAG.
+
+### v24 native MCP handler binding
+
+MC-F01/MC-F02 and HI-T04/08/09 use native-package-binding-contract.json native_mcp_dispatch exact source-backed in-process hook/catalog/RPC/result joins. All original native/account acceptance remains pending.
+
+### v25 MCP lexical/config mapping
+
+Use native_mcp_dispatch row_types/invocation_mapping/native_config exact records, same one-use lexical binding and root-backed native candidate registration. MC/HI acceptance remains pending.
+
+Installed release/native assembly v33: `plans/amendments/2026-10-09-installed-release-native-assembly-v33.md`; exact root receipt and construction joins preserve existing task IDs and pending evidence.
+
+Native candidate index delivery v38: `plans/amendments/2026-10-09-native-candidate-index-delivery-v38.md`; exact compiled member/receipt joins preserve open tasks.
+
+Native schema artifact joins v39: `plans/amendments/2026-10-09-native-schema-artifact-joins-v39.md`; exact selected schema source mapping, original tasks remain pending.
+
+Candidate toolset envelope v41: `plans/amendments/2026-10-09-native-candidate-toolset-envelope-v41.md`; exact source-backed owner/envelope metadata, tasks stay open.
+
+Native registration/source snapshot v44: `plans/amendments/2026-10-09-native-registration-source-snapshot-v44.md`; exact existing task join, target gates open.
+
+Actual EOF/schema derivation v54: `plans/amendments/2026-10-09-stdin-eof-schema-derivation-v54.md`; exact root receipt joins in planning contracts, existing task IDs remain unchecked.
+
+MCP derived schema CAS closure v92: `plans/amendments/2026-10-10-mcp-derived-schema-cas-closure-v92.md`; existing MC-F01/HI-T08 remain open.
+
+Private loopback enforcement choice v97: `plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97.md`; existing original implementation/acceptance obligations remain open.
+
+Native registration projection v99: `plans/amendments/2026-10-10-native-registration-projection-v99.md`; exact source registration/selector/local-family coverage required; existing implementation and acceptance tasks remain open.
+
+Home Assistant MC-R0101 root enrollment: `plans/amendments/2026-10-10-home-assistant-root-enrollment-mc-r0101.md`; actual root vault/instance/source probe and finite strict publication/adoption, preserving existing HA configuration and all pending acceptance.
+
+HA Assist actual resource scope: `plans/amendments/2026-10-10-home-assistant-assist-scope-mc-r0101.md`; exact typed home-assistant-assist-read choice and conditional current exposure/resource filter proofs.
+
+
+HA v210 plans/amendments/2026-10-10-home-assistant-metadata-functional-read-v210.md refines actual Core2026.10.0 complete metadata reads and genuine explicitly selected whole GetLiveContext alternative with finite TLS/DNS-pinned WS dependency/credential custody. No HA exposure mutation, metadata/functional/source/enablement evidence separate; all acceptance OPEN.
+
+
+HA setup receipt refinement v216: plans/amendments/2026-10-10-ha-setup-observation-receipts-v216.md supplies concrete live root-session signer/journal/transport sink/schema-to-functional-call ownership; setup evidence is distinct from daemon SourceReceipt/HostContext and cannot restore authority. All acceptance OPEN.

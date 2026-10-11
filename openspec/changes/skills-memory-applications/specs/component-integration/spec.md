@@ -621,3 +621,266 @@ The installer SHALL authenticate initial provision through its installed root-lo
 #### Scenario: Worker fabricates bootstrap actor
 - **WHEN** a worker supplies root labels, another transaction receipt or a writable journal mapping
 - **THEN** root rejects before provision/state effects without requiring or inventing a first active worker context
+
+### Requirement: Root actual EOF and schema source receipts
+The installer SHALL require actual custody write/EOF receipts for task completion and exact root-derived schema receipts for native schema artifacts where applicable.
+
+#### Scenario: Forged or mismatched receipt
+- **WHEN** a caller substitutes stdout success, a fabricated receipt or a generic fetched archive for required root observations
+- **THEN** the installer denies completion or schema admission without marking target acceptance complete
+
+### Requirement: Source-backed memory lifecycle and whole turn
+The installer SHALL start only source-bound selected memory service recipes and derive whole-turn capture from actual completed root-observed native event closure with current consent and private routing.
+
+#### Scenario: Liveness or tool-only capture substituted
+- **WHEN** only a liveness response or one tool invocation exists
+- **THEN** semantic memory readiness or complete whole-turn capture is not asserted
+
+Whole-turn handle delivery v70: `plans/amendments/2026-10-10-whole-turn-authenticated-handle-delivery-v70.md`; existing SK-T01/HI-T08/HI-T11 remain open, authenticated root input/response metadata only, actual whole-turn proof and failure evidence required.
+
+Active row joins v71: `plans/amendments/2026-10-10-memory-lifecycle-xpra-overlay-row-joins-v71.md`; existing task/target gates remain open, actual retained source/runtime receipts required.
+
+Root-selected lifecycle authority v80: `plans/amendments/2026-10-10-root-selected-service-lifecycle-authority-v80.md`; existing HI/RT/SK tasks open, separate actual controller and selected subject proof required.
+
+Selected lifecycle stop canonical payload v85: `plans/amendments/2026-10-10-selected-lifecycle-stop-canonical-payload-v85.md`; existing HI-T09/HI-T13/SK-T01 remain open.
+
+Native request observation domain v86: `plans/amendments/2026-10-10-native-request-observation-domain-v86.md`; existing HI-T11/SK-T01 remain open.
+
+Selected application workload binding v89: `plans/amendments/2026-10-10-selected-application-workload-binding-v89.md`; existing SK-F03/R0067/R0138/AC12 implementation and acceptance obligations remain open.
+
+Nonrecursive selections and private source ceilings v90: `plans/amendments/2026-10-10-nonrecursive-selection-private-source-ceilings-v90.md`; existing original implementation and acceptance tasks remain open.
+
+Root turn transcript encoding v96: `plans/amendments/2026-10-10-root-turn-transcript-encoding-v96.md`; SK-T01/HI-T08/HI-T11 remain open.
+
+Memory capture enablement consent v98: `plans/amendments/2026-10-10-memory-capture-enablement-consent-v98.md`; existing SK-T01/SK-F02/SK01 obligations remain open.
+
+Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected-runtime-profile-currentness-v102.md`; actual independent Resources choice/PM journal root/current consent and recipe-bound application limits; existing implementation/acceptance tasks open.
+
+Application owned execution receipts v104: `plans/amendments/2026-10-10-application-owned-execution-receipts-v104.md`; actual distinct selected grant/controller/probe/manager terminal/artifact result producer required, no ResourceTask/RuntimeReview substitutes; existing implementation/acceptance tasks open.
+
+### Requirement: Source reviewed application request mapping
+The system SHALL preserve original request bytes and use only a reviewed explicit native action projection or the separate v107 finite root installer qualification request to admit an application workload. It SHALL NOT infer a native mapping from application IDs or fixture recipe names.
+
+#### Scenario: Fixture recipe has no native registration
+- **WHEN** a fixture workload has no actual reviewed native registration
+- **THEN** native dispatch denies and the separate qualification flow does not constitute production application acceptance.
+
+### Requirement: Actual distinct private memory capability selection
+The system SHALL use v108 selected owned endpoint/model deployment and private text-generation/embedding capability receipts for the exact memory profile/namespace/provider/owner. It SHALL preserve GLM5.2 extraction, separately enroll an actual embedding model/dimension and enforce bounded source-owned serializers/parsers and fresh private authorization at every retry.
+
+#### Scenario: Only public chat dispatcher exists
+- **WHEN** private endpoint/model or embedding capability proof is absent
+- **THEN** extraction/embedding remains unavailable without public fallback, invented vectors or lazy model installation.
+
+### Requirement: Preactive application source preparation
+The system SHALL use v117 typed root setup source selections and independently observed full source/lock receipts before active runtime publication without manufacturing a selected active row. Operational application authorization SHALL remain independent.
+
+#### Scenario: Runtime not yet active
+- **WHEN** an actual prepared setup choice selects one fixed source profile
+- **THEN** the source producer verifies/stages its exact pinned source and locks before runtime probing and activation.
+
+### Requirement: Purpose bound qualification consent
+The system SHALL record v117 finite local qualification consent in the same explicit rootTTY workflow choice and resolve current phase snapshots without another routineprompt. It SHALL NOT reuse capture/private-input consent or authorize provider/account effects.
+
+#### Scenario: Qualification attempts provider egress
+- **WHEN** a selected fixture attempts an unrelated endpoint or metered operation
+- **THEN** qualification consent denies that effect.
+
+### Requirement: Current memory service enablement and active prestart closure
+
+The installer SHALL resolve selected memory service lifecycle enablement and actual active prestart artifact closure under v119, independently of capture consent and expired setup authorization.
+
+#### Scenario: Liveness without semantic evidence
+
+- **WHEN** a selected memory process passes only its liveness/status route
+- **THEN** the installer records that exact status and leaves semantic memory functionality pending until actual selected capability operations and private route gates are verified
+
+### Requirement: Actual installer memory service enable configuration
+
+The installer SHALL record v124 actual protected root TTY service-enable configuration and publish its exact verified active service projection separately from capture/provider consent.
+
+#### Scenario: User-mode selection or capture consent alone
+
+- **WHEN** only user-private selection state or capture consent exists without the current root service-enable choice and active projection
+- **THEN** memory service startup is unavailable and no service authorization is inferred
+
+### Requirement: Actual observed private endpoint and separate model deployments
+
+The installer SHALL require v125 actual root-held endpoint/model/runtime/source-load/current process evidence for private memory route selection, separately for GLM5.2 extraction and embedding.
+
+#### Scenario: Model-list alias without verified source loading
+
+- **WHEN** an endpoint lists a model alias but no exact verified installed model/runtime/config/current load proof exists
+- **THEN** no deployment receipt is minted and private memory remains unavailable with the missing prerequisite stated
+
+### Requirement: Root selected existing model source tree observation
+
+The installer SHALL use v127 actual held root directory/source-member verification and finite authority signing for pre-existing model artifacts outside the static catalog.
+
+#### Scenario: Arbitrary directory or listed model alias
+
+- **WHEN** no genuine selected owned-directory/source inventory receipt exists
+- **THEN** the registry denies model source observation and does not infer source or deployment proof from a path or served alias
+
+### Requirement: Exact private model protected selection and held directory getters
+
+The installer SHALL resolve v128 exact protected endpoint/model selection records and current owned-directory source getters independently of actual deployment observations.
+
+#### Scenario: A typed caller object lacks registry membership
+
+- **WHEN** a selection object or directory FD is not the exact retained current root selection
+- **THEN** source/model observation is denied even if its fields appear structurally valid
+
+### Requirement: Prepared qualification admission from actual runtime preparation
+
+The installer SHALL admit v130 finite prepared qualification from actual source/lock/environment/discriminated ABI probe/choice/consent/ownedfixture receipts without fabricating an active runtime row.
+
+#### Scenario: Node source has only Python runtime proof
+
+- **WHEN** Hyperframes lacks actual selected Node/Bun environment and Node ABI/import-origin probe evidence
+- **THEN** qualification remains unavailable with the missing prerequisite and cannot pass through a Python probe or RuntimeReview
+
+### Requirement: Source-selected offline application environment builds
+The system SHALL use only the four v132 setup build targets with current genuine source, lock, package closure, runtime, controller, namespace and qualification consent selections before producing an application environment receipt. Python and Bun/Node preparation and probes SHALL remain distinct, and no active app row SHALL be fabricated to prepare its environment.
+
+#### Scenario: Missing immutable package or native toolchain
+- **WHEN** a selected lock dependency, build hook, Bun/Node artifact or native dependency has no verified held source/integrity/license/toolchain proof
+- **THEN** the build denies that phase without network fallback, runtime receipt or functional acceptance.
+
+### Requirement: Setup intent selectors and current private profile proof
+The system SHALL distinguish stable root setup principal/namespace/private-purpose intent from current <=30s authenticated authority snapshots, using the v133 exact source/subject/session/generation joins. It SHALL mint a distinct private-purpose selection only from the actual adopted native principal/profile and verified v91 owner-private namespace source within actual root TTY configuration.
+
+#### Scenario: Identity changes during preparation
+- **WHEN** refreshed Authentik subject, groups, policy or selected namespace differs from the retained choice
+- **THEN** the phase denies without extending old receipts, widening permission or substituting a Resources profile.
+
+### Requirement: Source-bound GLM inventory and independent license observations v135
+The installer SHALL observe the exact bounded inventory, upstream MIT license and selected quantizer declaration pinned by v135 before model-source selection; metadata SHALL NOT substitute for actual immutable model member/runtime/load evidence.
+
+#### Scenario: Source metadata is available but model is absent
+- **WHEN** the three small source blobs verify but no complete selected model directory or owned deployment is observed
+- **THEN** source provenance is retained and deployment remains pending; no weights are downloaded and no acceptance is promoted
+
+### Requirement: Current consent and actual lock-selected package source receipts v136
+The installer SHALL acquire only exact supported-origin integrity-locked package bytes under the explicit acquire-locked-runtime-packages qualification phase and retain genuine scoped CAS/license evidence; deployment SHALL exclude editable installs and default dependency groups.
+
+#### Scenario: Old source-only consent or missing package evidence
+- **WHEN** acquisition lacks the explicit phase, exact lock integrity, allowed origin, current held bytes or required reviewed license eligibility
+- **THEN** the affected phase remains pending and no static catalog handle, unchecked cache or metadata assertion substitutes for proof
+
+### Requirement: Actual held existing model-store source selection v139
+The installer SHALL select an already-present model directory only through the fixed reviewed model-store root and actual protected directory/source observations, independently of private profile intent and deployment proof.
+
+#### Scenario: Model store or selected tree absent
+- **WHEN** the exact store/child/source inventory is absent, unowned, writable or changed
+- **THEN** selection remains pending with its exact prerequisite and no arbitrary path, download, copy or inferred model load substitutes
+
+### Requirement: Finite Hyperframes Node and Bun toolchain source v144
+The installer SHALL select exact independently verified Node and Bun source artifacts and observe held isolated toolchain bytes before the fixed offline environment build and distinct native runtime probe.
+
+#### Scenario: Upstream workspace has no exact Bun declaration
+- **WHEN** Hyperframes needs a Bun toolchain
+- **THEN** only the reviewed finite source selection is acquired and qualified without guessing a project pin, enabling lifecycle scripts or claiming native compatibility
+
+### Requirement: Fresh memory owned process control admission v145
+The installer SHALL reobserve current authorization for status and stop after initial admission expiry while retaining exact original process ownership and deadline.
+
+#### Scenario: Memory service outlives its start proof
+- **WHEN** the original short admission expires while the owned process remains within its original deadline
+- **THEN** productive control requires a fresh same-process admission and revocation cleanup remains bound to retained PIDFD ownership without extending the old proof
+
+### Requirement: Completed source choice ordering v146
+The installer SHALL distinguish held root observation from completed signed choice and full source verification, accurately name release identity and authenticate complete public scope payloads from retained configuration.
+
+#### Scenario: Fixed root is observed before child choice
+- **WHEN** only the fixed model store root is held
+- **THEN** no completed choice or model source proof is signed until the actual TTY selection and applicable source evidence exist
+
+### Requirement: Lock-derived hash-constrained offline dependency install v147
+The installer SHALL preserve the original selected lock while deriving hashed requirements and installing only the verified target-active package closure offline, and SHALL require a separate actual noneditable source-project wheel and environment probe before qualification.
+
+#### Scenario: Export omits source project
+- **WHEN** the hash-constrained dependency install succeeds using no-emit-project
+- **THEN** no application runtime is qualified until its exact source-built project wheel and complete installed origin/probe receipts also pass
+
+### Requirement: Offline probe interpreter provenance v148
+The installer SHALL distinguish the container interpreter used in dependency recipe experiments from genuine selected PM runtime observations.
+
+#### Scenario: Container version matches selected PM version
+- **WHEN** the fixture interpreter reports Python3.14.7
+- **THEN** no PM origin or actual setup environment receipt is inferred from that version match
+
+### Requirement: Selected large toolchain source observation v150
+The installer SHALL obtain Node and Bun source bytes through a finite selected-plan-bound held artifact observation before toolchain extraction.
+
+#### Scenario: Toolchain private CAS has no selected source observation
+- **WHEN** an archive was independently fetched without the actual selected source observer
+- **THEN** it cannot mint a trusted toolchain receipt merely from matching local CAS syntax
+
+### Requirement: Stable private binding and current observation separation v151
+The installer SHALL select private endpoint/model binding IDs before startup and resolve genuine current runtime observations only after actual listener/load/source proof.
+
+#### Scenario: Configured private endpoint has no live process
+- **WHEN** only the protected endpoint binding exists
+- **THEN** no runtime route or deployment receipt is fabricated from that configured identity
+
+### Requirement: Separate finite PEP517 backend closure v152
+The installer SHALL bind project wheel builds to exact separately reviewed backend source/license/CAS receipts rather than claiming absent backend packages belong to the runtime lock.
+
+#### Scenario: Backend adds an undeclared build requirement
+- **WHEN** a backend requests a package outside the selected reviewed offline closure
+- **THEN** the build denies without fetching network packages or widening the original lock and backend table
+
+### Requirement: Toolchain policy member binding v155
+The installer SHALL resolve the selected finite Node/Bun policy from its exact reviewed release member before source acquisition.
+
+#### Scenario: Source policy member is absent from the selected release
+- **WHEN** an otherwise cataloged tool is requested without the reviewed selected policy member
+- **THEN** acquisition denies and no caller artifact ID or invented plan field substitutes for that member proof
+
+### Requirement: Backend source observer v157
+The installer SHALL acquire and observe selected PEP517 backend wheel and embedded license bytes through a separate finite source-policy-bound observer.
+
+#### Scenario: Backend wheel is absent from project runtime lock
+- **WHEN** the exact separately reviewed backend policy selects that source
+- **THEN** the observer verifies actual wheel and license bytes against that policy without fabricating project lock membership or widening Node/Bun acquisition
+
+### Requirement: Application build admission v161
+The installer SHALL execute application runtime preparation only through a finite root-selected managed build profile, genuine held input/service/output proofs and one-use setup grant.
+
+#### Scenario: Final selection lacks a reviewed source driver or backend closure
+- **WHEN** an application environment build is requested
+- **THEN** custody denies before start without inventing a driver hash, caller script, future output digest or active runtime row
+
+### Requirement: Application Python entrypoint relocation v168
+The installer SHALL bind the regular environment interpreter to actual held PM executable bytes and normalize only source-reviewed console script shebangs to its selected final generation.
+
+#### Scenario: Script requests ambient interpreter
+- **WHEN** installed script depends on /usr/bin/env or an unrelated interpreter path
+- **THEN** materialization denies until exact selected interpreter normalization is verified
+
+### Requirement: Application effect sources v175
+The installer SHALL admit only the source-reviewed fixed qualification effect stages and separately verify runtime ABI.
+
+#### Scenario: Hyperframes qualification runs
+- **WHEN** the selected fixed Hyperframes effect recipe is admitted
+- **THEN** exactly render, ffprobe and framehash stages are allowed with one-use linked grants and actual cleanup evidence
+
+### Requirement: Python runtime configuration relocation v176
+The installer SHALL bind relocated Python environments to a genuinely held PM base runtime closure.
+
+#### Scenario: Only interpreter executable bytes exist
+- **WHEN** the base standard-library/runtime closure is not currently verified
+- **THEN** the environment remains pending and cannot obtain runnable or ABI acceptance
+
+
+### Requirement: Reviewed source members and boundary joins v180
+The installer SHALL apply only the exact finite reviewed source/member/role mappings and genuine producer joins in `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`.
+
+#### Scenario: Reviewed source reaches runtime
+- **WHEN** committed source pins are packaged and exact current membership/import/selection receipts are verified
+- **THEN** separate owner-overlay rows SHALL remain digest-covered through loading/invocation, standalone build driver SHALL use its dedicated held execution source and PM runtime, and each worker SHALL pass its own cgroup kernel gate before app code
+
+#### Scenario: Missing or unsupported producer
+- **WHEN** a source/member/role/schema/loaded proof is missing or kernel enforcement permits a forbidden bind
+- **THEN** startup/effect remains unavailable, no network lease or acceptance is issued, and owned cleanup SHALL be verified without weakening negative expectations

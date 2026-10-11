@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "id": "native-financial-web-results-v1",
+  "requirements": [
+    "HI-T08",
+    "HI-T11"
+  ],
+  "schema_artifacts": [
+    {
+      "tool_name": "financial_data_read",
+      "schema_id": "installer-native-result-financial_data_read-v1",
+      "artifact_id": "installer-native-result-financial_data_read-v1",
+      "path": "plans/amendments/2026-10-10-native-financial-web-results-v120/financial_data_read.result.schema.json",
+      "sha256": "6902fd82075320bad86cd622d6304ffd248ec236b70ea4a27c44071c843fbf03",
+      "size_bytes": 935
+    },
+    {
+      "tool_name": "web_retrieve",
+      "schema_id": "installer-native-result-web_retrieve-v1",
+      "artifact_id": "installer-native-result-web_retrieve-v1",
+      "path": "plans/amendments/2026-10-10-native-financial-web-results-v120/web_retrieve.result.schema.json",
+      "sha256": "dea89695c5206d563b2f0cd199490042af85612981fd504086e16a92ab767e13",
+      "size_bytes": 1315
+    }
+  ],
+  "source_pins": {
+    "plugin_finance.py": "54ca0bedad3a3d3ee03176c20f3ae7a71987b0992640e0647b0b702c51907c73",
+    "plugin_local_voice_web.py": "8acfd074698c12242efeab9059830db0388df2e24392d044cc0ab7696cf06487"
+  },
+  "financial": "Exact source-normalized observations, <=1000 rows/64 scalar keys each. Enforce total canonical UTF8 result <=2097152, finite numbers, <=2048 UTF8 bytes per data string/control denial, source provider-operation pair and current selected alias. Strip source credential/account identifiers as existing normalizer; no new effect/account authority. Numeric/time/schema fields do not prove current bank/trade state.",
+  "web": "Closed source-established outer return key set preserved. Existing source only checks receipt object; implementation must now populate/resolve the exact selected root artifact receipt fields, rather than promote backend-provided dictionary. Require current root registry membership, actual captured content artifact SHA/size/media/profile/owner/operation/source ancestry and expiry; response bytes and redirects remain untrusted/authority none. maxItems32 is reviewed bounded result ceiling, never authorization to follow32 redirects: actual stricter fetch policy remains controlling.",
+  "bounds": "Canonical bytes <=2MiB, duplicate keys/nonfinite values denied; string UTF8 byte limits enforced independently of JSON Schema maxLength. New finite receipt field ceilings are validator obligations, not inferred source guarantees. Schemas become operational only after actual source artifact observation, component wrapper implementation and protected selected schema/registration joins.",
+  "registration_schema_foreign_keys": "For external registration argument/result native_schema_artifacts row: adapter_id exactly registration.adapter_id, action_id exactly registration.registration_id, id exactly explicit argument_schema_id/result_schema_id and schema_kind corresponding role. Both exact records/proofs mandatory for executable registration. Backend effect action schemas remain separate; identical bytes may share storage but not erase explicit role joins.",
+  "tasks": [
+    "HI-T120.1: registration/component owner apply exact finite financial/web result validators and genuine root artifact receipt resolver; no generic object schema.",
+    "HI-T120.2: factory/schema observer/enrollment join actual packaged result schemas and external registration foreign keys; actual42 registration/61 backend effect proof separate.",
+    "HI-T120.3: test oversized/nonfinite/control/credential output, false web receipt, stale profile/owner/expiry and untrusted redirect/content semantics; real effects and acceptance remain open."
+  ]
+}

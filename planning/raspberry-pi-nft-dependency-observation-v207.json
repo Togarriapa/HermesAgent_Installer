@@ -1,0 +1,93 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-raspberry-pi-nft-dependency-observation-v207.md",
+  "extends": [
+    "v105",
+    "v122"
+  ],
+  "requirements": [
+    "HI-T09",
+    "HI-T13"
+  ],
+  "tasks": [
+    "HI-T207.1",
+    "VD-T207.2"
+  ],
+  "owner": "luna_pi_network_recipe",
+  "module": "hermes_installer.authority.host_tool_observation",
+  "platform": {
+    "distribution": "debian",
+    "release": "13",
+    "codename": "trixie",
+    "architecture": "arm64",
+    "variant_id": "nft-debian13-arm64-1.1.3-1"
+  },
+  "vendor_scope": {
+    "package_name": "libc6",
+    "version": "2.41-12+rpt1+deb13u3",
+    "architecture": "arm64",
+    "origin": "https://archive.raspberrypi.com/debian",
+    "suite": "trixie",
+    "signed_origin": "Raspberry Pi Foundation",
+    "signed_label": "Raspberry Pi Foundation",
+    "signed_suite": "stable",
+    "signed_codename": "trixie",
+    "component": "main",
+    "index_gzip": "main/binary-arm64/Packages.gz",
+    "index_uncompressed": "main/binary-arm64/Packages"
+  },
+  "trust_anchor": {
+    "path": "/usr/share/keyrings/raspberrypi-archive-keyring.pgp",
+    "sha256": "3a29901549ae65a910de13a32551e6eea7f45ba1fd70f0cb67e5c70d98488071",
+    "size_bytes": 1229,
+    "uid": 0,
+    "gid": 0,
+    "mode": "0644",
+    "primary_signer": "CF8A1AF502A2AA2D763BAE7E82B129927FA3303E",
+    "encryption_subkey_not_signer": "DE5C1FD28F18825391E92B58F7BB0489EDD83D6C"
+  },
+  "limits": {
+    "max_inrelease_bytes": 4194304,
+    "max_metadata_bytes": 67108864,
+    "max_index_expanded_bytes": 536870912,
+    "max_single_package_bytes": 134217728,
+    "max_total_package_bytes": 536870912,
+    "max_signed_age_seconds": 1209600,
+    "max_future_seconds": 300,
+    "max_lease_seconds": 30
+  },
+  "signed_index_extension_fields": [
+    "archive_id",
+    "keyring_identity_handle",
+    "metadata_source",
+    "authenticated_uncompressed_sha256",
+    "authenticated_uncompressed_size_bytes",
+    "metadata_expires_at"
+  ],
+  "package_extension_fields": [
+    "archive_id",
+    "keyring_identity_handle",
+    "control_sha256"
+  ],
+  "evidence": {
+    "keyring_deb_url": "https://archive.raspberrypi.com/debian/pool/main/r/raspberrypi-archive-keyring/raspberrypi-archive-keyring_2025.1+rpt1_all.deb",
+    "keyring_deb_sha256": "2e727149d7acb8cc7f604e66d0049161039c8aa1eaf1175e54f9e69d963d60e4",
+    "keyring_deb_size_bytes": 7372,
+    "current_inrelease_sha256": "aa76d42257ba4eef4065cb0d5f0de077132558647d54979944a57445f4940bcb",
+    "current_inrelease_size_bytes": 54861,
+    "current_signed_date": "Fri, 09 Oct 2026 19:47:47 UTC",
+    "current_gpg_validsig": "CF8A1AF502A2AA2D763BAE7E82B129927FA3303E",
+    "current_gzip_sha256": "286264c0f9b5db0550067e80c750b70ed69e8de7aa62a933b7baf6037ca85ff8",
+    "current_gzip_size_bytes": 490717,
+    "current_uncompressed_sha256": "44e16b6793480488f7d4964b655a93ee41705dc3e06923e68018af97ff83d28c",
+    "current_uncompressed_size_bytes": 1684276,
+    "current_libc6_version": "2.41-12+rpt1+deb13u4",
+    "u3_download_sha256": "6f23ea0769d9545710f7d690fd26d47539d2729b74a413704790f93483425656",
+    "u3_download_size_bytes": 5186294,
+    "u3_download_relative_path": "pool/main/g/glibc/libc6_2.41-12+rpt1+deb13u3_arm64.deb",
+    "u3_control_matches": true,
+    "u3_signed_index_membership": "not established; HTTPS/control/package measurement alone is not authority"
+  },
+  "acceptance": "AC01..AC18 OPEN; vendor source observation is not running nft/kernel/network proof",
+  "source_pins": "future changed issuer module review pending; no installer source/catalog tuples changed"
+}

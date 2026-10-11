@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-setup-startup-and-fixture-source-producers-v199.md",
+  "extends": [
+    "v197",
+    "v198"
+  ],
+  "tasks": [
+    "HI-T197.1",
+    "HI-T197.2",
+    "HI-T197.3",
+    "HI-T173.1",
+    "HI-T178.2",
+    "VD-T197.4"
+  ],
+  "startup_projection_fields": [
+    "selection_handle",
+    "setup_session_id",
+    "bootstrap_transaction_handle",
+    "committed_transaction_id",
+    "generation_id",
+    "service_generation_digest",
+    "publication_receipt_handle",
+    "publication_sha256",
+    "remote_enrollment_id",
+    "remote_startup_row_sha256",
+    "network_enrollment_id",
+    "network_row_sha256",
+    "role_recipe_records_sha256",
+    "principal_binding_sha256",
+    "setup_actor_witness_sha256",
+    "original_setup_deadline_monotonic",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "qualification_transaction_fields": [
+    "transaction_handle",
+    "fixture_selection_handle",
+    "fixture_run_id",
+    "generation_id",
+    "release_manifest_sha256",
+    "actor_witness_sha256",
+    "controller_selection_handle",
+    "journal_root_id",
+    "journal_transaction_id",
+    "issued_monotonic",
+    "expires_monotonic"
+  ],
+  "producer_order": [
+    "selected-role-source",
+    "active-publication",
+    "setup-projection",
+    "intent"
+  ],
+  "fixture_order": [
+    "controller",
+    "own-source-transaction-session",
+    "source-PM",
+    "materializer",
+    "fixture-publication-session-runtime"
+  ],
+  "source_hashes": "pending committed source review",
+  "implementation_complete": false,
+  "target_acceptance_complete": false,
+  "acceptance": "AC01..AC18 OPEN"
+}

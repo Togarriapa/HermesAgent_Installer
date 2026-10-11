@@ -1,0 +1,87 @@
+{
+  "argv": [
+    "unshare",
+    "--mount",
+    "--fork",
+    "--propagation",
+    "private",
+    "/usr/bin/python3",
+    "/root/vd-t1932-0cd0c36abb4e451f97d045904bdd97e6/namespace.py",
+    "/root/vd-t1932-0cd0c36abb4e451f97d045904bdd97e6/fixture/source",
+    "/root/vd-t1932-0cd0c36abb4e451f97d045904bdd97e6/fixture/outside",
+    "/run/vd-t1932-rul67o6h/target",
+    "import pathlib,sys,hashlib\ns=pathlib.Path(sys.argv[1]); o=pathlib.Path(sys.argv[2]); t=pathlib.Path(sys.argv[3])\nps=[t/('f%d'%i) for i in range(5)]\nfor i,p in enumerate(ps):\n q=p.read_bytes(); print('READ_OK',i,len(q),hashlib.sha256(q).hexdigest())\ntry: p=ps[0]; p.write_bytes(b'x'); raise AssertionError('NOBODY_WRITE_SUCCEEDED')\nexcept OSError: print('NOBODY_WRITE_DENIED')\ntry: (t/'created').write_text('x'); raise AssertionError('NOBODY_CREATE_SUCCEEDED')\nexcept OSError: print('NOBODY_CREATE_DENIED')\ntry: (s/'f0').read_bytes(); raise AssertionError('SOURCE_TRAVERSAL_SUCCEEDED')\nexcept PermissionError: print('SOURCE_TRAVERSAL_DENIED')\ntry: (o/'sentinel').read_bytes(); raise AssertionError('FOREIGN_SENTINEL_SUCCEEDED')\nexcept PermissionError: print('FOREIGN_SENTINEL_DENIED')\ntry: (t/'sentinel').read_bytes(); raise AssertionError('TARGET_SENTINEL_VISIBLE')\nexcept FileNotFoundError: print('TARGET_SENTINEL_ABSENT')\n"
+  ],
+  "cleanup": "fixture_and_run_target_removed",
+  "end_utc": "2026-10-10T16:25:03.932816+00:00",
+  "exit_code": 0,
+  "gid": 0,
+  "namespace_script_retained": true,
+  "run_parent_before_namespace": {
+    "gid": 0,
+    "mode": "0o711",
+    "uid": 0
+  },
+  "schema_version": 1,
+  "source_files_before_namespace": [
+    {
+      "dev": 66306,
+      "ino": 552192,
+      "mode": "0o444",
+      "name": "f0",
+      "sha256": "d67b6823cd5e8f772444b12e580c6ef84bc1ff98aa604144014b2143f309ee2b"
+    },
+    {
+      "dev": 66306,
+      "ino": 552193,
+      "mode": "0o444",
+      "name": "f1",
+      "sha256": "82ae799608f580c5a58f749fcb42d1b6add5276f9706ed42a9d7ac87f8aea211"
+    },
+    {
+      "dev": 66306,
+      "ino": 552195,
+      "mode": "0o444",
+      "name": "f2",
+      "sha256": "56f76b156d8f5c7b1d4d0818a620a9ed97195704428494c92b7e87d059d277fb"
+    },
+    {
+      "dev": 66306,
+      "ino": 552196,
+      "mode": "0o444",
+      "name": "f3",
+      "sha256": "79bcfbdde97cd048cafcf4ca2c87b3763d7e20765015c7e7af6ba8d0542823dd"
+    },
+    {
+      "dev": 66306,
+      "ino": 552197,
+      "mode": "0o444",
+      "name": "f4",
+      "sha256": "e6ca42d00e8e045c0fe4fe92f844f02bf9193bb1f3a1c7c183c667e2bafa9fb6"
+    }
+  ],
+  "source_root_before_namespace": {
+    "dev": 66306,
+    "gid": 0,
+    "ino": 552190,
+    "mode": "0o700",
+    "uid": 0
+  },
+  "stage": "/root/vd-t1932-0cd0c36abb4e451f97d045904bdd97e6",
+  "start_utc": "2026-10-10T16:25:03.838938+00:00",
+  "stderr": "",
+  "stderr_bytes": 0,
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stdout": "SOURCE_ROOT {\"dev\": 66306, \"ino\": 552190, \"uid\": 0, \"gid\": 0, \"mode\": \"0o700\"}\nTARGET_ROOT {\"dev\": 82, \"ino\": 1, \"uid\": 0, \"gid\": 0, \"mode\": \"0o711\"}\nROOTS_DISTINCT True\nROOT_WRITE_EROFS\nNOBODY_EXIT 0\nREAD_OK 0 17 d67b6823cd5e8f772444b12e580c6ef84bc1ff98aa604144014b2143f309ee2b\nREAD_OK 1 17 82ae799608f580c5a58f749fcb42d1b6add5276f9706ed42a9d7ac87f8aea211\nREAD_OK 2 17 56f76b156d8f5c7b1d4d0818a620a9ed97195704428494c92b7e87d059d277fb\nREAD_OK 3 17 79bcfbdde97cd048cafcf4ca2c87b3763d7e20765015c7e7af6ba8d0542823dd\nREAD_OK 4 17 e6ca42d00e8e045c0fe4fe92f844f02bf9193bb1f3a1c7c183c667e2bafa9fb6\nNOBODY_WRITE_DENIED\nNOBODY_CREATE_DENIED\nSOURCE_TRAVERSAL_DENIED\nFOREIGN_SENTINEL_DENIED\nTARGET_SENTINEL_ABSENT\nTARGET_MOUNTS [\"577 464 0:82 / /run/vd-t1932-rul67o6h/target ro,nosuid,nodev,noexec,relatime - tmpfs tmpfs ro,size=1024k\", \"578 577 259:2 /root/vd-t1932-0cd0c36abb4e451f97d045904bdd97e6/fixture/source/f0 /run/vd-t1932-rul67o6h/target/f0 ro,nosuid,nodev,noexec,noatime - ext4 /dev/nvme0n1p2 rw\", \"579 577 259:2 /root/vd-t1932-0cd0c36abb4e451f97d045904bdd97e6/fixture/source/f1 /run/vd-t1932-rul67o6h/target/f1 ro,nosuid,nodev,noexec,noatime - ext4 /dev/nvme0n1p2 rw\", \"580 577 259:2 /root/vd-t1932-0cd0c36abb4e451f97d045904bdd97e6/fixture/source/f2 /run/vd-t1932-rul67o6h/target/f2 ro,nosuid,nodev,noexec,noatime - ext4 /dev/nvme0n1p2 rw\", \"581 577 259:2 /root/vd-t1932-0cd0c36abb4e451f97d045904bdd97e6/fixture/source/f3 /run/vd-t1932-rul67o6h/target/f3 ro,nosuid,nodev,noexec,noatime - ext4 /dev/nvme0n1p2 rw\", \"582 577 259:2 /root/vd-t1932-0cd0c36abb4e451f97d045904bdd97e6/fixture/source/f4 /run/vd-t1932-rul67o6h/target/f4 ro,nosuid,nodev,noexec,noatime - ext4 /dev/nvme0n1p2 rw\"]\nFILE_RECORDS [{\"name\": \"f0\", \"src_dev\": 66306, \"src_ino\": 552192, \"dst_dev\": 66306, \"dst_ino\": 552192, \"src_sha256\": \"d67b6823cd5e8f772444b12e580c6ef84bc1ff98aa604144014b2143f309ee2b\", \"dst_sha256\": \"d67b6823cd5e8f772444b12e580c6ef84bc1ff98aa604144014b2143f309ee2b\"}, {\"name\": \"f1\", \"src_dev\": 66306, \"src_ino\": 552193, \"dst_dev\": 66306, \"dst_ino\": 552193, \"src_sha256\": \"82ae799608f580c5a58f749fcb42d1b6add5276f9706ed42a9d7ac87f8aea211\", \"dst_sha256\": \"82ae799608f580c5a58f749fcb42d1b6add5276f9706ed42a9d7ac87f8aea211\"}, {\"name\": \"f2\", \"src_dev\": 66306, \"src_ino\": 552195, \"dst_dev\": 66306, \"dst_ino\": 552195, \"src_sha256\": \"56f76b156d8f5c7b1d4d0818a620a9ed97195704428494c92b7e87d059d277fb\", \"dst_sha256\": \"56f76b156d8f5c7b1d4d0818a620a9ed97195704428494c92b7e87d059d277fb\"}, {\"name\": \"f3\", \"src_dev\": 66306, \"src_ino\": 552196, \"dst_dev\": 66306, \"dst_ino\": 552196, \"src_sha256\": \"79bcfbdde97cd048cafcf4ca2c87b3763d7e20765015c7e7af6ba8d0542823dd\", \"dst_sha256\": \"79bcfbdde97cd048cafcf4ca2c87b3763d7e20765015c7e7af6ba8d0542823dd\"}, {\"name\": \"f4\", \"src_dev\": 66306, \"src_ino\": 552197, \"dst_dev\": 66306, \"dst_ino\": 552197, \"src_sha256\": \"e6ca42d00e8e045c0fe4fe92f844f02bf9193bb1f3a1c7c183c667e2bafa9fb6\", \"dst_sha256\": \"e6ca42d00e8e045c0fe4fe92f844f02bf9193bb1f3a1c7c183c667e2bafa9fb6\"}]\n",
+  "stdout_bytes": 2970,
+  "stdout_sha256": "37d22d962e8aee23cc861226ff8fb5bbe79a379d1b89e859e711383d36eaf0f7",
+  "target_placeholder_before_namespace": {
+    "dev": 22,
+    "gid": 0,
+    "ino": 713216,
+    "mode": "0o700",
+    "uid": 0
+  },
+  "timed_out": false,
+  "uid": 0
+}

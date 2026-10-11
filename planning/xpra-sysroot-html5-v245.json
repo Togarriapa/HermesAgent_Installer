@@ -1,0 +1,158 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-xpra-sysroot-html5-v245.md",
+  "extends": [
+    "v219",
+    "v227",
+    "v238"
+  ],
+  "requirements": [
+    "R0028",
+    "R0035",
+    "R0037",
+    "R0203",
+    "R0204",
+    "R0211"
+  ],
+  "owner": "luna_xpra_runtime_builder",
+  "source_evidence": {
+    "v238_policy_sha256": "2b316eb88b634713af2a3fffe53dd495aa0bd61bad371aee0b51b2dbca26898e",
+    "archive_count": 399,
+    "link_count": 3093,
+    "symlink_count": 3052,
+    "hardlink_count": 41,
+    "link_observation_path": "plans/amendments/2026-10-10-xpra-sysroot-html5-v245/deb-link-observations.json",
+    "link_observation_sha256": "419c6355d2a00d91325f2286cb70973f412b5fd504103fc1d64fb856531860f6",
+    "validation": "Sol independently reopened and hashed all399 actual signed-policy DEB bytes and parsed each original data archive link; exact3093 origin rows match. Diagnostic CP314 ARM64 install compiled43 extensions, but ambient container link workaround and absent HTML5 prevent positive runtime."
+  },
+  "sysroot": {
+    "producer": "RootXpraDependencySysrootRegistry",
+    "factory": "from_current_setup(binding, native_acquisition, source_cas, pm_registry)",
+    "methods": [
+      "materialize_current_dependency_sysroot(selection, deb_closure, toolchain) -> RootObservedXpraDependencySysroot",
+      "resolve_current_dependency_sysroot(handle, selection) -> RootObservedXpraDependencySysroot"
+    ],
+    "receipt_fields": [
+      "schema",
+      "sysroot_handle",
+      "selection_handle",
+      "choice_handle",
+      "setup_session_id",
+      "transaction_handle",
+      "prepared_generation_id",
+      "prepared_generation_digest",
+      "source_policy_sha256",
+      "dependency_receipt_handles",
+      "dependency_closure_sha256",
+      "toolchain_receipt_handles",
+      "toolchain_closure_sha256",
+      "archive_origin_manifest_sha256",
+      "input_link_graph_sha256",
+      "materialized_member_manifest_sha256",
+      "materialized_link_graph_sha256",
+      "transform_attestation_handle",
+      "transform_attestation_sha256",
+      "sysroot_closure_sha256",
+      "issued_monotonic",
+      "expires_monotonic"
+    ],
+    "private": "Same sealed retained choice/controller PIDFD/start/PM/NSS/source acquisition and exact held archive, root/tree descriptors; no receipt from caller rows/paths/copies. Reopen all origin bytes/signature/hash/license/currentness before admission and on resolve; current sysroot assembly under original owned preactive build grant, no active dependency.",
+    "namespace": "Fixed composite virtual root from signed relative archive paths. Merge usr/,lib/ and other required signed sysroot members only in exact manager-owned isolated dependency staging. GNU compiler/linker use fixed --sysroot=<held staging root>; their loaders/tool interpreters are separately current held members. No host /usr/lib/mount, container ambient workaround, apt install, maintainer scripts or global package configuration.",
+    "origin_rows": [
+      "package",
+      "version",
+      "path",
+      "kind",
+      "target",
+      "mode"
+    ],
+    "graph_rules": "Each link retains exact original signed archive SHA/size/package/version/path/kind/raw target plus current origin member receipt. POSIX-normalize targets inside the private virtual root: archive absolute target means that virtual root only, never host traversal; relative targets resolve from containing directory. Reject path escapes/NUL/duplicate conflicting ownership/multiple inconsistent targets/cycles and bound traversal to64 links. Hardlink root-relative archive targets must resolve to exact regular content with origin ownership, mode/hash/size; do not preserve mutable hardlink aliasing. Stage equivalent immutable measured regular bytes with explicit hardlink-origin transform facts. Symlink materialization retains measured target bytes/hash/size and original target; any rebasing is private source-owned transform, no unproved new targets.",
+    "closure": "Graph observation permits signed dangling data links as source facts only, never resolved dependency authority. Every compiler/interpreter/pkg-config/native consumed path and ELF DT_NEEDED/DT_INTERP resolution must terminate at exact current held regular member. Unresolved/ambiguous/cyclic/escaping links required by recipe deny; unrelated source-only links stay unmounted/quarantined unless separately proven. Cross-package identical directories/files may merge only with exact content/mode facts, retaining all origins; conflicting files/links deny without last-writer wins.",
+    "limits": {
+      "max_archive_count": 399,
+      "max_link_count": 3093,
+      "max_link_hops": 64,
+      "max_expanded_bytes": 2147483648,
+      "max_output_bytes": 2147483648
+    },
+    "glibc_transform": {
+      "package": "libc6-dev",
+      "package_version": "2.41-12+deb13u4",
+      "archive_sha256": "71e373cb5e9da975b02fb4af555929cb1977560e2dd8245de4eb8a7b03677a08",
+      "path": "usr/lib/aarch64-linux-gnu/libc.so",
+      "input_sha256": "cf5d6c74565de8a3e39b94ca1da75acedbb1f0d44dfc1633969477ae058badc3",
+      "input_size_bytes": 291,
+      "match_token": "/usr/lib/aarch64-linux-gnu/libc_nonshared.a",
+      "replacement_token": "=/usr/lib/aarch64-linux-gnu/libc_nonshared.a",
+      "match_count": 1,
+      "output_sha256": "746dd9e697f41a2330c301e5b4e032748b011d4b72807a97f7bc16ee162020c4",
+      "output_size_bytes": 292,
+      "required_targets": [
+        "lib/aarch64-linux-gnu/libc.so.6",
+        "usr/lib/aarch64-linux-gnu/libc_nonshared.a",
+        "lib/ld-linux-aarch64.so.1"
+      ],
+      "rules": "Only this exact signed291-byte GNU ld script may change; exact single /usr libc_nonshared token gains sysroot prefix =. Preserve all other bytes, verify output hash and target/member graph independently. Native driver records actual observed source+output and managed transform attestation. No arbitrary linker-script rewrite, fixture alias or dynamic absolute path."
+    },
+    "pycairo_products": "Existing v238 exact Pycairo1.29.2 source nonwheel Meson install outputs py3cairo.pc, py3cairo.h and CP314 ARM64 module are genuine generated isolated dependency output members, not source pins. Bind real held sdist/PM314/compiler/Meson managed attestation; forbid transient final RPATH or host /usr. Independently inspect/install actual output before Xpra compilation."
+  },
+  "html5": {
+    "policy_role": "xpra-html5-source-policy-v1",
+    "policy_path": "plans/amendments/2026-10-10-xpra-sysroot-html5-v245/xpra-html5-source-policy-v1.json",
+    "policy_sha256": "8ebdb9c6a0bac16351e9ca49ee0d2197e8f44e5b6a548a03fa72a9cbe1812871",
+    "source_policy": {
+      "schema": 1,
+      "artifact_id": "xpra-html5-v20-5b8898a-source-v1",
+      "origin_id": "codeload-github-xpra-html5",
+      "source_revision": "5b8898a35ef54aa919cb847b352fe2469e78c5dd",
+      "upstream_release": "v20",
+      "url": "https://codeload.github.com/Xpra-org/xpra-html5/tar.gz/5b8898a35ef54aa919cb847b352fe2469e78c5dd",
+      "sha256": "1c4d3be64ab535aeba8899d0692e8d8d23cef810992dacd7c7af270c8b80ebd2",
+      "size_bytes": 2396584,
+      "max_download_bytes": 2396584,
+      "archive_root": "xpra-html5-5b8898a35ef54aa919cb847b352fe2469e78c5dd",
+      "max_archive_entries": 109,
+      "max_expanded_bytes": 5021584,
+      "member_manifest_sha256": "489ee5012f72a4e95fa394cb877ffb94122490bfc321a0839d3b51ea17e073fd",
+      "license_manifest_sha256": "4a025c092574007c5b44bc598e19c48cef7c36acee2aa0cf15732335a174919b",
+      "member_manifest": "html5-source-members.json",
+      "license_manifest": "html5-license-observations.json",
+      "project_license": "MPL-2.0",
+      "bundled_license_status": "mixed-licenses: whole vendored proof pending",
+      "issuer_member_role": "display-dependency",
+      "issuer_relative_path": "html5/xpra-html5-v20.tar.gz"
+    },
+    "provider": "RootXpraHTML5SourceRegistry",
+    "factory": "from_current_setup(binding, held_release, source_acquisition, source_cas)",
+    "methods": [
+      "acquire_current_html5_source(selection) -> RootVerifiedXpraHTML5Source",
+      "resolve_current_html5_source(handle, selection) -> RootVerifiedXpraHTML5Source"
+    ],
+    "grant": "Extend existing v227 fixed selected acquisition policy by one exact codeload origin/path/artifact tuple, expected hash and2396584-byte cap from held reviewed policy only. No caller origins/paths/hash, arbitrary redirects, branch latest fallback or npm source. Quarantine normal-TLS bytes until independently exact hash/member/license proof; same current choice/transaction/generation/controller/PM/NSS ownership and cumulative512MiB/object budget.",
+    "receipt": "Root-private sealed source receipt retains current source selection, policy/source archive and manifest/license proof handles/digests plus held archive FD. No runtime/build/transform receipt from archive hash alone; missing full vendored license evidence denies positive buildable HTML5 closure.",
+    "install": "Existing fixed Xpra source driver consumes display-dependency/html5/xpra-html5-v20.tar.gz. Verify full exact109-entry source graph, then copy only reviewed regular html5/ subtree to usr/share/xpra/www inside owned actual output. Preserve source bytes and source-origin facts, normalize stage modes to0644/dirs0755; no upstream setup.py installer, ambient /usr JS/fonts/background symlinks, compressor/minifier probes or external asset fetches. Exact generated output manifest independently verifies required index.html/JS/CSS/fonts/images relative references and source/member hashes. Copy license notices into a fixed within-package metadata directory; must include mixed component licenses, not incorrectly relicense all files MPL/MIT.",
+    "license": "Root LICENSE actualMPL2 sha fab3dd6bdab226f1c08630b1dd917e11fcb4ec5e1e020e2c16f83a0a13863e85 plus upstream packaging copyright and bundled member inventory observed. Headers explicitly include MIT, MPL2, CC-BY-SA3.0-derived code and additional bundled audio/font libraries. Upstream broad lib/*MIT claim is not complete per-file proof; verify exact third-party source/license notices before issuing positive closure. No blanket license substitution.",
+    "qualification": "Actual Xpra managed session must independently serve these closed assets at private14500 and qualify seamless official Desktop/Xvfb/input path. Static index presence is insufficient; gateway8765 JWT policy unchanged, Desktop AF_UNIX only, private three-role namespace preserved."
+  },
+  "tasks": {
+    "RT-T245.1": "Implement actual origin-bound archive graph/sysroot materializer and single pinned glibc transformation with independent observer.",
+    "RT-T245.2": "Enroll exact held official HTML5 policy/acquire/license proof and fixed source-data install; retain no ambient asset dependency.",
+    "VD-T245.3": "Exercise link/origin/conflict/cycle/escape/dangling/glibc/license/hash/currentness failures and real managed ARM64 Xpra/Xvfb/HTML5 session."
+  },
+  "acceptance": "All AC OPEN. Exact source observations and diagnostic build only; no code cohort pins, positive runtime receipt or Pi acceptance.",
+  "build_config_projection": {
+    "preserve": "Existing source/transform/PM/member-only closure and output schema fields remain bound; no recipe/self-hash cycle. Source recipe resolves current sysroot/HTML5 from private producer, never caller config.",
+    "new_fields": [
+      "dependency_sysroot_closure_sha256",
+      "dependency_link_graph_sha256",
+      "html5_source_sha256",
+      "html5_source_member_manifest_sha256"
+    ],
+    "field_binding": "Exact independently retained RootObservedXpraDependencySysroot current closure/materialized graph and RootVerifiedXpraHTML5Source archive/member manifest; static SHA values alone cannot mint those receipts. Config updates require source-owned committed schema review, no future schema pin.",
+    "paths": {
+      "dependencies": "/run/hermes-installer/build/dependencies",
+      "html5_archive_relative": "html5/xpra-html5-v20.tar.gz"
+    },
+    "outputs": "Existing actual usr output and source-owned envelope; package member facts measure copied HTML5 and generated Pycairo development outputs. Exact current final member/recipe/CAS/ELF/session joins still required."
+  }
+}

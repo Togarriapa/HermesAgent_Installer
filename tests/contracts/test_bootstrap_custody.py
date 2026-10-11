@@ -189,7 +189,7 @@ class RootSelectedHermesOperationsTests(unittest.TestCase):
         return EnrollmentReceipt(1, "transaction", "provision-receipt", "generation-7",
             "a" * 64, None, state, tuple(enrollment_ids), time.monotonic(), time.monotonic() + 60)
 
-    def test_stage_health_operations_are_fixed_and_generation_bound(self):
+    def test_stage_recipe_is_fixed_and_generation_bound(self):
         from hermes_installer.bootstrap_custody import RootSelectedHermesOperations
 
         class Client:
@@ -217,13 +217,11 @@ class RootSelectedHermesOperationsTests(unittest.TestCase):
         operations = RootSelectedHermesOperations(BootstrapCustody(client), self.receipt())
         stage = operations.stage(timeout=10)
         self.assertTrue(stage.operation_completed)
-        health = operations.health(stage, timeout=10)
-        self.assertTrue(health.operation_completed)
         self.assertEqual([item["operation_id"] for item in client.started], [
-            "hermes-agent-stage-v1", "hermes-agent-health-v1"])
+            "hermes-agent-stage-v1"])
         self.assertTrue(all(item["parameters"] == {} for item in client.started))
         self.assertTrue(all(item["generation"] == "generation-7" for item in client.started))
-        self.assertEqual(health.generation_digest, "a" * 64)
+        self.assertEqual(stage.generation_digest, "a" * 64)
 
     def test_prepared_enrollment_and_failed_stage_cannot_run_health(self):
         from hermes_installer.bootstrap_custody import (
@@ -247,8 +245,6 @@ class RootSelectedHermesOperationsTests(unittest.TestCase):
         operations = RootSelectedHermesOperations(BootstrapCustody(FailedClient()), self.receipt())
         stage = operations.stage(timeout=10)
         self.assertFalse(stage.operation_completed)
-        with self.assertRaises(BootstrapCustodyError):
-            operations.health(stage, timeout=10)
 
     def test_async_cancellation_stops_and_verifies_the_selected_child(self):
         import asyncio

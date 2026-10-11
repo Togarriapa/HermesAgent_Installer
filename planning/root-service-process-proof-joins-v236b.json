@@ -1,0 +1,100 @@
+{
+  "schema": 1,
+  "id": "root-service-process-proof-joins-v236b",
+  "refines": "planning/root-service-process-authority-lane-v236.json",
+  "status": "specified; source implementation/acceptance OPEN",
+  "tasks": [
+    "HI-T236.1",
+    "HI-T236.2",
+    "VD-T236.3"
+  ],
+  "audit": {
+    "health": "RootNativeHealthStartAdmission and RootSelectedHealthStartBinding have no selected_home_binding_sha256. RootOwnedNativeProfileHomeRegistry/open_current_profile_home and current published crosswalk plus v221 PM resolver provide genuine current primary home custody, but no health admission/home binding producer exists. Current root process helper searching profile.selected_home_binding_sha256 must not infer/zero-fill it.",
+    "revision": "AuthorityService.authority_epoch is secrets.token_urlsafe(24) generated per service instance; _policy_revision() reads current policy.revision (otherwise default-deny). Current LocalOwnerPolicyAdapter.revision is linux-local-owner-v1: concatenated actual published_core.sha256. Neither epoch nor revision is a compiler claim digest or prepared policy generation.",
+    "declaration": "Actual RootPreparedNativeServiceProcessDeclaration from setup registry has live selection/recipe/member references and setup TTL. It cannot be reconstructed as restart authority. Publisher outputs require distinct freshly validated current published source type.",
+    "schema": "v225 reserves service_generations schema3 as exact schema2 fields plus remote_service_identity_source_records. Local parser WIP using schema3 for root_service_process_authorities conflicts with that definition."
+  },
+  "health_home_producer": {
+    "module": "hermes_installer.authority.native_health_home_bindings (new narrow producer)",
+    "registry": "RootNativeHealthHomeBindingRegistry.from_root_runtime(runtime: RootAuthorityRuntime, published_core: RootPublishedAuthorityCore, owned_homes: RootOwnedNativeProfileHomeRegistry, pm_runtime: RootPublishedProfileHomePMRuntimeResolver, health_authority: RootNativeHealthStartAuthority) -> registry; exact retained runtime/service/manager/health/core/bindings/journal dependencies, no callback/path/home hash input.",
+    "resolve": "resolve_selected_health_home(admission: RootNativeHealthStartAdmission, binding: RootSelectedHealthStartBinding) -> RootSelectedNativeHealthHomeBinding; exact healthauthority/observer-retained objects, matching current committed enrollment/current native recipe/source/controller, not dataclass construction.",
+    "source_row": "Use core.resolve_current_native_profile_home_crosswalk() (exact208row member/current claim); select EXACT ONE row source_profile_id=hermes, role=jarvis-primary-home, native_profile_key=default, display_name=Jarvis. Do not derive home from service profile string or delegate resource ID. Validate same row principal_id/namespace_id vs admission/binding/current runtime service proof.",
+    "existing_custody": "Call owned_homes.open_current_profile_home(row)->actual RootOwnedNativeProfileHome; verify_current(row), held nofollow directoryFD identity/owner/mode/member/journal. Call pm_runtime.resolve_current_profile_home_runtime(row)->actual RootVerifiedPublishedProfileHomePMRuntime; exact row runtime_identity_sha256 and complete v221 committedPM projection/current core. Use service subject UID/GID, never login UID. Existing these APIs are source-reviewed substrates; new health binding itself remains pending until implemented/tested.",
+    "composition": "Reuse source-home/ownedhome/PM substrates without requiring ResourceJobAuthority/controller DAG enrollment just to construct health binding. Current runtime composes substrate only inside resource-task conditional; factor shared source custody lifetime so health can use same retained proofs independently, no duplicate ownership or fake task admission.",
+    "dto": "RootSelectedNativeHealthHomeBinding frozen/reprhidden issuer-sealed and membership-retained, exposes binding_sha256 and verify_current(admission,binding)->same object. It is home custody, not effect authority.",
+    "public_projection_keys": [
+      "schema",
+      "purpose",
+      "health_admission_handle",
+      "service_enrollment_id",
+      "profile_id",
+      "process_generation",
+      "principal_id",
+      "namespace_id",
+      "subject_uid",
+      "subject_gid",
+      "home_binding_id",
+      "source_profile_id",
+      "role",
+      "native_profile_key",
+      "materialization_receipt_handle",
+      "home_generation",
+      "behavioral_manifest_sha256",
+      "home_device",
+      "home_inode",
+      "home_owner_uid",
+      "home_owner_gid",
+      "home_mode",
+      "runtime_identity_sha256",
+      "publication_receipt_handle",
+      "publication_sha256",
+      "service_generation_digest",
+      "crosswalk_member_sha256",
+      "source_output_claim_sha256",
+      "authority_epoch",
+      "policy_revision"
+    ],
+    "purpose": "literal selected-native-health-primary-home-v1",
+    "digest": "binding_sha256=SHA256 canonical UTF8 JSON of exact public_projection_keys, sort_keys/separators comma colon/ensure_ascii=False/allow_nan=False/no newline. Exclude binding_sha256/opaque new bindinghandle/monotonic times/private refs/FDs. This is a new home binding digest derived from actual joined proof, not fixture/native closure/claim/container hash relabel.",
+    "private_refs": "Exact issuing registry/admission/binding/core/current crosswalk primary row/RootOwnedNativeProfileHome + duplicate tracked directory FD/current PM proof/runtime service/health controller and committed enrollment proof; proper exact FD ownership/release, no duplicate-close reuse.",
+    "currentness": "verify_current(admission,binding) requires identical retained inputs + same observer/healthauthority current admission/control and original deadlines, current service epoch/policy, core descriptor/receipt/claim/crosswalk, exact home source/journal/FD/members/UID/GID/mode, fresh PM/current runtime identity. Lifetime min(now+30s, original health/controller/source/PM/namespace/home leases). Revalidation at grant/consume/manager unit start; restart creates fresh current bindings from published custody, never old health/setup seal.",
+    "root_issuer_join": "RootServiceProcessAuthority.authorize_admitted_health_process_start(..., home_binding: RootSelectedNativeHealthHomeBinding) requires exact runtime.native_health_home_binding_registry issuer and home_binding.verify_current(admission,binding). selected_home_binding_sha256=home_binding.binding_sha256; retain exact object in admission ledger. Remove speculative profile getter. Retain same object through consumed process proof and manager start. Root health start request digest remains SHA256(binding.payload()) for existing exact health schema; admission separately signs selected_home_binding_sha256, never silently changes existing health payload.",
+    "custodian": "ManagedProcessEffectHandler.start_selected_health_operation extends rootprivate signature with selected_home_binding and root consumed process proof; verifies both against same admission before effect. For selected declared Hermes CLI worker, attach actual held primary home FD through existing fixed/hermes kernel home mount and derive cwd/HOME/HERMES_HOME from that custody; no caller path or chmod. Revalidate through start; missing mount/home producer keeps unavailable. Existing VerifiedRootSelectedServiceEffect/health source/controller/namespace/kernel/cleanup checks stay mandatory; this extra binding does not replace consumed effect."
+  },
+  "policy_identity": {
+    "core_proof": "RootServiceProcessBindingCurrentProof contains current core/publication/generation/source/binding hashes. It SHALL NOT invent policy_revision or authority_epoch from those fields.",
+    "runtime_epoch": "RootServiceProcessAdmission.authority_epoch = exact current retained runtime.service.authority_epoch, validated as nonempty startup random from existing AuthorityService. Not persisted in core, not restored on restart; a new daemon invalidates old runtime grants.",
+    "runtime_revision": "RootServiceProcessAdmission.policy_revision=runtime.service._policy_revision() ONLY after validating current actual concrete policy adapter + published identity domain. LocalOwnerPolicyAdapter revision exactly linux-local-owner-v1:<current authority core SHA256>; SHA is core.sha256, not publication_sha256/claim_digest/service_generation_digest. Authentik mode uses actual current AuthentikSystemPolicy.revision from protected enrolled policy. Default-deny sentinel is not valid selected process authorization.",
+    "proof_join": "If consumer needs runtime epoch/revision proof, issue a separate RootServiceProcessRuntimeCurrentProof from exact RootServiceProcessAuthority/service/policy/core binding after checking currentness. It holds same runtime/service object privately, epoch/revision strings and core binding proof; never copy them into static source/compile DTO or treat caller string as proof. Compare all again issue/consume/control/start. No compiler input/output hash cycle."
+  },
+  "declaration_interface": {
+    "prepared_api": "RootActiveAuthorityProjectionRegistry.resolve_current_prepared_service_process_declaration(projection: RootPreparedActiveAuthorityProjection, profile_id: str, process_authority_id: str)->RootPreparedNativeServiceProcessDeclaration; aggregate retains SAME actual RootPreparedNativeServiceProcessDeclarationRegistry and issued object from resolve_selected(current native policy choice), not RootAuthorityRuntime. Verify aggregate/precompile/selected worker recipe/NSS/source/member/session/current issuer and exact16field public_projection equals root process row. Session delegates only through retained aggregate registry. Live-only prepared proof never cold reconstructed.",
+    "published_api": "RootPublishedAuthorityCore.resolve_current_root_service_process_declaration(profile_id, process_authority_id) -> RootPublishedNativeServiceProcessDeclaration (distinct runtime type)",
+    "published_issuer": "RootPublishedNativeServiceProcessDeclarationRegistry.from_root_runtime(published_core: RootPublishedAuthorityCore, choice_registry: RootSetupChoiceRegistry(runtime-only mode), installed_release: VerifiedInstallerReleaseReceipt, runtime_bindings: RootRuntimeBindings) -> registry; exact bound current published/core/release/runtime identities. Core attaches only this same root runtime registry, never caller factory/parsed mapping. Absent current typed issuer means fail-closed restart, not conversion of prepared DTO.",
+    "published_resolve": "registry.resolve_current(profile_id, process_authority_id)->RootPublishedNativeServiceProcessDeclaration: read exact bound root_service_process_authorities row through current held core, resolve RootSetupChoiceRegistry.resolve_current_adopted_choice_snapshot(row.source_choice_selection_handle, native-policy-preparation), verify original signed choice/adoption/current publication/revocation/recipe/principal/namespace/service generation. Reopen held current installer release declaration/handler/schema source members at fixed staged paths/roles and validate complete byte hashes/size/source closure against original bound claim/catalog. Original source receipt handles are immutable lineage IDs compared to signed original claims; not recreated live bearer proofs.",
+    "source_paths": [
+      "plans/amendments/2026-10-10-native-service-process-declaration-v236/native-service-process-declaration-v1.json",
+      "src/hermes_installer/managed_process_custodian.py"
+    ],
+    "layout": "Above paths are source identities from actual registry DECLARATION_PATH/HANDLER_PATH. Installed reads MUST use corresponding exact publisher-staged release member paths/roles from actual verified release mapping, not assume source paths are installed paths. Actual parameter schema source receipt also held/verified by registry. Missing staged member or current adoption source proof remains exact pending.",
+    "published_type": "RootPublishedNativeServiceProcessDeclaration offers public_projection()->exact same16field v236 row, operation_targets and operation_parameter_schemas from actual held declaration/schema bytes, verify_current()->same type/current issued object, expires_monotonic<=now+30s and publication/core/service generation/source/adoption metadata. Private issuer/core/choice adoption/installed memberFDs and source verification refs; frozen/reprhidden. No setup selection seal/expired setup receipt requirement.",
+    "parser_consumer": "Parser/root process policy accepts exact prepared type only for genuine live prepublication validation through actual aggregate issuer, and exact published type for installed runtime/reader/restart. No ducktyped or caller map construction. Shared complete16field/declaration/schema/handler/source/service and sixoperation validators identical in both modes; rootservice authority consumes published type at runtime. A current static row alone is not fresh declaration proof."
+  },
+  "generation_schema": {
+    "schema1": "Existing schema1 field set/validators unchanged legacy.",
+    "schema2": "Existing schema2 = schema1 plus native_worker_network_records/active_network_generation_records/native_worker_runtime_records/owner_overlay_observer_records, unchanged.",
+    "schema3": "Exact v225 schema2 PLUS remote_service_identity_source_records only; bound1024, strict unique/sorted remote_enrollment_id/adoption handles/source SHA/size/journal row joins. Existing v225 published source/member/adoption semantics preserved even when array empty.",
+    "schema4": "Exact schema3 PLUS root_service_process_authorities only. Both remote_service_identity_source_records and root_service_process_authorities REQUIRED, even empty. Root bound256/exact16field rows/sixoperations; all schema3/shared validators executed directly and complete schema4 generation_digest hashes entire object excluding only generation_digest. Never strip fields/alter schema/recompute older digest to validate; reject missing/unexpected arrays. Fresh v236 selected process aggregate emits4; older3 remote does not acquire process lane. Prepared initial2 remains dormant.",
+    "actual_remote_validator": "Compiler clone /private/tmp/hermes-active-policy-core currently implements v225 selectors inline in enrollment._validate_service_generations at2432+; there is no separate helper module required. Preserve exact fields {remote_enrollment_id,adoption_handle,source_sha256,source_size_bytes,journal_root_id,journal_relative_path}, source SHA64hex, size1..131072, path32hex.json, current declared remote/journal joins, uniqueness and ordering. Refactor reusable helper only if needed; do not substitute permissive empty validator. Artifact/core document schema1 unchanged.",
+    "old_failure": "WIP local parser schema3=rootprocess must be corrected to4 before integration; a row accepted under conflicting3 cannot become accepted evidence."
+  },
+  "failure_tests": [
+    "Actual retained current health admission+primaryhermes/default crosswalk+ownedFD+freshPM proof yields stable homebinding and root admission digest, consumedproof/manager uses same home; no fake profile attribute or monkeypatch-current callback as positive proof.",
+    "Missing/duplicate/nonprimary home row, altered source/FD/member/journal/UID/namespace/PM/current receipt/deadline denies before grant/unit creation; fixture hash/native closure/zero hash cannot stand in.",
+    "Local revision uses coreSHA exactprefix; claimSHA mismatch, defaultdeny policy or daemon restart epoch denies old runtime admission; prepared projection gets no fake epoch/revision.",
+    "Live prepared sameissuer proof validates prepublication; cold/restart parser accepts only fresh published typed choice+heldinstalledsource proof and rejects reconstructed prepared seal/expiredsetup receipt/rawrow.",
+    "Schema3remote existing cases unchanged, schema4 with both actualarray domains validated; missing/extra key/hash tamper/remote duplicate/source schema mismatch/root 6rule mismatch deny.",
+    "Home registry can compose without resourcejob DAG if actual health/source/PM/committedroot is valid; absence no fake task, all custody/kernel/currentness obligations unchanged."
+  ],
+  "acceptance": "HI-T236.1/HI-T236.2/VD-T236.3 and all AC01..18 OPEN. Clarifies source APIs/digest/schema, no implementation/sourcepin/runtime/target assertion."
+}

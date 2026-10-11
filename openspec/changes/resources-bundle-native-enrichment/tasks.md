@@ -69,3 +69,108 @@ Use installed_selection_catalog artifact_catalog/artifact_store joins, root task
 ### v20 exact root peer/controller DTOs
 
 Use pending_pair_DTO and task_runner_protocol.RootTaskController exact records/role mapping/PIDFD ownership. Existing HI/RB tasks remain pending.
+
+### v23 root resource controller enrollment
+
+Use active resource_controller_roles and root_controller_role_catalog exact actual daemon/module/source/backend/operation joins; current handler module SHA and stricter effective result bounds apply. HI/RB tasks remain pending.
+
+### v27 prepared native receipts and Hermes home
+
+Use first_stage_policy_compiler exact home/prepared order/runtime artifact roles/independent Resources source and receipt_binding_rules_schema. Existing BD/LC/HI/RB tasks remain pending.
+
+### v29 native task and credential joins
+
+Use separate result generation_api domains, task_runner_protocol.native_execution_receipt and backend_enrollments.credential_bindings exact active joins. Existing HI/RB tasks remain pending.
+
+Additive observation assembly v31: `plans/amendments/2026-10-09-final-observation-assembly-v31.md`; preserve existing task IDs and open target gates. Selected root registries/current custody receipts supply actual observations; static catalog or caller claims do not.
+
+Installed release/native assembly v33: `plans/amendments/2026-10-09-installed-release-native-assembly-v33.md`; exact root receipt and construction joins preserve existing task IDs and pending evidence.
+
+Initial identity/terminal sequencing v35: `plans/amendments/2026-10-09-initial-identity-terminal-sequencing-v35.md`; exact existing task joins remain pending.
+
+First-stage publication/ingress v36: `plans/amendments/2026-10-09-first-stage-publication-ingress-v36.md`; exact existing task construction joins, no completion claimed.
+
+Native candidate index delivery v38: `plans/amendments/2026-10-09-native-candidate-index-delivery-v38.md`; exact compiled member/receipt joins preserve open tasks.
+
+Native schema artifact joins v39: `plans/amendments/2026-10-09-native-schema-artifact-joins-v39.md`; exact selected schema source mapping, original tasks remain pending.
+
+Audio/HTTP native input transport v40: `plans/amendments/2026-10-09-native-input-audio-http-channels-v40.md`; original5 channels retain required pending scope.
+
+Candidate toolset envelope v41: `plans/amendments/2026-10-09-native-candidate-toolset-envelope-v41.md`; exact source-backed owner/envelope metadata, tasks stay open.
+
+First-selection/native-target v43: `plans/amendments/2026-10-09-first-selection-cas-native-target-v43.md`; exact existing task joins remain open.
+
+Native registration/source snapshot v44: `plans/amendments/2026-10-09-native-registration-source-snapshot-v44.md`; exact existing task join, target gates open.
+
+Original WhatsApp authenticated trigger v45: `plans/amendments/2026-10-09-whatsapp-authenticated-trigger-enrollment-v45.md`; source-backed setup/schema acquisition, originalchannel tasks remain pending.
+
+Root task initial input v46: `plans/amendments/2026-10-09-root-task-initial-input-sequence-v46.md`; exact existing task sequencing, no target completion.
+
+Root channel peer delivery v48: `plans/amendments/2026-10-09-root-channel-peer-delivery-v48.md`; concrete originalchannel transport join, tasks open.
+
+Root registry phase joins v50: `plans/amendments/2026-10-09-root-intake-delivery-phase-joins-v50.md`; exact existing effect/evidence phases, tasks open.
+
+Native materialization CAS v51: `plans/amendments/2026-10-09-native-materialization-output-cas-v51.md`; exact source/output roles, tasks open.
+
+Initial native input peer take v52: `plans/amendments/2026-10-09-native-initial-input-peer-take-v52.md`; exact source delivery beforestdin, tasks open.
+
+Actual EOF/schema derivation v54: `plans/amendments/2026-10-09-stdin-eof-schema-derivation-v54.md`; exact root receipt joins in planning contracts, existing task IDs remain unchecked.
+
+Native output encoding v56: `plans/amendments/2026-10-10-native-output-byte-encoding-v56.md`; actual compiler/CAS/readonly mount proof remains required and tasks open.
+
+Frozen task handle phase v57: `plans/amendments/2026-10-10-frozen-task-handle-write-phase-v57.md`; RB-T08 remains open.
+
+Root key/source producer/catalog selection v61: `plans/amendments/2026-10-10-root-key-source-producer-composio-selection-v61.md`; existing task gates unchanged.
+
+First source bootstrap actor v62: `plans/amendments/2026-10-10-first-source-bootstrap-actor-v62.md`; existing scope/tasks remain open.
+
+Prepared base/reader/release manifest v63: `plans/amendments/2026-10-10-prepared-base-reader-release-manifest-v63.md`; existing gates remain open.
+
+Raw resource event/result closure v66: `plans/amendments/2026-10-10-resource-raw-event-result-closure-v66.md`; existing RB task gates open.
+
+Resource capture schemas v67: `plans/amendments/2026-10-10-resource-capture-schema-artifacts-v67.md`; existing task/acceptance gates open.
+
+Channel retained receipts/source choice v68: `plans/amendments/2026-10-10-channel-receipts-source-selection-v68.md`; existing task gates unchanged.
+
+Native registration projection v99: `plans/amendments/2026-10-10-native-registration-projection-v99.md`; exact source registration/selector/local-family coverage required; existing implementation and acceptance tasks remain open.
+
+Private input recipient consent v100: `plans/amendments/2026-10-10-private-input-recipient-consent-v100.md`; actual root observed private-route choice/current input binding/epoch required, no capture-consent substitution; existing implementation/acceptance gates open.
+
+Verified Xpra source pin v101: `plans/amendments/2026-10-10-xpra-verified-source-pin-v101.md`; exact source tree/finite links/actual transform and runtime proof required; no source-only acceptance or missing native-family waiver. Existing tasks open.
+
+Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected-runtime-profile-currentness-v102.md`; actual independent Resources choice/PM journal root/current consent and recipe-bound application limits; existing implementation/acceptance tasks open.
+
+- [ ] HI-T172.1 Local/native/enrollment/factory/observer: genuine owner view/target/current source operations, separate row parser/FKs/grants/root result witness and exact pending coverage.
+
+- [ ] HI-T173.1 Resource runtime/controller/enrollment: implement genuine fixed fixture source generation, native materialization/discovery receipt and strict current projection.
+
+- [ ] HI-T174.1 Event issuer/TTY/consent/observer/composer: actual initial public source producer before admission and strict current disclosure/replay/ancestry tests.
+
+- [ ] RB-T205.1: Implement Jarvis sole default user entry and protected isolated specialist map.
+- [ ] RB-T205.2: Preserve state/secrets with journaled idempotent owned migration and deny unowned conflicts.
+- [ ] VD-T205.3: Verify genuine backend/Desktop listing/routing/delegation and migration effects; acceptance separate.
+
+- [ ] RB-T213.1: Produce current held-home completed materialization/active source crosswalk joins.
+- [ ] HI-T213.2: Wire selected task/home digest/grant to actual fixed/hermes custody mount.
+- [ ] VD-T213.3: Verify unprivileged delegate effects, isolation, stale/grant/source denial and cleanup.
+
+RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member readback and post-setup restart/current active home registry; setup-only maps cannot complete Jarvis delegate scope.
+
+- [ ] RB-T213.1 / HI-T213.2 / VD-T213.3 (v214): Implement exact published source-home vs live selected-task split, current core claim/readback and actual delegate grant/mount evidence.
+
+- [ ] RB-T213.1 / HI-T213.2 / VD-T213.3 (v215): Implement distinct protected source mapping, typed live admission/home binding, unchanged service identity and genuine prepared/publication claim joins.
+
+- [ ] HI-T221.1: Implement exactfreshpublishedhomePMadapter/projectionmetadata/FDverification.
+- [ ] HI-T221.2: Wire currentPMproof into activehome/taskbinding aftersetup/restart.
+- [ ] VD-T221.3: Verify fresh/stale/restart/projection/source/member/namespace failures and actualeffects separately.
+- [ ] HI-T231.1: Implement actual retained active authority aggregate, pure root rendering and strict local-owner/Authentik identity-domain parsing using exact current source/runtime/NSS/effect receipts.
+- [ ] BD-T231.2: Consume the sealed aggregate in active compiler/publisher and reuse its exact generation in activation; preserve separate v214 crosswalk and absent optional remote.
+- [ ] VD-T231.3: Verify complete genuine receipt-to-core-to-publication/enrollment pipeline and tamper/currentness/deadline/retry/restart failures; target acceptance separately OPEN.
+
+- [ ] HI-T236.1: Produce actual selected reviewed six-operation process declaration and strict protected root-service process binding separately from local user overlay caps.
+- [ ] HI-T236.2: Integrate typed current source/task/health/control process admission and one-use consume into actual root manager paths; preserve all kernel and child authority checks.
+- [ ] VD-T236.3: Verify strict dual domain enrollment plus genuine task/health process effects, unchanged user ceiling and replay/currentness/sibling isolation failures; target acceptance separate.
+
+- [ ] HI-T236.1 / HI-T236.2 / VD-T236.3 (v236b): Implement exact retained health primaryhome binding, current runtime epoch/policy revision, prepared-vs-published declaration getter/restart source custody and schema4; verify all genuine positive/currentness/legacy failures.
+
+- [ ] HI-T236.1 / HI-T236.2 / VD-T236.3 (v236b cold custody): Implement independent read-only signed adopted-choice/current key/member issuer, strict cold parser declaration bridge, and ordinary exact runtime revalidation before activation; test restart/races/deny-before-effects.

@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "record_kind": "operator_reported_cloudflare_owned_edge_configuration_partial",
+  "observed_at": "2026-10-10T22:04:40Z",
+  "source_observation": "/private/tmp/hermes-jarvis-cloudflare-20261010/reconfigure-observation-20261010.json",
+  "http_observation_source": "/private/tmp/hermes-jarvis-cloudflare-20261010/unauthenticated-http-observation.json",
+  "hostname": "jarvis.togarriapahome.uk",
+  "resource_history": {
+    "prior_tunnel_id": "85988ce8-512b-4e0c-bced-db4063201936",
+    "prior_tunnel_deleted_at": "2026-10-10T21:37:09.971752Z",
+    "prior_access_application_id": "0b710d17-561e-4953-af62-34e1bd94f273",
+    "prior_access_application_missing": true,
+    "dns_was_absent_before_recreation": true
+  },
+  "current_owned_resources": {
+    "access_application": {
+      "id": "98e42f84-a9c3-4de6-b418-47d57b99159b",
+      "name": "Jarvis Desktop",
+      "domain": "jarvis.togarriapahome.uk",
+      "type": "self_hosted",
+      "session_duration": "1h",
+      "policy_count": 1,
+      "policy": {
+        "id": "2dfc7f97-1db8-4064-98d9-78f1e348c8cb",
+        "decision": "allow",
+        "identity_scope": "one authenticated owner identity; exact identity value omitted",
+        "identity_provider_id": "bf6b381d-7fa2-4302-a74e-2bdb299d43c8",
+        "session_duration": "1h"
+      }
+    },
+    "tunnel": {
+      "id": "7bd18bb8-fb2f-4439-92cd-18a8e6349a67",
+      "name": "jarvis-pi-desktop",
+      "remote_config": true,
+      "status": "inactive",
+      "connections": 0
+    },
+    "dns": {
+      "id": "0994431671e378440728541df2a75bae",
+      "name": "jarvis.togarriapahome.uk",
+      "type": "CNAME",
+      "target": "7bd18bb8-fb2f-4439-92cd-18a8e6349a67.cfargotunnel.com",
+      "proxied": true
+    }
+  },
+  "edge_behavior": {
+    "unauthenticated_https_get": {
+      "status": 302,
+      "redirect_origin": "https://togarriapa.cloudflareaccess.com",
+      "redirect_path": "/cdn-cgi/access/login/jarvis.togarriapahome.uk",
+      "timestamp": null,
+      "otp_sent": false,
+      "authenticated": false,
+      "desktop_rendered": false,
+      "cookies_ip_addresses_and_query_values_retained": false
+    },
+    "tunnel_ingress": [
+      {"match": "jarvis.togarriapahome.uk", "service": "http_status:503", "access_audience_required": true},
+      {"match": "catch-all", "service": "http_status:404"}
+    ],
+    "warp_routing": false
+  },
+  "not_observed_or_not_ready": [
+    "running cloudflared connector or active tunnel connection",
+    "live loopback Desktop origin or rendered Desktop",
+    "tunnel credential retrieval or delivery",
+    "authenticated OTP/login test",
+    "installer adoption or protected root readiness receipt",
+    "Pi/Desktop acceptance"
+  ],
+  "acceptance": {
+    "AC13": null,
+    "AC14": null,
+    "AC15": null,
+    "readiness_claimed": false,
+    "resource_delete_safe": false
+  },
+  "claim_limit": "Owned Cloudflare Access, tunnel configuration, DNS and unauthenticated redirect observations only. This is partial edge configuration, not a functioning Desktop route, authenticated access proof, installer adoption, or acceptance."
+}

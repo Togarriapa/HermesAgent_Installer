@@ -193,3 +193,113 @@ The installer SHALL satisfy this obligation: Use tool allowlists and bounded dis
 #### Scenario: R0162 unavailable or failed prerequisite
 - **WHEN** the server returns revoked authentication, malformed tool schema or exceeds its configured startup/call deadline
 - **THEN** The installer SHALL report an actionable blocked/failed result, preserve prior owned data/state, and SHALL NOT claim this obligation passed without the required evidence.
+
+### Requirement: Protected native MCP call binding
+
+Installer-managed native MCP calls SHALL resolve exact observed invocation/name/schema to current enrolled backend/resource and fresh protected MCP effect before bytes.
+
+#### Scenario: Native call mapping mismatch
+- **WHEN** name/schema/resource/package/peer or one-use invocation binding differs
+- **THEN** no MCP effect or credential reaches the unselected backend.
+
+### Requirement: Exact native MCP lexical and configuration mapping
+
+Installer-owned MCP calls SHALL retain exact protected server/tool/schema and same lexical invocation binding while preventing direct worker transport bypass.
+
+#### Scenario: Configured direct transport bypass
+- **WHEN** an installer-owned entry attempts direct worker effects instead of the selected broker
+- **THEN** no MCP bytes or credentials are forwarded.
+
+### Requirement: Installed closure and native construction joins
+The implementation SHALL use the applicable exact root release and native assembly joins in the v33 amendment before activating selected runtime behavior.
+
+#### Scenario: First input precedes provider pending pair
+- **WHEN** the selected actual producer receives root observed initial input before a provider pair exists
+- **THEN** root resolves the target through actual execution custody and loader proof, without guessing a pending pair or trusting worker selectors
+
+### Requirement: Protected native candidate index delivery
+The implementation SHALL verify the selected fixed candidate-index closure member through exact entrypoint manifest and package pins before native discovery.
+
+#### Scenario: Ordinary cache has a matching tool name
+- **WHEN** no verified selected candidate index exists
+- **THEN** native protected discovery remains pending without adopting the cache schema or caller metadata
+
+### Requirement: Native schema artifact provenance
+The implementation SHALL resolve exact selected argument/result schema artifacts through v39 protected package/action joins.
+
+#### Scenario: Tool name exists without selected schema bytes
+- **WHEN** no verified selected schema artifact resolves
+- **THEN** the candidate remains unavailable without inferring schema from the name or ordinary cache
+
+### Requirement: Explicit protected native toolset owner
+The implementation SHALL obtain native server/toolset ownership and presentation description from the verified candidate index.
+
+#### Scenario: Tool name resembles a different server
+- **WHEN** registering a protected native candidate
+- **THEN** ownership follows the explicit root-selected server field and parameters-only schema digest, without parsing its name
+
+### Requirement: Exact native registration and retained source joins
+The implementation SHALL apply the v44 source snapshot and native registration distinctions without repeated one-use resolution.
+
+#### Scenario: Root source was already consumed for launch
+- **WHEN** binding the actual running task to native observation registry
+- **THEN** the same verified source snapshot is passed internally and revalidated, without resolving or reusing parent authorization again
+
+### Requirement: Root actual EOF and schema source receipts
+The installer SHALL require actual custody write/EOF receipts for task completion and exact root-derived schema receipts for native schema artifacts where applicable.
+
+#### Scenario: Forged or mismatched receipt
+- **WHEN** a caller substitutes stdout success, a fabricated receipt or a generic fetched archive for required root observations
+- **THEN** the installer denies completion or schema admission without marking target acceptance complete
+
+MCP derived schema CAS closure v92: `plans/amendments/2026-10-10-mcp-derived-schema-cas-closure-v92.md`; existing MC-F01/HI-T08 remain open.
+
+Private loopback enforcement choice v97: `plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97.md`; existing original implementation/acceptance obligations remain open.
+
+Native registration projection v99: `plans/amendments/2026-10-10-native-registration-projection-v99.md`; one candidate per actual source registration, finite root selector/workflow and local registry/owner-overlay routes preserve all18 scope; source and actual dispatch proof required, all gates open.
+
+### Requirement: Home Assistant root enrollment MC-R0101
+The installer SHALL enroll an existing Home Assistant MCP instance only through current root-held credential/source selection and strict protected publication, allowing reviewed selected-entity reads.
+
+#### Scenario: Dashboard login or generic setup ID exists
+- **WHEN** no actual protected API credential and selected read schema have been verified
+- **THEN** connection remains pending and no worker-created authority or device action is permitted
+
+#### Scenario: Credential is revoked after a successful read
+- **WHEN** reconnect receives unauthorized or revoked credential evidence
+- **THEN** new reads are denied, stale transport handles are retired and HA configuration remains unchanged
+
+### Requirement: Home Assistant actual Assist resource scope
+The installer SHALL bind Assist reads to actual observed selected exposure or unique source-supported human resource filters through a typed root choice.
+
+#### Scenario: GetLiveContext exposes an unfiltered overview
+- **WHEN** current explicit exposure-set selection or unique reviewed filter proof is absent
+- **THEN** the read remains pending and no entity-ID read or whole-house permission is inferred
+
+
+## ADDED Requirements
+
+### Requirement: Source-owned HA metadata and whole context read
+The installer SHALL apply v210 complete metadata rules for selected filters and separately admit explicit whole GetLiveContext permission only through actual root selection, exact current source/schema/credential grants and genuine bounded functional MCP result. It SHALL preserve HA exposure policy and use only fixed authenticated TLS/DNS-pinned metadata WS reads with the reviewed installer-isolated dependency.
+
+#### Scenario: Partial or permission-limited metadata
+- **WHEN** registry aliases/current explicit exposure are incomplete, expose_new is true or metadata admin permission is unavailable
+- **THEN** no unique selected-filter proof is issued and exposure policy remains unchanged; the user may separately select the whole source-approved GetLiveContext resource
+
+#### Scenario: Actual whole-context semantic read
+- **WHEN** informed rootTTY whole-context selection produces a one-use exact Assist GetLiveContext({}) grant and authentic bounded nonempty response
+- **THEN** only its genuine whole-context membership and functional receipt are recorded, with later membership changes denied before worker data release and no entity-ID/admin/control authority inferred
+
+
+## ADDED Requirements
+
+### Requirement: Genuine setup HA observation evidence
+The installer SHALL implement v216 root-session-owned signed observation receipts for actual setup HA TLS/request/provider/schema/validated-response effects, with exact retained producer membership and canonical journal custody. It SHALL preserve daemon SourceReceipt/HostContext restrictions and issue no call authority from historical receipt bytes.
+
+#### Scenario: Actual schema precedes functional call
+- **WHEN** genuine tools/list produces a current source-validated retained schema receipt and informed whole-context intent
+- **THEN** only the one-use exact GetLiveContext({}) functional grant may consume it through the real transport and record actual bounded semantic response evidence
+
+#### Scenario: Unrelated daemon receipt or forged observation
+- **WHEN** a caller supplies SourceReceipt names, copied journal JSON, raw result maps or expired schema/signature/context
+- **THEN** no live setup grant/functional receipt is issued and raw secrets/HTTP bodies remain absent from persistent evidence

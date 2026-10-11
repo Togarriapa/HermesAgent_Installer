@@ -1,0 +1,81 @@
+{
+  "schema": 1,
+  "id": "jarvis-visible-desktop-mvp-stage-v259",
+  "status": "authorized priority stage; implementation and live verification OPEN",
+  "authorization": "User prioritizes a stable visible working MVP before broader improvements, preserves all work, confirms hostname jarvis.togarriapahome.uk. Existing scoped owned Pi/Cloudflare configuration authorization applies; no new spending or foreign resources.",
+  "hostname": "jarvis.togarriapahome.uk",
+  "baseline": "Frozen baseline/full211 obligations and all original AC remain unchanged/OPEN. MVP milestone evidence is separate, never full installer acceptance.",
+  "stage_goal": "One actual Jarvis primary/default official native Desktop/chat entry on the identified owned Pi, authenticated only through constrained loopback JWT gateway and Cloudflare Access email OTP, with durable owned startup/connector and demonstrated end-to-end visibility/chat after restart.",
+  "deployment_choice": {
+    "priority": "Reuse actual retained native official AppDir if its complete measured build/source/runtime/license provenance and ARM64 launch can be independently verified; otherwise use an official upstream prebuilt only if actual Linux ARM64 asset, origin/hash/member graph/license and sandbox/runtime support verify. No assumed prebuilt availability/hash. Do not rebuild unrelated inputs when verified existing artifact already meets stage.",
+    "custody": "Two lawful stage paths: existing genuine managed installer receipts if available, OR explicitly recorded manual owned MVP deployment under user authorization. Manual path independently verifies actual official build/prebuilt/source SHA, complete files/license/dependency evidence, signed distro packages, exact executable/root ownership and actual runtime process/window/input proofs; records observations in a root-owned nofollow deployment manifest and retained backups. This record is evidence/configuration, never counterfeit RootPublishedAuthorityCore/installer receipt or full installer grant. No caller path trusted without actual root owner inspection/readback. No import of unverified old code.",
+    "minimal_changes": "Only changes needed to deploy/operate these four milestones. Use existing official app, Hermes runtime/home, process custody, gateway/JWT, Access/tunnel, connector and startup code. Do not block MVP on unrelated plugin/account/action enrollment, full specialist dispatch, Coral/model downloads or general installer expansion. If existing narrow protected deployment path lacks an actual required field/producer, implement only that concrete join and test it; no placeholder bypass."
+  },
+  "milestones": [
+    {
+      "id": "BD-T259.1",
+      "name": "Native official app visible",
+      "work": "Inventory identified owned Pi/current Hermes/services/artifacts without secrets. Select actually verified official native ARM64 Desktop, reuse retained AppDir or official prebuilt if eligible. Manual owned MVP may use Debian-signed distro Xpra/Xvfb/component runtime as specified; preserve Hermes PM runtime and sandbox. Sole primary/default visible label Jarvis, preserve existing home/state/source IDs and internal work. Verify actual selected app window/input, never whole-host desktop.",
+      "evidence": "Actual source/artifact digest, selected native launch process/custody/sandbox, visible Jarvis UI and harmless input event; local diagnostic/native launch distinguish from public access."
+    },
+    {
+      "id": "PR-T259.2",
+      "name": "Real chat",
+      "work": "Use an actual already configured user-authorized private-capable supported provider/model/auth or genuine existing local runtime, with zero additional metered budget. Observe one harmless real chat response in official Desktop. Do not expose/duplicate credential, silently fallback to incompatible public/free route, download huge model, infer subscription entitlement or claim GLM/Coral acceptance from another model. Missing eligible auth/model reports exact required configuration before chat milestone.",
+      "evidence": "Actual selected provider/model name and nonsecret current auth/budget/privacy proof, one correlated real response and UI rendering. Required GLM-5.2/full private model acceptance remains original separate OPEN if deferred; no substitute completion claim."
+    },
+    {
+      "id": "RT-T259.3",
+      "name": "OTP protected domain",
+      "work": "Configure only owned account/zone tunnel/DNS/Access app/email OTP allowlist for confirmed hostname through existing scoped secret/reference workflow. Preserve unowned conflicts. Gateway exposes official selected app only on constrained loopback/session network; validate Access JWT before any assets/pixels/input and enforce active WebSocket expiry/revocation. Cloudflare management credential never enters cloudflared/Desktop; runtime uses verified protected tunnel token file. Gateway can use concrete root-owned manual stage config as specified without fabricated installer authority.",
+      "evidence": "Actual unauthenticated denial, authorized OTP browser login, visible Jarvis app and harmless chat/input through https://jarvis.togarriapahome.uk, wrong-audience/expired/revoked JWT and active session denial. No house actions or external installation-test messages."
+    },
+    {
+      "id": "LC-T259.4",
+      "name": "Owned durable restart",
+      "work": "Install/reuse only actual owned sustained manual stage units/connector or genuinely ready managed lifecycle. Preserve existing services/config/credentials/memory and journal backups. Verify owned stop/start plus authorized daemon/Pi restart, OTP domain reconnect and harmless chat. Manual sustained service is separate from unchanged installer finite diagnostic/start grants, with actual current JWT/session/token/boot checks; no indefinite auth lease or foreign restart.",
+      "evidence": "Exact owned unit/current boot/process/runtime identity, durable token custody/current connector, startup readiness and browser reconnect/chat after restart. A <=600s diagnostic process is not durable service or sustained session acceptance; if current recipe cannot satisfy this milestone, implement/review only the genuine required service lifecycle without claiming done."
+    }
+  ],
+  "deferred": [
+    "full208 specialist materialization/routing and full native plugin/action/account coverage",
+    "Coral delegate inference and GLM-5.2 required-model acceptance not genuinely available for this stage",
+    "unrelated optional MCP/apps/account integrations and broad improvements",
+    "v258 Desktop policy/helper/ABI/control-license refinement unless actual chosen deployment needs those inputs"
+  ],
+  "preservation": "Deferred means not removed or marked complete. Preserve every source branch/commit/draft/policy/audit/test and immutable amendment. Do not delete profiles, rename upstream CLI/packages, copy secrets into profile homes, overwrite unowned Jarvis conflicts, clear deployment pointers or loosen provenance/currentness to make a diagnostic artifact installable.",
+  "verification": {
+    "task": "VD-T259.5",
+    "work": "Record each milestone separately with actual candidate/source artifact/owned Pi identity/time/commands/redacted outcomes and bounded browser evidence. Correlate visible app -> authenticated session -> real chat -> durable startup/reconnect. Denials and failures remain truthful. Run relevant existing code/failure tests plus strict specs/plan/baseline checks.",
+    "acceptance": "MVP stage complete only after all four actual effects succeed. Full baseline AC and deferred account/native requirements remain OPEN even then. Source download, configuration, diagnostic AppDir build or screenshot alone does not prove stage.",
+    "current_unknowns": "Pi existing services/auth and retained AppDir/prebuilt provenance under active owner inventory. No runtime artifact IDs/hash/PM/model/token/service account/enrollment facts invented in this spec."
+  },
+  "dependencies": {
+    "BD-T259.1": [],
+    "PR-T259.2": [
+      "BD-T259.1"
+    ],
+    "RT-T259.3": [
+      "BD-T259.1"
+    ],
+    "LC-T259.4": [
+      "PR-T259.2",
+      "RT-T259.3"
+    ],
+    "VD-T259.5": [
+      "BD-T259.1",
+      "PR-T259.2",
+      "RT-T259.3",
+      "LC-T259.4"
+    ]
+  },
+  "manual_stage": {
+    "allowed": "Root-authorized concrete owned manual deployment may use existing Debian13 signed distro Xpra/Xvfb and its separately isolated distro Python3.13 display/gateway component runtime, while Hermes continues its official PM Python3.14. No global Python downgrade, disabled TLS or Electron/browser sandbox. Verify exact installed/downloaded Debian package versions, official signed apt metadata/checksums/licenses and actual executable/runtime readback; dependency graph/source caps of full crossbuild remain deferred installer obligations, not manual-stage acceptance gates. No arbitrary unsigned pip/lazy installs.",
+    "gateway": "Use existing fixed source GatewayConfig/JWT verifier/server implementation and required actual dependency set in dedicated component environment with source/import closure and real auth/input tests. A root-owned stage configuration binds exactly display loopback upstream, app-only routes, domain audience/issuer/email allowlist, current JWKS validation/expiry/revocation and bounded active WebSocket sessions. Do not fabricate AuthorityService or active service rows to start it; manual config is visibly separate from managed enrollment. Unknown bypass/proxy/full-host route denied.",
+    "accounts_units": "Before effects, inspect actual owner/service accounts, homes, listeners and existing units. Root generates fixed owned stage systemd units/configs with least-privilege distinct display/gateway/connector accounts where supported, required shared Xauthority socket access only, no root app process or host shell exposed. Desktop/Hermes runs as current actual owner of preserved home/auth, never moves/copies credentials into another profile. Service identities/UIDs/paths/ports are recorded from actual target, not spec guesses. Use root-protected0400/0600 token/config files readable only by intended runtime; no management token in runtime.",
+    "network": "Bind Xpra and gateway only to exact selected loopback addresses/socket; no wildcard/public display listener. Existing source topology permits display127.0.0.1:14500 and gateway127.0.0.1:8765 if free/owned; conflicts preserve and require actual owned resolution. Only gateway reaches display HTTP/WebSocket; Desktop uses X UNIX socket/Xauthority. Apply actual host/unit restrictions sufficient for selected app-only service and test direct unauthorized display/gateway bytes/input denial. No whole-host desktop or unrestricted X session.",
+    "durability": "Fixed owned units/connector may be normal sustained systemd services with failure/boot control and current security policy rather than finite <=600s diagnostic recipe. This is a separate explicitly manual stage lifecycle, not renewal/extension of installer start grants or v254 finite role recipe. Root confirms ownership/restart permission, journals reversible configuration and rollback backups, rechecks domain/auth/session/boot proof after restart. Full managed lifecycle/process/network receipt acceptance remains OPEN.",
+    "secrets": "Root secure input/current reference only. Existing model/auth home preserved in place, no secret output during inventory or evidence. Scoped Cloudflare setup token used only for setup; tunnel token verified/protected separately.",
+    "evidence": "Label every outcome manual-MVP/native-diagnostic/managed-installer accurately. Record actual sources/packages/license facts/systemd unit config hashes/listeners/user ownership/visible window and JWT/OTP/revocation/input/restart effects. Manual MVP may meet user-visible stage while full installer AC stays OPEN."
+  }
+}

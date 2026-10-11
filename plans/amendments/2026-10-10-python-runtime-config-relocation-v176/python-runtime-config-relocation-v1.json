@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "requirements": [
+    "SK-T168",
+    "SK-T175"
+  ],
+  "why": "Actual pinned uv0.12.3 ARM64/CPython3.14.7 pyvenv.cfg has a temporary home path; executable-only copy cannot find unproven base stdlib. Exact observed wrapper structure also differs from an assumed re.sub normalizer.",
+  "observed_config": {
+    "path": "/private/tmp/hermes-uv-generated-format-probe-20261010/work2/application/runtime-env/pyvenv.cfg",
+    "size_bytes": 122,
+    "sha256": "0f589f4040fec92c35552c7f4083a3a6ec3c2a0f9d501eee1b152acfe5a685d1",
+    "keys": [
+      "home",
+      "implementation",
+      "uv",
+      "version_info",
+      "include-system-site-packages"
+    ],
+    "values": {
+      "home": "/opt/pm/python/bin",
+      "implementation": "CPython",
+      "uv": "0.12.3",
+      "version_info": "3.14.7",
+      "include-system-site-packages": "false"
+    },
+    "scope": "Generated-file format observation using tiny offline fixture wheel; not Browser Use source build/install/acceptance."
+  },
+  "rule": "Root materializer validates exact five unique LF keys/no unknown keys/NUL/newline injection, implementation CPython, uv exact selected0.12.3, version_info exact held PM runtime version3.14.x, include-system-site-packages false. Original home must equal exact source builder runtime bin mount recorded by selected build recipe, not arbitrary path. Rewrite only home to current root-resolved held final PM base runtime bin path; all other bytes/order retained. No executable/command fields invented; unknown generated shape denies pending source review.",
+  "proof": "Actual PM runtime registry must expose a held verified base runtime tree/member manifest/stdlib/dependency closure and current immutable materialized path identity, alongside executable receipt. Archive regular bin/python3.14 exact executable copy and aliases bin/python/bin/python3 bind same final environment executable; copied bytes alone are not runnable evidence. Current source and all member hashes checked before normalization/probe.",
+  "receipt": "Extend v168 RootApplicationRuntimeRelocationReceipt with pyvenv_original_sha256, pyvenv_normalized_sha256, pm_base_runtime_receipt_handle, pm_base_runtime_closure_sha256. Digest covers exact original/final bytes and selected base runtime current observation. Final environment manifest calculated after rewrite; no future tree hash required in pre-build selection.",
+  "wrapper": "Console script validation uses actual selected uv0.12.3 generated AST/bytes, including import sys and fixed -script.pyw/.exe suffix branches. Do not assume re.sub or accept arbitrary Python shim. Exact source-pinned console module/function allowlist still v168; only shebang rewrite, rest bytes preserved. Source owner tests positive measured wrapper and rejects modified body/callable/argv logic.",
+  "tasks": [
+    {
+      "id": "SK-T176.1",
+      "owner": "PM closure/builder/materializer/selection",
+      "work": "Expose genuine held PM base runtime closure; normalize only measured config home and exact measured script format, retain original/final digests and run actual isolated ABI probe. Reject missing stdlib/currentness/unknown config or wrapper."
+    }
+  ],
+  "acceptance": "No runnable app/Pi acceptance inferred; all AC open and baseline unchanged."
+}

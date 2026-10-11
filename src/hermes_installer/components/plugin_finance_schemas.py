@@ -14,7 +14,7 @@ from typing import Any
 from hermes_installer.components.plugin_effects import PluginActionSchema
 
 
-PLUGIN_FINANCE_ADAPTER_SHA256 = "54ca0bedad3a3d3ee03176c20f3ae7a71987b0992640e0647b0b702c51907c73"
+PLUGIN_FINANCE_ADAPTER_SHA256 = "ba87876d4bed36027822be008c85d094655226afcfab19d4509148685ff9e111"
 _ROOT = Path(__file__).resolve().parents[3]
 _PLUGIN_DIR = _ROOT / "resources/vendor/hermes-agent-resources-2.3.1/plugins"
 FINANCIAL_PLUGIN_MANIFEST_SHA256 = MappingProxyType({
@@ -72,7 +72,7 @@ _FILTERS = _obj({
 _DATA_RESULT = _obj({
     "items": {"type": "array", "maxItems": 1000, "items": {"type": "object"}},
     "account_alias": _str(128, 1, r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"),
-}, ["items"])
+}, ["items", "account_alias"])
 
 _EXEC_PROVIDER = {"type": "string", "enum": ["trading212", "pionex", "regulated-pisp", "ledger-wallet-api"]}
 _EXEC_OPERATIONS = {"type": "string", "enum": [

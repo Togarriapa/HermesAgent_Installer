@@ -67,3 +67,296 @@ Use installed_selection_catalog.bootstrap_policy_artifact explicit selected poli
 ### v22 runnable and health ordering
 
 Use bootstrap_policy_artifact.activation_order: verified runnable custody publication precedes health observation, functional enablement follows actual passed current-generation health only. Existing acceptance remains pending.
+
+### v26 usable first-stage publication
+
+Use first_stage_policy_compiler exact stage0 constructor/choice/compile/publish/materialization/HERMES_HOME contracts before factory resolution. Existing BD/LC/HI tasks remain pending until actual native operation.
+
+### v27 prepared native receipts and Hermes home
+
+Use first_stage_policy_compiler exact home/prepared order/runtime artifact roles/independent Resources source and receipt_binding_rules_schema. Existing BD/LC/HI/RB tasks remain pending.
+
+### v30 concrete closed compiler template
+
+Use immutable installer-bootstrap-compiler-template-v1 bytes and exact root-binding grammar/stage executor in first_stage_policy_compiler. Prepared empty records until actual fact/receipt bindings. Existing BD/LC/HI tasks remain pending.
+
+Additive observation assembly v31: `plans/amendments/2026-10-09-final-observation-assembly-v31.md`; preserve existing task IDs and open target gates. Selected root registries/current custody receipts supply actual observations; static catalog or caller claims do not.
+
+Setup principal selection v32: `plans/amendments/2026-10-09-setup-principal-selection-v32.md` and lifecycle compiler principal_selection_receipt define exact first-setup trusted identity joins; existing tasks remain open.
+
+Installed release/native assembly v33: `plans/amendments/2026-10-09-installed-release-native-assembly-v33.md`; exact root receipt and construction joins preserve existing task IDs and pending evidence.
+
+Complete baseline receipt digest v34 clarifies full-tree and original160 snapshot domains: `plans/amendments/2026-10-09-complete-baseline-digest-v34.md`; no task completion.
+
+Initial identity/terminal sequencing v35: `plans/amendments/2026-10-09-initial-identity-terminal-sequencing-v35.md`; exact existing task joins remain pending.
+
+First-stage publication/ingress v36: `plans/amendments/2026-10-09-first-stage-publication-ingress-v36.md`; exact existing task construction joins, no completion claimed.
+
+Official PM runtime receipt v37: `plans/amendments/2026-10-09-official-pm-runtime-receipt-v37.md`; exact root observed executable joins, existing tasks remain open.
+
+Native candidate index delivery v38: `plans/amendments/2026-10-09-native-candidate-index-delivery-v38.md`; exact compiled member/receipt joins preserve open tasks.
+
+Initial compilation handoff v42: `plans/amendments/2026-10-09-initial-compilation-handoff-v42.md`; exact stage0/post-policy separation, original tasks open.
+
+First-selection/native-target v43: `plans/amendments/2026-10-09-first-selection-cas-native-target-v43.md`; exact existing task joins remain open.
+
+Root task initial input v46: `plans/amendments/2026-10-09-root-task-initial-input-sequence-v46.md`; exact existing task sequencing, no target completion.
+
+Root identity credential intake v47: `plans/amendments/2026-10-09-root-identity-credential-intake-v47.md`; exact original setupintake, tasks remain open.
+
+Authentik template/actor API v49: `plans/amendments/2026-10-09-authentik-template-actor-api-v49.md`; exact source template and existing verifier, tasks open.
+
+Root registry phase joins v50: `plans/amendments/2026-10-09-root-intake-delivery-phase-joins-v50.md`; exact existing effect/evidence phases, tasks open.
+
+Native materialization CAS v51: `plans/amendments/2026-10-09-native-materialization-output-cas-v51.md`; exact source/output roles, tasks open.
+
+Initial native input peer take v52: `plans/amendments/2026-10-09-native-initial-input-peer-take-v52.md`; exact source delivery beforestdin, tasks open.
+
+Release plan/active compiler v53: `plans/amendments/2026-10-09-release-plan-active-compiler-v53.md`; exact source template/buildclaims, existing tasks open.
+
+Live health control/output kinds v55: `plans/amendments/2026-10-09-live-health-control-output-kinds-v55.md`; existing tasks remain open until actual proof.
+
+Native output encoding v56: `plans/amendments/2026-10-10-native-output-byte-encoding-v56.md`; actual compiler/CAS/readonly mount proof remains required and tasks open.
+
+Native digest domains v58: `plans/amendments/2026-10-10-native-output-digest-domains-v58.md`; original compiled tree domain retained and task gates open.
+
+Native generation/index identity v59: `plans/amendments/2026-10-10-native-generation-index-identity-v59.md`; existing HI task gates unchanged.
+
+Selected display/loopback startup v60: `plans/amendments/2026-10-10-selected-display-loopback-startup-v60.md`; existing task/acceptance gates remain open.
+
+Root key/source producer/catalog selection v61: `plans/amendments/2026-10-10-root-key-source-producer-composio-selection-v61.md`; existing task gates unchanged.
+
+First source bootstrap actor v62: `plans/amendments/2026-10-10-first-source-bootstrap-actor-v62.md`; existing scope/tasks remain open.
+
+Prepared base/reader/release manifest v63: `plans/amendments/2026-10-10-prepared-base-reader-release-manifest-v63.md`; existing gates remain open.
+
+Bootstrap CAS/selected start grants v65: `plans/amendments/2026-10-10-bootstrap-cas-selected-start-grants-v65.md`; existing task gates unchanged.
+
+Channel retained receipts/source choice v68: `plans/amendments/2026-10-10-channel-receipts-source-selection-v68.md`; existing task gates unchanged.
+
+Literal bootstrap receipt binding source v72: `plans/amendments/2026-10-10-literal-bootstrap-receipt-bindings-v72.md`; existing BD/HI lifecycle gates open; actual typed root receipts required.
+
+Prepared unresolved receipt rendering v74: `plans/amendments/2026-10-10-prepared-unresolved-receipt-rule-rendering-v74.md`; empty output identities remain dormant and actual active receipts required under existing BD/HI tasks.
+
+Bootstrap source projection/store correction v75: `plans/amendments/2026-10-10-bootstrap-binding-projection-store-correction-v75.md`; existing BD/HI tasks remain open.
+
+First-bootstrap pinned interpreter v76: `plans/amendments/2026-10-10-first-bootstrap-isolated-pinned-interpreter-v76.md`; existing BD/HI tasks remain open, actual isolated Linux runtime/actor proof required.
+
+Same-process bootstrap handoff v78: `plans/amendments/2026-10-10-bootstrap-same-process-sealed-runtime-handoff-v78.md`; existing BD/HI tasks open, actual trusted re-exec proof required.
+
+Existing typed candidate handoff v79: `plans/amendments/2026-10-10-bootstrap-existing-typed-candidate-handoff-v79.md`; existing BD/HI tasks open.
+
+Closed root plan template selection v81: `plans/amendments/2026-10-10-closed-root-plan-template-selection-v81.md`; existing BD/HI tasks open.
+
+Two-stage source driver interpretation v83: `plans/amendments/2026-10-10-two-stage-source-driver-interpretation-v83.md`; existing BD/HI tasks open.
+
+Selected lifecycle stop canonical payload v85: `plans/amendments/2026-10-10-selected-lifecycle-stop-canonical-payload-v85.md`; existing HI-T09/HI-T13/SK-T01 remain open.
+
+Native request observation domain v86: `plans/amendments/2026-10-10-native-request-observation-domain-v86.md`; existing HI-T11/SK-T01 remain open.
+
+Pre-active native assembly selection v84: `plans/amendments/2026-10-10-pre-active-native-assembly-selection-v84.md`; HI-T08/HI-T09/RB-T09 remain open.
+
+Bootstrap action and derived store ownership v87: `plans/amendments/2026-10-10-bootstrap-action-derived-store-ownership-v87.md`; existing BD/HI/RB tasks remain open.
+
+Selected resource materialization and task route v88: `plans/amendments/2026-10-10-selected-resource-materialization-task-route-v88.md`; RB-T08/HI-T09/HI-T12 remain open.
+
+Nonrecursive selections and private source ceilings v90: `plans/amendments/2026-10-10-nonrecursive-selection-private-source-ceilings-v90.md`; existing original implementation and acceptance tasks remain open.
+
+Reviewed native capability selection v91: `plans/amendments/2026-10-10-reviewed-native-capability-selection-v91.md`; HI-T03 remains open.
+
+MCP derived schema CAS closure v92: `plans/amendments/2026-10-10-mcp-derived-schema-cas-closure-v92.md`; existing MC-F01/HI-T08 remain open.
+
+Resource task proof DTO and custody v93: `plans/amendments/2026-10-10-resource-task-proof-dto-custody-v93.md`; RB-T08/HI-T09/HI-T12 remain open.
+
+HTTP and audio observed event schemas v94: `plans/amendments/2026-10-10-http-audio-observed-event-schemas-v94.md`; original RG-F03/R0060/native-input obligations remain open.
+
+Resource task authority module and seal v95: `plans/amendments/2026-10-10-resource-task-authority-module-seal-v95.md`; RB-T08/HI-T09/HI-T12 remain open.
+
+Root turn transcript encoding v96: `plans/amendments/2026-10-10-root-turn-transcript-encoding-v96.md`; SK-T01/HI-T08/HI-T11 remain open.
+
+Private loopback enforcement choice v97: `plans/amendments/2026-10-10-private-loopback-enforcement-choice-v97.md`; existing original implementation/acceptance obligations remain open.
+
+Memory capture enablement consent v98: `plans/amendments/2026-10-10-memory-capture-enablement-consent-v98.md`; existing SK-T01/SK-F02/SK01 obligations remain open.
+
+Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected-runtime-profile-currentness-v102.md`; actual independent Resources choice/PM journal root/current consent and recipe-bound application limits; existing implementation/acceptance tasks open.
+
+Prepared build service selection v115: `plans/amendments/2026-10-10-prepared-build-service-selection-v115.md`; source-owned setup-only exact build subject/current NSS/root selection before activeprofile, no fabricated worker. Existing build/setup/acceptance tasks remain open.
+
+Pinned runtime release asset redirect v116: `plans/amendments/2026-10-10-pinned-runtime-release-asset-redirect-v116.md`; one exact publicCPython GitHub302 officialasset hop with TLS/header/query/integrity checks, all other NoRedirect unchanged. Existing actualbootstrap/acceptance tasks remain open.
+
+- [ ] HI-T131.1 — Materialize only the exact pinned PyYAML compatibility members; verify negative arbitrary descendants, traversal, special files, duplicates and RECORD mismatch; retain actual runtime probe and pending acceptance.
+
+- [ ] HI-T149.1 release builder/verifier: Exact runtime-member finite role mapping and full closure validation preserving unique interpreter; genuine ARM64 bootstrap rerun separate acceptance.
+
+- [ ] HI-T149.2 factory/source observer/native custody: Prepared held worker release-member issuer distinct actual root import and later worker mounted import/PIDFD proof; missing/unselected source or role denies.
+
+- [ ] HI-T149.3 public permission/factory/source input: Actual rootTTY per-input public disclosure binds retained bytes/selection and source ancestry; persistent choice alone/omitted parents/private ancestry deny.
+
+- [ ] HI-T154.1 Broker/release/factory/source observer: exact final source/installed descriptors and separate current source-membership/root-import/worker-origin proofs.
+
+- [ ] HI-T159.1 factory/entrypoint/startup/custody/health observer: Actual committed health admission/current receipt and root-selected-service health issuer/custody route/control-before-input producer; preserve runnable-before-health/withheld enablement.
+
+- [ ] HI-T159.2 native fixture/observer/registration source owners: Provide genuine source-reviewed health request/result fixture artifact and actual loader/input/request/tool/provider/terminal observation closure, meaningful currentness/failure integration tests.
+
+- [ ] HI-T160.1 root entrypoint/task kernel fixture/display fixture/controller custody: Implement fixed installed qualification source dispatcher and actual owned fixture recipe/schema assets; publish measured source pins for Sol review, real runtime/session/publication producer, no test authority shortcuts.
+
+- [ ] HI-T160.2 task/display fixture owners: Replace synthetic Linux positive fixtures with exact production graph, preserve meaningful negative/cleanup checks and source/environment evidence distinct Pi acceptance.
+
+- [ ] HI-T162.1 Controller custody/fixture publisher/host authority/entrypoint: genuine finite fixture compiler/key/publication/session/runtime adapter and namespace/currentness negative tests.
+
+- [ ] HI-T163.1 Health/source/authority/custody: genuine selected source/context and health capture/write/EOF/take current-peer joins and negative tests.
+- [ ] HI-T163.2 Broker/release/health: exact source asset enrollment, owned seed cleanup and semantic result gate with required actual provider.
+
+- [ ] HI-T164.1 Fixture publisher/host enrollment/authority: exact canonical envelope and held namespace loader, scoped key/signature and wrong-source/currentness negatives.
+
+- [ ] HI-T165.1 Factory/native/compiler/publisher: genuine typed runnable role closure and single atomic activation with truthful durable recovery.
+- [ ] HI-T165.2 Enrollment/authority/health: fresh current committed source/CAS observation without expired setup renewal.
+
+- [ ] HI-T166.1 Fixture key/publisher/authority: restricted prepublication envelope signer and same-key service adoption, source/currentness/domain negatives.
+
+- [ ] HI-T167.1 Fixture session/publisher/enrollment: historical session file never restores live authority; fresh current lease required.
+
+- [ ] HI-T169.1 Factory/native/compiler/publisher: actual source-authorized outputs, precompile reservation and same-reservation compiled claim transition, wrong-source/currentness negatives.
+
+- [ ] HI-T170.1 Factory/native/compiler: exact existing five role/kind pairs and unknown-role negatives.
+
+- [ ] HI-T177.1 Display/window observer/broker/custody: genuine selected-window F24 events and independent current observation/source proof.
+
+- [ ] `HI-T178.1` Implement and verify the exact producer ownership/order/positive and failure acceptance in `plans/amendments/2026-10-10-source-join-producers-v178.md`; fixture results never close AC01..18.
+
+- [ ] `HI-T178.2` Implement and verify the exact producer ownership/order/positive and failure acceptance in `plans/amendments/2026-10-10-source-join-producers-v178.md`; fixture results never close AC01..18.
+
+- [ ] `HI-T178.5` Implement and verify the exact producer ownership/order/positive and failure acceptance in `plans/amendments/2026-10-10-source-join-producers-v178.md`; fixture results never close AC01..18.
+
+- [ ] `HI-T180.1` Implement the exact owner/order/source-member/role and positive/failure evidence contract in `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`; source review does not close runtime or AC acceptance.
+
+- [ ] `SK-T180.2` Implement the exact owner/order/source-member/role and positive/failure evidence contract in `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`; source review does not close runtime or AC acceptance.
+
+- [ ] `HI-T180.5` Implement the exact owner/order/source-member/role and positive/failure evidence contract in `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`; source review does not close runtime or AC acceptance.
+
+
+## v181 conditional identity and independent readiness
+
+- [ ] `BD-T181.3` Choose selected capabilities before credentials; implement genuine independent fresh local-owner setup entry point. Exact producer/order and meaningful positive/failure evidence: `plans/amendments/2026-10-10-conditional-authentik-local-owner-setup-v181.md`. Implementation and target acceptance OPEN.
+
+
+## v182 active generation custody
+
+- [ ] `HI-T182.1` Compile and publish finite signed-source/network/worker/enrollment projection. Exact producer/order/evidence: `plans/amendments/2026-10-10-active-network-generation-owner-v182.md`. Implementation and target acceptance OPEN.
+- [ ] `HI-T182.3` Consume current active owner projections through helper spawn/stop/release/reload cleanup. Exact producer/order/evidence: `plans/amendments/2026-10-10-active-network-generation-owner-v182.md`. Implementation and target acceptance OPEN.
+
+
+## v183 exact active effect producers
+
+- [ ] `HI-T183.1` Produce concrete held worker recipes, signed choice fields and generated service/process/network output. Producer/type/order/evidence contract: `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md`. Implementation and acceptance OPEN.
+- [ ] `HI-T183.2` Reconstruct current active PM/native worker runtime member custody independently of setup. Producer/type/order/evidence contract: `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md`. Implementation and acceptance OPEN.
+
+- [ ] `HI-T183.0` Implement and source-review the exact fixed held Hermes/native-loader startup recipe source producer in `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md`; no guessed argv or denial-only completion.
+
+
+## v184 exact wire clarification
+
+- [ ] `HI-T184.1` Implement exact schema2 finite network/runtime/source FK rows and acyclic canonical digest mapping. Exact contract: `plans/amendments/2026-10-10-network-row-wire-digest-boundaries-v184.md`; implementation/acceptance OPEN.
+- [ ] `HI-T184.2` Consume current row mapping and transient enclosing digest in real owner/manager lifecycle. Exact contract: `plans/amendments/2026-10-10-network-row-wire-digest-boundaries-v184.md`; implementation/acceptance OPEN.
+
+
+## v185 owner observation and proxy
+
+- [ ] `HI-T185.2` Bind actual worker proxy/native execute RPC to observed invocation/current one-use local grant and CAS. Exact contract `plans/amendments/2026-10-10-owner-overlay-observer-capture-rpc-v185.md`; implementation/acceptance OPEN.
+
+
+## v186 endpoint source phase
+
+- [ ] `HI-T186.1` Create and observe actual preactive root custody socket with no effects before signed recipe. Exact contract `plans/amendments/2026-10-10-preactive-authority-listener-custody-v186.md`; implementation/acceptance OPEN.
+- [ ] `HI-T186.2` Verify active adoption and one-use exact listener FD transfer/current active re-observation. Exact contract `plans/amendments/2026-10-10-preactive-authority-listener-custody-v186.md`; implementation/acceptance OPEN.
+
+
+## v187 actual activation transport
+
+- [ ] `HI-T187.1` Produce verified installed root daemon supervisor/unit/launch and distinct peer observations. Exact contract `plans/amendments/2026-10-10-supervised-listener-activation-channel-v187.md`; implementation/acceptance OPEN.
+- [ ] `HI-T187.2` Implement actual both-process authenticated activation channel and one-use exact listener FD adoption. Exact contract `plans/amendments/2026-10-10-supervised-listener-activation-channel-v187.md`; implementation/acceptance OPEN.
+
+- [ ] HI-T191.3 Wire fixed authenticated setup intent and current completed witness at genuine two-process callpoints. See `plans/amendments/2026-10-10-two-actor-health-commit-custody-v191.md`; all acceptance OPEN.
+
+
+Existing `VD-T180.6`/`VD-T183.5` handoff: apply and verify only the exact v195 source/catalog/role/import closure batch in `plans/amendments/2026-10-10-final-coherent-source-pin-review-v195.md`. This source review leaves all existing checkboxes OPEN; no duplicate task or runtime acceptance is created.
+
+
+- [ ] `BD-T196.1` Implement/revalidate closed safe bootstrap step/errno output and redaction/trust failure regressions; exact source reviewed in `plans/amendments/2026-10-10-safe-bootstrap-diagnostics-source-review-v196.md`, pin application/target outcome OPEN.
+- [ ] `VD-T196.2` Apply exact two source tuple updates and verify focused source/installed metadata plus actual redacted target outcome; no skipped/old-pin failure becomes acceptance. All AC01..AC18 OPEN.
+
+
+Existing `HI-T149.1`/`VD-T196.2` and source integration evidence include `plans/amendments/2026-10-10-fixed-release-store-source-review-v200.md`; actual Pi publication/installed-runtime acceptance remains OPEN.
+
+
+Existing HI-T160.1/HI-T197.2/.3/VD-T197.4 include actual protected-core producer/parser/currentness and fixed acquisition-only deadline in `plans/amendments/2026-10-10-publication-core-and-fixture-acquisition-v201.md`; remain OPEN.
+
+
+Existing HI-T160.1/HI-T197.2/VD-T197.4 include exact remote chooser and three-role source input/build/runtime production in `plans/amendments/2026-10-10-selected-remote-role-source-inputs-v202.md`; remain OPEN.
+
+- [ ] BD-T203.1 Bootstrap owner: exact typed finite-stage diagnostic/redaction/state tests with unchanged trust/failure behavior.
+- [ ] VD-T203.2 Source review/recheck: measured committed future source pins and actual target diagnostic, no inferred DD00 stage/acceptance.
+
+- [ ] BD-T203.1 / VD-T203.2 (v204): Apply only reviewed two leaf tuples, rerun stale-pin test unexcluded and retain actual target diagnostic evidence; no acceptance promotion.
+
+- [ ] RB-T205.1: Implement Jarvis sole default user entry and protected isolated specialist map.
+- [ ] RB-T205.2: Preserve state/secrets with journaled idempotent owned migration and deny unowned conflicts.
+- [ ] VD-T205.3: Verify genuine backend/Desktop listing/routing/delegation and migration effects; acceptance separate.
+
+- [ ] HI-T207.1: Implement v207 exact vendor libc6 signed dependency evidence and concrete per-archive keyring/index currentness, preserving other Debian package provenance.
+- [ ] VD-T207.2: Verify meaningful signed-cache/control/ELF and mutation failures plus actual target evidence separately; no package mutation or runtime acceptance inference.
+
+- [ ] BD-T208.1: Implement final-boundary explicit root TTY reconfirmation and one-use fresh proof with unchanged identity/source/runtime joins.
+- [ ] VD-T208.2: Verify slow acquisition, mismatch/drift/replay/expiry failures and review actual source pins/target result separately.
+
+- [ ] BD-T208.1 / VD-T208.2 (v211): Apply exact reviewed root_setup tuple only, run full unexcluded regressions and retain genuine target handoff evidence.
+
+- [ ] BD-T218.1: Implement Desktop-specific selected sourcepolicy/acquisition phase and locked toolchain/dependency/license receipts.
+- [ ] BD-T218.2: Consume held closure in fixed offline209212 rolebuild with native ABI/script proof.
+- [ ] VD-T218.3: Verify source/phase/integrity/TLS/architecture/script/currentness failures and actual target evidence separately.
+
+- [ ] BD-T208.1 / VD-T208.2 (v220): Integrate exact reviewed FD3 source/evidence, full coherent checks and actual target handoff; no installed selfpin or acceptance inference.
+
+
+- [ ] HI-T217.1: Resource owner implements exact retained v173 compiler/source projection and strict fixture policy/catalog issuer.
+- [ ] HI-T217.2: Resource owner implements genuine child runtime/task outcome and source adapter proof; missing native route remains incomplete, never substitute success.
+- [ ] VD-T217.3: Integrator implements current installed journal owner, retained actual unit/PIDFD, signed historical evidence and parent result consumption/cleanup with two-process failure tests.
+
+
+- [ ] HI-T217.1 / HI-T217.2 / VD-T217.3 (v224): Implement exact source-owned row serializer/recipe selection, genuine fixture NSS policy/catalog and strict complete indexing; verify actual native outcome and missing-route incomplete without fake Authentik/rows/source proof.
+
+
+- [ ] HI-T230.1: Separate source-only fixture lease issuance from one-time genuine prepared process custody attachment under v230.
+- [ ] VD-T230.2: Verify pre-attachment denial, exact current owner joins, original expiry and both cleanup phases; target acceptance remains open.
+- [ ] BD-T232.1: Source owner implements exact BootstrapPendingStepFailure and nine fixed boundaries/formatter with actor, account, redaction, subclass and malformed-field failures.
+- [ ] VD-T232.2: Review actual coherent committed diagnostic bytes under v228 and next target evidence independently; no source/acceptance promotion.
+- [ ] BD-T231.2 (v231): Consume only the issuer-current v231 active authority aggregate, bind its actual canonical core bytes/hash/size and reuse its exact generation at activation. Genuine pipeline/failure evidence VD-T231.3 and target acceptance separately OPEN.
+
+
+- [ ] VD-T180.6 / VD-T183.5 (v228): Apply exact reviewed8185 outer module/catalog tuples and three fixed delayed module preloads, prove isolated installed origins and retain full coherent checks/target evidence separately.
+- [ ] VD-T232.2 (v228): Confirm committed exact pending diagnostic leaves and future observed target stage without inferred cause or acceptance.
+- [ ] HI-T233.1: Implement retained oneshot terminal DTO/current verification and purpose-owned collection under v233.
+- [ ] VD-T233.2: Validate real systemd terminal/transport, drift/failure/foreign cleanup cases and independent native acceptance.
+- [ ] BD-T235.1: Implement the v235 exact predecessor-bound candidate selection/source/build/sealed exec transition; preserve all existing data/authority and exact pending prerequisites.
+- [ ] VD-T235.3 (v235): Verify genuine installed-predecessor candidate pipeline, pointer/controller/input drift, crash/rollback/preservation failures; target acceptance separate.
+
+
+- [ ] BD-T235.1 / LC-T235.2 / VD-T235.3 (v241): Apply only reviewed root_setup tuple literals after spec publication; run unexcluded narrow candidate checks and genuine full positive/current predecessor/failure/recovery evidence. Source review is separate from completion.
+
+
+- [ ] BD-T242.1: Implement fixed source-update entry and genuine held predecessor/currentTTY/source-bootstrap bridge without bypassing installed actor verification.
+- [ ] VD-T242.2: Review new committed bytes and verify genuine pre-v235 positive/failure/currentness/rollback/immutability on isolated and target environments; keep distribution/runtime acceptance separate.
+
+## Immutable historical predecessor refinement v249
+
+- [ ] BD-T242.1 / VD-T242.2 (v247): Apply only exact reviewed root_setup two-table tuples and run unexcluded coherent source-update checks plus genuine full old/pre-v235 predecessor and target evidence; source approval remains separate from completion.
+- [x] BD-T249.1 Implement internally selected reviewed whole historical cohort and distinct sealed predecessor receipt without old code execution/current actor weakening.
+- [x] LC-T249.2 Wire observe/admission/reexec snapshot/rollback through same predecessor verifier and original pointer/closure custody.
+- [ ] VD-T249.3 Verify genuine historical/current predecessor positives, spoof/tamper/mixed/unknown cohort failures and real source-update/rollback; Pi acceptance separately open.
+
+Actual edb349 Pi update evidence: `evidence/development/EV-BD-T249-pi-update-edb349-20261011.json`. Historical verification reached the candidate prompt; snapshot verification then failed on a missing import. Current pointer remained cc81. Bounded fix16275bf passed75 root-focused contracts/13 skips; actual published-candidate Pi update and VD-T249.3 remain OPEN.
+- [ ] BD-T259.1: Native official app visible — Inventory identified owned Pi/current Hermes/services/artifacts without secrets. Select actually verified official native ARM64 Desktop, reuse retained AppDir or official prebuilt if eligible. Manual owned MVP may use Debian-signed distro Xpra/Xvfb/component runtime as specified; preserve Hermes PM runtime and sandbox. Sole primary/default visible label Jarvis, preserve existing home/state/source IDs and internal work. Verify actual selected app window/input, never whole-host desktop.
+- [ ] PR-T259.2: Real chat — Use an actual already configured user-authorized private-capable supported provider/model/auth or genuine existing local runtime, with zero additional metered budget. Observe one harmless real chat response in official Desktop. Do not expose/duplicate credential, silently fallback to incompatible public/free route, download huge model, infer subscription entitlement or claim GLM/Coral acceptance from another model. Missing eligible auth/model reports exact required configuration before chat milestone.
+- [ ] RT-T259.3: OTP protected domain — Configure only owned account/zone tunnel/DNS/Access app/email OTP allowlist for confirmed hostname through existing scoped secret/reference workflow. Preserve unowned conflicts. Gateway exposes official selected app only on constrained loopback/session network; validate Access JWT before any assets/pixels/input and enforce active WebSocket expiry/revocation. Cloudflare management credential never enters cloudflared/Desktop; runtime uses verified protected tunnel token file. Gateway can use concrete root-owned manual stage config as specified without fabricated installer authority.
+- [ ] LC-T259.4: Owned durable restart — Install/reuse only actual owned sustained manual stage units/connector or genuinely ready managed lifecycle. Preserve existing services/config/credentials/memory and journal backups. Verify owned stop/start plus authorized daemon/Pi restart, OTP domain reconnect and harmless chat. Manual sustained service is separate from unchanged installer finite diagnostic/start grants, with actual current JWT/session/token/boot checks; no indefinite auth lease or foreign restart.
+- [ ] VD-T259.5: Verify correlated actual visible app/chat/OTP domain/durable restart milestones; preserve full baseline/deferred AC OPEN.

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Callable, Mapping
 

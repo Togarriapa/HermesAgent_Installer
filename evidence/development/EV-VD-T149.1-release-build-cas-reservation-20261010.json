@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "requirements": ["HI-T149.1", "VD-T149.1"],
+  "finding": {
+    "cause": "Release-build admission reserved twice the global 8 GiB source-tree maximum (16 GiB) before every build. That equals the entire release-build CAS cap, so any retained output made all retries fail even when the selected output was small.",
+    "observed_retained_output": {
+      "source": "read-only Raspberry Pi observation relayed by the parent task",
+      "path": "/var/lib/hermes-installer/authority-journal/release-build-cas/d3fe050df8af4d5a5f28eedb178e9f09b89bf9f23dff3536",
+      "files": 5279,
+      "bytes": 606706296,
+      "symlinks": 0,
+      "custody": "uid 0, mode 0700",
+      "disposition": "retained; this implementation does not prune CAS entries"
+    },
+    "repair": "Under a protected root-owned flock, reserve twice the selected source receipt bytes to cover original-tree and installed-layout copies, all selected runtime receipt bytes, the selected executable, exact rendered plan bytes, and the fixed 16 MiB manifest maximum. Require retained bytes plus reservation to fit the unchanged 16 GiB CAS limit. Keep post-build actual-size validation.",
+    "followup_failure": "The next actual Pi run passed capacity admission and completed staging, then failed while constructing VerifiedInstallerReleaseBuildReceipt because the extracted helper referenced interpreter_handle without receiving it.",
+    "followup_repair": "Bind minted release receipts directly to receipt_handle on the exact verified source and interpreter receipt objects returned by their registries. This retains the registry-selected identities and avoids copying caller handle text into the output proof."
+  },
+  "validation": {
+    "repo_contract_test": "ARM64 Linux Docker Python 3.14.7: tests/contracts/test_installer_release_build.py and tests/contracts/test_root_setup.py passed together (93 passed, 2 skipped). The source mount was read-only and the container was removed.",
+    "completed_receipt_path_test": "Actual RootInstalledReleaseBuilder.build_selected class method reached receipt construction, verified resolved source and interpreter handles, read/parsed the sealed manifest, and opened exact staged member bytes (1 passed on ARM64 Linux).",
+    "capacity_boundaries": "Covers retaining the reported 606706296-byte output, exact-cap admission, one-byte-over rejection, and reservation-over-cap rejection.",
+    "serialization": "Linux root fixture confirms a second descriptor cannot acquire the capacity flock until the reservation/build context exits.",
+    "target_acceptance": "OPEN; source implementation/test evidence only. No Pi build retry or publication is claimed by this evidence.",
+    "repository_validation": "npm run validate:specs passed (13/13); npm run validate:plan passed (planning coverage pass, runtime acceptance not established); git diff --check passed."
+  },
+  "source_pin": {
+    "builder_source_sha256": "6355198dd122046469b7aba2d9c02ffae43fc17dd3b7263c1e782b560f06b12f",
+    "builder_source_bytes": 258915,
+    "builder_structural_only": true,
+    "new_builder_self_pin": false,
+    "candidate_commit": "identify by containing commit"
+  }
+}

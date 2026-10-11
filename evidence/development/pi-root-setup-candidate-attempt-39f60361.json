@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "record_kind": "operator_reported_pi_root_installer_candidate_attempt",
+  "state": "report_only",
+  "authenticated": false,
+  "acceptance_record_emitted": false,
+  "accepted_target_result": false,
+  "change_ids": ["installer-bootstrap-desktop", "lifecycle-recovery"],
+  "task_ids": ["BD-F01", "BD-F03", "LC-F03"],
+  "target": {
+    "target_name": "PI-HERMES",
+    "architecture": "aarch64",
+    "model": "Raspberry Pi 5",
+    "distribution": "Debian 13.6",
+    "observed_executor": "root",
+    "uid": 0,
+    "gid": 0,
+    "free_space_gib_reported": 845.5
+  },
+  "candidate": {
+    "path": "/root/hermes-installer-candidate-39f60361549e9c3e4c6baa8dc117fdb05a4f791f/checkout",
+    "commit": "39f60361549e9c3e4c6baa8dc117fdb05a4f791f",
+    "tree": "c762c81250d886ca93e501a02cbea5a67fb1b8e1",
+    "frozen_tag": "hermes-installer-plan-2026-10-09-v1",
+    "frozen_tag_object": "c47c90cf2e0a6b1cd5779257fdcba9e487ee08f8",
+    "frozen_tag_peeled_commit": "653ac5fbc7a02613c9951859a7d794599603459b",
+    "frozen_tag_object_verified": true
+  },
+  "attempts": [
+    {
+      "timestamp": null,
+      "timestamp_status": "not recorded",
+      "command": "(cd /root/hermes-installer-candidate-39f60361549e9c3e4c6baa8dc117fdb05a4f791f/checkout && ./scripts/hermes-installer-root-setup install)",
+      "interactive_source_prompt": "Exact Hermes installer source commit (40 lowercase hex characters):",
+      "submitted_source_commit": "39f60361549e9c3e4c6baa8dc117fdb05a4f791f",
+      "observed_output": "Root setup could not verify its required authority (RuntimeError)",
+      "outcome": "stopped before verified installer authority; no installation acceptance"
+    },
+    {
+      "timestamp": null,
+      "timestamp_status": "not recorded",
+      "command": "(cd /root/hermes-installer-candidate-39f60361549e9c3e4c6baa8dc117fdb05a4f791f/checkout && ./scripts/hermes-installer-root-setup install)",
+      "interactive_source_prompt": "Exact Hermes installer source commit (40 lowercase hex characters):",
+      "submitted_source_commit": "39f60361549e9c3e4c6baa8dc117fdb05a4f791f",
+      "observed_output": "Root setup could not verify its required authority (OSError)",
+      "outcome": "stopped before verified installer authority; no installation acceptance"
+    }
+  ],
+  "subsequent_read_only_metadata": {
+    "timestamp": null,
+    "timestamp_status": "not recorded",
+    "observed": {
+      "source_cas": "absent",
+      "deployments_root": {"owner": "root:root", "mode": "0700"},
+      "receipts_directory": {"owner": "root:root", "mode": "0700"},
+      "acquire_lock": {"owner": "root:root", "mode": "0600"},
+      "shallow_find": "no candidate installation was shown"
+    },
+    "causality": "The metadata was observed after the failed attempts; it does not establish why authority verification failed or whether any attempt created these paths."
+  },
+  "not_observed": [
+    "successful verification of installer authority",
+    "verified deployment receipt or source-CAS receipt",
+    "installation, active generation, or enrollment",
+    "Hermes Desktop or PM enrollment",
+    "native profile or plugin qualification",
+    "Cloudflare account mutation during these installer attempts"
+  ],
+  "acceptance_assertions": {
+    "AC01": null,
+    "AC02": null,
+    "AC03": null,
+    "AC04": null,
+    "AC05": null,
+    "AC06": null,
+    "AC07": null,
+    "AC08": null,
+    "AC09": null,
+    "AC10": null,
+    "AC11": null,
+    "AC12": null,
+    "AC13": null,
+    "AC14": null,
+    "AC15": null,
+    "AC16": null,
+    "AC17": null,
+    "AC18": null
+  },
+  "claim_limit": "These are two failed root setup attempts and subsequent metadata observations, not an installation or acceptance result. All AC01-AC18 remain open."
+}

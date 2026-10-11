@@ -13,14 +13,16 @@ import hashlib
 import json
 import math
 import os
+import re
 import secrets
 import threading
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 from hermes_installer.registry.resource_jobs import (
     ResourceChildAdmission,
+    ResourceCredentialBinding,
     ResourceBackendEnrollment,
     ResourceBodyRecipe,
     ResourceBodyRecipeField,
@@ -32,7 +34,9 @@ from hermes_installer.registry.resource_jobs import (
     ResourceJobNode,
     RootAdmittedTask,
     RootAdmittedTaskSource,
+    _ident,
     RootResourceJobAdmissionHandle,
+    RootResourceNodeResultClosure,
     RootTaskController,
     ResourceScopeBinding,
     ResourceValidator,
@@ -62,6 +66,7 @@ _BACKEND_FIELDS = {
     "credential_reference_ids", "request_schema_id", "result_schema_id", "body_recipe_id",
     "scope_binding_id", "maximum_request_bytes", "maximum_response_bytes", "maximum_seconds",
     "profile_generation", "execution_binding",
+    "credential_bindings",
 }
 _BODY_RECIPE_FIELDS = {
     "id", "schema_id", "source_artifact_id", "source_sha256", "output_fields",
@@ -90,7 +95,12 @@ def parse_resource_backend_records(records: Any) -> Mapping[str, ResourceBackend
             if (not isinstance(raw["approved_action_ids"], list)
                     or any(not isinstance(item, str) for item in raw["approved_action_ids"])
                     or not isinstance(raw["credential_reference_ids"], list)
-                    or any(not isinstance(item, str) for item in raw["credential_reference_ids"])):
+                    or any(not isinstance(item, str) for item in raw["credential_reference_ids"])
+                    or not isinstance(raw["credential_bindings"], list)
+                    or len(raw["credential_bindings"]) > 16
+                    or any(not isinstance(item, Mapping)
+                           or set(item) != {"source_placeholder", "credential_reference_id", "usage"}
+                           for item in raw["credential_bindings"])):
                 raise ValueError
             backend = ResourceBackendEnrollment(
                 backend_id=raw["id"], resource_id=raw["resource_id"],
@@ -115,6 +125,8 @@ def parse_resource_backend_records(records: Any) -> Mapping[str, ResourceBackend
                 maximum_seconds=raw["maximum_seconds"],
                 profile_generation=raw["profile_generation"],
                 execution_binding=raw["execution_binding"],
+                credential_bindings=tuple(ResourceCredentialBinding(**item)
+                                           for item in raw["credential_bindings"]),
             )
         except (TypeError, ValueError, ResourceJobDenied):
             raise AuthorityDenied("resource.backend", "protected backend row is invalid") from None
@@ -438,6 +450,21 @@ class _JobEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class _RootResultCapsuleBinding:
+    """Authority-retained binding from one completed DAG node to its capsule."""
+
+    node_id: str
+    admission_id: str
+    receipt_id: str
+    capsule_handle: str
+    capsule_sha256: str
+    backend_enrollment_id: str
+    resource_generation: str
+    service_generation_digest: str
+    expires_monotonic: float
+
+
+@dataclass(frozen=True, slots=True)
 class RootResourceProcessReceipt:
     """Validated wire receipt from the root-only profile task launcher.
 
@@ -547,16 +574,399 @@ class ResourceJobAuthority:
         self._task_handle_lock = threading.RLock()
         self._task_handles: dict[str, tuple[Any, ResourceChildAdmission, ResourceJobEnrollment, _JobEvent]] = {}
         self._running_task_handles: dict[str, tuple[Any, ResourceChildAdmission, ResourceJobEnrollment, _JobEvent]] = {}
+        self._resolved_task_dtos: dict[str, RootAdmittedTask] = {}
         self._source_resolved_handles: set[str] = set()
         self._source_context_handles: dict[str, str] = {}
         self._task_controller_bindings: dict[str, tuple[str, Any]] = {}
+        self._controller_resolved_handles: set[str] = set()
+        self._resolved_controller_evidence: dict[str, tuple[Any, ...]] = {}
+        self._parent_context_resolved_handles: set[str] = set()
         self._event_lock = threading.RLock()
         self._event_fields_by_job: dict[str, tuple[bytearray, float]] = {}
         self._source_closures_by_job: dict[str, tuple[HostContext, tuple[Any, ...], Mapping[str, Any], float]] = {}
         self._result_fields_by_job: dict[str, dict[str, tuple[str, bytearray]]] = {}
         self._result_fields_expiry: dict[str, float] = {}
+        self._result_capsules_by_job: dict[str, dict[str, _RootResultCapsuleBinding]] = {}
+        self._root_result_closures: dict[str, tuple[RootResourceNodeResultClosure,
+                                                    Mapping[str, Mapping[str, Any]]]] = {}
+        self._root_job_handles: dict[str, str] = {}
         self._event_field_reservations: dict[str, bytearray] = {}
         self._event_field_bytes = 0
+        # Root ingress admission is intentionally separate from the worker
+        # resource.job.admit RPC. These maps bind the exact registry-minted
+        # event and returned admission objects; neither IDs nor DTO contents
+        # alone are bearer authority.
+        self._root_event_admissions: dict[str, tuple[Any, ResourceJobAdmission]] = {}
+        self._root_admission_objects: dict[str, ResourceJobAdmission] = {}
+        self._root_event_by_job: dict[str, Any] = {}
+        self._root_source_context_by_job: dict[str, str] = {}
+        self._root_task_controller_tokens: dict[str, str] = {}
+
+    def admit_root_resource_event(
+        self, root_event_handle: Any, *, timeout: float = 30.0,
+        cancelled: Callable[[], bool] = lambda: False,
+    ) -> ResourceJobAdmission:
+        """Durably admit one already captured, root-verified resource event.
+
+        This is an in-process producer API. It accepts only the exact opaque
+        handle retained by this AuthorityService's root controller registry;
+        workers cannot call it over RPC or supply event fields, receipt IDs,
+        resource identity, controller evidence, or a DAG.
+        """
+        from .resource_source_controllers import RootResourceEventHandle
+
+        if (type(root_event_handle) is not RootResourceEventHandle
+                or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout) or not 0.1 <= timeout <= 600
+                or not callable(cancelled)):
+            raise AuthorityDenied("resource.event", "root resource event admission request is malformed")
+        issuer = getattr(self.service, "resource_event_context_issuer", None)
+        controller_registry = getattr(issuer, "controller_registry", None)
+        if controller_registry is None or getattr(issuer, "service", None) is not self.service:
+            raise AuthorityDenied("resource.event", "root resource event registry is unavailable")
+        # Attach only this exact job authority to the same root event registry
+        # that authenticated the capture. Runtime composition may have done
+        # this already; an unrelated authority is never replaced.
+        attach_jobs = getattr(controller_registry, "attach_resource_job_authority", None)
+        if not callable(attach_jobs):
+            raise AuthorityDenied("resource.admission", "root event registry has no job-authority binding")
+        bound_jobs = getattr(controller_registry, "_resource_job_authority", None)
+        if bound_jobs is None:
+            try:
+                attach_jobs(self)
+            except Exception:
+                # A concurrent exact attachment is harmless; a different
+                # authority or an invalid interface is not.
+                if getattr(controller_registry, "_resource_job_authority", None) is not self:
+                    raise AuthorityDenied("resource.admission", "root job authority attachment failed") from None
+        elif bound_jobs is not self:
+            raise AuthorityDenied("resource.admission", "another root job authority owns this event registry")
+        key = (root_event_handle.resource_id, root_event_handle.resource_generation)
+        enrollment = self.enrollments.get(key)
+        if enrollment is None:
+            raise AuthorityDenied("resource.selection", "root event is outside the active job enrollment")
+        with self._event_lock:
+            self._prune_root_admissions_locked(self.service.monotonic())
+            prior = self._root_event_admissions.get(root_event_handle.handle)
+            if prior is not None:
+                raise AuthorityDenied("resource.event_replay", "root event was already admitted")
+            if len(self._root_event_admissions) >= min(4096, self.ledger.max_jobs):
+                raise AuthorityDenied("resource.capacity", "root admission handle store is full")
+
+        # Resolve through the owning controller registry, which checks object
+        # identity, event epoch/deadline, selected source role, observer,
+        # resource generation, backend, and node membership.
+        try:
+            first_node = enrollment.nodes[0]
+            record, selected, _node, _backend = controller_registry._resolve_event_node(
+                root_event_handle, first_node.node_id)
+        except Exception:
+            raise AuthorityDenied("resource.event", "root event is stale or not selected") from None
+        if selected is not enrollment:
+            raise AuthorityDenied("resource.selection", "event and job authorities selected different generations")
+        if cancelled():
+            raise AuthorityDenied("resource.event", "root event was cancelled before admission")
+
+        # The event issuer rechecks current consent, signed HostContext,
+        # complete source receipt signatures/closure and source-origin joins.
+        # Never derive these facts from the worker admission handler.
+        try:
+            issuer._require_live_selection(enrollment)
+            context, receipts = issuer._verify_source_closure(
+                record, enrollment, controller_registry._profile_binding(enrollment),
+                self.service.monotonic(),
+            )
+            self.service._verify_context_signature(context)
+            binding = self.service._binding(context.uid)
+            self.service._assert_current_context(context, binding, context.uid)
+            for receipt in receipts:
+                self.service._verify_source_receipt(receipt, binding)
+        except Exception:
+            raise AuthorityDenied("resource.source", "root event source closure or consent is stale") from None
+        expected_ids = tuple(sorted(receipt.receipt_id for receipt in receipts))
+        closure_digest = canonical_digest(sorted(
+            (receipt.receipt_id, canonical_digest(receipt.claims())) for receipt in receipts
+        ))
+        if (context.source_receipts != receipts
+                or expected_ids != tuple(sorted(root_event_handle.source_receipt_ids))
+                or context.source_receipts != record.parent_receipts
+                or record.handle is not root_event_handle
+                or canonical_digest(record.payload) != root_event_handle.payload_sha256
+                or closure_digest != root_event_handle.parent_closure_digest
+                or context.profile_id != enrollment.profile_id
+                or context.principal_id != enrollment.principal_id
+                or context.generation != enrollment.profile_generation):
+            raise AuthorityDenied("resource.source", "root event payload or authenticated closure changed")
+
+        # Revalidate live controller custody before the durable state change.
+        # The duplicated PIDFD is immediately closed; per-node issuer calls
+        # acquire their own fresh lease later.
+        import os
+        controller = None
+        try:
+            controller = controller_registry.resolve_for_event(
+                root_event_handle, first_node.node_id)
+            if (controller.controller_kind not in {"root-scheduler", "root-webhook", "root-channel"}
+                    or controller.uid != 0
+                    or controller.service_generation_digest != getattr(
+                        self.service, "service_generation_digest", None)):
+                raise AuthorityDenied("resource.controller", "root ingress controller lease is invalid")
+        except AuthorityDenied:
+            raise
+        except Exception:
+            raise AuthorityDenied("resource.controller", "root ingress controller is stale") from None
+        finally:
+            if controller is not None:
+                try:
+                    os.close(controller.pidfd)
+                except OSError:
+                    pass
+
+        now = self.service.monotonic()
+        current_generation = self._resource_generation(enrollment)
+        if current_generation != root_event_handle.resource_generation:
+            raise AuthorityDenied("resource.selection", "resource generation changed before admission")
+        deadline = min(
+            [root_event_handle.expires_monotonic, context.monotonic_expires_at]
+            + [receipt.monotonic_expires_at for receipt in receipts]
+        )
+        remaining = deadline - now
+        ttl = min(enrollment.max_runtime_seconds, max(1, int(timeout)), int(remaining))
+        if remaining < 1 or ttl < 1:
+            raise AuthorityDenied("resource.source", "root event has no usable execution lease")
+
+        # Root-authenticated source fields are derived only from the retained
+        # event record. Bounded reservation prevents memory exhaustion while
+        # admission commits; the SQLite event key makes retry/replay durable.
+        reservation = self._reserve_event_fields(record.event_fields)
+        try:
+            admission = self.ledger.admit_job(
+                enrollment, event_id=root_event_handle.event_id,
+                verified_source_receipt_ids=expected_ids,
+                current_generation=current_generation, ttl_seconds=ttl,
+                parent_lineage_hash=context.lineage_hash,
+                parent_sensitivity=context.sensitivity.value,
+            )
+        except ResourceJobDenied as exc:
+            self._discard_event_field_reservation(reservation)
+            raise AuthorityDenied("resource.admission", str(exc)) from None
+        except Exception:
+            self._discard_event_field_reservation(reservation)
+            raise
+
+        lineage = MappingProxyType({
+            "root_event_handle": root_event_handle.handle,
+            "event_id": root_event_handle.event_id,
+            "source_kind": root_event_handle.source_kind,
+            "observer_enrollment_id": root_event_handle.source_observer_enrollment_id,
+            "payload_sha256": root_event_handle.payload_sha256,
+            "parent_closure_digest": root_event_handle.parent_closure_digest,
+            "parent_receipt_ids": expected_ids,
+            "issued_monotonic": root_event_handle.issued_monotonic,
+            "expires_monotonic": root_event_handle.expires_monotonic,
+        })
+        self._promote_event_fields(
+            reservation, admission.job_id, admission.expires_monotonic,
+            source_closure=(context, tuple(receipts), lineage, admission.expires_monotonic),
+        )
+        with self._event_lock:
+            if root_event_handle.handle in self._root_event_admissions:
+                # This should be prevented by the ledger's unique event key;
+                # fail closed if in-memory state disagrees after a race.
+                self._discard_job_event_fields(admission.job_id)
+                raise AuthorityDenied("resource.event_replay", "root event admission was already retained")
+            self._root_event_admissions[root_event_handle.handle] = (root_event_handle, admission)
+            self._root_admission_objects[admission.job_id] = admission
+            self._root_event_by_job[admission.job_id] = root_event_handle
+            self._root_source_context_by_job[admission.job_id] = secrets.token_urlsafe(32)
+            self._root_job_handles[admission.job_id] = secrets.token_urlsafe(32)
+        bind_job = getattr(controller_registry, "bind_admitted_job", None)
+        try:
+            if not callable(bind_job):
+                raise AuthorityDenied("resource.admission", "root event registry cannot bind durable admission")
+            bind_job(root_event_handle, admission)
+        except Exception:
+            self.ledger.cancel_job(admission.job_id, current_generation=enrollment.generation)
+            self._discard_job_event_fields(admission.job_id)
+            raise AuthorityDenied("resource.admission", "root durable admission could not bind to its event") from None
+        if cancelled() or self._resource_generation(enrollment) != enrollment.generation:
+            self.ledger.cancel_job(admission.job_id, current_generation=enrollment.generation)
+            self._discard_job_event_fields(admission.job_id)
+            raise AuthorityDenied("resource.event", "root event was revoked immediately after admission")
+        return admission
+
+    def _prune_root_admissions_locked(self, now: float) -> None:
+        """Drop expired in-memory dispatch authority without pruning ledger replay rows."""
+        for handle_id, (handle, admission) in tuple(self._root_event_admissions.items()):
+            if admission.expires_monotonic <= now or handle.authority_epoch != self.service.authority_epoch:
+                self._root_event_admissions.pop(handle_id, None)
+                self._root_admission_objects.pop(admission.job_id, None)
+                self._root_event_by_job.pop(admission.job_id, None)
+                self._root_source_context_by_job.pop(admission.job_id, None)
+                self._root_job_handles.pop(admission.job_id, None)
+
+    def is_root_admission_current(self, root_event_handle: Any, admission: Any) -> bool:
+        """Revalidate the exact event/admission pair before any root DAG step."""
+        from .resource_source_controllers import RootResourceEventHandle
+        if (type(root_event_handle) is not RootResourceEventHandle
+                or not isinstance(admission, ResourceJobAdmission)):
+            return False
+        with self._event_lock:
+            self._prune_root_admissions_locked(self.service.monotonic())
+            bound = self._root_event_admissions.get(root_event_handle.handle)
+            if (bound is None or bound[0] is not root_event_handle or bound[1] is not admission
+                    or self._root_admission_objects.get(admission.job_id) is not admission
+                    or self._root_event_by_job.get(admission.job_id) is not root_event_handle):
+                return False
+        enrollment = self.enrollments.get((admission.resource_id, admission.generation))
+        issuer = getattr(self.service, "resource_event_context_issuer", None)
+        registry = getattr(issuer, "controller_registry", None)
+        if (enrollment is None or registry is None or admission.expires_monotonic <= self.service.monotonic()
+                or root_event_handle.authority_epoch != getattr(self.service, "authority_epoch", None)
+                or getattr(issuer, "service", None) is not self.service
+                or self._resource_generation(enrollment) != enrollment.generation
+                or not self.ledger.is_job_active(admission.job_id, current_generation=enrollment.generation)):
+            return False
+        try:
+            record, selected, node, _backend = registry._resolve_event_node(
+                root_event_handle, enrollment.nodes[0].node_id)
+            if selected is not enrollment:
+                return False
+            issuer._require_live_selection(enrollment)
+            context, receipts = issuer._verify_source_closure(
+                record, enrollment, registry._profile_binding(enrollment), self.service.monotonic())
+            self.service._verify_context_signature(context)
+            binding = self.service._binding(context.uid)
+            self.service._assert_current_context(context, binding, context.uid)
+            for receipt in receipts:
+                self.service._verify_source_receipt(receipt, binding)
+            controller = registry.resolve_for_event(root_event_handle, node.node_id)
+        except Exception:
+            return False
+        try:
+            retained = self._source_closures_by_job.get(admission.job_id)
+            return bool(
+                record.handle is root_event_handle and context.source_receipts == receipts
+                and receipts == record.parent_receipts
+                and retained is not None and retained[0] is context and retained[1] == receipts
+                and retained[3] > self.service.monotonic()
+                and context.profile_id == enrollment.profile_id
+                and context.principal_id == enrollment.principal_id
+                and controller.uid == 0 and controller.controller_profile_id is None
+                and controller.controller_kind in {"root-scheduler", "root-webhook", "root-channel"}
+                and controller.service_generation_digest == self.service.service_generation_digest
+                and controller.expires_monotonic > self.service.monotonic()
+            )
+        finally:
+            try:
+                os.close(controller.pidfd)
+            except OSError:
+                pass
+
+    def resolve_node_result_closure(
+        self, root_event_handle: Any, admission: ResourceJobAdmission, node_id: str,
+    ) -> RootResourceNodeResultClosure:
+        """Issue one immutable v66 closure from completed, retained result capsules."""
+        from .resource_source_controllers import RootResourceEventHandle
+        if (type(root_event_handle) is not RootResourceEventHandle
+                or not isinstance(admission, ResourceJobAdmission)
+                or not isinstance(node_id, str)):
+            raise AuthorityDenied("resource.result_closure", "root node result closure request is malformed")
+        if not self.is_root_admission_current(root_event_handle, admission):
+            raise AuthorityDenied("resource.result_closure", "root event admission is stale or unbound")
+        enrollment = self.enrollments[(admission.resource_id, admission.generation)]
+        node = enrollment.node_map.get(node_id)
+        if node is None:
+            raise AuthorityDenied("resource.result_closure", "requested node is outside the admitted DAG")
+        now = self.service.monotonic()
+        current_generation = self._resource_generation(enrollment)
+        values = self._load_parent_results(admission.job_id)
+        capsule_rows = self._result_capsules_by_job.get(admission.job_id, {})
+        result_handles: list[str] = []
+        result_digests: list[str] = []
+        expiries = [admission.expires_monotonic, root_event_handle.expires_monotonic]
+        for prerequisite in sorted(node.depends_on):
+            try:
+                completed_id, attempt, receipts = self.ledger.completed_node_result_receipts(
+                    admission.job_id, prerequisite, current_generation=current_generation)
+            except ResourceJobDenied as exc:
+                raise AuthorityDenied("resource.result_closure", str(exc)) from None
+            row = capsule_rows.get(prerequisite)
+            stored = values.get(prerequisite)
+            if (row is None or stored is None or row.admission_id != completed_id
+                    or row.node_id != prerequisite or row.resource_generation != enrollment.generation
+                    or row.service_generation_digest != self.service.service_generation_digest
+                    or row.expires_monotonic <= now or stored[0] not in receipts
+                    or row.receipt_id != stored[0]):
+                raise AuthorityDenied("resource.result_closure", "completed prerequisite lacks its actual validated capsule")
+            result_handles.append(row.capsule_handle)
+            result_digests.append(row.capsule_sha256)
+            expiries.append(row.expires_monotonic)
+        expires = min(expiries)
+        if expires <= now:
+            raise AuthorityDenied("resource.result_closure", "selected result closure has expired")
+        parent_digest = canonical_digest({
+            "event": root_event_handle.handle,
+            "event_parent_closure": root_event_handle.parent_closure_digest,
+            "job": admission.job_id, "dag": admission.approved_dag_sha256,
+            "node": node_id, "prerequisites": sorted(node.depends_on),
+            "capsules": list(zip(result_handles, result_digests)),
+            "resource_generation": enrollment.generation,
+            "service_generation_digest": self.service.service_generation_digest,
+            "consent_revision": enrollment.consent_revision,
+        })
+        closure = RootResourceNodeResultClosure(
+            schema=1, closure_handle=secrets.token_urlsafe(32),
+            event_handle=root_event_handle.handle, admission_handle=admission.job_id,
+            node_id=node_id, job_handle=self._root_job_handles[admission.job_id],
+            resource_generation=enrollment.generation,
+            service_generation_digest=self.service.service_generation_digest,
+            prerequisite_node_ids=tuple(sorted(node.depends_on)),
+            result_capsule_handles=tuple(result_handles),
+            result_capsule_sha256s=tuple(result_digests),
+            parent_closure_digest=parent_digest, issued_monotonic=now,
+            expires_monotonic=expires,
+        )
+        selected_values = MappingProxyType({
+            key: values[key][1] for key in sorted(node.depends_on)
+        })
+        with self._event_lock:
+            if len(self._root_result_closures) >= 1024:
+                raise AuthorityDenied("resource.capacity", "root result closure registry is full")
+            self._root_result_closures[closure.closure_handle] = (closure, selected_values)
+        return closure
+
+    def resolve_node_result_values(
+        self, closure: RootResourceNodeResultClosure,
+    ) -> Mapping[str, Mapping[str, Any]]:
+        """Revalidate a closure and resolve only its root-retained result fields."""
+        if not isinstance(closure, RootResourceNodeResultClosure):
+            raise AuthorityDenied("resource.result_closure", "result closure handle is invalid")
+        with self._event_lock:
+            row = self._root_result_closures.get(closure.closure_handle)
+            if row is None or row[0] is not closure:
+                raise AuthorityDenied("resource.result_closure", "result closure is forged or already expired")
+        bound = self._root_event_admissions.get(closure.event_handle)
+        if bound is None or bound[1].job_id != closure.admission_handle:
+            raise AuthorityDenied("resource.result_closure", "result closure no longer has its admitted job")
+        current = self.resolve_node_result_closure(bound[0], bound[1], closure.node_id)
+        try:
+            if (current.prerequisite_node_ids != closure.prerequisite_node_ids
+                    or current.result_capsule_handles != closure.result_capsule_handles
+                    or current.result_capsule_sha256s != closure.result_capsule_sha256s
+                    or current.parent_closure_digest != closure.parent_closure_digest
+                    or current.service_generation_digest != closure.service_generation_digest
+                    or current.resource_generation != closure.resource_generation
+                    or current.expires_monotonic < closure.expires_monotonic):
+                raise AuthorityDenied("resource.result_closure", "result closure changed after issuance")
+        finally:
+            with self._event_lock:
+                self._root_result_closures.pop(current.closure_handle, None)
+        with self._event_lock:
+            retained = self._root_result_closures.get(closure.closure_handle)
+            if retained is None or retained[0] is not closure:
+                raise AuthorityDenied("resource.result_closure", "result closure expired during resolution")
+            return retained[1]
 
     def handlers(self) -> Mapping[tuple[str, str], Callable[..., Mapping[str, Any]]]:
         """Return exact protected handler registrations; absent joins stay absent."""
@@ -918,7 +1328,9 @@ class ResourceJobAuthority:
             if handle.handle_id in self._task_handles or len(self._task_handles) >= 256:
                 raise AuthorityDenied("resource.capacity", "root profile-task admission handle store is full")
             self._task_handles[handle.handle_id] = (handle, child, event.enrollment, event)
-            self._source_context_handles[handle.handle_id] = secrets.token_urlsafe(32)
+            self._source_context_handles[handle.handle_id] = (
+                self._root_source_context_by_job.get(child.job_id) or secrets.token_urlsafe(32)
+            )
         try:
             response = adapter.launch_resource_profile_task(handle, node.node_id)
             with self._task_handle_lock:
@@ -939,6 +1351,16 @@ class ResourceJobAuthority:
             completion = getattr(self.service, "consume_resource_task_completion", None)
             if not callable(completion):
                 raise AuthorityDenied("resource.result", "root terminal/result capsule consumer is unavailable")
+            # Resolve the digest while the runner still retains the exact
+            # unconsumed capsule. Completion consumes that capsule, so querying
+            # its digest afterward would either fail or create a replay seam.
+            task_runner = getattr(self.service, "resource_task_runner", None)
+            capsule_digest_resolver = getattr(task_runner, "resolve_result_capsule_sha256", None)
+            if not callable(capsule_digest_resolver):
+                raise AuthorityDenied("resource.result", "root result capsule digest resolver is unavailable")
+            capsule_digest = capsule_digest_resolver(response)
+            if not isinstance(capsule_digest, str) or not _HEX64.fullmatch(capsule_digest):
+                raise AuthorityDenied("resource.result", "root result capsule digest is malformed")
             result = completion(response, cancelled=cancelled)
             if not isinstance(result, Mapping) or set(result) != {
                     "status", "body", "headers", "receipt_id", "result_fields"}:
@@ -950,6 +1372,9 @@ class ResourceJobAuthority:
                 raise AuthorityDenied("resource.result", "root task completion result exceeds its schema")
             result_value = dict(result)
             result_value["result_fields"] = MappingProxyType(dict(result["result_fields"]))
+            self._retain_task_result_capsule(
+                child, event, backend, response, result_value, capsule_digest,
+            )
             return result_value
         except AuthorityDenied:
             raise
@@ -959,8 +1384,12 @@ class ResourceJobAuthority:
             with self._task_handle_lock:
                 self._task_handles.pop(handle.handle_id, None)
                 self._running_task_handles.pop(handle.handle_id, None)
+                self._resolved_task_dtos.pop(handle.handle_id, None)
                 self._source_resolved_handles.discard(handle.handle_id)
                 self._source_context_handles.pop(handle.handle_id, None)
+                self._controller_resolved_handles.discard(handle.handle_id)
+                self._resolved_controller_evidence.pop(handle.handle_id, None)
+                self._parent_context_resolved_handles.discard(handle.handle_id)
                 controller = self._task_controller_bindings.pop(handle.handle_id, None)
             if controller is not None:
                 try:
@@ -1003,6 +1432,68 @@ class ResourceJobAuthority:
                 raise AuthorityDenied("resource.process_task", "root task handle is already running")
             self._running_task_handles[handle.handle_id] = registered
         return handle
+
+    def resolve_task_child_admission(
+        self, handle: Any, node_id: str,
+    ) -> ResourceChildAdmission:
+        """Resolve the exact active ledger child for the root task grant issuer.
+
+        This is an in-process authority seam. It accepts only the identical
+        consumed task handle retained in ``_running_task_handles``; the child
+        admission is returned from that retained tuple, never reconstructed
+        from task/source DTO fields. The service calls it again at grant
+        consumption, so revocation or a stale retry cannot reuse the proof.
+        """
+        if (not isinstance(handle, RootResourceJobAdmissionHandle)
+                or not isinstance(node_id, str) or node_id != handle.node_id):
+            raise AuthorityDenied("resource.child", "task child admission lookup is malformed")
+        with self._task_handle_lock:
+            registered = self._running_task_handles.get(handle.handle_id)
+            if (registered is None or len(registered) != 4
+                    or registered[0] is not handle):
+                raise AuthorityDenied("resource.child", "task child admission requires the exact consumed handle")
+        _handle, child, enrollment, event = registered
+        backend = enrollment.backends.get(handle.backend_enrollment_id)
+        binding = backend.execution_binding if backend is not None else None
+        node = enrollment.node_map.get(node_id)
+        current_generation = self._resource_generation(enrollment)
+        now = self.service.monotonic()
+        if (backend is None or binding is None or node is None
+                or event.enrollment is not enrollment
+                or event.admission.job_id != child.job_id
+                or child.node_id != node_id or child.job_id != handle.job_id
+                or child.admission_id != handle.child_admission_id
+                or child.retry_index != handle.attempt_index
+                or enrollment.generation != handle.resource_generation
+                or backend.resource_id != enrollment.resource_id
+                or backend.generation != enrollment.generation
+                or backend.consent_revision != enrollment.consent_revision
+                or backend.profile_id != enrollment.profile_id
+                or backend.principal_id != enrollment.principal_id
+                or binding["process_enrollment_id"] != handle.process_enrollment_id
+                or binding["process_generation"] != handle.process_generation
+                or binding["operation_id"] != handle.operation_id
+                or binding["child_target_id"] != handle.child_target_id
+                or binding["child_capability"] != handle.child_capability
+                or binding["task_body_recipe_id"] != handle.task_body_recipe_id
+                or binding["task_request_schema_id"] != handle.task_request_schema_id
+                or current_generation != enrollment.generation
+                or self.service.profile_generations.get(enrollment.profile_id)
+                   != event.parent_context.generation
+                or now >= min(handle.expires_monotonic, event.admission.expires_monotonic)
+                or handle.parent_closure_digest != _admitted_source_closure_digest(
+                    event, child, node, backend)
+                or not self.ledger.is_child_admitted(child, current_generation=current_generation)):
+            raise AuthorityDenied("resource.child", "task child admission is stale or outside its selected job")
+        root_event = self._root_event_by_job.get(child.job_id)
+        if root_event is not None:
+            with self._event_lock:
+                root_row = self._root_event_admissions.get(root_event.handle)
+            if (root_row is None or root_row[0] is not root_event
+                    or root_row[1] is not event.admission
+                    or not self.is_root_admission_current(root_event, event.admission)):
+                raise AuthorityDenied("resource.child", "root event admission is no longer current")
+        return child
 
     def resolve_admitted_task_source(self, handle: Any, node_id: str) -> RootAdmittedTaskSource:
         """Resolve the original verified source closure for an actively consumed handle.
@@ -1055,6 +1546,36 @@ class ResourceJobAuthority:
                 or binding["task_request_schema_id"] != handle.task_request_schema_id):
             raise AuthorityDenied("resource.source", "task source selection changed after admission")
         capsule = event.source_capsule_lineage
+        # Resolve the private context capability and exact signed receipt
+        # handles before splitting root-owned ingress from worker-observed
+        # events.  Both paths consume the same retained, signature-bearing
+        # closure; only the authority that validates the producer differs.
+        receipt_handle_map = getattr(self.service, "_source_receipt_handles", None)
+        if not isinstance(receipt_handle_map, Mapping):
+            raise AuthorityDenied("resource.source", "root source receipt handle registry is unavailable")
+        opaque_receipt_handles: list[str] = []
+        signed_wires: list[bytes] = []
+        for receipt in event.source_receipts:
+            matches = [key for key, candidate in receipt_handle_map.items()
+                       if candidate is receipt or candidate.receipt_id == receipt.receipt_id]
+            if len(matches) != 1:
+                raise AuthorityDenied("resource.source", "signed source receipt handle is unavailable or ambiguous")
+            opaque_receipt_handles.append(str(matches[0]))
+            signed_wires.append(_canonical(receipt.to_wire()))
+        context_handle = self._source_context_handles.get(handle.handle_id)
+        if not isinstance(context_handle, str) or not context_handle:
+            raise AuthorityDenied("resource.source", "root source context handle is unavailable")
+        # Root timer/webhook/channel events have a different trusted producer
+        # identity from worker-captured native events. Bind the same complete
+        # retained source context/receipt closure, but do not try to reinterpret
+        # the root event as a worker SourceObserverRegistry receipt.
+        root_event_handle = self._root_event_by_job.get(child.job_id)
+        if (root_event_handle is not None
+                and capsule.get("root_event_handle") == root_event_handle.handle):
+            return self._resolve_root_admitted_task_source(
+                handle, child, enrollment, event, context_handle,
+                opaque_receipt_handles, signed_wires,
+            )
         source_receipt = next((item for item in event.source_receipts
                                if item.receipt_id == capsule.get("receipt_id")), None)
         parent_receipt_ids = tuple(capsule.get("parent_receipt_ids", ()))
@@ -1082,21 +1603,6 @@ class ResourceJobAuthority:
                 receipt_id for receipt_id, _fields in event.parent_results.values()
                 if receipt_id in child.parent_result_receipt_ids}:
             raise AuthorityDenied("resource.source", "declared predecessor result closure is incomplete")
-        receipt_handle_map = getattr(self.service, "_source_receipt_handles", None)
-        if not isinstance(receipt_handle_map, Mapping):
-            raise AuthorityDenied("resource.source", "root source receipt handle registry is unavailable")
-        opaque_receipt_handles: list[str] = []
-        signed_wires: list[bytes] = []
-        for receipt in event.source_receipts:
-            matches = [key for key, candidate in receipt_handle_map.items()
-                       if candidate is receipt or candidate.receipt_id == receipt.receipt_id]
-            if len(matches) != 1:
-                raise AuthorityDenied("resource.source", "signed source receipt handle is unavailable or ambiguous")
-            opaque_receipt_handles.append(str(matches[0]))
-            signed_wires.append(_canonical(receipt.to_wire()))
-        context_handle = self._source_context_handles.get(handle.handle_id)
-        if not isinstance(context_handle, str):
-            raise AuthorityDenied("resource.source", "root source context handle is unavailable")
         observers = getattr(self.service, "source_observer_registry", None)
         resolver = getattr(observers, "resolve_live_source_producer", None)
         capsule = event.source_capsule_lineage
@@ -1176,12 +1682,116 @@ class ResourceJobAuthority:
                                   *(receipt.monotonic_expires_at for receipt in event.source_receipts)),
         )
 
+    def _resolve_root_admitted_task_source(
+        self, handle: RootResourceJobAdmissionHandle, child: ResourceChildAdmission,
+        enrollment: ResourceJobEnrollment, event: _JobEvent, context_handle: str,
+        receipt_handles: Sequence[str], signed_wires: Sequence[bytes],
+    ) -> RootAdmittedTaskSource:
+        root_event = self._root_event_by_job.get(child.job_id)
+        issuer = getattr(self.service, "resource_event_context_issuer", None)
+        registry = getattr(issuer, "controller_registry", None)
+        if (root_event is None or event.source_capsule_lineage.get("root_event_handle") != root_event.handle
+                or registry is None or getattr(issuer, "service", None) is not self.service
+                or len(receipt_handles) != len(event.source_receipts)
+                or len(signed_wires) != len(event.source_receipts)):
+            raise AuthorityDenied("resource.source", "root task source registry binding is unavailable")
+        try:
+            record, selected, _node, _backend = registry._resolve_event_node(root_event, child.node_id)
+            issuer._require_live_selection(enrollment)
+            context, receipts = issuer._verify_source_closure(
+                record, enrollment, registry._profile_binding(enrollment), self.service.monotonic())
+            self.service._verify_context_signature(context)
+            binding = self.service._binding(context.uid)
+            self.service._assert_current_context(context, binding, context.uid)
+            for receipt in receipts:
+                self.service._verify_source_receipt(receipt, binding)
+        except Exception:
+            raise AuthorityDenied("resource.source", "root task source closure is stale") from None
+        if (selected is not enrollment or record.handle is not root_event
+                or context is not event.parent_context or receipts != event.source_receipts
+                or tuple(sorted(item.receipt_id for item in receipts)) != event.source_receipt_ids
+                or context.source_receipts != receipts
+                or context.lineage_hash != event.lineage_hash
+                or context.sensitivity != event.sensitivity
+                or self.service.monotonic() >= min(handle.expires_monotonic,
+                                                    root_event.expires_monotonic,
+                                                    *(item.monotonic_expires_at for item in receipts))):
+            raise AuthorityDenied("resource.source", "root task source identity, closure, or lease changed")
+        with self._task_handle_lock:
+            if (self._running_task_handles.get(handle.handle_id, (None,))[0] is not handle
+                    or handle.handle_id in self._root_task_controller_tokens):
+                raise AuthorityDenied("resource.controller", "root task controller token is already resolved")
+            controller_token = secrets.token_urlsafe(32)
+            self._root_task_controller_tokens[handle.handle_id] = controller_token
+        recipient_ceiling = set(receipts[0].recipient_ceiling)
+        for receipt in receipts[1:]:
+            recipient_ceiling.intersection_update(receipt.recipient_ceiling)
+        return RootAdmittedTaskSource(
+            source_context_handle=context_handle,
+            verified_source_receipt_handles=tuple(receipt_handles),
+            signed_receipt_wires=tuple(signed_wires), sensitivity=event.sensitivity,
+            lineage_hash=event.lineage_hash, recipient_ceiling=tuple(sorted(recipient_ceiling)),
+            principal_id=enrollment.principal_id, profile_id=enrollment.profile_id,
+            namespace_id=context.namespace_id, parent_closure_digest=handle.parent_closure_digest,
+            controller_binding_handle=controller_token,
+            expires_monotonic=min(handle.expires_monotonic, root_event.expires_monotonic,
+                                  context.monotonic_expires_at,
+                                  *(item.monotonic_expires_at for item in receipts)),
+        )
+
     def resolve_admitted_task_controller(self, handle: Any, node_id: str) -> RootTaskController:
         """Return one root-resolved live source producer PIDFD for a consumed node."""
         if not isinstance(handle, RootResourceJobAdmissionHandle) or node_id != handle.node_id:
             raise AuthorityDenied("resource.controller", "task controller is not bound to this selected node")
         with self._task_handle_lock:
             registered = self._running_task_handles.get(handle.handle_id)
+            controller_token = self._root_task_controller_tokens.get(handle.handle_id)
+            root_event = (self._root_event_by_job.get(handle.job_id)
+                          if registered is not None and registered[0] is handle else None)
+            if root_event is not None:
+                self._root_task_controller_tokens.pop(handle.handle_id, None)
+        if root_event is not None:
+            source_event = registered[3].source_capsule_lineage.get("root_event_handle")
+            issuer = getattr(self.service, "resource_event_context_issuer", None)
+            registry = getattr(issuer, "controller_registry", None)
+            if (source_event != root_event.handle or not isinstance(controller_token, str)
+                    or registry is None or self.service.monotonic() >= handle.expires_monotonic):
+                raise AuthorityDenied("resource.controller", "root task controller event binding is stale")
+            controller = None
+            try:
+                controller = registry.resolve_for_event(root_event, node_id)
+                if (controller.controller_kind not in {"root-scheduler", "root-webhook", "root-channel"}
+                        or controller.uid != 0 or controller.controller_profile_id is not None
+                        or controller.source_receipt_id is not None
+                        or controller.subject_profile_id != registered[2].profile_id
+                        or controller.subject_principal_id != registered[2].principal_id
+                        or controller.service_generation_digest
+                        != getattr(self.service, "service_generation_digest", None)
+                        or controller.expires_monotonic <= self.service.monotonic()):
+                    raise AuthorityDenied("resource.controller", "root task controller proof is not selected")
+                from dataclasses import replace
+                controller = replace(controller, controller_handle=controller_token)
+                with self._task_handle_lock:
+                    if (self._running_task_handles.get(handle.handle_id, (None,))[0] is not handle
+                            or handle.handle_id in self._controller_resolved_handles):
+                        raise AuthorityDenied("resource.controller", "root task controller was replayed")
+                    self._controller_resolved_handles.add(handle.handle_id)
+                    self._resolved_controller_evidence[handle.handle_id] = (
+                        controller_token, root_event.handle, controller.identity, controller.pid,
+                        controller.uid, controller.controller_kind,
+                        controller.controller_role_artifact_id, controller.controller_role_sha256,
+                        controller.controller_generation, controller.expires_monotonic,
+                        controller.service_generation_digest, self.service.authority_epoch,
+                    )
+                return controller
+            except Exception:
+                if controller is not None:
+                    try:
+                        os.close(controller.pidfd)
+                    except OSError:
+                        pass
+                raise AuthorityDenied("resource.controller", "root task controller is stale or unavailable") from None
+        with self._task_handle_lock:
             bound = self._task_controller_bindings.pop(handle.handle_id, None)
         if (registered is None or registered[0] is not handle or bound is None
                 or not self.service.monotonic() < handle.expires_monotonic):
@@ -1211,7 +1821,7 @@ class ResourceJobAuthority:
                 pass
             raise AuthorityDenied("resource.controller", "selected controller role proof is incomplete")
         enrollment = registered[2]
-        return RootTaskController(
+        controller_dto = RootTaskController(
             schema=1, controller_handle=controller_handle, controller_kind="worker",
             controller_role_artifact_id=role_artifact_id,
             controller_role_sha256=role_sha256, pid=producer.pid, pidfd=producer.pidfd,
@@ -1224,6 +1834,346 @@ class ResourceJobAuthority:
             service_generation_digest=service_generation_digest,
             expires_monotonic=producer.expires_monotonic,
         )
+        with self._task_handle_lock:
+            self._controller_resolved_handles.add(handle.handle_id)
+            self._resolved_controller_evidence[handle.handle_id] = (
+                controller_handle, source_receipt.receipt_id, producer.identity,
+                producer.uid, producer.profile_id, producer.generation,
+                producer.expires_monotonic, role_artifact_id, role_sha256,
+                service_generation_digest, producer.authority_epoch,
+            )
+        return controller_dto
+
+    def verify_admitted_root_task_controller(
+        self, handle: Any, task: Any, source: Any, controller: Any,
+    ) -> bool:
+        """Revalidate a root role PIDFD against the exact consumed resource task.
+
+        This is the only service-side proof accepted for root-* controllers.
+        It resolves current custody again from the retained event registry and
+        compares that proof to the one-use duplicate handed to the runner.
+        """
+        from .resource_source_controllers import RootResourceEventHandle
+        if (not isinstance(handle, RootResourceJobAdmissionHandle)
+                or not isinstance(task, RootAdmittedTask)
+                or not isinstance(source, RootAdmittedTaskSource)
+                or not isinstance(controller, RootTaskController)
+                or task.node_id != handle.node_id
+                or controller.controller_kind not in {"root-scheduler", "root-webhook", "root-channel"}
+                or controller.uid != 0 or controller.controller_profile_id is not None
+                or controller.source_receipt_id is not None):
+            return False
+        with self._task_handle_lock:
+            registered = self._running_task_handles.get(handle.handle_id)
+            evidence = self._resolved_controller_evidence.get(handle.handle_id)
+            expected_context = self._source_context_handles.get(handle.handle_id)
+        root_event = self._root_event_by_job.get(handle.job_id)
+        if (registered is None or registered[0] is not handle or len(registered) != 4
+                or handle.handle_id not in self._controller_resolved_handles
+                or evidence is None or evidence[0] != controller.controller_handle
+                or root_event is None or evidence[1] != root_event.handle
+                or source.controller_binding_handle != controller.controller_handle
+                or source.source_context_handle != expected_context
+                or source.parent_closure_digest != handle.parent_closure_digest
+                or source.expires_monotonic <= self.service.monotonic()
+                or task.deadline_monotonic <= self.service.monotonic()
+                or handle.expires_monotonic <= self.service.monotonic()):
+            return False
+        _token, child, enrollment, event = registered
+        issuer = getattr(self.service, "resource_event_context_issuer", None)
+        registry = getattr(issuer, "controller_registry", None)
+        if (not isinstance(root_event, RootResourceEventHandle)
+                or event.source_capsule_lineage.get("root_event_handle") != root_event.handle
+                or not self.ledger.is_child_admitted(
+                    child, current_generation=self._resource_generation(enrollment))
+                or not callable(getattr(issuer, "_require_live_selection", None))
+                or registry is None):
+            return False
+        try:
+            issuer._require_live_selection(enrollment)
+            record, selected, _node, _backend = registry._resolve_event_node(root_event, task.node_id)
+            context, receipts = issuer._verify_source_closure(
+                record, enrollment, registry._profile_binding(enrollment), self.service.monotonic())
+            self.service._verify_context_signature(context)
+            binding = self.service._binding(context.uid)
+            self.service._assert_current_context(context, binding, context.uid)
+            for receipt in receipts:
+                self.service._verify_source_receipt(receipt, binding)
+            current = registry.resolve_for_event(root_event, task.node_id)
+        except Exception:
+            return False
+        try:
+            return bool(
+                selected is enrollment and record.handle is root_event
+                and context is event.parent_context and receipts == event.source_receipts
+                and current.controller_kind == controller.controller_kind
+                and current.controller_role_artifact_id == controller.controller_role_artifact_id
+                and current.controller_role_sha256 == controller.controller_role_sha256
+                and current.pid == controller.pid and current.uid == controller.uid
+                and current.identity == controller.identity
+                and current.controller_generation == controller.controller_generation
+                and current.service_generation_digest == controller.service_generation_digest
+                and current.expires_monotonic >= controller.expires_monotonic
+                and current.service_generation_digest == getattr(
+                    self.service, "service_generation_digest", None)
+                and tuple(sorted(item.receipt_id for item in receipts))
+                    == tuple(sorted(event.source_receipt_ids))
+                and context.source_receipts == receipts
+            )
+        finally:
+            try:
+                os.close(current.pidfd)
+            except OSError:
+                pass
+
+    def is_admitted_task_controller_current(
+        self, handle: Any, node_id: str, controller: Any,
+    ) -> bool:
+        """Repeatably verify root controller custody without consuming its PIDFD."""
+        if (not isinstance(handle, RootResourceJobAdmissionHandle)
+                or handle.node_id != node_id or not isinstance(controller, RootTaskController)
+                or controller.controller_kind not in {"root-scheduler", "root-webhook", "root-channel"}
+                or controller.uid != 0 or controller.controller_profile_id is not None
+                or controller.source_receipt_id is not None):
+            return False
+        with self._task_handle_lock:
+            registered = self._running_task_handles.get(handle.handle_id)
+            evidence = self._resolved_controller_evidence.get(handle.handle_id)
+        root_event = self._root_event_by_job.get(handle.job_id)
+        if (registered is None or registered[0] is not handle or len(registered) != 4
+                or evidence is None or evidence[0] != controller.controller_handle
+                or root_event is None or evidence[1] != root_event.handle
+                or handle.handle_id not in self._controller_resolved_handles
+                or not self.ledger.is_child_admitted(
+                    registered[1], current_generation=self._resource_generation(registered[2]))
+                or controller.expires_monotonic <= self.service.monotonic()):
+            return False
+        event = registered[3]
+        issuer = getattr(self.service, "resource_event_context_issuer", None)
+        registry = getattr(issuer, "controller_registry", None)
+        if registry is None or event.source_capsule_lineage.get("root_event_handle") != root_event.handle:
+            return False
+        try:
+            issuer._require_live_selection(registered[2])
+            record, selected, _node, _backend = registry._resolve_event_node(root_event, node_id)
+            context, receipts = issuer._verify_source_closure(
+                record, registered[2], registry._profile_binding(registered[2]),
+                self.service.monotonic())
+            self.service._verify_context_signature(context)
+            binding = self.service._binding(context.uid)
+            self.service._assert_current_context(context, binding, context.uid)
+            for receipt in receipts:
+                self.service._verify_source_receipt(receipt, binding)
+            current = registry.resolve_for_event(root_event, node_id)
+        except Exception:
+            return False
+        try:
+            return bool(
+                selected is registered[2] and record.handle is root_event
+                and context is event.parent_context and receipts == event.source_receipts
+                and current.controller_kind == controller.controller_kind
+                and current.controller_role_artifact_id == controller.controller_role_artifact_id
+                and current.controller_role_sha256 == controller.controller_role_sha256
+                and current.pid == controller.pid and current.uid == controller.uid
+                and current.identity == controller.identity
+                and current.controller_generation == controller.controller_generation
+                and current.service_generation_digest == controller.service_generation_digest
+                and current.service_generation_digest == self.service.service_generation_digest
+                and current.expires_monotonic >= controller.expires_monotonic
+            )
+        finally:
+            try:
+                os.close(current.pidfd)
+            except OSError:
+                pass
+
+    def resolve_admitted_task_parent_context(
+        self, handle: Any, node_id: str, source_context_handle: str,
+    ) -> HostContext:
+        """Return the original signed parent context to the root issuer once.
+
+        The returned context is source material, not a child grant. The
+        AuthorityService must issue a fresh ``process.start`` context/grant
+        with empty ``source_receipts`` (the parent receipts were already
+        consumed by event admission) and must bind its lineage hash to the
+        freshly revalidated full source-closure digest.
+        """
+        if (not isinstance(handle, RootResourceJobAdmissionHandle) or node_id != handle.node_id
+                or not isinstance(source_context_handle, str)):
+            raise AuthorityDenied("resource.source", "task parent context lookup is malformed")
+        with self._task_handle_lock:
+            registered = self._running_task_handles.get(handle.handle_id)
+            expected_handle = self._source_context_handles.get(handle.handle_id)
+            if (registered is None or registered[0] is not handle
+                    or expected_handle != source_context_handle
+                    or handle.handle_id not in self._source_resolved_handles
+                    or handle.handle_id not in self._controller_resolved_handles
+                    or handle.handle_id not in self._resolved_controller_evidence
+                    or handle.handle_id in self._parent_context_resolved_handles):
+                raise AuthorityDenied("resource.source", "task parent context is forged, stale, or consumed")
+            self._parent_context_resolved_handles.add(handle.handle_id)
+        _token, child, enrollment, event = registered
+        backend = enrollment.backends.get(handle.backend_enrollment_id)
+        binding = backend.execution_binding if backend is not None else None
+        now = self.service.monotonic()
+        current_generation = self._resource_generation(enrollment)
+        node = enrollment.node_map.get(node_id)
+        if (backend is None or binding is None or node is None
+                or event.enrollment is not enrollment or event.admission.job_id != child.job_id
+                or child.node_id != node_id or child.admission_id != handle.child_admission_id
+                or child.retry_index != handle.attempt_index
+                or current_generation != handle.resource_generation
+                or backend.resource_id != enrollment.resource_id
+                or backend.generation != enrollment.generation
+                or backend.consent_revision != enrollment.consent_revision
+                or backend.profile_id != enrollment.profile_id
+                or backend.principal_id != enrollment.principal_id
+                or self.service.profile_generations.get(enrollment.profile_id)
+                   != event.parent_context.generation
+                or now >= min(handle.expires_monotonic, event.admission.expires_monotonic)
+                or not self.ledger.is_child_admitted(child, current_generation=current_generation)
+                or handle.parent_closure_digest != _admitted_source_closure_digest(
+                    event, child, node, backend)):
+            raise AuthorityDenied("resource.source", "task parent context is stale or outside its selected job")
+        root_event = self._root_event_by_job.get(child.job_id)
+        if (root_event is not None
+                and event.source_capsule_lineage.get("root_event_handle") == root_event.handle):
+            issuer = getattr(self.service, "resource_event_context_issuer", None)
+            registry = getattr(issuer, "controller_registry", None)
+            evidence = self._resolved_controller_evidence.get(handle.handle_id)
+            if registry is None or evidence is None or evidence[1] != root_event.handle:
+                raise AuthorityDenied("resource.controller", "root event controller evidence is unavailable")
+            try:
+                issuer._require_live_selection(enrollment)
+                record, selected, _node, _backend = registry._resolve_event_node(root_event, node_id)
+                context, receipts = issuer._verify_source_closure(
+                    record, enrollment, registry._profile_binding(enrollment), now)
+                self.service._verify_context_signature(context)
+                parent_binding = self.service._binding(context.uid)
+                self.service._assert_current_context(context, parent_binding, context.uid)
+                for receipt in receipts:
+                    self.service._verify_source_receipt(receipt, parent_binding)
+                controller = registry.resolve_for_event(root_event, node_id)
+            except Exception:
+                raise AuthorityDenied("resource.source", "root task parent closure is stale") from None
+            try:
+                if (selected is not enrollment or record.handle is not root_event
+                        or context is not event.parent_context or receipts != event.source_receipts
+                        or not context.native_process_identity
+                        or context.sensitivity != event.sensitivity
+                        or tuple(sorted(item.receipt_id for item in receipts))
+                           != tuple(sorted(event.source_receipt_ids))
+                        or controller.uid != 0
+                        or controller.controller_kind not in {
+                            "root-scheduler", "root-webhook", "root-channel"}
+                        or controller.pid != evidence[3] or controller.uid != evidence[4]
+                        or controller.controller_kind != evidence[5]
+                        or controller.controller_role_artifact_id != evidence[6]
+                        or controller.controller_role_sha256 != evidence[7]
+                        or controller.controller_generation != evidence[8]
+                        or controller.service_generation_digest != evidence[10]
+                        or controller.expires_monotonic < evidence[9]):
+                    raise AuthorityDenied("resource.controller", "root controller or source closure changed")
+            finally:
+                try:
+                    os.close(controller.pidfd)
+                except OSError:
+                    pass
+            retained = self._source_closures_by_job.get(child.job_id)
+            if (retained is None or retained[0] is not context or retained[1] != receipts
+                    or retained[3] <= now):
+                raise AuthorityDenied("resource.source", "root authenticated source closure expired")
+            return context
+        if (binding["process_enrollment_id"] != handle.process_enrollment_id
+                or binding["process_generation"] != handle.process_generation
+                or binding["native_package_id"] != handle.native_package_id
+                or binding["native_package_generation"] != handle.native_package_generation
+                or binding["operation_id"] != handle.operation_id
+                or binding["child_target_id"] != handle.child_target_id
+                or binding["child_capability"] != handle.child_capability
+                or binding["task_body_recipe_id"] != handle.task_body_recipe_id
+                or binding["task_request_schema_id"] != handle.task_request_schema_id):
+            raise AuthorityDenied("resource.selection", "process-start selection changed after task admission")
+        resolver = getattr(self.service, "selected_operation_resolver", None)
+        if not callable(resolver):
+            raise AuthorityDenied("resource.selection", "root selected process operation resolver is unavailable")
+        try:
+            operation = resolver(
+                handle.process_enrollment_id, handle.process_generation,
+                "process.start", handle.operation_id,
+            )
+        except Exception:
+            raise AuthorityDenied("resource.selection", "selected process-start operation is unavailable") from None
+        if (getattr(operation, "operation", None) != "process.start"
+                or getattr(operation, "operation_id", None) != handle.operation_id
+                or getattr(operation, "target", None) != handle.child_target_id
+                or getattr(operation, "enrollment_id", None) != handle.process_enrollment_id
+                or getattr(operation, "generation", None) != handle.process_generation
+                or getattr(operation, "profile_id", None) != enrollment.profile_id
+                or getattr(operation, "principal_id", None) != enrollment.principal_id):
+            raise AuthorityDenied("resource.selection", "selected process operation is outside the job principal")
+        context = event.parent_context
+        try:
+            self.service._verify_context_signature(context)
+            parent_binding = self.service._binding(context.uid)
+            self.service._assert_current_context(context, parent_binding, context.uid)
+            for receipt in event.source_receipts:
+                self.service._verify_source_receipt(receipt, parent_binding)
+        except Exception:
+            raise AuthorityDenied("resource.source", "original signed parent context is no longer current") from None
+        if (context.profile_id != enrollment.profile_id
+                or context.principal_id != enrollment.principal_id
+                or context.namespace_id == ""
+                or context.sensitivity != event.sensitivity
+                or tuple(sorted(item.receipt_id for item in context.source_receipts))
+                   != tuple(sorted(event.source_receipt_ids))
+                or context.source_receipts != event.source_receipts
+                or tuple(sorted(item.receipt_id for item in event.source_receipts))
+                   != tuple(sorted(event.source_receipt_ids))):
+            raise AuthorityDenied("resource.source", "original source context or receipt closure changed")
+        with self._event_lock:
+            retained = self._source_closures_by_job.get(child.job_id)
+        if (retained is None or retained[0] is not context
+                or retained[1] != event.source_receipts
+                or retained[2] != event.source_capsule_lineage
+                or retained[3] <= now):
+            raise AuthorityDenied("resource.source", "retained authenticated source closure expired or changed")
+        evidence = self._resolved_controller_evidence.get(handle.handle_id)
+        if (evidence is None or evidence[1] not in event.source_receipt_ids
+                or evidence[3] != context.uid or evidence[4] != enrollment.profile_id
+                or evidence[5] != context.generation or evidence[6] <= now
+                or evidence[10] != getattr(self.service, "authority_epoch", None)):
+            raise AuthorityDenied("resource.controller", "resolved task controller is stale or outside source closure")
+        observer_registry = getattr(self.service, "source_observer_registry", None)
+        producer_resolver = getattr(observer_registry, "resolve_live_source_producer", None)
+        receipt = next((item for item in event.source_receipts if item.receipt_id == evidence[1]), None)
+        if receipt is None or not callable(producer_resolver):
+            raise AuthorityDenied("resource.controller", "live source controller proof is unavailable")
+        try:
+            live = producer_resolver(
+                receipt.receipt_id, profile_id=receipt.profile_id,
+                generation=receipt.process_generation,
+                native_process_identity=receipt.native_process_identity,
+                expires_monotonic=receipt.monotonic_expires_at,
+            )
+        except Exception:
+            raise AuthorityDenied("resource.controller", "task source controller is no longer current") from None
+        try:
+            proof = live.loaded_package_proof
+            if (live.receipt_id != receipt.receipt_id or live.identity != evidence[2]
+                    or live.uid != evidence[3] or live.profile_id != evidence[4]
+                    or live.generation != evidence[5] or live.expires_monotonic != evidence[6]
+                    or getattr(proof, "role_artifact_id", None) != evidence[7]
+                    or getattr(proof, "role_sha256", None) != evidence[8]
+                    or live.authority_epoch != evidence[10]
+                    or live.expires_monotonic <= now):
+                raise AuthorityDenied("resource.controller", "task controller identity changed after resolution")
+        finally:
+            try:
+                os.close(live.pidfd)
+            except OSError:
+                pass
+        return context
 
     def resolve_admitted_task(self, handle: Any, node_id: str) -> RootAdmittedTask:
         """Project the exact neutral task DTO after source and handle validation."""
@@ -1252,7 +2202,7 @@ class ResourceJobAuthority:
             raise AuthorityDenied("resource.process_task", "admitted task selection changed after consume")
         value = json.loads(handle.task_payload.decode("utf-8"))
         stdin = value["prompt"].encode("utf-8")
-        return RootAdmittedTask(
+        task = RootAdmittedTask(
             schema=1, admission_id=child.admission_id, job_id=child.job_id,
             node_id=child.node_id, backend_enrollment_id=backend.backend_id,
             resource_generation=enrollment.generation,
@@ -1268,6 +2218,13 @@ class ResourceJobAuthority:
             parent_closure_digest=handle.parent_closure_digest,
             deadline_monotonic=handle.expires_monotonic, source_context_handle=context_handle,
         )
+        with self._task_handle_lock:
+            current = self._running_task_handles.get(handle.handle_id)
+            if (current is None or current[0] is not handle
+                    or handle.handle_id in self._resolved_task_dtos):
+                raise AuthorityDenied("resource.process_task", "admitted task DTO was already resolved or released")
+            self._resolved_task_dtos[handle.handle_id] = task
+        return task
 
     def start_task_handle(self, handle: Any, node_id: str) -> None:
         """Move the claimed child to running immediately before process.start bytes."""
@@ -1284,6 +2241,145 @@ class ResourceJobAuthority:
             self.ledger.start_child(child, current_generation=self._resource_generation(enrollment))
         except ResourceJobDenied:
             raise AuthorityDenied("resource.process_task", "root child attempt cannot start") from None
+
+    def is_admitted_task_current(self, task: Any, selection_payload: bytes | None = None) -> bool:
+        """Custody guard for the task token and, when supplied, exact launch envelope."""
+        if (not isinstance(task, RootAdmittedTask)
+                or selection_payload is not None and not isinstance(selection_payload, bytes)):
+            return False
+        envelope = None
+        if selection_payload is not None:
+            try:
+                envelope = json.loads(selection_payload.decode("ascii"))
+                if (not isinstance(envelope, dict)
+                        or set(envelope) != {
+                            "schema", "enrollment_id", "generation", "operation_id", "parameters",
+                            "admission_handle", "node_id", "task_payload_sha256", "stdin_sha256",
+                            "stdin_size_bytes", "source_profile_id", "home_binding_id",
+                            "home_binding_handle", "home_binding_sha256",
+                        }
+                        or _canonical(envelope) != selection_payload
+                        or envelope["schema"] != 1
+                        or envelope["enrollment_id"] != task.process_enrollment_id
+                        or envelope["generation"] != task.process_generation
+                        or envelope["operation_id"] != task.operation_id
+                        or envelope["parameters"] != {}
+                        or envelope["node_id"] != task.node_id
+                        or envelope["task_payload_sha256"] != task.task_payload_sha256
+                        or envelope["stdin_sha256"] != task.stdin_sha256
+                        or envelope["stdin_size_bytes"] != task.stdin_size_bytes):
+                    return False
+            except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+                return False
+
+        with self._task_handle_lock:
+            candidates = [row for row in self._running_task_handles.values()
+                          if row[1].admission_id == task.admission_id
+                          and row[1].job_id == task.job_id
+                          and row[1].node_id == task.node_id]
+            if len(candidates) != 1:
+                return False
+            handle, child, enrollment, event = candidates[0]
+            if (self._resolved_task_dtos.get(handle.handle_id) is not task
+                    or envelope is not None and envelope["admission_handle"] != handle.handle_id
+                    or self._source_context_handles.get(handle.handle_id) != task.source_context_handle
+                    or handle.handle_id not in self._source_resolved_handles
+                    or handle.handle_id not in self._controller_resolved_handles
+                    or handle.handle_id not in self._parent_context_resolved_handles):
+                return False
+        try:
+            now = self.service.monotonic()
+            backend = enrollment.backends.get(task.backend_enrollment_id)
+            node = enrollment.node_map.get(task.node_id)
+            current_generation = self._resource_generation(enrollment)
+            if (backend is None or node is None or event.enrollment is not enrollment
+                    or task.admission_id != child.admission_id or task.job_id != child.job_id
+                    or task.node_id != child.node_id or child.retry_index != handle.attempt_index
+                    or task.resource_generation != enrollment.generation
+                    or task.process_enrollment_id != handle.process_enrollment_id
+                    or task.process_generation != handle.process_generation
+                    or task.native_package_id != backend.native_package_id
+                    or task.native_package_generation != backend.native_package_generation
+                    or task.operation_id != handle.operation_id
+                    or task.task_body_recipe_id != handle.task_body_recipe_id
+                    or task.task_request_schema_id != handle.task_request_schema_id
+                    or task.task_payload_bytes != handle.task_payload
+                    or task.task_payload_sha256 != handle.task_payload_sha256
+                    or task.stdin_sha256 != hashlib.sha256(
+                        json.loads(handle.task_payload.decode("utf-8"))["prompt"].encode("utf-8")
+                    ).hexdigest()
+                    or task.stdin_size_bytes != len(
+                        json.loads(handle.task_payload.decode("utf-8"))["prompt"].encode("utf-8")
+                    )
+                    or task.parent_closure_digest != handle.parent_closure_digest
+                    or task.deadline_monotonic != handle.expires_monotonic
+                    or now >= min(handle.expires_monotonic, event.admission.expires_monotonic)
+                    or handle.parent_closure_digest != _admitted_source_closure_digest(
+                        event, child, node, backend)
+                    or current_generation != enrollment.generation
+                    or backend.consent_revision != enrollment.consent_revision
+                    or backend.profile_id != enrollment.profile_id
+                    or backend.principal_id != enrollment.principal_id
+                    or envelope is not None and (
+                        not isinstance(backend.execution_binding, Mapping)
+                        or envelope["source_profile_id"] != backend.execution_binding.get("source_profile_id")
+                        or envelope["home_binding_id"] != backend.execution_binding.get("home_binding_id")
+                        or not isinstance(envelope["home_binding_handle"], str)
+                        or not envelope["home_binding_handle"]
+                        or not isinstance(envelope["home_binding_sha256"], str)
+                        or not re.fullmatch(r"[0-9a-f]{64}", envelope["home_binding_sha256"])
+                    )
+                    or self.service.profile_generations.get(enrollment.profile_id)
+                       != event.parent_context.generation
+                    or not self.ledger.is_job_active(child.job_id, current_generation=current_generation)
+                    or not (self.ledger.is_child_admitted(child, current_generation=current_generation)
+                            or self.ledger.is_active(child, current_generation=current_generation))):
+                return False
+            with self._event_lock:
+                retained = self._source_closures_by_job.get(child.job_id)
+            if (retained is None or retained[0] is not event.parent_context
+                    or retained[1] != event.source_receipts
+                    or retained[2] != event.source_capsule_lineage
+                    or retained[3] <= now):
+                return False
+            self.service._verify_context_signature(event.parent_context)
+            parent_binding = self.service._binding(event.parent_context.uid)
+            self.service._assert_current_context(event.parent_context, parent_binding,
+                                                 event.parent_context.uid)
+            if event.parent_context.source_receipts != event.source_receipts:
+                return False
+            for receipt in event.source_receipts:
+                self.service._verify_source_receipt(receipt, parent_binding)
+            evidence = self._resolved_controller_evidence.get(handle.handle_id)
+            observers = getattr(self.service, "source_observer_registry", None)
+            resolver = getattr(observers, "resolve_live_source_producer", None)
+            source_receipt = next((item for item in event.source_receipts
+                                   if evidence is not None and item.receipt_id == evidence[1]), None)
+            if evidence is None or source_receipt is None or not callable(resolver):
+                return False
+            live = resolver(
+                source_receipt.receipt_id, profile_id=source_receipt.profile_id,
+                generation=source_receipt.process_generation,
+                native_process_identity=source_receipt.native_process_identity,
+                expires_monotonic=source_receipt.monotonic_expires_at,
+            )
+            try:
+                return bool(
+                    live.receipt_id == source_receipt.receipt_id
+                    and live.identity == evidence[2] and live.uid == evidence[3]
+                    and live.profile_id == evidence[4] and live.generation == evidence[5]
+                    and live.expires_monotonic == evidence[6] and live.expires_monotonic > now
+                    and live.authority_epoch == evidence[10]
+                    and evidence[10] == getattr(self.service, "authority_epoch", None)
+                )
+            finally:
+                os.close(live.pidfd)
+        except Exception:
+            return False
+
+    def is_task_admission_current(self, task: Any) -> bool:
+        """One-argument callback for managed task custody; custody validates its envelope."""
+        return self.is_admitted_task_current(task)
 
     def task_handle_cancelled(self, handle: Any, node_id: str) -> bool:
         """Root launcher poll hook; stale, revoked, or unknown tokens cancel."""
@@ -1314,8 +2410,12 @@ class ResourceJobAuthority:
             raise AuthorityDenied("resource.process_task", "root task handle release identity is invalid")
         with self._task_handle_lock:
             registered = self._running_task_handles.pop(handle.handle_id, None)
+            self._resolved_task_dtos.pop(handle.handle_id, None)
             self._source_resolved_handles.discard(handle.handle_id)
             self._source_context_handles.pop(handle.handle_id, None)
+            self._controller_resolved_handles.discard(handle.handle_id)
+            self._resolved_controller_evidence.pop(handle.handle_id, None)
+            self._parent_context_resolved_handles.discard(handle.handle_id)
             controller = self._task_controller_bindings.pop(handle.handle_id, None)
         if controller is not None:
             try:
@@ -1350,6 +2450,38 @@ class ResourceJobAuthority:
             self._result_fields_expiry[child.job_id] = expires
             self._event_field_bytes += len(payload)
 
+    def _retain_task_result_capsule(
+        self, child: ResourceChildAdmission, event: _JobEvent,
+        backend: ResourceBackendEnrollment, receipt: RootResourceProcessReceipt,
+        result: Mapping[str, Any], capsule_sha256: str,
+    ) -> None:
+        """Bind only the runner-validated capsule to this exact child attempt."""
+        if (not isinstance(receipt, RootResourceProcessReceipt)
+                or not isinstance(result, Mapping)
+                or receipt.job_id != child.job_id or receipt.node_id != child.node_id
+                or receipt.backend_enrollment_id != backend.backend_id
+                or not _HEX64.fullmatch(capsule_sha256)
+                or result.get("receipt_id") is None
+                or not isinstance(result.get("receipt_id"), str)
+                or not isinstance(result.get("body"), bytes)):
+            raise AuthorityDenied("resource.result", "validated task capsule does not bind its child attempt")
+        binding = _RootResultCapsuleBinding(
+            node_id=child.node_id, admission_id=child.admission_id,
+            receipt_id=result["receipt_id"], capsule_handle=receipt.result_capsule_handle,
+            capsule_sha256=capsule_sha256, backend_enrollment_id=backend.backend_id,
+            resource_generation=event.enrollment.generation,
+            service_generation_digest=self.service.service_generation_digest or "",
+            expires_monotonic=min(receipt.expires_monotonic, event.admission.expires_monotonic),
+        )
+        if (not _HEX64.fullmatch(binding.service_generation_digest)
+                or binding.expires_monotonic <= self.service.monotonic()):
+            raise AuthorityDenied("resource.result", "validated task result capsule lease is stale")
+        with self._event_lock:
+            rows = self._result_capsules_by_job.setdefault(child.job_id, {})
+            if child.node_id in rows or sum(len(value) for value in self._result_capsules_by_job.values()) >= 1024:
+                raise AuthorityDenied("resource.capacity", "root task result capsule registry is full or duplicated")
+            rows[child.node_id] = binding
+
     def _load_parent_results(self, job_id: str) -> Mapping[str, tuple[str, Mapping[str, Any]]]:
         with self._event_lock:
             self._prune_event_fields_locked(self.service.monotonic())
@@ -1374,6 +2506,11 @@ class ResourceJobAuthority:
             if rows == {}:
                 self._result_fields_by_job.pop(job_id, None)
                 self._result_fields_expiry.pop(job_id, None)
+            capsules = self._result_capsules_by_job.get(job_id)
+            if capsules is not None:
+                capsules.pop(node_id, None)
+                if not capsules:
+                    self._result_capsules_by_job.pop(job_id, None)
 
     def _consume_selected_event_capsule(
             self, enrollment: ResourceJobEnrollment, *, context: HostContext,
@@ -1509,6 +2646,10 @@ class ResourceJobAuthority:
                 self._event_field_bytes -= len(payload)
                 payload[:] = b"\x00" * len(payload)
             self._result_fields_expiry.pop(job_id, None)
+            self._result_capsules_by_job.pop(job_id, None)
+            for key, (closure, _values) in tuple(self._root_result_closures.items()):
+                if closure.admission_handle == job_id:
+                    self._root_result_closures.pop(key, None)
 
     def _prune_event_fields_locked(self, now: float) -> None:
         for job_id, (payload, expires) in tuple(self._event_fields_by_job.items()):
@@ -1526,6 +2667,15 @@ class ResourceJobAuthority:
                 for _receipt_id, payload in results.values():
                     self._event_field_bytes -= len(payload)
                     payload[:] = b"\x00" * len(payload)
+        for job_id, rows in tuple(self._result_capsules_by_job.items()):
+            kept = {node_id: row for node_id, row in rows.items() if row.expires_monotonic > now}
+            if kept:
+                self._result_capsules_by_job[job_id] = kept
+            else:
+                self._result_capsules_by_job.pop(job_id, None)
+        for key, (closure, _values) in tuple(self._root_result_closures.items()):
+            if closure.expires_monotonic <= now:
+                self._root_result_closures.pop(key, None)
 
     def _load_event_fields(self, job_id: str) -> Mapping[str, Any]:
         now = self.service.monotonic()

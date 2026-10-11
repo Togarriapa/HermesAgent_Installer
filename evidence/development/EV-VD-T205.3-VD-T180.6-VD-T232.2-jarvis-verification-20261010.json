@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "record_kind": "repository_contract_verification_and_pi_predecessor_pointer_observation",
+  "authenticated": false,
+  "acceptance_record_emitted": false,
+  "accepted_target_result": false,
+  "change_ids": ["installer-bootstrap-desktop", "verification-documentation"],
+  "task_ids": ["VD-T205.3", "VD-T180.6", "VD-T232.2"],
+  "repository_verification": {
+    "candidate_commit": "18029cc87ea3ca36f45168f9e7edfb48e57576c3",
+    "tree": "0517fe68231f3935bc205d5b2238a679f4fca8d0",
+    "command": "PYTHONPATH=src HERMES_NATIVE_PLUGIN_PYTHON=/private/tmp/hermes-installer-cohort-py314/bin/python /private/tmp/hermes-installer-cohort-py314/bin/python -m pytest -q tests/contracts --basetemp=/private/tmp/hermes-root-jarvis-gid-owned-20261010/final-candidate-after-pins",
+    "result": {"exit_code": 0, "passed": 2019, "skipped": 161, "warnings": 17, "duration_seconds": 80.02},
+    "raw_log_path": "/private/tmp/hermes-root-jarvis18029-contracts-20261010.log",
+    "additional_checks": {
+      "strict_openspec": "13 changes/spec items passed",
+      "plan_validation": "passed; 160 frozen-baseline file hashes verified",
+      "frozen_baseline_tree_diff": "empty",
+      "git_diff_check": "clean"
+    },
+    "related_native_fixture_evidence": {
+      "candidate": "d319be50534bbbe602b8a2a98e4cc41e8ab895c5",
+      "pinned_hermes_source": "7085fbf7753266fc4943c55ac04926186bc90005",
+      "full_bundle": "208 profile identities and 396 skill contents loaded; 1 passed in 282.77 seconds",
+      "default_jarvis_profile": "sole default profile fixture passed in 2.61 seconds",
+      "classification": "fixture evidence only; not Pi, privileged installation, Desktop rendering, inference, or account acceptance"
+    }
+  },
+  "pi_predecessor_read_only_observation": {
+    "target": "PI-HERMES",
+    "reader": "root, as reported",
+    "method": "bounded read-only O_NOFOLLOW open; maximum 65536 bytes; validated regular file with one link",
+    "path": "/var/lib/hermes-installer/deployments/current.json",
+    "file_identity": {"uid": 0, "gid": 0, "mode_octal": "0600", "device": 66306, "inode": 1974883},
+    "pointer_candidate": "cc81abffe3cbb1df447889bca269d1e6c0be77ea",
+    "pointer_sha256": "4fb20b47f759986696cb23ee9752c04a08a91e43bbc0025990c1b14062f5ee9e",
+    "closure_sha256": "a8c2e34d62710087877f549828bc14c7d086493a274ff87b892cb406e946d40b",
+    "baseline_aggregate_sha256": "039a6ab93f6bd44d80df01e99368c24c4348624305b6f4d17816eed25a167ade",
+    "timestamp": null,
+    "interpretation_limit": "Metadata-only read of a predecessor deployment pointer. It is not full installed-release verification, a current runtime health result, or Pi acceptance for candidate 18029cc."
+  },
+  "acceptance_assertions": {
+    "AC01": null, "AC02": null, "AC03": null, "AC04": null, "AC05": null,
+    "AC06": null, "AC07": null, "AC08": null, "AC09": null, "AC10": null,
+    "AC11": null, "AC12": null, "AC13": null, "AC14": null, "AC15": null,
+    "AC16": null, "AC17": null, "AC18": null
+  },
+  "resource_delete_safe": false,
+  "claim_limit": "Repository tests and checks passed for candidate 18029cc; separate Pi metadata refers to predecessor cc81. Neither establishes successful Pi installation, current runtime, account/provider action, or acceptance. All AC01-AC18 remain open."
+}

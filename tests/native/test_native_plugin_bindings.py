@@ -16,11 +16,14 @@ from hermes_installer.native_plugin_bindings import (
 
 
 def resolver_wire(*, rows=None):
+    process_role_records_sha256 = hashlib.sha256(b"[]").hexdigest()
     body = {
         "schema": 1,
         "package_id": "native-package-fixture",
         "profile_id": "profile-fixture",
         "generation": "generation-fixture",
+        "process_role_records_sha256": process_role_records_sha256,
+        "owner_overlay_operation_records": [],
         "adapters": list(rows if rows is not None else [{
             "adapter_id": "fixture-plugin",
             "manifest_sha256": "a" * 64,
@@ -39,6 +42,33 @@ def resolver_wire(*, rows=None):
     canonical = json.dumps(body, ensure_ascii=False, sort_keys=True,
                            separators=(",", ":"), allow_nan=False).encode("utf-8")
     return {**body, "resolver_sha256": hashlib.sha256(canonical).hexdigest()}
+
+
+def owner_overlay_wire(registration_id="resource-overlay-store:tool:resource_overlay_read"):
+    method, operation = {
+        "resource-overlay-store:tool:resource_overlay_read": ("read", "plugin.resource-overlay-store.read"),
+        "resource-overlay-store:tool:resource_overlay_history": ("history", "plugin.resource-overlay-store.read"),
+        "resource-overlay-store:tool:resource_overlay_write": ("write", "plugin.resource-overlay-store.write"),
+        "resource-overlay-store:tool:resource_overlay_delete": ("delete", "plugin.resource-overlay-store.write"),
+    }[registration_id]
+    return {
+        "registration_id": registration_id, "method": method, "operation": operation,
+        "capability": "plugin:resource-overlay-store", "target_id": "target-1", "recipient": None,
+        "effect_enrollment_id": "effect-1", "profile_id": "profile-fixture",
+        "profile_generation": "profile-gen-1", "principal_id": "principal-1",
+        "namespace_id": "namespace-1", "package_id": "native-package-fixture",
+        "package_generation": "generation-fixture", "argument_schema_id": "args-1",
+        "argument_schema_sha256": "a" * 64, "argument_schema_receipt_handle": "args-receipt-1",
+        "result_schema_id": "result-1", "result_schema_sha256": "b" * 64,
+        "result_schema_receipt_handle": "result-receipt-1", "handler_artifact_id": "handler-1",
+        "handler_sha256": "c" * 64, "handler_source_receipt_handle": "handler-receipt-1",
+        "profile_view_selection_handle": "view-selection-1", "profile_view_receipt_handle": "view-receipt-1",
+        "data_root_selection_handle": "data-root-selection-1", "data_root_receipt_handle": "data-root-receipt-1",
+        "target_selection_handle": "target-selection-1", "target_receipt_handle": "target-receipt-1",
+        "prepared_source_observer_selection_handle": "observer-selection-1",
+        "source_observer_enrollment_ids": ["observer-1"], "process_role_id": "role-1",
+        "source_issuer_id": "issuer-1",
+    }
 
 
 class AuthorityFixture:
@@ -81,8 +111,42 @@ class NativePluginBindingTests(unittest.TestCase):
         self.assertEqual(effects.generation, "generation-fixture")
         self.assertEqual(selected.effect_enrollment_id, "effect.fixture.read")
         self.assertIsNone(effects.resolve("unselected-plugin", "fixture.read"))
+        self.assertEqual(effects.adapter_rows[0].adapter_id, "fixture-plugin")
+        self.assertEqual(effects.owner_overlay_operations, ())
         with self.assertRaises((AttributeError, TypeError)):
             selected.generation = "other-generation"
+
+    def test_owner_overlay_rows_are_a_separate_complete_local_lane(self):
+        rows = [owner_overlay_wire(registration) for registration in sorted({
+            "resource-overlay-store:tool:resource_overlay_read",
+            "resource-overlay-store:tool:resource_overlay_history",
+            "resource-overlay-store:tool:resource_overlay_write",
+            "resource-overlay-store:tool:resource_overlay_delete",
+        })]
+        wire = resolver_wire()
+        wire["owner_overlay_operation_records"] = rows
+        canonical = {key: wire[key] for key in (
+            "schema", "package_id", "profile_id", "generation", "process_role_records_sha256",
+            "adapters", "owner_overlay_operation_records")}
+        wire["resolver_sha256"] = hashlib.sha256(json.dumps(
+            canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            allow_nan=False).encode("utf-8")).hexdigest()
+        selected = RootSelectedPluginEffects(AuthorityFixture(wire), clock=lambda: 10.0)
+        self.assertEqual({row.method for row in selected.owner_overlay_operations},
+                         {"read", "history", "write", "delete"})
+        self.assertEqual(len(selected.adapter_rows), 1)
+        self.assertIsNone(selected.resolve("resource-overlay-store", rows[0]["registration_id"]))
+        self.assertEqual(selected.resolve_owner_overlay(rows[0]["registration_id"]).method,
+                         rows[0]["method"])
+
+        rows[0]["data_root_receipt_handle"] = ""
+        wire["owner_overlay_operation_records"] = rows
+        canonical["owner_overlay_operation_records"] = rows
+        wire["resolver_sha256"] = hashlib.sha256(json.dumps(
+            canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            allow_nan=False).encode("utf-8")).hexdigest()
+        with self.assertRaises(NativePluginBindingUnavailable):
+            RootSelectedPluginEffects(AuthorityFixture(wire), clock=lambda: 10.0)
 
     def test_opaque_target_identifier_is_metadata_not_an_authority_shape(self):
         wire = resolver_wire(rows=[{
@@ -130,7 +194,8 @@ class NativePluginBindingTests(unittest.TestCase):
         wrong_generation = resolver_wire()
         wrong_generation["adapters"][0]["generation"] = "generation-other"
         canonical = {key: wrong_generation[key] for key in
-                     ("schema", "package_id", "profile_id", "generation", "adapters")}
+                     ("schema", "package_id", "profile_id", "generation",
+                      "process_role_records_sha256", "adapters", "owner_overlay_operation_records")}
         wrong_generation["resolver_sha256"] = hashlib.sha256(json.dumps(
             canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
             allow_nan=False).encode("utf-8")).hexdigest()

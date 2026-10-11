@@ -7,6 +7,7 @@ adapters; callers submit only opaque artifact receipt handles and an intent.
 from __future__ import annotations
 
 import hashlib
+import errno
 import json
 import os
 import pwd
@@ -22,7 +23,7 @@ import select
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Callable, Iterator, Mapping, Protocol
 
 
 MAX_AUTHORITY_BYTES = 8 * 1024 * 1024
@@ -35,6 +36,117 @@ class BootstrapEnrollmentError(RuntimeError):
 
 class BootstrapEnrollmentPending(BootstrapEnrollmentError):
     """A required root-enrolled artifact or account prerequisite is absent."""
+
+
+class BootstrapPendingStepFailure(BootstrapEnrollmentPending):
+    """A fixed initial-compilation stage where a prerequisite is pending."""
+
+    STEPS = frozenset({
+        "initial_compilation.actor_current",
+        "initial_compilation.validation",
+        "initial_compilation.account",
+        "initial_compilation.install_mode",
+        "initial_compilation.release_closure",
+        "initial_compilation.template",
+        "initial_compilation.catalog",
+        "initial_compilation.journal",
+        "initial_compilation.actor_write",
+    })
+
+    def __init__(self, step: str):
+        if type(step) is not str or step not in self.STEPS:
+            raise ValueError("bootstrap pending diagnostic step is outside the fixed catalog")
+        self.step = step
+        super().__init__("root setup prerequisite is pending at a fixed initial-compilation stage")
+
+
+@contextmanager
+def bootstrap_pending_step(step: str) -> Iterator[None]:
+    """Tag only an exact pending prerequisite with a reviewed fixed stage."""
+    if type(step) is not str or step not in BootstrapPendingStepFailure.STEPS:
+        raise ValueError("bootstrap pending diagnostic step is outside the fixed catalog")
+    try:
+        yield
+    except BootstrapEnrollmentPending as exc:
+        if type(exc) is not BootstrapEnrollmentPending:
+            raise
+        raise BootstrapPendingStepFailure(step) from None
+
+
+class BootstrapSystemCallFailure(OSError):
+    """A root bootstrap OS failure with a finite step and sanitized errno."""
+
+    STEPS = frozenset({
+        "bootstrap.tty_selection",
+        "source_cas.construct",
+        "source_cas.prepare",
+        "source_cas.lock",
+        "source_cas.lock_release",
+        "source_cas.inspect",
+        "source_cas.materialize",
+        "source_cas.resolve",
+        "installer_runtime.provision",
+        "bootstrap.handoff",
+        "bootstrap.reexec",
+    })
+    ERRNO_NAMES = frozenset({
+        "EACCES", "EAGAIN", "EBUSY", "EEXIST", "EINTR", "EINVAL", "EIO",
+        "EISDIR", "EMFILE", "ENFILE", "ENOSPC", "ENOTDIR", "ENOTTY",
+        "ENXIO", "ELOOP", "ENOENT", "ENOMEM", "EPERM", "EROFS", "ETIMEDOUT",
+        "EXDEV",
+    })
+
+    def __init__(self, step: str, error_number: int | None):
+        if step not in self.STEPS:
+            step = "source_cas.inspect"
+        errno_name = errno.errorcode.get(error_number) if isinstance(error_number, int) else None
+        safe_errno = error_number if errno_name in self.ERRNO_NAMES else None
+        self.step = step
+        self.errno_name = errno_name if safe_errno is not None else "UNKNOWN"
+        super().__init__(safe_errno, "installer bootstrap system call failed")
+
+
+class BootstrapRuntimeStepFailure(RuntimeError):
+    """A fixed bootstrap stage and built-in RuntimeError category only."""
+
+    STEPS = frozenset({
+        "bootstrap.tty_selection",
+        "source_cas.construct",
+        "source_cas.registry",
+        "source_cas.acquire",
+        "source_cas.resolve",
+        "installer_runtime.registry",
+        "installer_runtime.provision",
+        "bootstrap.handoff",
+        "bootstrap.reexec",
+        "installed_release.predecessor",
+        "installed_release.import_closure",
+        "installed_release.actor_observation",
+        "installed_release.actor_verification",
+    })
+    ERROR_KINDS = frozenset({"RuntimeError"})
+
+    def __init__(self, step: str, error_kind: str):
+        if type(step) is not str or step not in self.STEPS:
+            raise ValueError("bootstrap runtime diagnostic step is outside the fixed catalog")
+        if type(error_kind) is not str or error_kind not in self.ERROR_KINDS:
+            raise ValueError("bootstrap runtime diagnostic category is outside the fixed catalog")
+        self.step = step
+        self.error_kind = error_kind
+        super().__init__("installer bootstrap runtime step failed")
+
+
+@contextmanager
+def bootstrap_runtime_error_step(step: str) -> Iterator[None]:
+    """Add only a reviewed stage to an exact built-in RuntimeError."""
+    if type(step) is not str or step not in BootstrapRuntimeStepFailure.STEPS:
+        raise ValueError("bootstrap runtime diagnostic step is outside the fixed catalog")
+    try:
+        yield
+    except RuntimeError as exc:
+        if type(exc) is not RuntimeError:
+            raise
+        raise BootstrapRuntimeStepFailure(step, "RuntimeError") from None
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +181,14 @@ class EnrollmentPolicy:
     generation_id: str
     source_artifact_id: str
     records: tuple[Mapping[str, Any], ...]
+    # These active root catalogs must be selected explicitly, even when the
+    # selected generation declares a capability unavailable with an empty list.
+    resource_controller_roles: tuple[Mapping[str, Any], ...]
+    native_mcp_tool_bindings: tuple[Mapping[str, Any], ...]
+    remote_observation_enrollments: tuple[Mapping[str, Any], ...]
+    native_schema_artifacts: tuple[Mapping[str, Any], ...] = ()
+    composio_channel_enrollments: tuple[Mapping[str, Any], ...] = ()
+    channel_delivery_bindings: tuple[Mapping[str, Any], ...] = ()
     protected_devices: tuple[Mapping[str, Any], ...] = ()
     protected_build_records: tuple[Mapping[str, Any], ...] = ()
     native_packages: tuple[Mapping[str, Any], ...] = ()
@@ -82,6 +202,27 @@ class EnrollmentPolicy:
     resource_scope_bindings: tuple[Mapping[str, Any], ...] = ()
     resource_validators: tuple[Mapping[str, Any], ...] = ()
     root_journal_roots: tuple[Mapping[str, Any], ...] = ()
+    # These active runtime selections are populated only from root-selected
+    # receipts and catalog joins. Empty means the corresponding capability is
+    # not selected in this generation.
+    remote_startup_enrollments: tuple[Mapping[str, Any], ...] = ()
+    private_loopback_networks: tuple[Mapping[str, Any], ...] = ()
+    # v184 finite native AF_UNIX startup projection. These catalogs are empty
+    # until their root-held source, endpoint and active-generation producer is
+    # composed; callers do not get to submit them through an enrollment request.
+    native_worker_network_records: tuple[Mapping[str, Any], ...] = ()
+    active_network_generation_records: tuple[Mapping[str, Any], ...] = ()
+    native_worker_runtime_records: tuple[Mapping[str, Any], ...] = ()
+    owner_overlay_observer_records: tuple[Mapping[str, Any], ...] = ()
+    selected_resource_executions: tuple[Mapping[str, Any], ...] = ()
+    selected_application_runtimes: tuple[Mapping[str, Any], ...] = ()
+    # Public network scopes become active only after their source-specific
+    # target configuration receipt is selected and joined by root.
+    public_web_scopes: tuple[Mapping[str, Any], ...] = ()
+    memory_service_enablement_projections: tuple[Mapping[str, Any], ...] = ()
+    native_schema_artifacts: tuple[Mapping[str, Any], ...] = ()
+    composio_channel_enrollments: tuple[Mapping[str, Any], ...] = ()
+    channel_delivery_bindings: tuple[Mapping[str, Any], ...] = ()
     activation_state: str = "active"
     authority_base: Mapping[str, Any] | None = None
     home_root: Path = Path("/var/lib/hermes-installer/services/default/home")
@@ -101,6 +242,18 @@ class EnrollmentReceipt:
     enrollment_ids: tuple[str, ...]
     issued_monotonic: float
     expires_monotonic: float
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class VerifiedCommittedEnrollment:
+    """Store-issued proof that a caller receipt matches the current durable CAS."""
+
+    receipt: EnrollmentReceipt
+    setup_session_id: str
+    plan_digest: str
+    target_id: str
+    journal_transaction_id: str
+    _store_seal: str = field(repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -588,6 +741,7 @@ class RootSetupSessionStore:
     def __init__(self, *, plan_resolver: RootSetupPlanResolver,
                  actor_verifier: RootSetupActorVerifier,
                  receipt_registry: RootArtifactReceiptRegistry,
+                 initial_compilation_registry: Any | None = None,
                  session_root: Path = Path("/var/lib/hermes-installer/authority-journal/setup-sessions"),
                  transaction_root: Path = Path("/var/lib/hermes-installer/authority-journal/bootstrap-transactions"),
                  authority_path: Path = Path("/etc/hermes-installer/authority.json")):
@@ -603,11 +757,84 @@ class RootSetupSessionStore:
         self.plan_resolver = plan_resolver
         self.actor_verifier = actor_verifier
         self.receipt_registry = receipt_registry
+        self.initial_compilation_registry = initial_compilation_registry
         self.session_root = session_root
         self.transaction_root = transaction_root
         self.authority_path = authority_path
         self._instance_seal = secrets.token_hex(32)
         self._sessions: dict[str, _LiveSetupSession] = {}
+        self._selected_startup_intent_journal: Any | None = None
+
+    def begin_from_initial_publication(self, handoff_handle: str) -> RootSetupSessionHandle:
+        """Adopt the published stage-zero choices into a new live setup session.
+
+        The registry owns the publication proof and consumes the handoff once. The
+        only values used to construct the normal session are read from that sealed
+        root DTO; callers cannot supply a target account, plan, or operation intent.
+        """
+        registry = self.initial_compilation_registry
+        if registry is None or not callable(getattr(registry, "resolve_handoff", None)):
+            raise BootstrapEnrollmentPending("initial root publication handoff registry is unavailable")
+        from .bootstrap_runtime_factory import RootInitialPublicationHandoff
+        handoff = registry.resolve_handoff(handoff_handle)
+        if not isinstance(handoff, RootInitialPublicationHandoff) or handoff._initial_session is None:
+            raise BootstrapEnrollmentPending("initial publication handoff is not registry-issued")
+        initial = handoff._initial_session
+        if (initial.phase != "initial-compilation"
+                or handoff.expires_monotonic <= time.monotonic()
+                or handoff.principal_identity_kind
+                   != initial._choices.selected_principal_identity_kind
+                or handoff.principal_identity_kind not in {"authentik-subject-v1", "linux-local-owner-v1"}
+                or not re.fullmatch(r"[0-9a-f]{64}", handoff.plan_sha256)):
+            raise BootstrapEnrollmentPending("initial publication handoff is stale or malformed")
+        verify_initial = getattr(registry, "verify_initial_session", None)
+        if not callable(verify_initial):
+            raise BootstrapEnrollmentPending("initial compilation registry cannot revalidate the stage-zero session")
+        verify_initial(initial)
+        choices = initial._choices
+        if choices is None:
+            raise BootstrapEnrollmentPending("published stage-zero choices are unavailable")
+        handle = self.begin_local(
+            mode=choices.mode,
+            selected_plan_artifact_id=initial.plan_artifact_id,
+            target_account_name=choices.target_account_name,
+        )
+        live = self._live(handle)
+        if live.record["plan_digest"] != handoff.plan_sha256:
+            self.close_session(handle)
+            raise BootstrapEnrollmentPending("installed setup plan changed after initial publication")
+        # Persist a recoverable intent before the registry's one-use transition.
+        live.record["initial_publication"] = {
+            "handoff_handle": handoff_handle,
+            "publication_receipt_handle": handoff.publication_receipt_handle,
+            "publication_sha256": handoff.publication_sha256,
+            "compilation_session_handle": handoff.compilation_session_handle,
+            "compilation_transaction_handle": handoff.compilation_transaction_handle,
+            "choices_sha256": handoff.choices_sha256,
+            "principal_selection_receipt_handle": handoff.principal_selection_receipt_handle,
+            "principal_identity_kind": handoff.principal_identity_kind,
+            "artifact_receipt_handles": list(handoff.artifact_receipt_handles),
+            "adoption_state": "pending",
+        }
+        _atomic_root_file(self.session_root / f"{handle.session_id}.json",
+                          _canonical(live.record), 0o600)
+        try:
+            adopted = registry.adopt_handoff(handoff_handle, handle, self)
+            proof = self._proof(live)
+            if (adopted.normal_setup_session_id != handle.session_id
+                    or adopted.normal_transaction_handle != proof.transaction_handle):
+                raise BootstrapEnrollmentPending("adopted publication handoff does not join the new session")
+            live.record["initial_publication"]["adoption_state"] = "adopted"
+            live.record["initial_publication"]["normal_setup_session_id"] = handle.session_id
+            live.record["initial_publication"]["normal_transaction_handle"] = proof.transaction_handle
+            _atomic_root_file(self.session_root / f"{handle.session_id}.json",
+                              _canonical(live.record), 0o600)
+            return handle
+        except Exception:
+            # A consumed handoff is never silently recreated. Keep the durable
+            # pending record for root reconciliation and invalidate this process handle.
+            self.close_session(handle)
+            raise
 
     def begin_local(self, *, mode: str, selected_plan_artifact_id: str,
                     target_account_name: str) -> RootSetupSessionHandle:
@@ -685,10 +912,32 @@ class RootSetupSessionStore:
         if (not isinstance(session_handle, RootSetupSessionHandle)
                 or not secrets.compare_digest(session_handle._instance_seal, self._instance_seal)):
             raise BootstrapEnrollmentError("root setup session handle is not owned by this store instance")
-        live = self._sessions.pop(session_handle.session_id, None)
+        live = self._sessions.get(session_handle.session_id)
         if live is None or not secrets.compare_digest(live.instance_seal, session_handle._instance_seal):
             raise BootstrapEnrollmentError("root setup session is not live in this store")
+        journal = self._selected_startup_intent_journal
+        if journal is not None:
+            # Cancellation is durably committed before the PIDFD or live
+            # membership is released.  A failed journal write keeps the
+            # session live so callers cannot accidentally revoke only half
+            # of the delegated authority.
+            journal.cancel_for_setup_session(session_handle)
+        self._sessions.pop(session_handle.session_id, None)
         os.close(live.pidfd)
+
+    def attach_selected_startup_intent_journal(self, journal: Any) -> None:
+        """Attach the exact issuer-owned journal used by this live setup store."""
+        from .selected_startup_intents import RootSetupSelectedStartupIntentJournal
+        if (type(journal) is not RootSetupSelectedStartupIntentJournal
+                or journal.issuer is None
+                or journal.issuer.binding._session._factory.session_store is not self
+                or journal.issuer.session_store is not self):
+            raise BootstrapEnrollmentError(
+                "selected startup intent journal is not owned by this setup session store")
+        if (self._selected_startup_intent_journal is not None
+                and self._selected_startup_intent_journal is not journal):
+            raise BootstrapEnrollmentError("setup store already owns another startup intent journal")
+        self._selected_startup_intent_journal = journal
 
     def record_receipt(self, session_handle: RootSetupSessionHandle,
                        receipt: EnrollmentReceipt) -> None:
@@ -700,6 +949,64 @@ class RootSetupSessionStore:
         live.record["expected_previous_generation_digest"] = receipt.generation_digest
         _atomic_root_file(self.session_root / f"{live.record['setup_session_id']}.json",
                           _canonical(live.record), 0o600)
+
+    def verify_committed_receipt(
+        self, receipt: EnrollmentReceipt, authorization: VerifiedRootSetupAuthorization,
+    ) -> VerifiedCommittedEnrollment:
+        """Verify an enrollment DTO against its root transaction journal and CAS."""
+        if not isinstance(receipt, EnrollmentReceipt) or not isinstance(authorization, VerifiedRootSetupAuthorization):
+            raise BootstrapEnrollmentPending("committed enrollment verification requires typed root proofs")
+        live = self._sessions.get(authorization.setup_session_id)
+        if live is None:
+            raise BootstrapEnrollmentPending("committed enrollment session is no longer live")
+        current = self._proof(self._live(live.handle))
+        if current != authorization:
+            raise BootstrapEnrollmentPending("committed enrollment authorization is stale")
+        if (receipt.schema != 1 or receipt.state != "committed"
+                or type(receipt.issued_monotonic) not in (int, float)
+                or type(receipt.expires_monotonic) not in (int, float)
+                or receipt.expires_monotonic <= time.monotonic()
+                or receipt.expires_monotonic <= receipt.issued_monotonic
+                or receipt.expires_monotonic - receipt.issued_monotonic > 300.001
+                or receipt.transaction_handle != current.transaction_handle
+                or not re.fullmatch(r"[0-9a-f]{48}", receipt.provision_receipt_handle)
+                or not re.fullmatch(r"[0-9a-f]{64}", receipt.generation_digest)
+                or (receipt.previous_generation_digest is not None
+                    and not re.fullmatch(r"[0-9a-f]{64}", receipt.previous_generation_digest))
+                or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", receipt.generation_id)):
+            raise BootstrapEnrollmentPending("enrollment receipt is not a current committed receipt")
+        matches: list[tuple[str, Mapping[str, Any]]] = []
+        for path in self.transaction_root.glob("[0-9a-f]" * 32 + ".json"):
+            row = _read_json_if_owned(path)
+            if not isinstance(row, dict):
+                continue
+            setup = row.get("setup_authorization")
+            if (row.get("state") == "committed" and isinstance(setup, dict)
+                    and setup.get("transaction_handle") == receipt.transaction_handle
+                    and setup.get("setup_session_id") == current.setup_session_id
+                    and setup.get("plan_digest") == current.plan_digest
+                    and setup.get("target_id") == current.target_id
+                    and setup.get("expected_previous_generation_digest") == receipt.previous_generation_digest
+                    and row.get("generation_digest") == receipt.generation_digest
+                    and row.get("previous_generation_digest") == receipt.previous_generation_digest
+                    and live.record["expected_previous_generation_digest"] in {
+                        receipt.previous_generation_digest, receipt.generation_digest}
+                    and row.get("provision_receipt_handle") == receipt.provision_receipt_handle):
+                matches.append((path.stem, row))
+        if len(matches) != 1:
+            raise BootstrapEnrollmentPending("committed enrollment does not match one durable setup transaction")
+        transaction_id, journal = matches[0]
+        authority = self.authority_loader_for_session()
+        snapshot = authority.get("service_generations") if isinstance(authority, Mapping) else None
+        if (not isinstance(snapshot, Mapping)
+                or snapshot.get("generation_id") != receipt.generation_id
+                or snapshot.get("generation_digest") != receipt.generation_digest
+                or snapshot.get("generation_digest") != journal.get("generation_digest")):
+            raise BootstrapEnrollmentPending("committed enrollment CAS is no longer the selected authority generation")
+        return VerifiedCommittedEnrollment(
+            receipt, current.setup_session_id, current.plan_digest, current.target_id,
+            transaction_id, self._instance_seal,
+        )
 
     def bootstrap_client(self, session_handle: RootSetupSessionHandle,
                          transaction: RootBootstrapEnrollment, *,
@@ -753,6 +1060,14 @@ class RootSetupSessionStore:
                 or stat.S_IMODE(current_journal.st_mode) != 0o700):
             raise BootstrapEnrollmentError("root authority journal directory identity changed")
         return live
+
+    def current_deadline(self, session_handle: RootSetupSessionHandle) -> float:
+        """Return the monotonic expiry of a fully revalidated live setup session."""
+        live = self._live(session_handle)
+        deadline = live.record.get("expires_monotonic")
+        if type(deadline) not in (int, float) or deadline <= time.monotonic():
+            raise BootstrapEnrollmentPending("root setup session deadline is unavailable or expired")
+        return float(deadline)
 
     def _handle_for_session(self, session_id: str) -> RootSetupSessionHandle:
         live = self._sessions.get(session_id)
@@ -1507,12 +1822,14 @@ class RootBootstrapEnrollment:
 
 
 def _generation(policy: EnrollmentPolicy) -> dict[str, Any]:
-    value = {"schema": 1, "generation_id": policy.generation_id,
+    value = {"schema": 2, "generation_id": policy.generation_id,
              "service_records": [dict(row) for row in policy.records],
              "protected_devices": [dict(row) for row in policy.protected_devices],
              "protected_build_records": [dict(row) for row in policy.protected_build_records],
              "native_packages": [dict(row) for row in policy.native_packages],
              "memory_enrollments": [dict(row) for row in policy.memory_enrollments],
+             "memory_service_enablement_projections": [dict(row) for row in getattr(
+                 policy, "memory_service_enablement_projections", ())],
              "operation_parameter_schemas": [dict(row) for row in policy.operation_parameter_schemas],
              "source_issuers": [dict(row) for row in policy.source_issuers],
              "resource_jobs": [dict(row) for row in policy.resource_jobs],
@@ -1521,7 +1838,31 @@ def _generation(policy: EnrollmentPolicy) -> dict[str, Any]:
              "resource_body_recipes": [dict(row) for row in policy.resource_body_recipes],
              "resource_scope_bindings": [dict(row) for row in policy.resource_scope_bindings],
              "resource_validators": [dict(row) for row in policy.resource_validators],
-             "root_journal_roots": [dict(row) for row in policy.root_journal_roots]}
+             "root_journal_roots": [dict(row) for row in policy.root_journal_roots],
+             "remote_startup_enrollments": [dict(row) for row in policy.remote_startup_enrollments],
+             "private_loopback_networks": [dict(row) for row in policy.private_loopback_networks],
+             "native_worker_network_records": [dict(row) for row in policy.native_worker_network_records],
+             "active_network_generation_records": [dict(row) for row in policy.active_network_generation_records],
+             "native_worker_runtime_records": [dict(row) for row in policy.native_worker_runtime_records],
+             "owner_overlay_observer_records": [dict(row) for row in policy.owner_overlay_observer_records],
+             "selected_resource_executions": [dict(row) for row in policy.selected_resource_executions],
+             "selected_application_runtimes": [dict(row) for row in policy.selected_application_runtimes],
+             "public_web_scopes": [dict(row) for row in policy.public_web_scopes],
+             "native_schema_artifacts": [dict(row) for row in policy.native_schema_artifacts],
+             "composio_channel_enrollments": [dict(row) for row in policy.composio_channel_enrollments],
+             "channel_delivery_bindings": [dict(row) for row in policy.channel_delivery_bindings],
+             "resource_controller_roles": [dict(row) for row in policy.resource_controller_roles],
+             "native_mcp_tool_bindings": [dict(row) for row in policy.native_mcp_tool_bindings],
+             "remote_observation_enrollments": [dict(row) for row in policy.remote_observation_enrollments],
+             "native_schema_artifacts": [dict(row) for row in policy.native_schema_artifacts],
+             "composio_channel_enrollments": [dict(row) for row in policy.composio_channel_enrollments],
+             "channel_delivery_bindings": [dict(row) for row in policy.channel_delivery_bindings],
+             # v128 selections exist only after root-verified observation and
+             # explicit selection. Enrollment never infers either from policy
+             # aliases, model lists, or the prepared setup transaction.
+             "private_memory_endpoint_selections": [],
+             "private_memory_model_selections": [],
+             "public_web_scopes": [dict(row) for row in getattr(policy, "public_web_scopes", ())]}
     value["generation_digest"] = hashlib.sha256(_canonical(value, ensure_ascii=False)).hexdigest()
     from .enrollment import _validate_service_generations
     try:
@@ -1534,11 +1875,20 @@ def _verify_service_records(policy: EnrollmentPolicy, identity: ServiceIdentity)
     """Parse and join the selected record through the same decoder as runtime."""
     snapshot = _generation(policy)
     from .protected_enrollment import ProtectedEnrollmentCatalog
+    from hermes_installer.memory.enrollment import MemoryServiceEnrollment
     try:
         catalog = ProtectedEnrollmentCatalog.from_verified_records(
             snapshot["service_records"], protected_digest=snapshot["generation_digest"],
             expected_uid=0, native_packages=snapshot["native_packages"],
             parameter_schemas=snapshot["operation_parameter_schemas"],
+            memory_enrollments={
+                (row.service_enrollment_id, row.service_generation): row
+                for row in (
+                    MemoryServiceEnrollment.from_protected_record(raw)
+                    for raw in snapshot["memory_enrollments"]
+                )
+            },
+            memory_service_enablement_projections=snapshot["memory_service_enablement_projections"],
         )
         matches = [record for record in catalog._records.values()
                    if record.profile_id == policy.service_profile_id]
@@ -1888,8 +2238,7 @@ def _validate_prepared_policy(policy: EnrollmentPolicy) -> None:
     catalog_names = ("protected_devices", "protected_build_records", "native_packages",
                      "memory_enrollments", "operation_parameter_schemas", "source_issuers",
                      "resource_jobs", "remote_session_enrollments", "resource_backend_enrollments",
-                     "resource_body_recipes", "resource_scope_bindings", "resource_validators",
-                     "root_journal_roots")
+                     "resource_body_recipes", "resource_scope_bindings", "resource_validators")
     if any(getattr(policy, name) for name in catalog_names):
         raise BootstrapEnrollmentError("prepared generation cannot activate dependent catalogs")
 

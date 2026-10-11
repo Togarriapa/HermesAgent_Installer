@@ -12,12 +12,14 @@ dependencies = ["PyYAML==6.0.3"]
 [project.scripts]
 hermes-installer = "hermes_installer.cli:main"
 hermes-installer-authority = "hermes_installer.authority.daemon:main"
+hermes-installer-gateway-stage = "hermes_installer.remote.manual_stage:main"
+hermes-installer-gateway-stage-inspector = "hermes_installer.remote.manual_stage_inspector:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-hermes_installer = ["registry/bundle_data/*.json", "registry/bundle_data/*.tar.gz", "authority/artifact-catalog.json", "authority/hermes-source-normalization.json", "components/runtime_locks/browser-use/*"]
+hermes_installer = ["registry/bundle_data/*.json", "registry/bundle_data/*.tar.gz", "authority/artifact-catalog.json", "authority/hermes-source-normalization.json", "components/runtime_locks/browser-use/*", "native_health_fixture/*.json", "native_health_fixture/*.txt", "components/probes/*.py", "components/probes/*.json", "components/probes/graphify_fixture/*.py", "components/probes/hyperframes_fixture/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

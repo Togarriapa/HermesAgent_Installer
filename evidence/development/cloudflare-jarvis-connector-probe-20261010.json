@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "record_kind": "operator_reported_cloudflare_connector_probe_partial",
+  "observation_date": "2026-10-10",
+  "observation_window_utc": "22:40-22:45; exact seconds not reported",
+  "change_ids": ["remote-desktop-tunnel", "verification-documentation"],
+  "requirement_ids": ["RT-F01"],
+  "acceptance_ids": ["AC13", "AC14", "AC15"],
+  "target": "PI-HERMES",
+  "owned_tunnel": {
+    "id": "7bd18bb8-fb2f-4439-92cd-18a8e6349a67",
+    "cloudflare_api_state_during_probe": "four registered, non-pending connections; locations reported as Madrid colo sites",
+    "pi_journal_during_probe": "four registered tunnel connections; safe configuration seen=true; errors=0"
+  },
+  "connector_probe": {
+    "cloudflared_version": "2026.9.3",
+    "canonical_binary": "/usr/bin/cloudflared",
+    "binary_sha256": "aaeb2d7d0da3614634c7e03ab13487a1522c2e79165ed2929cfe23d5e95b326d",
+    "binary_digest_source": "Root-reported digest from the actual official Linux ARM64 /usr/bin/cloudflared binary on PI-HERMES during the 2026-10-10 browser/Pi probe.",
+    "normal_usr_local_path": "symlink to /usr/bin/cloudflared",
+    "unit": "hermes-installer-jarvis-connector-probe2-20261010.service",
+    "attempt_history": "Initial transient invocation failed because systemd-run preserved a literal %d credential-path specifier. The corrected invocation used the actual credential directory and produced the bounded connection proof.",
+    "execution": "Transient, five-minute-capped systemd unit with DynamicUser, LoadCredential, ProtectSystem=strict, ProtectHome, PrivateTmp, PrivateDevices, NoNewPrivileges, and empty capability set.",
+    "credential_handling": "Tunnel credential was sent encrypted using RSA-4096 OAEP-SHA256; plaintext was not placed in model context, source, argv, or logs. Pi-side private key was deleted after decryption and the token was held in a root-owned mode-0600 protected file.",
+    "disposition": "Explicitly stopped after the bounded proof; reported exit status 0. This transient unit is not installer-managed or adopted as a permanent connector."
+  },
+  "route_and_access_state": {
+    "exact_hostname": "jarvis.togarriapahome.uk",
+    "access_policy": "Existing single-owner OTP allowlist remains configured.",
+    "exact_host_response": 503,
+    "catch_all_response": 404,
+    "live_desktop_origin": false,
+    "unauthenticated_login_redirect": "Earlier reported HTTPS GET 302 to Cloudflare Access remains valid.",
+    "authenticated_otp_test": false,
+    "desktop_bytes_rendered": false,
+    "desktop_input_or_jwt_acceptance": false
+  },
+  "not_claimed": [
+    "permanent or installer-adopted connector",
+    "currently active tunnel after the probe unit was stopped",
+    "working Desktop origin or public Desktop route",
+    "authenticated Access session or OTP login proof",
+    "full remote Desktop acceptance"
+  ],
+  "acceptance": {
+    "AC13": null,
+    "AC14": null,
+    "AC15": null,
+    "readiness_claimed": false,
+    "resource_delete_safe": false
+  },
+  "claim_limit": "This proves a bounded connector reached Cloudflare and produced four registered healthy connections during the reported window. The protected Desktop origin, installer adoption, authenticated route, and acceptance remain unproven."
+}

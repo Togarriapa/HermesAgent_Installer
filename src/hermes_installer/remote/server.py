@@ -800,6 +800,11 @@ def create_app(runtime: GatewayRuntime):
                     if runtime.monotonic() >= session.expires:
                         raise GatewayDenied("root session lease expired")
                     data = await asyncio.wait_for(asyncio.to_thread(connector.read, 65_536), timeout=7)
+                    if data is None:
+                        # A fixed connector may report a bounded idle poll. It
+                        # is distinct from EOF so a quiet native desktop does
+                        # not terminate its active authorization lease.
+                        continue
                     if not data:
                         return
                     await asyncio.wait_for(downstream.send_bytes(data), timeout=5)

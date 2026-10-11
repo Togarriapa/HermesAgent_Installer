@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import os
 import secrets
@@ -313,6 +314,27 @@ class ResourceBodyRecipe:
 
 
 @dataclass(frozen=True, slots=True)
+class ResourceCredentialBinding:
+    """Exact protected mapping from a reviewed request placeholder to a vault ref."""
+
+    source_placeholder: str
+    credential_reference_id: str
+    usage: str
+
+    def __post_init__(self) -> None:
+        # Preserve the exact selected manifest token. Environment-style
+        # placeholders are data labels only: they never become environment
+        # variable names or an implicit vault lookup.
+        if (not isinstance(self.source_placeholder, str)
+                or not (re.fullmatch(r"\$\{[A-Z][A-Z0-9_]{0,127}\}", self.source_placeholder)
+                        or _ID.fullmatch(self.source_placeholder))):
+            raise ResourceJobDenied("credential source placeholder is invalid")
+        _ident(self.credential_reference_id, "credential reference")
+        if self.usage not in {"webhook-hmac-verify", "channel-account", "backend-account"}:
+            raise ResourceJobDenied("credential binding usage is outside the protected closed set")
+
+
+@dataclass(frozen=True, slots=True)
 class ResourceBackendEnrollment:
     backend_id: str
     resource_id: str
@@ -340,6 +362,7 @@ class ResourceBackendEnrollment:
     maximum_seconds: int
     profile_generation: str = ""
     execution_binding: Mapping[str, Any] | None = None
+    credential_bindings: tuple[ResourceCredentialBinding, ...] = ()
 
     def __post_init__(self) -> None:
         for name in (
@@ -357,7 +380,7 @@ class ResourceBackendEnrollment:
                 "process_enrollment_id", "process_generation", "operation_id",
                 "native_package_id", "native_package_generation", "child_operation",
                 "child_target_id", "child_capability", "task_body_recipe_id",
-                "task_request_schema_id",
+                "task_request_schema_id", "source_profile_id", "home_binding_id",
             }
             binding = self.execution_binding
             if not isinstance(binding, Mapping) or set(binding) != fields:
@@ -366,6 +389,9 @@ class ResourceBackendEnrollment:
             for key, value in binding.items():
                 _ident(value, f"backend execution {key}")
                 frozen_binding[key] = value
+            if (not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", frozen_binding["source_profile_id"])
+                    or not re.fullmatch(r"[0-9a-f]{64}", frozen_binding["home_binding_id"])):
+                raise ResourceJobDenied("backend execution source-home identity is malformed")
             if (frozen_binding["operation_id"] != "hermes-resource-profile-task-v1"
                     or frozen_binding["child_operation"] != "process.start"
                     or frozen_binding["native_package_id"] != self.native_package_id
@@ -381,6 +407,14 @@ class ResourceBackendEnrollment:
             if not isinstance(values, (set, frozenset)):
                 raise ResourceJobDenied(f"resource backend {name} must be a protected set")
             object.__setattr__(self, name, frozenset(_ident(value, name) for value in values))
+        bindings = self.credential_bindings
+        if (not isinstance(bindings, (tuple, list)) or len(bindings) > 16
+                or any(not isinstance(item, ResourceCredentialBinding) for item in bindings)
+                or len({item.source_placeholder for item in bindings}) != len(bindings)
+                or any(item.credential_reference_id not in self.credential_reference_ids
+                       for item in bindings)):
+            raise ResourceJobDenied("resource backend credential bindings are invalid")
+        object.__setattr__(self, "credential_bindings", tuple(bindings))
         if not self.approved_action_ids:
             raise ResourceJobDenied("resource backend has no approved actions")
         for name, maximum in (("maximum_request_bytes", 256 * 1024),
@@ -721,6 +755,59 @@ class ResourceJobAdmission:
 
 
 @dataclass(frozen=True, slots=True)
+class RootResourceNodeResultClosure:
+    """One registry-issued snapshot of completed prerequisite result capsules.
+
+    This immutable DTO carries only opaque root handles and digests. Result
+    fields remain in ResourceJobAuthority's private capsule index and are
+    resolved again at the context-issuance boundary.
+    """
+
+    schema: int
+    closure_handle: str
+    event_handle: str
+    admission_handle: str
+    node_id: str
+    job_handle: str
+    resource_generation: str
+    service_generation_digest: str
+    prerequisite_node_ids: tuple[str, ...]
+    result_capsule_handles: tuple[str, ...]
+    result_capsule_sha256s: tuple[str, ...]
+    parent_closure_digest: str
+    issued_monotonic: float
+    expires_monotonic: float
+
+    def __post_init__(self) -> None:
+        if type(self.schema) is not int or self.schema != 1:
+            raise ResourceJobDenied("root result closure schema is invalid")
+        for name in ("closure_handle", "event_handle", "admission_handle", "node_id", "job_handle",
+                     "resource_generation"):
+            _ident(getattr(self, name), f"root result closure {name}")
+        for name in ("service_generation_digest", "parent_closure_digest"):
+            if not isinstance(getattr(self, name), str) or not _DIGEST.fullmatch(getattr(self, name)):
+                raise ResourceJobDenied("root result closure digest is invalid")
+        if (not isinstance(self.prerequisite_node_ids, tuple)
+                or len(set(self.prerequisite_node_ids)) != len(self.prerequisite_node_ids)
+                or any(not isinstance(item, str) or not _ID.fullmatch(item)
+                       for item in self.prerequisite_node_ids)
+                or not isinstance(self.result_capsule_handles, tuple)
+                or not isinstance(self.result_capsule_sha256s, tuple)
+                or len(self.result_capsule_handles) != len(self.result_capsule_sha256s)
+                or len(self.result_capsule_handles) != len(self.prerequisite_node_ids)
+                or any(not isinstance(item, str) or not _ID.fullmatch(item)
+                       for item in self.result_capsule_handles)
+                or any(not isinstance(item, str) or not _DIGEST.fullmatch(item)
+                       for item in self.result_capsule_sha256s)):
+            raise ResourceJobDenied("root result closure capsule list is malformed")
+        if (any(isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value) for value in
+                (self.issued_monotonic, self.expires_monotonic))
+                or self.issued_monotonic <= 0 or self.expires_monotonic <= self.issued_monotonic):
+            raise ResourceJobDenied("root result closure lease is invalid")
+
+
+@dataclass(frozen=True, slots=True)
 class RootResourceJobAdmissionHandle:
     """Root-only one-attempt handle used to launch a selected Hermes task.
 
@@ -842,6 +929,141 @@ class RootAdmittedTask:
                 or hashlib.sha256(value["prompt"].encode("utf-8")).hexdigest() != self.stdin_sha256
                 or len(value["prompt"].encode("utf-8")) != self.stdin_size_bytes):
             raise ResourceJobDenied("root admitted task payload does not match its selected stdin")
+
+
+@dataclass(frozen=True, slots=True)
+class RootTaskInitialInputReceipt:
+    """Root-recorded delivery of the exact admitted prompt to a selected producer."""
+
+    schema: int
+    receipt_handle: str
+    task_handle: str
+    admission_id: str
+    node_id: str
+    process_id: str
+    process_generation: str
+    selected_execution_handle: str
+    source_receipt_handle: str
+    producer_context_delivery_handle: str
+    native_loader_ready_event_id: str
+    stdin_sha256: str
+    stdin_size_bytes: int
+    parent_closure_digest: str
+    service_generation_digest: str
+    resource_generation: str
+    issued_monotonic: float
+    expires_monotonic: float
+
+    def __post_init__(self) -> None:
+        opaque = ("receipt_handle", "task_handle", "selected_execution_handle",
+                  "source_receipt_handle", "producer_context_delivery_handle",
+                  "native_loader_ready_event_id")
+        identities = ("admission_id", "node_id", "process_id", "process_generation",
+                      "resource_generation")
+        digests = ("stdin_sha256", "parent_closure_digest", "service_generation_digest")
+        if (type(self.schema) is not int or self.schema != 1
+                or any(not isinstance(getattr(self, name), str)
+                       or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", getattr(self, name))
+                       for name in opaque)
+                or any(not isinstance(getattr(self, name), str)
+                       or not _ID.fullmatch(getattr(self, name)) for name in identities)
+                or any(not _DIGEST.fullmatch(getattr(self, name)) for name in digests)
+                or type(self.stdin_size_bytes) is not int or not 1 <= self.stdin_size_bytes <= 262_144
+                or any(isinstance(value, bool) or not isinstance(value, (int, float))
+                       or not math.isfinite(value)
+                       for value in (self.issued_monotonic, self.expires_monotonic))
+                or not self.issued_monotonic < self.expires_monotonic):
+            raise ResourceJobDenied("root task initial input receipt is malformed")
+
+
+@dataclass(frozen=True, slots=True)
+class RootTaskNativeExecutionReceipt:
+    """Immutable companion binding actual native events to one task terminal."""
+
+    schema: int
+    native_execution_receipt_handle: str
+    task_handle: str
+    process_id: str
+    process_generation: str
+    native_package_generation: str
+    loader_ready_event_id: str
+    initial_input_event_id: str
+    native_request_event_ids: tuple[str, ...]
+    native_result_event_ids: tuple[str, ...]
+    required_tool_result_event_ids: tuple[str, ...]
+    parent_closure_digest: str
+    task_payload_sha256: str
+    terminal_receipt_handle: str
+    observed_monotonic: float
+
+    def __post_init__(self) -> None:
+        opaque_fields = ("native_execution_receipt_handle", "task_handle",
+                         "loader_ready_event_id", "initial_input_event_id",
+                         "terminal_receipt_handle")
+        event_fields = ("native_request_event_ids", "native_result_event_ids",
+                        "required_tool_result_event_ids")
+        if (type(self.schema) is not int or self.schema != 1
+                or any(not isinstance(getattr(self, name), str)
+                       or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", getattr(self, name))
+                       for name in opaque_fields)
+                or any(not isinstance(getattr(self, name), str) or not getattr(self, name)
+                       for name in ("process_id", "process_generation", "native_package_generation"))
+                or not _DIGEST.fullmatch(self.parent_closure_digest)
+                or not _DIGEST.fullmatch(self.task_payload_sha256)
+                or any(not isinstance(getattr(self, name), tuple)
+                       or len(getattr(self, name)) > 256
+                       or any(not isinstance(item, str)
+                              or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", item)
+                              for item in getattr(self, name))
+                       or len(set(getattr(self, name))) != len(getattr(self, name))
+                       for name in event_fields)
+                or isinstance(self.observed_monotonic, bool)
+                or not isinstance(self.observed_monotonic, (int, float))
+                or not math.isfinite(self.observed_monotonic)):
+            raise ResourceJobDenied("root native execution receipt is malformed")
+
+
+@dataclass(frozen=True, slots=True)
+class RootTaskStdinWriteReceipt:
+    """Custody proof that the exact admitted stdin frame reached EOF once."""
+
+    schema: int
+    receipt_handle: str
+    task_handle: str
+    process_id: str
+    process_generation: str
+    initial_input_receipt_handle: str
+    stdin_sha256: str
+    stdin_size_bytes: int
+    sequence: int
+    write_complete: bool
+    drained: bool
+    stdin_closed: bool
+    service_generation_digest: str
+    issued_monotonic: float
+    expires_monotonic: float
+
+    def __post_init__(self) -> None:
+        opaque_fields = ("receipt_handle", "task_handle", "process_id",
+                         "initial_input_receipt_handle")
+        if (type(self.schema) is not int or self.schema != 1
+                or any(not isinstance(getattr(self, name), str)
+                       or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", getattr(self, name))
+                       for name in opaque_fields)
+                or not isinstance(self.process_generation, str)
+                or not _ID.fullmatch(self.process_generation)
+                or not _DIGEST.fullmatch(self.stdin_sha256)
+                or type(self.stdin_size_bytes) is not int
+                or not 1 <= self.stdin_size_bytes <= 262_144
+                or type(self.sequence) is not int or self.sequence != 0
+                or self.write_complete is not True or self.drained is not True
+                or self.stdin_closed is not True
+                or not _DIGEST.fullmatch(self.service_generation_digest)
+                or any(isinstance(value, bool) or not isinstance(value, (int, float))
+                       or not math.isfinite(value)
+                       for value in (self.issued_monotonic, self.expires_monotonic))
+                or not self.issued_monotonic < self.expires_monotonic):
+            raise ResourceJobDenied("root task stdin write receipt is malformed")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1227,6 +1449,39 @@ class ResourceJobLedger:
         finally:
             db.close()
 
+    def completed_node_result_receipts(
+        self, job_id: str, node_id: str, *, current_generation: str,
+    ) -> tuple[str, int, tuple[str, ...]]:
+        """Return only the latest terminal-complete node's durable receipt set."""
+        _ident(job_id, "job id")
+        node_id = _ident(node_id, "node id")
+        if not _DIGEST.fullmatch(current_generation):
+            raise ResourceJobDenied("resource generation is unavailable")
+        db = self._connect()
+        try:
+            row = db.execute(
+                "SELECT c.admission_id,c.attempt,c.status,c.result_receipts,j.generation,j.expires,j.status "
+                "FROM children AS c JOIN jobs AS j ON j.job_id=c.job_id "
+                "WHERE c.job_id=? AND c.node_id=? ORDER BY c.attempt DESC LIMIT 1",
+                (job_id, node_id),
+            ).fetchone()
+            now = self.monotonic()
+            if (row is None or row[2] != "complete" or row[4] != current_generation
+                    or row[5] <= now or row[6] != "running"):
+                raise ResourceJobDenied("node result is not a current completed job child")
+            receipts = json.loads(row[3])
+            if (not isinstance(receipts, list) or not receipts or len(receipts) > 64
+                    or any(not isinstance(item, str) or not item for item in receipts)
+                    or len(set(receipts)) != len(receipts)):
+                raise ResourceJobDenied("completed node result receipts are malformed")
+            return row[0], row[1], tuple(receipts)
+        except ResourceJobDenied:
+            raise
+        except (sqlite3.Error, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ResourceJobDenied("completed node result lookup failed closed") from exc
+        finally:
+            db.close()
+
     def admit_child(self, admission: ResourceJobAdmission, enrollment: ResourceJobEnrollment, *,
                     node_id: str, parent_result_receipt_ids: Sequence[str],
                     current_generation: str) -> ResourceChildAdmission:
@@ -1504,5 +1759,31 @@ class ResourceJobLedger:
         except sqlite3.Error as exc:
             db.rollback()
             raise ResourceJobDenied("generation revocation failed closed") from exc
+        finally:
+            db.close()
+
+    def cancel_job(self, job_id: str, *, current_generation: str) -> bool:
+        """Cancel one root admission and all of its uncompleted children atomically."""
+        _ident(job_id, "job id")
+        if not isinstance(current_generation, str) or not current_generation:
+            raise ResourceJobDenied("current resource generation is invalid")
+        db = self._connect()
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT generation,status FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+            if row is None or row[0] != current_generation:
+                db.rollback()
+                return False
+            db.execute(
+                "UPDATE children SET status='cancelled' WHERE job_id=? AND status IN ('pending','admitted','running')",
+                (job_id,),
+            )
+            cursor = db.execute("UPDATE jobs SET status='cancelled' WHERE job_id=? AND status='running'",
+                                (job_id,))
+            db.commit()
+            return cursor.rowcount == 1
+        except sqlite3.Error as exc:
+            db.rollback()
+            raise ResourceJobDenied("job cancellation failed closed") from exc
         finally:
             db.close()

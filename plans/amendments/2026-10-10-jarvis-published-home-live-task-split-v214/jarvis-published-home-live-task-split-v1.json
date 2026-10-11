@@ -1,0 +1,112 @@
+{
+  "schema": 1,
+  "corrects": "planning/jarvis-selected-task-home-custody-v213.json active_catalog row_fields only; prior213 immutable",
+  "requirements": [
+    "direct-user-2026-10-10-jarvis-sole-user-profile",
+    "R0045",
+    "R0048",
+    "R0049",
+    "R0050",
+    "R0055",
+    "R0056",
+    "R0060"
+  ],
+  "why": "Actual source home materializer has no selectedtask at compilation and no207 service-profile/process enrollments. v213 conflated source home publication facts with future live task facts. Do not invent them or park all delegates permanently.",
+  "published_row": {
+    "class": "RootPublishedNativeProfileHomeRow",
+    "fields": [
+      "home_binding_id",
+      "source_profile_id",
+      "source_revision",
+      "source_manifest_sha256",
+      "role",
+      "native_profile_key",
+      "display_name",
+      "home_selection_handle",
+      "materialization_receipt_handle",
+      "mapping_sha256",
+      "home_generation",
+      "principal_id",
+      "namespace_id",
+      "runtime_receipt_handle",
+      "runtime_identity_sha256",
+      "behavioral_manifest_sha256"
+    ],
+    "catalog": "native_profile_task_homes; max208 exactsourceIDs, one primaryhermes/defaultJarvis and207 delegatehome/default internal",
+    "source": "Actual current setup principal_id and verified namespace_id, current PM receipt/runtime_sha256 and materialization/source/home manifest facts. Setup principal defers service UID until activation; installation account UID/GID MUST NOT become principal UID/GID. Missing genuine namespace/source proof leaves exact row pending, no alias.",
+    "generation": "home_generation is completed owned home/materialization generation, NOT a protected task profile_generation. Source profiles do not each become207 service profile enrollments.",
+    "envelope": "Existing immutable native-profile-home-crosswalk-v213.json core member supplies current installed release/publication handle/service-generation/source-output claim binding via RootPublishedAuthorityCore verified member getter. No row task ID/policy metadata copied in advance."
+  },
+  "live_binding": {
+    "class": "RootSelectedResourceTaskHomeBinding",
+    "base": "Exact current published row and retained held directoryFD/member observations",
+    "additional_fields": [
+      "binding_handle",
+      "binding_sha256",
+      "profile_id",
+      "profile_generation",
+      "resource_id",
+      "resource_generation",
+      "process_enrollment_id",
+      "process_generation",
+      "authority_epoch",
+      "policy_revision",
+      "service_generation_digest",
+      "publication_handle",
+      "crosswalk_member_sha256",
+      "source_output_claim_sha256",
+      "home_device",
+      "home_inode",
+      "home_owner_uid",
+      "home_owner_gid",
+      "home_mode",
+      "issued_monotonic",
+      "expires_monotonic",
+      "principal_uid",
+      "principal_gid"
+    ],
+    "source": "Only one actual root-selected SelectedResourceProfileTask +current RootResourceTaskContext/grant source. authority_epoch,policy_revision,service_generation_digest exact existing context/service current verifier values, no caller epochs. Principal/UID/GID/namespace must match actual task/current service identity and selected home row, else deny. Current principal_uid/gid comes exclusively from actual current NSS +selected task proof after activation; inode/mode ownership observations are not principal authority.",
+    "task_binding": "Existing canonical consumed start proof commits selected source_profile_id +home_binding_handle/digest +current publication/member/claim; resolve selected task sourceID through current crosswalk exact match. Recheck current process/resource/package/profile policy grants and source/runtime/home join before unit creation.",
+    "lifetime": "Fresh<=30s bounded original admission/context/controller/runtime leases; one actual task/node. No durable grant, setupTTL refresh or restoredFD/seal."
+  },
+  "unchanged_apis": [
+    "RootPublishedAuthorityCore.resolve_current_native_profile_home_crosswalk()->RootPublishedNativeProfileHomeCrosswalk",
+    "RootNativeProfileTaskHomeRegistry.from_published_authority_core(core,owned_profile_home_registry,pm_runtime_registry,principal_namespace_registry,root_journal)",
+    "resolve_selected_resource_task_home(selection)->RootSelectedResourceTaskHomeBinding",
+    "verify_current(binding,selection)",
+    "duplicate_home_fd(binding,selection)"
+  ],
+  "postinstall": "Actual current publication/member/journal source claim readback reopens owned rootFD and validates current source/PM/NSS/principalNS/behavioral hashes/inode/modes. No expired setup session or hidden seal restoration. Update/rollback/revocation invalidates active task binding and uses owned stop/cleanup. All207 delegates must remain usable aftersetup through live grants.",
+  "custody": "v213 fixed/hermes held-home mount,cwd/HOME/HERMES_HOME, actual unprivilegedUID access and sibling/primary denial unchanged; no rootchmod/callerpath/primaryrights relabel. NativeHome lookup or manifestmetadata cannot authorize tool/provider/privatepublic scope.",
+  "ownership": {
+    "RB-T213.1": "Jarvis produces exact published source-home row; compiler/publisher serialize/readback current owned core member and claim.",
+    "HI-T213.2": "Taskhome owner activation/currentregistry/restart/livebinding/consumedgrant/kernel mount.",
+    "VD-T213.3": "Actual native delegate effects+isolation/currentness failures+cleanup; sourcepins aftertestedcommit."
+  },
+  "tasks": [
+    "RB-T213.1",
+    "HI-T213.2",
+    "VD-T213.3"
+  ],
+  "acceptance": "All original208profile/207delegate/soleJarvis scope and AC01..18 OPEN;213 defect corrected, no implementation/readiness inferred.",
+  "core_member_extension": {
+    "relative_path": "authority/native-profile-home-crosswalk-v213.json",
+    "payload_keys": [
+      "schema",
+      "rows"
+    ],
+    "schema": 1,
+    "rows": "Exactly RootPublishedNativeProfileHomeRow16fields, sorted source_profile_id, unique sourceID/home_binding_id, max208, SHA256 canonical UTF8 JSON(sort_keys=True,separators comma/colon,ensure_ascii=False), no trailing newline; no paths/FDs or future taskfields. Complete207 usability obligation preserved; absentactualsource row is pendingnotinvented.",
+    "binding_field": "native_profile_home_crosswalk",
+    "binding_keys": [
+      "schema",
+      "relative_path",
+      "sha256",
+      "size_bytes"
+    ],
+    "placement": "Required when Jarvis crosswalk present in exact same core claim member manifest, immutable descriptor and signed publication receipt; same field/values crosschecked, current pointer/publication/transaction/source-output claim and installed module currentness verified. No alias to authority/enrollment.json digest.",
+    "producer": "Compiler consumes only sealed current Jarvis source-home producer, emits separate exact member alongside existing authority/enrollment.json. Publisher owns bytes/root mode/inode safe writes and readback; claim includes bothmembers. Existing core alone does not prove this extension.",
+    "getter": "RootPublishedAuthorityCore.resolve_current_native_profile_home_crosswalk()->RootPublishedNativeProfileHomeCrosswalk with schema,rows,publication_handle,service_generation_digest,crosswalk_member_sha256,source_output_claim_sha256 and reprhidden held verified member/core custody. Verifies exact member fields/current core claim/descriptor/receipt/filebytes eachuse, then strict rowparse.",
+    "restart": "Read current protected descriptor/signedreceipt/claim, reopen exact fixed member via heldcore rootFD nofollow and hash/size compare; no caller JSON/memberpath or historicalsession/FD/seal."
+  }
+}

@@ -8,21 +8,131 @@ jobs:
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+      - id: setup-python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.13"
-      - name: Install hash-pinned host authority primitives
+      - name: Install pinned disposable Xvfb/XRes observation fixture
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            xvfb=2:21.1.12-1ubuntu1.8 \
+            libxres1=2:1.2.1-1build1 \
+            libx11-6=2:1.8.7-1build1 \
+            libxtst6=2:1.2.3-1.1build1
+      - id: install-ci-deps
+        name: Install hash-pinned host authority primitives
         run: python -m pip install --no-deps --require-hashes -r src/hermes_installer/remote/requirements-ci-x86-py313-core.lock
-      - name: Prepare immutable root-owned CI interpreter
+      - id: prepare-interpreter
+        name: Prepare immutable root-owned CI interpreter
         run: |
           sudo install -d -o root -g root -m 0755 /run/hermes-custody-python
           sudo install -o root -g root -m 0755 "$(command -v python)" /run/hermes-custody-python/python
-      - name: Exercise root authority and kernel custody against disposable identities
+      - id: prepare-private-loopback-tools
+        name: Prepare measured nftables test tool
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y nftables=1.0.9-1ubuntu0.1
+          test "$(sha256sum /usr/sbin/nft | cut -d ' ' -f1)" = "3f1c21553e62716ef1abfcf31f51ff94eb73ff4234a6653bac754a42f936d1c7"
+      - name: Exercise root process custody
+        if: ${{ always() && steps.install-ci-deps.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}
         run: |
           site_packages="$(python -c 'import site; print(site.getsitepackages()[0])')"
           sudo env PYTHONPATH="${GITHUB_WORKSPACE}/src:${site_packages}" PYTHONDONTWRITEBYTECODE=1 /run/hermes-custody-python/python -m unittest tests.contracts.test_managed_process_custody_linux -v
-          sudo env PYTHONPATH="${GITHUB_WORKSPACE}/src:${site_packages}" PYTHONDONTWRITEBYTECODE=1 /run/hermes-custody-python/python -m unittest tests.contracts.test_managed_task_custody_linux -v
+
+      - name: Exercise selected display credential mount custody
+        if: ${{ always() && steps.install-ci-deps.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}
+        run: |
+          site_packages="$(python -c 'import site; print(site.getsitepackages()[0])')"
+          sudo env PYTHONPATH="${GITHUB_WORKSPACE}/src:${GITHUB_WORKSPACE}/tests/contracts:${site_packages}" PYTHONDONTWRITEBYTECODE=1 /run/hermes-custody-python/python -m unittest discover -s "${GITHUB_WORKSPACE}/tests/contracts" -p 'test_xauthority_mount_kernel_linux.py' -v
+
+      - name: Exercise root task custody
+        if: ${{ always() && steps.install-ci-deps.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}
+        run: |
+          site_packages="$(python -c 'import site; print(site.getsitepackages()[0])')"
+          unit="hermes-root-task-custody-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          sudo /usr/bin/systemd-run --system --quiet --wait --pipe --collect --property=Type=exec \
+            --unit="${unit}" \
+            --working-directory="${GITHUB_WORKSPACE}" \
+            --setenv="PYTHONPATH=${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}/src:${GITHUB_WORKSPACE}/tests/contracts:${site_packages}" \
+            --setenv="HERMES_ROOT_CONTROLLER_TEST_UNIT=${unit}.service" \
+            --setenv="PYTHONDONTWRITEBYTECODE=1" \
+            /run/hermes-custody-python/python -m unittest discover \
+             -s "${GITHUB_WORKSPACE}/tests/contracts" \
+               -p 'test_managed_task_custody_linux.py' -v
+
+      - name: Exercise root managed build custody
+        if: ${{ always() && steps.install-ci-deps.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}
+        run: |
+          site_packages="$(python -c 'import site; print(site.getsitepackages()[0])')"
           sudo env PYTHONPATH="${GITHUB_WORKSPACE}/src:${site_packages}" PYTHONDONTWRITEBYTECODE=1 /run/hermes-custody-python/python -m unittest tests.contracts.test_managed_build_custody_linux -v
+
+      - name: Exercise build output attestation
+        if: ${{ always() && steps.install-ci-deps.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}
+        run: |
+          site_packages="$(python -c 'import site; print(site.getsitepackages()[0])')"
           sudo env PYTHONPATH="${GITHUB_WORKSPACE}/src:${GITHUB_WORKSPACE}/tests/contracts:${site_packages}" PYTHONDONTWRITEBYTECODE=1 /run/hermes-custody-python/python -m unittest tests.contracts.test_build_execution_linux -v
+
+      - name: Exercise fixed CPython output probe
+        if: ${{ always() && steps.install-ci-deps.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}
+        run: |
+          site_packages="$(python -c 'import site; print(site.getsitepackages()[0])')"
+          sudo env PYTHONPATH="${GITHUB_WORKSPACE}/src:${GITHUB_WORKSPACE}/tests/contracts:${site_packages}" PYTHONDONTWRITEBYTECODE=1 /run/hermes-custody-python/python -m unittest tests.contracts.test_build_probe_linux -v
+
+      - name: Exercise fixed service connector custody
+        if: ${{ always() && steps.install-ci-deps.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}
+        run: |
+          site_packages="$(python -c 'import site; print(site.getsitepackages()[0])')"
           sudo env PYTHONPATH="${GITHUB_WORKSPACE}/src:${site_packages}" PYTHONDONTWRITEBYTECODE=1 /run/hermes-custody-python/python -m unittest tests.contracts.test_service_connector -v
+
+      - name: Exercise remote observations with Xvfb
+        if: ${{ always() && steps.install-ci-deps.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}
+        run: |
+          site_packages="$(python -c 'import site; print(site.getsitepackages()[0])')"
+          sudo env HERMES_RUN_XVFB_PROOF=1 PYTHONPATH="${GITHUB_WORKSPACE}/src:${site_packages}" PYTHONDONTWRITEBYTECODE=1 /run/hermes-custody-python/python -m unittest tests.contracts.test_remote_observations_xvfb_linux -v
+
+      - name: Restore Ubuntu runner trust-keyring path ownership for isolated host-tool fixture
+        if: ${{ always() && steps.prepare-private-loopback-tools.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}
+        run: |
+          keyring=/usr/share/keyrings/ubuntu-archive-keyring.gpg
+          test -f "$keyring" && test ! -L "$keyring"
+          test "$(dpkg-query -S "$keyring")" = "ubuntu-keyring: $keyring"
+          sudo dpkg --verify ubuntu-keyring
+          for path in /usr /usr/share /usr/share/keyrings "$keyring"; do
+            stat -c 'pre-repair %n uid=%u gid=%g mode=%a' "$path"
+          done
+          before="$(sha256sum "$keyring" | cut -d ' ' -f1)"
+          # Some hosted Ubuntu images leave /usr/share writable by the runner.
+          # Repair only this trust path in the disposable CI VM; never relax
+          # the runtime root-owned/no-write source check or alter keyring bytes.
+          sudo chown root:root /usr /usr/share /usr/share/keyrings "$keyring"
+          sudo chmod go-w /usr /usr/share /usr/share/keyrings "$keyring"
+          after="$(sha256sum "$keyring" | cut -d ' ' -f1)"
+          test "$before" = "$after"
+          for path in /usr /usr/share /usr/share/keyrings "$keyring"; do
+            test ! -L "$path"
+            test "$(stat -c '%u:%g' "$path")" = "0:0"
+            mode="$(stat -c '%a' "$path")"
+            mode_bits=$((8#$mode))
+            test $((mode_bits & 18)) -eq 0
+            stat -c 'post-repair %n uid=%u gid=%g mode=%a' "$path"
+          done
+          echo "Ubuntu archive keyring and trust path are root-owned and non-writable"
+
+      - name: Exercise selected private loopback namespace and nft enforcement
+        if: ${{ always() && steps.prepare-private-loopback-tools.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}
+        run: |
+          site_packages="$(python -c 'import site; print(site.getsitepackages()[0])')"
+          sudo env PYTHONPATH="${GITHUB_WORKSPACE}/src:${site_packages}" PYTHONDONTWRITEBYTECODE=1 /run/hermes-custody-python/python -m unittest tests.contracts.test_private_loopback_network_linux -v
+
+      - name: Exercise Linux package installation custody
+        if: ${{ always() && steps.install-ci-deps.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}
+        run: |
+          site_packages="$(python -c 'import site; print(site.getsitepackages()[0])')"
           sudo env PYTHONPATH="${GITHUB_WORKSPACE}/src:${site_packages}" PYTHONDONTWRITEBYTECODE=1 /run/hermes-custody-python/python -m unittest tests.contracts.test_package_set_install_linux -v
+
+      - name: Exercise root controller cleanup
+        if: ${{ always() && steps.install-ci-deps.outcome == 'success' && steps.prepare-interpreter.outcome == 'success' }}
+        run: |
+          site_packages="$(python -c 'import site; print(site.getsitepackages()[0])')"
+          sudo /usr/bin/systemd-run --system --quiet --wait --pipe --collect --property=Type=exec --unit="hermes-root-controller-custody-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --working-directory="${GITHUB_WORKSPACE}" --setenv="PYTHONPATH=${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}/src" --setenv="HERMES_ROOT_CONTROLLER_TEST_UNIT=hermes-root-controller-custody-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.service" /run/hermes-custody-python/python -m unittest discover -s "${GITHUB_WORKSPACE}/tests/contracts" -p 'test_root_controller_custody_linux.py' -v

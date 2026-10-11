@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import stat
+import copy
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -12,10 +13,12 @@ from hermes_installer.protected_enrollment import (
     EnrollmentDenied,
     FixedBuildProfile,
     OperationParameterSchema,
+    NativePackageBinding,
     ProtectedBuildCatalog,
     ProtectedDeviceCatalog,
     ProtectedEnrollmentCatalog,
     ProtectedRootJournalCatalog,
+    RootSelectedPublicWebScope,
     _canonical,
     _parse_profile,
 )
@@ -114,6 +117,233 @@ def test_package_runtime_requires_signed_completed_build_receipt():
         catalog.resolve_package_runtime(
             "service-a", "gen-a", "coral-cp39-runtime-v1", build_catalog,
             build_store=None,
+        )
+
+
+def test_selected_application_row_is_exposed_unchanged_with_enclosing_digest_separate():
+    row = {"application_id": "app-a", "profile_id": "profile-a",
+           "profile_generation": "process-g1", "capability_ids": ["application:run"],
+           "provider_route_ids": [], "credential_reference_ids": []}
+    catalog = ProtectedEnrollmentCatalog(
+        {("service-a", "process-g1"): SimpleNamespace()}, digest="a" * 64,
+        selected_application_runtimes=[row],
+    )
+    selected = catalog.selected_application_runtime_record("app-a")
+    assert selected["capability_ids"] == ("application:run",)
+    assert "service_generation_digest" not in selected
+    assert catalog.digest == "a" * 64
+    with pytest.raises(EnrollmentDenied, match="not enrolled"):
+        catalog.selected_application_runtime_record("app-missing")
+    with pytest.raises(EnrollmentDenied, match="ambiguous"):
+        ProtectedEnrollmentCatalog(
+            {("service-a", "process-g1"): SimpleNamespace()}, digest="a" * 64,
+            selected_application_runtimes=[row, {**row, "profile_id": "profile-b"}],
+        )
+
+
+def test_owner_overlay_observer_catalog_is_generation_scoped_when_unselected():
+    service = SimpleNamespace(enrollment_id="service-a", profile_id="profile-a", generation="service-g1",
+                              principal_id="principal-a", namespace_identity="namespace-a")
+    catalog = ProtectedEnrollmentCatalog(
+        {("service-a", "service-g1"): service}, digest="b" * 64,
+        owner_overlay_observer_records=(),
+    )
+    assert catalog.resolve_owner_overlay_observer_records(
+        profile_id="profile-a", profile_generation="service-g1",
+        service_generation_digest="b" * 64,
+    ) == ()
+    with pytest.raises(EnrollmentDenied, match="stale service generation"):
+        catalog.resolve_owner_overlay_observer_records(
+            profile_id="profile-a", profile_generation="service-g1",
+            service_generation_digest="c" * 64,
+        )
+
+
+def test_native_worker_candidate_projection_uses_only_the_exact_catalog_generation():
+    network = {"id": "network-a"}
+    active = {"network_id": "network-a", "process_profile_id": "profile-a",
+              "service_enrollment_id": "service-a", "service_generation": "generation-a",
+              "process_profile_generation": "generation-a"}
+    runtime = {"id": "runtime-a"}
+    profile = SimpleNamespace(profile_id="profile-a", generation="generation-a",
+                              runtime_artifact_ids=(), operation_recipes={})
+    service = SimpleNamespace(enrollment_id="service-a", generation="generation-a")
+
+    class CandidateCatalog:
+        digest = "a" * 64
+        _native_worker_network_records = {"network-a": network}
+        _active_network_generation_records = {"active-a": active}
+
+        @staticmethod
+        def resolve_native_worker_generation(network_id, profile_id, *, service_generation_digest):
+            assert (network_id, profile_id, service_generation_digest) == (
+                "network-a", "profile-a", "a" * 64)
+            return network, active, runtime
+
+        @staticmethod
+        def resolve(_enrollment_id, _generation):
+            return service
+
+        @staticmethod
+        def resolve_profile_generation(_profile_id, _generation):
+            return profile
+
+    candidates = ProtectedEnrollmentCatalog.resolve_selected_native_worker_generation_candidates(
+        CandidateCatalog(), "a" * 64)
+    assert candidates == ((network, active, runtime, profile, service),)
+    with pytest.raises(EnrollmentDenied, match="stale service generation"):
+        ProtectedEnrollmentCatalog.resolve_selected_native_worker_generation_candidates(
+            CandidateCatalog(), "b" * 64)
+
+
+def _private_endpoint_row(**overrides):
+    row = {
+        "binding_id": "endpoint-selection-a", "profile_id": "profile-a",
+        "namespace_id": "namespace-a", "principal_id": "principal-a",
+        "service_enrollment_id": "service-a", "service_generation": "memory-gen-a",
+        "process_profile_id": "server-profile-a", "process_profile_generation": "process-gen-a",
+        "endpoint_target_id": "memory-openviking:profile-a", "connector_route_ids": ["memory-search-v1"],
+        "recipient_id": "recipient-a", "credential_reference_id": "credential-a",
+        "server_config_artifact_id": "server-config-a", "server_config_sha256": "a" * 64,
+        "runtime_artifact_ids": ["server-runtime-a"], "network_binding_handle": "network-receipt-a",
+    }
+    row.update(overrides)
+    return row
+
+
+def _private_model_row(**overrides):
+    row = {
+        "binding_id": "model-selection-a", "endpoint_binding_id": "endpoint-selection-a",
+        "served_model_id": "private-model-a", "source_model_id": "source-model-a",
+        "source_revision": "revision-a", "license_artifact_id": "license-a",
+        "license_sha256": "b" * 64, "model_artifact_id": "model-a",
+        "model_artifact_sha256": "c" * 64, "model_tree_manifest_sha256": "d" * 64,
+        "runtime_artifact_id": "model-runtime-a", "runtime_artifact_sha256": "e" * 64,
+        "load_config_artifact_id": "load-config-a", "load_config_sha256": "f" * 64,
+        "capability": "extraction-text", "dimensions": None,
+    }
+    row.update(overrides)
+    return row
+
+
+def test_private_memory_selection_dtos_are_exact_immutable_and_dimension_typed():
+    from hermes_installer.protected_enrollment import (
+        RootSelectedPrivateMemoryEndpointBinding, RootSelectedPrivateMemoryModelBinding,
+    )
+    endpoint = RootSelectedPrivateMemoryEndpointBinding.from_protected_record(
+        _private_endpoint_row(), service_generation_digest="9" * 64,
+    )
+    assert endpoint.connector_route_ids == ("memory-search-v1",)
+    assert endpoint.service_generation_digest == "9" * 64
+    assert "service_generation_digest" not in _private_endpoint_row()
+    model = RootSelectedPrivateMemoryModelBinding.from_protected_record(
+        _private_model_row(), service_generation_digest="9" * 64,
+    )
+    assert model.dimensions is None and model.capability == "extraction-text"
+    embedding = RootSelectedPrivateMemoryModelBinding.from_protected_record(
+        _private_model_row(capability="embedding", dimensions=768), service_generation_digest="9" * 64,
+    )
+    assert embedding.dimensions == 768
+    bad_rows = [
+        _private_endpoint_row(service_generation_digest="9" * 64),
+        _private_endpoint_row(connector_route_ids=["memory-search-v1", "memory-search-v1"]),
+        _private_endpoint_row(server_config_sha256="not-a-digest"),
+    ]
+    for row in bad_rows:
+        with pytest.raises(EnrollmentDenied):
+            RootSelectedPrivateMemoryEndpointBinding.from_protected_record(
+                row, service_generation_digest="9" * 64,
+            )
+    for override in ({"capability": "extraction-text", "dimensions": 768},
+                     {"capability": "embedding", "dimensions": None},
+                     {"capability": "embedding", "dimensions": 8193}):
+        with pytest.raises(EnrollmentDenied):
+            RootSelectedPrivateMemoryModelBinding.from_protected_record(
+                _private_model_row(**override), service_generation_digest="9" * 64,
+            )
+
+
+def test_private_memory_catalog_getters_rejoin_exact_service_routes_and_endpoint(monkeypatch):
+    profile = SimpleNamespace(
+        enrollment_id="service-a", generation="memory-gen-a", profile_id="profile-a",
+        principal_id="principal-a", namespace_identity="namespace-a",
+    )
+    process = SimpleNamespace(
+        enrollment_id="server-enrollment-a", generation="process-gen-a",
+        profile_id="server-profile-a", principal_id="principal-a",
+        namespace_identity="namespace-a",
+    )
+    memory = SimpleNamespace(
+        service_enrollment_id="service-a", service_generation="memory-gen-a",
+        profile_id="profile-a", principal_id="principal-a", namespace_identity="namespace-a",
+        target_id="memory-openviking:profile-a", auth_reference_id="credential-a",
+        fixed_route_map={"memory-search-v1": object()},
+    )
+    monkeypatch.setattr(ProtectedEnrollmentCatalog, "resolve", lambda self, *_: profile)
+    monkeypatch.setattr(ProtectedEnrollmentCatalog, "resolve_profile_generation", lambda self, *_: process)
+    resolved_routes = []
+    monkeypatch.setattr(
+        ProtectedEnrollmentCatalog, "resolve_connector_route",
+        lambda self, _enrollment, _generation, _target, route: resolved_routes.append(route) or object(),
+    )
+    catalog = ProtectedEnrollmentCatalog(
+        {("service-a", "memory-gen-a"): profile}, digest="9" * 64,
+        memory_enrollments={("service-a", "memory-gen-a"): memory},
+        private_memory_endpoint_selections=[_private_endpoint_row()],
+        private_memory_model_selections=[_private_model_row()],
+    )
+    endpoint = catalog.resolve_private_memory_endpoint_binding("endpoint-selection-a")
+    selected_endpoint = catalog.resolve_private_memory_endpoint_for_service(
+        "service-a", "memory-gen-a", "profile-a", "principal-a",
+    )
+    model = catalog.resolve_private_memory_model_binding("model-selection-a", "endpoint-selection-a")
+    assert endpoint.service_generation_digest == catalog.digest
+    assert selected_endpoint is endpoint
+    assert model.endpoint_binding_id == endpoint.binding_id
+    assert resolved_routes == ["memory-search-v1"] * 4
+    with pytest.raises(EnrollmentDenied, match="another endpoint"):
+        catalog.resolve_private_memory_model_binding("model-selection-a", "other-endpoint")
+    with pytest.raises(EnrollmentDenied, match="absent or stale"):
+        catalog.resolve_private_memory_model_binding("unknown-model")
+    with pytest.raises(EnrollmentDenied, match="no unique selected endpoint"):
+        catalog.resolve_private_memory_endpoint_for_service(
+            "service-a", "memory-gen-a", "profile-a", "other-principal",
+        )
+
+
+def test_private_memory_catalog_denies_stale_process_join_and_unknown_model_endpoint(monkeypatch):
+    profile = SimpleNamespace(
+        enrollment_id="service-a", generation="memory-gen-a", profile_id="profile-a",
+        principal_id="principal-a", namespace_identity="namespace-a",
+    )
+    process = SimpleNamespace(
+        enrollment_id="server-enrollment-a", generation="process-gen-wrong",
+        profile_id="server-profile-a", principal_id="principal-a",
+        namespace_identity="namespace-a",
+    )
+    memory = SimpleNamespace(
+        service_enrollment_id="service-a", service_generation="memory-gen-a",
+        profile_id="profile-a", principal_id="principal-a", namespace_identity="namespace-a",
+        target_id="memory-openviking:profile-a", auth_reference_id="credential-a",
+        fixed_route_map={"memory-search-v1": object()},
+    )
+    monkeypatch.setattr(ProtectedEnrollmentCatalog, "resolve", lambda self, *_: profile)
+    monkeypatch.setattr(ProtectedEnrollmentCatalog, "resolve_profile_generation", lambda self, *_: process)
+    monkeypatch.setattr(ProtectedEnrollmentCatalog, "resolve_connector_route", lambda self, *_: object())
+    with pytest.raises(EnrollmentDenied, match="stale or incomplete"):
+        ProtectedEnrollmentCatalog(
+            {("service-a", "memory-gen-a"): profile}, digest="9" * 64,
+            memory_enrollments={("service-a", "memory-gen-a"): memory},
+            private_memory_endpoint_selections=[_private_endpoint_row()],
+        )
+
+    process.generation = "process-gen-a"
+    with pytest.raises(EnrollmentDenied, match="foreign key"):
+        ProtectedEnrollmentCatalog(
+            {("service-a", "memory-gen-a"): profile}, digest="9" * 64,
+            memory_enrollments={("service-a", "memory-gen-a"): memory},
+            private_memory_endpoint_selections=[_private_endpoint_row()],
+            private_memory_model_selections=[_private_model_row(endpoint_binding_id="other-endpoint")],
         )
 
 
@@ -323,31 +553,86 @@ def test_native_package_record_is_typed_and_resolved_only_for_current_service_ge
     profile = _parse_profile(item)
     record = {
         "package_id": "desktop-native", "profile_id": profile.profile_id,
-        "generation": profile.generation, "source_revision": "rev-1",
+        "generation": "native-gen-1", "profile_generation": profile.generation,
+        "source_revision": "rev-1",
         "source_tree_sha256": "b" * 64,
         "compiled_closure_artifact_id": "compiled-closure", "compiled_closure_sha256": "c" * 64,
         "entrypoint_artifact_id": "plugin-entrypoint", "entrypoint_sha256": "d" * 64,
         "resolver_artifact_id": "plugin-resolver", "resolver_sha256": "e" * 64,
         "service_package_root_id": "desktop-package-root", "service_mount_id": "desktop-package-mount",
-        "adapter_records": [{
-            "adapter_id": "adapter-one", "manifest_sha256": "f" * 64,
+        "adapter_records": [],
+        "action_records": [{
+            "action_binding_id": "adapter-one:action:read", "adapter_id": "adapter-one",
+            "action_id": "read", "manifest_sha256": "f" * 64,
             "adapter_artifact_id": "adapter-one-artifact", "adapter_sha256": "0" * 64,
-            "action_id": "read", "argument_schema_id": "read-input-v1", "result_schema_id": "read-result-v1",
-            "effect_enrollment_id": "effect-enrollment", "operation": "plugin.example.read",
-            "capability": "example-read", "target_id": "example-target", "recipient": "example-recipient",
-            "generation": profile.generation, "observer_enrollment_ids": [], "workflow_bindings": [],
+            "argument_schema_id": "read-input-v1", "result_schema_id": "read-result-v1",
+            "effect_enrollment_id": "effect-enrollment", "operation": "plugin.adapter-one.read",
+            "capability": "plugin:adapter-one", "target_id": "example-target",
+            "recipient": "example-recipient", "generation": "native-gen-1",
+            "observer_enrollment_ids": [],
         }],
+        "registration_records": [], "workflow_records": [], "process_role_records": [],
     }
     catalog = ProtectedEnrollmentCatalog({("install-1", "gen-1"): profile}, digest="0" * 64,
                                          native_packages=[record])
     monkeypatch.setattr(catalog, "resolve", lambda enrollment_id, generation: profile
                         if (enrollment_id, generation) == ("install-1", "gen-1")
                         else (_ for _ in ()).throw(EnrollmentDenied("stale")))
-    resolved = catalog.resolve_native_package("desktop-native", profile.generation)
+    resolved = catalog.resolve_native_package("desktop-native", "native-gen-1")
     assert resolved.service_mount_id == "desktop-package-mount"
-    assert resolved.adapter_records["adapter-one"].operation == "plugin.example.read"
+    assert resolved.action_records["adapter-one:action:read"].operation == "plugin.adapter-one.read"
+    assert resolved.profile_generation == profile.generation
     with pytest.raises(EnrollmentDenied):
         catalog.resolve_native_package("desktop-native", "stale-generation")
+
+
+def test_native_owner_overlay_lane_requires_complete_registration_and_loaded_role_join():
+    from types import SimpleNamespace
+    from hermes_installer.protected_enrollment import _parse_native_owner_overlay_operation_records
+
+    registration_id = "resource-overlay-store:tool:resource_overlay_read"
+    registration = SimpleNamespace(
+        handler_kind="owner-overlay", argument_schema_id="args-v1", result_schema_id="result-v1",
+        registration_source_artifact_id="handler-artifact", registration_source_sha256="a" * 64,
+        registration_source_receipt_handle="handler-receipt",
+    )
+    role = SimpleNamespace(registration_ids=(registration_id,),
+                           observer_enrollment_ids=("observer-1",))
+    row = {
+        "registration_id": registration_id, "method": "read",
+        "operation": "plugin.resource-overlay-store.read", "capability": "plugin:resource-overlay-store",
+        "target_id": "target-1", "recipient": None, "effect_enrollment_id": "effect-1",
+        "profile_id": "profile-1", "profile_generation": "profile-generation-1",
+        "principal_id": "local-principal-1", "namespace_id": "local-namespace-1",
+        "package_id": "package-1", "package_generation": "package-generation-1",
+        "argument_schema_id": "args-v1", "argument_schema_sha256": "b" * 64,
+        "argument_schema_receipt_handle": "args-receipt", "result_schema_id": "result-v1",
+        "result_schema_sha256": "c" * 64, "result_schema_receipt_handle": "result-receipt",
+        "handler_artifact_id": "handler-artifact", "handler_sha256": "a" * 64,
+        "handler_source_receipt_handle": "handler-receipt",
+        "profile_view_selection_handle": "view-selection", "profile_view_receipt_handle": "view-receipt",
+        "data_root_selection_handle": "data-root-selection", "data_root_receipt_handle": "data-root-receipt",
+        "target_selection_handle": "target-selection", "target_receipt_handle": "target-receipt",
+        "prepared_source_observer_selection_handle": "observer-selection",
+        "source_observer_enrollment_ids": ["observer-1"], "process_role_id": "role-1",
+        "source_issuer_id": "issuer-1",
+    }
+    parsed = _parse_native_owner_overlay_operation_records(
+        [row], package_id="package-1", generation="package-generation-1",
+        profile_id="profile-1", profile_generation="profile-generation-1",
+        registrations={registration_id: registration}, process_roles={"role-1": role})
+    assert parsed[registration_id]["source_observer_enrollment_ids"] == ("observer-1",)
+    with pytest.raises(EnrollmentDenied):
+        _parse_native_owner_overlay_operation_records(
+            [{**row, "data_root_receipt_handle": ""}], package_id="package-1",
+            generation="package-generation-1", profile_id="profile-1",
+            profile_generation="profile-generation-1", registrations={registration_id: registration},
+            process_roles={"role-1": role})
+    with pytest.raises(EnrollmentDenied):
+        _parse_native_owner_overlay_operation_records(
+            [row], package_id="package-1", generation="package-generation-1",
+            profile_id="profile-1", profile_generation="profile-generation-1",
+            registrations={registration_id: registration}, process_roles={})
 
 
 def test_native_observer_reference_joins_exact_active_issuer_role():
@@ -371,40 +656,361 @@ def test_native_observer_reference_joins_exact_active_issuer_role():
     profile = _parse_profile(item)
     package = {
         "package_id": "desktop-native", "profile_id": profile.profile_id,
-        "generation": profile.generation, "source_revision": "rev-1",
+        "generation": "native-gen-1", "profile_generation": profile.generation,
+        "source_revision": "rev-1",
         "source_tree_sha256": "b" * 64,
         "compiled_closure_artifact_id": "compiled-closure", "compiled_closure_sha256": "c" * 64,
         "entrypoint_artifact_id": "plugin-entrypoint", "entrypoint_sha256": "d" * 64,
         "resolver_artifact_id": "plugin-resolver", "resolver_sha256": "e" * 64,
         "service_package_root_id": "desktop-package-root", "service_mount_id": "desktop-package-mount",
-        "adapter_records": [{
-            "adapter_id": "adapter-one", "manifest_sha256": "f" * 64,
+        "adapter_records": [],
+        "action_records": [{
+            "action_binding_id": "adapter-one:action:read", "adapter_id": "adapter-one",
+            "action_id": "read", "manifest_sha256": "f" * 64,
             "adapter_artifact_id": "adapter-one-artifact", "adapter_sha256": "0" * 64,
-            "action_id": "read", "argument_schema_id": "read-input-v1", "result_schema_id": "read-result-v1",
-            "effect_enrollment_id": "effect-enrollment", "operation": "plugin.example.read",
-            "capability": "example-read", "target_id": "example-target", "recipient": "example-recipient",
-            "generation": profile.generation, "observer_enrollment_ids": ["observer-one"],
-            "workflow_bindings": [],
+            "argument_schema_id": "read-input-v1", "result_schema_id": "read-result-v1",
+            "effect_enrollment_id": "effect-enrollment", "operation": "plugin.adapter-one.read",
+            "capability": "plugin:adapter-one", "target_id": "example-target",
+            "recipient": "example-recipient", "generation": "native-gen-1",
+            "observer_enrollment_ids": ["observer-one"],
+        }],
+        "registration_records": [], "workflow_records": [], "process_role_records": [{
+            "role_id": "result-role", "package_id": "desktop-native",
+            "native_package_generation": "native-gen-1", "profile_id": profile.profile_id,
+            "profile_generation": profile.generation, "role_artifact_id": "process-result-role",
+            "role_sha256": "1" * 64, "role_source_receipt_handle": "role-source-receipt",
+            "module_name": "hermes_installer.adapters.result_role",
+            "closure_member_path": "hermes_installer/adapters/result_role.py",
+            "role_source_revision": "rev-1", "role_source_tree_sha256": "2" * 64,
+            "observer_enrollment_ids": ["observer-one"], "registration_ids": [],
+            "action_binding_ids": ["adapter-one:action:read"], "workflow_ids": [],
         }],
     }
     issuer = SourceIssuerRecord(
-        "tool-result", profile.profile_id, "adapter-one-artifact", "0" * 64,
-        "read-result-v1", (), profile.generation, "observer-one", ("registered-tool-result",),
+        "tool-result", profile.profile_id, "process-result-role", "1" * 64,
+        "read-result-v1", (), profile.generation, "observer-one", ("read",),
     )
     catalog = ProtectedEnrollmentCatalog({("install-1", "gen-1"): profile}, digest="0" * 64,
                                          native_packages=[package], source_issuers=[issuer])
+    catalog.resolve = lambda *_args: profile
+    role = catalog.resolve_selected_native_process_role("desktop-native", "native-gen-1", "result-role")
+    assert role.role_artifact_id == "process-result-role"
     join = catalog.source_observer_joins["observer-one"]
-    assert join.issuer is issuer
-    assert join.package.package_id == "desktop-native"
-    assert join.adapter.adapter_id == "adapter-one"
+    assert join.process_role == role
+    assert join.actions["adapter-one:action:read"].adapter_artifact_id == "adapter-one-artifact"
 
-    with pytest.raises(EnrollmentDenied, match="does not match"):
-        ProtectedEnrollmentCatalog({("install-1", "gen-1"): profile}, digest="0" * 64,
-                                   native_packages=[package], source_issuers=[
-            SourceIssuerRecord("tool-result", profile.profile_id, "different-role", "0" * 64,
-                               "read-result-v1", (), profile.generation, "observer-one",
-                               ("registered-tool-result",))
-        ])
+    for mutate, message in (
+        (lambda row: row.__setitem__("closure_member_path", "../outside.py"), "normalized and relative"),
+        (lambda row: row.__setitem__("profile_generation", "stale-process-generation"), "another package or profile generation"),
+        (lambda row: row.__setitem__("role_sha256", "not-a-digest"), "digest"),
+    ):
+        invalid = copy.deepcopy(package)
+        mutate(invalid["process_role_records"][0])
+        with pytest.raises(EnrollmentDenied, match=message):
+            NativePackageBinding.from_protected_record(invalid)
+
+    with pytest.raises(EnrollmentDenied, match="exact active source issuer"):
+        ProtectedEnrollmentCatalog(
+            {("install-1", "gen-1"): profile}, digest="0" * 64,
+            native_packages=[package], source_issuers=[
+                SourceIssuerRecord("tool-result", profile.profile_id, "different-role", "0" * 64,
+                                   "read-result-v1", (), profile.generation, "observer-one", ("read",))
+            ],
+        )
+    with pytest.raises(EnrollmentDenied, match="exact active source issuer"):
+        ProtectedEnrollmentCatalog(
+            {("install-1", "gen-1"): profile}, digest="0" * 64,
+            native_packages=[package], source_issuers=[
+                SourceIssuerRecord("tool-result", profile.profile_id, "different-role", "0" * 64,
+                                   "read-result-v1", (), "stale-process-gen", "observer-one",
+                                   ("registered-tool-result",))
+            ],
+        )
+
+
+def test_v113_native_package_keeps_effect_actions_separate_from_registered_tools():
+    from hermes_installer.protected_enrollment import NativePackageBinding
+
+    action_base = {
+        "adapter_id": "adapter", "manifest_sha256": "1" * 64,
+        "adapter_artifact_id": "adapter-code", "adapter_sha256": "2" * 64,
+        "argument_schema_id": "action-args-v1", "result_schema_id": "action-result-v1",
+        "effect_enrollment_id": "effect-a", "operation": "plugin.adapter.read",
+        "capability": "plugin:adapter", "target_id": "target-a", "recipient": None,
+        "generation": "package-g2", "observer_enrollment_ids": [],
+    }
+    actions = [
+        {**action_base, "action_id": action_id,
+         "action_binding_id": f"adapter:action:{action_id}"}
+        for action_id in ("read", "write")
+    ]
+    registration = {
+        "registration_id": "adapter:tool:query", "native_tool_name": "query",
+        "native_server_name": "hermes-installer", "toolset": "filesystem", "family": "files",
+        "adapter_id": "adapter", "argument_schema_id": "tool-args-v1",
+        "result_schema_id": "tool-result-v1", "native_schema_sha256": "3" * 64,
+        "registration_source_artifact_id": "registration-source",
+        "registration_source_sha256": "4" * 64,
+        "registration_source_receipt_handle": "receipt-source",
+        "handler_kind": "effect-action", "handler_id": "read-handler",
+        "selector_fields": [],
+        "action_bindings": [{
+            "selector_values": {}, "action_binding_id": "adapter:action:read",
+            "argument_projection": [{"name": "query", "source_field": "query"}],
+            "workflow_id": None,
+        }],
+        "observer_enrollment_ids": [], "generation": "package-g2",
+    }
+    package = NativePackageBinding.from_protected_record({
+        "package_id": "package-a", "profile_id": "profile-a", "generation": "package-g2",
+        "profile_generation": "process-g5", "source_revision": "rev-a",
+        "source_tree_sha256": "5" * 64, "compiled_closure_artifact_id": "closure-a",
+        "compiled_closure_sha256": "6" * 64, "entrypoint_artifact_id": "entry-a",
+        "entrypoint_sha256": "7" * 64, "resolver_artifact_id": "resolver-a",
+        "resolver_sha256": "8" * 64, "service_package_root_id": "root-a",
+        "service_mount_id": "mount-a", "adapter_records": [],
+        "action_records": actions, "registration_records": [registration],
+        "workflow_records": [], "process_role_records": [],
+    })
+    assert set(package.action_records) == {"adapter:action:read", "adapter:action:write"}
+    assert package.registration_records["adapter:tool:query"].action_bindings[0].action_binding_id == "adapter:action:read"
+    assert package.generation != package.profile_generation
+    with pytest.raises(TypeError):
+        package.action_records["extra"] = package.action_records["adapter:action:read"]
+
+    bad = dict(registration)
+    bad["action_bindings"] = [{**registration["action_bindings"][0],
+                               "action_binding_id": "adapter:action:missing"}]
+    malformed = {
+        "package_id": "package-a", "profile_id": "profile-a", "generation": "package-g2",
+        "profile_generation": "process-g5", "source_revision": "rev-a",
+        "source_tree_sha256": "5" * 64, "compiled_closure_artifact_id": "closure-a",
+        "compiled_closure_sha256": "6" * 64, "entrypoint_artifact_id": "entry-a",
+        "entrypoint_sha256": "7" * 64, "resolver_artifact_id": "resolver-a",
+        "resolver_sha256": "8" * 64, "service_package_root_id": "root-a",
+        "service_mount_id": "mount-a", "adapter_records": [],
+        "action_records": actions, "registration_records": [bad], "workflow_records": [],
+        "process_role_records": [],
+    }
+    with pytest.raises(EnrollmentDenied, match="action binding is absent"):
+        NativePackageBinding.from_protected_record(malformed)
+
+
+def test_v113_native_workflow_refs_are_ordered_and_owned_by_the_registration():
+    from hermes_installer.protected_enrollment import NativePackageBinding
+
+    action = {
+        "action_binding_id": "adapter:action:step", "adapter_id": "adapter", "action_id": "step",
+        "manifest_sha256": "1" * 64, "adapter_artifact_id": "adapter-code", "adapter_sha256": "2" * 64,
+        "argument_schema_id": "step-args", "result_schema_id": "step-result",
+        "effect_enrollment_id": "effect-step", "operation": "plugin.adapter.step",
+        "capability": "plugin:adapter", "target_id": "target", "recipient": None,
+        "generation": "pkg-1", "observer_enrollment_ids": [],
+    }
+    registration = {
+        "registration_id": "adapter:tool:voice", "native_tool_name": "voice",
+        "native_server_name": "hermes-installer", "toolset": "voice", "family": "voice",
+        "adapter_id": "adapter", "argument_schema_id": "voice-args", "result_schema_id": "voice-result",
+        "native_schema_sha256": "3" * 64, "registration_source_artifact_id": "reg-src",
+        "registration_source_sha256": "4" * 64, "registration_source_receipt_handle": "reg-receipt",
+        "handler_kind": "finite-workflow", "handler_id": "voice-workflow",
+        "selector_fields": [], "action_bindings": [{
+            "selector_values": {}, "action_binding_id": None, "argument_projection": [],
+            "workflow_id": "workflow-1",
+        }], "observer_enrollment_ids": [], "generation": "pkg-1",
+    }
+    workflow = {
+        "id": "workflow-1", "registration_id": registration["registration_id"],
+        "external_argument_schema_id": "voice-args", "external_result_schema_id": "voice-result",
+        "workflow_artifact_id": "workflow-code", "workflow_sha256": "5" * 64,
+        "workflow_source_receipt_handle": "workflow-receipt",
+        "step_action_binding_ids": ["adapter:action:step"], "generation": "pkg-1",
+    }
+    row = {
+        "package_id": "package", "profile_id": "profile", "generation": "pkg-1",
+        "profile_generation": "process-4", "source_revision": "rev",
+        "source_tree_sha256": "6" * 64, "compiled_closure_artifact_id": "closure",
+        "compiled_closure_sha256": "7" * 64, "entrypoint_artifact_id": "entry",
+        "entrypoint_sha256": "8" * 64, "resolver_artifact_id": "resolver",
+        "resolver_sha256": "9" * 64, "service_package_root_id": "root",
+        "service_mount_id": "mount", "adapter_records": [], "action_records": [action],
+        "registration_records": [registration], "workflow_records": [workflow], "process_role_records": [],
+    }
+    parsed = NativePackageBinding.from_protected_record(row)
+    assert parsed.workflow_records["workflow-1"].step_action_binding_ids == ("adapter:action:step",)
+
+    from types import SimpleNamespace
+    profile = SimpleNamespace(enrollment_id="install", profile_id="profile", generation="process-4")
+    schema_rows = []
+    for adapter_id, action_id, schema_id, kind in (
+        ("adapter", "step", "step-args", "arguments"),
+        ("adapter", "step", "step-result", "result"),
+        ("adapter", "adapter:tool:voice", "voice-args", "arguments"),
+        ("adapter", "adapter:tool:voice", "voice-result", "result"),
+    ):
+        schema_rows.append({
+            "id": schema_id, "artifact_id": f"artifact-{schema_id}", "sha256": "a" * 64,
+            "schema_kind": kind, "native_package_id": "package", "native_package_generation": "pkg-1",
+            "adapter_id": adapter_id, "action_id": action_id, "source_receipt_handle": "receipt",
+            "size_bytes": 10, "derivation_receipt_handle": None,
+        })
+    catalog = ProtectedEnrollmentCatalog(
+        {("install", "process-4"): profile}, digest="d" * 64,
+        native_packages=[row], native_schema_artifacts=schema_rows,
+    )
+    catalog.resolve = lambda *_args: profile
+    assert catalog.resolve_native_registration_schema_artifact(
+        "package", "pkg-1", "adapter:tool:voice", "arguments", profile_id="profile",
+        process_generation="process-4", service_generation_digest="d" * 64,
+    )["id"] == "voice-args"
+    with pytest.raises(EnrollmentDenied, match="stale service snapshot"):
+        catalog.resolve_native_registration_schema_artifact(
+            "package", "pkg-1", "adapter:tool:voice", "arguments", profile_id="profile",
+            process_generation="process-4", service_generation_digest="e" * 64,
+        )
+    malformed_schema_rows = [record for record in schema_rows if record["id"] != "voice-result"]
+    with pytest.raises(EnrollmentDenied, match="registration schema join"):
+        ProtectedEnrollmentCatalog(
+            {("install", "process-4"): profile}, digest="d" * 64,
+            native_packages=[row], native_schema_artifacts=malformed_schema_rows,
+        )
+
+    wrong_owner = {**workflow, "registration_id": "other:tool:voice"}
+    with pytest.raises(EnrollmentDenied, match="workflow belongs to another registration"):
+        NativePackageBinding.from_protected_record({**row, "workflow_records": [wrong_owner]})
+
+    wrong_adapter = {**action, "adapter_id": "other", "action_id": "step",
+                     "action_binding_id": "other:action:step", "operation": "plugin.other.step",
+                     "capability": "plugin:other"}
+    foreign_workflow = {**workflow, "step_action_binding_ids": ["other:action:step"]}
+    with pytest.raises(EnrollmentDenied, match="workflow action belongs to another adapter"):
+        NativePackageBinding.from_protected_record({**row, "action_records": [action, wrong_adapter],
+                                                     "workflow_records": [foreign_workflow]})
+
+
+def test_public_web_scope_parser_binds_canonical_payload_and_rejects_unsafe_targets():
+    raw = {
+        "enrollment_id": "web-scope-a", "target_id": "docs-a", "generation": "process-g1",
+        "principal_id": "principal-a", "profile_id": "profile-a", "recipient": "recipient-a",
+        "targets": [{"hostname": "docs.example.org", "path_prefixes": ["/api", "/docs"],
+                     "query_keys": ["lang", "q"]}],
+        "request_bytes_limit": 8192, "response_bytes_limit": 65536, "deadline_seconds": 10,
+        "target_selection_handle": "selection-a", "configuration_observation_handle": "observation-a",
+        "configuration_sha256": "a" * 64, "target_contract_artifact_id": "contract-a",
+        "target_contract_sha256": "b" * 64, "target_contract_source_receipt_handle": "receipt-a",
+    }
+    parsed = RootSelectedPublicWebScope.from_protected_record(
+        raw, service_generation_digest="c" * 64,
+    )
+    payload = {key: raw[key] for key in (
+        "enrollment_id", "target_id", "generation", "principal_id", "profile_id", "recipient",
+        "targets", "request_bytes_limit", "response_bytes_limit", "deadline_seconds",
+    )}
+    assert parsed.enrolled_scope.target == "plugin:web:docs-a:process-g1"
+    assert parsed.enrolled_scope.targets[0].hostname == "docs.example.org"
+    canonical_payload = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode("utf-8")
+    assert parsed.scope_payload == canonical_payload
+    assert parsed.scope_payload_sha256 == hashlib.sha256(canonical_payload).hexdigest()
+    assert type(parsed.enrolled_scope.deadline_seconds) is int
+    assert parsed.service_generation_digest == "c" * 64
+
+    for bad in (
+        {**raw, "extra": True},
+        {**raw, "targets": [{**raw["targets"][0], "hostname": "127.0.0.1"}]},
+        {**raw, "targets": [{**raw["targets"][0], "hostname": "docs.example.org."}]},
+        {**raw, "targets": [{**raw["targets"][0], "path_prefixes": ["/docs/../private"]}]},
+        {**raw, "targets": [{**raw["targets"][0], "path_prefixes": ["/docs/%2e%2e/private"]}]},
+        {**raw, "targets": [{**raw["targets"][0], "path_prefixes": ["/docs", "/api"]}]},
+        {**raw, "targets": [{**raw["targets"][0], "query_keys": ["access_token"]}]},
+        {**raw, "deadline_seconds": True},
+        {**raw, "response_bytes_limit": 2_097_153},
+        {**raw, "configuration_sha256": "A" * 64},
+    ):
+        with pytest.raises(EnrollmentDenied):
+            RootSelectedPublicWebScope.from_protected_record(
+                bad, service_generation_digest="c" * 64,
+            )
+
+
+def test_public_web_scope_catalog_joins_exact_action_issuer_and_process_epoch(monkeypatch):
+    from hermes_installer.authority.enrollment import SourceIssuerRecord
+
+    profile = SimpleNamespace(profile_id="profile-a", generation="process-g1",
+                              principal_id="principal-a", enrollment_id="service-a")
+    action = {
+        "action_binding_id": "web:action:read", "adapter_id": "web",
+        "action_id": "read", "manifest_sha256": "1" * 64,
+        "adapter_artifact_id": "adapter-code", "adapter_sha256": "2" * 64,
+        "argument_schema_id": "web-args", "result_schema_id": "web-result",
+        "effect_enrollment_id": "web-scope-a", "operation": "plugin.web.read",
+        "capability": "plugin:web", "target_id": "plugin:web:docs-a:process-g1",
+        "recipient": "recipient-a", "generation": "package-g1", "observer_enrollment_ids": [],
+    }
+    package = {
+        "package_id": "package-a", "profile_id": "profile-a", "generation": "package-g1",
+        "profile_generation": "process-g1", "source_revision": "rev-a",
+        "source_tree_sha256": "3" * 64, "compiled_closure_artifact_id": "closure-a",
+        "compiled_closure_sha256": "4" * 64, "entrypoint_artifact_id": "entry-a",
+        "entrypoint_sha256": "5" * 64, "resolver_artifact_id": "resolver-a",
+        "resolver_sha256": "6" * 64, "service_package_root_id": "root-a",
+        "service_mount_id": "mount-a", "adapter_records": [], "action_records": [action],
+        "registration_records": [], "workflow_records": [], "process_role_records": [],
+    }
+    issuer = SourceIssuerRecord(
+        "native-input", "profile-a", "role-a", "7" * 64, "capture-v1", (),
+        "process-g1", "observer-a", ("authenticated-input",), (), ("web-scope-a",),
+    )
+    raw_scope = {
+        "enrollment_id": "web-scope-a", "target_id": "docs-a", "generation": "process-g1",
+        "principal_id": "principal-a", "profile_id": "profile-a", "recipient": "recipient-a",
+        "targets": [{"hostname": "docs.example.org", "path_prefixes": ["/docs"], "query_keys": ["q"]}],
+        "request_bytes_limit": 8192, "response_bytes_limit": 65536, "deadline_seconds": 10,
+        "target_selection_handle": "selection-a", "configuration_observation_handle": "observation-a",
+        "configuration_sha256": "8" * 64, "target_contract_artifact_id": "contract-a",
+        "target_contract_sha256": "9" * 64, "target_contract_source_receipt_handle": "receipt-a",
+    }
+    monkeypatch.setattr(ProtectedEnrollmentCatalog, "resolve", lambda self, *_args: profile)
+    catalog = ProtectedEnrollmentCatalog(
+        {("service-a", "process-g1"): profile}, digest="c" * 64,
+        native_packages=[package], source_issuers=[issuer], public_web_scopes=[raw_scope],
+    )
+    selected = catalog.resolve_current_public_web_scopes(
+        ["web-scope-a"], principal_id="principal-a", profile_id="profile-a",
+        profile_generation="process-g1", service_generation_digest="c" * 64,
+    )
+    assert len(selected) == 1
+    assert selected[0].target_selection_handle == "selection-a"
+    assert catalog.resolve_current_public_web_scopes(
+        [], principal_id="principal-a", profile_id="profile-a",
+        profile_generation="process-g1", service_generation_digest="c" * 64,
+    ) == ()
+    with pytest.raises(EnrollmentDenied, match="principal/profile generation"):
+        catalog.resolve_current_public_web_scopes(
+            ["web-scope-a"], principal_id="other", profile_id="profile-a",
+            profile_generation="process-g1", service_generation_digest="c" * 64,
+        )
+    with pytest.raises(EnrollmentDenied, match="stale generation"):
+        catalog.resolve_current_public_web_scopes(
+            ["web-scope-a"], principal_id="principal-a", profile_id="profile-a",
+            profile_generation="process-g1", service_generation_digest="d" * 64,
+        )
+    with pytest.raises(EnrollmentDenied, match="source issuer"):
+        ProtectedEnrollmentCatalog(
+            {("service-a", "process-g1"): profile}, digest="c" * 64,
+            native_packages=[package], source_issuers=[
+                SourceIssuerRecord("native-input", "profile-a", "role-a", "7" * 64,
+                                   "capture-v1", (), "other-generation", "observer-a",
+                                   ("authenticated-input",), (), ("web-scope-a",)),
+            ], public_web_scopes=[raw_scope],
+        )
+    with pytest.raises(EnrollmentDenied, match="sorted by enrollment ID"):
+        ProtectedEnrollmentCatalog(
+            {("service-a", "process-g1"): profile}, digest="c" * 64,
+            native_packages=[package], source_issuers=[issuer],
+            public_web_scopes=[raw_scope, {**raw_scope, "generation": "process-g2"}],
+        )
 
 
 def test_memory_connector_route_binds_variant_port_and_exact_route():

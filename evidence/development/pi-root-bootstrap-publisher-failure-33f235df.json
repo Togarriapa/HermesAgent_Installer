@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "record_kind": "operator_reported_pi_root_bootstrap_publisher_failure",
+  "state": "failed_before_installed_release_publication",
+  "authenticated": false,
+  "acceptance_record_emitted": false,
+  "accepted_target_result": false,
+  "change_ids": ["installer-bootstrap-desktop", "lifecycle-recovery", "verification-documentation"],
+  "task_ids": ["BD-F01", "BD-F03", "LC-F03", "VD-F03"],
+  "target": {
+    "target_name": "PI-HERMES",
+    "architecture": "aarch64",
+    "distribution": "Debian 13.6",
+    "executor_uid": 0,
+    "executor_gid": 0
+  },
+  "candidate": {
+    "commit": "33f235df47c0ee6a9d66912fdd3ce536e799c0ad",
+    "tree": "fa590579e8af91db706db76c948fbd7751d49573",
+    "frozen_tag": "hermes-installer-plan-2026-10-09-v1",
+    "frozen_tag_object": "c47c90cf2e0a6b1cd5779257fdcba9e487ee08f8",
+    "frozen_tag_peeled_commit": "653ac5fbc7a02613c9951859a7d794599603459b",
+    "tag_verified_by_operator": true,
+    "fresh_exact_sha_prompt_entry_succeeded": true,
+    "submitted_source_commit": "33f235df47c0ee6a9d66912fdd3ce536e799c0ad"
+  },
+  "attempt": {
+    "timestamp": null,
+    "timestamp_status": "not supplied",
+    "stage_path": null,
+    "stage_path_status": "not supplied",
+    "phase_reached": "source CAS, runtime bootstrap, and build completed far enough to re-exec into _bootstrap_after_reexec",
+    "failure": {
+      "call_chain": [
+        "_bootstrap_after_reexec (bootstrap.py:3027)",
+        "publisher.publish_installed_stage",
+        "installed_stage_publisher.py:124",
+        "_verify_directory(release_root.parent, expected_uid, mode=None) at line 646"
+      ],
+      "exception": "FileNotFoundError",
+      "errno": 2,
+      "missing_component": "hermes-installer",
+      "observed_release_parent": "/usr/lib/hermes-installer/releases"
+    },
+    "outcome": "installed-stage publication failed; no installed launch or acceptance result"
+  },
+  "subsequent_read_only_path_observation": {
+    "timestamp": null,
+    "timestamp_status": "not supplied",
+    "paths": {
+      "/usr/lib": {"owner": "root:root", "mode": "0755", "state": "present"},
+      "/usr/lib/hermes-installer": {"state": "absent"},
+      "/usr/lib/hermes-installer/releases": {"state": "absent"},
+      "/var/lib/hermes-installer/deployments": {"owner": "root:root", "mode": "0700", "state": "present"},
+      "/var/lib/hermes-installer/bootstrap-runtimes/8cd0339fdd3c87a97139dda8945cfbb73113fc0035935f934ba4a73a856c871f/python": {"state": "present"}
+    },
+    "scope": "Root-reported stat only; no directory was created or repaired manually."
+  },
+  "not_observed": [
+    "installed release publication",
+    "active or launchable installation",
+    "current deployment receipt",
+    "account prompts or account enrollment",
+    "native profile/plugin operation or acceptance",
+    "installer recovery after the publication failure"
+  ],
+  "followup_fix_status": "The Sol-approved publisher fix identified as 4f84b909 is pending root publication and integration; no Pi result for that fix is reported.",
+  "acceptance_assertions": {
+    "AC01": null,
+    "AC02": null,
+    "AC03": null,
+    "AC04": null,
+    "AC05": null,
+    "AC06": null,
+    "AC07": null,
+    "AC08": null,
+    "AC09": null,
+    "AC10": null,
+    "AC11": null,
+    "AC12": null,
+    "AC13": null,
+    "AC14": null,
+    "AC15": null,
+    "AC16": null,
+    "AC17": null,
+    "AC18": null
+  },
+  "claim_limit": "This records a failed installed-stage publisher call and a later root-reported path inspection. It does not establish an installed release or target acceptance; all AC01-AC18 remain open."
+}

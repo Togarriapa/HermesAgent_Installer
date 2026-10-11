@@ -1,0 +1,107 @@
+{
+  "schema": 1,
+  "amendment": "plans/amendments/2026-10-10-safe-bootstrap-diagnostics-source-review-v196.md",
+  "parent_review": "planning/final-coherent-source-pin-review-v195.json",
+  "reference_commit": "fff388978141a027ddb036e94b4d08b2f5346116",
+  "reference_tree": "78d20d172b9708f24580de6f74300421eedca88b",
+  "replaces_only_members": [
+    {
+      "source_commit": "fff388978141a027ddb036e94b4d08b2f5346116",
+      "source_path": "src/hermes_installer/authority/bootstrap_enrollment.py",
+      "module_name": "hermes_installer.authority.bootstrap_enrollment",
+      "source_artifact_id": null,
+      "installed_artifact_id": "installer-module:hermes_installer.authority.bootstrap_enrollment",
+      "installed_member": "lib/python/hermes_installer/authority/bootstrap_enrollment.py",
+      "sha256": "6a5985a80064b661c93e1be0c62ae27a454eea1d90658be2c09fe0141e7ecedd",
+      "size_bytes": 142594,
+      "roles": [
+        "module"
+      ],
+      "installed_mode": 292,
+      "preload": true,
+      "requirement_ids": [
+        "BD-F02",
+        "HI-T149.1",
+        "BD-T196.1",
+        "VD-T196.2"
+      ],
+      "source_authority": "exact verified installer candidate source snapshot plus held installed module receipt; no separate raw downloader identity"
+    },
+    {
+      "source_commit": "fff388978141a027ddb036e94b4d08b2f5346116",
+      "source_path": "src/hermes_installer/root_setup.py",
+      "module_name": "hermes_installer.root_setup",
+      "source_artifact_id": null,
+      "installed_artifact_id": "installer-module:hermes_installer.root_setup",
+      "installed_member": "lib/python/hermes_installer/root_setup.py",
+      "sha256": "a938ca78933cde596f627986a60b7c270c0093dc6d9edacf2acb467abbd27f9c",
+      "size_bytes": 57764,
+      "roles": [
+        "module"
+      ],
+      "installed_mode": 292,
+      "preload": true,
+      "requirement_ids": [
+        "BD-F02",
+        "HI-T149.1",
+        "BD-T196.1",
+        "VD-T196.2"
+      ],
+      "source_authority": "exact verified installer candidate source snapshot plus held installed module receipt; no separate raw downloader identity"
+    }
+  ],
+  "catalog_rows_to_apply": [],
+  "fixed_steps": [
+    "bootstrap.handoff",
+    "bootstrap.reexec",
+    "bootstrap.tty_selection",
+    "installer_runtime.provision",
+    "source_cas.construct",
+    "source_cas.inspect",
+    "source_cas.lock",
+    "source_cas.lock_release",
+    "source_cas.materialize",
+    "source_cas.prepare",
+    "source_cas.resolve"
+  ],
+  "fixed_errno_names": [
+    "EACCES",
+    "EAGAIN",
+    "EBUSY",
+    "EEXIST",
+    "EINTR",
+    "EINVAL",
+    "EIO",
+    "EISDIR",
+    "ELOOP",
+    "EMFILE",
+    "ENFILE",
+    "ENOENT",
+    "ENOMEM",
+    "ENOSPC",
+    "ENOTDIR",
+    "ENOTTY",
+    "ENXIO",
+    "EPERM",
+    "EROFS",
+    "ETIMEDOUT",
+    "EXDEV"
+  ],
+  "metadata_structural_reference": {
+    "source_commit": "fff388978141a027ddb036e94b4d08b2f5346116",
+    "source_path": "src/hermes_installer/authority/installer_release_build.py",
+    "sha256": "539708a4f4615857aed78e79267ff19a31e8ed3f714162a8dedd3187d47d4c52",
+    "size_bytes": 254684,
+    "state": "actual candidate source snapshot/import metadata; no expected self pin"
+  },
+  "source_review_complete": true,
+  "pin_application_complete": false,
+  "runtime_acceptance_complete": false,
+  "acceptance": "AC01..AC18 OPEN",
+  "reported_tests": {
+    "focused_redaction_passed": 1,
+    "combined_passed": 75,
+    "combined_skipped": 7,
+    "combined_expected_old_pin_failures": 1
+  }
+}

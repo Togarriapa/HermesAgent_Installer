@@ -60,3 +60,62 @@ Use installed_selection_catalog.bootstrap_policy_artifact explicit selected poli
 ### v22 runnable and health ordering
 
 Use bootstrap_policy_artifact.activation_order: verified runnable custody publication precedes health observation, functional enablement follows actual passed current-generation health only. Existing acceptance remains pending.
+
+### v26 usable first-stage publication
+
+Use first_stage_policy_compiler exact stage0 constructor/choice/compile/publish/materialization/HERMES_HOME contracts before factory resolution. Existing BD/LC/HI tasks remain pending until actual native operation.
+
+### v27 prepared native receipts and Hermes home
+
+Use first_stage_policy_compiler exact home/prepared order/runtime artifact roles/independent Resources source and receipt_binding_rules_schema. Existing BD/LC/HI/RB tasks remain pending.
+
+### v30 concrete closed compiler template
+
+Use immutable installer-bootstrap-compiler-template-v1 bytes and exact root-binding grammar/stage executor in first_stage_policy_compiler. Prepared empty records until actual fact/receipt bindings. Existing BD/LC/HI tasks remain pending.
+
+Additive observation assembly v31: `plans/amendments/2026-10-09-final-observation-assembly-v31.md`; preserve existing task IDs and open target gates. Selected root registries/current custody receipts supply actual observations; static catalog or caller claims do not.
+
+Setup principal selection v32: `plans/amendments/2026-10-09-setup-principal-selection-v32.md` and lifecycle compiler principal_selection_receipt define exact first-setup trusted identity joins; existing tasks remain open.
+
+Installed release/native assembly v33: `plans/amendments/2026-10-09-installed-release-native-assembly-v33.md`; exact root receipt and construction joins preserve existing task IDs and pending evidence.
+
+Complete baseline receipt digest v34 clarifies full-tree and original160 snapshot domains: `plans/amendments/2026-10-09-complete-baseline-digest-v34.md`; no task completion.
+
+Initial identity/terminal sequencing v35: `plans/amendments/2026-10-09-initial-identity-terminal-sequencing-v35.md`; exact existing task joins remain pending.
+
+First-stage publication/ingress v36: `plans/amendments/2026-10-09-first-stage-publication-ingress-v36.md`; exact existing task construction joins, no completion claimed.
+
+Official PM runtime receipt v37: `plans/amendments/2026-10-09-official-pm-runtime-receipt-v37.md`; exact root observed executable joins, existing tasks remain open.
+
+Initial compilation handoff v42: `plans/amendments/2026-10-09-initial-compilation-handoff-v42.md`; exact stage0/post-policy separation, original tasks open.
+
+Root identity credential intake v47: `plans/amendments/2026-10-09-root-identity-credential-intake-v47.md`; exact original setupintake, tasks remain open.
+
+Authentik template/actor API v49: `plans/amendments/2026-10-09-authentik-template-actor-api-v49.md`; exact source template and existing verifier, tasks open.
+
+Release plan/active compiler v53: `plans/amendments/2026-10-09-release-plan-active-compiler-v53.md`; exact source template/buildclaims, existing tasks open.
+
+Live health control/output kinds v55: `plans/amendments/2026-10-09-live-health-control-output-kinds-v55.md`; existing tasks remain open until actual proof.
+
+First source bootstrap actor v62: `plans/amendments/2026-10-10-first-source-bootstrap-actor-v62.md`; existing scope/tasks remain open.
+
+
+## Conditional Authentik and local-owner setup v181
+
+Use the separate root-observed Linux-owner identity/principal/snapshot domain, finite selected owner-overlay ceiling, digest-covered native policy and genuine loaded worker joins; preserve Authentik TLS/credential/fresh System/recipient/broker checks. Contract and sequential producer/evidence details: `plans/amendments/2026-10-10-conditional-authentik-local-owner-setup-v181.md`. No runtime implementation or acceptance is claimed; all AC01..18 OPEN.
+
+
+Two-actor health v191: `plans/amendments/2026-10-10-two-actor-health-commit-custody-v191.md` replaces unsafe setup-session aliasing with independently current daemon commit/source proof, actual fixed source run/events and one-use authenticated setup health intent. Only consumer-completed same-generation journal witness may enable; ACK is insufficient. All acceptance/source pins remain OPEN.
+
+Predecessor-bound candidate update v235: planning/predecessor-bound-candidate-update-v235.json requires current verified old release admission before exact candidate staging, sealed samecontroller input joins, existing publisher present CAS, durable owned rollback and candidate reexec. Distribution and runtime generation acceptance remain separate. LC-T235.2/VD-T235.3 OPEN; all AC OPEN.
+
+
+v241 narrow candidate update source review: `plans/amendments/2026-10-10-candidate-update-source-review-v241.md` and `planning/candidate-update-source-review-v241.json`. Exact committed ae399 source fixes cold recovery, complete postCAS rollback and issued FD3 cleanup. Only existing root_setup tuple updates in both tables are approved; builder/publisher remain source-held metadata, no recipe/catalog changes. Genuine full positive/unexcluded/Pi evidence and BD-T235.1/LC-T235.2/VD-T235.3/all AC OPEN.
+
+
+v242 pre-v235 bridge: `plans/amendments/2026-10-10-preinstalled-source-update-entry-v242.md` / `planning/preinstalled-source-update-entry-v242.json` adds finite source-update entry using genuine present predecessor/current UPDATE TTY/fixed-origin CAS/FD3 and isolated source actor before new installed actor. Ordinary installed verifier is preserved; no oldrelease/pointer deletion, caller path/flag authority or restored seals. BD-T242.1 → VD-T242.2 and all AC OPEN.
+
+## Immutable historical predecessor refinement v249
+
+v247 narrow source-update leaf review: `plans/amendments/2026-10-10-source-update-entry-source-review-v247.md` / `planning/source-update-entry-source-review-v247.json`. Exact7b7f source root_setup0b7d7203/71543 replaces only two existing static tuple literals after publication. Current verified predecessor/TTY/source actor/FD3 gates and safe fixed source retry retained; no recipe/catalog or broader source approval. Genuine full positive/unexcluded/Pi and all tasks/AC OPEN.
+Preserve BD-F03/LC-F03/AC01..02 and v235/v242. Use exact source-reviewed historical whole cohort and dedicated predecessor-only receipt in `planning/version-aware-predecessor-verification-v249.json`; old installed code never becomes current actor. Full closed release/pointer custody and original deadlines remain; no target acceptance.

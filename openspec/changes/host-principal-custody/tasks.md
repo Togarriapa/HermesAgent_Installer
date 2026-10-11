@@ -147,3 +147,364 @@ Use installed_selection_catalog artifact_catalog/artifact_store joins, root task
 ### v20 exact root peer/controller DTOs
 
 Use pending_pair_DTO and task_runner_protocol.RootTaskController exact records/role mapping/PIDFD ownership. Existing HI/RB tasks remain pending.
+
+### v23 root resource controller enrollment
+
+Use active resource_controller_roles and root_controller_role_catalog exact actual daemon/module/source/backend/operation joins; current handler module SHA and stricter effective result bounds apply. HI/RB tasks remain pending.
+
+### v24 native MCP handler binding
+
+MC-F01/MC-F02 and HI-T04/08/09 use native-package-binding-contract.json native_mcp_dispatch exact source-backed in-process hook/catalog/RPC/result joins. All original native/account acceptance remains pending.
+
+### v25 MCP lexical/config mapping
+
+Use native_mcp_dispatch row_types/invocation_mapping/native_config exact records, same one-use lexical binding and root-backed native candidate registration. MC/HI acceptance remains pending.
+
+### v29 native task and credential joins
+
+Use separate result generation_api domains, task_runner_protocol.native_execution_receipt and backend_enrollments.credential_bindings exact active joins. Existing HI/RB tasks remain pending.
+
+Root-selected lifecycle authority v80: `plans/amendments/2026-10-10-root-selected-service-lifecycle-authority-v80.md`; existing HI/RT/SK tasks open, separate actual controller and selected subject proof required.
+
+Native registration projection v99: `plans/amendments/2026-10-10-native-registration-projection-v99.md`; exact source registration/selector/local-family coverage required; existing implementation and acceptance tasks remain open.
+
+Private input recipient consent v100: `plans/amendments/2026-10-10-private-input-recipient-consent-v100.md`; actual root observed private-route choice/current input binding/epoch required, no capture-consent substitution; existing implementation/acceptance gates open.
+
+Verified Xpra source pin v101: `plans/amendments/2026-10-10-xpra-verified-source-pin-v101.md`; exact source tree/finite links/actual transform and runtime proof required; no source-only acceptance or missing native-family waiver. Existing tasks open.
+
+Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected-runtime-profile-currentness-v102.md`; actual independent Resources choice/PM journal root/current consent and recipe-bound application limits; existing implementation/acceptance tasks open.
+
+Private loopback host tool pins v103: `plans/amendments/2026-10-10-private-loopback-host-tool-pins-v103.md`; finite actual package/executable/dependency/namespace proof, no source-only or target acceptance; existing tasks remain open.
+
+Application owned execution receipts v104: `plans/amendments/2026-10-10-application-owned-execution-receipts-v104.md`; actual distinct selected grant/controller/probe/manager terminal/artifact result producer required, no ResourceTask/RuntimeReview substitutes; existing implementation/acceptance tasks open.
+
+Host tool observation v105: `plans/amendments/2026-10-10-host-tool-observation-v105.md`; finite network-owned host package producer, actual held installed dependency closure/currentness, no Coral receipt substitute. Existing implementation and acceptance tasks remain open.
+
+Xpra managed transform v106: `plans/amendments/2026-10-10-xpra-managed-transform-v106.md`; finite managed target and actual PM/module/source/terminal/CAS receipts required. Existing HI-T09/HI-T13 implementation and acceptance remain open.
+
+Xpra regular source build pin v109: `plans/amendments/2026-10-10-xpra-regular-source-build-pin-v109.md`; exact module/source topology, file builder root and data output role. Existing managed proof/acceptance tasks open.
+
+Native local result bounds v110: `plans/amendments/2026-10-10-native-local-result-bounds-v110.md`; actual eight local schemas/recursive transport budget and unchanged protected result gates, no all18 omission. Implementation/acceptance tasks remain open.
+
+Xpra link target source pin v111: `plans/amendments/2026-10-10-xpra-link-target-source-pin-v111.md`; final committed module and exact five link target byte hashes/sizes; managed proof/acceptance still required.
+
+Native local schema artifacts v112: `plans/amendments/2026-10-10-native-local-schema-artifacts-v112.md`; eight literal source schema IDs/hashes and actual packaged receipt/validator/generation join. Existing all18 implementation/acceptance tasks remain open.
+
+Protected native registration records v113: `plans/amendments/2026-10-10-protected-native-registration-records-v113.md`; separate42 registration/61action protected arrays from actual preactive source selections, typed workflows/observers/schemas, bounded backend-data wrappers. Existing HI-T08/HI-T11/HI-T12 and all18 acceptance remain open.
+
+Native schema catalog identities v114: `plans/amendments/2026-10-10-native-schema-catalog-identities-v114.md`; exact eight literal catalog-compatible IDs, sourcebytes unchanged; actual receipt/assembly/acceptance still open.
+
+Prepared build service selection v115: `plans/amendments/2026-10-10-prepared-build-service-selection-v115.md`; source-owned setup-only exact build subject/current NSS/root selection before activeprofile, no fabricated worker. Existing build/setup/acceptance tasks remain open.
+
+Native financial/web bounded results v120: `plans/amendments/2026-10-10-native-financial-web-results-v120.md`; HI-T08/HI-T11 implementation and actual acceptance remain open.
+
+- [ ] HI-T120.1: registration/component owner apply exact finite financial/web result validators and genuine root artifact receipt resolver; no generic object schema.
+
+- [ ] HI-T120.2: factory/schema observer/enrollment join actual packaged result schemas and external registration foreign keys; actual42 registration/61 backend effect proof separate.
+
+- [ ] HI-T120.3: test oversized/nonfinite/control/credential output, false web receipt, stale profile/owner/expiry and untrusted redirect/content semantics; real effects and acceptance remain open.
+
+Financial alias source bound v121: `plans/amendments/2026-10-10-financial-alias-source-bound-v121.md`; source128-character alias domain preserved, HI-T120 obligations open.
+
+Native process role association v123: `plans/amendments/2026-10-10-native-process-role-association-v123.md`; actual role/source/loaded observer joins and acceptance remain open.
+
+- [x] HI-T123.1: enrollment/runtime owner strict process_role_records parser/getter and exact profile/module/observer/action FK checks.
+
+- [ ] HI-T123.2: factory/registration/assembler owner produce reviewed root staged definitions/role module source receipts before active publish; do not wait for pre-existing active rows.
+
+- [ ] HI-T123.3: source/custody owner independently join actual loaded role/source proof to producer and exact selected action; test wrong role module/adapter/observer and two generations; actual native runtime acceptance open.
+
+Web content root receipt v126: `plans/amendments/2026-10-10-web-content-root-receipt-v126.md`; actual bounded captured source/CAS/handler proof required; HI-T08/HI-T11 acceptance open.
+
+- [ ] HI-T126.1: broker implement actual bounded dynamic root CAS/response observation/receipt resolver and root handler callpoint, distinct transport versus source/artifact proof.
+
+- [ ] HI-T126.2: web/native/turn owners consume exact typed root receipt projection and retained ancestry; no synthesized opaque handles.
+
+- [ ] HI-T126.3: test forged effect/native/transport, false CAS hash/inode, profile/owner/expiry mismatch, duplicate bytes across profiles, output limits and untrusted content/source semantics; real account/runtime acceptance open.
+
+- [ ] HI-T133.1 bootstrap enrollment: stable selector intent and fresh atomic <=30s identity/namespace pair; changed subject/groups/policy/revocation/session tests
+
+- [ ] SK-T133.2 factory: genuine purpose-bound private profile selection and same-configuration TTY producer; memory/model/app consumers use selectors and fresh receipts, never Resources aliases or old authority lease
+
+- [ ] SK-T133.3 factory/consent/model/source owners: genuine selector/profile choice persistence and current phase joins; source preparation across snapshot renewal succeeds only same actual binding, changed identity/private-purpose/source denies
+
+- [ ] HI-T134.1 native assembler: exact manifest role projection/hash and resolver digest join from sealed preactive definitions; CAS/role/FK/source mismatch tests
+
+- [ ] HI-T134.2 boundary/loader/custody: validated selected role delivery and actual import event proof, root held member/PIDFD/mount currentness, no catalog-only loaded claim
+
+- [ ] HI-T134.3 source/factory/runtime: root validated loaded-role proof to current selected observer registration/action joins; missing/changed role/import denies
+
+- [ ] HI-T137.1 factory/native policy preparation: Implement actual root TTY selected native component/action/target configuration and sealed preactive policy registry feeding existing assembly; finite choice/target/current identity/source proof failures and phase renewal.
+
+- [ ] HI-T137.2 component target/source owners: Implement finite reviewed per-component target/account/vault/permission observation adapters and protected source-role/observer definition producer; preserve configurable pending for absent auth/rights/runtime, no installation-test writes/messages.
+
+- [ ] HI-T137.3 registration projection/source observer/native assembler/active compiler: Produce exact 61 action/42 registration/workflow/process-role/schema/observer joins from actual staged records, real root source receipts; compile then atomically publish real outputs without active-before-assembly cycle, verify all-family coverage and missing proof denial.
+
+- [ ] PR-T138.1 factory/consent: Actual same normal configuration public-web permission producer and current root source selection snapshots; no defaults/private alias.
+
+- [ ] HI-T138.2 source input/host authority: Actual PUBLIC source observation and initial selected input proof -> signed finite permission/source ceiling; per-dispatch nonconsuming epoch revalidation, private/UNKNOWN ancestry negative tests.
+
+- [ ] RB-T138.3 web/native integration: Current bounded public web scope projection, actual public-only fixture positive through genuine source/authority/transport/CAS/result joins; SSRF/redirect/private ancestry/revocation/zero-budget failures. Public fixture proves only fixture behavior, not live acceptance.
+
+- [ ] HI-T140.1 native source/projection/factory: Consume current held module pin, re-observe exact registration/action/schema source joins and current registration capture; stale source receipts/hash deny.
+
+- [ ] RB-T140.2 web/native integration: Preserve genuine raw receipt/result/media/operation joins and PUBLIC-only egress positive with private ancestry/revocation negatives; actual runtime/account/ARM acceptance remains open.
+
+- [ ] HI-T141.1 finance/native source/projection/factory: Current installed source/schema receipt and fresh exact registration/finite selector capture against pinned module; stale/forged source, malformed observations/alias and forbidden account fields deny.
+
+- [ ] HI-T141.2 finance/native integration: Actual bounded observation fixture path/source ancestry and separate finance/wallet account/effect/current permission failures; no outbound transaction or account/live acceptance claim.
+
+- [ ] HI-T142.1 native target/factory/publisher: Actual source-owned TTY public scope configuration, retained target/config source observation, first active projection and exact effect/source FK validation.
+
+- [ ] HI-T142.2 host enrollment/authority: Strict active table/getter and PUBLIC per-input permission join; missing/conflicting source, PRIVATE ancestry, stale selection and out-of-scope URLs deny.
+
+- [ ] HI-T143.1 bootstrap enrollment/factory/consent: Existing key custody normal-session adoption/resume and finite durable choice signer/registry, genuine TTY source methods and release member receipts; no parallel key/service.
+
+- [ ] HI-T143.2 factory/active publisher/runtime composer: Actual signed choice adoption into selected generation and fresh runtime purpose projections; changed source/key/subject/epoch, expired snapshots and unadopted intent deny.
+
+- [ ] SK-T146.1 factory/model selection/consent: Actual unsigned held root observation -> root TTY complete choice -> genuine small source member receipts -> durable choice -> full model-tree observer order; deployment digest named accurately.
+
+- [ ] HI-T146.2 native target/factory/enrollment: Expose current retained canonical public scope payload resolver and compare complete payload hash/FKs; preserve operation/capability separation.
+
+- [ ] HI-T149.1 release builder/verifier: Exact runtime-member finite role mapping and full closure validation preserving unique interpreter; genuine ARM64 bootstrap rerun separate acceptance.
+
+- [ ] HI-T149.2 factory/source observer/native custody: Prepared held worker release-member issuer distinct actual root import and later worker mounted import/PIDFD proof; missing/unselected source or role denies.
+
+- [ ] HI-T149.3 public permission/factory/source input: Actual rootTTY per-input public disclosure binds retained bytes/selection and source ancestry; persistent choice alone/omitted parents/private ancestry deny.
+
+- [ ] HI-T153.1 consent/publisher/enrollment/runtime composer: Genuine durable adoption/current original source row+signature+epoch/revoke resolver beyond setupTTL, truthful postcommit recovery; no pointer-only verification.
+
+- [ ] HI-T153.2 publicTTY/consent/factory/source input: Runtime disclosure constructor with actual installed actor/oneuse rootTTY source adapter, distinctconsentID signedproducer/public-web source literal; no live setup dependency/private relabel.
+
+- [ ] HI-T154.1 Broker/release/factory/source observer: exact final source/installed descriptors and separate current source-membership/root-import/worker-origin proofs.
+
+- [ ] HI-T156.1 Consent/publicTTY/host authority: actual runtime rootTTY revocation observation, finite signer transition and durable current epoch verification.
+
+- [ ] HI-T158.1 source observer/native observer/registration/factory: Publish held capture profile members; actual selected schema/result validator FKs and finite source/action rows; root effect/provider issuer then exact peer presentation delivery. Negative raw worker capture/malformed/stale/private ancestry tests.
+
+- [ ] HI-T158.2 host authority/consent: Exact finite revocation signature domain and closed canonical typed envelope, current row verification; no arbitrary signer.
+
+- [ ] HI-T159.1 factory/entrypoint/startup/custody/health observer: Actual committed health admission/current receipt and root-selected-service health issuer/custody route/control-before-input producer; preserve runnable-before-health/withheld enablement.
+
+- [ ] HI-T159.2 native fixture/observer/registration source owners: Provide genuine source-reviewed health request/result fixture artifact and actual loader/input/request/tool/provider/terminal observation closure, meaningful currentness/failure integration tests.
+
+- [ ] HI-T160.1 root entrypoint/task kernel fixture/display fixture/controller custody: Implement fixed installed qualification source dispatcher and actual owned fixture recipe/schema assets; publish measured source pins for Sol review, real runtime/session/publication producer, no test authority shortcuts.
+
+- [ ] HI-T160.2 task/display fixture owners: Replace synthetic Linux positive fixtures with exact production graph, preserve meaningful negative/cleanup checks and source/environment evidence distinct Pi acceptance.
+
+- [ ] SK-T161.1 application builder/factory/custody: Implement sealed finite app admission/private FixedBuildProfile/output/service held inputs and one-use setup grant adapter; actual managed runner union/currentness/cleanup/denial tests.
+
+- [ ] SK-T161.2 application builder/source broker: Implement fixed standalone multistep driver, provide actual committed source/member pins for Sol review, finite mount/argv/phase recipe and genuine terminal/archive/extraction/probe receipts.
+
+- [ ] HI-T162.1 Controller custody/fixture publisher/host authority/entrypoint: genuine finite fixture compiler/key/publication/session/runtime adapter and namespace/currentness negative tests.
+
+- [ ] HI-T163.1 Health/source/authority/custody: genuine selected source/context and health capture/write/EOF/take current-peer joins and negative tests.
+- [ ] HI-T163.2 Broker/release/health: exact source asset enrollment, owned seed cleanup and semantic result gate with required actual provider.
+
+- [ ] HI-T164.1 Fixture publisher/host enrollment/authority: exact canonical envelope and held namespace loader, scoped key/signature and wrong-source/currentness negatives.
+
+- [ ] HI-T165.1 Factory/native/compiler/publisher: genuine typed runnable role closure and single atomic activation with truthful durable recovery.
+- [ ] HI-T165.2 Enrollment/authority/health: fresh current committed source/CAS observation without expired setup renewal.
+
+- [ ] HI-T166.1 Fixture key/publisher/authority: restricted prepublication envelope signer and same-key service adoption, source/currentness/domain negatives.
+
+- [ ] HI-T167.1 Fixture session/publisher/enrollment: historical session file never restores live authority; fresh current lease required.
+
+- [ ] SK-T168.1 Application builder/materializer/selection/execution: regular held PM interpreter entrypoint, finite source shebang normalization and final manifest/probe joins.
+
+- [ ] HI-T169.1 Factory/native/compiler/publisher: actual source-authorized outputs, precompile reservation and same-reservation compiled claim transition, wrong-source/currentness negatives.
+
+- [ ] HI-T170.1 Factory/native/compiler: exact existing five role/kind pairs and unknown-role negatives.
+
+- [ ] HI-T171.1 Native/MCP/source/broker/policy: actual tools/list request/result witness capture before derivation, current source/peer/schema and wrong-method negatives.
+
+- [ ] HI-T172.1 Local/native/enrollment/factory/observer: genuine owner view/target/current source operations, separate row parser/FKs/grants/root result witness and exact pending coverage.
+
+- [ ] HI-T173.1 Resource runtime/controller/enrollment: implement genuine fixed fixture source generation, native materialization/discovery receipt and strict current projection.
+
+- [ ] HI-T174.1 Event issuer/TTY/consent/observer/composer: actual initial public source producer before admission and strict current disclosure/replay/ancestry tests.
+
+- [ ] SK-T175.1 Broker/factory/execution/wiring/custody: enroll exact effect sources, derive finite stage admissions, observe actual terminal/semantic/cleanup receipts.
+
+- [ ] SK-T176.1 PM/builder/materializer/selector: held base runtime closure and exact measured config/wrapper relocation with current source and original/final digests.
+
+- [ ] HI-T177.1 Display/window observer/broker/custody: genuine selected-window F24 events and independent current observation/source proof.
+
+- [ ] `HI-T178.1` Implement and verify the exact producer ownership/order/positive and failure acceptance in `plans/amendments/2026-10-10-source-join-producers-v178.md`; fixture results never close AC01..18.
+
+- [ ] `HI-T178.2` Implement and verify the exact producer ownership/order/positive and failure acceptance in `plans/amendments/2026-10-10-source-join-producers-v178.md`; fixture results never close AC01..18.
+
+- [ ] `HI-T178.3` Implement and verify the exact producer ownership/order/positive and failure acceptance in `plans/amendments/2026-10-10-source-join-producers-v178.md`; fixture results never close AC01..18.
+
+- [ ] `HI-T178.4` Implement and verify the exact producer ownership/order/positive and failure acceptance in `plans/amendments/2026-10-10-source-join-producers-v178.md`; fixture results never close AC01..18.
+
+- [x] HI-T179.1 Implement/verify retained source-owner selected executable closure and exact projector/assembler/member/currentness denials under v179. Evidence: `docs/native-selected-source-composition-v179.md`; local source fixture only, HI-T178.1 and live acceptance remain OPEN.
+
+- [ ] HI-T179.2 Live loaded-worker/PIDFD and external target/account/provider/device acceptance; all AC01..18 remain OPEN.
+
+- [ ] `HI-T180.1` Implement the exact owner/order/source-member/role and positive/failure evidence contract in `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`; source review does not close runtime or AC acceptance.
+
+- [ ] `HI-T180.3` Implement the exact owner/order/source-member/role and positive/failure evidence contract in `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`; source review does not close runtime or AC acceptance.
+
+- [ ] `HI-T180.4` Implement the exact owner/order/source-member/role and positive/failure evidence contract in `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`; source review does not close runtime or AC acceptance.
+
+- [ ] `HI-T180.5` Implement the exact owner/order/source-member/role and positive/failure evidence contract in `plans/amendments/2026-10-10-reviewed-source-members-boundary-joins-v180.md`; source review does not close runtime or AC acceptance.
+
+
+## v181 conditional identity and independent readiness
+
+- [ ] `HI-T181.1` Observe genuine local owner and issue separate typed current principal/snapshot; retain strict Authentik receipt domain. Exact producer/order and meaningful positive/failure evidence: `plans/amendments/2026-10-10-conditional-authentik-local-owner-setup-v181.md`. Implementation and target acceptance OPEN.
+- [ ] `HI-T181.2` Select finite local overlay capabilities and preserve identity domain through active policy/native publication/loaded invocation. Exact producer/order and meaningful positive/failure evidence: `plans/amendments/2026-10-10-conditional-authentik-local-owner-setup-v181.md`. Implementation and target acceptance OPEN.
+
+
+## v182 active generation custody
+
+- [ ] `HI-T182.1` Compile and publish finite signed-source/network/worker/enrollment projection. Exact producer/order/evidence: `plans/amendments/2026-10-10-active-network-generation-owner-v182.md`. Implementation and target acceptance OPEN.
+- [ ] `HI-T182.2` Own exact post-setup active generation, signed source/revocation and actor/key/journal revalidation. Exact producer/order/evidence: `plans/amendments/2026-10-10-active-network-generation-owner-v182.md`. Implementation and target acceptance OPEN.
+- [ ] `HI-T182.3` Consume current active owner projections through helper spawn/stop/release/reload cleanup. Exact producer/order/evidence: `plans/amendments/2026-10-10-active-network-generation-owner-v182.md`. Implementation and target acceptance OPEN.
+
+
+## v183 exact active effect producers
+
+- [ ] `HI-T183.1` Produce concrete held worker recipes, signed choice fields and generated service/process/network output. Producer/type/order/evidence contract: `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md`. Implementation and acceptance OPEN.
+- [ ] `HI-T183.2` Reconstruct current active PM/native worker runtime member custody independently of setup. Producer/type/order/evidence contract: `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md`. Implementation and acceptance OPEN.
+- [ ] `HI-T183.3` Publish signed tagged local-owner and exact overlay source/view/target/effect adoption. Producer/type/order/evidence contract: `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md`. Implementation and acceptance OPEN.
+- [ ] `HI-T183.4` Implement independent active NSS/source/view/loaded invocation/grant four-method owner. Producer/type/order/evidence contract: `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md`. Implementation and acceptance OPEN.
+
+- [ ] `HI-T183.0` Implement and source-review the exact fixed held Hermes/native-loader startup recipe source producer in `plans/amendments/2026-10-10-signed-worker-recipes-active-overlay-producers-v183.md`; no guessed argv or denial-only completion.
+
+
+## v184 exact wire clarification
+
+- [ ] `HI-T184.1` Implement exact schema2 finite network/runtime/source FK rows and acyclic canonical digest mapping. Exact contract: `plans/amendments/2026-10-10-network-row-wire-digest-boundaries-v184.md`; implementation/acceptance OPEN.
+- [ ] `HI-T184.2` Consume current row mapping and transient enclosing digest in real owner/manager lifecycle. Exact contract: `plans/amendments/2026-10-10-network-row-wire-digest-boundaries-v184.md`; implementation/acceptance OPEN.
+
+
+## v185 owner observation and proxy
+
+- [ ] `HI-T185.1` Publish and resolve concrete tagged owner registration observer and captured-source schemas. Exact contract `plans/amendments/2026-10-10-owner-overlay-observer-capture-rpc-v185.md`; implementation/acceptance OPEN.
+- [ ] `HI-T185.2` Bind actual worker proxy/native execute RPC to observed invocation/current one-use local grant and CAS. Exact contract `plans/amendments/2026-10-10-owner-overlay-observer-capture-rpc-v185.md`; implementation/acceptance OPEN.
+
+
+## v186 endpoint source phase
+
+- [ ] `HI-T186.1` Create and observe actual preactive root custody socket with no effects before signed recipe. Exact contract `plans/amendments/2026-10-10-preactive-authority-listener-custody-v186.md`; implementation/acceptance OPEN.
+- [ ] `HI-T186.2` Verify active adoption and one-use exact listener FD transfer/current active re-observation. Exact contract `plans/amendments/2026-10-10-preactive-authority-listener-custody-v186.md`; implementation/acceptance OPEN.
+
+
+## v187 actual activation transport
+
+- [ ] `HI-T187.1` Produce verified installed root daemon supervisor/unit/launch and distinct peer observations. Exact contract `plans/amendments/2026-10-10-supervised-listener-activation-channel-v187.md`; implementation/acceptance OPEN.
+- [ ] `HI-T187.2` Implement actual both-process authenticated activation channel and one-use exact listener FD adoption. Exact contract `plans/amendments/2026-10-10-supervised-listener-activation-channel-v187.md`; implementation/acceptance OPEN.
+
+
+- [ ] HI-T188.1 Implement exact paired owner result source publication/active issuer and completed-effect capture. See `plans/amendments/2026-10-10-owner-result-source-selector-v188.md`; all AC remain OPEN.
+
+- [ ] HI-T188.3 Implement exact typed active native Hermes module launch at manager admission/barrier. See v188; acceptance OPEN.
+
+- [ ] HI-T189.1 Implement exact committed PM executable descriptor/private resolver/parser-runtime consumer. See `plans/amendments/2026-10-10-committed-pm-executable-identity-v189.md`; all acceptance OPEN.
+
+- [ ] HI-T190.1 Implement exact helper/manager staged namespace gate and same-PID release. See `plans/amendments/2026-10-10-same-worker-namespace-handshake-v190.md`; acceptance OPEN.
+
+- [ ] HI-T191.1/2 Implement exact source/run producer and independent daemon commit/health consumer. See `plans/amendments/2026-10-10-two-actor-health-commit-custody-v191.md`; all acceptance OPEN.
+
+- [ ] HI-T192.1 Implement exact dual-path native view projection and actual selected mount custody. See `plans/amendments/2026-10-10-native-worker-selected-view-paths-v192.md`; acceptance OPEN.
+
+- [ ] HI-T193.1 Implement exact source/target native member view compatibility and private observed APIs. See `plans/amendments/2026-10-10-native-worker-view-member-bind-custody-v193.md`; acceptance OPEN.
+
+- [ ] HI-T194.1/2 Implement exact causal native event resolver/proof and matching receipt/completion consumer. See `plans/amendments/2026-10-10-health-event-causal-ancestry-v194.md`; acceptance OPEN.
+
+
+Existing `VD-T180.6`/`VD-T183.5` handoff: apply and verify only the exact v195 source/catalog/role/import closure batch in `plans/amendments/2026-10-10-final-coherent-source-pin-review-v195.md`. This source review leaves all existing checkboxes OPEN; no duplicate task or runtime acceptance is created.
+
+
+- [ ] `HI-T197.1` Implement live setup-issued fixed startup intent, cancellation and authenticated adopted-channel transport; exact contract `plans/amendments/2026-10-10-installed-startup-qualification-custody-v197.md`.
+- [ ] `HI-T197.2` Compose genuine daemon intent registry/tagged display admission/controller PIDFD and attach before dispatch; no copied setup session.
+- [ ] `HI-T197.3` Implement fixed owned qualification controller/source/PM/materializer/publication/session/runtime composer and both installed dispatch suites; preserve HI-T160/173/178 dependencies.
+- [ ] `VD-T197.4` Replace synthetic positive display/task fixtures with genuine composed authority/custody/effects, replay/currentness/BPF/cleanup failures; all AC01..AC18 OPEN.
+
+
+Existing `HI-T197.1`/`HI-T197.2`/`VD-T197.4` remain OPEN and include exact durable overlay adoption and completed-start lifecycle failures in `plans/amendments/2026-10-10-durable-xpra-startup-adoption-v198.md`; no duplicate task or acceptance claim.
+
+- [ ] MC-R0101.1 HA/factory/vault/compiler/composer: actual root instance credential/source selection, bounded grant discovery/read and strict publication/adoption.
+- [ ] MC-R0101.2 HA: protected transport/vault/publication fixtures, reconnect/revoke/write-denial/TLS/schema/CAS/redaction and separate actual-target evidence.
+
+Existing HI-T197.1/.2/.3, HI-T173.1/178.2 and VD-T197.4 include the exact source producer ownership/order in `plans/amendments/2026-10-10-setup-startup-and-fixture-source-producers-v199.md`; remain OPEN.
+
+- [ ] MC-R0101.3 HA/factory/consent/parser/broker: actual typed choice/exposure/current scope/schema/result/grant joins.
+- [ ] MC-R0101.4 HA: real-schema Assist read fixtures, ambiguity/new exposure/unfiltered/action/revoke/TLS denial and distinct actual-target acceptance.
+
+Existing HI-T160.1/HI-T197.2/.3/VD-T197.4 include actual protected-core producer/parser/currentness and fixed acquisition-only deadline in `plans/amendments/2026-10-10-publication-core-and-fixture-acquisition-v201.md`; remain OPEN.
+
+
+Existing HI-T160.1/HI-T197.2/VD-T197.4 include exact remote chooser and three-role source input/build/runtime production in `plans/amendments/2026-10-10-selected-remote-role-source-inputs-v202.md`; remain OPEN.
+
+- [ ] BD-T203.1 Bootstrap owner: exact typed finite-stage diagnostic/redaction/state tests with unchanged trust/failure behavior.
+- [ ] VD-T203.2 Source review/recheck: measured committed future source pins and actual target diagnostic, no inferred DD00 stage/acceptance.
+
+- [ ] BD-T203.1 / VD-T203.2 (v204): Apply only reviewed two leaf tuples, rerun stale-pin test unexcluded and retain actual target diagnostic evidence; no acceptance promotion.
+
+
+Existing HI-T173.1/HI-T178.2/HI-T197.3/VD-T197.4 include exact fixture subject NSS issuer/custody/cleanup in `plans/amendments/2026-10-10-fixture-subject-nss-custody-v206.md`; remain OPEN.
+
+- [ ] BD-T208.1: Implement final-boundary explicit root TTY reconfirmation and one-use fresh proof with unchanged identity/source/runtime joins.
+- [ ] VD-T208.2: Verify slow acquisition, mismatch/drift/replay/expiry failures and review actual source pins/target result separately.
+
+- [ ] BD-T208.1 / VD-T208.2 (v211): Apply exact reviewed root_setup tuple only, run full unexcluded regressions and retain genuine target handoff evidence.
+
+- [ ] RB-T213.1: Produce current held-home completed materialization/active source crosswalk joins.
+- [ ] HI-T213.2: Wire selected task/home digest/grant to actual fixed/hermes custody mount.
+- [ ] VD-T213.3: Verify unprivileged delegate effects, isolation, stale/grant/source denial and cleanup.
+
+RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member readback and post-setup restart/current active home registry; setup-only maps cannot complete Jarvis delegate scope.
+
+- [ ] RB-T213.1 / HI-T213.2 / VD-T213.3 (v214): Implement exact published source-home vs live selected-task split, current core claim/readback and actual delegate grant/mount evidence.
+
+- [ ] RB-T213.1 / HI-T213.2 / VD-T213.3 (v215): Implement distinct protected source mapping, typed live admission/home binding, unchanged service identity and genuine prepared/publication claim joins.
+
+- [ ] BD-T218.1: Implement Desktop-specific selected sourcepolicy/acquisition phase and locked toolchain/dependency/license receipts.
+- [ ] BD-T218.2: Consume held closure in fixed offline209212 rolebuild with native ABI/script proof.
+- [ ] VD-T218.3: Verify source/phase/integrity/TLS/architecture/script/currentness failures and actual target evidence separately.
+
+- [ ] BD-T208.1 / VD-T208.2 (v220): Integrate exact reviewed FD3 source/evidence, full coherent checks and actual target handoff; no installed selfpin or acceptance inference.
+
+- [ ] RT-T222.1: Implement exact helddefinition/parser/source receipt and transactionrole selections.
+- [ ] RT-T222.2: Join actual212NSS/209runtime/network and strictactivepublication/adoption.
+- [ ] VD-T222.3: Verify source/choice/identity/currentness failures and actual target effects separately.
+
+- [ ] HI-T221.1: Implement exactfreshpublishedhomePMadapter/projectionmetadata/FDverification.
+- [ ] HI-T221.2: Wire currentPMproof into activehome/taskbinding aftersetup/restart.
+- [ ] VD-T221.3: Verify fresh/stale/restart/projection/source/member/namespace failures and actualeffects separately.
+- [x] BD-T208.1 FD3 defect: explicitly clear and verify close-on-exec for the same-fd placement case; preserve seals and handoff identity checks.
+- [x] VD-T208.2 FD3 regression: real ARM64 Linux Python 3.14 fork/exec positive and CLOEXEC negative controls; repository Linux integration test added.
+- [ ] VD-T208.2 target: repeat exact handoff on enrolled Pi and retain genuine target result; development container evidence is not Pi acceptance.
+- [ ] HI-T221.1: Implement exact fresh published-home PM adapter, projection metadata and FD verification.
+- [ ] HI-T221.2: Wire current PM proof into active home/task binding after setup and restart.
+- [ ] VD-T221.3: Verify fresh/stale/restart/projection/source/member/namespace failures and actual effects separately.
+
+- [ ] HI-T231.1 (v231): Retain actual service NSS, principal/namespace, PM/native closure, source/effect policy and native generation receipts in the sealed v231 aggregate; validate strict identity-domain active core before publication. Genuine pipeline/failure evidence VD-T231.3 and target acceptance separately OPEN.
+
+
+- [ ] HI-T233.1: Implement retained oneshot terminal DTO/current verification and purpose-owned collection under v233.
+- [ ] VD-T233.2: Validate real systemd terminal/transport, drift/failure/foreign cleanup cases and independent native acceptance.
+- [ ] HI-T236.1: Produce actual selected reviewed six-operation process declaration and strict protected root-service process binding separately from local user overlay caps.
+- [ ] HI-T236.2: Integrate typed current source/task/health/control process admission and one-use consume into actual root manager paths; preserve all kernel and child authority checks.
+- [ ] VD-T236.3: Verify strict dual domain enrollment plus genuine task/health process effects, unchanged user ceiling and replay/currentness/sibling isolation failures; target acceptance separate.
+
+- [ ] HI-T236.1 / HI-T236.2 / VD-T236.3 (v236b): Implement exact retained health primaryhome binding, current runtime epoch/policy revision, prepared-vs-published declaration getter/restart source custody and schema4; verify all genuine positive/currentness/legacy failures.
+
+- [ ] HI-T236.1 / HI-T236.2 / VD-T236.3 (v236b cold custody): Implement independent read-only signed adopted-choice/current key/member issuer, strict cold parser declaration bridge, and ordinary exact runtime revalidation before activation; test restart/races/deny-before-effects.
+
+
+- [ ] RT-T239.1: Retain genuine remote executor terminal proof and implement narrow remote CAS/attestation package issuer.
+- [ ] RT-T239.2: Materialize exact role package through current held data-root custody and issue v209/v202 runtime receipts for v225 adoption.
+- [ ] VD-T239.4: Verify terminal forgery, source/schema/root races, expiry, cross-role and owned rollback failures plus actual pipeline effect; target acceptance separate.
+
+- [ ] RT-T239.3: Issue same-transaction remote enrollment reservation and current source/NSS-derived private-network policy selection; wire exact v202 aggregate and separate v225 kernel lease.
+
+
+## Gateway source and wheel issuer refinement v244
+
+- [ ] RT-T244.1 Implement fixed held release source receipt/member projection and reviewed exact source-member cohort.
+- [ ] RT-T244.2 Implement Gateway lock/PM/choice-bound bounded acquisition, license verification, immutable CAS and retained provider/source projection integration.
+- [ ] VD-T244.3 Exercise spoofed receipts, changed lock/source/PM, stale choice, cancellation, conflicting CAS, bounded dependency/license failure and genuine ARM64 production positives; target acceptance separately open.
