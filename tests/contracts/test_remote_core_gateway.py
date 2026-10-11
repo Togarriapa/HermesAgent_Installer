@@ -89,6 +89,186 @@ class CoreGatewayInspectorClientTests(unittest.TestCase):
             ["pending_member_invalid", "pending_member_invalid"]))
         self.assertFalse(core_gateway_inspector._valid_learning_reasons(["internal_error"]))
 
+    def test_skill_learning_ipc_observation_validates_jwt_and_consumes_real_one_use_issue(self):
+        config = _config()
+        issued = time.monotonic() - 0.05
+        proof = {
+            "nonce": "1" * 64, "proof_sha256": "2" * 64,
+            "issued_monotonic": issued, "expires_monotonic": issued + 4.8,
+            "peer_pid": 551, "peer_uid": 996, "peer_gid": 981,
+            "origin_socket_device": 11, "origin_socket_inode": 12,
+            "core_generation": "3" * 64, "config_sha256": config.config_sha256,
+            "boot_id": config.boot_id,
+        }
+        with core_gateway_inspector._RETAINED_INGRESS_LOCK:
+            core_gateway_inspector._RETAINED_INGRESS_ISSUES.clear()
+        core_gateway_inspector._retain_ingress_issue(
+            caller_pid=440, caller_start_ticks="88", proof=proof)
+        current = {key: proof[key] for key in
+                   ("proof_sha256", "core_generation", "boot_id", "config_sha256")}
+        native = {"state": "read-only-native-review", "pending_reasons": [],
+                  "candidates": [], "candidate_count": 0, "diff_bytes": 0}
+        principal = Principal("owner@example.test", "owner-subject", time.time() + 60, "4" * 64)
+        request = {
+            "schema": 1, "op": "observe-skill-learning", "nonce": "5" * 64,
+            "peer_pid": 551, "peer_uid": 996, "peer_gid": 981,
+            "access_jwt": "forwarded-owner-jwt", "core_generation": proof["core_generation"],
+            "ingress_nonce": proof["nonce"], "ingress_proof_sha256": proof["proof_sha256"],
+        }
+        class IPCConnection:
+            def __init__(self, request_body):
+                raw = json.dumps(request_body, separators=(",", ":")).encode("utf-8")
+                self.incoming = bytearray(struct.pack("!I", len(raw)) + raw)
+                self.outgoing = bytearray()
+
+            def settimeout(self, _timeout):
+                pass
+
+            def getsockopt(self, _level, _option, _length):
+                return struct.pack("3i", 440, 996, 981)
+
+            def recv(self, size):
+                chunk = bytes(self.incoming[:size])
+                del self.incoming[:size]
+                return chunk
+
+            def sendall(self, value):
+                self.outgoing.extend(value)
+
+        connection = IPCConnection(request)
+        try:
+            core_gateway_inspector._SERVER_SLOTS.acquire()
+            with patch.object(core_gateway_inspector, "_proc_start_ticks", return_value="88"), \
+                 patch.object(core_gateway_inspector, "observe_current_ingress", return_value=current) as observe, \
+                 patch.object(core_gateway_inspector, "_learning_jwks", return_value=object()), \
+                 patch("hermes_installer.remote.gateway.validate_access_jwt", return_value=principal) as validate, \
+                 patch.object(core_gateway_inspector, "_run_native_skill_learning_probe", return_value=native) as probe:
+                core_gateway_inspector._serve_connection(connection, config)
+            frame_size = struct.unpack("!I", connection.outgoing[:4])[0]
+            result = json.loads(connection.outgoing[4:4 + frame_size].decode("utf-8"))
+            self.assertEqual(frame_size, len(connection.outgoing) - 4)
+            self.assertEqual(observe.call_count, 2)
+            self.assertEqual(validate.call_args.args[0], request["access_jwt"])
+            self.assertTrue(probe.called)
+            self.assertEqual(result["readiness"], native["state"])
+            self.assertEqual(result["ingress_proof_sha256"], proof["proof_sha256"])
+            with self.assertRaises(core_gateway_inspector.CoreInspectionDenied):
+                core_gateway_inspector._consume_ingress_issue(
+                    caller_pid=440, caller_start_ticks="88", nonce=proof["nonce"],
+                    proof_sha256=proof["proof_sha256"], peer=(551, 996, 981),
+                    core_generation=proof["core_generation"], config=config)
+        finally:
+            with core_gateway_inspector._RETAINED_INGRESS_LOCK:
+                core_gateway_inspector._RETAINED_INGRESS_ISSUES.clear()
+
+    def test_skill_learning_jwt_rejection_consumes_issue_without_running_native_helper(self):
+        config = _config()
+        issued = time.monotonic() - 0.05
+        proof = {
+            "nonce": "6" * 64, "proof_sha256": "7" * 64,
+            "issued_monotonic": issued, "expires_monotonic": issued + 4.8,
+            "peer_pid": 551, "peer_uid": 996, "peer_gid": 981,
+            "origin_socket_device": 11, "origin_socket_inode": 12,
+            "core_generation": "8" * 64, "config_sha256": config.config_sha256,
+            "boot_id": config.boot_id,
+        }
+        with core_gateway_inspector._RETAINED_INGRESS_LOCK:
+            core_gateway_inspector._RETAINED_INGRESS_ISSUES.clear()
+        core_gateway_inspector._retain_ingress_issue(
+            caller_pid=440, caller_start_ticks="88", proof=proof)
+        current = {"proof_sha256": proof["proof_sha256"],
+                   "core_generation": proof["core_generation"],
+                   "boot_id": proof["boot_id"], "config_sha256": proof["config_sha256"]}
+        request = {
+            "schema": 1, "op": "observe-skill-learning", "nonce": "9" * 64,
+            "peer_pid": 551, "peer_uid": 996, "peer_gid": 981,
+            "access_jwt": "rejected-owner-jwt", "core_generation": proof["core_generation"],
+            "ingress_nonce": proof["nonce"], "ingress_proof_sha256": proof["proof_sha256"],
+        }
+        try:
+            with patch.object(core_gateway_inspector, "_proc_start_ticks", return_value="88"), \
+                 patch.object(core_gateway_inspector, "observe_current_ingress", return_value=current), \
+                 patch.object(core_gateway_inspector, "_learning_jwks", return_value=object()), \
+                 patch("hermes_installer.remote.gateway.validate_access_jwt",
+                       side_effect=core_gateway.CoreGatewayDenied("invalid")), \
+                 patch.object(core_gateway_inspector, "_run_native_skill_learning_probe") as probe:
+                with self.assertRaises(core_gateway.CoreGatewayDenied):
+                    core_gateway_inspector.observe_skill_learning(
+                        config, request=request, caller_pid=440, caller_uid=996, caller_gid=981,
+                        peer_pid=551, peer_uid=996, peer_gid=981)
+            self.assertFalse(probe.called)
+            with self.assertRaises(core_gateway_inspector.CoreInspectionDenied):
+                core_gateway_inspector._consume_ingress_issue(
+                    caller_pid=440, caller_start_ticks="88", nonce=proof["nonce"],
+                    proof_sha256=proof["proof_sha256"], peer=(551, 996, 981),
+                    core_generation=proof["core_generation"], config=config)
+        finally:
+            with core_gateway_inspector._RETAINED_INGRESS_LOCK:
+                core_gateway_inspector._RETAINED_INGRESS_ISSUES.clear()
+
+    def test_skill_learning_helper_expiry_does_not_extend_original_ingress_deadline(self):
+        config = _config()
+        start = time.monotonic()
+        clock = [start]
+        proof = {
+            "nonce": "a" * 64, "proof_sha256": "b" * 64,
+            "issued_monotonic": start - 0.05, "expires_monotonic": start + 4.5,
+            "peer_pid": 551, "peer_uid": 996, "peer_gid": 981,
+            "origin_socket_device": 11, "origin_socket_inode": 12,
+            "core_generation": "c" * 64, "config_sha256": config.config_sha256,
+            "boot_id": config.boot_id,
+        }
+        with core_gateway_inspector._RETAINED_INGRESS_LOCK:
+            core_gateway_inspector._RETAINED_INGRESS_ISSUES.clear()
+        core_gateway_inspector._retain_ingress_issue(
+            caller_pid=440, caller_start_ticks="88", proof=proof)
+        current = {"proof_sha256": proof["proof_sha256"],
+                   "core_generation": proof["core_generation"],
+                   "boot_id": proof["boot_id"], "config_sha256": proof["config_sha256"]}
+        principal = Principal("owner@example.test", "owner-subject", time.time() + 60, "d" * 64)
+        request = {
+            "schema": 1, "op": "observe-skill-learning", "nonce": "e" * 64,
+            "peer_pid": 551, "peer_uid": 996, "peer_gid": 981,
+            "access_jwt": "forwarded-owner-jwt", "core_generation": proof["core_generation"],
+            "ingress_nonce": proof["nonce"], "ingress_proof_sha256": proof["proof_sha256"],
+        }
+
+        def native_read(*, deadline):
+            self.assertEqual(deadline, proof["expires_monotonic"])
+            clock[0] = deadline
+            return {"state": "partial", "pending_reasons": ["pending_custody_changed"],
+                    "candidates": [], "candidate_count": 0, "diff_bytes": 0}
+
+        try:
+            with patch.object(core_gateway_inspector.time, "monotonic", side_effect=lambda: clock[0]), \
+                 patch.object(core_gateway_inspector, "_proc_start_ticks", return_value="88"), \
+                 patch.object(core_gateway_inspector, "observe_current_ingress", return_value=current), \
+                 patch.object(core_gateway_inspector, "_learning_jwks", return_value=object()), \
+                 patch("hermes_installer.remote.gateway.validate_access_jwt", return_value=principal), \
+                 patch.object(core_gateway_inspector, "_run_native_skill_learning_probe", side_effect=native_read):
+                with self.assertRaises(core_gateway_inspector.CoreInspectionDenied):
+                    core_gateway_inspector.observe_skill_learning(
+                        config, request=request, caller_pid=440, caller_uid=996, caller_gid=981,
+                        peer_pid=551, peer_uid=996, peer_gid=981)
+            self.assertFalse(core_gateway_inspector._RETAINED_INGRESS_ISSUES)
+        finally:
+            with core_gateway_inspector._RETAINED_INGRESS_LOCK:
+                core_gateway_inspector._RETAINED_INGRESS_ISSUES.clear()
+
+    def test_native_skill_learning_probe_fails_closed_on_helper_pin_mismatch(self):
+        directory = SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=0)
+        helper = SimpleNamespace(st_mode=stat.S_IFREG | 0o644, st_uid=0, st_nlink=1,
+                                 st_size=core_gateway_inspector.NATIVE_SKILL_LEARNING_SIZE)
+        with patch.object(core_gateway_inspector.os, "lstat",
+                          side_effect=lambda path: helper if Path(path).name ==
+                          "native_skill_learning_probe.py" else directory), \
+             patch.object(core_gateway_inspector, "_protected_file_sha", return_value="0" * 64), \
+             patch.object(core_gateway_inspector.subprocess, "Popen") as spawn:
+            with self.assertRaisesRegex(ValueError, "helper custody differs"):
+                core_gateway_inspector._run_native_skill_learning_probe(
+                    deadline=time.monotonic() + 3.0)
+        self.assertFalse(spawn.called)
+
     def test_module_entry_delegates_to_canonical_gateway_module(self):
         called = []
 

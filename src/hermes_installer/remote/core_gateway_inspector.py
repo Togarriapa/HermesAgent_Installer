@@ -174,8 +174,6 @@ def _valid_learning_candidates(candidates: Any, readiness: str) -> bool:
         return False
     if not isinstance(candidates, list) or len(candidates) > 64:
         return False
-    reasons = {"missing_store", "unsafe_store", "corrupt_record", "record_limit",
-               "diff_limit", "native_read_failed", "source_unavailable", "snapshot_changed"}
     candidate_fields = {"opaque_id", "revision_sha256", "action", "created_at", "skill_label",
                         "summary", "diff_text", "diff_sha256", "truncated", "state"}
     total = 0
