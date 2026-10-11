@@ -20,7 +20,7 @@ def _turn(store, subject="owner-a"):
     conversation = store.create_conversation(
         subject, f"runtime-{subject}", f"stored-{subject}", "core-generation-a")
     turn_id, _nonce, _conversation = store.begin_turn(
-        subject, conversation["id"], "question", "request-key-00000001", _principal(subject))
+        subject, conversation["id"], "question", "request-key-0000000001", _principal(subject))
     return conversation, turn_id
 
 
