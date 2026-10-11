@@ -51,7 +51,8 @@ def _clean_text(value: Any, limit: int) -> str:
 
 
 def _canonical(value: Any) -> bytes:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+                      allow_nan=False).encode("utf-8")
 
 
 def _hash(value: Any) -> str:
@@ -76,8 +77,16 @@ def _verified_team_catalog() -> dict[str, Any]:
         item["id"]: _clean_text(item.get("displayName") or item["name"], 120)
         for item in inventory["items"] if item["kind"] == "profiles"
     }
+    sources = {
+        item["id"]: {
+            "label": _clean_text(item.get("displayName") or item["name"], 120),
+            "kind": item["kind"],
+        }
+        for item in inventory["items"] if item["kind"] in {"profiles", "bundles"}
+    }
     return {
         "profiles": profiles,
+        "sources": sources,
         "source": {
             "revision": inventory["source"]["revision"],
             "catalog_version": inventory["source"]["catalogVersion"],
@@ -96,6 +105,15 @@ def _initialize(store: Any) -> None:
           title TEXT NOT NULL,
           brief TEXT NOT NULL,
           team_ids TEXT NOT NULL,
+          execution_mode TEXT NOT NULL DEFAULT 'pending' CHECK(execution_mode IN ('pending','oneshot','kanban')),
+          autonomy_mode TEXT NOT NULL DEFAULT 'approval_required' CHECK(autonomy_mode IN ('approval_required','fully_autonomous')),
+          selected_source_ids TEXT,
+          master_plan_json TEXT,
+          master_plan_sha256 TEXT,
+          master_plan_response_sha256 TEXT,
+          master_plan_gateway_turn_id TEXT,
+          master_plan_core_generation TEXT,
+          master_plan_core_source_generation TEXT,
           status TEXT NOT NULL CHECK(status IN ('draft','preview_pending')),
           create_key_hash TEXT NOT NULL,
           create_request_hash TEXT NOT NULL,
@@ -122,6 +140,9 @@ def _initialize(store: Any) -> None:
           gateway_turn_id TEXT,
           launch_idempotency_hash TEXT,
           launch_request_hash TEXT,
+          autonomy_mode TEXT NOT NULL DEFAULT 'approval_required' CHECK(autonomy_mode IN ('approval_required','fully_autonomous')),
+          scope_sha256 TEXT,
+          authorization_sha256 TEXT,
           UNIQUE(owner, idempotency_hash)
         )""")
         approval_columns = {row["name"] for row in db.execute("PRAGMA table_info(jarvis_mission_approvals)")}
@@ -131,6 +152,23 @@ def _initialize(store: Any) -> None:
             db.execute("ALTER TABLE jarvis_mission_approvals ADD COLUMN launch_idempotency_hash TEXT")
         if "launch_request_hash" not in approval_columns:
             db.execute("ALTER TABLE jarvis_mission_approvals ADD COLUMN launch_request_hash TEXT")
+        if "autonomy_mode" not in approval_columns:
+            db.execute("ALTER TABLE jarvis_mission_approvals ADD COLUMN autonomy_mode TEXT NOT NULL DEFAULT 'approval_required'")
+        if "scope_sha256" not in approval_columns:
+            db.execute("ALTER TABLE jarvis_mission_approvals ADD COLUMN scope_sha256 TEXT")
+        if "authorization_sha256" not in approval_columns:
+            db.execute("ALTER TABLE jarvis_mission_approvals ADD COLUMN authorization_sha256 TEXT")
+        mission_columns = {row["name"] for row in db.execute("PRAGMA table_info(jarvis_missions)")}
+        if "execution_mode" not in mission_columns:
+            db.execute("ALTER TABLE jarvis_missions ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'pending'")
+        if "autonomy_mode" not in mission_columns:
+            db.execute("ALTER TABLE jarvis_missions ADD COLUMN autonomy_mode TEXT NOT NULL DEFAULT 'approval_required'")
+        for column in ("selected_source_ids", "master_plan_json", "master_plan_sha256",
+                       "master_plan_response_sha256",
+                       "master_plan_gateway_turn_id", "master_plan_core_generation",
+                       "master_plan_core_source_generation"):
+            if column not in mission_columns:
+                db.execute(f"ALTER TABLE jarvis_missions ADD COLUMN {column} TEXT")
         db.execute("CREATE INDEX IF NOT EXISTS jarvis_mission_approval_current ON jarvis_mission_approvals(owner, mission_id, revision, created DESC)")
         db.execute("CREATE UNIQUE INDEX IF NOT EXISTS jarvis_mission_launch_key ON jarvis_mission_approvals(owner, launch_idempotency_hash) WHERE launch_idempotency_hash IS NOT NULL")
 
@@ -143,6 +181,13 @@ def _row_view(row: sqlite3.Row) -> dict[str, Any]:
         "title": row["title"],
         "brief": row["brief"],
         "team_ids": json.loads(row["team_ids"]),
+        "selected_source_ids": (json.loads(row["selected_source_ids"])
+                                if row["selected_source_ids"] else None),
+        "master_plan_sha256": row["master_plan_sha256"],
+        "master_plan_response_sha256": row["master_plan_response_sha256"],
+        "source_selection_state": "jarvis_selected" if row["master_plan_sha256"] else "pending",
+        "execution_mode": row["execution_mode"],
+        "autonomy_mode": row["autonomy_mode"],
         "created_at": _timestamp(row["created"]),
         "updated_at": _timestamp(row["updated"]),
     }
@@ -165,6 +210,8 @@ def _approval_response(row: sqlite3.Row) -> dict[str, Any]:
         "revision": int(row["revision"]),
         "plan_sha256": row["plan_sha256"],
         "status": ("approved-pending-execution" if status == "approved" else status),
+        "autonomy_mode": row["autonomy_mode"],
+        "review_state": "not_started",
         "intent_nonce": row["intent_nonce"] if status == "approved" else None,
         "expires_at": _timestamp(float(row["expires"])),
         "native_execution_available": False,
@@ -201,8 +248,6 @@ def _bind_approved_intent_to_turn(store: Any, *, owner: str, mission_id: str,
             or not isinstance(source_binding, dict)):
         raise ValueError("mission turn binding is malformed")
     idem_hash = hashlib.sha256(idempotency_key.encode("ascii")).hexdigest()
-    request_hash = _hash({"mission_id": mission_id, "revision": revision,
-                          "plan_sha256": plan_sha256})
     binding_text = _canonical(source_binding).decode("utf-8")
     with store._connect() as db:
         db.execute("BEGIN IMMEDIATE")
@@ -225,6 +270,9 @@ def _bind_approved_intent_to_turn(store: Any, *, owner: str, mission_id: str,
                 or mission["source_binding"] != binding_text):
             db.rollback()
             raise ValueError("mission approval is stale, expired, or no longer current")
+        request_hash = _hash({"mission_id": mission_id, "revision": revision,
+                              "plan_sha256": plan_sha256,
+                              "autonomy_mode": approval["autonomy_mode"]})
         collision = db.execute(
             "SELECT id,mission_id,launch_request_hash,gateway_turn_id FROM jarvis_mission_approvals "
             "WHERE owner=? AND launch_idempotency_hash=?",
@@ -233,11 +281,41 @@ def _bind_approved_intent_to_turn(store: Any, *, owner: str, mission_id: str,
         if collision is not None:
             db.rollback()
             raise ValueError("mission launch idempotency key was already used")
+        execution_mode = mission["execution_mode"]
+        autonomy_mode = approval["autonomy_mode"]
+        try:
+            selected_source_ids = json.loads(mission["selected_source_ids"] or "null")
+        except (TypeError, ValueError):
+            selected_source_ids = None
+        if (execution_mode not in {"oneshot", "kanban"}
+                or type(selected_source_ids) is not list or not selected_source_ids):
+            db.rollback()
+            raise ValueError("Jarvis master plan decision is unavailable")
+        scope_sha256 = _hash({"owner": owner, "mission_id": mission_id,
+                              "revision": revision, "brief": mission["brief"],
+                              "selected_source_ids": selected_source_ids,
+                              "execution_mode": execution_mode,
+                              "autonomy_mode": autonomy_mode,
+                              "plan_sha256": plan_sha256,
+                              "source_binding": source_binding,
+                              "limits": {"native_delegations": 1,
+                                         "additional_metered_microusd": 0,
+                                         "deadline": "current_owner_turn_lease"},
+                              "final_effects": "jarvis_review_and_current_owner_gate"})
+        authorization_sha256 = (
+            _hash({"approval_id": approval["id"], "owner": owner,
+                   "mission_id": mission_id, "revision": revision,
+                   "plan_sha256": plan_sha256, "scope_sha256": scope_sha256,
+                   "explicit_owner_task_start": True})
+            if autonomy_mode == "fully_autonomous" else None
+        )
         changed = db.execute(
             "UPDATE jarvis_mission_approvals SET status='spent',gateway_turn_id=?,"
-            "launch_idempotency_hash=?,launch_request_hash=? WHERE id=? AND owner=? "
+            "launch_idempotency_hash=?,launch_request_hash=?,scope_sha256=?,authorization_sha256=? "
+            "WHERE id=? AND owner=? "
             "AND status='approved' AND expires>?",
-            (gateway_turn_id, idem_hash, request_hash, approval["id"], owner, time.time()),
+            (gateway_turn_id, idem_hash, request_hash, scope_sha256, authorization_sha256,
+             approval["id"], owner, time.time()),
         ).rowcount
         if changed != 1:
             db.rollback()
@@ -278,26 +356,32 @@ def _recheck_principal(service: JarvisChatService, request: Any, expected: Any) 
 
 
 def _mission_binding_route_ready(service: JarvisChatService) -> bool:
-    """Require the Activity-owned fail-closed typed binding seam before reserving a run."""
+    """Require root validation of the current autonomy-bearing binding before any session effect."""
     try:
         parameters = inspect.signature(service.start_server_turn).parameters
-    except (TypeError, ValueError):
+        from . import core_gateway_inspector
+    except (ImportError, TypeError, ValueError):
         return False
     return ("require_mission_binding" in parameters
             and "before_schedule" in parameters
+            and getattr(core_gateway_inspector, "MISSION_BINDING_SCHEMA", None) == 2
             and callable(getattr(service, "_owner_turn_register", None)))
 
 
 def _preview(store: Any, owner: str, row: sqlite3.Row, binding: dict[str, str | None],
              *, catalog: dict[str, Any], persist: bool = True,
              before_commit: Any = None) -> dict[str, Any] | None:
-    selected = json.loads(row["team_ids"])
+    selected = json.loads(row["selected_source_ids"] or row["team_ids"])
+    selection_state = "jarvis_selected" if row["master_plan_sha256"] else "pending"
     team = [
         {
             "id": identity,
-            "label": catalog["profiles"].get(identity, identity),
+            "label": catalog["sources"].get(identity, {}).get("label", identity),
             "readiness": "pending",
-            "reason": "Bundled source identity is verified; current native dispatch and per-task authority are not.",
+            "selection_source": selection_state,
+            "reason": ("Jarvis selected this source in its sealed task plan; native dispatch remains pending."
+                       if selection_state == "jarvis_selected" else
+                       "Owner source preference only; Jarvis has not selected a team in a sealed plan."),
         }
         for identity in selected
     ]
@@ -310,7 +394,17 @@ def _preview(store: Any, owner: str, row: sqlite3.Row, binding: dict[str, str | 
         "title": row["title"],
         "brief": row["brief"],
         "team_ids": selected,
+        "selected_source_ids": (json.loads(row["selected_source_ids"])
+                                if row["selected_source_ids"] else None),
+        "source_selection_state": selection_state,
+        "master_plan_sha256": row["master_plan_sha256"],
+        "master_plan_response_sha256": row["master_plan_response_sha256"],
         "team": team,
+        "execution_mode": row["execution_mode"],
+        "autonomy_mode": row["autonomy_mode"],
+        "master_plan": (json.loads(row["master_plan_json"])
+                        if row["master_plan_json"] else None),
+        "review_state": "not_started",
         "bundled_source": catalog["source"],
         "current_core": binding,
         "native_execution_available": False,
@@ -348,12 +442,127 @@ def _preview(store: Any, owner: str, row: sqlite3.Row, binding: dict[str, str | 
         "title": row["title"],
         "brief": row["brief"],
         "team": team,
+        "execution_mode": row["execution_mode"],
+        "autonomy_mode": row["autonomy_mode"],
+        "master_plan": (json.loads(row["master_plan_json"])
+                        if row["master_plan_json"] else None),
+        "source_selection_state": selection_state,
+        "review_state": "not_started",
         "plan_sha256": digest,
         "approval_nonce": None,
         "expires_at": None,
         "native_execution_available": False,
         "pending_reasons": pending,
     }
+
+
+def record_jarvis_master_plan(store: Any, decision: Any, *, config: Any,
+                              custody: Any) -> bool:
+    """Persist only a current root-sealed Jarvis plan for this exact owner mission.
+
+    User-entered team IDs remain preferences. This completion receipt supplies the only
+    path to concrete execution mode and selected source IDs. It grants no execution or
+    final-effect authority; the separately persisted owner task-start authorization and
+    native claim are still required.
+    """
+    from .jarvis_master_planning import CoreVerifiedJarvisMasterPlanDecision
+    if (type(decision) is not CoreVerifiedJarvisMasterPlanDecision
+            or decision.execution_mode not in {"oneshot", "kanban"}
+            or not decision.is_current_sealed(config, custody=custody)):
+        return False
+    selected = decision.selected_source_ids
+    if (type(selected) is not tuple or not 1 <= len(selected) <= _TEAM_LIMIT
+            or len(set(selected)) != len(selected)):
+        return False
+    catalog = _verified_team_catalog()
+    if any(not isinstance(identity, str) or identity not in catalog["sources"]
+           for identity in selected):
+        return False
+    try:
+        plan_bytes = _canonical(dict(decision.plan))
+        if len(plan_bytes) > 16_384:
+            return False
+        plan_digest = hashlib.sha256(_canonical({
+            "execution_mode": decision.execution_mode,
+            "selected_source_ids": list(selected),
+            "plan": dict(decision.plan),
+        })).hexdigest()
+        from .jarvis_mission_executor import mission_goal_arguments_sha256
+        owner = decision.owner_subject_sha256
+        with store._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            mission = db.execute(
+                "SELECT * FROM jarvis_missions WHERE id=? AND owner=? AND revision=?",
+                (decision.mission_id, owner, decision.revision),
+            ).fetchone()
+            if mission is None:
+                db.rollback()
+                return False
+            try:
+                current_source = json.loads(mission["source_binding"] or "null")
+            except (TypeError, ValueError):
+                current_source = None
+            task_sha256 = mission_goal_arguments_sha256(mission["brief"])
+            if (not decision.matches(
+                    owner_subject_sha256=owner, mission_id=mission["id"],
+                    revision=int(mission["revision"]), goal_sha256=task_sha256,
+                    core_generation=(current_source.get("core_generation")
+                                     if isinstance(current_source, dict) else None),
+                    core_source_generation=(current_source.get("core_source_generation")
+                                            if isinstance(current_source, dict) else None))
+                    or type(current_source) is not dict
+                    or set(current_source) != {"core_generation", "core_source_generation"}
+                    or decision.plan_sha256 != plan_digest):
+                db.rollback()
+                return False
+            if mission["master_plan_sha256"] is not None:
+                same = (mission["master_plan_sha256"] == plan_digest
+                        and mission["master_plan_response_sha256"] == decision.response_sha256
+                        and mission["master_plan_gateway_turn_id"] == decision.gateway_turn_id
+                        and mission["master_plan_json"] == plan_bytes.decode("utf-8"))
+                db.rollback()
+                return same
+            if (db.execute(
+                    "SELECT 1 FROM jarvis_mission_runs WHERE owner=? AND mission_id=? AND revision=?",
+                    (owner, mission["id"], decision.revision)).fetchone() is not None
+                    or db.execute(
+                    "SELECT 1 FROM jarvis_mission_approvals WHERE owner=? AND mission_id=? "
+                    "AND revision=? AND status IN ('approved','spent')",
+                    (owner, mission["id"], decision.revision)).fetchone() is not None):
+                db.rollback()
+                return False
+            if not decision.is_current_sealed(config, custody=custody):
+                db.rollback()
+                return False
+            changed = db.execute(
+                "UPDATE jarvis_missions SET execution_mode=?,selected_source_ids=?,master_plan_json=?,"
+                "master_plan_sha256=?,master_plan_response_sha256=?,master_plan_gateway_turn_id=?,master_plan_core_generation=?,"
+                "master_plan_core_source_generation=?,plan_sha256=NULL,source_binding=NULL,status='draft',updated=? "
+                "WHERE id=? AND owner=? AND revision=? AND execution_mode='pending'",
+                (decision.execution_mode, _canonical(list(selected)).decode("utf-8"),
+                 plan_bytes.decode("utf-8"), plan_digest, decision.response_sha256, decision.gateway_turn_id,
+                 decision.core_generation, decision.core_source_generation, time.time(),
+                 mission["id"], owner, decision.revision),
+            ).rowcount
+            if changed != 1:
+                db.rollback()
+                return False
+            db.execute(
+                "UPDATE jarvis_mission_approvals SET status='invalidated' "
+                "WHERE owner=? AND mission_id=? AND revision=? AND status='approved'",
+                (owner, mission["id"], decision.revision),
+            )
+            if not decision.is_current_sealed(config, custody=custody):
+                db.rollback()
+                return False
+            db.commit()
+            return True
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return False
 
 
 def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None:
@@ -380,8 +589,15 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                  "reason": "Verified bundled identity only; no current dispatch or execution authority."}
                 for identity, label in sorted(catalog["profiles"].items())
             ]
+            mission_views = []
+            for row in rows:
+                view = _row_view(row)
+                run = executor.latest_run(owner, row["id"], int(row["revision"]))
+                view["review_state"] = (executor.project(principal.subject, run)["review_state"]
+                                        if run is not None else "not_started")
+                mission_views.append(view)
             _recheck_principal(service, request, principal)
-            return web.json_response({"missions": [_row_view(row) for row in rows],
+            return web.json_response({"missions": mission_views,
                                       "team_options": team_options}, headers=_secure_headers())
         except JarvisChatDenied:
             raise web.HTTPForbidden(text="forbidden", headers=_secure_headers()) from None
@@ -397,6 +613,9 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
             brief = _clean_text(body["brief"], _BRIEF_LIMIT)
             key = body["idempotency_key"]
             team_ids = body["team_ids"]
+            # Only an authenticated Jarvis master planning result may choose topology.
+            # No sealed planning result is wired into this mission ingress yet.
+            execution_mode = "pending"
             if (not title or len(body["title"]) > _TITLE_LIMIT or not brief
                     or len(body["brief"]) > _BRIEF_LIMIT
                     or not isinstance(key, str) or not IDEMPOTENCY_RE.fullmatch(key)
@@ -423,8 +642,8 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                         raise web.HTTPConflict(text="idempotency key conflict", headers=_secure_headers())
                     created = existing
                 else:
-                    db.execute("INSERT INTO jarvis_missions(id,owner,revision,title,brief,team_ids,status,create_key_hash,create_request_hash,created,updated) VALUES(?,?,?,?,?,?,'draft',?,?,?,?)",
-                               (mission_id, owner, 1, title, brief, json.dumps(team_ids, separators=(",", ":")), key_hash, request_hash, now, now))
+                    db.execute("INSERT INTO jarvis_missions(id,owner,revision,title,brief,team_ids,execution_mode,status,create_key_hash,create_request_hash,created,updated) VALUES(?,?,?,?,?,?,?,'draft',?,?,?,?)",
+                               (mission_id, owner, 1, title, brief, json.dumps(team_ids, separators=(",", ":")), execution_mode, key_hash, request_hash, now, now))
                     created = db.execute("SELECT * FROM jarvis_missions WHERE id=? AND owner=?", (mission_id, owner)).fetchone()
                 _recheck_principal(service, request, principal)
                 db.commit()
@@ -445,6 +664,7 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
             if row is None:
                 raise web.HTTPNotFound(text="not found", headers=_secure_headers())
             result = {"mission": _row_view(row), "preview": None}
+            result["review_state"] = "not_started"
             if row["status"] == "preview_pending":
                 try:
                     catalog = _verified_team_catalog()
@@ -458,6 +678,8 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                         result["approval"] = {
                             "status": ("expired" if approval["expires"] <= time.time()
                                        else approval["status"]),
+                            "autonomy_mode": approval["autonomy_mode"],
+                            "review_state": "not_started",
                             "expires_at": _timestamp(float(approval["expires"])),
                             "intent_nonce": (approval["intent_nonce"]
                                              if approval["status"] == "approved"
@@ -470,6 +692,7 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                                       int(row["revision"]))
             if run is not None:
                 result["run"] = executor.project(principal.subject, run)
+                result["review_state"] = result["run"]["review_state"]
             _recheck_principal(service, request, principal)
             return web.json_response(result, headers=_secure_headers())
         except web.HTTPException:
@@ -517,15 +740,18 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
             if request.raw_path != request.path:
                 raise web.HTTPNotFound(text="not found", headers=_secure_headers())
             principal = service._current(request)
-            body = await _read_body(request, {"revision", "plan_sha256", "idempotency_key"})
+            body = await _read_body(request, {"revision", "plan_sha256", "autonomy_mode", "idempotency_key"})
             _recheck_principal(service, request, principal)
             revision = body["revision"]
             plan_sha256 = body["plan_sha256"]
             key = body["idempotency_key"]
+            autonomy_mode = body["autonomy_mode"]
             if (type(revision) is not int or revision < 1
                     or not isinstance(plan_sha256, str)
                     or not re.fullmatch(r"[a-f0-9]{64}", plan_sha256)
-                    or not isinstance(key, str) or not IDEMPOTENCY_RE.fullmatch(key)):
+                    or not isinstance(key, str) or not IDEMPOTENCY_RE.fullmatch(key)
+                    or not isinstance(autonomy_mode, str)
+                    or autonomy_mode not in {"approval_required", "fully_autonomous"}):
                 raise web.HTTPBadRequest(text="invalid request", headers=_secure_headers())
 
             owner = service.store._owner(principal.subject)
@@ -545,10 +771,15 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                                        catalog=catalog, persist=False)
             if current_preview is None or current_preview["plan_sha256"] != plan_sha256:
                 raise web.HTTPConflict(text="mission preview is stale", headers=_secure_headers())
+            if (mission["execution_mode"] not in {"oneshot", "kanban"}
+                    or not mission["master_plan_sha256"]
+                    or not mission["selected_source_ids"]):
+                raise web.HTTPConflict(text="Jarvis master planning decision is pending",
+                                       headers=_secure_headers())
 
             idem_hash = hashlib.sha256(key.encode("ascii")).hexdigest()
             request_hash = _hash({"mission_id": mission_id, "revision": revision,
-                                  "plan_sha256": plan_sha256})
+                                  "plan_sha256": plan_sha256, "autonomy_mode": autonomy_mode})
             now = time.time()
             now_mono = time.monotonic()
             expiry_room = min(principal.expires_monotonic - now_mono,
@@ -596,12 +827,14 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                 db.execute(
                     "INSERT INTO jarvis_mission_approvals "
                     "(id,owner,mission_id,revision,plan_sha256,source_binding,request_hash,"
-                    "idempotency_hash,intent_nonce,status,created,expires) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,'approved',?,?)",
+                    "idempotency_hash,intent_nonce,status,created,expires,autonomy_mode) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,'approved',?,?,?)",
                     (approval_id, owner, mission_id, revision, plan_sha256,
                      _canonical(binding).decode("utf-8"), request_hash, idem_hash,
-                     intent_nonce, now, expires),
+                     intent_nonce, now, expires, autonomy_mode),
                 )
+                db.execute("UPDATE jarvis_missions SET autonomy_mode=?,updated=? WHERE id=? AND owner=?",
+                           (autonomy_mode, now, mission_id, owner))
                 created = db.execute("SELECT * FROM jarvis_mission_approvals WHERE id=?", (approval_id,)).fetchone()
                 _recheck_principal(service, request, principal)
                 db.commit()
@@ -654,7 +887,8 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                 nonce = body["approval_nonce"]
                 idem_hash = hashlib.sha256(body["idempotency_key"].encode("ascii")).hexdigest()
                 launch_hash = _hash({"mission_id": row["id"], "revision": revision,
-                                     "plan_sha256": body["plan_sha256"]})
+                                     "plan_sha256": body["plan_sha256"],
+                                     "autonomy_mode": row["autonomy_mode"]})
                 prior_run = _run_by_key(service.store, owner, idem_hash)
                 if prior_run is not None:
                     if (prior_run["mission_id"] != row["id"]
@@ -679,7 +913,9 @@ def install_jarvis_missions_routes(app: Any, service: JarvisChatService) -> None
                         or current_preview is None
                         or current_preview["plan_sha256"] != body["plan_sha256"]):
                     raise web.HTTPConflict(text="mission approval is stale or expired", headers=_secure_headers())
-                if (json.loads(row["team_ids"]) != ["orchestrator"]
+                selected_sources = json.loads(row["selected_source_ids"] or "null")
+                if (row["execution_mode"] != "oneshot"
+                        or selected_sources != ["orchestrator"]
                         or binding["core_generation"] != principal.core_generation
                         or not re.fullmatch(r"[a-f0-9]{64}", binding["core_generation"] or "")
                         or not re.fullmatch(r"[a-f0-9]{64}", binding["core_source_generation"] or "")

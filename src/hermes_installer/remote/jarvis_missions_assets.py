@@ -9,7 +9,7 @@ FEATURE_ASSETS = JarvisFeatureAssets(
 <section class="jm-shell" aria-labelledby="jm-heading">
   <header class="jm-header">
     <div><p class="jm-eyebrow">OWNER WORKSPACE</p><h1 id="jm-heading">Mission planning</h1>
-      <p class="jm-intro">Save a brief and inspect a source-backed team plan. The first native route is limited to an explicitly approved Orchestrator mission.</p></div>
+      <p class="jm-intro">Jarvis remains the master for every task. Save a brief and inspect its source-backed plan; experts prepare internal work for Jarvis review.</p></div>
     <button class="jm-refresh" type="button" data-jm-refresh>Refresh</button>
   </header>
   <div class="jm-state" data-jm-state role="status" aria-live="polite">Loading your private mission drafts…</div>
@@ -36,7 +36,7 @@ FEATURE_ASSETS = JarvisFeatureAssets(
   <section class="jm-panel jm-preview" data-jm-preview hidden aria-labelledby="jm-preview-heading">
     <div class="jm-list-heading"><div><p class="jm-eyebrow">SOURCE-BOUND PLAN</p><h2 id="jm-preview-heading">Preview</h2></div><span class="jm-pending-badge">Execution pending</span></div>
     <div data-jm-preview-content></div>
-    <p class="jm-boundary">Previewing and approval do not start work. Launch reserves one owned turn only after explicit approval; only observed native child events can produce a result for review. Unknown launch outcomes are never retried automatically.</p>
+    <p class="jm-boundary">Experts can propose internal drafts only. Jarvis review is always required before a final effect. Owner approval is required by default; fully autonomous authorization is explicit, task-scoped, and does not grant experts final-effect authority. Unknown launch outcomes are never retried automatically.</p>
   </section>
 </section>
 """,
@@ -53,7 +53,7 @@ FEATURE_ASSETS = JarvisFeatureAssets(
 [data-feature-root="missions"] .jm-panel{min-width:0;padding:22px;border:1px solid var(--border,#344052);border-radius:16px;background:var(--surface,#151d29)}
 [data-feature-root="missions"] form{display:grid;gap:10px;margin-top:18px}
 [data-feature-root="missions"] label,[data-feature-root="missions"] legend{font-size:.86rem;font-weight:650}
-[data-feature-root="missions"] input,[data-feature-root="missions"] textarea{box-sizing:border-box;width:100%;padding:11px 12px;border:1px solid var(--border,#3b485b);border-radius:9px;background:var(--input,#0d141f);color:inherit;font:inherit}
+[data-feature-root="missions"] input,[data-feature-root="missions"] textarea,[data-feature-root="missions"] select{box-sizing:border-box;width:100%;padding:11px 12px;border:1px solid var(--border,#3b485b);border-radius:9px;background:var(--input,#0d141f);color:inherit;font:inherit}
 [data-feature-root="missions"] textarea{resize:vertical;line-height:1.5}
 [data-feature-root="missions"] fieldset{min-width:0;margin:8px 0 2px;padding:14px;border:1px solid var(--border,#344052);border-radius:10px}
 [data-feature-root="missions"] .jm-help,[data-feature-root="missions"] .jm-muted{color:var(--muted,#a5afc0);font-size:.82rem;line-height:1.5}
@@ -154,6 +154,9 @@ FEATURE_ASSETS = JarvisFeatureAssets(
       const copy = document.createElement('div');
       addText(copy, 'p', 'jm-card-title', item.title);
       addText(copy, 'p', 'jm-card-meta', item.status === 'preview_pending' ? 'Preview pending' : 'Draft');
+      if (['pending', 'oneshot', 'kanban'].includes(item.execution_mode)) addText(copy, 'p', 'jm-card-meta', item.execution_mode === 'pending' ? 'Jarvis mode decision pending' : (item.execution_mode === 'oneshot' ? 'One-shot' : 'Dedicated Kanban'));
+      if (['approval_required', 'fully_autonomous'].includes(item.autonomy_mode)) addText(copy, 'p', 'jm-card-meta', item.autonomy_mode === 'fully_autonomous' ? 'Fully autonomous for this task' : 'Owner approval required');
+      if (['not_started', 'awaiting_jarvis_review', 'approved', 'rejected'].includes(item.review_state)) addText(copy, 'p', 'jm-card-meta', item.review_state === 'awaiting_jarvis_review' ? 'Jarvis review pending' : (item.review_state === 'approved' ? 'Jarvis review approved' : item.review_state.replaceAll('_', ' ')));
       const actions = document.createElement('div');
       actions.className = 'jm-card-actions';
       const inspect = document.createElement('button');
@@ -179,6 +182,9 @@ FEATURE_ASSETS = JarvisFeatureAssets(
     addText(box, 'h3', '', preview.title);
     addText(box, 'p', 'jm-plan-brief', preview.brief);
     addText(box, 'p', 'jm-card-meta', 'Revision ' + preview.revision + ' · ' + preview.status);
+    if (['pending', 'oneshot', 'kanban'].includes(preview.execution_mode)) addText(box, 'p', 'jm-card-meta', 'Mode · ' + (preview.execution_mode === 'pending' ? 'Jarvis mode decision pending' : (preview.execution_mode === 'oneshot' ? 'One-shot' : 'Dedicated Kanban')));
+    if (['approval_required', 'fully_autonomous'].includes(preview.autonomy_mode)) addText(box, 'p', 'jm-card-meta', 'Final-effect owner gate · ' + (preview.autonomy_mode === 'fully_autonomous' ? 'Fully autonomous for this task' : 'Owner approval required'));
+    if (['not_started', 'awaiting_jarvis_review', 'approved', 'rejected'].includes(preview.review_state)) addText(box, 'p', 'jm-card-meta', 'Jarvis review · ' + (preview.review_state === 'awaiting_jarvis_review' ? 'Jarvis review pending' : (preview.review_state === 'approved' ? 'Jarvis review approved' : preview.review_state.replaceAll('_', ' '))));
     for (const member of preview.team || []) {
       const row = document.createElement('div');
       row.className = 'jm-team-row';
@@ -192,27 +198,48 @@ FEATURE_ASSETS = JarvisFeatureAssets(
     box.append(reasons);
     const approval = document.createElement('div');
     approval.className = 'jm-approval';
-    const approve = document.createElement('button');
-    approve.type = 'button';
-    approve.className = 'jm-primary';
-    approve.textContent = 'Approve this plan';
-    approve.addEventListener('click', (event) => recordApproval(preview, event.currentTarget), { signal });
-    approval.append(approve);
+    const planningReady = ['oneshot', 'kanban'].includes(preview.execution_mode)
+      && Array.isArray(preview.selected_source_ids) && preview.selected_source_ids.length > 0;
+    if (!planningReady) addText(approval, 'p', 'jm-card-meta', 'Owner approval and task start remain unavailable until Jarvis completes a protected plan decision.');
+    const autonomyLabel = document.createElement('label');
+    autonomyLabel.textContent = 'Task authorization';
+    const autonomyMode = document.createElement('select');
+    autonomyMode.name = 'autonomy_mode';
+    const approvalRequired = document.createElement('option');
+    approvalRequired.value = 'approval_required'; approvalRequired.textContent = 'Owner approval required';
+    const autonomous = document.createElement('option');
+    autonomous.value = 'fully_autonomous'; autonomous.textContent = 'Fully autonomous for this task';
+    autonomyMode.append(approvalRequired, autonomous);
+    autonomyMode.value = preview.autonomy_mode === 'fully_autonomous' ? 'fully_autonomous' : 'approval_required';
+    const autonomyHelp = addText(approval, 'p', 'jm-card-meta', 'Fully autonomous applies only to this exact task scope. Jarvis still reviews expert results; experts never receive final-effect authority.');
+    autonomyLabel.append(autonomyMode);
+    if (planningReady) {
+      approval.append(autonomyLabel, autonomyHelp);
+      const approve = document.createElement('button');
+      approve.type = 'button';
+      approve.className = 'jm-primary';
+      approve.textContent = 'Approve task scope';
+      approve.addEventListener('click', (event) => recordApproval(preview, autonomyMode.value, event.currentTarget), { signal });
+      approval.append(approve);
+    }
     box.append(approval);
     if (preview.approval && ['approved-pending-execution', 'approved'].includes(preview.approval.status)) {
       addText(box, 'p', 'jm-card-meta', 'Owner approval recorded until ' + preview.approval.expires_at + '. Launch remains a separate action.');
       activeApprovalNonce = preview.approval.intent_nonce;
       if (activeApprovalNonce && (preview.team || []).length === 1 && preview.team[0].id === 'orchestrator') {
-        const launch = document.createElement('button');
-        launch.type = 'button'; launch.className = 'jm-primary'; launch.textContent = 'Launch approved Orchestrator mission';
-        launch.addEventListener('click', (event) => launchMission(preview, event.currentTarget), { signal });
-        approval.append(launch);
+        if (preview.execution_mode === 'oneshot'
+            && JSON.stringify(preview.selected_source_ids) === '["orchestrator"]') {
+          const launch = document.createElement('button');
+          launch.type = 'button'; launch.className = 'jm-primary'; launch.textContent = 'Start approved Jarvis task';
+          launch.addEventListener('click', (event) => launchMission(preview, event.currentTarget), { signal });
+          approval.append(launch);
+        } else addText(approval, 'p', 'jm-card-meta', 'This plan has no enrolled native task runner.');
       }
     }
     if (preview.run) renderRun(box, preview, preview.run);
     setMessage('Preview saved for revision ' + preview.revision + '. No Hermes task or model spend has started.');
   };
-  const recordApproval = async (preview, button) => {
+  const recordApproval = async (preview, autonomyMode, button) => {
     const requestGeneration = ++generation;
     const planKey = preview.mission_id + ':' + preview.revision + ':' + preview.plan_sha256;
     if (planKey !== approvalRetryPlan || approvalRetryAcknowledged) {
@@ -228,13 +255,14 @@ FEATURE_ASSETS = JarvisFeatureAssets(
       const result = await api.post('/chat/api/missions/' + encodeURIComponent(preview.mission_id) + '/approve', {
         revision: preview.revision,
         plan_sha256: preview.plan_sha256,
+        autonomy_mode: autonomyMode,
         idempotency_key: approvalRetryKey
       });
       if (!mounted || requestGeneration !== generation) return;
       approvalRetryAcknowledged = true;
       activeApprovalNonce = result.intent_nonce;
       await openDetail(preview.mission_id);
-      setMessage('Approval recorded. Review the exact plan and launch separately if ready.');
+      setMessage('Task-scope authorization recorded. Task start is a separate action.');
     } catch (_) {
       if (mounted && requestGeneration === generation) setMessage('Approval could not be recorded. Refresh the source-bound preview and try again.', 'error');
     } finally {
@@ -249,9 +277,16 @@ FEATURE_ASSETS = JarvisFeatureAssets(
     if (run.native_child_started) addText(section, 'p', 'jm-card-meta', 'Native child activity observed.');
     if (run.status === 'review_pending' && typeof run.result === 'string') {
       const output = document.createElement('pre'); output.className = 'jm-result'; output.textContent = run.result; section.append(output);
-      for (const [decision, label] of [['accept', 'Accept observed result'], ['reject', 'Reject observed result']]) {
-        const button = document.createElement('button'); button.type = 'button'; button.textContent = label;
-        button.addEventListener('click', () => reviewMission(preview, decision, button), { signal }); section.append(button);
+      if (run.review_state === 'awaiting_jarvis_review') {
+        addText(section, 'p', 'jm-card-meta', 'Jarvis review pending. The owner decision control stays unavailable until Jarvis reviews this exact result.');
+      } else if (run.review_state === 'approved') {
+        addText(section, 'p', 'jm-card-meta', 'Jarvis reviewed this exact draft. Owner approval is a separate step; no final effect is performed here.');
+        for (const [decision, label] of [['accept', 'Approve reviewed draft'], ['reject', 'Reject reviewed draft']]) {
+          const button = document.createElement('button'); button.type = 'button'; button.textContent = label;
+          button.addEventListener('click', () => reviewMission(preview, decision, button), { signal }); section.append(button);
+        }
+      } else if (run.review_state === 'rejected') {
+        addText(section, 'p', 'jm-card-meta', 'Jarvis rejected this draft. It cannot be approved for final effects.');
       }
     }
     if (['queued', 'running'].includes(run.status)) {
@@ -296,7 +331,7 @@ FEATURE_ASSETS = JarvisFeatureAssets(
         revision: preview.revision, decision, idempotency_key: actionKey()
       });
       await openDetail(preview.mission_id);
-      setMessage('Review decision recorded for the observed result.');
+      setMessage('Owner decision recorded for the Jarvis-reviewed draft. No final effect was performed.');
     } catch (_) { setMessage('The observed result could not be reviewed.', 'error'); button.disabled = false; }
   };
   const load = async () => {

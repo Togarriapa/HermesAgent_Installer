@@ -92,39 +92,32 @@ def test_owner_draft_preview_is_persisted_but_never_fabricates_execution(tmp_pat
             }]
             assert preview["native_execution_available"] is False
             assert preview["approval_nonce"] is None and preview["expires_at"] is None
+            assert preview["execution_mode"] == "pending"
+            assert preview["source_selection_state"] == "pending"
             assert len(preview["plan_sha256"]) == 64
 
             approval_body = {
                 "revision": 1,
                 "plan_sha256": preview["plan_sha256"],
+                "autonomy_mode": "approval_required",
                 "idempotency_key": "mission-approve-idempotency-key-001",
             }
             approved_response = await client.post(
                 f"/chat/api/missions/{mission_id}/approve", json=approval_body)
-            assert approved_response.status == 200
-            approved = await approved_response.json()
-            assert approved["status"] == "approved-pending-execution"
-            assert approved["native_execution_available"] is False
-            assert approved["plan_sha256"] == preview["plan_sha256"]
-            assert len(approved["intent_nonce"]) == 64
-            assert approved["pending_reasons"]
-
-            approval_replay = await client.post(
-                f"/chat/api/missions/{mission_id}/approve", json=approval_body)
-            assert approval_replay.status == 200
-            assert (await approval_replay.json())["intent_nonce"] == approved["intent_nonce"]
+            assert approved_response.status == 409
+            assert "planning decision" in await approved_response.text()
 
             detail = await client.get(f"/chat/api/missions/{mission_id}")
             assert detail.status == 200
             assert (await detail.json())["preview"]["plan_sha256"] == preview["plan_sha256"]
             detail_payload = await detail.json()
-            assert detail_payload["approval"]["status"] == "approved"
-            assert detail_payload["approval"]["intent_nonce"] == approved["intent_nonce"]
+            assert detail_payload["review_state"] == "not_started"
+            assert "approval" not in detail_payload
 
             launch = await client.post(f"/chat/api/missions/{mission_id}/launch", json={
                 "revision": 1,
                 "plan_sha256": preview["plan_sha256"],
-                "approval_nonce": approved["intent_nonce"],
+                "approval_nonce": "0" * 64,
                 "idempotency_key": "mission-launch-idempotency-key-001",
             })
             assert launch.status == 409
@@ -134,35 +127,7 @@ def test_owner_draft_preview_is_persisted_but_never_fabricates_execution(tmp_pat
                     "SELECT status, gateway_turn_id FROM jarvis_mission_approvals WHERE mission_id=?",
                     (mission_id,),
                 ).fetchone()
-            assert approval_row["status"] == "approved"
-            assert approval_row["gateway_turn_id"] is None
-
-            jarvis_missions._bind_approved_intent_to_turn(
-                store,
-                owner=store._owner("owner-a"),
-                mission_id=mission_id,
-                revision=1,
-                plan_sha256=preview["plan_sha256"],
-                intent_nonce=approved["intent_nonce"],
-                idempotency_key="mission-turn-idempotency-key-001",
-                gateway_turn_id="G" * 32,
-                source_binding={"core_source_generation": None, "core_generation": None},
-            )
-            with store._connect() as db:
-                bound = db.execute(
-                    "SELECT status, gateway_turn_id FROM jarvis_mission_approvals WHERE mission_id=?",
-                    (mission_id,),
-                ).fetchone()
-            assert bound["status"] == "spent"
-            assert bound["gateway_turn_id"] == "G" * 32
-            jarvis_missions._invalidate_unscheduled_mission_turn(
-                store, owner=store._owner("owner-a"), gateway_turn_id="G" * 32)
-            with store._connect() as db:
-                invalidated = db.execute(
-                    "SELECT status FROM jarvis_mission_approvals WHERE mission_id=?",
-                    (mission_id,),
-                ).fetchone()
-            assert invalidated["status"] == "invalidated"
+            assert approval_row is None
 
             stop = await client.post(f"/chat/api/missions/{mission_id}/stop", json={
                 "revision": 1, "idempotency_key": "mission-stop-idempotency-key-001",
