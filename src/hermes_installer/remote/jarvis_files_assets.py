@@ -71,12 +71,12 @@ _MOUNT = r"""function mount(container, api, state) {
   const previewBytes = root.querySelector('[data-preview-bytes]');
   const list = root.querySelector('[data-files]');
   const empty = root.querySelector('[data-empty]');
-  let stopped = false, busy = false, pendingAttempt = null, conversationId = '';
+  let stopped = false, busy = false, pendingAttempt = null, conversationId = '', previewRevision = 0;
   function call(method, path, body) {
     if (stopped) return Promise.reject(new Error('View closed'));
     return method === 'GET' ? api.get(path) : api.post(path, body);
   }
-  function filesPath() { return '/chat/api/conversations/' + encodeURIComponent(conversationId) + '/files'; }
+  function filesPath(id = conversationId) { return '/chat/api/conversations/' + encodeURIComponent(id) + '/files'; }
   function addText(parent, tag, text, className) {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -159,7 +159,7 @@ _MOUNT = r"""function mount(container, api, state) {
     }
     return btoa(binary);
   }
-  async function previewSelectedFile(file) {
+  async function previewSelectedFile(file, revision = ++previewRevision) {
     preview.hidden = true;
     previewMeta.textContent = '';
     previewBytes.textContent = '';
@@ -173,7 +173,7 @@ _MOUNT = r"""function mount(container, api, state) {
     try {
       const bytes = await file.arrayBuffer();
       const decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-      if (stopped || fileInput.files?.[0] !== file) return false;
+      if (stopped || revision !== previewRevision || fileInput.files?.[0] !== file) return false;
       previewMeta.textContent = file.name + ' · ' + sizeText(file.size) + ' · UTF-8 upload bytes';
       previewBytes.textContent = decoded;
       preview.hidden = false;
@@ -188,17 +188,21 @@ _MOUNT = r"""function mount(container, api, state) {
   }
   async function stageFile() {
     if (stopped || busy || !conversationId) return;
+    const targetConversation = conversationId;
     const file = fileInput.files && fileInput.files[0];
     if (!file) return;
-    if (!(await previewSelectedFile(file))) return;
     busy = true;
     uploadButton.disabled = true;
-    note.textContent = 'Staging file in the selected Hermes conversation…';
+    conversationSelect.disabled = true;
+    refreshButton.disabled = true;
     try {
-      if (!pendingAttempt || pendingAttempt.file !== file || pendingAttempt.conversationId !== conversationId) {
+      if (!(await previewSelectedFile(file)) || stopped || targetConversation !== conversationId ||
+          fileInput.files?.[0] !== file) return;
+      note.textContent = 'Staging file in the selected Hermes conversation…';
+      if (!pendingAttempt || pendingAttempt.file !== file || pendingAttempt.conversationId !== targetConversation) {
         pendingAttempt = {
           file: file,
-          conversationId: conversationId,
+          conversationId: targetConversation,
           body: {
             name: file.name,
             content_base64: toBase64(await file.arrayBuffer()),
@@ -206,35 +210,52 @@ _MOUNT = r"""function mount(container, api, state) {
           }
         };
       }
-      const data = await call('POST', filesPath(), pendingAttempt.body);
+      await call('POST', filesPath(targetConversation), pendingAttempt.body);
       if (stopped) return;
       pendingAttempt = null;
       fileInput.value = '';
       note.textContent = 'File staged. Its contents will be attached to your next message in this conversation.';
-      renderFiles((await call('GET', filesPath())).files);
+      try {
+        renderFiles((await call('GET', filesPath(targetConversation))).files);
+      } catch (_) {
+        if (!stopped) note.textContent = 'File staged successfully. Refresh the conversation file list to confirm its current state.';
+      }
     } catch (_) {
       if (!stopped) note.textContent = 'No upload receipt arrived. Re-submit the same selected file to retry its idempotent request.';
     } finally {
       busy = false;
-      if (!stopped) uploadButton.disabled = !conversationId || !fileInput.files || fileInput.files.length === 0;
+      if (!stopped) {
+        conversationSelect.disabled = false;
+        refreshButton.disabled = false;
+        uploadButton.disabled = !conversationId || !fileInput.files || fileInput.files.length === 0;
+      }
     }
   }
   function onConversationChange() {
     conversationId = conversationSelect.value || '';
+    const selectedConversation = conversationId;
     pendingAttempt = null;
     renderFiles([]);
     uploadButton.disabled = true;
-    previewSelectedFile(fileInput.files && fileInput.files[0]).then((valid) => {
-      if (!stopped) uploadButton.disabled = !conversationId || !valid;
+    const revision = ++previewRevision;
+    previewSelectedFile(fileInput.files && fileInput.files[0], revision).then((valid) => {
+      if (!stopped && revision === previewRevision && selectedConversation === conversationId) {
+        uploadButton.disabled = !selectedConversation || !valid;
+      }
     });
     refreshFiles();
   }
   function onFileChange() {
     pendingAttempt = null;
+    const selectedConversation = conversationId;
     const file = fileInput.files && fileInput.files[0];
     uploadButton.disabled = true;
-    previewSelectedFile(file).then((valid) => {
-      if (!stopped) uploadButton.disabled = !conversationId || !valid;
+    const revision = ++previewRevision;
+    previewSelectedFile(file, revision).then((valid) => {
+      if (!stopped && revision === previewRevision && selectedConversation === conversationId &&
+          fileInput.files?.[0] === file) {
+        uploadButton.disabled = !selectedConversation || !valid;
+      }
     });
   }
   conversationSelect.addEventListener('change', onConversationChange);
@@ -244,10 +265,13 @@ _MOUNT = r"""function mount(container, api, state) {
   loadConversations();
   return function cleanup() {
     stopped = true;
+    previewRevision++;
     conversationSelect.removeEventListener('change', onConversationChange);
     fileInput.removeEventListener('change', onFileChange);
     uploadButton.removeEventListener('click', stageFile);
     refreshButton.removeEventListener('click', refreshFiles);
+    preview.hidden = true;
+    previewMeta.textContent = '';
     previewBytes.textContent = '';
   };
 }"""
