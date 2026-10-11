@@ -36,7 +36,8 @@ class JarvisSecondBrainAssetTests(unittest.TestCase):
         self.assertIn("summary.observedAt", FEATURE_ASSETS.mount_js)
         self.assertIn("link[targetField]", FEATURE_ASSETS.mount_js)
         self.assertIn("note.markdown", FEATURE_ASSETS.mount_js)
-        self.assertIn("does not imply communication or execution", FEATURE_ASSETS.view_html)
+        self.assertIn("Connections represent indexed Obsidian links only", FEATURE_ASSETS.view_html)
+        self.assertRegex(FEATURE_ASSETS.view_html, r"\bdo not imply communication or execution\b")
 
     def test_read_view_has_keyboard_touch_and_reduced_motion_paths(self):
         self.assertIn("data-search-form", FEATURE_ASSETS.view_html)
@@ -53,7 +54,8 @@ class JarvisSecondBrainAssetTests(unittest.TestCase):
         self.assertIn("selectedTags", FEATURE_ASSETS.mount_js)
         self.assertIn("edge.fromNoteId", FEATURE_ASSETS.mount_js)
         self.assertIn("edge.toNoteId", FEATURE_ASSETS.mount_js)
-        self.assertIn("<animateMotion", FEATURE_ASSETS.mount_js)
+        self.assertIn("createElementNS(SVG, 'animateMotion')", FEATURE_ASSETS.mount_js)
+        self.assertIn("motion.setAttribute('repeatCount', 'indefinite')", FEATURE_ASSETS.mount_js)
         self.assertIn("graph.pauseAnimations()", FEATURE_ASSETS.mount_js)
         self.assertIn("IntersectionObserver", FEATURE_ASSETS.mount_js)
         self.assertIn("data-zoom-in", FEATURE_ASSETS.view_html)
