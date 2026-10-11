@@ -147,6 +147,9 @@ def build_manual_jarvis_skills_artifact() -> bytes:
             "version": item.resource.version,
             "source_path": registry.paths[raw_key],
             "source_document_sha256": raw.content_digest,
+            # The resolver digest is over canonical parsed document content;
+            # retain a separate digest for the exact upstream YAML member.
+            "source_declaration_sha256": _sha256(source.files[registry.paths[raw_key]]),
             "identity_sha256": _sha256(files[f"registry/profiles/{profile_id}/SOUL.md"]),
             "upstream_compiled_identity_sha256": _sha256(baseline_prompt),
             "profile_yaml_sha256": _sha256(files[f"registry/profiles/{profile_id}/profile.yaml"]),
@@ -428,7 +431,7 @@ def _read_artifact(archive_bytes: bytes, expected_sha256: str) -> tuple[dict[str
             if _sha256(files.get(overlay_file, b"")) != expected_overlay["sha256"]:
                 raise ValueError
             rows_by_id = {row["source_id"]: row for row in profiles}
-            if any(rows_by_id[profile_id].get("source_document_sha256")
+            if any(rows_by_id[profile_id].get("source_declaration_sha256")
                    != source_declarations[f"profiles/{profile_id}.yaml"]
                    for profile_id in ("hermes", "orchestrator")):
                 raise ValueError

@@ -55,8 +55,8 @@ class ManualJarvisSkillsTests(unittest.TestCase):
         manifest, files = _read_artifact(self.bundle, self.digest)
         overlay = manifest["effective_overlay"]
         profiles = {row["source_id"]: row for row in manifest["profile_members"]}
-        self.assertEqual(overlay["overlay_id"], "jarvis-master-semantics-v1")
-        self.assertEqual(overlay["approval_commit"], "76fa3f9237d5c6a0cf608f1039f72f70f68a2523")
+        self.assertEqual(overlay["overlay_id"], "jarvis-master-semantics-v2")
+        self.assertEqual(overlay["approval_commit"], "aab3b666023559c0d9112633212e0194dcc7af97")
         self.assertEqual(overlay["sha256"], overlay_identity()["sha256"])
         self.assertEqual(len(manifest["skill_members"]), 396)
         self.assertEqual(len(manifest["profile_members"]), 208)
@@ -65,7 +65,8 @@ class ManualJarvisSkillsTests(unittest.TestCase):
             row = profiles[profile_id]
             self.assertNotEqual(row["upstream_compiled_identity_sha256"], row["identity_sha256"])
             original = files[f"registry/package/upstream-source/profiles/{profile_id}.yaml"]
-            self.assertEqual(hashlib.sha256(original).hexdigest(), row["source_document_sha256"])
+            self.assertNotEqual(row["source_document_sha256"], row["source_declaration_sha256"])
+            self.assertEqual(hashlib.sha256(original).hexdigest(), row["source_declaration_sha256"])
             self.assertEqual(overlay["source_declarations"][f"profiles/{profile_id}.yaml"],
                              hashlib.sha256(original).hexdigest())
         for profile_id, row in profiles.items():
@@ -77,6 +78,8 @@ class ManualJarvisSkillsTests(unittest.TestCase):
         self.assertIn("OneShot", jarvis)
         self.assertIn("Only Jarvis may make the final", jarvis)
         self.assertIn("not a mandatory hop", jarvis)
+        self.assertNotIn("Compose every user-facing response using all six sections", jarvis)
+        self.assertIn("directSpecialistDispatch: internal-only", jarvis)
         self.assertIn("without creating a project board", coordinator)
         self.assertIn("Never publish or perform final external", coordinator)
         self.assertEqual(hashlib.sha256(
