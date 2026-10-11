@@ -99,6 +99,9 @@ def test_empty_overview_reports_zero_real_counts_and_pending_settings(tmp_path):
         "provider": {"value": None, "status": "pending"},
         "model": {"value": None, "status": "pending"},
         "coreVersion": {"value": None, "status": "pending"},
+        "accountState": {"value": "unknown", "status": "pending"},
+        "plugins": {"state": "unknown", "items": []},
+        "mcp": {"state": "unknown", "checkedAt": None, "servers": []},
     }
 
 
@@ -124,8 +127,20 @@ def test_discovery_and_verified_core_version_never_claim_functional_capability(t
     assert overview["capabilities"]["discoveredResourceCounts"] == projection["resource_counts"]
     assert settings["coreVersion"] == {"value": "7085fbf77532", "status": "verified"}
     assert settings["provider"] == {"value": None, "status": "pending"}
+    assert settings["accountState"] == {"value": "unknown", "status": "pending"}
     assert capabilities["nativeDiscovery"]["state"] == "discovered"
     assert {item["state"] for item in capabilities["items"]} == {"bundled"}
+
+
+def test_settings_marks_safe_config_labels_unverified_and_auth_pending():
+    result = build_settings({"core_version": "7085fbf77532", "provider": "openrouter",
+                             "model": "openrouter/auto"})
+    assert result["readiness"] == "pending"
+    assert result["provider"] == {"value": "openrouter", "status": "configured-unverified"}
+    assert result["model"] == {"value": "openrouter/auto", "status": "configured-unverified"}
+    assert result["accountState"] == {"value": "unknown", "status": "pending"}
+    assert result["plugins"] == {"state": "unknown", "items": []}
+    assert result["mcp"] == {"state": "unknown", "checkedAt": None, "servers": []}
 
 
 def test_capabilities_use_fixed_packaged_inventory_and_public_jarvis_alias():

@@ -15,6 +15,7 @@ import struct
 import subprocess
 import threading
 import time
+import pwd
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +40,10 @@ CORE_PYTHON_LINK_TARGET = "/home/admin/HermesInstaller/data/tools/python-3.14.7+
 CORE_ARGV_TAIL = ("-m", "hermes_cli.main", "serve", "--isolated", "--host",
                   CORE_HOST, "--port", str(CORE_PORT))
 CORE_TOKEN_SOURCE = Path("/etc/hermes-installer/jarvis-core/session-token")
+CORE_ADMIN_HOME = Path("/home/admin")
+CORE_HERMES_HOME = CORE_ADMIN_HOME / ".hermes"
+CORE_USER_CONFIG = CORE_HERMES_HOME / "config.yaml"
+MAX_CORE_USER_CONFIG_BYTES = 512 * 1024
 CORE_SOURCE = Path("/home/admin/HermesInstaller/data/generations/hermes-agent-7085fbf77532")
 CORE_SOURCE_REVISION = "7085fbf7753266fc4943c55ac04926186bc90005"
 CORE_SOURCE_FILES = {
@@ -638,16 +643,104 @@ _OVERVIEW_PROJECTION_FIELDS = {
 }
 
 
-def _core_overview_projection(source_generation: str) -> dict[str, Any]:
+def _core_overview_projection(source_generation: str,
+                              config_digest_holder: dict[str, str | None] | None = None) -> dict[str, Any]:
     from ..core_runtime import COMMIT, read_current_resources_discovery
     projection = read_current_resources_discovery(core_source_generation=source_generation)
-    # Provider/model are deliberately unknown until a separately reviewed, bounded
-    # effective-config projection exists. A present key is not proof of auth.
-    projection.update({"core_version": COMMIT[:12], "provider": None, "model": None,
+    provider, model, digest = _fixed_model_config_projection()
+    if config_digest_holder is not None:
+        config_digest_holder["digest"] = digest
+    # These are safe configured labels from the fixed private config only. They
+    # do not establish authentication, provider reachability, or per-turn routing.
+    projection.update({"core_version": COMMIT[:12], "provider": provider, "model": model,
                        "account_state": "unknown"})
     if not _valid_overview_projection(projection):
         _deny()
     return projection
+
+
+def _fixed_model_config_bytes() -> bytes | None:
+    """Read the fixed owner config under root custody without exposing raw YAML."""
+    from ..core_runtime import _projection_file
+    account = pwd.getpwnam("admin")
+    home = os.lstat(CORE_ADMIN_HOME)
+    private_home = os.lstat(CORE_HERMES_HOME)
+    if (not stat.S_ISDIR(home.st_mode) or home.st_uid != account.pw_uid
+            or stat.S_IMODE(home.st_mode) & 0o022
+            or not stat.S_ISDIR(private_home.st_mode) or private_home.st_uid != account.pw_uid
+            or private_home.st_gid != account.pw_gid or stat.S_IMODE(private_home.st_mode) != 0o700):
+        raise CoreInspectionDenied("fixed model configuration custody differs")
+    return _projection_file(CORE_USER_CONFIG, owner=account.pw_uid, group=account.pw_gid,
+                            mode=0o600, maximum=MAX_CORE_USER_CONFIG_BYTES)
+
+
+def _fixed_model_config_projection() -> tuple[str | None, str | None, str | None]:
+    try:
+        raw = _fixed_model_config_bytes()
+    except FileNotFoundError:
+        return None, None, None
+    except Exception:
+        # A present but unsafe config is an unknown value, never a public read path.
+        return None, None, None
+    digest = hashlib.sha256(raw).hexdigest()
+    try:
+        import yaml
+        from yaml.constructor import ConstructorError
+
+        class UniqueSafeLoader(yaml.SafeLoader):
+            def compose_node(self, parent, index):
+                if self.check_event(yaml.AliasEvent):
+                    raise ConstructorError(None, None, "YAML aliases are not accepted",
+                                           self.peek_event().start_mark)
+                return super().compose_node(parent, index)
+
+        def construct_mapping(loader, node, deep=False):
+            mapping = {}
+            for key_node, value_node in node.value:
+                key = loader.construct_object(key_node, deep=deep)
+                if key in mapping:
+                    raise ConstructorError("while constructing a mapping", node.start_mark,
+                                           "duplicate configuration key", key_node.start_mark)
+                mapping[key] = loader.construct_object(value_node, deep=deep)
+            return mapping
+
+        UniqueSafeLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+                                         construct_mapping)
+        document = yaml.load(raw, Loader=UniqueSafeLoader)
+        if not isinstance(document, dict):
+            return None, None, digest
+        model_config = document.get("model")
+        if isinstance(model_config, dict):
+            model_value = model_config.get("default", model_config.get("name", ""))
+            provider_value = model_config.get("provider", "")
+        elif isinstance(model_config, str) and model_config:
+            model_value, provider_value = model_config, ""
+        else:
+            model_value, provider_value = "", ""
+        return (_safe_config_label(provider_value, provider=True),
+                _safe_config_label(model_value, provider=False), digest)
+    except Exception:
+        return None, None, digest
+
+
+def _safe_config_label(value: Any, *, provider: bool) -> str | None:
+    maximum = 80 if provider else 160
+    pattern = (r"[A-Za-z0-9][A-Za-z0-9._+-]{0,79}" if provider
+               else r"[A-Za-z0-9][A-Za-z0-9 ._:/+-]{0,159}")
+    if not isinstance(value, str) or not value or len(value) > maximum:
+        return None
+    if not provider and ("://" in value or "\\" in value or value.endswith("/")
+                         or "//" in value):
+        return None
+    return value if re.fullmatch(pattern, value) else None
+
+
+def _current_fixed_model_config_digest() -> str | None:
+    try:
+        raw = _fixed_model_config_bytes()
+    except Exception:
+        return None
+    return hashlib.sha256(raw).hexdigest()
 
 
 def _valid_overview_projection(projection: Any) -> bool:
@@ -657,13 +750,11 @@ def _valid_overview_projection(projection: Any) -> bool:
             or projection.get("account_state") not in {"unknown", "configured"}
             or projection.get("resources_state") not in {"pending", "discovered", "stale"}):
         return False
-    for key in ("provider", "model"):
-        value = projection.get(key)
-        if value is not None and (not isinstance(value, str)
-                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,79}", value) is None):
-            return False
-    if projection["account_state"] == "unknown" and any(
-            projection[key] is not None for key in ("provider", "model")):
+    if (projection.get("provider") is not None
+            and _safe_config_label(projection["provider"], provider=True) != projection["provider"]):
+        return False
+    if (projection.get("model") is not None
+            and _safe_config_label(projection["model"], provider=False) != projection["model"]):
         return False
     if projection["resources_state"] != "discovered":
         return all(projection[key] is None for key in (
@@ -696,15 +787,20 @@ def observe_current_core_overview(config: CoreGatewayConfig, *, nonce: str,
                                   peer_pid: int, peer_uid: int, peer_gid: int,
                                   issued: float, deadline: float) -> dict[str, Any]:
     projection_holder: dict[str, Any] = {}
+    config_digest_holder: dict[str, str | None] = {}
 
     def project(source_generation: str) -> None:
-        projection_holder.update(_core_overview_projection(source_generation))
+        projection_holder.update(_core_overview_projection(source_generation, config_digest_holder))
 
     ingress = observe_current_ingress(config, nonce=nonce, caller_pid=caller_pid,
         caller_uid=caller_uid, caller_gid=caller_gid, peer_pid=peer_pid,
         peer_uid=peer_uid, peer_gid=peer_gid, _issued=issued, _deadline=deadline,
         _projection_factory=project)
     if set(projection_holder) != _OVERVIEW_PROJECTION_FIELDS:
+        _deny()
+    captured_config_digest = config_digest_holder.get("digest")
+    if (captured_config_digest is not None
+            and _current_fixed_model_config_digest() != captured_config_digest):
         _deny()
     body = {
         "schema": 1, "nonce": nonce, "boot_id": ingress["boot_id"],
@@ -751,10 +847,13 @@ class CoreVerifiedOverviewObservation:
                     or type(projection) is not dict or set(projection) != _OVERVIEW_PROJECTION_FIELDS
                     or projection.get("account_state") not in {"unknown", "configured"}
                     or projection.get("resources_state") not in {"pending", "discovered", "stale"}
-                    or any(value is not None and (not isinstance(value, str)
-                        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,79}", value) is None)
-                        for value in (projection.get("core_version"), projection.get("provider"),
-                                      projection.get("model"), projection.get("resources_revision")))
+                    or projection.get("core_version") != CORE_SOURCE_REVISION[:12]
+                    or (projection.get("provider") is not None and
+                        _safe_config_label(projection["provider"], provider=True) != projection["provider"])
+                    or (projection.get("model") is not None and
+                        _safe_config_label(projection["model"], provider=False) != projection["model"])
+                    or (projection.get("resources_revision") is not None and
+                        re.fullmatch(r"[0-9a-f]{40}", projection["resources_revision"]) is None)
                     or (projection.get("artifact_sha256") is not None
                         and not _is_hash(projection.get("artifact_sha256")))
                     or (projection.get("active_prompt_matches_bundled_primary") is not None

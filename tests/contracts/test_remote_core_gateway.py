@@ -77,6 +77,26 @@ class CoreGatewayInspectorClientTests(unittest.TestCase):
         self.assertFalse(changed.verify_current(config, peer_pid=431, peer_uid=996,
             peer_gid=981, accepted_ingress=None, now=10.5))
 
+    def test_fixed_model_projection_returns_only_safe_labels_from_private_yaml(self):
+        raw = (b"model:\n  provider: zai\n  default: zai/glm-5.2\n"
+               b"  api_key: never-project-this\n  base_url: https://secret.invalid\n")
+        with patch.object(core_gateway_inspector, "_fixed_model_config_bytes", return_value=raw):
+            provider, model, digest = core_gateway_inspector._fixed_model_config_projection()
+        self.assertEqual((provider, model), ("zai", "zai/glm-5.2"))
+        self.assertEqual(digest, hashlib.sha256(raw).hexdigest())
+
+        invalid = b"model:\n  provider: https://secret.invalid\n  default: /private/path\n"
+        with patch.object(core_gateway_inspector, "_fixed_model_config_bytes", return_value=invalid):
+            self.assertEqual(core_gateway_inspector._fixed_model_config_projection(),
+                             (None, None, hashlib.sha256(invalid).hexdigest()))
+
+    def test_fixed_model_projection_rejects_duplicate_yaml_keys(self):
+        raw = b"model:\n  provider: safe\n  provider: shadow\n  default: model-x\n"
+        with patch.object(core_gateway_inspector, "_fixed_model_config_bytes", return_value=raw):
+            provider, model, digest = core_gateway_inspector._fixed_model_config_projection()
+        self.assertEqual((provider, model), (None, None))
+        self.assertEqual(digest, hashlib.sha256(raw).hexdigest())
+
     def test_core_overview_proof_expires_before_dashboard_can_reuse_it(self):
         config = _config()
         accepted = _accepted_observation(config, now=10.0, lease_seconds=2.0)
@@ -203,6 +223,30 @@ def _accepted_observation(config, *, now, lease_seconds=4.0, peer_uid=996, peer_
         principal, jwt_expiry, root, 440, peer_uid, peer_gid, 1, 2, now - 0.01, expiry,
         root.core_generation, config.config_sha256,
         core_gateway._accepted_claim_digest(**claims), core_gateway._ACCEPTED_INGRESS_SEAL)
+
+
+def _overview_observation(config, accepted, *, now):
+    """Create a sealed test proof tied to the real accepted-ingress fixture."""
+    projection = {
+        "core_version": core_gateway_inspector.CORE_SOURCE_REVISION[:12],
+        "provider": None, "model": None, "account_state": "unknown",
+        "resources_state": "pending", "resource_counts": None,
+        "resources_revision": None, "artifact_sha256": None,
+        "discovery_observed_at_utc": None,
+        "active_prompt_matches_bundled_primary": None,
+    }
+    claims = {
+        "schema": 1, "nonce": "a" * 64, "boot_id": config.boot_id,
+        "issued_monotonic": now,
+        "expires_monotonic": min(now + 3.0, accepted.expires_monotonic),
+        "config_sha256": config.config_sha256,
+        "core_generation": accepted.core_generation,
+        "core_source_generation": accepted.root_observation.core_source_generation,
+        "projection": projection,
+    }
+    return core_gateway_inspector.CoreVerifiedOverviewObservation(
+        **claims, proof_sha256=core_gateway_inspector._overview_digest(claims),
+        _seal=core_gateway_inspector._OVERVIEW_PROOF_SEAL)
 
 
 def _jarvis_service(launch, store_path):
@@ -626,8 +670,11 @@ class CoreGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
 
         with tempfile.TemporaryDirectory(prefix="jarvis-dashboard-gateway-") as temporary:
             service = _jarvis_service(launch, Path(temporary) / "chat.sqlite3")
+            overview = _overview_observation(config, accepted, now=now)
             with patch.object(jarvis_chat, "build_jarvis_chat_service", return_value=service), \
                  patch.object(core_gateway_inspector, "_boot_id", return_value=config.boot_id), \
+                 patch.object(core_gateway_inspector, "verify_current_core_overview",
+                              return_value=overview), \
                  patch.object(core_gateway.os, "lstat", side_effect=lstat), \
                  patch.object(core_gateway, "_read_config_current"), \
                  patch.object(core_gateway, "accept_core_ingress", return_value=accepted):

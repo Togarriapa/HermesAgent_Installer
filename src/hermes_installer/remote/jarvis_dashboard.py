@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import json
+import secrets
 from datetime import date, datetime, time, timedelta, timezone
 from functools import lru_cache
 from importlib.resources import files as package_files
@@ -26,6 +28,7 @@ _BUNDLE_INVENTORY_COUNTS = {
     "bundles": 55, "channels": 5, "crons": 4, "mcps": 3,
     "plugins": 18, "profiles": 208, "skills": 396, "webhooks": 3,
 }
+_NATIVE_ID_KEY = secrets.token_bytes(32)
 
 
 def _iso_utc(timestamp: float | None) -> str | None:
@@ -179,18 +182,28 @@ def build_capabilities(core_projection: dict[str, Any] | None = None) -> dict[st
         }}
 
 
+def _native_id(subject: str, core_generation: str, kind: str, name: str) -> str:
+    source = f"jarvis-native-item-v1\0{subject}\0{core_generation}\0{kind}\0{name}".encode("utf-8")
+    return hmac.new(_NATIVE_ID_KEY, source, hashlib.sha256).hexdigest()[:32]
+
+
 def build_settings(core_projection: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Return only values present in the fixed root-signed sanitized projection."""
+    """Return root-verified config labels; native status is added by its strict adapter."""
     projection = core_projection or {}
     pending = {"value": None, "status": "pending"}
     version = projection.get("core_version")
+    provider = projection.get("provider")
+    model = projection.get("model")
     return {
-        "readiness": "pending" if not projection.get("provider") or not projection.get("model") else "configured",
-        "provider": ({"value": projection["provider"], "status": "configured"}
-                     if projection.get("provider") else dict(pending)),
-        "model": ({"value": projection["model"], "status": "configured"}
-                  if projection.get("model") else dict(pending)),
+        "readiness": "pending",
+        "provider": ({"value": provider, "status": "configured-unverified"}
+                     if provider else dict(pending)),
+        "model": ({"value": model, "status": "configured-unverified"}
+                  if model else dict(pending)),
         "coreVersion": ({"value": version, "status": "verified"} if version else dict(pending)),
+        "accountState": {"value": "unknown", "status": "pending"},
+        "plugins": {"state": "unknown", "items": []},
+        "mcp": {"state": "unknown", "checkedAt": None, "servers": []},
     }
 
 
@@ -233,7 +246,44 @@ def install_jarvis_dashboard_routes(app: Any, service: Any) -> None:
                 return web.json_response(build_capabilities(core_projection))
             except Exception:
                 raise web.HTTPServiceUnavailable(text="capability inventory unavailable") from None
-        return web.json_response(build_settings(core_projection))
+        plugins = None
+        mcp = None
+        try:
+            list_plugins = getattr(service.backend, "list_plugins")
+            mcp_status = getattr(service.backend, "mcp_status")
+            plugin_snapshot, mcp_snapshot = await asyncio.wait_for(
+                asyncio.gather(list_plugins(), mcp_status()), timeout=1.5)
+            current = service._current(request)
+            if (current.subject != principal.subject
+                    or current.core_generation != principal.core_generation):
+                raise ValueError
+            plugins = {"plugins": plugin_snapshot}
+            mcp = mcp_snapshot
+        except Exception:
+            # Status is additive. A failure leaves it explicitly unknown; it never
+            # falls back to a config/catalog inventory or blocks the dashboard.
+            try:
+                current = service._current(request)
+                if (current.subject != principal.subject
+                        or current.core_generation != principal.core_generation):
+                    raise ValueError
+            except Exception:
+                raise web.HTTPForbidden(text="forbidden") from None
+        base = build_settings(core_projection)
+        try:
+            from .jarvis_native_controls import build_native_controls_snapshot, decode_native_controls
+            payload = build_native_controls_snapshot(
+                provider=base["provider"], model=base["model"],
+                core_version=base["coreVersion"], plugins=plugins, mcp=mcp,
+                opaque_id=lambda kind, name: _native_id(
+                    principal.subject, principal.core_generation, kind, name))
+            snapshot = decode_native_controls(payload)
+            public_payload = snapshot.to_public_dict()
+            return web.json_response(public_payload)
+        except Exception:
+            # The adapter is separately pinned/composed. Its absence or a strict
+            # decode failure leaves the fixed settings projection pending.
+            return web.json_response(base)
 
     for path in _ROUTES:
         app.router.add_get(path, route, allow_head=False)

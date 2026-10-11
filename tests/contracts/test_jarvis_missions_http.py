@@ -12,6 +12,8 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from hermes_installer.remote.jarvis_chat import ChatPrincipal, JarvisChatService, JarvisChatStore
 from hermes_installer.remote import jarvis_missions
+from hermes_installer.remote import jarvis_feature_registry
+from hermes_installer.remote.jarvis_missions_assets import FEATURE_ASSETS as MISSION_ASSETS
 
 
 class Backend:
@@ -135,3 +137,8 @@ def test_mission_routes_and_feature_assets_are_literal_and_finite():
         "/chat/api/missions/{mission_id}/stop",
         "/chat/api/missions/{mission_id}/review",
     }
+    assert jarvis_feature_registry.FEATURE_ASSETS == (MISSION_ASSETS,)
+    assert jarvis_feature_registry.FEATURE_ROUTE_INSTALLERS == (
+        ("missions", jarvis_missions.install_jarvis_missions_routes,
+         jarvis_missions.FEATURE_ROUTES),
+    )

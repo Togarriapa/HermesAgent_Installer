@@ -121,8 +121,8 @@ _HTML = '''<!doctype html>
         <div id="capability-list" class="capability-list" aria-live="polite"></div>
       </section>
       <section class="data-main" id="settings-view" aria-label="Settings" data-view-panel="settings" hidden>
-        <div class="page-heading"><span class="eyebrow">CONFIGURATION</span><h1>Settings</h1><p>Effective runtime configuration reported by the service.</p></div>
-        <section class="data-card settings-card"><h2>Assistant runtime</h2><dl id="settings-list" class="settings-list"><div><dt>Status</dt><dd>Loading verified configuration…</dd></div></dl><p class="muted">These values are read-only here until secure settings changes are available.</p></section>
+        <div class="page-heading"><span class="eyebrow">CONFIGURATION</span><h1>Settings</h1><p>Verified configuration labels and read-only integration status.</p></div>
+        <section class="data-card settings-card"><h2>Assistant runtime</h2><dl id="settings-list" class="settings-list"><div><dt>Status</dt><dd>Loading verified configuration…</dd></div></dl><p class="muted">Configured model labels do not prove account authentication or the route selected for an individual reply. Secure settings changes are not available here.</p></section>
         <section class="data-card voice-settings-card"><h2>Browser voice</h2>
           <p class="muted">Optional browser features. Text chat remains available on every device.</p>
           <label class="voice-choice" id="speech-consent-row" hidden><input id="speech-consent" type="checkbox"><span><strong>Enable push-to-talk for this page</strong><small>Browser speech recognition may process audio through your browser or platform speech service outside Jarvis. Audio is not sent to the Jarvis chat service. Availability and processing depend on your browser.</small></span></label>

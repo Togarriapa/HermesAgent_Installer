@@ -195,11 +195,12 @@ def test_bundled_resource_import_uses_exact_admin_home_source_and_pm_python(tmp_
     assert kwargs["timeout"] == 600
     assert kwargs["env"]["HOME"] == str(core.HOME)
     assert kwargs["env"]["PYTHONNOUSERSITE"] == "1"
-    assert receipt["state"] == "discovered"
-    assert receipt["functional"] is False and receipt["target_verified"] is False
+    # Importer output is only an attempt signal; root discovery comes from a
+    # fresh independently pinned native-loader readback after import.
+    assert receipt == {}
 
 
-def test_resource_import_does_not_overwrite_or_gate_on_existing_primary_prompt(tmp_path, monkeypatch):
+def test_admin_import_prompt_claim_is_discarded_for_independent_root_readback(tmp_path, monkeypatch):
     installer_python = tmp_path / "installer-python"
     runuser = tmp_path / "runuser"
     for executable in (installer_python, runuser):
@@ -213,7 +214,7 @@ def test_resource_import_does_not_overwrite_or_gate_on_existing_primary_prompt(t
 
     receipt = core._install_bundled_resources(SimpleNamespace(pw_uid=os.getuid()))
 
-    assert receipt["native_receipt"]["active_prompt_matches_bundled_primary"] is False
+    assert receipt == {}
 
 
 def test_root_discards_admin_discovery_booleans_and_uses_separate_readback(tmp_path, monkeypatch):
