@@ -8,7 +8,15 @@ Source `12b9e83dd246052558ba64f4299b52ad63e2b5f1` is deployed at <https://jarvis
 
 The public route is protected by Cloudflare Access email OTP and the gateway's origin JWT, binding, and conversation-ownership checks. A fresh email-OTP login succeeded. The broader public denial, expiry, revocation, and long-lived-session matrices remain open.
 
-The development candidate `d8d15533a240732bc0bacac5a97ed165cc773cbc` is on the development line but is not the deployed public UI. It includes Overview/Integrations navigation work, renames the former Plugins/MCP menus, and targets 14 menus; it also changes mission prompt/consumer binding and cold-model readiness. At this snapshot, the public site still serves the 12b source with 13 menus. The joined Pi suite for the newer development candidate was running; no result was reported, so it is not recorded as passing.
+The earlier development candidate `d8d15533a240732bc0bacac5a97ed165cc773cbc` is superseded and is not the current deployed public UI. Its Overview/Integrations navigation work, Plugins/MCP menu rename, mission prompt/consumer binding and cold-model readiness changes remain development-only. At this snapshot, the public site still serves the 12b source with 13 menus; no joined Pi-suite result for that earlier candidate was reported.
+
+## Latest live implementation checkpoint
+
+Candidate `3b9d13e7bb9a6fcdd380ca032587d7a7ad0d18b1` passed 173 Pi UI contract tests and composed JavaScript syntax checks; the root deployment preserved the existing core PID. The public Overview's central reactor telemetry has been observed. This does not establish overall stability or acceptance.
+
+A small name request completed according to stored counters, which showed 8 completed, 1 failed, 9 total. After reload, another chat ended with the client-side SSE message “Connection interrupted” and a blank response. This delivery failure is under investigation; the counters alone do not prove the response reached the user. A responsive Pi v1 attempt failed safely with an `Uncaught` error; responsive v2 diagnostics are still running.
+
+The later `5be` Pi suite reported 346 passed and 4 skipped. UI candidate `4fef` then reported 176 Pi tests passed with 21 warnings; this is source-candidate evidence, not full release acceptance. Official Hermes core, plugin, and `-P` behavior remains on the legacy path and has not been adopted. Observed Experts completions currently come only from Planner; Teams have no joined expert execution. The Obsidian R0090 four-artifact/leaf proposal and UI `6a9` are source-only; central installer and RPC binding remain in progress, and no native Obsidian app is installed.
 
 The Pi run for source `12b9e83dd246052558ba64f4299b52ad63e2b5f1` reported 199 tests passed, 17 warnings, no skips, in 15.27 seconds; generated JavaScript syntax passed. Strict OpenSpec, current-plan, and status/apply checks passed, with eight broad acceptance groups still open. Pi test logs are retained under `/var/tmp/hermes-jarvis-core-checks-20261011/`. The prior `8cfbee0a4` test/deployment logs remain under `/var/tmp/hermes-jarvis-core-checks-20261011/` and `/var/tmp/hermes-jarvis-deploy-8cfbee0a4/`, respectively; those are historical paths, not evidence of the 12b deployment run.
 
