@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from hermes_installer.remote.jarvis_mission_executor import MissionBinding
+
 
 PROFILE_ID = "orchestrator"
 MAX_GOAL_CHARS = 1200
@@ -49,6 +51,12 @@ RESOURCES_DELEGATE_SCHEMA_SHA256 = hashlib.sha256(_RESOURCES_DELEGATE_SCHEMA_BYT
 
 def _canonical_json(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+
+
+def _mission_task_sha256(goal: str) -> str:
+    canonical = json.dumps({"goal": goal}, ensure_ascii=False, sort_keys=True,
+                           separators=(",", ":"), allow_nan=False).encode("utf-8", errors="strict")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def resources_delegate_schema_sha256() -> str:
@@ -161,6 +169,10 @@ class RootSelectedInternalProfileDispatchClaim:
     route_receipt_sha256: str
     max_additional_metered_microusd: int
     expires_monotonic: float
+    gateway_turn_id: str
+    core_generation: str
+    core_source_generation: str
+    mission_binding: MissionBinding | None
 
 
 class InternalProfileClaimSource(Protocol):
@@ -213,6 +225,11 @@ def _claim_is_current(claim: RootSelectedInternalProfileDispatchClaim,
         and claim.parent_agent is parent_agent
         and isinstance(claim.parent_session_id, str) and claim.parent_session_id == session_id
         and _valid_digest(claim.owner_subject_sha256)
+        and isinstance(claim.gateway_turn_id, str)
+        and re.fullmatch(r"[A-Za-z0-9_-]{24,64}", claim.gateway_turn_id) is not None
+        and _valid_digest(claim.core_generation)
+        and _valid_digest(claim.core_source_generation)
+        and (claim.mission_binding is None or type(claim.mission_binding) is MissionBinding)
         and "resources_delegate" in parent_tools
         and "delegate_task" in parent_tools
         and claim.parent_tool_names == parent_tools
@@ -294,6 +311,20 @@ def make_resources_delegate_handler(ctx: HermesPluginContext,
             return _denied("task text is malformed Unicode")
         if len(context_bytes) > MAX_PROMPT_BYTES + MAX_GOAL_CHARS + 512:
             return _denied("selected prompt and task exceed the native delegation bound")
+        if claim.mission_binding is not None:
+            try:
+                from hermes_installer.remote.core_native_observer import (
+                    RootInternalProfileClaimSource, RootVerifiedMissionDispatchAuthorization,
+                )
+                if type(claim_source) is not RootInternalProfileClaimSource:
+                    raise ResourcesDispatchDenied("fixed root mission authorization client is unavailable")
+                task_sha256 = _mission_task_sha256(goal)
+                authorization = claim_source.authorize_mission_claim(claim, task_sha256=task_sha256)
+                if (type(authorization) is not RootVerifiedMissionDispatchAuthorization
+                        or not authorization.matches_claim(claim, task_sha256, now=time.monotonic())):
+                    raise ResourcesDispatchDenied("root mission approval does not match this exact native call")
+            except Exception:
+                return _denied("the spent mission approval is unavailable or no longer matches")
         try:
             result = ctx.dispatch_tool(
                 "delegate_task",

@@ -41,8 +41,9 @@ _CODEX_MODE = "codex_responses"
 _OBSERVER_RUNTIME_DIR = Path("/run/hermes-jarvis-native-observer")
 _NATIVE_INHERITANCE_POLICY_SEAL = object()
 _RESOURCES_DELEGATE_REGISTRATION_SEAL = object()
-_RESOURCES_DELEGATE_SOURCE_SHA256 = "050afe835279e022ba3e4ec479f597692f5bdc88f7488eb630863d08a6b8cf9c"
+_RESOURCES_DELEGATE_SOURCE_SHA256 = "6eee1b932dfda36efc93e3901ccedf86af06af684d1c5c77bf882c1ba18a5d64"
 _RESOURCES_DELEGATE_SCHEMA_SHA256 = "9325cea421e122395475b0ba0d0517cb4aa4c16c3d4a14c5145f9fcc3f957f33"
+_MISSION_AUTHORIZATION_SEAL = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -353,6 +354,7 @@ class RootSelectedInternalProfileDispatchClaim:
     owner_subject_sha256: str
     observed_call_handle: str
     core_generation: str
+    core_source_generation: str
     generation_sha256: str
     session_id: str
     turn_id: str
@@ -392,6 +394,7 @@ class RootSelectedInternalProfileDispatchClaim:
                 or not _ID.fullmatch(self.gateway_turn_id or "")
                 or not _HASH.fullmatch(self.owner_subject_sha256 or "")
                 or not _HASH.fullmatch(self.core_generation or "")
+                or not _HASH.fullmatch(self.core_source_generation or "")
                 or not _HASH.fullmatch(self.generation_sha256 or "")
                 or not _ID.fullmatch(self.session_id or "") or not _ID.fullmatch(self.turn_id or "")
                 or not _ID.fullmatch(self.tool_call_id or "") or not _ID.fullmatch(self.tool_name or "")
@@ -448,6 +451,44 @@ class RootSelectedInternalProfileDispatchClaim:
             raise CoreNativeObservationUnavailable("root dispatch claim is malformed")
 
 
+@dataclass(frozen=True, slots=True)
+class RootVerifiedMissionDispatchAuthorization:
+    """Typed one-use result of the root's immediate persisted-approval recheck."""
+
+    claim_handle: str
+    mission_binding_sha256: str
+    gateway_turn_id: str
+    owner_subject_sha256: str
+    core_generation: str
+    core_source_generation: str
+    source_profile_id: str
+    canonical_arguments_sha256: str
+    expires_monotonic: float
+    _seal: object
+
+    def matches_claim(self, claim: RootSelectedInternalProfileDispatchClaim,
+                      canonical_arguments_sha256: str, *, now: float) -> bool:
+        return bool(
+            type(self) is RootVerifiedMissionDispatchAuthorization
+            and self._seal is _MISSION_AUTHORIZATION_SEAL
+            and type(claim) is RootSelectedInternalProfileDispatchClaim
+            and claim.mission_binding is not None
+            and self.claim_handle == claim.claim_handle
+            and self.mission_binding_sha256 == _hash(claim.mission_binding.to_wire())
+            and self.gateway_turn_id == claim.gateway_turn_id
+            and self.owner_subject_sha256 == claim.owner_subject_sha256
+            and self.core_generation == claim.core_generation
+            and self.core_source_generation == claim.core_source_generation
+            and self.source_profile_id == claim.mission_binding.source_profile_id == "orchestrator"
+            and self.canonical_arguments_sha256 == canonical_arguments_sha256
+            and self.canonical_arguments_sha256 == claim.arguments_sha256
+            and _HASH.fullmatch(self.mission_binding_sha256 or "") is not None
+            and type(self.expires_monotonic) in (int, float)
+            and math.isfinite(float(self.expires_monotonic))
+            and now < self.expires_monotonic <= min(claim.expires_monotonic, now + 30.0)
+        )
+
+
 class CoreNativeObservationClient:
     """Fixed bounded client for the root-owned current-core observation socket."""
 
@@ -464,6 +505,7 @@ class CoreNativeObservationClient:
         if operation not in {
             "register-attempt", "register-response",
             "register-tool-call", "prepare-dispatch", "consume-dispatch",
+            "authorize-mission-dispatch",
         }:
             raise CoreNativeObservationUnavailable("observer operation is not supported")
         nonce = secrets.token_urlsafe(32)
@@ -603,7 +645,7 @@ class CoreNativeObservationClient:
         required = {
             "schema", "claim_handle", "owner_turn_handle", "gateway_turn_id",
             "owner_subject_sha256", "observed_call_handle",
-            "core_generation", "session_id", "turn_id", "tool_call_id", "tool_name",
+            "core_generation", "core_source_generation", "session_id", "turn_id", "tool_call_id", "tool_name",
             "generation_sha256",
             "arguments_sha256", "account_fingerprint", "profile_id", "source_revision",
             "profile_manifest_sha256", "profile_tool_names", "profile_privacy_requirements",
@@ -652,6 +694,7 @@ class CoreNativeObservationClient:
                 owner_subject_sha256=claim["owner_subject_sha256"],
                 observed_call_handle=claim["observed_call_handle"],
                 core_generation=claim["core_generation"], session_id=claim["session_id"],
+                core_source_generation=claim["core_source_generation"],
                 generation_sha256=claim["generation_sha256"],
                 turn_id=claim["turn_id"], tool_call_id=claim["tool_call_id"],
                 tool_name=claim["tool_name"], arguments_sha256=claim["arguments_sha256"],
@@ -678,6 +721,40 @@ class CoreNativeObservationClient:
             )
         except Exception:
             raise CoreNativeObservationUnavailable("root dispatch claim payload is malformed") from None
+
+    def authorize_mission_dispatch(self, *, claim: RootSelectedInternalProfileDispatchClaim):
+        if type(claim) is not RootSelectedInternalProfileDispatchClaim or claim.mission_binding is None:
+            raise CoreNativeObservationUnavailable("a root-sealed mission claim is required")
+        row = self._rpc("authorize-mission-dispatch", {"claim_handle": claim.claim_handle})
+        required = {"schema", "nonce", "ok", "claim_handle", "mission_binding_sha256", "gateway_turn_id",
+                    "owner_subject_sha256", "core_generation", "core_source_generation",
+                    "source_profile_id", "canonical_arguments_sha256", "expires_monotonic"}
+        if (not isinstance(row, dict) or set(row) != required
+                or type(row.get("ok")) is not bool or row["ok"] is not True):
+            raise CoreNativeObservationUnavailable("mission authorization response is malformed")
+        binding = claim.mission_binding
+        if (type(row["schema"]) is not int or row["schema"] != 1
+                or row["claim_handle"] != claim.claim_handle
+                or row["mission_binding_sha256"] != _hash(binding.to_wire())
+                or row["gateway_turn_id"] != claim.gateway_turn_id
+                or row["owner_subject_sha256"] != claim.owner_subject_sha256
+                or row["core_generation"] != claim.core_generation
+                or row["core_source_generation"] != claim.core_source_generation
+                or row["source_profile_id"] != binding.source_profile_id
+                or row["canonical_arguments_sha256"] != claim.arguments_sha256):
+            raise CoreNativeObservationUnavailable("mission authorization does not match the claim")
+        return RootVerifiedMissionDispatchAuthorization(
+            claim_handle=claim.claim_handle,
+            mission_binding_sha256=row["mission_binding_sha256"],
+            gateway_turn_id=row["gateway_turn_id"],
+            owner_subject_sha256=row["owner_subject_sha256"],
+            core_generation=row["core_generation"],
+            core_source_generation=row["core_source_generation"],
+            source_profile_id=row["source_profile_id"],
+            canonical_arguments_sha256=row["canonical_arguments_sha256"],
+            expires_monotonic=row["expires_monotonic"],
+            _seal=_MISSION_AUTHORIZATION_SEAL,
+        )
 
 
 class RootCoreNativeObservationRegistry:
@@ -709,6 +786,7 @@ class RootCoreNativeObservationRegistry:
         self._attempts: dict[str, dict[str, Any]] = {}
         self._calls: dict[str, dict[str, Any]] = {}
         self._claims: dict[str, dict[str, Any]] = {}
+        self._mission_pending: dict[str, dict[str, Any]] = {}
         self._closed = False
 
     @classmethod
@@ -859,6 +937,9 @@ class RootCoreNativeObservationRegistry:
         for handle, row in list(self._claims.items()):
             if row["expiry"] <= now:
                 self._claims.pop(handle, None)
+        for handle, row in list(self._mission_pending.items()):
+            if row["expiry"] <= now:
+                self._mission_pending.pop(handle, None)
 
     def _owner_for(self, session_id: str, turn_id: str) -> Any:
         now = time.monotonic()
@@ -1074,7 +1155,9 @@ class RootCoreNativeObservationRegistry:
                     "owner_turn_handle": owner.owner_turn_handle, "gateway_turn_id": owner.gateway_turn_id,
                     "owner_subject_sha256": owner.owner_subject_sha256,
                     "observed_call_handle": call["handle"],
-                    "core_generation": owner.core_generation, "session_id": call["attempt_session_id"],
+                    "core_generation": owner.core_generation,
+                    "core_source_generation": owner.core_source_generation,
+                    "session_id": call["attempt_session_id"],
                     "generation_sha256": source.generation_sha256,
                     "turn_id": call["attempt_turn_id"], "tool_call_id": call["tool_call_id"],
                     "tool_name": call["tool_name"], "arguments_sha256": call["arguments_sha256"],
@@ -1098,7 +1181,56 @@ class RootCoreNativeObservationRegistry:
                     "expires_monotonic": claim["expiry"], "evidence_class": "protected-core-process-observation",
                     "provider": _CODEX_PROVIDER, "api_mode": _CODEX_MODE, "base_url": _CODEX_ENDPOINT,
                     "additional_metered_budget": 0}
+                if owner.mission_binding is not None:
+                    if len(self._mission_pending) >= 128:
+                        raise ValueError("pending mission authorization registry is full")
+                    self._mission_pending[request["claim_handle"]] = claim
                 return {"schema": 1, "nonce": nonce, "ok": True, "dispatch_claim": body}
+            if op == "authorize-mission-dispatch":
+                if set(request) != {"schema", "op", "nonce", "claim_handle"}:
+                    raise ValueError("mission authorization schema mismatch")
+                pending = self._mission_pending.pop(request["claim_handle"], None)
+                if pending is None or pending["expiry"] <= time.monotonic():
+                    raise ValueError("mission authorization is expired or already consumed")
+                call, owner = pending["call"], pending["owner"]
+                policy = pending["policy"]
+                source = self._source.resolve_current(self._custody)
+                if (call["peer"] != peer
+                        or call.get("claim") != request["claim_handle"]
+                        or source.is_current_sealed(custody=self._custody, now=time.monotonic()) is not True
+                        or owner.is_current_sealed(self._config, custody=self._custody, now=time.monotonic()) is not True
+                        or self._policy_for_owner(owner, time.monotonic()) is not policy
+                        or policy.additional_metered_budget != 0
+                        or not set(call["parent_tool_names"]).issubset(policy.configured_parent_tool_names)
+                        or (not policy.allow_inherited_mcp
+                            and any(name.startswith("mcp__") for name in call["parent_tool_names"]))
+                        or type(owner.mission_binding) is not MissionBinding
+                        or source.profile_id != "orchestrator"
+                        or call["tool_name"] != "resources_delegate"):
+                    raise ValueError("mission dispatch lineage is no longer current")
+                from hermes_installer.remote.jarvis_chat import CHAT_STORE_PATH
+                from hermes_installer.remote.jarvis_mission_executor import (
+                    MissionLedgerReader, resolve_spent_mission_claim,
+                )
+                if CHAT_STORE_PATH != Path("/var/lib/hermes-jarvis-chat/chat.sqlite3"):
+                    raise ValueError("fixed mission ledger path differs")
+                arguments_sha256 = call["arguments_sha256"]
+                if resolve_spent_mission_claim(
+                        MissionLedgerReader(path=CHAT_STORE_PATH), owner.mission_binding,
+                        owner.gateway_turn_id, owner.owner_subject_sha256,
+                        owner.core_generation, owner.core_source_generation,
+                        source.profile_id, arguments_sha256) is not True:
+                    raise ValueError("spent mission approval no longer matches the native call")
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                    "claim_handle": request["claim_handle"],
+                    "mission_binding_sha256": _hash(owner.mission_binding.to_wire()),
+                    "gateway_turn_id": owner.gateway_turn_id,
+                    "owner_subject_sha256": owner.owner_subject_sha256,
+                    "core_generation": owner.core_generation,
+                    "core_source_generation": owner.core_source_generation,
+                    "source_profile_id": owner.mission_binding.source_profile_id,
+                    "canonical_arguments_sha256": arguments_sha256,
+                    "expires_monotonic": min(pending["expiry"], owner.expires_monotonic)}
         raise ValueError("unsupported observer operation")
 
     def serve_connection(self, connection: socket.socket) -> None:
@@ -1136,6 +1268,7 @@ class RootCoreNativeObservationRegistry:
             self._attempts.clear()
             self._calls.clear()
             self._claims.clear()
+            self._mission_pending.clear()
 
 
 def serve_core_native_observer(registry: RootCoreNativeObservationRegistry, *,
@@ -1455,6 +1588,8 @@ class RootInternalProfileClaimSource:
         if type(client) is not CoreNativeObservationClient:
             raise CoreNativeObservationUnavailable("fixed native observation client is required")
         self._client = client
+        self._lock = threading.RLock()
+        self._mission_claims: OrderedDict[str, tuple[object, RootSelectedInternalProfileDispatchClaim]] = OrderedDict()
 
     def consume_current_claim(self, profile_id: str, parent_agent: object, *,
                               tool_call_id: str, tool_name: str,
@@ -1494,7 +1629,7 @@ class RootInternalProfileClaimSource:
                 "delegation_policy_sha256": claim.delegation_policy_sha256,
                 "parent_tool_configuration_sha256": claim.parent_tool_configuration_sha256,
             })
-            return ResourcesDispatchClaim(
+            resources_claim = ResourcesDispatchClaim(
                 claim_id=claim.claim_handle, profile_id=claim.profile_id,
                 source_revision=claim.source_revision,
                 generation_sha256=claim.generation_sha256,
@@ -1520,9 +1655,45 @@ class RootInternalProfileClaimSource:
                 route_receipt_sha256=route_receipt,
                 max_additional_metered_microusd=0,
                 expires_monotonic=claim.expires_monotonic,
+                gateway_turn_id=claim.gateway_turn_id,
+                core_generation=claim.core_generation,
+                core_source_generation=claim.core_source_generation,
+                mission_binding=claim.mission_binding,
             )
+            if claim.mission_binding is not None:
+                with self._lock:
+                    if len(self._mission_claims) >= 128:
+                        self._mission_claims.popitem(last=False)
+                    self._mission_claims[claim.claim_handle] = (resources_claim, claim)
+            return resources_claim
         except Exception:
             raise CoreNativeObservationUnavailable("root claim does not match the live native parent") from None
+
+    def authorize_mission_claim(self, resources_claim: object, *, task_sha256: str
+                                ) -> RootVerifiedMissionDispatchAuthorization:
+        from hermes_installer.components.resources_internal_dispatch import (
+            RootSelectedInternalProfileDispatchClaim as ResourcesDispatchClaim,
+        )
+        if (type(resources_claim) is not ResourcesDispatchClaim
+                or resources_claim.mission_binding is None
+                or not _HASH.fullmatch(task_sha256 or "")):
+            raise CoreNativeObservationUnavailable("typed bound mission claim is required")
+        with self._lock:
+            row = self._mission_claims.pop(resources_claim.claim_id, None)
+        if row is None or row[0] is not resources_claim or row[1].mission_binding != resources_claim.mission_binding:
+            raise CoreNativeObservationUnavailable("mission claim was not issued by this root client")
+        native_claim = row[1]
+        if (native_claim.arguments_sha256 != task_sha256
+                or native_claim.gateway_turn_id != resources_claim.gateway_turn_id
+                or native_claim.owner_subject_sha256 != resources_claim.owner_subject_sha256
+                or native_claim.core_generation != resources_claim.core_generation
+                or native_claim.core_source_generation != resources_claim.core_source_generation
+                or native_claim.mission_binding.task_sha256 != task_sha256):
+            raise CoreNativeObservationUnavailable("mission claim does not bind the approved goal")
+        authorization = self._client.authorize_mission_dispatch(claim=native_claim)
+        if not authorization.matches_claim(native_claim, task_sha256, now=time.monotonic()):
+            raise CoreNativeObservationUnavailable("root mission authorization is not current")
+        return authorization
 
 
 def register_native_resources_observer(ctx: Any, runtime_context: Any, *,
@@ -1555,7 +1726,8 @@ __all__ = [
     "CoreNativeObservationUnavailable", "ObservedNativeToolCall",
     "CoreNativeResourcesDelegateRegistration", "current_resources_delegate_registration",
     "NativeSourceMember", "ObservedProviderAttempt", "OwnerTurnHandle",
-    "RootSelectedInternalProfileDispatchClaim", "RootCoreNativeObservationRegistry",
+    "RootSelectedInternalProfileDispatchClaim", "RootVerifiedMissionDispatchAuthorization",
+    "RootCoreNativeObservationRegistry",
     "RootInternalProfileClaimSource", "serve_core_native_observer",
     "install_native_codex_process_observer", "register_native_resources_observer",
     "register_tool_call_from_current_parent",

@@ -15,6 +15,7 @@ from hermes_installer.components.resources_internal_dispatch import (
     RootSelectedInternalProfileDispatchClaim,
     register_resources_delegate,
 )
+from hermes_installer.remote.jarvis_mission_executor import MissionBinding
 
 
 class Parent:
@@ -56,6 +57,10 @@ def current_claim(parent, **overrides):
         route_receipt_sha256=digest("bound-route-receipt"),
         max_additional_metered_microusd=0,
         expires_monotonic=time.monotonic() + 10,
+        gateway_turn_id="gateway-turn-00000000000000000001",
+        core_generation=digest("core-generation"),
+        core_source_generation=digest("core-source-generation"),
+        mission_binding=None,
     )
     values.update(overrides)
     return RootSelectedInternalProfileDispatchClaim(**values)
@@ -69,6 +74,10 @@ class OneShotIssuer:
     def consume_current_claim(self, profile_id, parent_agent, **bound_call):
         self.calls.append((profile_id, parent_agent, bound_call))
         return self.claim
+
+    def authorize_mission_claim(self, claim, *, task_sha256):
+        self.authorization_calls = getattr(self, "authorization_calls", []) + [(claim, task_sha256)]
+        raise AssertionError("untrusted test issuer must not authorize a mission")
 
 
 class FakeRegistry:
@@ -163,6 +172,26 @@ def test_claim_mismatch_denies_before_native_delegation(claim_change, native_reg
 
     assert response["success"] is False
     assert response["state"] == "pending"
+    assert context.dispatches == []
+
+
+def test_mission_dispatch_requires_fixed_root_spent_row_authorization(native_registry):
+    parent = Parent()
+    binding = MissionBinding(
+        schema=1, mission_id="mission_0123456789abcdef01234567", revision=2,
+        plan_sha256=digest("plan"), task_sha256=digest("approved task"),
+        source_profile_id="orchestrator",
+    )
+    issuer = OneShotIssuer(current_claim(parent, mission_binding=binding))
+    context = NativeContext(native_registry)
+    register_resources_delegate(context, issuer)
+
+    response = json.loads(context.registration[3]({"goal": "bounded task"}, parent_agent=parent,
+                                                   tool_call_id="call-mission", turn_id="turn-20"))
+
+    assert response["success"] is False
+    assert response["state"] == "pending"
+    assert getattr(issuer, "authorization_calls", []) == []
     assert context.dispatches == []
 
 
