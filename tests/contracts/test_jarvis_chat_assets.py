@@ -29,12 +29,18 @@ class JarvisChatAssetTests(unittest.TestCase):
         for label in ("Chat", "Sessions", "Overview", "Capabilities", "Settings"):
             with self.subTest(label=label):
                 self.assertIn(f">{label}</button>", source)
-        self.assertIn('id="turn-chart"', source)
+        self.assertEqual(source.count('id="overview-view"'), 1)
+        self.assertEqual(source.count('data-view-panel="overview"'), 1)
+        self.assertIn('id="overview-core-heading"', source)
+        self.assertIn('data-core-status', source)
+        self.assertIn('data-status-bars', source)
+        self.assertIn('data-duration-bars', source)
         self.assertIn('id="capability-list"', source)
         self.assertIn('id="capability-search" type="search"', source)
         self.assertIn('id="capability-kind"', source)
         self.assertIn('id="capability-discovery"', source)
-        self.assertIn('id="turn-active"', source)
+        self.assertIn('data-integration-kind', source)
+        self.assertIn('data-integration-status', source)
         self.assertIn('id="session-search" type="search"', source)
         self.assertIn('id="session-count" role="status" aria-live="polite"', source)
         self.assertIn('aria-label="Owned conversation sessions"', source)
@@ -46,12 +52,15 @@ class JarvisChatAssetTests(unittest.TestCase):
 
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
         client = script.decode("utf-8")
-        for endpoint in ("/overview", "/capabilities", "/settings"):
+        for endpoint in ("/capabilities", "/settings"):
             with self.subTest(endpoint=endpoint):
                 self.assertIn(f"${{API}}{endpoint}", client)
-        self.assertIn("turnCountsByDay", client)
+        self.assertNotIn("turnCountsByDay", client)
+        self.assertNotIn("function loadOverview", client)
+        self.assertNotIn("function renderTurnChart", client)
         self.assertIn("function featurePathMatches(template, path)", client)
-        self.assertIn("feature.mount(root, featureApi(feature)", client)
+        self.assertIn("feature.mount(root, featureApi(feature, root)", client)
+        self.assertIn('feature.id === "overview" && method === "GET" && path === "/chat/api/overview"', client)
         self.assertIn("unmountFeature();", client)
         navigation = client.split("async function showView(view, navSelection = view) {", 1)[1].split("if (selected !== \"chat\")", 1)[0]
         self.assertIn('button.setAttribute("aria-current", "page")', navigation)
@@ -72,7 +81,13 @@ class JarvisChatAssetTests(unittest.TestCase):
         features_tag = '<script defer src="/chat/assets/features.js"></script>'
         app_tag = '<script defer src="/chat/assets/app.js"></script>'
         self.assertLess(markup.index(features_tag), markup.index(app_tag))
-        self.assertEqual(markup.count('<button type="button" class="nav-item"'), 5 + len(FEATURE_ASSETS))
+        self.assertEqual(markup.count('<button type="button" class="nav-item"'), 4 + len(FEATURE_ASSETS))
+        self.assertEqual(markup.count('data-view="overview"'), 1)
+        self.assertEqual(markup.count('data-view="integrations"'), 1)
+        self.assertEqual(markup.count('>Plugins &amp; MCP</button>'), 1)
+        self.assertEqual(markup.count('>Integrations</button>'), 1)
+        self.assertEqual(markup.count('id="overview-view"'), 1)
+        self.assertEqual(markup.count('data-view-panel="overview"'), 1)
 
         _content_type, registry = reviewed_chat_asset("/chat/assets/features.js")
         source = registry.decode("utf-8")
@@ -96,6 +111,8 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('script[src="/chat/assets/features.js"]', client)
         self.assertIn("featureRegistryScript.jarvisReviewedFeatures", client)
         self.assertNotIn("__JARVIS_FEATURE_ASSETS__", client)
+        _content_type, features = reviewed_chat_asset("/chat/assets/features.js")
+        self.assertIn("turnCountsByDay", features.decode("utf-8"))
 
     def test_capability_inventory_filter_and_details_are_data_backed(self):
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")

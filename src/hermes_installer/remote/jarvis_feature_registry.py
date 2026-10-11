@@ -17,6 +17,8 @@ from .jarvis_learning_feature import FEATURE_ASSETS as _LEARNING_ASSETS
 from .jarvis_native_inventory_assets import FEATURE_ASSETS as _NATIVE_INVENTORY_ASSETS
 from .jarvis_files_assets import FEATURE_ASSETS as _FILES_ASSETS
 from .jarvis_models_assets import FEATURE_ASSETS as _MODELS_ASSETS
+from .jarvis_overview_assets import FEATURE_ASSETS as _OVERVIEW_ASSETS
+from .jarvis_integrations_assets import FEATURE_ASSETS as _INTEGRATIONS_ASSETS
 
 # Runtime resources are compiled only from these explicit, reviewed modules.
 FEATURE_ASSETS: tuple[JarvisFeatureAssets, ...] = (
@@ -24,6 +26,8 @@ FEATURE_ASSETS: tuple[JarvisFeatureAssets, ...] = (
     _NATIVE_INVENTORY_ASSETS,
     _FILES_ASSETS,
     _MODELS_ASSETS,
+    _OVERVIEW_ASSETS,
+    _INTEGRATIONS_ASSETS,
 )
 
 # New endpoint installers are explicit. Activity is installed exactly once by
@@ -40,10 +44,23 @@ FEATURE_ROUTE_OWNERS = (
     ("activity", "chat-service.install", _ACTIVITY_ASSETS.api_routes),
     ("native-controls", "dashboard", _NATIVE_CONTROLS_ASSETS.api_routes),
     ("resources-learning", "dashboard", _LEARNING_ASSETS.api_routes),
+    ("overview", "dashboard", _OVERVIEW_ASSETS.api_routes),
+    ("integrations", "dashboard-and-bots-read", _INTEGRATIONS_ASSETS.api_routes),
 )
 
 # Files may reuse only this fixed authenticated conversation selector.
 _SHARED_INSTALLER_READS = {"files": {("GET", "/chat/api/conversations")}}
+_INTEGRATIONS_SHARED_READS = (
+    ("GET", "/chat/api/capabilities"),
+    ("GET", "/chat/api/channels"),
+)
+_OWNER_BY_FEATURE = {
+    "activity": "chat-service.install",
+    "native-controls": "dashboard",
+    "resources-learning": "dashboard",
+    "overview": "dashboard",
+    "integrations": "dashboard-and-bots-read",
+}
 
 
 def _route_shape(route: tuple[str, str]) -> tuple[str, str]:
@@ -82,8 +99,8 @@ def install_jarvis_feature_routes(app, service) -> None:
     owners = {}
     for entry in FEATURE_ROUTE_OWNERS:
         if (not isinstance(entry, tuple) or len(entry) != 3
-                or entry[0] not in {"activity", "native-controls", "resources-learning"}
-                or entry[1] not in {"chat-service.install", "dashboard"}
+                or entry[0] not in _OWNER_BY_FEATURE
+                or entry[1] != _OWNER_BY_FEATURE[entry[0]]
                 or not isinstance(entry[2], tuple) or entry[0] in owners):
             raise ValueError("dashboard feature route owner is invalid")
         owners[entry[0]] = (entry[1], entry[2])
@@ -111,7 +128,18 @@ def install_jarvis_feature_routes(app, service) -> None:
                 raise ValueError("dashboard feature asset and existing routes differ")
             registered = {_route_shape((route.method, route.resource.canonical))
                           for route in app.router.routes()}
-            if not declared.issubset(registered):
+            if feature_id == "integrations":
+                bot_routes = installers.get("bots", (None, ()))[1]
+                channels_read = ("GET", "/chat/api/channels")
+                capabilities_read = ("GET", "/chat/api/capabilities")
+                if (owner != "dashboard-and-bots-read"
+                        or asset.api_routes != _INTEGRATIONS_SHARED_READS
+                        or routes != _INTEGRATIONS_SHARED_READS
+                        or bot_routes.count(channels_read) != 1
+                        or _route_shape(capabilities_read) not in registered
+                        or _route_shape(channels_read) in registered):
+                    raise ValueError("integration readiness reads do not have their reviewed owners")
+            elif not declared.issubset(registered):
                 raise ValueError("shared feature routes are not registered exactly")
 
     registered = {_route_shape((route.method, route.resource.canonical))
@@ -123,3 +151,8 @@ def install_jarvis_feature_routes(app, service) -> None:
     expected = {_route_shape(route) for _, routes in installers.values() for route in routes} - registered
     if added != expected:
         raise ValueError("feature installer added an unreviewed route")
+    registered_after_install = {_route_shape((route.method, route.resource.canonical))
+                                for route in app.router.routes()}
+    for feature_id, (_owner, routes) in owners.items():
+        if not {_route_shape(route) for route in routes}.issubset(registered_after_install):
+            raise ValueError(f"shared feature routes were not registered for {feature_id}")

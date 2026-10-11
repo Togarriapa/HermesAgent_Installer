@@ -17,6 +17,14 @@ from .jarvis_capability_details_assets import MOUNT_JS as _CAPABILITY_DETAILS_MO
 from .jarvis_capability_details_assets import VIEW_HTML as _CAPABILITY_DETAILS_HTML
 
 
+_OVERVIEW_CORE_STATUS_HTML = '''<section class="overview-card" aria-labelledby="overview-core-heading">
+  <h2 id="overview-core-heading">Core service</h2>
+  <p data-core-status role="status" aria-live="polite">Checking verified status</p>
+  <p data-core-readiness>Functional readiness has not been verified.</p>
+  <p data-core-observed>No verified observation time</p>
+</section>'''
+
+
 _HTML = '''<!doctype html>
 <html lang="en">
 <head>
@@ -42,7 +50,7 @@ _HTML = '''<!doctype html>
       <nav class="primary-nav" aria-label="Jarvis sections">
         <button type="button" class="nav-item" data-view="chat" aria-current="page">Chat</button>
         <button type="button" class="nav-item" data-view="chat" data-open-sessions="true">Sessions</button>
-        <button type="button" class="nav-item" data-view="overview">Overview</button>
+        <!-- JARVIS_OVERVIEW_NAV -->
         <button type="button" class="nav-item" data-view="capabilities">Capabilities</button>
         <button type="button" class="nav-item" data-view="settings">Settings</button>
         <!-- JARVIS_FEATURE_NAV -->
@@ -111,16 +119,7 @@ _HTML = '''<!doctype html>
           <p class="voice-status" id="voice-status" role="status" aria-live="polite" hidden></p>
         </div>
       </main>
-      <section class="data-main" id="overview-view" aria-label="Overview" data-view-panel="overview" hidden>
-        <div class="page-heading"><span class="eyebrow">SYSTEM STATUS</span><h1>Overview</h1><p>Your assistant activity and service readiness.</p></div>
-        <div class="dashboard-grid">
-          <section class="data-card status-card"><h2>Core service</h2><p class="large-value" id="core-status">Loading…</p><p id="core-readiness" class="muted">Checking verified status</p><p id="core-observed" class="muted"></p></section>
-          <section class="data-card"><h2>Conversations</h2><p class="large-value" id="conversation-count">—</p><p class="muted">Available in your private history</p></section>
-          <section class="data-card"><h2>Assistant turns</h2><p class="large-value" id="turn-total">—</p><p class="muted" id="turn-breakdown">Activity totals</p></section>
-          <section class="data-card"><h2>Active turns</h2><p class="large-value" id="turn-active">—</p><p class="muted" id="last-turn">Last turn not available</p></section>
-          <section class="data-card chart-card"><h2>Turns over the last 7 days</h2><p class="muted" id="chart-caption">Loading recorded activity…</p><div id="turn-chart" role="list" aria-label="Assistant turns in the last seven days"></div></section>
-        </div>
-      </section>
+      <!-- JARVIS_OVERVIEW_PANEL -->
       <section class="data-main" id="capabilities-view" aria-label="Capabilities" data-view-panel="capabilities" hidden>
         <div class="page-heading"><span class="eyebrow">BUNDLED INVENTORY</span><h1>Capabilities</h1><p>Search the fixed offline catalog. Bundled items are declarations, not proof that a resource is enabled or working.</p></div>
         <div id="capability-readiness" class="readiness-banner" role="status">Loading verified capability inventory…</div>
@@ -345,12 +344,46 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
         ? /^[A-Za-z0-9._~-]+$/.test(actual[index]) && actual[index] !== "." && actual[index] !== ".."
         : part === actual[index]);
   }
-  function featureApi(feature) {
+  function renderCoreStatus(root, core, failed = false) {
+    const status = root.querySelector("[data-core-status]");
+    const readiness = root.querySelector("[data-core-readiness]");
+    const observed = root.querySelector("[data-core-observed]");
+    if (!status || !readiness || !observed) return;
+    if (failed) {
+      status.textContent = "Unavailable";
+      readiness.textContent = "The status request failed; functional readiness is not verified.";
+      observed.textContent = "No current observation is available.";
+      return;
+    }
+    const value = core && typeof core === "object" ? core : {};
+    const serviceLabels = {"process-observed": "Service process observed", unavailable: "Unavailable"};
+    status.textContent = serviceLabels[value.status] || "Not verified";
+    const readinessLabels = {
+      "current-core-witness": "A current process and listener were observed; functional readiness has not been verified.",
+      pending: "Functional readiness has not been verified.",
+      stale: "The last observation is stale; refresh verification.",
+    };
+    readiness.textContent = readinessLabels[value.readiness] || "Functional readiness has not been verified.";
+    const timestamp = typeof value.observedAt === "string" ? new Date(value.observedAt) : null;
+    observed.textContent = timestamp && !Number.isNaN(timestamp.valueOf())
+      ? `Checked ${timestamp.toLocaleString()}` : "No verified observation time";
+  }
+  function featureApi(feature, root) {
     const requestFeature = (method, path, body) => {
       if (!feature.routes.some((route) => route.method === method && featurePathMatches(route.path, path))) {
         return Promise.reject(new Error("This dashboard view is not allowed to call that service route."));
       }
-      return request(path, method === "GET" ? {method} : {method, body: JSON.stringify(body)});
+      const result = request(path, method === "GET" ? {method} : {method, body: JSON.stringify(body)});
+      if (feature.id === "overview" && method === "GET" && path === "/chat/api/overview") {
+        return result.then((data) => {
+          renderCoreStatus(root, data && data.core);
+          return data;
+        }, (error) => {
+          renderCoreStatus(root, null, true);
+          throw error;
+        });
+      }
+      return result;
     };
     return Object.freeze({get: (path) => requestFeature("GET", path), post: (path, body) => requestFeature("POST", path, body)});
   }
@@ -368,7 +401,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     if (!root || typeof feature.mount !== "function") return;
     mountedFeature = feature;
     try {
-      const cleanup = feature.mount(root, featureApi(feature), Object.freeze({}));
+      const cleanup = feature.mount(root, featureApi(feature, root), Object.freeze({}));
       mountedFeatureCleanup = typeof cleanup === "function" ? cleanup : null;
     } catch (_) {
       mountedFeature = null;
@@ -941,62 +974,6 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       if (activeTurnId === turnId) renderTurnControls(true);
     }
   }
-  function renderTurnChart(days) {
-    const chart = byId("turn-chart");
-    chart.replaceChildren();
-    if (!Array.isArray(days) || days.length !== 7 || days.some((day) => !day || typeof day.date !== "string" || !Number.isFinite(day.total))) {
-      byId("chart-caption").textContent = "Recorded daily activity is not available yet.";
-      return;
-    }
-    byId("chart-caption").textContent = days.reduce((sum, day) => sum + Math.max(0, day.total), 0) === 0 ? "No assistant turns recorded in this period." : "Recorded turns, grouped by day.";
-    const max = Math.max(1, ...days.map((day) => Math.max(0, day.total)));
-    const bars = document.createElement("div");
-    bars.className = "chart-bars";
-    for (const day of days) {
-      const cell = document.createElement("div");
-      cell.className = "chart-day";
-      cell.setAttribute("role", "listitem");
-      const value = Math.max(0, day.total);
-      const track = document.createElement("div");
-      track.className = "chart-bar-track";
-      const bar = document.createElement("span");
-      bar.className = "chart-bar";
-      bar.style.height = `${value ? Math.max(4, 100 * value / max) : 1}%`;
-      bar.title = `${value} turns`;
-      track.append(bar);
-      const label = document.createElement("span");
-      const parsed = new Date(`${day.date}T00:00:00Z`);
-      const weekday = Number.isNaN(parsed.valueOf()) ? day.date : parsed.toLocaleDateString(undefined, { weekday: "short", timeZone: "UTC" });
-      label.textContent = `${weekday}: ${value}`;
-      cell.setAttribute("aria-label", `${day.date}: ${value} turns`);
-      cell.append(track, label);
-      bars.append(cell);
-    }
-    chart.append(bars);
-  }
-  async function loadOverview() {
-    const data = await request(`${API}/overview`);
-    const core = data.core || {};
-    const chat = data.chat || {};
-    const serviceLabels = {"process-observed": "Service process observed", unavailable: "Unavailable"};
-    byId("core-status").textContent = serviceLabels[core.status] || "Not verified";
-    const readinessLabels = {
-      "current-core-witness": "A current process and listener were observed; functional readiness has not been verified.",
-      pending: "Functional readiness has not been verified.", stale: "The last observation is stale; refresh verification."
-    };
-    byId("core-readiness").textContent = readinessLabels[core.readiness] || "Functional readiness has not been verified.";
-    const observed = typeof core.observedAt === "string" ? new Date(core.observedAt) : null;
-    byId("core-observed").textContent = observed && !Number.isNaN(observed.valueOf())
-      ? `Checked ${observed.toLocaleString()}` : "No verified observation time";
-    byId("conversation-count").textContent = Number.isFinite(chat.conversationCount) ? String(chat.conversationCount) : "Unavailable";
-    const counts = chat.turnCounts || {};
-    byId("turn-total").textContent = Number.isFinite(counts.total) ? String(counts.total) : "Unavailable";
-    byId("turn-breakdown").textContent = ["completed", "failed", "cancelled"].map((key) => `${key}: ${Number.isFinite(counts[key]) ? counts[key] : "—"}`).join(" · ");
-    byId("turn-active").textContent = Number.isFinite(counts.active) ? String(counts.active) : "Unavailable";
-    const lastTurn = typeof chat.lastTurnAt === "string" ? new Date(chat.lastTurnAt) : null;
-    byId("last-turn").textContent = lastTurn && !Number.isNaN(lastTurn.valueOf()) ? `Last turn ${lastTurn.toLocaleString()}` : "No recorded turns yet";
-    renderTurnChart(chat.turnCountsByDay);
-  }
   let capabilityItems = [];
   function renderCapabilityMap() {
     const map = byId("capability-map");
@@ -1131,7 +1108,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     }
   }
   async function showView(view, navSelection = view) {
-    const selected = ["chat", "overview", "capabilities", "settings"].includes(view) || featuresById.has(view) ? view : "chat";
+    const selected = ["chat", "capabilities", "settings"].includes(view) || featuresById.has(view) ? view : "chat";
     const selectedNavigation = navSelection === "sessions" && selected === "chat" ? "sessions" : selected;
     if (selected !== currentView && mountedFeature) unmountFeature();
     if (selected !== currentView && currentView === "capabilities") unmountCapabilitiesDetails();
@@ -1160,20 +1137,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       mountFeature(feature);
       return;
     }
-    if (selected === "overview") {
-      try { await loadOverview(); } catch (_) {
-        byId("core-status").textContent = "Unavailable";
-        byId("core-readiness").textContent = "The status request failed; functional readiness is not verified.";
-        byId("core-observed").textContent = "No current observation is available.";
-        byId("conversation-count").textContent = "Unavailable";
-        byId("turn-total").textContent = "Unavailable";
-        byId("turn-active").textContent = "Unavailable";
-        byId("last-turn").textContent = "Last turn is unavailable.";
-        byId("turn-breakdown").textContent = "Turn totals are unavailable.";
-        byId("chart-caption").textContent = "Recorded daily activity is unavailable.";
-        byId("turn-chart").replaceChildren();
-      }
-    } else if (selected === "capabilities") {
+    if (selected === "capabilities") {
       try { await loadCapabilities(); } catch (_) {
         byId("capability-readiness").textContent = "The catalog request failed. Runtime readiness is not verified.";
         byId("capability-count").textContent = "Catalog entries are unavailable.";
@@ -1280,23 +1244,28 @@ def _compose_feature_assets() -> None:
     global _HTML, _CSS, _JS, _FEATURES_JS
     validate_feature_assets(FEATURE_ASSETS)
     nav: list[str] = []
+    overview_nav: list[str] = []
     panels: list[str] = []
+    overview_panels: list[str] = []
     css_fragments: list[bytes] = []
     javascript: list[str] = []
     for feature in FEATURE_ASSETS:
         feature_id = escape(feature.feature_id, quote=True)
         nav_label = escape(feature.nav_label)
         title = escape(feature.title, quote=True)
-        nav.append(
+        nav_markup = (
             f'<button type="button" class="nav-item" data-view="{feature_id}">'
             f'{nav_label}</button>'
         )
-        panels.append(
+        panel_markup = (
             f'<section class="data-main" id="{feature_id}-view" '
             f'aria-label="{title}" data-view-panel="{feature_id}" hidden>'
             f'<div class="feature-view" data-feature-root="{feature_id}">'
+            f'{_OVERVIEW_CORE_STATUS_HTML if feature.feature_id == "overview" else ""}'
             f'{feature.view_html}</div></section>'
         )
+        (overview_nav if feature.feature_id == "overview" else nav).append(nav_markup)
+        (overview_panels if feature.feature_id == "overview" else panels).append(panel_markup)
         if feature.css:
             css_fragments.append(feature.css.encode("utf-8"))
         routes = json.dumps(
@@ -1312,8 +1281,10 @@ def _compose_feature_assets() -> None:
     html = _HTML.decode("utf-8")
     html = html.replace("<!-- JARVIS_FEATURE_NAV -->", "".join(nav))
     html = html.replace("<!-- JARVIS_FEATURE_PANELS -->", "".join(panels))
+    html = html.replace("<!-- JARVIS_OVERVIEW_NAV -->", "".join(overview_nav))
+    html = html.replace("<!-- JARVIS_OVERVIEW_PANEL -->", "".join(overview_panels))
     html = html.replace("__JARVIS_CAPABILITY_DETAILS__", _CAPABILITY_DETAILS_HTML)
-    if "JARVIS_FEATURE_" in html:
+    if "JARVIS_FEATURE_" in html or "JARVIS_OVERVIEW_" in html:
         raise ValueError("Jarvis feature asset template markers were not fully replaced")
     script = _JS.decode("utf-8")
     script = script.replace("__JARVIS_CAPABILITY_DETAILS_MOUNT__", _CAPABILITY_DETAILS_MOUNT_JS)

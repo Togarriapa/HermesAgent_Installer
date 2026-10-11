@@ -86,6 +86,7 @@ def test_native_controls_feature_uses_the_shared_frozen_shell_contract():
     validate_feature_assets((FEATURE_ASSETS,))
 
     assert FEATURE_ASSETS.feature_id == "native-controls"
+    assert FEATURE_ASSETS.nav_label == "Plugins & MCP"
     assert FEATURE_ASSETS.api_routes == (("GET", "/chat/api/settings"),)
     assert "<script" not in FEATURE_ASSETS.view_html.lower()
     assert "textContent" in FEATURE_ASSETS.mount_js

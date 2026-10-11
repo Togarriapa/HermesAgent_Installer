@@ -102,7 +102,7 @@ _UNMOUNT_JS = "function unmount() {}"
 
 FEATURE_ASSETS = JarvisFeatureAssets(
     feature_id="native-controls",
-    nav_label="Integrations",
+    nav_label="Plugins & MCP",
     title="Native integrations",
     view_html=_VIEW_HTML,
     css=_CSS,
