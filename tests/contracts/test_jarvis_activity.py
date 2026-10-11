@@ -76,7 +76,8 @@ def test_activity_persists_closed_projection_and_owner_only_pages(tmp_path):
     assert usage["cost_usd"] is None
     assert usage["cost_status"] == "unknown"
     assert usage["usage_scope"] == "session_cumulative_snapshot"
-    assert activity.for_turn("owner-b", turn_id)[0] == []
+    with pytest.raises(JarvisChatDenied, match="turn is unavailable"):
+        activity.for_turn("owner-b", turn_id)
     assert activity.recent_for_owner("owner-a")["events"][0]["turnId"] == turn_id
     assert activity.recent_for_owner("owner-b")["events"] == []
 
