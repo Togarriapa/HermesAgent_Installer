@@ -15,13 +15,13 @@ FEATURE_ASSETS = JarvisFeatureAssets(
         '</section>'
     ),
     css=(
-        '[data-feature-root="resources"] .learning{max-width:58rem;margin:auto}'
-        '[data-feature-root="resources"] .learning-status{color:var(--muted,#aab8c8)}'
-        '[data-feature-root="resources"] .learning-list{display:grid;gap:.8rem;padding:0;list-style:none}'
-        '[data-feature-root="resources"] .learning-card{border:1px solid var(--line,#344252);border-radius:.7rem;padding:1rem;background:var(--panel,#121b25)}'
-        '[data-feature-root="resources"] .learning-meta{color:var(--muted,#aab8c8);font-size:.9rem}'
-        '[data-feature-root="resources"] .learning-diff{max-height:24rem;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}'
-        '[data-feature-root="resources"] .learning-next{margin-top:1rem;color:var(--muted,#aab8c8)}'
+        '[data-feature-root="resources-learning"] .learning{max-width:58rem;margin:auto}'
+        '[data-feature-root="resources-learning"] .learning-status{color:var(--muted,#aab8c8)}'
+        '[data-feature-root="resources-learning"] .learning-list{display:grid;gap:.8rem;padding:0;list-style:none}'
+        '[data-feature-root="resources-learning"] .learning-card{border:1px solid var(--line,#344252);border-radius:.7rem;padding:1rem;background:var(--panel,#121b25)}'
+        '[data-feature-root="resources-learning"] .learning-meta{color:var(--muted,#aab8c8);font-size:.9rem}'
+        '[data-feature-root="resources-learning"] .learning-diff{max-height:24rem;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}'
+        '[data-feature-root="resources-learning"] .learning-next{margin-top:1rem;color:var(--muted,#aab8c8)}'
     ),
     api_routes=(("GET", "/chat/api/resources/learning"),),
     mount_js=(

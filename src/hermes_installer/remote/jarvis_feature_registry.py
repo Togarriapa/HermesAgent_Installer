@@ -10,10 +10,11 @@ from .jarvis_bots_ui import FEATURE_ASSETS as _BOTS_ASSETS
 from .jarvis_feature_contract import JarvisFeatureAssets
 from .jarvis_missions_assets import FEATURE_ASSETS as _MISSION_ASSETS
 from .jarvis_native_controls_assets import FEATURE_ASSETS as _NATIVE_CONTROLS_ASSETS
+from .jarvis_learning_feature import FEATURE_ASSETS as _LEARNING_ASSETS
 
 # Runtime resources are compiled only from these explicit, reviewed modules.
 FEATURE_ASSETS: tuple[JarvisFeatureAssets, ...] = (
-    _MISSION_ASSETS, _BOTS_ASSETS, _ACTIVITY_ASSETS, _NATIVE_CONTROLS_ASSETS,
+    _MISSION_ASSETS, _BOTS_ASSETS, _ACTIVITY_ASSETS, _NATIVE_CONTROLS_ASSETS, _LEARNING_ASSETS,
 )
 
 # New endpoint installers are explicit. Activity is installed exactly once by
@@ -25,6 +26,7 @@ FEATURE_ROUTE_INSTALLERS = (
 FEATURE_ROUTE_OWNERS = (
     ("activity", "chat-service.install", _ACTIVITY_ASSETS.api_routes),
     ("native-controls", "dashboard", _NATIVE_CONTROLS_ASSETS.api_routes),
+    ("resources-learning", "dashboard", _LEARNING_ASSETS.api_routes),
 )
 
 
@@ -49,7 +51,7 @@ def install_jarvis_feature_routes(app, service) -> None:
     owners = {}
     for entry in FEATURE_ROUTE_OWNERS:
         if (not isinstance(entry, tuple) or len(entry) != 3
-                or entry[0] not in {"activity", "native-controls"}
+                or entry[0] not in {"activity", "native-controls", "resources-learning"}
                 or entry[1] not in {"chat-service.install", "dashboard"}
                 or not isinstance(entry[2], tuple) or entry[0] in owners):
             raise ValueError("dashboard feature route owner is invalid")
