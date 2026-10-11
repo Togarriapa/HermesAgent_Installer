@@ -138,3 +138,18 @@ def test_restart_marks_unfinished_durable_execution_unknown_not_live():
         core_generation="d" * 64, core_source_generation="f" * 64)
     assert result["instances"][0]["status"] == "unknown"
     assert result["instances"][0]["stale"] is True
+
+
+def test_read_caps_instances_and_summaries():
+    rows = []
+    for index in range(120):
+        row = _row(execution=f"{index:032x}")
+        row["events"] = [{**row["events"][0],
+                          "event_id": f"{index * 16 + event_index + 1:064x}"}
+                         for event_index in range(16)]
+        rows.append(row)
+    registry = _registry(rows)
+    result = registry.read_native_activity(owner_subject_sha256="a" * 64,
+        core_generation="d" * 64, core_source_generation="f" * 64)
+    assert len(result["instances"]) == observer._NATIVE_ACTIVITY_MAX_INSTANCES
+    assert sum(len(item["events"]) for item in result["instances"]) <= 200
