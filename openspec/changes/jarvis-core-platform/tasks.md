@@ -24,3 +24,11 @@ Complete obligation/component/AC mapping: requirements/current-scope.json. Usefu
 These slices retain the eight checkbox task IDs/dependency graph; implementation progress and live qualification are separately evidenced. Video research is inspiration pending actual content evidence, never acceptance or purchasing authority.
 
 Within HI-T266.2/R0055/R0131, add one bounded native skill-create/refine→review/diff→approval→discovery/use→rollback slice with provenance/private-budget denials. RT-T266.3 may surface its real pending/history/result state. Caption research remains separate from implementation and does not delay the practical Pi MVP.
+
+## Immediate economical handoff
+
+1. HI-T266.2/RT-T266.3: implement sanitized effective settings/readiness projection and finite safe controls; prove real status provenance, redaction, family/owner separation, stale failures and no arbitrary key/RPC proxy.
+2. HI-T266.2/RT-T266.3: browser push-to-talk/STT/TTS feature detection, privacy permission, editable transcript/text fallback, audio stop/mute and reduced motion; test actual phone/browser behavior separately from native Android wake word.
+3. RB-T266.4/HI-T266.2: source-audit official plugin/child prompt APIs, implement one verified source-selected harmless delegate with additive identity/grant intersection and preserved SOUL/auth; prove denials then qualify all207 identities/resource kinds incrementally.
+
+Overview/capability/history slice can ship first. These are substeps of existing eight OPEN groups, not a new task/dependency forest; Pi tests/evidence remain required, and recorded Resources discovery does not close RB-T266.4.

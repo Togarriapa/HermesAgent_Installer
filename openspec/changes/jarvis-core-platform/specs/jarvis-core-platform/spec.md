@@ -1117,8 +1117,13 @@ The installer SHALL satisfy: Require actual supported providers for vision, imag
 
 #### Scenario: Verified capability or exact pending state
 - **WHEN** this obligation is implemented for a selected authorized target/account
-- **THEN** verification MUST exercise Pi-backed STT→owned chat→TTS and mute/cancel/error proof, permission/budget/privacy denial; real device keyboard/audio/reboot/lock/Bluetooth/call interruption and battery observations. Background wake-word remains pending until device-qualified; PWA is not always-on assistant proof.
+- **THEN** verification MUST exercise Browser STT/TTS feature detection, explicit mic consent/start/stop/mute, transcript review before submit, cancelable TTS and text fallback; no automatic remote voice/billing. Pixel10/HonorX5bPlus/tablet observations are separate; no browser background/locked-device wake-word claim.
 - **AND** missing dependency/account/hardware or failed evidence leaves acceptance OPEN with exact next action, preserving data and prior working state.
+
+#### Scenario: Browser voice with safe fallback
+- **WHEN** a user explicitly enables browser voice
+- **THEN** Jarvis MUST feature-detect supported STT/TTS, disclose local versus external processing, require mic permission and preserve visible transcript/text control.
+- **AND** denied permission, unsupported language/device, interrupted audio or unavailable eligible provider MUST retain text chat; browser voice MUST NOT claim Android background hotword behavior.
 
 ### Requirement: R0141 current functional obligation
 The installer SHALL satisfy: Provide a simple entry point, such as `./install.sh`, backed by maintainable modular code. A thin shell bootstrap plus typed Python orchestration is a reasonable default; use another stack only if it materially improves reliability. Avoid a single giant shell script.
@@ -1621,8 +1626,13 @@ The installer SHALL satisfy: Expose polished responsive Jarvis through protected
 
 #### Scenario: Verified capability or exact pending state
 - **WHEN** this obligation is implemented for a selected authorized target/account
-- **THEN** verification MUST exercise Prove responsive authenticated owner/family chat over finite routes, mobile keyboard/stream/history/stop, per-conversation ownership, CSRF/replay/revocation denial, and absence of raw RPC/backend credentials or management routes.
+- **THEN** verification MUST exercise Actual finite settings/readiness projection excludes secrets, raw configuration and paths; owner controls validate fixed schemas and family visibility. Exercise mobile composer/menus/graphs with real provenance, stale/account-unavailable states, CSRF/replay/cross-owner denial and no raw backend router.
 - **AND** missing dependency/account/hardware or failed evidence leaves acceptance OPEN with exact next action, preserving data and prior working state.
+
+#### Scenario: Trusted settings and truthful readiness
+- **WHEN** an authenticated user opens settings or capabilities
+- **THEN** the server MUST build an allowlisted effective projection from current trusted core/config/discovery evidence, with timestamp, provenance and unknown/pending states.
+- **AND** account secrets, tokens, raw config, host paths and private family data MUST remain absent; owner-only finite controls revalidate permissions and preserve recovery.
 
 ### Requirement: R0204 current functional obligation
 The installer SHALL satisfy: Deny unreviewed generic commands, backend management, host filesystem, clipboard, arbitrary URL and control proxies. Reviewed attachments/browser/voice capabilities require separate owner-bound finite adapters.
@@ -1725,7 +1735,7 @@ The installer SHALL satisfy: Import all208 original Resources identities; Jarvis
 
 #### Scenario: Verified capability or exact pending state
 - **WHEN** this obligation is implemented for a selected authorized target/account
-- **THEN** verification MUST exercise Complete208-source crosswalk and396-skill discovery; actual delegation loads selected source prompt/inheritance/tool grants, additive primary integration preserves user SOUL/auth, and all plugins/MCP/channels/crons/webhooks prove real dispatch/enrichment plus failure/privacy/budget denial. Generic delegate_task role or stored prompt files alone cannot pass.
+- **THEN** verification MUST exercise Pi discovery396skills/207internal208total prompt records/88other declarations is coverage only. Prove source-selected canonical plugin dispatcher loads exact effective prompt/inheritance/grants with actual harmless effect; preserve SOUL/auth and deny caller prompt/tool/provider/paths. Generic delegate_task role and ephemeral overwrite cannot pass.
 - **AND** missing dependency/account/hardware or failed evidence leaves acceptance OPEN with exact next action, preserving data and prior working state.
 
 ### Requirement: CORE-DOCS current functional obligation

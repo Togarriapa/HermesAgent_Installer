@@ -1399,7 +1399,7 @@
       "phase": 2,
       "task_id": "HI-T266.2",
       "implementation_module": "src/hermes_installer/skills.py",
-      "verification_method": "Pi-backed STT\u2192owned chat\u2192TTS and mute/cancel/error proof, permission/budget/privacy denial; real device keyboard/audio/reboot/lock/Bluetooth/call interruption and battery observations. Background wake-word remains pending until device-qualified; PWA is not always-on assistant proof.",
+      "verification_method": "Browser STT/TTS feature detection, explicit mic consent/start/stop/mute, transcript review before submit, cancelable TTS and text fallback; no automatic remote voice/billing. Pixel10/HonorX5bPlus/tablet observations are separate; no browser background/locked-device wake-word claim.",
       "test_path": "tests/contracts/test_skills.py",
       "acceptance": "OPEN"
     },
@@ -2029,7 +2029,7 @@
       "phase": 2,
       "task_id": "HI-T266.2",
       "implementation_module": "src/hermes_installer/remote",
-      "verification_method": "Prove responsive authenticated owner/family chat over finite routes, mobile keyboard/stream/history/stop, per-conversation ownership, CSRF/replay/revocation denial, and absence of raw RPC/backend credentials or management routes.",
+      "verification_method": "Actual finite settings/readiness projection excludes secrets, raw configuration and paths; owner controls validate fixed schemas and family visibility. Exercise mobile composer/menus/graphs with real provenance, stale/account-unavailable states, CSRF/replay/cross-owner denial and no raw backend router.",
       "test_path": "tests/contracts",
       "acceptance": "OPEN"
     },
@@ -2159,7 +2159,7 @@
       "phase": 4,
       "task_id": "RB-T266.4",
       "implementation_module": "src/hermes_installer",
-      "verification_method": "Complete208-source crosswalk and396-skill discovery; actual delegation loads selected source prompt/inheritance/tool grants, additive primary integration preserves user SOUL/auth, and all plugins/MCP/channels/crons/webhooks prove real dispatch/enrichment plus failure/privacy/budget denial. Generic delegate_task role or stored prompt files alone cannot pass.",
+      "verification_method": "Pi discovery396skills/207internal208total prompt records/88other declarations is coverage only. Prove source-selected canonical plugin dispatcher loads exact effective prompt/inheritance/grants with actual harmless effect; preserve SOUL/auth and deny caller prompt/tool/provider/paths. Generic delegate_task role and ephemeral overwrite cannot pass.",
       "test_path": "tests/contracts",
       "acceptance": "OPEN"
     },
@@ -3882,7 +3882,7 @@
       },
       {
         "url": "https://youtu.be/Acw0NtkyNtM",
-        "status": "caption/content review pending; no behavior claim",
+        "status": "Research owner reviewed auto-captions and available frames; demonstration/design evidence only, not Hermes operation or Pi acceptance.",
         "maps_to": [
           "R0140",
           "R0203",
@@ -3892,7 +3892,7 @@
       },
       {
         "url": "https://youtu.be/s3WkutktHsw",
-        "status": "caption/content review pending; no behavior claim",
+        "status": "Research owner reviewed auto-captions and available frames; demonstration/design evidence only, not Hermes operation or Pi acceptance.",
         "maps_to": [
           "R0140",
           "R0203",
@@ -3902,7 +3902,7 @@
       },
       {
         "url": "https://youtu.be/MeEZpjGrpm0",
-        "status": "caption/content review pending; no behavior claim",
+        "status": "Research owner reviewed auto-captions and available frames; demonstration/design evidence only, not Hermes operation or Pi acceptance.",
         "maps_to": [
           "R0140",
           "R0203",
@@ -3992,7 +3992,7 @@
       },
       {
         "url": "https://youtu.be/Ytpp65paFpY?t=23",
-        "status": "caption/content review pending; no behavior claim",
+        "status": "Research owner reviewed auto-captions and available frames; demonstration/design evidence only, not Hermes operation or Pi acceptance.",
         "maps_to": [
           "R0140",
           "R0203",
@@ -4014,6 +4014,15 @@
     "duplicate_video_ids": [
       "h9SsHkRSHxo",
       "Ytpp65paFpY"
-    ]
+    ],
+    "current_pi_inventory": {
+      "state": "discovered",
+      "native_skills": 396,
+      "internal_profile_records": 207,
+      "total_profile_records": 208,
+      "other_declarations_preserved": 88,
+      "functional_dispatch": "OPEN",
+      "data_preservation": "Root reports existing auth/config/SOUL unchanged; not a fresh-install or all-capability acceptance claim."
+    }
   }
 }
