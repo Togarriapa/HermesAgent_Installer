@@ -20,7 +20,7 @@ This is a partial, candidate-bound review record for `09949b83f8910d45184c2e6366
 | Voice controls | Enabling the voice opt-in checkbox exposed Speak, foreground wake, and a separate auto-send checkbox. No microphone was started. | Live screenshot path not supplied. |
 | Responsive layouts | Six sandboxed Chromium fixture renders covered the three stated sizes. | `/var/tmp/hermes-jarvis-core-checks-20261011/responsive-reactormobilefinal-v7/`; fixture-only. |
 
-A real, small Codex reply was saved with Jarvis identity. After reload, the UI showed the stale generic status “Jarvis is unreachable.” That mismatch is a blocking user-visible error under investigation; saved completion state does not prove successful response delivery to the visible chat.
+A real, small Codex reply was visibly displayed in the chat with Jarvis identity; no reload was needed to see it. A later background history refresh surfaced the generic “Jarvis is unreachable” notice. That stale notice is a blocking user-visible status error under investigation, but it does not negate the observed reply display.
 
 The browser viewport override reported success but the live DOM stayed at 840×853. Live phone and tablet layouts therefore were not verified. The responsive fixture report cannot substitute for actual device/browser review. Speech output, wake behavior, microphone capture, and auto-send effects were not exercised.
 
