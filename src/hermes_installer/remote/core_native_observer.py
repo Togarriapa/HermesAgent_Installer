@@ -21,6 +21,7 @@ import base64
 import time
 import os
 import sqlite3
+from types import SimpleNamespace
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -723,6 +724,7 @@ class CoreNativeObservationClient:
             "complete-native-child", "verify-planning-completion",
             "request-final-effect", "poll-final-effect", "authorize-master-read-call",
             "read-selected-expert-source", "admit-selected-expert-child",
+            "planning-turn-context",
         }:
             raise CoreNativeObservationUnavailable("observer operation is not supported")
         nonce = secrets.token_urlsafe(32)
@@ -799,10 +801,35 @@ class CoreNativeObservationClient:
         except (KeyError, TypeError, ValueError):
             raise CoreNativeObservationUnavailable("root provider-attempt receipt is malformed") from None
 
+    def planning_context_for_attempt(self, *, session_id: str, turn_id: str,
+                                    prompt_sha256: str) -> Any | None:
+        """Resolve whether this exact native turn is a root-enrolled planning turn."""
+        from .core_gateway_inspector import PlanningContext
+        row = self._rpc("planning-turn-context", {
+            "session_id": _require_id(session_id, "session ID"),
+            "turn_id": _require_id(turn_id, "turn ID"),
+            "prompt_sha256": _require_hash(prompt_sha256, "prompt digest"),
+        })
+        if set(row) != {"schema", "nonce", "ok", "planning", "planning_context"}:
+            raise CoreNativeObservationUnavailable("planning-turn response has an unknown schema")
+        if type(row["planning"]) is not bool:
+            raise CoreNativeObservationUnavailable("planning-turn response is malformed")
+        if not row["planning"]:
+            if row["planning_context"] is not None:
+                raise CoreNativeObservationUnavailable("ordinary turn carried planning authority")
+            return None
+        try:
+            context = PlanningContext.from_wire(row["planning_context"])
+        except Exception:
+            raise CoreNativeObservationUnavailable("root planning context is malformed") from None
+        if context.planner_prompt_sha256 != prompt_sha256:
+            raise CoreNativeObservationUnavailable("planning prompt changed before provider dispatch")
+        return context
+
     def register_response(self, *, attempt: ObservedProviderAttempt,
                           response_sha256: str, response_text_sha256: str | None,
                           tool_calls: list[dict[str, str]],
-                          completed: bool) -> None:
+                          completed: bool, response_text: str | None = None) -> None:
         if type(attempt) is not ObservedProviderAttempt or type(completed) is not bool:
             raise CoreNativeObservationUnavailable("provider response is not correlated")
         calls = []
@@ -816,12 +843,20 @@ class CoreNativeObservationClient:
             calls.append({"id": _require_id(call["id"], "provider tool-call ID"),
                           "name": _require_id(call["name"], "provider tool name"),
                           "arguments_sha256": _require_hash(call["arguments_sha256"], "tool arguments digest")})
-        self._rpc("register-response", {
+        payload = {
             "attempt_handle": attempt.handle,
             "response_sha256": _require_hash(response_sha256, "response digest"),
             "response_text_sha256": text_digest,
             "tool_calls": calls, "completed": completed,
-        })
+        }
+        if response_text is not None:
+            if (not isinstance(response_text, str)
+                    or not 1 <= len(response_text.encode("utf-8", errors="strict")) <= 32 * 1024
+                    or hashlib.sha256(response_text.encode("utf-8", errors="strict")).hexdigest()
+                        != text_digest):
+                raise CoreNativeObservationUnavailable("provider result text is not digest-bound")
+            payload["response_text"] = response_text
+        self._rpc("register-response", payload)
 
     def register_tool_call(self, *, attempt: ObservedProviderAttempt,
                            tool_call_id: str, canonical_arguments: bytes) -> ObservedNativeToolCall:
@@ -1602,6 +1637,10 @@ class RootCoreNativeObservationRegistry:
         self._config = config
         self._lock = threading.RLock()
         self._owners: dict[str, Any] = {}
+        # Keep a bounded tombstone for planned sessions even if their owner-turn
+        # record is retired; a later middleware lookup must not misclassify a
+        # stale planned request as ordinary chat and restore its original tools.
+        self._planning_sessions: dict[str, Any] = {}
         self._owner_turn_bindings: dict[str, str] = {}
         self._policies: dict[str, dict[str, Any]] = {}
         self._owner_policy_handles: dict[str, str] = {}
@@ -1652,9 +1691,23 @@ class RootCoreNativeObservationRegistry:
             if handle in self._owners:
                 self._close_fd(getattr(observation, "_core_pidfd", None))
                 raise CoreNativeObservationUnavailable("owner-turn observation was already registered")
+            if len(self._owners) >= 256 and all(
+                    row.planning_context is not None for row in self._owners.values()):
+                self._close_fd(getattr(observation, "_core_pidfd", None))
+                raise CoreNativeObservationUnavailable("retained owner-turn registry is full")
+            if observation.planning_context is not None:
+                existing = self._planning_sessions.get(observation.session_id)
+                if existing is not None or len(self._planning_sessions) >= 512:
+                    self._close_fd(getattr(observation, "_core_pidfd", None))
+                    raise CoreNativeObservationUnavailable("planning session is already enrolled or registry is full")
+                self._planning_sessions[observation.session_id] = observation
             self._owners[handle] = observation
             while len(self._owners) > 256:
-                expired_handle, expired = self._owners.popitem()
+                expired_handle = next((key for key, row in self._owners.items()
+                                       if row.planning_context is None), None)
+                if expired_handle is None:
+                    raise CoreNativeObservationUnavailable("retained owner-turn registry is full")
+                expired = self._owners.pop(expired_handle)
                 self._owner_turn_bindings.pop(expired_handle, None)
                 self._close_fd(getattr(expired, "_core_pidfd", None))
         return handle
@@ -2081,6 +2134,106 @@ class RootCoreNativeObservationRegistry:
                     return owner
         return None
 
+    def _persist_master_plan_result(self, attempt: dict[str, Any], raw_output: str,
+                                    response_text_sha256: str) -> None:
+        """Persist only a root-observed, current, zero-tool master plan result."""
+        owner = attempt.get("owner")
+        context = getattr(owner, "planning_context", None)
+        if owner is None or context is None:
+            raise ValueError("planning owner is unavailable")
+        now = time.monotonic()
+        if owner.is_current_sealed(self._config, custody=self._custody, now=now) is not True:
+            raise ValueError("planning owner turn is stale")
+        from hermes_installer.remote.core_gateway_inspector import (
+            _read_root_planning_catalog, _verify_planning_context,
+        )
+        from hermes_installer.remote.jarvis_master_planning import parse_master_plan_output
+        _verify_planning_context(context, owner_subject_sha256=owner.owner_subject_sha256,
+            core_generation=owner.core_generation,
+            core_source_generation=owner.core_source_generation,
+            prompt_sha256=context.planner_prompt_sha256, mission_id=context.mission_id,
+            revision=context.revision, gateway_turn_id=owner.gateway_turn_id,
+            conversation_id=owner.conversation_id, session_id=owner.session_id,
+            config=self._config, custody=self._custody, preparing=False)
+        catalog, catalog_sha = _read_root_planning_catalog(owner.core_source_generation)
+        if catalog_sha != context.catalog_sha256:
+            raise ValueError("master planning catalog changed")
+        parsed = parse_master_plan_output(raw_output, allowed_source_ids=catalog["sources"])
+        if hashlib.sha256(raw_output.encode("utf-8", errors="strict")).hexdigest() != response_text_sha256:
+            raise ValueError("master planning response digest changed")
+        path = Path("/var/lib/hermes-jarvis-chat/chat.sqlite3")
+        info = os.lstat(path)
+        parent = os.lstat(path.parent)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1
+                or stat.S_IMODE(info.st_mode) & 0o022 or not stat.S_ISDIR(parent.st_mode)
+                or parent.st_uid != 0 or stat.S_IMODE(parent.st_mode) & 0o022):
+            raise ValueError("fixed mission ledger custody differs")
+        plan_json = json.dumps(parsed["plan"], ensure_ascii=False, sort_keys=True,
+                               separators=(",", ":"), allow_nan=False)
+        selected_json = json.dumps(list(parsed["selected_source_ids"]),
+                                   ensure_ascii=False, separators=(",", ":"))
+        with sqlite3.connect(path, timeout=2, isolation_level=None) as db:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA busy_timeout=2000")
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                mission = db.execute(
+                    "SELECT id,owner,revision,status,execution_mode,master_plan_sha256 "
+                    "FROM jarvis_missions WHERE id=? AND owner=? AND revision=?",
+                    (context.mission_id, owner.owner_subject_sha256, context.revision)).fetchone()
+                planning = db.execute(
+                    "SELECT task_sha256,catalog_sha256,source_binding,planner_prompt_sha256,"
+                    "gateway_turn_id,conversation_id,status FROM jarvis_mission_planning_turns "
+                    "WHERE owner=? AND mission_id=? AND revision=?",
+                    (owner.owner_subject_sha256, context.mission_id, context.revision)).fetchone()
+                turn = db.execute(
+                    "SELECT owner,conversation_id,status,runtime_session_id,core_generation "
+                    "FROM turns WHERE id=?", (owner.gateway_turn_id,)).fetchone()
+                if (mission is None or planning is None or turn is None
+                        or mission["status"] != "draft" or mission["execution_mode"] != "pending"
+                        or mission["master_plan_sha256"] is not None
+                        or planning["status"] != "queued"
+                        or planning["gateway_turn_id"] != owner.gateway_turn_id
+                        or planning["conversation_id"] != owner.conversation_id
+                        or planning["task_sha256"] != context.goal_sha256
+                        or planning["catalog_sha256"] != context.catalog_sha256
+                        or planning["planner_prompt_sha256"] != context.planner_prompt_sha256
+                        or turn["owner"] != owner.owner_subject_sha256
+                        or turn["conversation_id"] != owner.conversation_id
+                        or turn["runtime_session_id"] != owner.session_id
+                        or turn["core_generation"] != owner.core_generation
+                        or turn["status"] not in {"queued", "running"}):
+                    raise ValueError("planning ledger or actual owned turn changed")
+                source_binding = json.loads(planning["source_binding"])
+                if source_binding != {"core_generation": owner.core_generation,
+                                      "core_source_generation": owner.core_source_generation}:
+                    raise ValueError("planning source binding changed")
+                changed = db.execute(
+                    "UPDATE jarvis_missions SET execution_mode=?,selected_source_ids=?,master_plan_json=?,"
+                    "master_plan_sha256=?,master_plan_response_sha256=?,master_plan_gateway_turn_id=?,"
+                    "master_plan_owner_turn_handle=?,master_plan_core_generation=?,"
+                    "master_plan_core_source_generation=?,updated=? WHERE id=? AND owner=? AND revision=? "
+                    "AND status='draft' AND execution_mode='pending' AND master_plan_sha256 IS NULL",
+                    (parsed["execution_mode"], selected_json, plan_json, parsed["plan_sha256"],
+                     parsed["response_sha256"], owner.gateway_turn_id, owner.owner_turn_handle,
+                     owner.core_generation, owner.core_source_generation, time.time(),
+                     context.mission_id, owner.owner_subject_sha256, context.revision)).rowcount
+                changed_row = db.execute(
+                    "UPDATE jarvis_mission_planning_turns SET status='completed',updated=? "
+                    "WHERE owner=? AND mission_id=? AND revision=? AND status='queued' "
+                    "AND gateway_turn_id=?",
+                    (time.time(), owner.owner_subject_sha256, context.mission_id,
+                     context.revision, owner.gateway_turn_id)).rowcount
+                if changed != 1 or changed_row != 1:
+                    raise ValueError("planning result was already consumed or changed")
+                if owner.is_current_sealed(self._config, custody=self._custody,
+                                            now=time.monotonic()) is not True:
+                    raise ValueError("planning owner expired during persistence")
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+
     def _policy_for_owner(self, owner: Any, now: float) -> RootSelectedOrchestratorDelegationPolicy | None:
         from hermes_installer.remote.core_gateway_inspector import CoreVerifiedNativeToolConfiguration
         handle = self._owner_policy_handles.get(owner.owner_turn_handle)
@@ -2156,6 +2309,40 @@ class RootCoreNativeObservationRegistry:
         with self._lock:
             self._ensure_open()
             self._prune(time.monotonic())
+            if op == "planning-turn-context":
+                if set(request) != {"schema", "op", "nonce", "session_id", "turn_id", "prompt_sha256"}:
+                    raise ValueError("planning-turn lookup schema mismatch")
+                session_id, turn_id = request["session_id"], request["turn_id"]
+                prompt_sha256 = request["prompt_sha256"]
+                if (not isinstance(session_id, str) or not isinstance(turn_id, str)
+                        or not _HASH.fullmatch(prompt_sha256 or "")):
+                    raise ValueError("planning-turn lookup is malformed")
+                owner = self._planning_sessions.get(session_id)
+                if owner is None:
+                    owner = next((item for item in self._owners.values()
+                                  if item.session_id == session_id), None)
+                if owner is None or owner.planning_context is None:
+                    return {"schema": 1, "nonce": nonce, "ok": True,
+                            "planning": False, "planning_context": None}
+                now = time.monotonic()
+                if (owner.is_current_sealed(self._config, custody=self._custody, now=now) is not True
+                        or owner.planning_context.planner_prompt_sha256 != prompt_sha256
+                        or owner.core_generation != self._custody.core_generation
+                        or owner.core_source_generation != self._custody.core_source_generation):
+                    raise ValueError("registered planning turn is stale or mismatched")
+                from hermes_installer.remote.core_gateway_inspector import _verify_planning_context
+                _verify_planning_context(owner.planning_context,
+                    owner_subject_sha256=owner.owner_subject_sha256,
+                    core_generation=owner.core_generation,
+                    core_source_generation=owner.core_source_generation,
+                    prompt_sha256=prompt_sha256,
+                    mission_id=owner.planning_context.mission_id,
+                    revision=owner.planning_context.revision,
+                    gateway_turn_id=owner.gateway_turn_id,
+                    conversation_id=owner.conversation_id, session_id=owner.session_id,
+                    config=self._config, custody=self._custody, preparing=False)
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                        "planning": True, "planning_context": owner.planning_context.to_wire()}
             if op == "authorize-master-read-call":
                 if set(request) != {"schema", "op", "nonce", "observed_call_handle"}:
                     raise ValueError("caller classification schema mismatch")
@@ -2654,6 +2841,26 @@ class RootCoreNativeObservationRegistry:
                 child = self._child_sessions.get(request["session_id"])
                 child_tools = tuple(child["tool_names"]) if child is not None else None
                 is_child_attempt = child is not None
+                planning_owner = owner is not None and owner.planning_context is not None
+                planning_current = False
+                if planning_owner:
+                    from hermes_installer.remote.core_gateway_inspector import _verify_planning_context
+                    try:
+                        _verify_planning_context(
+                            owner.planning_context,
+                            owner_subject_sha256=owner.owner_subject_sha256,
+                            core_generation=owner.core_generation,
+                            core_source_generation=owner.core_source_generation,
+                            prompt_sha256=request["prompt_sha256"],
+                            mission_id=owner.planning_context.mission_id,
+                            revision=owner.planning_context.revision,
+                            gateway_turn_id=owner.gateway_turn_id,
+                            conversation_id=owner.conversation_id,
+                            session_id=request["session_id"], config=self._config,
+                            custody=self._custody, preparing=False)
+                        planning_current = True
+                    except Exception:
+                        planning_current = False
                 if (owner is None or request["provider"] != _CODEX_PROVIDER
                         or request["api_mode"] != _CODEX_MODE or request["base_url"] != _CODEX_ENDPOINT
                         or type(request["retry_count"]) is not int or request["retry_count"] != 0
@@ -2668,6 +2875,9 @@ class RootCoreNativeObservationRegistry:
                                for name in request["parent_tool_names"])
                         or len(set(request["parent_tool_names"])) != len(request["parent_tool_names"])
                         or policy is None
+                        or (planning_owner and (not planning_current
+                            or request["prompt_sha256"] != owner.planning_context.planner_prompt_sha256
+                            or request["parent_tool_names"] != []))
                         or (is_child_attempt and (
                             child["owner"] is not owner or child["expiry"] <= time.monotonic()
                             or child["peer"] != peer
@@ -2679,7 +2889,7 @@ class RootCoreNativeObservationRegistry:
                             or tuple(request["parent_tool_names"]) != child_tools
                             or (child["mode"] == "planner" and bool(request["parent_tool_names"]))
                         ))
-                        or (not is_child_attempt and (
+                        or (not is_child_attempt and not planning_owner and (
                             not 1 <= len(request["parent_tool_names"])
                             or not set(request["parent_tool_names"]).issubset(policy.configured_parent_tool_names)
                             or "resources_delegate" not in request["parent_tool_names"]
@@ -2692,13 +2902,13 @@ class RootCoreNativeObservationRegistry:
                 handle = secrets.token_urlsafe(32)
                 if len(self._attempts) >= 2048:
                     raise ValueError("native attempt registry is full")
-                if is_child_attempt and child["mode"] == "planner":
+                if planning_owner or (is_child_attempt and child["mode"] == "planner"):
                     # The start receipt only authorizes beginning within 30s.
-                    # Once the first real child turn is observed, the work stays
-                    # bounded by the original owner/policy lease, not an arbitrary
-                    # 30-second model-response timeout.
+                    # A same-owner-turn plan is also bounded by the original
+                    # owner/policy lease, not a 30-second response timeout.
                     expiry = min(float(owner.expires_monotonic), float(policy.expires_monotonic))
-                    child["expiry"] = expiry
+                    if is_child_attempt:
+                        child["expiry"] = expiry
                 else:
                     expiry = min(float(owner.expires_monotonic), time.monotonic() + 30.0)
                 self._attempts[handle] = {"owner": owner, "session_id": request["session_id"],
@@ -2719,8 +2929,9 @@ class RootCoreNativeObservationRegistry:
                 return {"schema": 1, "nonce": nonce, "ok": True, "attempt_handle": handle,
                         "owner_turn_handle": owner.owner_turn_handle, "expires_monotonic": expiry}
             if op == "register-response":
-                if set(request) != {"schema", "op", "nonce", "attempt_handle", "response_sha256",
-                                    "response_text_sha256", "tool_calls", "completed"}:
+                required_response = {"schema", "op", "nonce", "attempt_handle", "response_sha256",
+                                     "response_text_sha256", "tool_calls", "completed"}
+                if set(request) not in (required_response, required_response | {"response_text"}):
                     raise ValueError("response schema mismatch")
                 row = self._attempts.get(request["attempt_handle"])
                 if (row is None or row["expiry"] <= time.monotonic() or row["response"] is not None
@@ -2743,6 +2954,17 @@ class RootCoreNativeObservationRegistry:
                             or (child["mode"] == "planner" and request["completed"]
                                 and not _HASH.fullmatch(request["response_text_sha256"] or ""))):
                         raise ValueError("child response exceeds its admitted tool or text closure")
+                elif row["owner"].planning_context is not None:
+                    raw_plan = request.get("response_text")
+                    if (calls or not request["completed"]
+                            or not _HASH.fullmatch(request["response_text_sha256"] or "")
+                            or not isinstance(raw_plan, str)
+                            or hashlib.sha256(raw_plan.encode("utf-8", errors="strict")).hexdigest()
+                                != request["response_text_sha256"]):
+                        raise ValueError("planning response is not a completed zero-tool result")
+                    self._persist_master_plan_result(row, raw_plan, request["response_text_sha256"])
+                elif "response_text" in request:
+                    raise ValueError("ordinary response cannot carry private planning output")
                 row["response"] = ((request["response_sha256"], calls,
                                     request["response_text_sha256"])
                                    if request["completed"] else (None, {}, None))
@@ -3148,16 +3370,54 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
         from hermes_cli.auth_codex import resolve_codex_runtime_credentials
         return resolve_codex_runtime_credentials(read_only=True)
 
+    def no_tool_request(request: dict[str, Any]) -> dict[str, Any]:
+        safe = dict(request)
+        safe["tools"] = []
+        safe["tool_choice"] = "none"
+        return safe
+
+    def denied_response() -> Any:
+        # Hermes' Codex normalizer accepts the provider's ordinary Responses
+        # shape. Returning a completed text response stops its retry/failover
+        # loop without invoking another provider or exposing a tool call.
+        message = "This request was not sent because its current Jarvis authority could not be verified."
+        return SimpleNamespace(
+            id="jarvis-authority-unavailable", status="completed", error=None,
+            incomplete_details=None, usage=None, output_text=message,
+            output=[SimpleNamespace(type="message", role="assistant", status="completed",
+                content=[SimpleNamespace(type="output_text", text=message)])],
+        )
+
     def observe(**event: Any) -> Any:
         next_call = event.get("next_call")
         request = event.get("request")
         route = (event.get("provider"), event.get("api_mode"), event.get("base_url"))
         if route != (_CODEX_PROVIDER, _CODEX_MODE, _CODEX_ENDPOINT):
-            # Leave ordinary model routes alone. Resources delegation remains unavailable
-            # because it cannot obtain a root observed call handle on those routes.
-            return next_call(request) if callable(next_call) else None
+            if isinstance(request, dict) and callable(next_call):
+                # Unrelated provider calls that are not attached to an observed
+                # owner turn remain ordinary Hermes traffic. Once a concrete
+                # turn is present, however, route uncertainty must not become a
+                # paid fallback for a root-enrolled zero-budget planning turn.
+                if not all(isinstance(event.get(name), str) and event.get(name)
+                           for name in ("session_id", "turn_id")):
+                    return next_call(request)
+                try:
+                    prompt_digest = _native_prompt_sha256(request)
+                    planned = client.planning_context_for_attempt(
+                        session_id=event.get("session_id"), turn_id=event.get("turn_id"),
+                        prompt_sha256=prompt_digest)
+                except Exception:
+                    # Do not spend on an alternate provider when a planned
+                    # turn cannot be distinguished from ordinary chat.
+                    return denied_response()
+                if planned is not None:
+                    return denied_response()
+                return next_call(request)
+            return denied_response()
         if not callable(next_call) or not isinstance(request, dict):
-            raise CoreNativeObservationUnavailable("native Codex call boundary is malformed")
+            return denied_response()
+        provider_request = request
+        force_no_tools = False
         session_id, turn_id, api_request_id = (event.get("session_id"), event.get("turn_id"),
                                                 event.get("api_request_id"))
         try:
@@ -3165,35 +3425,55 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
                            _require_id(api_request_id, "API request ID"))
             _require_id(turn_id, "turn ID")
         except CoreNativeObservationUnavailable:
-            return next_call(request)
+            return denied_response()
+        try:
+            prompt_sha256 = _native_prompt_sha256(request)
+            planning_context = client.planning_context_for_attempt(
+                session_id=session_id, turn_id=turn_id, prompt_sha256=prompt_sha256)
+        except Exception:
+            # Hook failures normally fall through to the original request. A
+            # completed local denial prevents provider retries/failover for an
+            # unknown mode without pretending to be a root receipt.
+            planning_context = None
+            force_no_tools = True
+            return denied_response()
+        if planning_context is not None:
+            force_no_tools = True
+        if force_no_tools:
+            provider_request = no_tool_request(request)
+        if force_no_tools and (not callable(next_call) or not isinstance(request, dict)):
+            return None
+        if planning_context is not None:
+            if event.get("middleware_trace"):
+                return denied_response()
         with lineage_lock:
             # Hermes re-enters this supported middleware for an outer retry with the
             # same api_request_id. The first observation is logical-attempt-only; a
             # second call is allowed to proceed for ordinary chat but cannot mint proof.
             if request_key in request_attempts:
-                return next_call(request)
+                return denied_response() if planning_context is not None else next_call(provider_request)
             request_attempts[request_key] = None  # reserved before any provider effect
             request_attempts.move_to_end(request_key)
             while len(request_attempts) > 1024:
                 request_attempts.popitem(last=False)
         if event.get("middleware_trace"):
-            return next_call(request)
+            return denied_response() if planning_context is not None else next_call(provider_request)
         try:
             account = _codex_account_fingerprint(resolve_credentials)
             attempt = client.register_attempt(
                 session_id=session_id, turn_id=turn_id, api_request_id=api_request_id,
                 provider=event.get("provider"), model=event.get("model"),
                 base_url=event.get("base_url"), api_mode=event.get("api_mode"),
-                account_fingerprint=account, request_sha256=_hash(request),
-                parent_tool_names=_request_tool_names(request),
-                prompt_sha256=_native_prompt_sha256(request), retry_count=0,
+                account_fingerprint=account, request_sha256=_hash(provider_request),
+                parent_tool_names=_request_tool_names(provider_request),
+                prompt_sha256=prompt_sha256, retry_count=0,
             )
         except CoreNativeObservationUnavailable:
-            return next_call(request)
+            return denied_response()
         with lineage_lock:
             request_attempts[request_key] = attempt
         try:
-            response = next_call(request)
+            response = next_call(provider_request)
         except BaseException:
             # Retire the root attempt as an unsuccessful logical observation. This
             # receipt can never authorize a tool call or delegation.
@@ -3204,6 +3484,8 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
                     response_text_sha256=None, tool_calls=[], completed=False)
             except Exception:
                 pass
+            if planning_context is not None:
+                return denied_response()
             raise
         try:
             # Verify the retained current resolver still selects the same identity after
@@ -3213,8 +3495,14 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
             except CoreNativeObservationUnavailable:
                 same_account = False
             if not same_account:
+                if planning_context is not None:
+                    return denied_response()
                 return response
             calls = _response_tool_calls(response)
+            if planning_context is not None and calls:
+                # No downstream Hermes tool dispatcher may consume a tool call
+                # returned to a request whose root-enrolled closure was empty.
+                return denied_response()
             output_text = getattr(response, "output_text", None)
             response_text_sha256 = None
             if isinstance(output_text, str):
@@ -3228,12 +3516,16 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
                 client.register_response(
                     attempt=attempt, response_sha256=hashlib.sha256(response_bytes).hexdigest(),
                     response_text_sha256=response_text_sha256,
+                    response_text=(output_text if planning_context is not None
+                                   and isinstance(output_text, str) else None),
                     tool_calls=[{"id": call_id, "name": name,
                                  "arguments_sha256": hashlib.sha256(arguments).hexdigest()}
                                 for call_id, name, arguments in calls],
                     completed=True,
                 )
             except CoreNativeObservationUnavailable:
+                if planning_context is not None:
+                    return denied_response()
                 return response
             with lineage_lock:
                 for call_id, name, arguments in calls:
@@ -3245,6 +3537,8 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
         except Exception:
             # Observation failure must not discard a successfully consumed answer.
             # Without its root response receipt, Resources delegation has no call handle.
+            if planning_context is not None:
+                return denied_response()
             return response
 
     registrations = []

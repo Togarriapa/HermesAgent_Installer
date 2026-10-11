@@ -11,6 +11,7 @@ import secrets
 import select
 import signal
 import socket
+import sqlite3
 import stat
 import struct
 import subprocess
@@ -102,6 +103,7 @@ CORE_CREDENTIALS_DIRECTORY = "/run/credentials/hermes-jarvis-core.service"
 MAX_REQUEST = 1024
 MAX_RESPONSE = 4096
 MAX_FINAL_EFFECT_RESPONSE = 64 * 1024
+MAX_MASTER_PLAN_RESPONSE = 32 * 1024
 MAX_SKILL_LEARNING_REQUEST_BYTES = 20 * 1024
 MAX_SKILL_LEARNING_RESPONSE_BYTES = 700 * 1024
 MAX_OWNER_TURN_REQUEST_BYTES = 24 * 1024
@@ -154,7 +156,143 @@ _OWNER_TURN_FIELDS = (
     "core_uid", "core_gid", "core_start_ticks", "core_invocation_id", "core_listener_inode",
     "core_source_generation", "core_unit_sha256", "core_executable_sha256",
     "session_id", "conversation_id", "gateway_turn_id", "prompt_sha256", "mission_binding",
+    "planning_context",
 )
+
+
+@dataclass(frozen=True, slots=True)
+class PlanningContext:
+    """Closed server-provided correlation for a same-owner-turn Jarvis plan.
+
+    This DTO carries no authority by itself. The root inspector reconstructs the
+    mission, catalog and current-master values from its own fixed stores both when
+    it is prepared and when the owner turn is registered.
+    """
+
+    schema: int
+    mission_id: str
+    revision: int
+    goal_sha256: str
+    catalog_sha256: str
+    planner_prompt_sha256: str
+    master_source_generation_sha256: str
+    master_source_manifest_sha256: str
+    master_prompt_sha256: str
+    source_profile_id: str = "hermes"
+
+    def to_wire(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema, "mission_id": self.mission_id,
+            "revision": self.revision, "goal_sha256": self.goal_sha256,
+            "catalog_sha256": self.catalog_sha256,
+            "planner_prompt_sha256": self.planner_prompt_sha256,
+            "master_source_generation_sha256": self.master_source_generation_sha256,
+            "master_source_manifest_sha256": self.master_source_manifest_sha256,
+            "master_prompt_sha256": self.master_prompt_sha256,
+            "source_profile_id": self.source_profile_id,
+        }
+
+    @classmethod
+    def from_wire(cls, value: Any) -> "PlanningContext":
+        fields = {"schema", "mission_id", "revision", "goal_sha256", "catalog_sha256",
+                  "planner_prompt_sha256", "master_source_generation_sha256",
+                  "master_source_manifest_sha256", "master_prompt_sha256", "source_profile_id"}
+        if type(value) is not dict or set(value) != fields:
+            raise CoreInspectionDenied("planning context fields differ")
+        try:
+            result = cls(**value)
+        except Exception:
+            raise CoreInspectionDenied("planning context is malformed") from None
+        if (type(result.schema) is not int or result.schema != 1
+                or not isinstance(result.mission_id, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{24,64}", result.mission_id) is None
+                or type(result.revision) is not int or result.revision < 1
+                or any(not _is_hash(getattr(result, name)) for name in (
+                    "goal_sha256", "catalog_sha256", "planner_prompt_sha256",
+                    "master_source_generation_sha256", "master_source_manifest_sha256",
+                    "master_prompt_sha256"))
+                or result.source_profile_id != "hermes"):
+            raise CoreInspectionDenied("planning context is malformed")
+        return result
+
+
+_MASTER_PLAN_DATA_SEAL = object()
+
+
+@dataclass(frozen=True, slots=True)
+class RootVerifiedJarvisMasterPlanData:
+    """Current root-readback of durable plan DATA, never itself a dispatch permit."""
+
+    schema: int
+    mission_id: str
+    revision: int
+    owner_subject_sha256: str
+    goal_sha256: str
+    plan_json: str
+    plan_sha256: str
+    response_sha256: str
+    gateway_turn_id: str
+    owner_turn_handle: str
+    core_generation: str
+    core_source_generation: str
+    catalog_sha256: str
+    planner_prompt_sha256: str
+    master_source_generation_sha256: str
+    master_source_manifest_sha256: str
+    master_prompt_sha256: str
+    source_profile_id: str
+    selected_source_ids: tuple[str, ...]
+    execution_mode: str
+    _seal: object = field(repr=False, compare=False)
+
+    def is_root_verified_data(self) -> bool:
+        try:
+            if (type(self) is not RootVerifiedJarvisMasterPlanData
+                    or self._seal is not _MASTER_PLAN_DATA_SEAL
+                    or type(self.schema) is not int or self.schema != 1
+                    or type(self.revision) is not int or self.revision < 1):
+                return False
+            plan = json.loads(self.plan_json, object_pairs_hook=_unique_pairs)
+            return bool(re.fullmatch(r"[A-Za-z0-9_-]{24,64}", self.mission_id)
+                and all(_is_hash(getattr(self, name)) for name in (
+                    "owner_subject_sha256", "goal_sha256", "plan_sha256", "response_sha256",
+                    "core_generation", "core_source_generation", "catalog_sha256",
+                    "planner_prompt_sha256", "master_source_generation_sha256",
+                    "master_source_manifest_sha256", "master_prompt_sha256"))
+                and isinstance(self.plan_json, str) and 2 <= len(self.plan_json.encode("utf-8")) <= 16_384
+                and isinstance(self.gateway_turn_id, str)
+                and re.fullmatch(r"[A-Za-z0-9_-]{24,64}", self.gateway_turn_id)
+                and isinstance(self.owner_turn_handle, str)
+                and re.fullmatch(r"[0-9a-f]{32}", self.owner_turn_handle)
+                and self.execution_mode in {"oneshot", "kanban"}
+                and self.source_profile_id == "hermes"
+                and isinstance(self.selected_source_ids, tuple)
+                and len(self.selected_source_ids) <= 16
+                and len(set(self.selected_source_ids)) == len(self.selected_source_ids)
+                and hashlib.sha256(_canonical_json({"execution_mode": self.execution_mode,
+                    "selected_source_ids": list(self.selected_source_ids), "plan": plan})).hexdigest()
+                    == self.plan_sha256)
+        except Exception:
+            return False
+
+    def to_wire(self) -> dict[str, Any]:
+        if not self.is_root_verified_data():
+            raise CoreGatewayDenied("root plan data is unavailable")
+        return {name: getattr(self, name) for name in (
+            "schema", "mission_id", "revision", "owner_subject_sha256", "goal_sha256",
+            "plan_json", "plan_sha256", "response_sha256", "gateway_turn_id",
+            "owner_turn_handle", "core_generation", "core_source_generation",
+            "catalog_sha256", "planner_prompt_sha256", "master_source_generation_sha256",
+            "master_source_manifest_sha256", "master_prompt_sha256", "source_profile_id",
+            "execution_mode")} | {"selected_source_ids": list(self.selected_source_ids)}
+
+
+def _planning_context_wire(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if type(value) is not PlanningContext:
+        raise CoreInspectionDenied("planning context is not a typed value")
+    return PlanningContext.from_wire(value.to_wire()).to_wire()
 class CoreInspectionDenied(PermissionError):
     pass
 
@@ -283,6 +421,103 @@ def _mission_binding_wire(value: Any) -> dict[str, Any] | None:
         raise CoreInspectionDenied("mission binding is not a verified typed value") from None
 
 
+def _canonical_json(value: Any) -> bytes:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+                      allow_nan=False).encode("utf-8", errors="strict")
+
+
+def _read_root_planning_catalog(core_source_generation: str) -> tuple[dict[str, Any], str]:
+    """Rebuild the mission catalog from the current Resources CAS and pinned inventory."""
+    if not _is_hash(core_source_generation):
+        raise CoreInspectionDenied("current Resources generation is unavailable")
+    from hermes_installer.components.resources_active_profile_source import _read_catalog
+    snapshot = _read_catalog(core_source_generation)
+    if snapshot is None or not isinstance(snapshot.get("sources"), dict):
+        raise CoreInspectionDenied("current Resources catalog is unavailable")
+    inventory_path = CORE_NATIVE_ADAPTER_SOURCE / "hermes_installer/remote/jarvis_capability_inventory.json"
+    deadline = time.monotonic() + MAX_PROOF_SECONDS
+    expected_digest = "16ba9ef9b5a5a727cbfa29a43f12862e3aca6deb1a57cab52f9d7d9b96610860"
+    if _protected_file_sha(inventory_path, deadline=deadline) != expected_digest:
+        raise CoreInspectionDenied("pinned Resources source inventory changed")
+    fd = os.open(inventory_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                 | getattr(os, "O_CLOEXEC", 0))
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1
+                or info.st_size > 512 * 1024):
+            raise CoreInspectionDenied("pinned Resources inventory custody differs")
+        raw = bytearray()
+        while len(raw) <= 512 * 1024:
+            block = os.read(fd, min(8192, 512 * 1024 + 1 - len(raw)))
+            if not block:
+                break
+            raw.extend(block)
+        after = os.fstat(fd)
+        named = os.stat(inventory_path, follow_symlinks=False)
+        signature = lambda item: (item.st_dev, item.st_ino, item.st_mode, item.st_uid,
+            item.st_gid, item.st_nlink, item.st_size, item.st_mtime_ns, item.st_ctime_ns)
+        if (signature(info) != signature(after) or signature(info) != signature(named)
+                or hashlib.sha256(raw).hexdigest() != expected_digest):
+            raise CoreInspectionDenied("pinned Resources inventory changed while reading")
+    finally:
+        os.close(fd)
+    try:
+        inventory = json.loads(bytes(raw).decode("utf-8", errors="strict"),
+                               object_pairs_hook=_unique_pairs)
+    except Exception:
+        raise CoreInspectionDenied("pinned Resources inventory is malformed") from None
+    if (type(inventory) is not dict or set(inventory) != {"readiness", "source", "items"}
+            or inventory.get("readiness") != "pending"
+            or inventory.get("source") != {
+                "kind": "offline-bundle", "catalogVersion": "2.3.1",
+                "revision": "113f42d33be9e0c8f0f47f5ca998e687323dec83"}
+            or type(inventory.get("items")) is not list or len(inventory["items"]) != 692):
+        raise CoreInspectionDenied("pinned Resources inventory schema differs")
+    profile_ids = set(snapshot["sources"])
+    profiles: dict[str, str] = {}
+    sources: dict[str, dict[str, str]] = {}
+    seen: set[tuple[str, str]] = set()
+    previous: tuple[str, str] | None = None
+    for item in inventory["items"]:
+        if (type(item) is not dict
+                or set(item) not in ({"id", "kind", "name", "summary", "state", "readiness"},
+                    {"id", "kind", "name", "summary", "state", "readiness", "displayName"})
+                or item.get("kind") not in {"profiles", "bundles", "skills", "plugins", "mcps", "channels", "crons", "webhooks"}
+                or item.get("state") != "bundled" or item.get("readiness") != "pending"
+                or not all(isinstance(item.get(key), str) for key in ("id", "name", "summary"))
+                or len(item["id"]) > 120 or len(item["name"]) > 120 or len(item["summary"]) > 240
+                or ("displayName" in item and (not isinstance(item["displayName"], str)
+                                                or len(item["displayName"]) > 120))):
+            raise CoreInspectionDenied("pinned Resources inventory item differs")
+        identity = (item["kind"], item["id"])
+        if identity in seen or (previous is not None and identity <= previous):
+            raise CoreInspectionDenied("pinned Resources inventory ordering differs")
+        seen.add(identity)
+        previous = identity
+        if item["kind"] not in {"profiles", "bundles"}:
+            continue
+        label = item.get("displayName") or item["name"]
+        if not isinstance(label, str) or not label or len(label) > 120:
+            raise CoreInspectionDenied("pinned Resources label is invalid")
+        sources[item["id"]] = {"label": label, "kind": item["kind"]}
+        if item["kind"] == "profiles":
+            profiles[item["id"]] = label
+    if set(profiles) != profile_ids:
+        raise CoreInspectionDenied("pinned profile catalog differs from the Resources CAS")
+    catalog = {
+        "profiles": dict(sorted(profiles.items())),
+        "sources": dict(sorted(sources.items())),
+        "source": {"revision": inventory["source"]["revision"],
+                   "catalog_version": inventory["source"]["catalogVersion"],
+                   "package_sha256": expected_digest},
+    }
+    digest = hashlib.sha256(_canonical_json({"schema": 1, **catalog})).hexdigest()
+    # The CAS source bytes are independently rechecked after projecting its IDs.
+    if _read_catalog(core_source_generation) is None or time.monotonic() >= deadline:
+        raise CoreInspectionDenied("Resources catalog changed during projection")
+    return catalog, digest
+
+
 def _mission_binding_from_wire(value: Any) -> Any:
     if value is None:
         return None
@@ -328,6 +563,218 @@ def _resolve_spent_mission_binding(value: Any, *, owner_subject_sha256: str,
         return binding
     except Exception:
         raise CoreInspectionDenied("spent mission binding is unavailable or changed") from None
+
+
+def _verify_planning_context(context: Any, *, owner_subject_sha256: str,
+                             core_generation: str, core_source_generation: str,
+                             prompt_sha256: str, mission_id: str | None = None,
+                             revision: int | None = None, gateway_turn_id: str | None = None,
+                             conversation_id: str | None = None, session_id: str | None = None,
+                             config: CoreGatewayConfig, custody: Any,
+                             preparing: bool) -> PlanningContext:
+    """Rebuild mission/catalog/master facts from root custody and the fixed read-only DB."""
+    dto = context if type(context) is PlanningContext else PlanningContext.from_wire(context)
+    if (dto.source_profile_id != "hermes" or dto.mission_id != mission_id
+            or dto.revision != revision or dto.planner_prompt_sha256 != prompt_sha256
+            or not _is_hash(owner_subject_sha256) or not _is_hash(core_generation)
+            or not _is_hash(core_source_generation)):
+        raise CoreInspectionDenied("planning context does not match its owner turn")
+    if (type(custody) is not CoreNativeObserverCustody
+            or custody.core_generation != core_generation
+            or custody.core_source_generation != core_source_generation):
+        raise CoreInspectionDenied("planning context core custody changed")
+    try:
+        proof_deadline = time.monotonic() + MAX_PROOF_SECONDS
+        from hermes_installer.remote.jarvis_chat import CHAT_STORE_PATH
+        from hermes_installer.remote.jarvis_mission_executor import (
+            MissionLedgerReader, mission_goal_arguments_sha256,
+        )
+        from hermes_installer.remote.jarvis_master_planning import build_master_plan_prompt
+        from hermes_installer.components.resources_active_profile_source import (
+            RootVerifiedJarvisMasterSource,
+        )
+        expected_path = Path("/var/lib/hermes-jarvis-chat/chat.sqlite3")
+        if CHAT_STORE_PATH != expected_path:
+            raise ValueError
+        parent = os.lstat(expected_path.parent)
+        target = os.lstat(expected_path)
+        if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0
+                or stat.S_IMODE(parent.st_mode) & 0o022
+                or not stat.S_ISREG(target.st_mode) or target.st_uid != 0
+                or target.st_nlink != 1 or stat.S_IMODE(target.st_mode) & 0o022):
+            raise ValueError
+        current_source = RootVerifiedJarvisMasterSource.current_master_source(custody, config)
+        if (type(current_source) is not RootVerifiedJarvisMasterSource
+                or current_source.profile_id != "hermes"
+                or current_source.native_profile_key != "default"
+                or current_source.display_name != "Jarvis"
+                or current_source.is_current_sealed(custody, now=time.monotonic()) is not True
+                or current_source.core_generation != core_generation
+                or current_source.core_source_generation != core_source_generation):
+            raise ValueError
+        catalog, catalog_sha = _read_root_planning_catalog(core_source_generation)
+        with MissionLedgerReader(path=expected_path)._connect() as db:
+            mission_columns = {row[1] for row in db.execute("PRAGMA table_info(jarvis_missions)")}
+            required_mission = {"id", "owner", "revision", "title", "brief", "status",
+                                "execution_mode", "master_plan_sha256"}
+            if not required_mission.issubset(mission_columns):
+                raise ValueError
+            mission = db.execute(
+                "SELECT id,owner,revision,title,brief,status,execution_mode,master_plan_sha256 "
+                "FROM jarvis_missions WHERE id=? AND owner=? AND revision=?",
+                (dto.mission_id, owner_subject_sha256, dto.revision)).fetchone()
+            if (mission is None or mission["status"] != "draft"
+                    or mission["execution_mode"] != "pending"
+                    or mission["master_plan_sha256"] is not None
+                    or not isinstance(mission["title"], str) or not 1 <= len(mission["title"]) <= 120
+                    or not isinstance(mission["brief"], str) or not 1 <= len(mission["brief"]) <= 8000):
+                raise ValueError
+            expected_goal = mission_goal_arguments_sha256(mission["brief"])
+            prompt, expected_prompt_sha = build_master_plan_prompt(
+                mission_id=dto.mission_id, revision=dto.revision, title=mission["title"],
+                goal=mission["brief"], allowed_source_ids=catalog["sources"])
+            if (dto.goal_sha256 != expected_goal or dto.catalog_sha256 != catalog_sha
+                    or dto.planner_prompt_sha256 != expected_prompt_sha
+                    or dto.master_source_generation_sha256 != current_source.generation_sha256
+                    or dto.master_source_manifest_sha256 != current_source.source_member_manifest_sha256
+                    or dto.master_prompt_sha256 != current_source.effective_prompt_sha256
+                    or hashlib.sha256(prompt.encode("utf-8", errors="strict")).hexdigest()
+                        != dto.planner_prompt_sha256):
+                raise ValueError
+            columns = {row[1] for row in db.execute(
+                "PRAGMA table_info(jarvis_mission_planning_turns)")}
+            required_planning = {"id", "owner", "mission_id", "revision", "task_sha256",
+                "catalog_sha256", "source_binding", "planner_prompt_sha256", "gateway_turn_id",
+                "conversation_id", "status", "master_source_generation_sha256",
+                "master_source_manifest_sha256", "master_prompt_sha256"}
+            if not required_planning.issubset(columns):
+                raise ValueError
+            planning = db.execute(
+                "SELECT id,owner,mission_id,revision,task_sha256,catalog_sha256,source_binding,"
+                "planner_prompt_sha256,gateway_turn_id,conversation_id,status,"
+                "master_source_generation_sha256,master_source_manifest_sha256,master_prompt_sha256 "
+                "FROM jarvis_mission_planning_turns WHERE owner=? AND mission_id=? AND revision=?",
+                (owner_subject_sha256, dto.mission_id, dto.revision)).fetchone()
+            if planning is None:
+                raise ValueError
+            try:
+                source_binding = json.loads(planning["source_binding"],
+                                            object_pairs_hook=_unique_pairs)
+            except Exception:
+                raise ValueError from None
+            if (type(source_binding) is not dict
+                    or set(source_binding) != {"core_generation", "core_source_generation"}
+                    or source_binding != {"core_generation": core_generation,
+                                          "core_source_generation": core_source_generation}
+                    or planning["task_sha256"] != expected_goal
+                    or planning["catalog_sha256"] != catalog_sha
+                    or planning["planner_prompt_sha256"] != expected_prompt_sha
+                    or planning["master_source_generation_sha256"] != current_source.generation_sha256
+                    or planning["master_source_manifest_sha256"] != current_source.source_member_manifest_sha256
+                    or planning["master_prompt_sha256"] != current_source.effective_prompt_sha256):
+                raise ValueError
+            if preparing:
+                if planning["status"] != "reserved" or planning["gateway_turn_id"] not in (None, ""):
+                    raise ValueError
+            else:
+                if (planning["status"] != "queued"
+                        or planning["gateway_turn_id"] != gateway_turn_id
+                        or planning["conversation_id"] != conversation_id
+                        or not isinstance(gateway_turn_id, str)
+                        or not isinstance(session_id, str)):
+                    raise ValueError
+                turn = db.execute(
+                    "SELECT owner,conversation_id,status,runtime_session_id,core_generation "
+                    "FROM turns WHERE id=?", (gateway_turn_id,)).fetchone()
+                if (turn is None or turn["owner"] != owner_subject_sha256
+                        or turn["conversation_id"] != conversation_id
+                        or turn["status"] not in {"queued", "running"}
+                        or turn["runtime_session_id"] != session_id
+                        or turn["core_generation"] != core_generation):
+                    raise ValueError
+        if (time.monotonic() >= proof_deadline
+                or current_source.is_current_sealed(custody, now=time.monotonic()) is not True
+                or _read_root_planning_catalog(core_source_generation)[1] != catalog_sha):
+            raise ValueError
+        return dto
+    except CoreInspectionDenied:
+        raise
+    except Exception:
+        raise CoreInspectionDenied("root mission planning context is unavailable or changed") from None
+
+
+def _prepare_planning_context(*, owner_subject_sha256: str, mission_id: str,
+                              revision: int, planner_prompt_sha256: str,
+                              core_generation: str, core_source_generation: str,
+                              config: CoreGatewayConfig, custody: Any) -> PlanningContext:
+    """Build a planning DTO only from a root-owned reserved mission row and live sources."""
+    if (not _is_hash(owner_subject_sha256) or type(revision) is not int or revision < 1
+            or re.fullmatch(r"[A-Za-z0-9_-]{24,64}", mission_id or "") is None
+            or not _is_hash(planner_prompt_sha256)):
+        raise CoreInspectionDenied("planning request identity is invalid")
+    deadline = time.monotonic() + MAX_PROOF_SECONDS
+    try:
+        from hermes_installer.remote.jarvis_chat import CHAT_STORE_PATH
+        from hermes_installer.remote.jarvis_mission_executor import (
+            MissionLedgerReader, mission_goal_arguments_sha256,
+        )
+        from hermes_installer.remote.jarvis_master_planning import build_master_plan_prompt
+        from hermes_installer.components.resources_active_profile_source import RootVerifiedJarvisMasterSource
+        expected_path = Path("/var/lib/hermes-jarvis-chat/chat.sqlite3")
+        if CHAT_STORE_PATH != expected_path:
+            raise ValueError
+        db_info = os.lstat(expected_path)
+        if not stat.S_ISREG(db_info.st_mode) or db_info.st_uid != 0 or db_info.st_nlink != 1:
+            raise ValueError
+        master = RootVerifiedJarvisMasterSource.current_master_source(custody, config)
+        if (type(master) is not RootVerifiedJarvisMasterSource
+                or master.profile_id != "hermes" or master.display_name != "Jarvis"
+                or master.is_current_sealed(custody, now=time.monotonic()) is not True):
+            raise ValueError
+        catalog, catalog_sha = _read_root_planning_catalog(core_source_generation)
+        with MissionLedgerReader(path=expected_path)._connect() as db:
+            row = db.execute(
+                "SELECT id,owner,revision,title,brief,status,execution_mode,master_plan_sha256 "
+                "FROM jarvis_missions WHERE id=? AND owner=? AND revision=?",
+                (mission_id, owner_subject_sha256, revision)).fetchone()
+            if (row is None or row["status"] != "draft" or row["execution_mode"] != "pending"
+                    or row["master_plan_sha256"] is not None
+                    or not isinstance(row["title"], str) or not row["title"]
+                    or not isinstance(row["brief"], str) or not row["brief"]):
+                raise ValueError
+            reserved = db.execute(
+                "SELECT task_sha256,catalog_sha256,source_binding,planner_prompt_sha256,status,gateway_turn_id,"
+                "master_source_generation_sha256,master_source_manifest_sha256,master_prompt_sha256 "
+                "FROM jarvis_mission_planning_turns WHERE owner=? AND mission_id=? AND revision=?",
+                (owner_subject_sha256, mission_id, revision)).fetchone()
+            if reserved is None or reserved["status"] != "reserved" or reserved["gateway_turn_id"] not in (None, ""):
+                raise ValueError
+            prompt, prompt_sha = build_master_plan_prompt(
+                mission_id=mission_id, revision=revision, title=row["title"],
+                goal=row["brief"], allowed_source_ids=catalog["sources"])
+            source_binding = json.loads(reserved["source_binding"], object_pairs_hook=_unique_pairs)
+            goal_sha = mission_goal_arguments_sha256(row["brief"])
+            if (prompt_sha != planner_prompt_sha256 or reserved["task_sha256"] != goal_sha
+                    or reserved["catalog_sha256"] != catalog_sha
+                    or reserved["planner_prompt_sha256"] != prompt_sha
+                    or reserved["master_source_generation_sha256"] != master.generation_sha256
+                    or reserved["master_source_manifest_sha256"] != master.source_member_manifest_sha256
+                    or reserved["master_prompt_sha256"] != master.effective_prompt_sha256
+                    or source_binding != {"core_generation": core_generation,
+                                          "core_source_generation": core_source_generation}
+                    or hashlib.sha256(prompt.encode("utf-8", errors="strict")).hexdigest() != prompt_sha):
+                raise ValueError
+        if (time.monotonic() >= deadline
+                or master.is_current_sealed(custody, now=time.monotonic()) is not True
+                or _read_root_planning_catalog(core_source_generation)[1] != catalog_sha):
+            raise ValueError
+        return PlanningContext(1, mission_id, revision, goal_sha, catalog_sha, prompt_sha,
+            master.generation_sha256, master.source_member_manifest_sha256,
+            master.effective_prompt_sha256, "hermes")
+    except CoreInspectionDenied:
+        raise
+    except Exception:
+        raise CoreInspectionDenied("root planning context could not be prepared") from None
 
 
 def _valid_learning_candidates(candidates: Any, readiness: str) -> bool:
@@ -569,7 +1016,11 @@ def observe_owner_turn(config: CoreGatewayConfig, *, request: dict[str, Any],
     required = {"schema", "op", "nonce", "peer_pid", "peer_uid", "peer_gid", "access_jwt",
                 "core_generation", "ingress_nonce", "ingress_proof_sha256", "session_id",
                 "conversation_id", "gateway_turn_id", "prompt_sha256"}
-    if (type(request) is not dict or set(request) not in (required, required | {"mission_binding"})
+    if (type(request) is not dict or not required.issubset(request)
+            or set(request) - required - {"mission_binding", "planning_context"}
+                or set(request) - required not in (
+                    set(), {"mission_binding"}, {"planning_context"},
+                    {"mission_binding", "planning_context"})
             or type(request.get("schema")) is not int
             or request["schema"] != 1 or request.get("op") != "observe-owner-turn"
             or (request.get("peer_pid"), request.get("peer_uid"), request.get("peer_gid"))
@@ -619,12 +1070,31 @@ def observe_owner_turn(config: CoreGatewayConfig, *, request: dict[str, Any],
     if (time.monotonic() >= deadline
             or principal.email.casefold() not in config.allowed_emails):
         raise CoreInspectionDenied("owner turn ingress expired")
+    custody = _CORE_NATIVE_CUSTODY
+    if type(custody) is not CoreNativeObserverCustody:
+        raise CoreInspectionDenied("current native observer custody is unavailable")
     mission_binding = _resolve_spent_mission_binding(
         _mission_binding_from_wire(request.get("mission_binding")),
         owner_subject_sha256=hashlib.sha256(principal.subject.encode("utf-8")).hexdigest(),
         gateway_turn_id=request["gateway_turn_id"],
         core_generation=retained.core_generation,
         core_source_generation=current["core_source_generation"], deadline=deadline)
+    planning_context = None
+    if "planning_context" in request:
+        if mission_binding is not None:
+            raise CoreInspectionDenied("mission execution and planning context cannot be combined")
+        planning_context_wire = PlanningContext.from_wire(request["planning_context"])
+        planning_context = _verify_planning_context(
+            request["planning_context"],
+            owner_subject_sha256=hashlib.sha256(principal.subject.encode("utf-8")).hexdigest(),
+            core_generation=retained.core_generation,
+            core_source_generation=current["core_source_generation"],
+            prompt_sha256=request["prompt_sha256"],
+            mission_id=planning_context_wire.mission_id,
+            revision=planning_context_wire.revision,
+            gateway_turn_id=request["gateway_turn_id"],
+            conversation_id=request["conversation_id"], session_id=request["session_id"],
+            config=config, custody=custody, preparing=False)
     final = observe_current_ingress(config, nonce=retained.nonce,
         caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
         peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
@@ -635,7 +1105,6 @@ def observe_owner_turn(config: CoreGatewayConfig, *, request: dict[str, Any],
             or final["config_sha256"] != retained.config_sha256
             or time.monotonic() >= deadline):
         raise CoreInspectionDenied("owner turn custody changed")
-    custody = _CORE_NATIVE_CUSTODY
     if (type(custody) is not CoreNativeObserverCustody
             or custody._seal is not _NATIVE_CUSTODY_SEAL
             or final["core_generation"] != custody.core_generation
@@ -685,10 +1154,11 @@ def observe_owner_turn(config: CoreGatewayConfig, *, request: dict[str, Any],
         "core_executable_sha256": custody.core_executable_sha256,
         "session_id": request["session_id"], "conversation_id": request["conversation_id"],
         "gateway_turn_id": request["gateway_turn_id"], "prompt_sha256": request["prompt_sha256"],
-        "mission_binding": mission_binding,
+        "mission_binding": mission_binding, "planning_context": planning_context,
     }
     digest_claims = dict(claims)
     digest_claims["mission_binding"] = _mission_binding_wire(mission_binding)
+    digest_claims["planning_context"] = _planning_context_wire(planning_context)
     observation = CoreVerifiedOwnerTurnObservation(
         **claims, proof_sha256=_owner_turn_digest(digest_claims), _core_pidfd=pidfd,
         _seal=_OWNER_TURN_SEAL)
@@ -742,6 +1212,202 @@ def observe_owner_turn(config: CoreGatewayConfig, *, request: dict[str, Any],
             pass
         raise CoreInspectionDenied("owner turn registration result is invalid")
     return {"schema": 1, "nonce": request["nonce"], "owner_turn_handle": handle}
+
+
+def prepare_master_planning_context(config: CoreGatewayConfig, *, request: dict[str, Any],
+                                   caller_pid: int, caller_uid: int, caller_gid: int,
+                                   peer_pid: int, peer_uid: int, peer_gid: int,
+                                   custody: Any) -> dict[str, Any]:
+    """Root-authenticate the request and derive a context for an already reserved plan row."""
+    fields = {"schema", "op", "nonce", "peer_pid", "peer_uid", "peer_gid", "access_jwt",
+              "core_generation", "ingress_nonce", "ingress_proof_sha256", "mission_id",
+              "revision", "planner_prompt_sha256"}
+    if (type(request) is not dict or set(request) != fields or request.get("schema") != 1
+            or request.get("op") != "prepare-master-planning-context"
+            or (request.get("peer_pid"), request.get("peer_uid"), request.get("peer_gid"))
+                != (peer_pid, peer_uid, peer_gid)
+            or (not isinstance(request.get("nonce"), str)
+                or re.fullmatch(r"[0-9a-f]{64}", request["nonce"]) is None)
+            or not isinstance(request.get("access_jwt"), str)
+            or not 1 <= len(request["access_jwt"]) <= 16_384
+            or not request["access_jwt"].isascii()
+            or not _is_hash(request.get("core_generation"))
+            or not isinstance(request.get("ingress_nonce"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", request["ingress_nonce"]) is None
+            or not _is_hash(request.get("ingress_proof_sha256"))
+            or not _is_hash(request.get("planner_prompt_sha256"))
+            or type(request.get("revision")) is not int):
+        raise CoreInspectionDenied("planning context request is invalid")
+    caller_start = _proc_start_ticks(caller_pid)
+    key = (caller_pid, caller_start, request["ingress_nonce"], request["ingress_proof_sha256"])
+    with _RETAINED_INGRESS_LOCK:
+        retained = _RETAINED_INGRESS_ISSUES.get(key)
+    if (retained is None or retained.peer != (peer_pid, peer_uid, peer_gid)
+            or retained.core_generation != request["core_generation"]
+            or retained.config_sha256 != config.config_sha256
+            or time.monotonic() >= retained.expires_monotonic):
+        raise CoreInspectionDenied("planning ingress is stale")
+    deadline = retained.expires_monotonic
+    current = observe_current_ingress(config, nonce=retained.nonce,
+        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+        peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+        _issued=retained.issued_monotonic, _deadline=deadline, _retain_issuance=False)
+    from .gateway import validate_access_jwt
+    principal = validate_access_jwt(request["access_jwt"],
+        policy=config.policy(_learning_jwks(config, deadline=deadline)),
+        deadline_monotonic=deadline)
+    if (principal.email.casefold() not in config.allowed_emails
+            or current["proof_sha256"] != retained.proof_sha256
+            or current["core_generation"] != retained.core_generation
+            or current["core_source_generation"] != custody.core_source_generation
+            or time.monotonic() >= deadline
+            or hashlib.sha256(request["access_jwt"].encode("ascii")).hexdigest()
+                != principal.token_fingerprint):
+        raise CoreInspectionDenied("planning ingress identity changed")
+    context = _prepare_planning_context(
+        owner_subject_sha256=hashlib.sha256(principal.subject.encode("utf-8")).hexdigest(),
+        mission_id=request["mission_id"], revision=request["revision"],
+        planner_prompt_sha256=request["planner_prompt_sha256"],
+        core_generation=retained.core_generation,
+        core_source_generation=current["core_source_generation"],
+        config=config, custody=custody)
+    final = observe_current_ingress(config, nonce=retained.nonce,
+        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+        peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+        _issued=retained.issued_monotonic, _deadline=deadline, _retain_issuance=False)
+    if final["proof_sha256"] != retained.proof_sha256 or time.monotonic() >= deadline:
+        raise CoreInspectionDenied("planning ingress changed during preparation")
+    return {"schema": 1, "nonce": request["nonce"], "ok": True,
+            "planning_context": context.to_wire()}
+
+
+def observe_read_master_plan(config: CoreGatewayConfig, *, request: dict[str, Any],
+                             caller_pid: int, caller_uid: int, caller_gid: int,
+                             peer_pid: int, peer_uid: int, peer_gid: int,
+                             custody: Any) -> dict[str, Any]:
+    """Read a durable plan only after fresh Access, owner, turn, CAS and master joins."""
+    required = {"schema", "op", "nonce", "peer_pid", "peer_uid", "peer_gid", "access_jwt",
+                "core_generation", "ingress_nonce", "ingress_proof_sha256", "mission_id", "revision"}
+    if (type(request) is not dict or set(request) != required or request.get("schema") != 1
+            or request.get("op") != "read-master-plan"
+            or (request.get("peer_pid"), request.get("peer_uid"), request.get("peer_gid"))
+                != (peer_pid, peer_uid, peer_gid)
+            or not isinstance(request.get("nonce"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", request["nonce"]) is None
+            or not isinstance(request.get("access_jwt"), str)
+            or not 1 <= len(request["access_jwt"]) <= 16_384
+            or not request["access_jwt"].isascii()
+            or not _is_hash(request.get("core_generation"))
+            or not isinstance(request.get("ingress_nonce"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", request["ingress_nonce"]) is None
+            or not _is_hash(request.get("ingress_proof_sha256"))
+            or type(request.get("revision")) is not int or request["revision"] < 1
+            or re.fullmatch(r"[A-Za-z0-9_-]{24,64}", request.get("mission_id", "")) is None):
+        raise CoreInspectionDenied("master plan read request is invalid")
+    caller_start = _proc_start_ticks(caller_pid)
+    issue_key = (caller_pid, caller_start, request["ingress_nonce"], request["ingress_proof_sha256"])
+    with _RETAINED_INGRESS_LOCK:
+        retained = _RETAINED_INGRESS_ISSUES.get(issue_key)
+    if (retained is None or retained.peer != (peer_pid, peer_uid, peer_gid)
+            or retained.core_generation != request["core_generation"]
+            or retained.config_sha256 != config.config_sha256
+            or time.monotonic() >= retained.expires_monotonic):
+        raise CoreInspectionDenied("master plan ingress is stale")
+    deadline = retained.expires_monotonic
+    ingress = observe_current_ingress(config, nonce=retained.nonce,
+        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+        peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+        _issued=retained.issued_monotonic, _deadline=deadline, _retain_issuance=False)
+    from .gateway import validate_access_jwt
+    principal = validate_access_jwt(request["access_jwt"],
+        policy=config.policy(_learning_jwks(config, deadline=deadline)), deadline_monotonic=deadline)
+    owner_hash = hashlib.sha256(principal.subject.encode("utf-8")).hexdigest()
+    if (principal.email.casefold() not in config.allowed_emails
+            or hashlib.sha256(request["access_jwt"].encode("ascii")).hexdigest()
+                != principal.token_fingerprint
+            or ingress["proof_sha256"] != retained.proof_sha256
+            or ingress["core_source_generation"] != custody.core_source_generation
+            or ingress["core_generation"] != custody.core_generation):
+        raise CoreInspectionDenied("master plan owner ingress changed")
+    try:
+        from hermes_installer.components.resources_active_profile_source import RootVerifiedJarvisMasterSource
+        from hermes_installer.remote.jarvis_mission_executor import mission_goal_arguments_sha256
+        path = Path("/var/lib/hermes-jarvis-chat/chat.sqlite3")
+        path_info, parent_info = os.lstat(path), os.lstat(path.parent)
+        if (not stat.S_ISREG(path_info.st_mode) or path_info.st_uid != 0 or path_info.st_nlink != 1
+                or stat.S_IMODE(path_info.st_mode) & 0o022
+                or not stat.S_ISDIR(parent_info.st_mode) or parent_info.st_uid != 0
+                or stat.S_IMODE(parent_info.st_mode) & 0o022):
+            raise ValueError
+        master = RootVerifiedJarvisMasterSource.current_master_source(custody, config)
+        if (type(master) is not RootVerifiedJarvisMasterSource
+                or master.is_current_sealed(custody, now=time.monotonic()) is not True):
+            raise ValueError
+        catalog, catalog_sha = _read_root_planning_catalog(custody.core_source_generation)
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=1) as db:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA query_only=ON")
+            mission = db.execute(
+                "SELECT * FROM jarvis_missions WHERE id=? AND owner=? AND revision=?",
+                (request["mission_id"], owner_hash, request["revision"])).fetchone()
+            planning = db.execute(
+                "SELECT * FROM jarvis_mission_planning_turns WHERE owner=? AND mission_id=? AND revision=?",
+                (owner_hash, request["mission_id"], request["revision"])).fetchone()
+            if mission is None or planning is None:
+                raise ValueError
+            plan = json.loads(mission["master_plan_json"], object_pairs_hook=_unique_pairs)
+            selected = json.loads(mission["selected_source_ids"], object_pairs_hook=_unique_pairs)
+            source_binding = json.loads(planning["source_binding"], object_pairs_hook=_unique_pairs)
+            turn = db.execute("SELECT owner,conversation_id,status,runtime_session_id,core_generation "
+                              "FROM turns WHERE id=?", (mission["master_plan_gateway_turn_id"],)).fetchone()
+            if (mission["status"] != "draft" or mission["execution_mode"] not in {"oneshot", "kanban"}
+                    or not _is_hash(mission["master_plan_sha256"])
+                    or not _is_hash(mission["master_plan_response_sha256"])
+                    or not isinstance(selected, list) or any(item not in catalog["sources"] for item in selected)
+                    or planning["status"] != "completed" or turn is None
+                    or planning["gateway_turn_id"] != mission["master_plan_gateway_turn_id"]
+                    or planning["conversation_id"] != turn["conversation_id"]
+                    or planning["task_sha256"] != mission_goal_arguments_sha256(mission["brief"])
+                    or planning["catalog_sha256"] != catalog_sha
+                    or planning["status"] != "completed"
+                    or source_binding != {"core_generation": custody.core_generation,
+                                          "core_source_generation": custody.core_source_generation}
+                    or planning["master_source_generation_sha256"] != master.generation_sha256
+                    or planning["master_source_manifest_sha256"] != master.source_member_manifest_sha256
+                    or planning["master_prompt_sha256"] != master.effective_prompt_sha256
+                    or turn["owner"] != owner_hash or turn["status"] != "completed"
+                    or turn["runtime_session_id"] is None
+                    or turn["core_generation"] != custody.core_generation):
+                raise ValueError
+            full_digest = hashlib.sha256(_canonical_json({"execution_mode": mission["execution_mode"],
+                "selected_source_ids": selected, "plan": plan})).hexdigest()
+            if full_digest != mission["master_plan_sha256"]:
+                raise ValueError
+            row = {
+                "schema": 1, "mission_id": mission["id"], "revision": mission["revision"],
+                "owner_subject_sha256": owner_hash,
+                "goal_sha256": planning["task_sha256"],
+                "plan_json": _canonical_json(plan).decode("utf-8"),
+                "plan_sha256": mission["master_plan_sha256"],
+                "response_sha256": mission["master_plan_response_sha256"],
+                "gateway_turn_id": mission["master_plan_gateway_turn_id"],
+                "owner_turn_handle": mission["master_plan_owner_turn_handle"],
+                "core_generation": mission["master_plan_core_generation"],
+                "core_source_generation": mission["master_plan_core_source_generation"],
+                "catalog_sha256": planning["catalog_sha256"],
+                "planner_prompt_sha256": planning["planner_prompt_sha256"],
+                "master_source_generation_sha256": master.generation_sha256,
+                "master_source_manifest_sha256": master.source_member_manifest_sha256,
+                "master_prompt_sha256": master.effective_prompt_sha256,
+                "source_profile_id": "hermes", "selected_source_ids": selected,
+                "execution_mode": mission["execution_mode"],
+            }
+        if (time.monotonic() >= deadline or master.is_current_sealed(custody, now=time.monotonic()) is not True
+                or _read_root_planning_catalog(custody.core_source_generation)[1] != catalog_sha):
+            raise ValueError
+    except Exception:
+        raise CoreInspectionDenied("durable master plan is unavailable or stale") from None
+    return {"schema": 1, "nonce": request["nonce"], "ok": True, "plan_data": row}
 
 
 def observe_final_effect_request(config: CoreGatewayConfig, *, request: dict[str, Any],
@@ -2349,6 +3015,7 @@ class CoreVerifiedOwnerTurnObservation:
     gateway_turn_id: str
     prompt_sha256: str
     mission_binding: MissionBinding | None
+    planning_context: PlanningContext | None
     _core_pidfd: int = field(repr=False, compare=False)
     _seal: object = field(repr=False, compare=False)
 
@@ -2358,6 +3025,7 @@ class CoreVerifiedOwnerTurnObservation:
         try:
             claims = {name: getattr(self, name) for name in _OWNER_TURN_FIELDS}
             claims["mission_binding"] = _mission_binding_wire(self.mission_binding)
+            claims["planning_context"] = _planning_context_wire(self.planning_context)
             issued = self.ingress_issued_monotonic
             return bool(
                 self._seal is _OWNER_TURN_SEAL and type(self.schema) is int and self.schema == 1
@@ -2396,6 +3064,10 @@ class CoreVerifiedOwnerTurnObservation:
                 and self.accepted_monotonic >= issued
                 and self.accepted_monotonic < self.ingress_expires_monotonic
                 and self.accepted_monotonic < self.expires_monotonic
+                and (self.planning_context is None or (
+                    type(self.planning_context) is PlanningContext
+                    and self.mission_binding is None
+                    and self.prompt_sha256 == self.planning_context.planner_prompt_sha256))
                 and all(type(value) in (int, float) and math.isfinite(value) for value in
                         (self.jwt_expires_monotonic, self.ingress_issued_monotonic,
                          self.ingress_expires_monotonic, self.accepted_monotonic,
@@ -2655,6 +3327,18 @@ def _serve_connection(conn: socket.socket, config: CoreGatewayConfig) -> None:
                 peer_uid=request.get("peer_uid"), peer_gid=request.get("peer_gid"),
                 registry=_CORE_NATIVE_REGISTRY)
             maximum = MAX_RESPONSE
+        elif request.get("op") == "prepare-master-planning-context":
+            result = prepare_master_planning_context(config, request=request,
+                caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+                peer_pid=request.get("peer_pid"), peer_uid=request.get("peer_uid"),
+                peer_gid=request.get("peer_gid"), custody=_CORE_NATIVE_CUSTODY)
+            maximum = MAX_RESPONSE
+        elif request.get("op") == "read-master-plan":
+            result = observe_read_master_plan(config, request=request,
+                caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+                peer_pid=request.get("peer_pid"), peer_uid=request.get("peer_uid"),
+                peer_gid=request.get("peer_gid"), custody=_CORE_NATIVE_CUSTODY)
+            maximum = MAX_MASTER_PLAN_RESPONSE
         elif request.get("op") in {"list-final-effects", "decide-final-effect"}:
             result = observe_final_effect_request(config, request=request, caller_pid=caller_pid,
                 caller_uid=caller_uid, caller_gid=caller_gid, peer_pid=request.get("peer_pid"),
@@ -2962,14 +3646,21 @@ def verify_current_skill_learning(config: CoreGatewayConfig, *, access_jwt: str,
 def verify_current_owner_turn(config: CoreGatewayConfig, *, access_jwt: str,
                               accepted_ingress: Any, session_id: str,
                               conversation_id: str, gateway_turn_id: str,
-                              prompt_sha256: str, mission_binding: Any = None) -> str:
+                              prompt_sha256: str, mission_binding: Any = None,
+                              planning_context: Any = None,
+                              require_planning_context: bool = False) -> str:
     """Ask the root inspector to mint one current owner-turn handle; return no proof fields."""
     from .core_gateway import CoreAcceptedIngressObservation, _log_ingress_denial, _read_config_current
     try:
         mission_wire = _mission_binding_wire(mission_binding)
+        planning_wire = _planning_context_wire(planning_context)
     except Exception:
         raise CoreGatewayDenied("current accepted owner turn is required") from None
-    if (type(accepted_ingress) is not CoreAcceptedIngressObservation
+    if (type(require_planning_context) is not bool
+            or (require_planning_context and planning_wire is None)
+            or (planning_wire is not None and mission_wire is not None)
+            or (planning_wire is not None and planning_wire["planner_prompt_sha256"] != prompt_sha256)
+            or type(accepted_ingress) is not CoreAcceptedIngressObservation
             or not isinstance(access_jwt, str) or not 1 <= len(access_jwt) <= 16_384
             or not access_jwt.isascii()
             or hashlib.sha256(access_jwt.encode("ascii")).hexdigest()
@@ -3011,7 +3702,7 @@ def verify_current_owner_turn(config: CoreGatewayConfig, *, access_jwt: str,
             "ingress_proof_sha256": root_proof.proof_sha256,
             "session_id": session_id, "conversation_id": conversation_id,
             "gateway_turn_id": gateway_turn_id, "prompt_sha256": prompt_sha256,
-            "mission_binding": mission_wire,
+            "mission_binding": mission_wire, "planning_context": planning_wire,
         }
         raw = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("ascii")
         if len(raw) > MAX_OWNER_TURN_REQUEST_BYTES or time.monotonic() >= deadline:
@@ -3047,6 +3738,152 @@ class CoreGatewayInspector:
         if type(config) is not CoreGatewayConfig:
             raise CoreGatewayDenied("fixed current core gateway configuration is required")
         self._config = config
+
+    def prepare_master_planning_context(self, access_jwt: str, accepted_ingress: Any,
+                                       mission_id: str, revision: int,
+                                       planner_prompt_sha256: str) -> PlanningContext:
+        """Fetch a root-derived planning DTO for an already reserved owner mission."""
+        from .core_gateway import CoreAcceptedIngressObservation, _read_config_current
+        if (type(accepted_ingress) is not CoreAcceptedIngressObservation
+                or not isinstance(access_jwt, str) or not 1 <= len(access_jwt) <= 16_384
+                or not access_jwt.isascii()
+                or hashlib.sha256(access_jwt.encode("ascii")).hexdigest()
+                    != accepted_ingress.principal.token_fingerprint
+                or not isinstance(mission_id, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{24,64}", mission_id) is None
+                or type(revision) is not int or revision < 1
+                or not _is_hash(planner_prompt_sha256)):
+            raise CoreGatewayDenied("current accepted mission planning ingress is required")
+        _read_config_current(self._config)
+        if accepted_ingress.verify_current(self._config) is not True:
+            raise CoreGatewayDenied("current accepted mission planning ingress is required")
+        proof = accepted_ingress.root_observation
+        nonce = os.urandom(32).hex()
+        deadline = min(time.monotonic() + MAX_PROOF_SECONDS, accepted_ingress.expires_monotonic)
+        info = os.lstat(CORE_INSPECTOR_SOCKET)
+        if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != 0
+                or info.st_gid != self._config.gateway_gid
+                or stat.S_IMODE(info.st_mode) != 0o660):
+            raise CoreGatewayDenied("root planning inspector is unavailable")
+        body = {"schema": 1, "op": "prepare-master-planning-context", "nonce": nonce,
+            "peer_pid": accepted_ingress.peer_pid, "peer_uid": accepted_ingress.peer_uid,
+            "peer_gid": accepted_ingress.peer_gid, "access_jwt": access_jwt,
+            "core_generation": accepted_ingress.core_generation,
+            "ingress_nonce": proof.nonce, "ingress_proof_sha256": proof.proof_sha256,
+            "mission_id": mission_id, "revision": revision,
+            "planner_prompt_sha256": planner_prompt_sha256}
+        raw = json.dumps(body, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("ascii")
+        if len(raw) > MAX_OWNER_TURN_REQUEST_BYTES:
+            raise CoreGatewayDenied("root planning request exceeded its bound")
+        conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            conn.settimeout(max(0.05, deadline - time.monotonic()))
+            conn.connect(str(CORE_INSPECTOR_SOCKET))
+            if not hasattr(socket, "SO_PEERCRED"):
+                raise ValueError
+            pid, uid, _gid = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            if uid != 0 or pid <= 1:
+                raise ValueError
+            conn.sendall(struct.pack("!I", len(raw)) + raw)
+            result = _read_frame(conn, deadline, MAX_RESPONSE)
+        except Exception:
+            raise CoreGatewayDenied("root planning context is unavailable") from None
+        finally:
+            conn.close()
+        try:
+            if (set(result) != {"schema", "nonce", "ok", "planning_context"}
+                    or result.get("schema") != 1 or result.get("nonce") != nonce
+                    or result.get("ok") is not True or time.monotonic() >= deadline):
+                raise ValueError
+            context = PlanningContext.from_wire(result["planning_context"])
+            if (context.mission_id != mission_id or context.revision != revision
+                    or context.planner_prompt_sha256 != planner_prompt_sha256):
+                raise ValueError
+            _read_config_current(self._config)
+            if accepted_ingress.verify_current(self._config) is not True:
+                raise ValueError
+            return context
+        except Exception:
+            raise CoreGatewayDenied("root planning context is malformed, stale or mismatched") from None
+
+    def read_master_plan(self, access_jwt: str, accepted_ingress: Any,
+                         mission_id: str, revision: int) -> RootVerifiedJarvisMasterPlanData | None:
+        """Return only a fresh root-read durable plan for this authenticated owner."""
+        from .core_gateway import CoreAcceptedIngressObservation, _read_config_current
+        if (type(accepted_ingress) is not CoreAcceptedIngressObservation
+                or not isinstance(access_jwt, str) or not 1 <= len(access_jwt) <= 16_384
+                or not access_jwt.isascii()
+                or hashlib.sha256(access_jwt.encode("ascii")).hexdigest()
+                    != accepted_ingress.principal.token_fingerprint
+                or not isinstance(mission_id, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{24,64}", mission_id) is None
+                or type(revision) is not int or revision < 1):
+            raise CoreGatewayDenied("current authenticated mission ingress is required")
+        _read_config_current(self._config)
+        if accepted_ingress.verify_current(self._config) is not True:
+            raise CoreGatewayDenied("current authenticated mission ingress is required")
+        proof = accepted_ingress.root_observation
+        nonce = os.urandom(32).hex()
+        deadline = min(time.monotonic() + MAX_PROOF_SECONDS, accepted_ingress.expires_monotonic)
+        info = os.lstat(CORE_INSPECTOR_SOCKET)
+        if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != 0
+                or info.st_gid != self._config.gateway_gid
+                or stat.S_IMODE(info.st_mode) != 0o660):
+            raise CoreGatewayDenied("root master plan inspector is unavailable")
+        body = {"schema": 1, "op": "read-master-plan", "nonce": nonce,
+            "peer_pid": accepted_ingress.peer_pid, "peer_uid": accepted_ingress.peer_uid,
+            "peer_gid": accepted_ingress.peer_gid, "access_jwt": access_jwt,
+            "core_generation": accepted_ingress.core_generation,
+            "ingress_nonce": proof.nonce, "ingress_proof_sha256": proof.proof_sha256,
+            "mission_id": mission_id, "revision": revision}
+        raw = json.dumps(body, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("ascii")
+        if len(raw) > MAX_OWNER_TURN_REQUEST_BYTES:
+            raise CoreGatewayDenied("root plan read request exceeded its bound")
+        conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            conn.settimeout(max(0.05, deadline - time.monotonic()))
+            conn.connect(str(CORE_INSPECTOR_SOCKET))
+            if not hasattr(socket, "SO_PEERCRED"):
+                raise ValueError
+            pid, uid, _gid = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            if uid != 0 or pid <= 1:
+                raise ValueError
+            conn.sendall(struct.pack("!I", len(raw)) + raw)
+            result = _read_frame(conn, deadline, MAX_MASTER_PLAN_RESPONSE)
+        except Exception:
+            raise CoreGatewayDenied("root durable master plan is unavailable") from None
+        finally:
+            conn.close()
+        _read_config_current(self._config)
+        if accepted_ingress.verify_current(self._config) is not True:
+            raise CoreGatewayDenied("mission owner ingress changed during plan read")
+        if (set(result) != {"schema", "nonce", "ok", "plan_data"}
+                or result.get("schema") != 1 or result.get("nonce") != nonce
+                or result.get("ok") is not True or time.monotonic() >= deadline):
+            raise CoreGatewayDenied("root plan read response is malformed")
+        raw_data = result["plan_data"]
+        if raw_data is None:
+            return None
+        expected = {"schema", "mission_id", "revision", "owner_subject_sha256", "goal_sha256",
+            "plan_json", "plan_sha256", "response_sha256", "gateway_turn_id", "owner_turn_handle",
+            "core_generation", "core_source_generation", "catalog_sha256", "planner_prompt_sha256",
+            "master_source_generation_sha256", "master_source_manifest_sha256", "master_prompt_sha256",
+            "source_profile_id", "selected_source_ids", "execution_mode"}
+        try:
+            if type(raw_data) is not dict or set(raw_data) != expected:
+                raise ValueError
+            data = RootVerifiedJarvisMasterPlanData(
+                **{key: value for key, value in raw_data.items() if key != "selected_source_ids"},
+                selected_source_ids=tuple(raw_data["selected_source_ids"]),
+                _seal=_MASTER_PLAN_DATA_SEAL)
+            if (data.mission_id != mission_id or data.revision != revision
+                    or data.owner_subject_sha256 != hashlib.sha256(
+                        accepted_ingress.principal.subject.encode("utf-8")).hexdigest()
+                    or data.is_root_verified_data() is not True):
+                raise ValueError
+            return data
+        except Exception:
+            raise CoreGatewayDenied("root durable master plan data is invalid") from None
 
     def preflight_native_mission(self, binding: Any, *, owner_subject_sha256: str,
                                  gateway_turn_id: str) -> bool:
