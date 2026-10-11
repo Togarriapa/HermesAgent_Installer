@@ -18,9 +18,9 @@ UPSTREAM_REPOSITORY = "https://github.com/Togarriapa/HermesAgent_Resources"
 UPSTREAM_VERSION = "2.3.1"
 UPSTREAM_REVISION = "113f42d33be9e0c8f0f47f5ca998e687323dec83"
 UPSTREAM_TREE = "c0c994b5e0b96b90cfd2fc564ea8632dff124308"
-OVERLAY_ID = "jarvis-master-semantics-v1"
-APPROVAL_COMMIT = "76fa3f9237d5c6a0cf608f1039f72f70f68a2523"
-OVERLAY_SHA256 = "3b8d50f01a9e14084efd2d5b9974abed1885a43efe65d45772705e94c0d4f028"
+OVERLAY_ID = "jarvis-master-semantics-v2"
+APPROVAL_COMMIT = "aab3b666023559c0d9112633212e0194dcc7af97"
+OVERLAY_SHA256 = "013aa1f45f2ee8cfc7493eb7a3abe66e9c0668bfa4e548fc6cceaeb0ef378df7"
 
 
 class JarvisSemanticsError(ValueError):
@@ -97,6 +97,16 @@ def _apply_profile(profile_id: str, spec: Mapping[str, Any], source: Mapping[str
         if result.get("output") != expected_output:
             raise JarvisSemanticsError("pinned Hermes output contract differs")
         result["output"] = deepcopy(rules["output"])
+        expected_interaction = {
+            "userFacing": True, "soleUserEntryPoint": True,
+            "directUserContact": "allow", "userChannelBinding": "allow",
+            "delegateRequestsTo": ["orchestrator"],
+            "receiveResultsFrom": ["orchestrator"],
+            "directSpecialistDispatch": "deny",
+        }
+        if result.get("interaction") != expected_interaction:
+            raise JarvisSemanticsError("pinned Hermes interaction topology differs")
+        result["interaction"] = deepcopy(rules["interaction"])
     if profile_id == "orchestrator":
         requires = result.get("requires")
         plugins = requires.get("plugins") if isinstance(requires, Mapping) else None
@@ -142,5 +152,10 @@ def effective_bundle_spec(bundle_id: str, spec: Mapping[str, Any], source: Mappi
     orchestration = result.get("orchestration")
     if not isinstance(orchestration, Mapping) or orchestration.get("perEpicKanban") is not True:
         raise JarvisSemanticsError("pinned Hermes runtime bundle Kanban source differs")
+    topology = result.get("topology")
+    if (not isinstance(topology, Mapping) or topology.get("userEntryPoint") != "hermes"
+            or topology.get("internalCoordinator") != "orchestrator"):
+        raise JarvisSemanticsError("pinned Hermes runtime bundle topology differs")
     result["orchestration"] = {**dict(orchestration), **rules["orchestration"]}
+    result["topology"] = {**dict(topology), **rules["topology"]}
     return result

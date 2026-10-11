@@ -801,7 +801,7 @@ def _verified_resources_payload(_admin_receipt=None,*,repair_umask_dirs=False):
   "compiled_profiles":overlay.get("compiled_profiles"),
   "compiled_bundle":overlay.get("compiled_bundle"),
  }
- if (overlay_receipt["overlay_id"]!="jarvis-master-semantics-v1"
+ if (overlay_receipt["overlay_id"]!="jarvis-master-semantics-v2"
      or not isinstance(overlay_receipt["sha256"],str)
      or re.fullmatch(r"[0-9a-f]{64}",overlay_receipt["sha256"]) is None):
   raise CoreRuntimeError("compiled Jarvis master overlay provenance is malformed")

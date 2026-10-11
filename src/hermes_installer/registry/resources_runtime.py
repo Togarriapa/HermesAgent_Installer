@@ -2068,8 +2068,8 @@ def _validate_bundle_declaration(spec: Mapping[str, Any]) -> None:
     if topology is not None:
         if not isinstance(topology, Mapping) or topology.get("userEntryPoint") != "hermes":
             raise ResourceRuntimeError("root topology must name Hermes as its sole user entry point")
-        if topology.get("internalCoordinator") != "orchestrator":
-            raise ResourceRuntimeError("root topology must name the reviewed internal orchestrator")
+        if topology.get("internalCoordinator") not in {"orchestrator", "optional"}:
+            raise ResourceRuntimeError("root topology must name a reviewed coordinator policy")
 
 
 def _validate_webhook_declaration(spec: Mapping[str, Any]) -> None:

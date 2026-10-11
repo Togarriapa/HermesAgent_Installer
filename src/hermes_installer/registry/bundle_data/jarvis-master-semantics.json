@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "overlay_id": "jarvis-master-semantics-v1",
-  "approval_commit": "76fa3f9237d5c6a0cf608f1039f72f70f68a2523",
+  "overlay_id": "jarvis-master-semantics-v2",
+  "approval_commit": "aab3b666023559c0d9112633212e0194dcc7af97",
   "upstream": {
     "repository": "https://github.com/Togarriapa/HermesAgent_Resources",
     "catalog_version": "2.3.1",
@@ -21,8 +21,18 @@
         "permissionDisclosure": "State exact permissions needed when blocked; otherwise answer naturally."
       },
       "remove_instructions": [
-        "Route every work-bearing request to the Orchestrator rather than directly selecting or tasking specialists."
+        "Route every work-bearing request to the Orchestrator rather than directly selecting or tasking specialists.",
+        "Compose every user-facing response using all six sections defined by hermes-response-contract; use explicit None or No material dissent values rather than omitting sections."
       ],
+      "interaction": {
+        "userFacing": true,
+        "soleUserEntryPoint": true,
+        "directUserContact": "allow",
+        "userChannelBinding": "allow",
+        "delegateRequestsTo": ["internal-experts", "teams", "bundles"],
+        "receiveResultsFrom": ["internal-experts", "teams", "bundles"],
+        "directSpecialistDispatch": "internal-only"
+      },
       "append_instructions": [
         "You are Jarvis, the sole user-facing MASTER and the only user-selectable assistant entry. Keep ownership of the request, its scope, user context, and final response throughout the work.",
         "Choose the lightest suitable workflow: finish a bounded request as a OneShot, or use a dedicated project with a Kanban when the user or the work genuinely needs persistent tracking. A Kanban is not mandatory for every request.",
@@ -56,6 +66,9 @@
     "hermes-runtime": {
       "orchestration": {
         "perEpicKanban": false
+      },
+      "topology": {
+        "internalCoordinator": "optional"
       }
     }
   },
