@@ -1378,9 +1378,10 @@ def test_bootstrap_transition_descriptor_requires_exact_sealed_shape():
         os.write(descriptor, body)
         with pytest.raises(release_build.InstallerReleaseBuildError):
             release_build._decode_sealed_handoff_descriptor(descriptor)
-        seals = (release_build.fcntl.F_SEAL_WRITE | release_build.fcntl.F_SEAL_GROW
-                 | release_build.fcntl.F_SEAL_SHRINK | release_build.fcntl.F_SEAL_SEAL)
-        release_build.fcntl.fcntl(descriptor, release_build.fcntl.F_ADD_SEALS, seals)
+        constants = release_build._memfd_seal_constants()
+        seals = (constants["F_SEAL_WRITE"] | constants["F_SEAL_GROW"]
+                 | constants["F_SEAL_SHRINK"] | constants["F_SEAL_SEAL"])
+        release_build.fcntl.fcntl(descriptor, constants["F_ADD_SEALS"], seals)
         parsed, info, observed = release_build._decode_sealed_handoff_descriptor(descriptor)
         assert observed == body and info.st_size == len(body)
         assert parsed == {"schema": 1, "handoff_handle": "h" * 43, "nonce": "n" * 43}
@@ -1419,9 +1420,10 @@ def test_bootstrap_transition_descriptor_rejects_duplicate_and_extra_identity_fi
     def sealed(body: bytes) -> int:
         descriptor = os.memfd_create("handoff-negative-test", os.MFD_ALLOW_SEALING)
         os.write(descriptor, body)
-        seals = (release_build.fcntl.F_SEAL_WRITE | release_build.fcntl.F_SEAL_GROW
-                 | release_build.fcntl.F_SEAL_SHRINK | release_build.fcntl.F_SEAL_SEAL)
-        release_build.fcntl.fcntl(descriptor, release_build.fcntl.F_ADD_SEALS, seals)
+        constants = release_build._memfd_seal_constants()
+        seals = (constants["F_SEAL_WRITE"] | constants["F_SEAL_GROW"]
+                 | constants["F_SEAL_SHRINK"] | constants["F_SEAL_SEAL"])
+        release_build.fcntl.fcntl(descriptor, constants["F_ADD_SEALS"], seals)
         return descriptor
 
     duplicate = sealed(b'{"schema":1,"schema":1,"handoff_handle":"' + b"h" * 43
@@ -1487,9 +1489,10 @@ def test_bootstrap_fd3_survives_exec_and_same_fd_cloexec_is_repaired():
                     "schema": 1, "handoff_handle": "h" * 43, "nonce": "n" * 43,
                 })
                 os.write(memfd, body)
-                seals = (release_build.fcntl.F_SEAL_WRITE | release_build.fcntl.F_SEAL_GROW
-                         | release_build.fcntl.F_SEAL_SHRINK | release_build.fcntl.F_SEAL_SEAL)
-                release_build.fcntl.fcntl(memfd, release_build.fcntl.F_ADD_SEALS, seals)
+                constants = release_build._memfd_seal_constants()
+                seals = (constants["F_SEAL_WRITE"] | constants["F_SEAL_GROW"]
+                         | constants["F_SEAL_SHRINK"] | constants["F_SEAL_SEAL"])
+                release_build.fcntl.fcntl(memfd, constants["F_ADD_SEALS"], seals)
 
                 if source_is_fd3:
                     # Demonstrate the kernel identity-dup case leaves CLOEXEC set.
@@ -1499,7 +1502,7 @@ def test_bootstrap_fd3_survives_exec_and_same_fd_cloexec_is_repaired():
                 assert not release_build.fcntl.fcntl(3, release_build.fcntl.F_GETFD) & release_build.fcntl.FD_CLOEXEC
 
                 code = ("import fcntl,os,sys; "
-                        "assert fcntl.fcntl(3,fcntl.F_GET_SEALS) & 15 == 15; "
+                        "assert fcntl.fcntl(3,1034) & 15 == 15; "
                         "assert os.read(3,4097) == " + repr(body) + "; sys.exit(0)")
                 pid = os.fork()
                 if pid == 0:
@@ -1833,7 +1836,7 @@ def test_recovered_update_entry_keeps_fd3_open_when_memfd_is_allocated_as_fd3(mo
                 transition, {"expires_monotonic": time.monotonic() + 30}, adoption)
             assert os.get_inheritable(3)
             code = ("import fcntl,json,os,sys; "
-                    "assert fcntl.fcntl(3,fcntl.F_GET_SEALS) & 15 == 15; "
+                    "assert fcntl.fcntl(3,1034) & 15 == 15; "
                     "value=json.loads(os.read(3,4097)); "
                     "assert set(value)=={'schema','handoff_handle','nonce'}; "
                     "assert len(value['handoff_handle'])==43; sys.exit(0)")
