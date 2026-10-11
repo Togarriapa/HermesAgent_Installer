@@ -116,8 +116,14 @@ class VerifiedResourcesProfileSource:
    return False
 
  def resolve_current(self, custody):
-  if not self.is_current_sealed(custody): return None
   try:
+   from .remote import core_gateway_inspector as inspector
+   if (type(self) is not VerifiedResourcesProfileSource
+       or self._seal is not _RESOURCES_PROFILE_SOURCE_SEAL
+       or type(custody) is not inspector.CoreNativeObserverCustody
+       or custody._seal is not inspector._NATIVE_CUSTODY_SEAL
+       or custody.core_source_generation!=self.core_source_generation):
+    return None
    current=read_current_resources_profile_source(
     core_source_generation=custody.core_source_generation)
    if (current is None or current.profile_prompt_sha256!=self.profile_prompt_sha256
