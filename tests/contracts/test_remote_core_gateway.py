@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import stat
+import struct
 import tempfile
 import time
 import unittest
@@ -38,7 +39,7 @@ def _config():
         config_path=core_gateway.CORE_CONFIG, config_sha256=digest)
 
 
-def _root_observation(config, *, now=10.0):
+def _root_observation(config, *, now=10.0, peer_uid=996, peer_gid=981):
     nonce = "b" * 64
     core_pid, start_ticks, listener_inode = 330, "77", 8822
     invocation = "12345678-1234-1234-1234-123456789012"
@@ -50,7 +51,7 @@ def _root_observation(config, *, now=10.0):
     claims = {
         "schema": 1, "nonce": nonce, "boot_id": config.boot_id,
         "issued_monotonic": now, "expires_monotonic": now + 5.0,
-        "peer_pid": 440, "peer_uid": 996, "peer_gid": 981,
+        "peer_pid": 440, "peer_uid": peer_uid, "peer_gid": peer_gid,
         "peer_start_ticks": "88", "tunnel_invocation_id": invocation,
         "tunnel_unit_sha256": config.tunnel_unit_sha256,
         "tunnel_executable_sha256": config.cloudflared_binary_sha256,
@@ -81,21 +82,52 @@ def _expected_source_generation(config):
     return hashlib.sha256(b"hermes-jarvis-core-source-generation-v1\0" + canonical).hexdigest()
 
 
-def _accepted_observation(config, *, now, lease_seconds=4.0):
-    root = _root_observation(config, now=now - 0.01)
+def _accepted_observation(config, *, now, lease_seconds=4.0, peer_uid=996, peer_gid=981):
+    root = _root_observation(config, now=now - 0.01, peer_uid=peer_uid, peer_gid=peer_gid)
     principal = Principal("owner@example.test", "owner-subject", time.time() + 120, "c" * 64)
     jwt_expiry = now + 100.0
     expiry = min(now + lease_seconds, root.expires_monotonic, jwt_expiry)
     claims = dict(principal=principal, jwt_expiry=jwt_expiry, root_proof=root,
-        peer=(440, 996, 981), listener=(1, 2), issued=now - 0.01, expiry=expiry,
+        peer=(440, peer_uid, peer_gid), listener=(1, 2), issued=now - 0.01, expiry=expiry,
         core_generation=root.core_generation, config_sha256=config.config_sha256)
     return core_gateway.CoreAcceptedIngressObservation(
-        principal, jwt_expiry, root, 440, 996, 981, 1, 2, now - 0.01, expiry,
+        principal, jwt_expiry, root, 440, peer_uid, peer_gid, 1, 2, now - 0.01, expiry,
         root.core_generation, config.config_sha256,
         core_gateway._accepted_claim_digest(**claims), core_gateway._ACCEPTED_INGRESS_SEAL)
 
 
 class CoreGatewayProofTests(unittest.TestCase):
+    def test_dynamic_tunnel_peer_is_accepted_only_when_bound_to_root_proof(self):
+        config = _config()
+        dynamic_uid = 63_324
+        dynamic_gid = 63_324
+        accepted = _accepted_observation(config, now=12.0,
+                                         peer_uid=dynamic_uid, peer_gid=dynamic_gid)
+        fake_stat = SimpleNamespace(st_mode=stat.S_IFSOCK | 0o660, st_dev=1, st_ino=2,
+                                    st_uid=config.gateway_uid, st_gid=config.gateway_gid)
+        with patch.object(core_gateway_inspector, "_boot_id", return_value=config.boot_id), \
+             patch.object(core_gateway.os, "lstat", return_value=fake_stat), \
+             patch.object(core_gateway, "_read_config_current"):
+            self.assertIs(accepted.verify_current(config, now=13.0), True)
+            changed = dataclasses.replace(accepted, peer_uid=config.gateway_uid,
+                                          peer_gid=config.gateway_gid)
+            self.assertIs(changed.verify_current(config, now=13.0), False)
+
+        class TunnelPeer:
+            family = core_gateway.socket.AF_UNIX
+
+            def getsockname(self):
+                return str(config.ingress_socket)
+
+            def getsockopt(self, *_args):
+                return struct.pack("3i", 440, dynamic_uid, dynamic_gid)
+
+        request = SimpleNamespace(transport=SimpleNamespace(
+            get_extra_info=lambda name: TunnelPeer() if name == "socket" else None))
+        with patch.object(core_gateway.os, "lstat", return_value=fake_stat):
+            self.assertEqual(core_gateway._request_peer(request, config, (1, 2)),
+                             (440, dynamic_uid, dynamic_gid, (1, 2)))
+
     def test_config_load_accepts_only_actual_pinned_core_python_path(self):
         document = {
             "schema": 1, "hostname": "jarvis.example.test",

@@ -47,6 +47,9 @@ _INGRESS_DIAGNOSTIC_STAGES = frozenset({
     "headers", "origin", "jwt", "unix_peer", "root_inspection", "accepted_proof",
     "config_before_ingress", "accept_ingress", "proof_before_handler", "route_handler",
     "proof_after_handler", "config_before_response", "proof_before_response",
+    "unix_peer_socket", "unix_peer_family", "unix_peer_credentials",
+    "unix_peer_address", "unix_peer_identity", "unix_peer_listener_metadata",
+    "unix_peer_listener_expected",
 })
 _CHAT_CONTENT_SECURITY_POLICY = (
     "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; "
@@ -273,8 +276,9 @@ class CoreAcceptedIngressObservation:
                     or not _sha256(self.principal.token_fingerprint)
                     or type(self.root_observation) is not CoreVerifiedIngressObservation
                     or self._config_sha256 != config.config_sha256
-                    or self.peer_pid <= 1 or self.peer_uid != config.gateway_uid
-                    or self.peer_gid != config.gateway_gid
+                    or any(type(value) is not int or value < 0 for value in
+                           (self.peer_pid, self.peer_uid, self.peer_gid))
+                    or self.peer_pid <= 1
                     or any(isinstance(value, bool) or not isinstance(value, (int, float))
                            or not math.isfinite(value) for value in (
                                self.jwt_expires_monotonic, self.issued_monotonic,
@@ -308,24 +312,49 @@ class CoreAcceptedIngressObservation:
 
 def _request_peer(request: Any, config: CoreGatewayConfig,
                   expected_listener: tuple[int, int] | None) -> tuple[int, int, int, tuple[int, int]]:
+    def deny(stage: str, error: BaseException) -> None:
+        _log_ingress_denial(stage, error)
+        raise CoreGatewayDenied(
+            "request did not arrive through the owned Cloudflare Unix ingress") from None
+
     try:
         transport = request.transport
         peer = transport.get_extra_info("socket") if transport is not None else None
-        if (peer is None or peer.family != socket.AF_UNIX or not hasattr(socket, "SO_PEERCRED")
-                or peer.getsockname() != str(config.ingress_socket)):
-            raise ValueError
-        pid, uid, gid = struct.unpack("3i", peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
-        if pid <= 1 or (uid, gid) != (config.gateway_uid, config.gateway_gid):
-            raise ValueError
+    except Exception as error:
+        deny("unix_peer_socket", error)
+    if peer is None:
+        deny("unix_peer_socket", ValueError())
+    if peer.family != socket.AF_UNIX:
+        deny("unix_peer_family", ValueError())
+    if not hasattr(socket, "SO_PEERCRED"):
+        deny("unix_peer_credentials", OSError())
+    try:
+        pid, uid, gid = struct.unpack(
+            "3i", peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+    except Exception as error:
+        deny("unix_peer_credentials", error)
+    try:
+        peer_address = peer.getsockname()
+    except Exception as error:
+        deny("unix_peer_address", error)
+    if peer_address != str(config.ingress_socket):
+        deny("unix_peer_address", ValueError())
+    # cloudflared uses a systemd DynamicUser. The root inspector binds this exact
+    # kernel tuple to its current unit PID/UID/GID and required gateway group.
+    if (any(type(value) is not int or value < 0 for value in (pid, uid, gid))
+            or pid <= 1):
+        deny("unix_peer_identity", ValueError())
+    try:
         listener = os.lstat(config.ingress_socket)
-        if (not stat.S_ISSOCK(listener.st_mode) or listener.st_uid != config.gateway_uid
-                or listener.st_gid != config.gateway_gid or stat.S_IMODE(listener.st_mode) != 0o660
-                or expected_listener is None
-                or (listener.st_dev, listener.st_ino) != expected_listener):
-            raise ValueError
-        return pid, uid, gid, (listener.st_dev, listener.st_ino)
-    except Exception:
-        raise CoreGatewayDenied("request did not arrive through the owned Cloudflare Unix ingress") from None
+    except Exception as error:
+        deny("unix_peer_listener_metadata", error)
+    if (not stat.S_ISSOCK(listener.st_mode) or listener.st_uid != config.gateway_uid
+            or listener.st_gid != config.gateway_gid or stat.S_IMODE(listener.st_mode) != 0o660):
+        deny("unix_peer_listener_metadata", ValueError())
+    if (expected_listener is None
+            or (listener.st_dev, listener.st_ino) != expected_listener):
+        deny("unix_peer_listener_expected", ValueError())
+    return pid, uid, gid, (listener.st_dev, listener.st_ino)
 
 
 async def _validate_jwt(token: str, policy: RemotePolicy, *, deadline: float) -> Principal:
