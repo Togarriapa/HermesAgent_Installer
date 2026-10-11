@@ -1450,7 +1450,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
 
 def _compose_feature_assets() -> None:
     """Embed reviewed views in HTML/CSS and serve feature code separately."""
-    global _HTML, _CSS, _JS
+    global _HTML, _CSS, _JS, _FEATURES_JS
     validate_feature_assets(FEATURE_ASSETS)
     grouped_nav: dict[str, list[str]] = {"work": [], "resources": [], "system": []}
     panels: list[str] = []
