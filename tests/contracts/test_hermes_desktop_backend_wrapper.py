@@ -36,6 +36,7 @@ class HermesDesktopBackendWrapperTests(unittest.TestCase):
             "pathlib.Path(os.environ['FIXTURE_CAPTURE']).write_text(json.dumps({"
             "'argv':sys.argv[1:], 'cwd':os.getcwd(), 'home':os.environ.get('HOME'),"
             "'hermes_home':os.environ.get('HERMES_HOME'), 'pythonpath':os.environ.get('PYTHONPATH'),"
+            "'disable_lazy_installs':os.environ.get('HERMES_DISABLE_LAZY_INSTALLS'),"
             "'pythonhome':os.environ.get('PYTHONHOME'), 'pythonstartup':os.environ.get('PYTHONSTARTUP'),"
             "'pythonuserbase':os.environ.get('PYTHONUSERBASE')}))\n"
             "raise SystemExit(int(os.environ.get('FIXTURE_BACKEND_EXIT', '0')))\n"
@@ -57,6 +58,7 @@ class HermesDesktopBackendWrapperTests(unittest.TestCase):
             "PYTHONHOME": "/must-be-cleared",
             "PYTHONSTARTUP": "/must-be-cleared",
             "PYTHONUSERBASE": "/must-be-cleared",
+            "HERMES_DISABLE_LAZY_INSTALLS": "0",
             "FIXTURE_CAPTURE": str(self.capture),
             "PATH": f"{self.root}:{os.environ.get('PATH', '')}",
         }
@@ -80,6 +82,7 @@ class HermesDesktopBackendWrapperTests(unittest.TestCase):
         self.assertEqual(observed["home"], "/home/admin")
         self.assertEqual(observed["hermes_home"], "/home/admin/.hermes")
         self.assertEqual(observed["pythonpath"], str(self.source))
+        self.assertEqual(observed["disable_lazy_installs"], "1")
         self.assertIsNone(observed["pythonhome"])
         self.assertIsNone(observed["pythonstartup"])
         self.assertIsNone(observed["pythonuserbase"])
