@@ -313,7 +313,7 @@ def test_owner_turn_registration_uses_actual_rebound_session_and_final_prompt(tm
 
     asyncio.run(exercise())
 
-    assert sent == [("runtime-after-idle", accepted_text),
+    assert sent == [("runtime-after-idle", final_first_prompt),
                     ("runtime-after-idle", final_second_prompt)]
     assert calls[0] == {
         "access_jwt": access_jwt,
@@ -330,7 +330,7 @@ def test_owner_turn_registration_uses_actual_rebound_session_and_final_prompt(tm
     assert service.owner_turn_handle_for(principal("subject-a"), turn_ids[1]) is None
     with pytest.raises(JarvisChatDenied):
         service.owner_turn_handle_for(principal("subject-b"), turn_ids[0])
-    assert sent == [("runtime-after-idle", accepted_text),
+    assert sent == [("runtime-after-idle", final_first_prompt),
                     ("runtime-after-idle", "ordinary chat remains available")]
     current = store.get_conversation("subject-a", conversation["id"])
     assert current["backend_id"] == "runtime-after-idle"

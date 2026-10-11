@@ -143,6 +143,9 @@ def test_generated_core_launcher_has_valid_shell_syntax():
 
 def _install_legacy_service_fixture(tmp_path, monkeypatch):
     calls, enabled = _fake_runtime(tmp_path, monkeypatch)
+    # Establish a complete temporary owned install using the same fixture actor
+    # and fixed temp paths; do not manufacture a journal fragment by hand.
+    core.install_or_resume()
     launcher_bytes = core._legacy_launcher()
     core.LAUNCHER.write_bytes(launcher_bytes)
     core.LAUNCHER.chmod(0o755)
@@ -152,6 +155,9 @@ def _install_legacy_service_fixture(tmp_path, monkeypatch):
                    "unit_sha256": hashlib.sha256(core._unit()).hexdigest()})
     core.JOURNAL.write_text(json.dumps(record, sort_keys=True) + "\n")
     core.JOURNAL.chmod(0o600)
+    # The production recipe is the post-migration comparator. The on-disk
+    # legacy launcher and journal hashes above remain the migration input.
+    monkeypatch.setattr(core, "_launcher", _REAL_CORE_LAUNCHER)
     monkeypatch.setattr(core, "ADAPTER_MIGRATION_BACKUP",
                         core.JOURNAL.parent / "adapter-migration-backup")
     monkeypatch.setattr(core, "_validate_adapter_source_path", lambda: None)
@@ -178,6 +184,10 @@ def _install_legacy_service_fixture(tmp_path, monkeypatch):
     return calls, enabled, launcher_bytes
 
 
+_REAL_CORE_LAUNCHER = core._launcher
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="legacy core migration requires the real root actor")
 def test_adapter_migration_activates_bridge_before_owned_core_restart(tmp_path, monkeypatch):
     calls, _enabled, old_launcher = _install_legacy_service_fixture(tmp_path, monkeypatch)
     token = core.TOKEN.read_bytes()
@@ -197,6 +207,7 @@ def test_adapter_migration_activates_bridge_before_owned_core_restart(tmp_path, 
     assert ordered.index(("bridge", "enable")) < ordered.index(("systemctl", "restart", core.SERVICE))
 
 
+@pytest.mark.skipif(os.geteuid() != 0, reason="legacy core migration requires the real root actor")
 def test_adapter_migration_restores_exact_owned_files_after_restart_failure(tmp_path, monkeypatch):
     calls, _enabled, old_launcher = _install_legacy_service_fixture(tmp_path, monkeypatch)
     token = core.TOKEN.read_bytes()
