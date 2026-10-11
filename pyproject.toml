@@ -12,6 +12,8 @@ dependencies = ["PyYAML==6.0.3"]
 [project.scripts]
 hermes-installer = "hermes_installer.cli:main"
 hermes-installer-authority = "hermes_installer.authority.daemon:main"
+hermes-installer-gateway-stage = "hermes_installer.remote.manual_stage:main"
+hermes-installer-gateway-stage-inspector = "hermes_installer.remote.manual_stage_inspector:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
