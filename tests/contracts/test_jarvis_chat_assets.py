@@ -232,11 +232,25 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('headers: {"Idempotency-Key": createIdempotencyKey()}', trash)
         self.assertIn('await refreshTrash();', trash)
         self.assertIn('result.conversation.id !== id', trash)
-        bridge = client.split("async function sendOverviewCommand(event) {", 1)[1].split("overviewForm.addEventListener", 1)[0]
-        self.assertIn("const accepted = await sendMessage(text, {modelId: null, reasoningEffort: null});", bridge)
-        self.assertIn("if (accepted)", bridge)
-        self.assertIn("Your text is preserved here", bridge)
-        self.assertIn("overviewCommandPending", bridge)
+        overview_command = client.split(
+            'if (feature.id === "overview") api.command = async (text) => {', 1
+        )[1].split('\n    if (feature.id === "overview") api.newConversation', 1)[0]
+        self.assertIn("await showView(\"chat\");", overview_command)
+        self.assertIn("const accepted = await sendMessage(text.trim());", overview_command)
+        self.assertIn('if (!accepted) throw new Error("Jarvis could not safely queue this response.");', overview_command)
+        self.assertIn("return true;", overview_command)
+        overview = next(feature for feature in FEATURE_ASSETS if feature.feature_id == "overview")
+        overview_submit = overview.mount_js.split(
+            "async function submitCommand(event) {", 1
+        )[1].split("\n  commandForm.addEventListener", 1)[0]
+        self.assertIn("await api.command(text)", overview_submit)
+        self.assertIn("commandInput.value = '';", overview_submit)
+        self.assertIn(
+            "Command not sent. Your text remains here; try again or open Chat.", overview_submit
+        )
+        self.assertIn(
+            "finally { button.disabled = false; commandInput.disabled = false; }", overview_submit
+        )
         self.assertIn('if (feature.id === "models-settings") contextualCleanup = preselectCurrentModelConversation(root);', client)
         model_context = client.split("function preselectCurrentModelConversation(root) {", 1)[1].split("function mountFeature(feature)", 1)[0]
         self.assertIn('select.value = id;', model_context)
