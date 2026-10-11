@@ -690,7 +690,7 @@ class ManualStageGatewayTests(unittest.TestCase):
             "command.py": b"positive patched command module fixture\n",
         }
         fixture_modules = []
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as tmp:
+        with tempfile.TemporaryDirectory(dir=str(Path("/tmp").resolve())) as tmp:
             for name, payload in payloads.items():
                 fixture = Path(tmp) / name
                 fixture.write_bytes(payload)
