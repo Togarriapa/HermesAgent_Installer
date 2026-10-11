@@ -16,8 +16,9 @@ from hermes_installer.remote.manual_stage import (
 )
 from hermes_installer.remote.gateway import Principal
 from hermes_installer.remote.manual_stage_inspector import (
-    MAX_APP_FILE_BYTES, MAX_APP_TREE_BYTES, StageInspectionDenied,
-    _check_app_file_size, _validate_nft,
+    MAX_APP_FILE_BYTES, MAX_APP_TREE_BYTES, XPRA_CONTROL_STUB_PATH,
+    XPRA_CONTROL_STUB_SHA256, XPRA_CONTROL_STUB_SIZE, StageInspectionDenied,
+    _check_app_file_size, _validate_nft, _verify_pinned_xpra_control_stub,
 )
 
 try:
@@ -243,6 +244,61 @@ class ManualStageGatewayTests(unittest.TestCase):
         self.assertGreaterEqual(MAX_APP_TREE_BYTES, 363_556_225)
         with self.assertRaises(StageInspectionDenied):
             _check_app_file_size(MAX_APP_FILE_BYTES + 1)
+
+    def test_xpra_control_stub_pin_accepts_readonly_fixture_and_rejects_changed_files(self):
+        from pathlib import Path
+        import os
+        import stat
+        import tempfile
+        import hermes_installer.remote.manual_stage_inspector as inspector
+
+        self.assertEqual(str(XPRA_CONTROL_STUB_PATH),
+                         "/usr/lib/python3/dist-packages/xpra/server/subsystem/stub.py")
+        self.assertEqual(XPRA_CONTROL_STUB_SIZE, 5071)
+        self.assertEqual(XPRA_CONTROL_STUB_SHA256,
+                         "da12f27c1421dc71248b568791f186ee3d470d0969c4020da0d9d6d7a1a02279")
+
+        payload = b"positive patched vendor member fixture\n"
+        expected = hashlib.sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory(dir="/private/tmp") as tmp:
+            fixture = Path(tmp) / "stub.py"
+            fixture.write_bytes(payload)
+            fixture.chmod(0o644)
+            real_fstat = os.fstat
+
+            def root_owned_fstat(fd):
+                info = real_fstat(fd)
+                values = list(info)
+                if stat.S_ISDIR(info.st_mode):
+                    values[0] = stat.S_IFDIR | 0o755
+                values[4] = 0
+                return os.stat_result(values)
+
+            with mock.patch.object(inspector, "XPRA_CONTROL_STUB_PATH", fixture), \
+                    mock.patch.object(inspector, "XPRA_CONTROL_STUB_SIZE", len(payload)), \
+                    mock.patch.object(inspector, "XPRA_CONTROL_STUB_SHA256", expected), \
+                    mock.patch.object(inspector.os, "fstat", side_effect=root_owned_fstat):
+                self.assertEqual(_verify_pinned_xpra_control_stub(), expected)
+
+                fixture.chmod(0o600)
+                fixture.write_bytes(b"U" * 4978)
+                fixture.chmod(0o644)
+                with self.assertRaises(StageInspectionDenied):
+                    _verify_pinned_xpra_control_stub()
+
+                fixture.chmod(0o600)
+                fixture.write_bytes(b"T" * len(payload))
+                fixture.chmod(0o644)
+                with self.assertRaises(StageInspectionDenied):
+                    _verify_pinned_xpra_control_stub()
+
+                fixture.unlink()
+                target = Path(tmp) / "target.py"
+                target.write_bytes(payload)
+                target.chmod(0o644)
+                fixture.symlink_to(target)
+                with self.assertRaises(StageInspectionDenied):
+                    _verify_pinned_xpra_control_stub()
 
     def test_stage_http_adapter_maps_only_canonical_client_assets_to_xpra_root(self):
         from types import SimpleNamespace

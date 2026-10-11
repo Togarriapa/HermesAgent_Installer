@@ -28,6 +28,9 @@ MAX_OUTPUT = 65_536
 OBSERVATION_SECONDS = 5.0
 MAX_APP_FILE_BYTES = 256 * 1024 * 1024
 MAX_APP_TREE_BYTES = 2 * 1024 * 1024 * 1024
+XPRA_CONTROL_STUB_PATH = Path("/usr/lib/python3/dist-packages/xpra/server/subsystem/stub.py")
+XPRA_CONTROL_STUB_SIZE = 5071
+XPRA_CONTROL_STUB_SHA256 = "da12f27c1421dc71248b568791f186ee3d470d0969c4020da0d9d6d7a1a02279"
 
 
 class StageInspectionDenied(PermissionError):
@@ -417,6 +420,7 @@ def observe_stage(config: Any, *, nonce: str) -> dict[str, Any]:
             raise _deny()
         if _hash_path(config.unit_fragment) != config.unit_sha256:
             raise _deny()
+        xpra_control_stub_digest = _verify_pinned_xpra_control_stub()
         app_digest = _check_immutable_tree(config.appdir, config.appdir_manifest_sha256)
         if _pid_start_ticks(pid) != start_ticks or _pidfd_exited(pidfd):
             raise _deny()
@@ -427,17 +431,61 @@ def observe_stage(config: Any, *, nonce: str) -> dict[str, Any]:
     proof = hashlib.sha256(b"hermes-manual-stage-inspection-v1\0" + b"\0".join((
         config.config_sha256.encode(), hashlib.sha256(table).hexdigest().encode(),
         props["InvocationID"].encode(), str(pid).encode(), start_ticks.encode(),
-        argv_digest.encode(), app_digest.encode(), boot_id.encode(), nonce.encode()))).hexdigest()
+        argv_digest.encode(), xpra_control_stub_digest.encode(), app_digest.encode(),
+        boot_id.encode(), nonce.encode()))).hexdigest()
     return {"schema": 1, "nonce": nonce, "proof_sha256": proof,
             "boot_id": boot_id, "issued_monotonic": started,
             "expires_monotonic": min(deadline, time.monotonic() + OBSERVATION_SECONDS)}
 
 
-def _hash_path(path: Path) -> str:
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+def _verify_pinned_xpra_control_stub() -> str:
+    digest = _hash_path(XPRA_CONTROL_STUB_PATH, expected_size=XPRA_CONTROL_STUB_SIZE,
+                        require_root_readonly=True)
+    if digest != XPRA_CONTROL_STUB_SHA256:
+        raise _deny()
+    return digest
+
+
+def _hash_path(path: Path, *, expected_size: int | None = None,
+               require_root_readonly: bool = False) -> str:
+    parent_fd = None
+    if require_root_readonly:
+        if path != XPRA_CONTROL_STUB_PATH or not path.is_absolute():
+            raise _deny()
+        try:
+            parent_fd = os.open("/", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) |
+                                getattr(os, "O_NOFOLLOW", 0))
+            root_info = os.fstat(parent_fd)
+            if not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != 0:
+                raise _deny()
+            for component in path.parts[1:-1]:
+                next_fd = os.open(component, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) |
+                                   getattr(os, "O_NOFOLLOW", 0), dir_fd=parent_fd)
+                info = os.fstat(next_fd)
+                if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0
+                        or stat.S_IMODE(info.st_mode) & 0o022):
+                    os.close(next_fd)
+                    raise _deny()
+                os.close(parent_fd)
+                parent_fd = next_fd
+            fd = os.open(path.name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent_fd)
+        except StageInspectionDenied:
+            if parent_fd is not None:
+                os.close(parent_fd)
+            raise
+        except OSError:
+            if parent_fd is not None:
+                os.close(parent_fd)
+            raise _deny() from None
+    else:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) & 0o022:
+            raise _deny()
+        if expected_size is not None and info.st_size != expected_size:
+            raise _deny()
+        if require_root_readonly and info.st_nlink != 1:
             raise _deny()
         digest = hashlib.sha256()
         while True:
@@ -448,6 +496,8 @@ def _hash_path(path: Path) -> str:
         return digest.hexdigest()
     finally:
         os.close(fd)
+        if parent_fd is not None:
+            os.close(parent_fd)
 
 
 def _pidfd_exited(fd: int) -> bool:
