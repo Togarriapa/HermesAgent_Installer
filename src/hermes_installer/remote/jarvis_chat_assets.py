@@ -44,11 +44,11 @@ _HTML = '''<!doctype html>
         <span class="brand-copy"><strong>JARVIS</strong><small>PERSONAL ASSISTANT</small></span>
       </a>
       <nav class="primary-nav" aria-label="Jarvis sections">
-        <details class="nav-group" data-nav-group="command-centre"><summary>Command centre</summary><div class="nav-menu" aria-label="Command centre destinations"><!-- JARVIS_GROUP_COMMAND_CENTRE --></div></details>
-        <details class="nav-group" data-nav-group="conversations"><summary>Conversations</summary><div class="nav-menu" aria-label="Conversation destinations"><button type="button" class="nav-item" data-view="chat">Chats</button><button type="button" class="nav-item" data-view="chat" data-open-sessions="true">Sessions</button></div></details>
-        <details class="nav-group" data-nav-group="work"><summary>Work</summary><div class="nav-menu" aria-label="Work destinations"><!-- JARVIS_GROUP_WORK --></div></details>
-        <details class="nav-group" data-nav-group="resources"><summary>Resources</summary><div class="nav-menu" aria-label="Resource destinations"><button type="button" class="nav-item" data-view="capabilities">Capabilities</button><!-- JARVIS_GROUP_RESOURCES --></div></details>
-        <details class="nav-group" data-nav-group="system"><summary>System</summary><div class="nav-menu" aria-label="System destinations"><button type="button" class="nav-item" data-view="settings">Settings</button><!-- JARVIS_GROUP_SYSTEM --></div></details>
+        <button type="button" class="nav-item" data-view="overview">Overview</button>
+        <button type="button" class="nav-item" data-view="chat">Chats</button>
+        <button type="button" class="nav-item feature-nav-link" data-view="projects" data-requires-feature="projects" hidden>Projects</button>
+        <button type="button" class="nav-item feature-nav-link" data-view="second-brain" data-requires-feature="second-brain" hidden>Knowledge</button>
+        <details class="nav-group manage-group" data-nav-group="manage"><summary>Manage</summary><div class="nav-menu"><button type="button" class="nav-item" data-view="capabilities">Capabilities</button><button type="button" class="nav-item" data-view="settings">Settings</button><!-- JARVIS_GROUP_MANAGE --></div></details>
       </nav>
       <div class="assistant-hud" id="assistant-hud" data-state="checking" aria-label="Jarvis status">
         <span class="assistant-orb" aria-hidden="true"><span class="orb-core"></span><span class="orb-ring"></span><span class="orb-halo"></span></span>
@@ -435,6 +435,19 @@ html[data-page-visible="true"] .assistant-hud[data-state="speaking"] .orb-ring{a
 @media(prefers-reduced-motion:reduce){html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-orbit-inner{animation:presence-turn 58s linear infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-core{animation:reactor-core-breathe 6s ease-in-out infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="thinking"] .presence-orbit-inner{animation:presence-turn 18s linear infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="thinking"] .presence-orbit-reactor{animation:presence-turn 46s linear infinite reverse!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="listening"] .presence-orbit-outer{animation:reactor-listening 1.7s ease-in-out infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="speaking"] .presence-orbit-reactor{animation:presence-turn 34s linear infinite!important}html[data-jarvis-motion="full"][data-page-visible="true"] .assistant-hud[data-state="idle"] .orb-halo{animation:jarvis-halo-breathe 7s ease-in-out infinite!important}html[data-jarvis-motion="full"][data-page-visible="true"] .assistant-hud[data-state="listening"] .orb-halo{animation:jarvis-halo-breathe 1.7s ease-in-out infinite!important}html[data-jarvis-motion="full"][data-page-visible="true"] .assistant-hud[data-state="speaking"] .orb-ring{animation:presence-turn 16s linear infinite!important}}
 '''.encode("utf-8")
 
+_CSS += b'''/* Direct destinations; configuration remains one compact Manage menu. */
+.primary-nav{justify-content:flex-start;gap:5px;scrollbar-width:thin}.primary-nav>.nav-item{min-height:44px;padding-inline:12px;color:#a9c0c4;font-size:11px;letter-spacing:.01em}.primary-nav>.nav-item[aria-current="page"]{color:#efffff;border-color:rgba(88,228,235,.24);background:linear-gradient(180deg,rgba(45,158,169,.2),rgba(20,89,98,.13));box-shadow:inset 0 -1px rgba(97,230,236,.55)}.primary-nav>.nav-item.feature-nav-link[hidden]{display:none!important}.manage-group{margin-left:3px}.manage-group>summary{min-height:44px;padding-inline:12px;color:#a9c0c4;font-size:11px}.manage-group[data-current="true"]>summary{color:#efffff}.manage-group .nav-menu{min-width:208px}
+.command-centre{max-width:1320px;margin:0 auto}.overview-hud{max-width:1280px;min-height:450px;grid-template-columns:minmax(145px,.78fr) minmax(360px,1.75fr) minmax(180px,.88fr);gap:clamp(18px,3vw,42px);margin-bottom:12px}.jarvis-presence{max-width:none;min-width:0;min-height:0;margin:0;display:flex;grid-template-columns:none;flex-direction:column;justify-content:center;gap:0;overflow:visible;padding:0;border:0;border-radius:0;background:none;box-shadow:none}.jarvis-presence:after{display:none}.presence-figure{width:clamp(300px,34vw,420px);height:auto;aspect-ratio:1;filter:drop-shadow(0 18px 38px rgba(0,0,0,.38))}.presence-figure:before{inset:13%;background:radial-gradient(circle,rgba(89,231,237,.24),rgba(18,111,122,.12) 42%,rgba(8,46,55,.05) 64%,transparent 74%)}.presence-figure svg{overflow:visible}.presence-orbit-dial{stroke:rgba(132,201,207,.24);stroke-width:.8;stroke-dasharray:1 3;vector-effect:non-scaling-stroke}.presence-orbit-outer{stroke:rgba(69,221,231,.79);stroke-width:1.15;stroke-dasharray:2 5;opacity:.92}.presence-orbit-inner{stroke:rgba(112,232,237,.55);stroke-width:1.1;stroke-dasharray:38 8 4 9}.presence-orbit-reactor{fill:rgba(4,23,30,.63);stroke:rgba(122,238,241,.84);stroke-width:1.3;stroke-dasharray:90 10 16 8}.presence-core{fill:rgba(38,202,211,.08);stroke:rgba(144,242,243,.84);stroke-width:1.25;filter:drop-shadow(0 0 12px rgba(67,222,231,.32))}.presence-core-lens{fill:rgba(44,208,216,.07);stroke:rgba(115,239,242,.46);stroke-width:.8}.presence-axis{stroke:rgba(89,212,222,.34);stroke-width:.9}.presence-tick{fill:none;stroke:rgba(151,230,233,.48);stroke-width:1.15}.presence-core-label{gap:7px;color:#efffff;font-size:clamp(14px,1.45vw,18px);letter-spacing:.23em;text-shadow:0 0 22px rgba(77,230,237,.72)}.presence-core-label small{color:#9ce7e9;font-size:8px;letter-spacing:.19em}.presence-copy{width:100%;max-width:520px;margin:clamp(-30px,-2.3vw,-16px) 0 0;text-align:center}.presence-copy h1{margin:0;color:#f1ffff;font-size:clamp(28px,3.3vw,42px);font-weight:520;line-height:1.12;letter-spacing:-.045em;text-wrap:balance}.presence-copy>p:not(.presence-kicker){margin:8px 0 12px;color:#c0d9dc;font-size:13px;line-height:1.5}.presence-connection{display:inline-grid;grid-template-columns:8px auto auto;gap:8px;font-size:8px}.presence-connection strong{padding:5px 8px;border-radius:999px;background:rgba(24,91,97,.19)}.telemetry-rail{align-content:center;gap:6px}.telemetry-readout{padding:12px 0;border-top-color:rgba(104,197,206,.19)}.telemetry-readout:last-child{border-bottom-color:rgba(104,197,206,.19)}.telemetry-readout h2{margin-bottom:7px;color:#a5c6c9;font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-size:9px;letter-spacing:.12em}.telemetry-readout .large-value{font-size:clamp(18px,1.65vw,23px);font-weight:560;letter-spacing:-.035em}.telemetry-readout .muted{font-size:10px}.activity-readout .chart-bars{height:104px;margin-top:13px}.activity-readout .chart-bar-track{height:69px}.activity-readout .chart-bar{box-shadow:0 -4px 16px rgba(44,194,204,.12)}.command-panel{position:relative;z-index:1;max-width:1040px;margin:0 auto 18px;padding:15px clamp(15px,2.4vw,24px) 13px;border:1px solid rgba(88,228,235,.28);border-radius:18px;background:linear-gradient(115deg,rgba(8,27,34,.98),rgba(7,22,29,.97));box-shadow:0 18px 50px rgba(0,0,0,.29),inset 0 1px rgba(222,255,255,.05)}.command-panel:before{content:"";position:absolute;top:-1px;left:24px;width:68px;height:1px;background:var(--cyan);box-shadow:0 0 12px rgba(88,228,235,.7)}.command-intro{color:#9db8bc;font-size:10px}.command-kicker{color:#96e9ec}.command-form{margin-top:9px}.command-form textarea{min-height:54px}.quick-actions{margin-top:9px}.quick-actions button{min-height:44px;border-radius:10px}.command-hint{margin-top:7px}.overview-hud+.command-panel{margin-top:0}
+@keyframes reactor-dial-turn{to{transform:rotate(-1turn)}}
+.jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-orbit-inner{animation:presence-turn 22s linear infinite}.jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-orbit-dial{transform-box:view-box;transform-origin:120px 120px;animation:reactor-dial-turn 36s linear infinite}.jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-core{animation-duration:5s}.jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="thinking"] .presence-orbit-reactor{animation-duration:14s}.jarvis-presence[data-state="listening"] .presence-orbit-outer{stroke:rgba(243,198,119,.9)}.jarvis-presence[data-state="listening"] .presence-core{fill:rgba(219,166,77,.1);stroke:rgba(244,208,145,.82)}.jarvis-presence[data-state="speaking"] .presence-orbit-reactor{animation:presence-turn 12s linear infinite;transform-box:view-box;transform-origin:120px 120px}.jarvis-presence[data-state="error"] .presence-core-lens{fill:rgba(202,146,61,.1)}
+@media(max-width:1120px) and (min-width:761px){.primary-nav{order:3;flex:1 1 100%;width:100%;justify-content:flex-start;margin:0;overflow-x:auto}.overview-hud{grid-template-columns:minmax(125px,.75fr) minmax(310px,1.7fr) minmax(160px,.9fr);gap:15px}.presence-figure{width:min(100%,390px)}}
+@media(max-width:760px){.primary-nav{justify-content:space-between;gap:2px}.primary-nav>.nav-item,.primary-nav>.nav-group{flex:1 1 0;min-width:0}.primary-nav>.nav-item{min-height:46px;padding-inline:2px;font-size:9px;white-space:nowrap}.primary-nav .manage-group>summary{justify-content:center;min-height:46px;padding-inline:2px;font-size:9px;white-space:nowrap}.primary-nav .manage-group>summary:after{width:5px;height:5px}.overview-hud{display:flex;flex-direction:column;gap:13px;min-height:0;align-items:stretch}.jarvis-presence{display:flex;grid-template-columns:none;order:-1;min-height:0;padding:0;gap:0}.presence-figure{width:min(82vw,370px);height:auto}.presence-copy{margin-top:-22px}.presence-copy h1{font-size:clamp(28px,7vw,36px)}.presence-copy>p:not(.presence-kicker){margin:7px 0 10px;font-size:12px}.presence-connection{grid-template-columns:8px auto auto}.telemetry-rail{grid-template-columns:repeat(2,minmax(0,1fr));gap:0 18px;padding:0 4px}.telemetry-readout{padding:10px 0}.telemetry-readout .large-value{font-size:19px}.telemetry-readout .muted{font-size:10px}.activity-readout .chart-bars{height:100px}.activity-readout .chart-bar-track{height:62px}.command-panel{margin-top:2px;padding:12px;border-radius:14px}.command-intro{gap:8px}.command-intro>span:last-child{font-size:9px}.quick-actions{display:flex;flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px;scroll-snap-type:x proximity;overscroll-behavior-inline:contain}.quick-actions button{flex:0 0 auto;scroll-snap-align:start;min-height:44px}.command-hint{font-size:10px}}
+@media(max-width:430px){.presence-figure{width:min(84vw,320px)}.presence-copy{margin-top:-18px}.presence-copy h1{font-size:27px}.presence-connection{grid-template-columns:7px auto;gap:6px}.presence-connection strong{grid-column:2;justify-self:start;margin-left:0}.telemetry-rail{grid-template-columns:1fr 1fr;gap:0 12px}.telemetry-readout h2{font-size:8px}.activity-readout{grid-column:1/-1}.activity-readout .chart-bars{height:92px}.activity-readout .chart-bar-track{height:56px}.command-intro>span:last-child{display:none}}
+@media(max-width:340px){.brand-copy strong{font-size:11px}.assistant-state span{max-width:66px}.primary-nav>.nav-item,.primary-nav .manage-group>summary{font-size:8px}.primary-nav .manage-group>summary:after{display:none}.telemetry-readout .large-value{font-size:17px}}
+@media(prefers-reduced-motion:reduce){html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-orbit-dial,html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-orbit-inner,html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-orbit-reactor,html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-orbit-outer,html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-core,html:not([data-jarvis-motion="full"]) .assistant-hud .orb-halo,html:not([data-jarvis-motion="full"]) .assistant-hud .orb-ring{animation:none!important;transform:none!important}}
+@media(prefers-reduced-motion:reduce){html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-orbit-inner{animation:presence-turn 22s linear infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-orbit-dial{animation:reactor-dial-turn 36s linear infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-core{animation:reactor-core-breathe 5s ease-in-out infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="thinking"] .presence-orbit-inner{animation:presence-turn 18s linear infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="thinking"] .presence-orbit-reactor{animation:presence-turn 14s linear infinite reverse!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="listening"] .presence-orbit-outer{animation:reactor-listening 1.7s ease-in-out infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="speaking"] .presence-orbit-reactor{animation:presence-turn 12s linear infinite!important}html[data-jarvis-motion="full"][data-page-visible="true"] .assistant-hud[data-state="idle"] .orb-halo{animation:jarvis-halo-breathe 5.5s ease-in-out infinite!important}html[data-jarvis-motion="full"][data-page-visible="true"] .assistant-hud[data-state="listening"] .orb-halo{animation:jarvis-halo-breathe 1.7s ease-in-out infinite!important}html[data-jarvis-motion="full"][data-page-visible="true"] .assistant-hud[data-state="speaking"] .orb-ring{animation:presence-turn 12s linear infinite!important}}
+'''
+
 
 _JS = r'''/* Browser client is text-first with optional, explicitly enabled browser voice. */
 (() => {
@@ -482,6 +495,9 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   const FEATURE_ASSETS = featureRegistryScript && featureRegistryScript.jarvisReviewedFeatures;
   if (!Array.isArray(FEATURE_ASSETS)) throw new Error("The reviewed dashboard features are unavailable.");
   const featuresById = new Map(FEATURE_ASSETS.map((feature) => [feature.id, feature]));
+  for (const item of document.querySelectorAll("[data-requires-feature]")) {
+    item.hidden = !featuresById.has(item.dataset.requiresFeature);
+  }
   let mountedFeature = null;
   let mountedFeatureCleanup = null;
   let capabilityDetailsCleanup = null;
@@ -1673,21 +1689,20 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       if (selectedButton) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
     }
-    const groupForView = {
-      overview: "command-centre", chat: "conversations",
-      missions: "work", bots: "work", capabilities: "resources", "resources-learning": "resources",
-      "native-inventory": "resources", files: "resources", context: "resources",
-      "second-brain": "resources",
-      settings: "system", "models-settings": "system", integrations: "system",
-      activity: "system", "native-controls": "system"
-    };
-    const currentGroup = groupForView[selected] || "command-centre";
+    const manageViews = new Set(["capabilities", "settings", ...FEATURE_ASSETS.map((feature) => feature.id).filter((id) => !["overview", "projects", "second-brain"].includes(id))]);
     for (const group of document.querySelectorAll(".nav-group")) {
-      const active = group.dataset.navGroup === currentGroup;
+      const active = group.dataset.navGroup === "manage" && manageViews.has(selected);
       group.dataset.current = String(active);
       const summary = group.querySelector("summary");
       if (active) summary.setAttribute("aria-current", "location");
       else summary.removeAttribute("aria-current");
+    }
+    const primaryNav = document.querySelector(".primary-nav");
+    const activeItem = primaryNav && [...primaryNav.querySelectorAll(".nav-item")].find((item) => item.dataset.view === selected);
+    if (activeItem && primaryNav && primaryNav.scrollWidth > primaryNav.clientWidth) {
+      const left = activeItem.offsetLeft - (primaryNav.clientWidth - activeItem.offsetWidth) / 2;
+      const behavior = shouldReduceMotion() ? "auto" : "smooth";
+      primaryNav.scrollTo({ left: Math.max(0, left), behavior });
     }
     if (selected !== "chat") {
       stopRecognition("Push-to-talk stopped when leaving chat.");
@@ -1937,9 +1952,7 @@ def _compose_feature_assets() -> None:
     _HTML = _HTML.replace(b"<!-- JARVIS_MOBILE_SETTINGS -->", SETTINGS_FRAGMENT_HTML.encode("utf-8"))
     _CSS += ("\n" + SETTINGS_FRAGMENT_CSS).encode("utf-8")
     validate_feature_assets(FEATURE_ASSETS)
-    grouped_nav: dict[str, list[str]] = {
-        "command-centre": [], "work": [], "resources": [], "system": [],
-    }
+    grouped_nav: dict[str, list[str]] = {"manage": []}
     panels: list[str] = []
     css_fragments: list[bytes] = []
     javascript: list[str] = []
@@ -1951,22 +1964,14 @@ def _compose_feature_assets() -> None:
             f'<button type="button" class="nav-item" data-view="{feature_id}">'
             f'{nav_label}</button>'
         )
+        if feature.feature_id not in {"overview", "projects", "second-brain"}:
+            grouped_nav["manage"].append(nav_markup)
         panel_markup = (
             f'<section class="data-main" id="{feature_id}-view" '
             f'aria-label="{title}" data-view-panel="{feature_id}" hidden>'
             f'<div class="feature-view" data-feature-root="{feature_id}">'
             f'{feature.view_html}</div></section>'
         )
-        group = {
-            "overview": "command-centre", "missions": "work", "bots": "work",
-            "resources-learning": "resources", "native-inventory": "resources", "files": "resources",
-            "context": "resources", "native-controls": "system", "models-settings": "system",
-            "second-brain": "resources",
-            "integrations": "system", "activity": "system",
-        }.get(feature.feature_id)
-        if group is None:
-            raise ValueError(f"reviewed feature has no Jarvis navigation group: {feature.feature_id}")
-        grouped_nav[group].append(nav_markup)
         panels.append(panel_markup)
         if feature.css:
             css_fragments.append(feature.css.encode("utf-8"))
@@ -1981,10 +1986,7 @@ def _compose_feature_assets() -> None:
         )
 
     html = _HTML.decode("utf-8")
-    html = html.replace("<!-- JARVIS_GROUP_COMMAND_CENTRE -->", "".join(grouped_nav["command-centre"]))
-    html = html.replace("<!-- JARVIS_GROUP_WORK -->", "".join(grouped_nav["work"]))
-    html = html.replace("<!-- JARVIS_GROUP_RESOURCES -->", "".join(grouped_nav["resources"]))
-    html = html.replace("<!-- JARVIS_GROUP_SYSTEM -->", "".join(grouped_nav["system"]))
+    html = html.replace("<!-- JARVIS_GROUP_MANAGE -->", "".join(grouped_nav["manage"]))
     html = html.replace("<!-- JARVIS_OVERVIEW_PANEL -->", "")
     html = html.replace("<!-- JARVIS_FEATURE_PANELS -->", "".join(panels))
     html = html.replace("__JARVIS_CAPABILITY_DETAILS__", _CAPABILITY_DETAILS_HTML)

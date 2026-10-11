@@ -85,18 +85,21 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn(".nav-item{min-height:44px}", stylesheet.decode("utf-8"))
         self.assertIn("Runtime readiness pending", client)
         self.assertIn("Internal profile · catalog only; not selectable", client)
-        self.assertIn('"current-core-witness": "A current process and listener were observed; functional readiness has not been verified."', client)
+        self.assertIn('"current-core-witness": "Presence is observed; functional operation is not confirmed."', client)
 
-    def test_feature_registry_is_a_separate_ordered_immutable_fixed_asset(self):
+    def test_command_centre_direct_navigation_preserves_all_routes_and_command_results(self):
         _content_type, page = reviewed_chat_asset("/chat")
         markup = page.decode("utf-8")
         features_tag = '<script defer src="/chat/assets/features.js"></script>'
         app_tag = '<script defer src="/chat/assets/app.js"></script>'
         self.assertLess(markup.index(features_tag), markup.index(app_tag))
         primary_nav = markup.split('<nav class="primary-nav"', 1)[1].split('</nav>', 1)[0]
-        self.assertEqual(primary_nav.count('<button type="button" class="nav-item"'), 4 + len(FEATURE_ASSETS))
-        for group in ("command-centre", "conversations", "work", "resources", "system"):
-            self.assertEqual(primary_nav.count(f'data-nav-group="{group}"'), 1)
+        self.assertEqual(primary_nav.count('<button type="button" class="nav-item"'), 3 + len(FEATURE_ASSETS))
+        self.assertEqual(primary_nav.count('class="nav-group'), 1)
+        self.assertIn('data-nav-group="manage"', primary_nav)
+        manage_menu = primary_nav.split('data-nav-group="manage"', 1)[1].split("</details>", 1)[0]
+        for destination in ("capabilities", "settings"):
+            self.assertIn(f'data-view="{destination}"', manage_menu)
         self.assertIn('Conversation model · session only', markup)
         self.assertEqual(markup.count('data-view="overview"'), 1)
         self.assertEqual(markup.count('data-view="integrations"'), 1)
@@ -107,19 +110,12 @@ class JarvisChatAssetTests(unittest.TestCase):
         source = page.decode("utf-8")
         self.assertIn('<div class="workspace" data-current-view="overview">', source)
         self.assertIn('<script defer src="/chat/assets/features.js"></script>', source)
-        self.assertIn('<main class="data-main" id="overview-view"', source)
-        self.assertIn('data-view="overview"', source.split('data-nav-group="command-centre"', 1)[1].split("</details>", 1)[0])
-        expected_groups = {
-            "conversations": ("chat",),
-            "work": ("missions", "bots"),
-            "resources": ("capabilities", "resources-learning", "native-inventory", "files"),
-            "system": ("settings", "activity", "native-controls", "models-settings"),
-        }
-        for group, destinations in expected_groups.items():
-            with self.subTest(group=group):
-                markup = source.split(f'data-nav-group="{group}"', 1)[1].split("</details>", 1)[0]
-                for destination in destinations:
-                    self.assertIn(f'data-view="{destination}"', markup)
+        self.assertIn('<section class="data-main" id="overview-view"', source)
+        primary_nav = source.split('<nav class="primary-nav"', 1)[1].split("</nav>", 1)[0]
+        for destination, label in (("overview", "Overview"), ("chat", "Chats"), ("projects", "Projects"), ("second-brain", "Knowledge")):
+            with self.subTest(destination=destination):
+                self.assertIn(f'data-view="{destination}"', primary_nav)
+                self.assertIn(label, primary_nav)
 
         _content_type, registry = reviewed_chat_asset("/chat/assets/features.js")
         source = registry.decode("utf-8")
@@ -148,13 +144,19 @@ class JarvisChatAssetTests(unittest.TestCase):
         _content_type, app_script = reviewed_chat_asset("/chat/assets/app.js")
         client = app_script.decode("utf-8")
         _registry_type, registry = reviewed_chat_asset("/chat/assets/features.js")
+        self.assertIn('item.hidden = !featuresById.has(item.dataset.requiresFeature);', client)
         for feature_id in (
             "missions", "bots", "activity", "native-controls", "resources-learning",
             "native-inventory", "files", "models-settings",
         ):
             with self.subTest(feature=feature_id):
                 self.assertIn(f'id:"{feature_id}"', registry.decode("utf-8"))
-        self.assertIn('const data = await request(`${API}/overview`);', client)
+                self.assertIn(f'data-view="{feature_id}"', source)
+        _content_type, stylesheet = reviewed_chat_asset("/chat/assets/app.css")
+        css = stylesheet.decode("utf-8")
+        self.assertIn('.primary-nav>.nav-item,.primary-nav>.nav-group{flex:1 1 0;min-width:0}', css)
+        self.assertIn('html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-orbit-dial', css)
+        self.assertIn('feature.id === "overview" && method === "GET" && path === "/chat/api/overview"', client)
         sender = client.split("async function sendMessage(text", 1)[1].split("function createIdempotencyKey()", 1)[0]
         self.assertIn("return true;", sender)
         self.assertIn("return false;", sender)
@@ -173,11 +175,6 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('headers: {"Idempotency-Key": createIdempotencyKey()}', trash)
         self.assertIn('await refreshTrash();', trash)
         self.assertIn('result.conversation.id !== id', trash)
-        bridge = client.split("async function sendOverviewCommand(event) {", 1)[1].split("overviewForm.addEventListener", 1)[0]
-        self.assertIn("const accepted = await sendMessage(text, {modelId: null, reasoningEffort: null});", bridge)
-        self.assertIn("if (accepted)", bridge)
-        self.assertIn("Your text is preserved here", bridge)
-        self.assertIn("overviewCommandPending", bridge)
         self.assertIn('if (feature.id === "models-settings") contextualCleanup = preselectCurrentModelConversation(root);', client)
         model_context = client.split("function preselectCurrentModelConversation(root) {", 1)[1].split("function mountFeature(feature)", 1)[0]
         self.assertIn('select.value = id;', model_context)
