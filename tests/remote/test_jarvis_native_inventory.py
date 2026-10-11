@@ -169,3 +169,41 @@ def test_native_inventory_route_denies_a_changed_principal_or_generation():
             await client.close()
 
     asyncio.run(scenario())
+
+
+def test_native_inventory_route_converts_stale_ingress_denial_to_forbidden():
+    import asyncio
+
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from hermes_installer.remote.jarvis_chat import JarvisChatDenied, JarvisChatService
+    from hermes_installer.remote.jarvis_native_inventory import install_jarvis_native_inventory_routes
+
+    class Backend:
+        async def toolsets_inventory(self):
+            raise AssertionError("backend must not be read without current ingress")
+
+        async def skills_inventory(self):
+            raise AssertionError("backend must not be read without current ingress")
+
+    class Service(JarvisChatService):
+        def __init__(self):
+            self.backend = Backend()
+
+        def _current(self, _request):
+            raise JarvisChatDenied("private expired-ingress detail")
+
+    async def scenario():
+        app = web.Application()
+        install_jarvis_native_inventory_routes(app, Service())
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            response = await client.get("/chat/api/native-capabilities")
+            assert response.status == 403
+            assert "private expired-ingress detail" not in await response.text()
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())

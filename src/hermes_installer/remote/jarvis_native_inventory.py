@@ -197,7 +197,14 @@ def install_jarvis_native_inventory_routes(app: Any, service: Any) -> None:
     async def route(request: Any) -> Any:
         if request.path != "/chat/api/native-capabilities" or request.raw_path != request.path:
             raise web.HTTPNotFound(text="not found")
-        principal = service._current(request)
+        try:
+            principal = service._current(request)
+        except Exception:
+            # `_current` raises JarvisChatDenied when the protected ingress lease
+            # is stale. Convert that private service denial into the route's
+            # ordinary authentication response instead of letting it escape as
+            # an unhandled route-handler error.
+            raise web.HTTPForbidden(text="forbidden") from None
         toolsets = None
         skills = None
         try:
