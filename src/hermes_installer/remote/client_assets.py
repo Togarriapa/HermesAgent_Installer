@@ -19,7 +19,7 @@ CLIENT_ASSETS = frozenset({
         "RgbHelpers.js", "Utilities.js", "VideoDecoder.js", "WebTransport.js", "Window.js",
         "lib/FileSaver.js", "lib/StreamSaver.js", "lib/aurora/aac.js", "lib/aurora/aurora-xpra.js",
         "lib/aurora/aurora.js", "lib/aurora/flac.js", "lib/aurora/mp3.js",
-        "lib/brotli_decode.js", "lib/detect-zoom.js", "lib/hmac.js",
+        "lib/brotli_decode.js", "lib/detect-zoom.js", "lib/hmac.js", "lib/jsmpeg.js",
         "lib/jquery-transform-draggable.js", "lib/jquery-ui.js", "lib/jquery.ba-throttle-debounce.js",
         "lib/jquery.js", "lib/lz4.js", "lib/rencode.js", "lib/simple-keyboard.js", "lib/slick.js",
         "lib/web-streams-ponyfill.es6.js",

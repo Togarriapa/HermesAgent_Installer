@@ -763,7 +763,13 @@ class ManualStageGatewayTests(unittest.TestCase):
         self.assertIn(b"X-Forwarded-Proto: https\r\n", emitted)
         self.assertNotIn(b"/client/", emitted)
         connector.sock.reset_mock()
-        for path in ("/client/../../etc/passwd", "/client/not-in-manifest"):
+        frame = build_asset_request("GET", "/client/js/lib/jsmpeg.js", canonicalize=lambda x: x)
+        connector.write(frame)
+        emitted = connector.sock.sendall.call_args.args[0]
+        self.assertTrue(emitted.startswith(b"GET /js/lib/jsmpeg.js HTTP/1.1\r\n"))
+        connector.sock.reset_mock()
+        for path in ("/client/../../etc/passwd", "/client/not-in-manifest",
+                     "/client/js/lib/not-reviewed.js"):
             with self.subTest(path=path), self.assertRaises(ManualStageDenied):
                 connector.write(build_asset_request("GET", path, canonicalize=lambda x: x))
         connector.sock.sendall.assert_not_called()
