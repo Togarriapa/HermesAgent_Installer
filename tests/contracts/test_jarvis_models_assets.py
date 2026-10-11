@@ -71,18 +71,26 @@ const document = {createElement() { return new Option("", ""); }};
 const crypto = {getRandomValues(bytes) { bytes.fill(7); return bytes; }};
 MOUNT
 async function exercise(initialConversationId) {
-  fields.get("[data-models-conversation]").replaceChildren();
-  fields.get("[data-models-choice]").replaceChildren();
-  fields.get("[data-models-apply]").disabled = true;
   requests.length = 0;
   const cleanup = mount(root, api, {initialConversationId});
+  const reset = {
+    conversationDisabled: fields.get("[data-models-conversation]").disabled,
+    conversationValue: fields.get("[data-models-conversation]").value,
+    choiceDisabled: fields.get("[data-models-choice]").disabled,
+    choiceOptions: fields.get("[data-models-choice]").options.map((option) => option.textContent),
+    applyDisabled: fields.get("[data-models-apply]").disabled,
+    provider: fields.get("[data-models-provider]").textContent,
+    model: fields.get("[data-models-model]").textContent,
+    account: fields.get("[data-models-account]").textContent,
+    selection: fields.get("[data-models-selection]").textContent
+  };
   await new Promise((resolve) => setImmediate(resolve));
   const conversation = fields.get("[data-models-conversation]");
   const choice = fields.get("[data-models-choice]");
   assert.equal(requests[0].path, "/chat/api/models/conversations");
   assert.equal(requests.filter((item) => item.method === "POST").length, 0);
   cleanup();
-  return {conversation, choice, requests: [...requests]};
+  return {conversation, choice, reset, requests: [...requests]};
 }
 (async () => {
   const current = await exercise(ownerConversationId);
@@ -96,6 +104,17 @@ async function exercise(initialConversationId) {
 
   for (const contextId of ["eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "../private", undefined]) {
     const untrusted = await exercise(contextId);
+    assert.deepEqual(untrusted.reset, {
+      conversationDisabled: true,
+      conversationValue: "",
+      choiceDisabled: true,
+      choiceOptions: ["Choose a conversation first"],
+      applyDisabled: true,
+      provider: "Pending verification",
+      model: "Pending verification",
+      account: "Unknown",
+      selection: "Not observed"
+    });
     assert.equal(untrusted.conversation.value, "");
     assert.deepEqual(untrusted.requests.map(({method, path}) => [method, path]), [
       ["GET", "/chat/api/models/conversations"]

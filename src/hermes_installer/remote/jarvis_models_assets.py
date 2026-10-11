@@ -44,6 +44,17 @@ _MOUNT_JS = r'''function mount(root, api, context = {}) {
   const safeModel = (value) => typeof value === "string" && /^[a-z0-9][a-z0-9.-]{0,79}$/.test(value);
   const initialConversationId = safeId(context && context.initialConversationId)
     ? context.initialConversationId : null;
+  conversation.disabled = true;
+  conversation.replaceChildren(new Option("Loading conversations…", ""));
+  choice.disabled = true;
+  choice.replaceChildren(new Option("Choose a conversation first", ""));
+  apply.disabled = true;
+  put("[data-models-provider]", "Pending verification");
+  put("[data-models-model]", "Pending verification");
+  put("[data-models-account]", "Unknown");
+  put("[data-models-selection]", "Not observed");
+  put("[data-models-catalog]", "Choose a conversation to load its current model state.");
+  status("Loading your conversations.");
   function updateApply() {
     apply.disabled = !(snapshot && revision && snapshot.selectionAvailability === "available"
       && safeId(conversation.value) && safeModel(choice.value));
