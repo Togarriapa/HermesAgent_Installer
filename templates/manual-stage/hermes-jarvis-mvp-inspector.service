@@ -1,0 +1,30 @@
+[Unit]
+Description=Read-only root observer for the Jarvis manual stage
+Requires=hermes-jarvis-mvp-stage-bootstrap.service hermes-xpra-stage.service
+After=hermes-jarvis-mvp-stage-bootstrap.service hermes-xpra-stage.service
+Before=hermes-jarvis-mvp-gateway.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+UMask=0077
+Environment=PYTHONPATH=/opt/hermes-jarvis-mvp-20261011/gateway-source/src
+Environment=PYTHONNOUSERSITE=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+UnsetEnvironment=PYTHONHOME PYTHONUSERBASE PYTHONSTARTUP
+ExecStart=/opt/hermes-jarvis-mvp-20261011/gateway-venv/bin/python -m hermes_installer.remote.manual_stage_inspector
+RuntimeDirectory=hermes-jarvis-mvp
+RuntimeDirectoryMode=0750
+RuntimeDirectoryGroup=981
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

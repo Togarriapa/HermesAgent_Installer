@@ -1,0 +1,27 @@
+[Unit]
+Description=Refresh the owned Jarvis manual-stage boot binding
+After=local-fs.target
+Before=hermes-xpra-stage.service hermes-jarvis-mvp-inspector.service hermes-jarvis-mvp-gateway.service
+RequiresMountsFor=/etc/hermes-installer /opt/hermes-jarvis-mvp-20261011/gateway-source
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+Environment=PYTHONPATH=/opt/hermes-jarvis-mvp-20261011/gateway-source/src
+Environment=PYTHONNOUSERSITE=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+UnsetEnvironment=PYTHONHOME PYTHONUSERBASE PYTHONSTARTUP
+ExecStart=/opt/hermes-jarvis-mvp-20261011/gateway-venv/bin/python -m hermes_installer.remote.manual_stage_bootstrap
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/etc/hermes-installer
+ProtectHome=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+TimeoutStartSec=10
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

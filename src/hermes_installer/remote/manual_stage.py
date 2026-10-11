@@ -66,9 +66,12 @@ class ManualGatewayStageConfig:
     config_sha256: str = field(repr=False)
 
     @classmethod
-    def load(cls, path: Path = STAGE_CONFIG, *, expected_owner_uid: int = 0) -> "ManualGatewayStageConfig":
+    def load(cls, path: Path = STAGE_CONFIG, *, expected_owner_uid: int = 0,
+             allow_stale_boot_id: bool = False) -> "ManualGatewayStageConfig":
         if path != STAGE_CONFIG or not path.is_absolute():
             raise ManualStageDenied("manual stage config must use the fixed protected path")
+        if allow_stale_boot_id and os.geteuid() != 0:
+            raise ManualStageDenied("only the root boot-refresh helper may read a stale boot identity")
         try:
             fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
             try:
@@ -130,7 +133,8 @@ class ManualGatewayStageConfig:
                     or not _digest(result.appdir_manifest_sha256)
                     or result.appdir != HERMES_STAGE_EXECUTABLE.parent
                     or not re.fullmatch(r"[0-9a-f-]{36}", result.boot_id)
-                    or Path("/proc/sys/kernel/random/boot_id").read_text().strip() != result.boot_id):
+                    or (not allow_stale_boot_id and
+                        Path("/proc/sys/kernel/random/boot_id").read_text().strip() != result.boot_id)):
                 raise ValueError
             if (os.geteuid() not in {expected_owner_uid, result.gateway_uid}
                     or (stat.S_IMODE(info.st_mode) == 0o440 and info.st_gid != result.gateway_gid)):

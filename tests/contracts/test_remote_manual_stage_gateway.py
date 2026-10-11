@@ -149,6 +149,71 @@ class ManualStageGatewayTests(unittest.TestCase):
         with self.assertRaises(StageInspectionDenied):
             _validate_nft(json.dumps(rows).encode(), 18000)
 
+    def test_boot_refresh_changes_only_the_boot_id_field(self):
+        from hermes_installer.remote.manual_stage_bootstrap import _replace_boot_id
+        original = {"schema": 1, "hostname": self.config.hostname, "gateway_uid": 996,
+                    "gateway_gid": 981, "xpra_uid": 1000, "boot_id": "0" * 36,
+                    "allowed_emails": ["owner@example.net"], "audience": "aud"}
+        updated = json.loads(_replace_boot_id(json.dumps(original).encode(), "1" * 36))
+        self.assertEqual(updated["boot_id"], "1" * 36)
+        original.pop("boot_id")
+        updated.pop("boot_id")
+        self.assertEqual(updated, original)
+
+    def test_boot_refresh_nft_effect_is_additive_and_rejects_foreign_owned_table(self):
+        from hermes_installer.remote.manual_stage_bootstrap import ensure_owned_nft_rule
+        inventory = json.dumps({"nftables": [
+            {"metainfo": {"version": "1.0"}},
+            {"table": {"family": "ip", "name": "unrelated", "handle": 7}},
+        ]}).encode()
+        exact_table = json.dumps({"nftables": [
+            {"metainfo": {"version": "1.0"}},
+            {"table": {"family": "inet", "name": "hermes_jarvis_mvp", "handle": 1}},
+            {"chain": {"family": "inet", "table": "hermes_jarvis_mvp", "name": "output",
+                       "type": "filter", "hook": "output", "prio": -10, "policy": "accept"}},
+            {"rule": {"family": "inet", "table": "hermes_jarvis_mvp", "chain": "output", "handle": 2,
+                "comment": "Jarvis MVP display gateway only", "expr": [
+                    {"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "daddr"}}, "right": "127.0.0.1"}},
+                    {"match": {"op": "==", "left": {"payload": {"protocol": "tcp", "field": "dport"}}, "right": 14500}},
+                    {"match": {"op": "!=", "left": {"meta": {"key": "skuid"}}, "right": 996}},
+                    {"reject": {"type": "tcp reset"}},
+                ]}},
+        ]}).encode()
+        with mock.patch("hermes_installer.remote.manual_stage_bootstrap._run_fixed",
+                        side_effect=[inventory, exact_table]) as run_fixed, \
+             mock.patch("hermes_installer.remote.manual_stage_bootstrap._apply_nft_creation_batch") as apply:
+            self.assertEqual(ensure_owned_nft_rule(), exact_table)
+        apply.assert_called_once_with()
+        self.assertIn(("ip", "unrelated"), __import__(
+            "hermes_installer.remote.manual_stage_bootstrap", fromlist=["_parse_tables"])._parse_tables(inventory))
+        self.assertNotIn(b"flush", __import__(
+            "hermes_installer.remote.manual_stage_bootstrap", fromlist=["NFT_CREATE_BATCH"]).NFT_CREATE_BATCH)
+        self.assertEqual(run_fixed.call_count, 2)
+
+        wrong_table = exact_table.replace(b"Jarvis MVP display gateway only", b"foreign rule")
+        occupied_inventory = json.dumps({"nftables": [
+            {"metainfo": {"version": "1.0"}},
+            {"table": {"family": "ip", "name": "unrelated", "handle": 7}},
+            {"table": {"family": "inet", "name": "hermes_jarvis_mvp", "handle": 1}},
+        ]}).encode()
+        with mock.patch("hermes_installer.remote.manual_stage_bootstrap._run_fixed",
+                        side_effect=[occupied_inventory, wrong_table]), \
+             mock.patch("hermes_installer.remote.manual_stage_bootstrap._apply_nft_creation_batch") as apply:
+            with self.assertRaises(StageInspectionDenied):
+                ensure_owned_nft_rule()
+        apply.assert_not_called()
+
+        with mock.patch("hermes_installer.remote.manual_stage_bootstrap._run_fixed",
+                        side_effect=[occupied_inventory, exact_table]), \
+             mock.patch("hermes_installer.remote.manual_stage_bootstrap._apply_nft_creation_batch") as apply:
+            self.assertEqual(ensure_owned_nft_rule(), exact_table)
+        apply.assert_not_called()
+
+    def test_stale_boot_config_override_is_root_only(self):
+        with mock.patch("hermes_installer.remote.manual_stage.os.geteuid", return_value=1000):
+            with self.assertRaises(ManualStageDenied):
+                ManualGatewayStageConfig.load(allow_stale_boot_id=True)
+
     def test_xpra_argv_requires_root_configured_hash_and_fixed_app_only_surface(self):
         from hermes_installer.remote.manual_stage_inspector import _validate_xpra_argv
         argv = ("/usr/bin/python3.13", "/usr/bin/xpra", "start", ":118",
