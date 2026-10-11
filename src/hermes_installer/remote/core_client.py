@@ -8,12 +8,13 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import inspect
 import json
 import math
 import re
 import secrets
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Literal, Mapping
+from typing import Any, AsyncIterator, Callable, Literal, Mapping
 from urllib.parse import quote
 
 from .jarvis_chat import JarvisChatDenied, _read_private_secret
@@ -517,12 +518,35 @@ class CoreRpcClient:
             raise JarvisChatDenied("official core history was invalid")
         return self._project_history_rows(rows)
 
-    async def stream(self, session_id: str, text: str) -> AsyncIterator[CoreTurnEvent]:
-        if not _valid_session_id(session_id) or not isinstance(text, str):
+    async def stream_owned_turn(self, stored_session_id: str, text: str, *,
+                                before_submit: Callable[[str], Any] | None = None
+                                ) -> AsyncIterator[CoreTurnEvent]:
+        """Resume the durable session and submit on one WebSocket transport.
+
+        Hermes detaches sessions from a WebSocket when it closes. Therefore a cached runtime
+        session id is not sufficient after an idle period: ``session.resume`` must bind this
+        connection before ``prompt.submit`` is sent, and both operations must share the socket.
+        The optional trusted callback runs with the actual runtime id between those operations.
+        """
+        if not _valid_session_id(stored_session_id) or not isinstance(text, str):
             raise JarvisChatDenied("official core turn is invalid")
         client, ws, ws_types = await self._connect()
-        request_id = secrets.token_hex(12)
         try:
+            resume_id = secrets.token_hex(12)
+            await ws.send_json({"jsonrpc": "2.0", "id": resume_id, "method": "session.resume",
+                                "params": {"session_id": stored_session_id, "source": "jarvis"}})
+            resumed = await self._receive(ws, ws_types, expected_id=resume_id)
+            session_id, resumed_key = resumed.get("session_id"), resumed.get("resumed")
+            if not _valid_session_id(session_id) or resumed_key != stored_session_id:
+                raise JarvisChatDenied("official core resume did not confirm the stored session")
+            if before_submit is not None:
+                if not callable(before_submit):
+                    raise JarvisChatDenied("official core turn mapping callback is invalid")
+                result = before_submit(session_id)
+                if inspect.isawaitable(result):
+                    await result
+
+            request_id = secrets.token_hex(12)
             await ws.send_json({"jsonrpc": "2.0", "id": request_id, "method": "prompt.submit",
                                 "params": {"session_id": session_id, "text": text}})
             early_events: list[dict] = []
@@ -597,6 +621,11 @@ class CoreRpcClient:
         finally:
             await ws.close()
             await client.close()
+
+    async def stream(self, stored_session_id: str, text: str) -> AsyncIterator[CoreTurnEvent]:
+        """Compatibility spelling; the first ID is the durable stored session key."""
+        async for event in self.stream_owned_turn(stored_session_id, text):
+            yield event
 
     async def stop(self, session_id: str) -> None:
         if not _valid_session_id(session_id):

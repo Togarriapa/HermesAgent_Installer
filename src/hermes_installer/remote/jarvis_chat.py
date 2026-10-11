@@ -73,6 +73,8 @@ class OfficialChatBackend(Protocol):
     async def resume_history(self, stored_session_id: str) -> tuple[str, list[dict[str, Any]]]: ...
     async def history(self, session_id: str) -> list[dict[str, Any]]: ...
     def stream(self, session_id: str, text: str) -> AsyncIterator[Any]: ...
+    def stream_owned_turn(self, stored_session_id: str, text: str, *,
+                          before_submit: Callable[[str], Any]) -> AsyncIterator[Any]: ...
     async def stop(self, session_id: str) -> None: ...
 
 
@@ -266,6 +268,48 @@ class JarvisChatStore:
                 raise JarvisChatDenied("official core session mapping changed during resume")
             db.execute("COMMIT")
         return self.get_conversation(subject, conversation_id)
+
+    def rebind_active_turn_session(self, principal: ChatPrincipal, conversation_id: str,
+                                   turn_id: str, old_runtime_id: str,
+                                   runtime_id: str) -> None:
+        """Atomically bind a queued/running owned turn to its just-resumed native session."""
+        if (not isinstance(principal, ChatPrincipal) or not ID_RE.fullmatch(conversation_id or "")
+                or not ID_RE.fullmatch(turn_id or "") or not _valid_core_session_id(old_runtime_id)
+                or not _valid_core_session_id(runtime_id)
+                or time.monotonic() >= principal.expires_monotonic):
+            raise JarvisChatDenied("official core turn mapping is stale")
+        owner = self._owner(principal.subject)
+        now = time.monotonic()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            current = db.execute(
+                "SELECT c.backend_id,c.core_generation,c.owner,t.runtime_session_id,t.status,"
+                "t.heartbeat_expiry,t.jwt_expiry,t.core_generation AS turn_generation,t.owner AS turn_owner "
+                "FROM conversations c JOIN turns t ON t.conversation_id=c.id "
+                "WHERE c.id=? AND t.id=?", (conversation_id, turn_id)).fetchone()
+            if (current is None or current["owner"] != owner or current["turn_owner"] != owner
+                    or current["backend_id"] != old_runtime_id
+                    or current["runtime_session_id"] != old_runtime_id
+                    or current["core_generation"] != principal.core_generation
+                    or current["turn_generation"] != principal.core_generation
+                    or current["status"] not in {"queued", "running"}
+                    or now >= min(current["heartbeat_expiry"], current["jwt_expiry"])):
+                db.execute("ROLLBACK")
+                raise JarvisChatDenied("official core turn mapping changed before submit")
+            conversation_changed = db.execute(
+                "UPDATE conversations SET backend_id=? WHERE id=? AND owner=? AND backend_id=? "
+                "AND core_generation=?",
+                (runtime_id, conversation_id, owner, old_runtime_id, principal.core_generation)).rowcount
+            turn_changed = db.execute(
+                "UPDATE turns SET runtime_session_id=?,updated=? WHERE id=? AND owner=? "
+                "AND conversation_id=? AND runtime_session_id=? AND core_generation=? "
+                "AND status IN ('queued','running') AND heartbeat_expiry>? AND jwt_expiry>?",
+                (runtime_id, _now(), turn_id, owner, conversation_id, old_runtime_id,
+                 principal.core_generation, now, now)).rowcount
+            if conversation_changed != 1 or turn_changed != 1:
+                db.execute("ROLLBACK")
+                raise JarvisChatDenied("official core turn mapping changed before submit")
+            db.execute("COMMIT")
 
     def fail_active_conversation_turns(self, conversation_id: str) -> None:
         with self._connect() as db:
@@ -696,7 +740,8 @@ class JarvisChatService:
                     raise JarvisChatDenied("protected core turn changed before scheduling")
                 async with self._worker_lock:
                     task = asyncio.create_task(self._run(
-                        turn_id, conversation["backend_id"], text, principal, conversation_id))
+                        turn_id, conversation["backend_id"], text, principal, conversation_id,
+                        stored_session_id=conversation["session_key"]))
                     self._workers[turn_id] = task
             except BaseException:
                 if on_schedule_failure is not None:
@@ -716,7 +761,7 @@ class JarvisChatService:
 
     async def _run(self, turn_id: str, session_id: str, text: str,
                    activity_principal: ChatPrincipal | None = None,
-                   conversation_id: str = ""):
+                   conversation_id: str = "", *, stored_session_id: str = ""):
         total = 0
         next_delta: asyncio.Task | None = None
         stream = None
@@ -731,7 +776,24 @@ class JarvisChatService:
                     turn_id=turn_id, core_generation=activity_principal.core_generation)
                 if refs:
                     text = text + "\n\n" + "\n".join(refs)
-            stream = self.backend.stream(session_id, text).__aiter__()
+            resume_stream = getattr(self.backend, "stream_owned_turn", None)
+            if callable(resume_stream):
+                if (activity_principal is None or not conversation_id
+                        or not _valid_core_session_id(stored_session_id)):
+                    raise JarvisChatDenied("owned core turn mapping is unavailable")
+
+                async def bind_resumed_session(actual_session_id: str) -> None:
+                    nonlocal session_id
+                    self.store.rebind_active_turn_session(
+                        activity_principal, conversation_id, turn_id, session_id, actual_session_id)
+                    session_id = actual_session_id
+
+                stream = resume_stream(stored_session_id, text,
+                                      before_submit=bind_resumed_session).__aiter__()
+            else:
+                # Compatibility for deterministic/fake adapters only. CoreRpcClient exposes the
+                # explicit owned-turn capability above, which always resumes on its submit socket.
+                stream = self.backend.stream(session_id, text).__aiter__()
             next_delta = asyncio.create_task(stream.__anext__())
             terminal_received = False
             while True:

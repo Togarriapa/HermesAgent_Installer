@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -77,3 +79,74 @@ def test_schedule_pause_is_fixed_and_requires_native_paused_postcondition():
     client.result = {"success": True, "job": {"job_id": "job-1", "state": "scheduled"}}
     with pytest.raises(JarvisChatDenied):
         asyncio.run(client.pause_schedule("job-1"))
+
+
+def test_owned_turn_resumes_and_submits_on_the_same_websocket_before_callback():
+    order = []
+
+    class FakeTypes:
+        TEXT, CLOSED, CLOSE, ERROR = 1, 2, 3, 4
+
+    class FakeClient:
+        async def close(self):
+            order.append("client_closed")
+
+    class FakeSocket:
+        def __init__(self):
+            self.frames = []
+            self.resume_id = None
+
+        async def send_json(self, request):
+            order.append(("send", request["method"], request["params"].copy()))
+            if request["method"] == "session.resume":
+                self.resume_id = request["id"]
+                self.frames.append(SimpleNamespace(type=1, data=json.dumps({
+                    "jsonrpc": "2.0", "id": request["id"],
+                    "result": {"session_id": "runtime-after-idle", "resumed": "stored-key"},
+                })))
+            elif request["method"] == "prompt.submit":
+                self.frames.extend((
+                    SimpleNamespace(type=1, data=json.dumps({
+                        "jsonrpc": "2.0", "id": request["id"], "result": {"status": "streaming"},
+                    })),
+                    SimpleNamespace(type=1, data=json.dumps({
+                        "method": "event", "params": {
+                            "type": "message.complete", "session_id": "runtime-after-idle",
+                            "payload": {"status": "complete", "text": "restored answer"},
+                        },
+                    })),
+                ))
+
+        async def receive(self):
+            return self.frames.pop(0)
+
+        async def close(self):
+            order.append("socket_closed")
+
+    class Client(CoreRpcClient):
+        async def _connect(self):
+            return FakeClient(), socket, FakeTypes
+
+    socket = FakeSocket()
+    client = Client.__new__(Client)
+    client._timeout_seconds = 1
+
+    async def before_submit(runtime_id):
+        order.append(("before_submit", runtime_id))
+
+    async def consume():
+        return [event async for event in client.stream_owned_turn(
+            "stored-key", "hello", before_submit=before_submit)]
+
+    events = asyncio.run(consume())
+    assert [item[0] for item in order if isinstance(item, tuple)] == [
+        "send", "before_submit", "send",
+    ]
+    assert order[0][1:] == ("session.resume", {"session_id": "stored-key", "source": "jarvis"})
+    assert order[1] == ("before_submit", "runtime-after-idle")
+    assert order[2][1:] == ("prompt.submit", {
+        "session_id": "runtime-after-idle", "text": "hello",
+    })
+    assert events[-1].kind == "complete"
+    assert events[0].text == "restored answer"
+    assert order[-2:] == ["socket_closed", "client_closed"]

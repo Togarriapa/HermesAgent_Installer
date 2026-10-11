@@ -181,6 +181,55 @@ def test_server_turn_mapping_runs_before_worker_and_failure_compensates_without_
     asyncio.run(exercise())
 
 
+def test_each_native_owned_turn_rebinds_runtime_and_turn_before_submit(tmp_path):
+    store = JarvisChatStore(tmp_path / "chat.sqlite3")
+    conversation = new_conversation(store, "subject-a")
+    initial = store.get_conversation("subject-a", conversation["id"])
+    observed = []
+
+    class Backend:
+        async def resume_session(self, _stored):
+            raise AssertionError("same-generation runtime is resumed on the submit socket")
+
+        def stream_owned_turn(self, stored_session_id, text, *, before_submit):
+            async def events():
+                assert stored_session_id == initial["session_key"]
+                assert text == "hello"
+                await before_submit("runtime-after-idle")
+                with store._connect() as db:
+                    turn_id = db.execute(
+                        "SELECT id FROM turns WHERE conversation_id=? AND status='running'",
+                        (conversation["id"],)).fetchone()[0]
+                turn = store.owned_turn("subject-a", turn_id)
+                current = store.get_conversation("subject-a", conversation["id"])
+                observed.append((current["backend_id"], turn["runtime_session_id"], turn_id))
+                yield SimpleNamespace(kind="complete")
+            return events()
+
+        async def stream(self, _session_id, _text):
+            raise AssertionError("native owned turns must use the resume-capable adapter")
+
+        async def stop(self, _session_id):
+            pass
+
+    service = JarvisChatService(
+        store, Backend(), principal_from_request=lambda _request: principal("subject-a"))
+
+    async def exercise():
+        queued = await service.start_server_turn(
+            SimpleNamespace(), conversation_id=conversation["id"], text="hello",
+            idempotency_key="idle-resume-request-key-0001")
+        for _ in range(100):
+            if store.owned_turn("subject-a", queued["turn_id"])["status"] == "completed":
+                break
+            await asyncio.sleep(0.01)
+        assert store.owned_turn("subject-a", queued["turn_id"])["status"] == "completed"
+
+    asyncio.run(exercise())
+    assert observed[0][:2] == ("runtime-after-idle", "runtime-after-idle")
+    assert store.get_conversation("subject-a", conversation["id"])["session_key"] == initial["session_key"]
+
+
 def test_heartbeat_nonce_is_owner_bound_single_use_and_expiring(tmp_path):
     store = JarvisChatStore(tmp_path / "chat.sqlite3")
     conversation = new_conversation(store, "subject-a")
