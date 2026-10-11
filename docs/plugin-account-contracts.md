@@ -6,7 +6,7 @@ exact resource identifiers, and pinned runtime metadata. They never accept a
 token, URL, executable path, or caller-provided readiness result.
 
 The vendor source is `resources/vendor/hermes-agent-resources-2.3.1/plugins/`
-at the pinned Resources revision recorded in `planning/source-revisions.json`:
+at the pinned Resources revision recorded in [current scope](../requirements/current-scope.json):
 
 - `github.yaml` 1.0.1 separates repository, issue/pull-request, and workflow
   reads from task-authorized writes. Destructive/admin work also needs explicit
