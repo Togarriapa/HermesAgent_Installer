@@ -94,7 +94,8 @@ class ManualJarvisSkillsTests(unittest.TestCase):
                     self.bundle, hermes_home=home, expected_sha256="0" * 64)
             self.assertEqual(sentinel.read_text(), "unowned bytes\n")
             self.assertEqual(set(p.name for p in (home / "skills").iterdir()),
-                             {target.name})
+                             {target.name, "user-owned"})
+            self.assertEqual((home / "skills/user-owned/SKILL.md").read_text(), "user bytes\n")
 
     def test_modified_owned_skill_is_preserved_and_rerun_refuses_adoption(self):
         with tempfile.TemporaryDirectory() as tmp:

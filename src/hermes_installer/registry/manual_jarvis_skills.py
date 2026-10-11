@@ -42,6 +42,7 @@ PLUGIN_PENDING = {
 }
 _ARTIFACT_LIMIT = 16 * 1024 * 1024
 _MEMBER_LIMIT = 256 * 1024
+_PACKAGE_MEMBER_LIMIT = 2 * 1024 * 1024
 _BUNDLE_SKILL_COUNT = 396
 _BUNDLE_PROFILE_COUNT = 208
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -231,8 +232,11 @@ def _read_artifact(archive_bytes: bytes, expected_sha256: str) -> tuple[dict[str
                    for name in names):
                 raise ValueError
             if any(
-                info.file_size > (1024 * 1024 if info.filename == "manifest.json" else
-                                  _MEMBER_LIMIT)
+                info.file_size > (
+                    1024 * 1024 if info.filename == "manifest.json" else
+                    _PACKAGE_MEMBER_LIMIT if info.filename.startswith("registry/package/") else
+                    _MEMBER_LIMIT
+                )
                 or info.compress_type != zipfile.ZIP_STORED
                 or (info.create_system == 3 and not stat.S_ISREG(info.external_attr >> 16))
                 for info in members_by_name.values()
@@ -307,8 +311,8 @@ def _read_artifact(archive_bytes: bytes, expected_sha256: str) -> tuple[dict[str
             for name in package_paths:
                 content = archive.read(name)
                 row = next(row for row in package_members if row["archive_path"] == name)
-                if (not content or len(content) != row["size_bytes"]
-                        or len(content) > _MEMBER_LIMIT or _sha256(content) != row["sha256"]
+                if (len(content) != row["size_bytes"]
+                        or len(content) > _PACKAGE_MEMBER_LIMIT or _sha256(content) != row["sha256"]
                         or not name.startswith("registry/package/")
                         or PurePosixPath(name).name == "SKILL.md"):
                     raise ValueError
