@@ -31,7 +31,7 @@ class JarvisChatAssetTests(unittest.TestCase):
     def test_navigation_and_read_only_views_use_finite_account_scoped_endpoints(self):
         _content_type, page = reviewed_chat_asset("/chat")
         source = page.decode("utf-8")
-        for label in ("Chat", "Sessions", "Overview", "Capabilities", "Settings"):
+        for label in ("Chats", "Overview", "Capabilities", "Settings"):
             with self.subTest(label=label):
                 self.assertIn(f">{label}</button>", source)
         self.assertEqual(source.count('id="overview-view"'), 1)
@@ -49,7 +49,7 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('data-integration-status', source)
         self.assertIn('id="session-search" type="search"', source)
         self.assertIn('id="session-count" role="status" aria-live="polite"', source)
-        self.assertIn('aria-label="Owned conversation sessions"', source)
+        self.assertIn('aria-label="Owned private chats"', source)
         self.assertIn('id="capability-map" class="capability-map"', source)
         self.assertIn("Profiles and bundles</strong> are internal specialists for Jarvis team missions", source)
         self.assertIn("Speech input", source)
@@ -77,6 +77,7 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('button.dataset.openSessions === "true" ? "sessions" : button.dataset.view', navigation)
         self.assertIn('showView("chat", "sessions")', client)
         self.assertIn('showView("overview");', client)
+        self.assertIn('data-view="chat">Chats</button>', page.decode("utf-8"))
         _content_type, stylesheet = reviewed_chat_asset("/chat/assets/app.css")
         self.assertIn(".nav-item{min-height:44px}", stylesheet.decode("utf-8"))
         self.assertIn("Runtime readiness pending", client)
@@ -100,6 +101,22 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertEqual(markup.count('>Integrations</button>'), 1)
         self.assertEqual(markup.count('id="overview-view"'), 1)
         self.assertEqual(markup.count('data-view-panel="overview"'), 1)
+        source = page.decode("utf-8")
+        self.assertIn('<div class="workspace" data-current-view="overview">', source)
+        self.assertIn('<script defer src="/chat/assets/features.js"></script>', source)
+        self.assertIn('<main class="data-main" id="overview-view"', source)
+        self.assertIn('data-view="overview"', source.split('data-nav-group="command-centre"', 1)[1].split("</details>", 1)[0])
+        expected_groups = {
+            "conversations": ("chat",),
+            "work": ("missions", "bots"),
+            "resources": ("capabilities", "resources-learning", "native-inventory", "files"),
+            "system": ("settings", "activity", "native-controls", "models-settings"),
+        }
+        for group, destinations in expected_groups.items():
+            with self.subTest(group=group):
+                markup = source.split(f'data-nav-group="{group}"', 1)[1].split("</details>", 1)[0]
+                for destination in destinations:
+                    self.assertIn(f'data-view="{destination}"', markup)
 
         _content_type, registry = reviewed_chat_asset("/chat/assets/features.js")
         source = registry.decode("utf-8")
@@ -179,7 +196,7 @@ class JarvisChatAssetTests(unittest.TestCase):
     def test_sessions_are_searchable_owned_rows_and_read_aloud_can_always_be_stopped(self):
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
         client = script.decode("utf-8")
-        history = client.split("function renderHistory() {", 1)[1].split("async function openSessions()", 1)[0]
+        history = client.split("function renderHistory() {", 1)[1].split("function setPanel(open)", 1)[0]
         self.assertIn('ui.sessionSearch.value.trim().toLocaleLowerCase()', history)
         self.assertIn("conversations.filter((entry)", history)
         self.assertIn("loadConversation(entry.id)", history)
@@ -372,6 +389,8 @@ CLASSIFIER
         _content_type, page = reviewed_chat_asset("/chat")
         markup = page.decode("utf-8")
         self.assertIn('id="voice-input" type="button"', markup)
+        self.assertIn('id="voice-wake-toggle" type="button" aria-pressed="false"', markup)
+        self.assertIn('id="voice-handsfree-send" type="checkbox"', markup)
         self.assertIn('id="speech-consent" type="checkbox"', markup)
         self.assertIn("outside Jarvis", markup)
         self.assertIn('id="speech-output" type="checkbox"', markup)
@@ -390,6 +409,10 @@ CLASSIFIER
         self.assertIn('&& !ui.input.disabled && !byId("main-content").hidden', source)
         self.assertIn("transcript.slice(0, Math.max(0, limit - existing.length - separator.length))", source)
         self.assertIn('document.visibilityState !== "visible"', source)
+        self.assertIn('current.continuous = mode === "wake"', source)
+        self.assertIn('byId("voice-handsfree-send").checked && !existingDraft', source)
+        self.assertIn("ui.form.requestSubmit()", source)
+        self.assertIn("Foreground wake listening ended", source)
 
     def test_voice_and_appearance_preferences_are_local_bounded_and_do_not_persist_consent(self):
         _content_type, page = reviewed_chat_asset("/chat")
@@ -398,20 +421,22 @@ CLASSIFIER
             with self.subTest(control=control):
                 self.assertIn(f'id="{control}"', markup)
         self.assertIn("browser or operating system chooses the microphone", markup)
-        self.assertIn("Microphone permission and push-to-talk consent are never saved", markup)
+        self.assertIn("Microphone permission and voice-input consent are never saved", markup)
+        self.assertIn('<option value="full">Full motion · override device</option>', markup)
 
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
         client = script.decode("utf-8")
         self.assertIn('const preferenceKey = "jarvis.ui.preferences.v1"', client)
-        self.assertIn('byId("speech-output").checked = uiPreferences.readAloud', client)
-        self.assertIn('current.lang = byId("speech-language").value', client)
+        self.assertIn('for (const id of ["speech-output", "chat-speech-output"]) byId(id).checked = uiPreferences.readAloud', client)
+        self.assertIn('current.lang = uiPreferences.language', client)
+        self.assertIn('uiPreferences.motion !== "full" && window.matchMedia("(prefers-reduced-motion: reduce)").matches', client)
         self.assertIn('"language-not-supported":', client)
         self.assertIn('utterance.rate = Number(byId("speech-rate").value)', client)
         self.assertIn('utterance.pitch = Number(byId("speech-pitch").value)', client)
         self.assertIn('readAloud: uiPreferences.readAloud, language: uiPreferences.language, voiceURI: uiPreferences.voiceURI', client)
         self.assertNotIn('safe.consent', client)
         self.assertIn('function shouldReduceMotion()', client)
-        self.assertIn('uiPreferences.motion === "reduce" || window.matchMedia', client)
+        self.assertIn('uiPreferences.motion === "reduce" || (uiPreferences.motion !== "full" && window.matchMedia', client)
         _content_type, stylesheet = reviewed_chat_asset("/chat/assets/app.css")
         css = stylesheet.decode("utf-8")
         self.assertIn('html[data-jarvis-density="compact"]', css)

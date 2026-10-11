@@ -45,7 +45,7 @@ _HTML = '''<!doctype html>
       </a>
       <nav class="primary-nav" aria-label="Jarvis sections">
         <details class="nav-group" data-nav-group="command-centre"><summary>Command centre</summary><div class="nav-menu" aria-label="Command centre destinations"><!-- JARVIS_GROUP_COMMAND_CENTRE --></div></details>
-        <details class="nav-group" data-nav-group="conversations"><summary>Conversations</summary><div class="nav-menu" aria-label="Conversation destinations"><button type="button" class="nav-item" data-view="chat">Chat</button><button type="button" class="nav-item" data-view="chat" data-open-sessions="true">Sessions</button></div></details>
+        <details class="nav-group" data-nav-group="conversations"><summary>Conversations</summary><div class="nav-menu" aria-label="Conversation destinations"><button type="button" class="nav-item" data-view="chat">Chats</button><button type="button" class="nav-item" data-view="chat" data-open-sessions="true">Sessions</button></div></details>
         <details class="nav-group" data-nav-group="work"><summary>Work</summary><div class="nav-menu" aria-label="Work destinations"><!-- JARVIS_GROUP_WORK --></div></details>
         <details class="nav-group" data-nav-group="resources"><summary>Resources</summary><div class="nav-menu" aria-label="Resource destinations"><button type="button" class="nav-item" data-view="capabilities">Capabilities</button><!-- JARVIS_GROUP_RESOURCES --></div></details>
         <details class="nav-group" data-nav-group="system"><summary>System</summary><div class="nav-menu" aria-label="System destinations"><button type="button" class="nav-item" data-view="settings">Settings</button><!-- JARVIS_GROUP_SYSTEM --></div></details>
@@ -59,20 +59,20 @@ _HTML = '''<!doctype html>
       </span>
     </header>
 
-    <div class="workspace">
+    <div class="workspace" data-current-view="overview">
       <aside class="conversation-panel" id="conversation-panel" aria-label="Conversations">
         <div class="panel-heading">
-          <div><span class="eyebrow">YOUR SPACE</span><h2>Sessions</h2></div>
+          <div><span class="eyebrow">YOUR SPACE</span><h2>Chats</h2></div>
           <button class="icon-button panel-close" id="history-close" type="button" aria-label="Close conversations">×</button>
         </div>
         <button class="new-chat-button" id="new-chat" type="button"><span aria-hidden="true">＋</span> New conversation</button>
         <p class="list-caption">YOUR CONVERSATIONS</p>
-        <label class="session-search-label" for="session-search">Find a session</label>
-        <input class="session-search" id="session-search" type="search" autocomplete="off" placeholder="Search sessions" aria-describedby="session-count">
-        <p class="session-count" id="session-count" role="status" aria-live="polite">Loading sessions…</p>
-        <nav class="conversation-list" id="conversation-list" aria-label="Owned conversation sessions"></nav>
-        <p class="history-empty" id="history-empty">No sessions yet. Start a new conversation.</p>
-        <p class="history-empty" id="history-filter-empty" hidden>No sessions match this search.</p>
+        <label class="session-search-label" for="session-search">Find a chat</label>
+        <input class="session-search" id="session-search" type="search" autocomplete="off" placeholder="Search chats" aria-describedby="session-count">
+        <p class="session-count" id="session-count" role="status" aria-live="polite">Loading chats…</p>
+        <nav class="conversation-list" id="conversation-list" aria-label="Owned private chats"></nav>
+        <p class="history-empty" id="history-empty">No chats yet. Start a new conversation.</p>
+        <p class="history-empty" id="history-filter-empty" hidden>No chats match this search.</p>
         <div class="panel-footer"><span class="privacy-mark" aria-hidden="true">◈</span><span>Private conversations</span></div>
       </aside>
 
@@ -82,7 +82,24 @@ _HTML = '''<!doctype html>
             <span class="eyebrow">PERSONAL ASSISTANT · PRIVATE SESSION</span>
             <h1 id="conversation-title">A clear mind, at your service.</h1>
           </div>
-          <div class="conversation-controls"><span>Current conversation</span><button type="button" class="nav-item" data-view="models-settings">Conversation model · session only</button></div>
+          <details class="chat-preferences" id="chat-preferences">
+            <summary aria-label="Open chat controls" aria-controls="chat-preferences-panel">Chat controls</summary>
+            <div class="chat-preferences-panel" id="chat-preferences-panel" role="region" aria-labelledby="chat-preferences-title">
+              <div class="chat-preferences-heading"><h2 id="chat-preferences-title">Chat controls</h2><span>Conversation model · session only · voice · display</span></div>
+              <button type="button" class="chat-model-link" data-view="models-settings">Choose conversation model <span>Session only ↗</span></button>
+              <p class="chat-preferences-note">Voice and display choices apply across this browser and are also available in System settings.</p>
+              <label class="chat-preference-toggle" id="chat-speech-consent-row"><input id="chat-speech-consent" type="checkbox"><span><strong>Allow browser voice input</strong><small>Push-to-talk or foreground wake phrase · review before sending</small></span></label>
+              <label class="chat-preference-toggle" id="chat-speech-output-row"><input id="chat-speech-output" type="checkbox"><span><strong>Read completed replies aloud</strong><small>Uses voices provided by this browser or device</small></span></label>
+              <label class="chat-preference-field"><span>Recognition language</span><select id="chat-speech-language" aria-label="Recognition language">
+                <option value="en-US">English (United States)</option><option value="en-GB">English (United Kingdom)</option><option value="pt-PT">Português (Portugal)</option><option value="pt-BR">Português (Brasil)</option><option value="es-ES">Español (España)</option><option value="fr-FR">Français</option><option value="de-DE">Deutsch</option><option value="it-IT">Italiano</option>
+              </select></label>
+              <label class="chat-preference-field"><span>Speech voice</span><select id="chat-speech-voice" aria-label="Speech voice"></select></label>
+              <div class="chat-preference-tuning" id="chat-preference-tuning"><label for="chat-speech-rate"><span>Speaking rate</span><output id="chat-speech-rate-value" for="chat-speech-rate">1.0×</output><input id="chat-speech-rate" type="range" min="0.5" max="2" step="0.1" value="1"></label><label for="chat-speech-pitch"><span>Voice pitch</span><output id="chat-speech-pitch-value" for="chat-speech-pitch">1.0</output><input id="chat-speech-pitch" type="range" min="0" max="2" step="0.1" value="1"></label></div>
+              <label class="chat-preference-field"><span>Text size</span><select id="chat-text-size" aria-label="Text size"><option value="normal">Default</option><option value="large">Large</option></select></label>
+              <label class="chat-preference-field"><span>Layout density</span><select id="chat-density" aria-label="Layout density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label>
+              <label class="chat-preference-field"><span>Motion</span><select id="chat-motion" aria-label="Motion preference"><option value="system">Follow device setting</option><option value="reduce">Reduce motion</option><option value="full">Full motion · override device</option></select></label>
+            </div>
+          </details>
         </div>
         <section class="message-scroll" id="message-scroll" aria-label="Conversation" aria-live="polite" aria-relevant="additions text">
           <div class="welcome" id="welcome-panel">
@@ -112,9 +129,14 @@ _HTML = '''<!doctype html>
               <button class="stop-button" id="stop-button" type="button" hidden>Stop response</button>
               <button class="voice-button" id="voice-input" type="button" aria-label="Start push to talk" hidden>Speak</button>
               <button class="voice-button" id="voice-stop" type="button" hidden>Stop listening</button>
+              <button class="voice-button voice-wake-button" id="voice-wake-toggle" type="button" aria-pressed="false" hidden>Enable foreground wake phrase</button>
               <button class="voice-button" id="speech-stop" type="button" aria-label="Stop reply audio" hidden disabled>Stop audio</button>
             </div>
           </form>
+          <div class="voice-wake-controls" id="voice-wake-controls" hidden>
+            <label><input id="voice-handsfree-send" type="checkbox"><span>Send a command after “Jarvis” without review</span></label>
+            <p>Foreground only. Wake listening uses this browser’s speech service, may send audio outside Jarvis, and stops when this page is hidden or leaves Chat.</p>
+          </div>
           <p class="voice-status" id="voice-status" role="status" aria-live="polite" hidden></p>
         </div>
       </main>
@@ -145,7 +167,7 @@ _HTML = '''<!doctype html>
         <section class="data-card voice-settings-card"><h2>Voice preferences</h2>
           <p class="muted">Optional browser features. Text chat remains available on every device.</p>
           <h3 class="voice-group-title">Speech input</h3>
-          <label class="voice-choice" id="speech-consent-row" hidden><input id="speech-consent" type="checkbox"><span><strong>Enable push-to-talk for this page</strong><small>Browser speech recognition may process audio through your browser or platform speech service outside Jarvis. Audio is not sent to the Jarvis chat service. Availability and processing depend on your browser.</small></span></label>
+          <label class="voice-choice" id="speech-consent-row" hidden><input id="speech-consent" type="checkbox"><span><strong>Allow browser voice input on this page</strong><small>Push-to-talk or foreground wake listening may process audio through your browser or platform speech service outside Jarvis. Audio is not sent to the Jarvis chat service. Availability and processing depend on your browser.</small></span></label>
           <label class="voice-choice voice-select-row" id="speech-language-row"><span><strong>Recognition language</strong><select id="speech-language" aria-label="Speech recognition language"><option value="en-US">English (United States)</option><option value="en-GB">English (United Kingdom)</option><option value="pt-PT">Português (Portugal)</option><option value="pt-BR">Português (Brasil)</option><option value="es-ES">Español (España)</option><option value="fr-FR">Français</option><option value="de-DE">Deutsch</option><option value="it-IT">Italiano</option></select><small>Applies to the next push-to-talk capture. The browser or operating system chooses the microphone; manage the input device there.</small></span></label>
           <p class="voice-unavailable" id="speech-unavailable" hidden></p>
           <h3 class="voice-group-title">Speech output</h3>
@@ -155,8 +177,8 @@ _HTML = '''<!doctype html>
           <p class="voice-unavailable" id="speech-voice-status" role="status" aria-live="polite" hidden></p>
           <p class="voice-unavailable" id="speech-output-unavailable" hidden></p>
           <h3 class="voice-group-title">Appearance</h3>
-          <div class="voice-range-row appearance-preferences"><label for="ui-density"><strong>Layout density</strong><select id="ui-density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label><label for="ui-text-size"><strong>Text size</strong><select id="ui-text-size"><option value="normal">Default</option><option value="large">Large</option></select></label><label for="ui-motion"><strong>Motion</strong><select id="ui-motion"><option value="system">Follow device setting</option><option value="reduce">Reduce motion</option></select></label></div>
-          <p class="muted">Voice output and appearance choices are stored only in this browser on this device. Microphone permission and push-to-talk consent are never saved; push-to-talk must be enabled again each time.</p>
+          <div class="voice-range-row appearance-preferences"><label for="ui-density"><strong>Layout density</strong><select id="ui-density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label><label for="ui-text-size"><strong>Text size</strong><select id="ui-text-size"><option value="normal">Default</option><option value="large">Large</option></select></label><label for="ui-motion"><strong>Motion</strong><select id="ui-motion"><option value="system">Follow device setting</option><option value="reduce">Reduce motion</option><option value="full">Full motion · override device</option></select></label></div>
+          <p class="muted">Voice output and appearance choices are stored only in this browser on this device. Microphone permission and voice-input consent are never saved; voice input must be enabled again each time.</p>
           <p class="voice-unavailable" id="preference-storage-status" role="status" aria-live="polite" hidden></p>
           <p class="voice-unavailable" id="voice-settings-status" role="status" aria-live="polite" hidden></p>
         </section>
@@ -328,6 +350,53 @@ html[data-jarvis-motion="reduce"] *,html[data-jarvis-motion="reduce"] *::before,
 @media(max-width:390px){.brand-copy small{display:none}.assistant-state span{max-width:80px}.nav-group>summary{padding-inline:5px;font-size:8px}}
 @media(prefers-reduced-motion:reduce){.assistant-hud[data-state="thinking"] .orb-halo{animation:none;opacity:.72}.nav-group>summary,.nav-menu .nav-item{transition:none}}
 @media(forced-colors:active){.nav-group>summary,.nav-menu{border:1px solid CanvasText}.nav-group>summary[aria-current="location"]{outline:2px solid Highlight;outline-offset:1px}}
+/* Overview is the owner home; the searchable conversation rail remains local to Chat. */
+.primary-nav{position:relative;display:flex;align-items:center;justify-content:center;gap:2px;flex:1 1 0;min-width:0;margin-left:8px;overflow:visible}
+.nav-group{position:relative;flex:0 0 auto}.nav-group>summary{min-height:44px;display:flex;align-items:center;gap:8px;padding:0 10px;border:1px solid transparent;border-radius:10px;color:#9ab1b5;font-size:11px;white-space:nowrap;list-style:none;cursor:pointer;user-select:none}.nav-group>summary::-webkit-details-marker{display:none}.nav-group>summary:after{content:"";width:6px;height:6px;border-right:1px solid currentColor;border-bottom:1px solid currentColor;transform:rotate(45deg) translateY(-2px);opacity:.7}.nav-group[open]>summary,.nav-group[data-current="true"]>summary{border-color:rgba(88,228,235,.25);background:rgba(88,228,235,.08);color:#ddfbfd}.nav-group>summary:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.nav-menu{position:absolute;z-index:30;top:calc(100% + 7px);left:0;width:max-content;min-width:220px;max-width:min(300px,90vw);max-height:min(70dvh,560px);display:grid;gap:3px;overflow:auto;padding:7px;border:1px solid rgba(91,199,211,.3);border-radius:14px;background:rgba(5,22,29,.98);box-shadow:0 18px 48px rgba(0,0,0,.5),inset 0 1px rgba(255,255,255,.04);backdrop-filter:blur(18px)}.nav-group:nth-last-child(-n+2) .nav-menu{left:auto;right:0}.nav-menu .nav-item{width:100%;min-height:44px;display:flex;align-items:center;justify-content:flex-start;padding:0 12px;border-radius:8px;text-align:left;font-size:12px;transition:none}.primary-nav .nav-item{flex:0 0 auto}.nav-item:active{transform:none}
+.workspace[data-current-view="chat"]{grid-template-columns:286px minmax(0,1fr)}.workspace[data-current-view]:not([data-current-view="chat"]){display:block}.workspace[data-current-view]:not([data-current-view="chat"])>.conversation-panel{display:none}.workspace[data-current-view]:not([data-current-view="chat"])>.chat-main{display:none}.workspace[data-current-view]:not([data-current-view="chat"])>.data-main{width:100%;height:100%;padding:clamp(20px,4vw,48px)}.assistant-hud{flex:0 0 auto;min-width:168px;padding:6px 10px 6px 6px;gap:8px;border-radius:14px}.assistant-orb{width:42px;height:42px}.orb-core{inset:11px}.orb-ring{inset:4px}.assistant-state strong{font-size:8px}.assistant-state span{max-width:122px;font-size:10px}.assistant-hud[data-state="thinking"] .orb-halo{animation:jarvis-orb-breathe 2.4s linear infinite}.assistant-hud[data-state="idle"] .assistant-state strong{color:#86cfc9}.assistant-hud[data-state="checking"] .orb-halo{opacity:.42}.assistant-hud[data-state="thinking"] .assistant-state strong{color:#91e8ec}.assistant-hud[data-state="error"] .orb-core{background:radial-gradient(circle at 38% 32%,#fff7df,#e9bd70 45%,#92703e 78%,#332717)}
+.conversation-model{align-self:center;flex:none;min-height:44px;padding-inline:11px;border-color:rgba(102,188,202,.2);font-size:10px}.command-centre .page-heading{margin-bottom:16px}.command-centre .page-heading h1{font-size:clamp(28px,4vw,42px);font-weight:560;letter-spacing:-.04em}.command-centre .page-heading p{max-width:700px}.command-panel{max-width:1080px;margin:0 auto 20px;padding:clamp(14px,2.5vw,24px);border:1px solid rgba(88,228,235,.28);border-radius:18px;background:radial-gradient(ellipse at 4% 0%,rgba(38,181,193,.15),transparent 55%),linear-gradient(140deg,rgba(13,43,52,.94),rgba(8,23,30,.96));box-shadow:inset 0 1px rgba(255,255,255,.05),0 18px 48px rgba(0,0,0,.17)}.command-intro{display:flex;align-items:center;justify-content:space-between;gap:1rem;color:#8eaaaf;font-size:.72rem}.command-kicker{color:#83d9de;font:600 .65rem/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.14em}.command-form{display:flex;align-items:flex-end;gap:.6rem;margin-top:.65rem;padding:.55rem;border:1px solid rgba(88,228,235,.34);border-radius:14px;background:rgba(3,17,23,.74)}.command-form textarea{width:100%;min-width:0;min-height:50px;max-height:144px;resize:vertical;padding:.8rem .65rem;border:0;outline:0;background:transparent;color:var(--text);font:inherit;font-size:1rem;line-height:1.5}.command-form textarea::placeholder{color:#708b91}.command-form button{display:flex;align-items:center;justify-content:center;gap:.7rem;min-width:144px;min-height:48px;padding:.65rem .85rem;border:1px solid rgba(93,228,235,.55);border-radius:10px;background:linear-gradient(135deg,#168895,#12626e);color:#efffff;font-size:.82rem;font-weight:650;cursor:pointer}.command-form button:focus-visible,.quick-actions button:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}.command-hint{margin:.6rem .2rem 0;color:#819ca1;font-size:.72rem;line-height:1.55}.quick-actions{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:1rem}.quick-actions button{display:flex;align-items:center;gap:.5rem;min-height:44px;padding:.45rem .8rem;border:1px solid rgba(112,190,199,.2);border-radius:999px;background:rgba(7,29,36,.7);color:#c4dbde;font-size:.76rem;cursor:pointer}.overview-status-strip{max-width:1080px;margin:-5px auto 16px;color:#9ab2b6;font-size:11px;line-height:1.55}.overview-status-strip strong{color:#d3e7e8;font-weight:600}
+.chat-preferences{position:relative;align-self:center;margin-left:auto;flex:none}.chat-preferences>summary{min-height:44px;display:flex;align-items:center;gap:9px;padding:0 13px;border:1px solid rgba(102,188,202,.28);border-radius:11px;background:rgba(9,31,38,.84);color:#d7f5f6;font-size:11px;font-weight:600;cursor:pointer;list-style:none}.chat-preferences>summary::-webkit-details-marker{display:none}.chat-preferences>summary:after{content:"";width:6px;height:6px;border-right:1px solid currentColor;border-bottom:1px solid currentColor;transform:rotate(45deg) translateY(-2px);opacity:.75}.chat-preferences>summary:focus-visible,.chat-preferences-panel :focus-visible{outline:2px solid var(--cyan);outline-offset:2px}.chat-preferences-panel{position:fixed;z-index:35;top:88px;right:clamp(12px,4vw,64px);width:min(380px,calc(100vw - 24px));max-height:min(76dvh,680px);overflow:auto;padding:15px 17px 17px;border:1px solid rgba(91,199,211,.38);border-radius:16px;background:#07191f;box-shadow:0 20px 56px rgba(0,0,0,.52),0 8px 22px rgba(8,110,121,.12);overscroll-behavior:contain}.chat-preferences-heading{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding-bottom:12px;border-bottom:1px solid var(--line)}.chat-preferences-heading h2{margin:0;font-size:15px;font-weight:600}.chat-preferences-heading>span,.chat-preferences-note{color:#a1b9bd;font-size:10px;line-height:1.5}.chat-preferences-note{margin:11px 0 7px}.chat-model-link{width:100%;min-height:44px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 11px;border:1px solid rgba(88,228,235,.27);border-radius:10px;background:rgba(24,102,111,.16);color:#e2fbfc;text-align:left;font:inherit;font-size:12px;cursor:pointer}.chat-model-link span{color:#9ed8dc;font-size:10px}.chat-preference-toggle{min-height:52px;display:flex;align-items:center;gap:11px;border-bottom:1px solid rgba(119,161,167,.13);cursor:pointer}.chat-preference-toggle input{width:18px;height:18px;flex:none;accent-color:#42c6d0}.chat-preference-toggle>span{display:grid;gap:3px}.chat-preference-toggle strong{font-size:12px;font-weight:600}.chat-preference-toggle small{color:#a1b9bd;font-size:10px;line-height:1.4}.chat-preference-field{min-height:47px;display:grid;grid-template-columns:1fr minmax(150px,1.2fr);align-items:center;gap:12px;border-bottom:1px solid rgba(119,161,167,.13);color:#c5dadd;font-size:11px}.chat-preference-field select{width:100%;min-height:44px;padding:7px 9px;border:1px solid var(--line-strong);border-radius:8px;background:#0c1f26;color:var(--text);font:inherit;font-size:11px}
+@media(min-width:761px) and (max-width:1120px){.primary-nav{order:4;flex:1 1 100%;width:100%;justify-content:flex-start;margin:0}.assistant-hud{margin-left:auto}}
+@media(max-width:760px){.topbar{height:auto;min-height:64px;flex-wrap:wrap;gap:8px 10px;padding:8px 12px}.brand{order:1}.assistant-hud{order:2;margin-left:auto;min-width:0;padding:4px 7px 4px 4px;gap:6px}.assistant-orb{width:36px;height:36px}.orb-core{inset:10px}.orb-ring{inset:3px}.assistant-state strong{font-size:7px;letter-spacing:.11em}.assistant-state span{max-width:96px;font-size:9px}.connection{order:3;margin-left:0;font-size:10px}.primary-nav{position:fixed;z-index:12;left:50%;bottom:calc(7px + env(safe-area-inset-bottom));order:4;width:min(calc(100% - 20px),540px);height:58px;margin:0;padding:5px;justify-content:space-between;gap:2px;overflow-x:auto;overscroll-behavior-inline:contain;transform:translateX(-50%);border:1px solid rgba(111,203,214,.2);border-radius:17px;background:rgba(7,23,30,.96);box-shadow:0 12px 32px rgba(0,0,0,.4),inset 0 1px rgba(255,255,255,.05);backdrop-filter:blur(16px) saturate(125%);scrollbar-width:none}.primary-nav::-webkit-scrollbar{display:none}.nav-group{flex:1 0 auto}.nav-group>summary{min-height:46px;justify-content:center;padding-inline:7px;font-size:9px;gap:5px}.nav-group>summary:after{width:5px;height:5px}.nav-menu,.nav-group:nth-last-child(-n+2) .nav-menu{position:fixed;left:10px;right:10px;top:auto;bottom:calc(76px + env(safe-area-inset-bottom));width:auto;max-width:none;max-height:min(64dvh,520px);padding:9px;border-radius:16px}.workspace{padding-bottom:calc(68px + env(safe-area-inset-bottom))}.workspace[data-current-view="chat"]{grid-template-columns:minmax(0,1fr)}.conversation-panel{top:calc(96px + env(safe-area-inset-top));bottom:calc(66px + env(safe-area-inset-bottom))}.chat-heading{flex-wrap:wrap}.conversation-model{width:100%;justify-content:flex-start;text-align:left}.chat-preferences{margin-left:0}.chat-preferences-panel{top:calc(74px + env(safe-area-inset-top));right:10px;width:min(380px,calc(100vw - 20px));max-height:min(72dvh,620px);padding:13px}.command-form{align-items:stretch;flex-direction:column}.command-form button{width:100%}.quick-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.quick-actions button{justify-content:flex-start;padding-inline:.65rem;font-size:.69rem}.workspace[data-current-view]:not([data-current-view="chat"])>.data-main{padding:20px 16px calc(85px + env(safe-area-inset-bottom))}}
+@media(max-width:390px){.brand-copy small{display:none}.assistant-state span{max-width:80px}.nav-group>summary{padding-inline:5px;font-size:8px}.command-centre .page-heading h1{font-size:26px}}
+@media(hover:hover) and (pointer:fine){.command-form button,.quick-actions button{transition:filter 140ms ease,border-color 140ms ease,background-color 140ms ease}.command-form button:hover{filter:brightness(1.13);border-color:var(--cyan)}.quick-actions button:hover{border-color:rgba(88,228,235,.48);background:rgba(18,76,85,.68);color:#f2ffff}}
+@media(prefers-reduced-motion:reduce){.assistant-hud[data-state="thinking"] .orb-halo{animation:none;opacity:.72}.nav-group>summary,.nav-menu .nav-item,.command-form button,.quick-actions button{transition:none}}
+@media(prefers-contrast:more){.nav-group>summary,.nav-menu,.command-panel{border-color:currentColor}}
+.jarvis-presence{position:relative;max-width:1080px;min-height:236px;margin:0 auto 18px;display:grid;grid-template-columns:220px minmax(0,1fr);align-items:center;gap:clamp(22px,5vw,58px);overflow:hidden;padding:20px clamp(20px,5vw,52px);border:1px solid rgba(86,210,221,.25);border-radius:20px;background:radial-gradient(ellipse at 15% 52%,rgba(21,139,153,.16),transparent 43%),linear-gradient(112deg,#0a252d,#08191f 68%);box-shadow:inset 0 1px rgba(226,255,255,.045),0 16px 42px rgba(0,0,0,.2)}.jarvis-presence:after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(112deg,transparent 38%,rgba(102,208,218,.025) 70%,transparent);opacity:.9}.presence-figure{position:relative;z-index:1;width:210px;height:210px;display:grid;place-items:center;filter:drop-shadow(0 14px 24px rgba(0,0,0,.2))}.presence-figure:before{content:"";position:absolute;inset:23px;border-radius:50%;background:radial-gradient(circle,rgba(54,210,222,.17),rgba(34,143,155,.065) 55%,transparent 72%);transition:transform .45s var(--ease-out),opacity .45s var(--ease-out)}.presence-figure svg{position:relative;width:100%;height:100%;overflow:visible}.presence-orbit,.presence-face,.presence-brow,.presence-jaw,.presence-axis{fill:none;stroke:rgba(103,225,232,.62);stroke-width:1.2;vector-effect:non-scaling-stroke}.presence-orbit-outer{stroke-dasharray:2 7;opacity:.66}.presence-orbit-inner{stroke:rgba(81,205,217,.22);stroke-dasharray:48 9 3 10}.presence-face{stroke-width:1.5;stroke:rgba(150,244,246,.84);filter:drop-shadow(0 0 4px rgba(74,219,228,.3))}.presence-brow,.presence-jaw{stroke-width:1.35;stroke:rgba(91,220,230,.75)}.presence-axis{stroke:rgba(82,199,211,.5)}.presence-node{fill:#c3ffff;filter:drop-shadow(0 0 4px rgba(82,229,237,.8))}.presence-copy{position:relative;z-index:1;max-width:540px}.presence-kicker{margin:0 0 12px;color:#83e0e5;font:600 10px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.15em}.presence-kicker span{color:#94adb2;font:500 9px/1.3 Inter,ui-sans-serif,system-ui,sans-serif;letter-spacing:.1em}.presence-copy h2{margin:0;color:#f0fcfc;font-size:clamp(28px,4vw,42px);font-weight:520;letter-spacing:-.04em}.presence-copy>p:not(.presence-kicker){margin:9px 0 19px;color:#b5cccf;font-size:14px;line-height:1.5}.presence-connection{display:grid;grid-template-columns:9px auto 1fr;align-items:center;gap:8px;color:#85a6ab;font-size:9px;letter-spacing:.12em}.presence-connection strong{justify-self:start;margin-left:7px;padding:6px 9px;border:1px solid rgba(93,183,194,.2);border-radius:7px;color:#bcd5d8;font-size:10px;letter-spacing:0;font-weight:550}.presence-connection-dot{width:7px;height:7px;border-radius:50%;background:#83979a}.jarvis-presence[data-state="idle"] .presence-connection-dot,.jarvis-presence[data-state="listening"] .presence-connection-dot,.jarvis-presence[data-state="thinking"] .presence-connection-dot,.jarvis-presence[data-state="speaking"] .presence-connection-dot{background:#66e3e6;box-shadow:0 0 9px rgba(88,228,235,.55)}.jarvis-presence[data-state="error"] .presence-connection-dot{background:var(--amber);box-shadow:0 0 8px rgba(233,189,112,.5)}.jarvis-presence[data-state="thinking"] .presence-figure:before{transform:scale(1.08);opacity:.84}.jarvis-presence[data-state="listening"] .presence-figure:before{transform:scale(1.04);opacity:1}.jarvis-presence[data-state="speaking"] .presence-orbit-outer{stroke-dasharray:12 5;opacity:.95}.jarvis-presence[data-state="error"] .presence-face,.jarvis-presence[data-state="error"] .presence-brow,.jarvis-presence[data-state="error"] .presence-jaw{stroke:rgba(233,189,112,.76)}
+@keyframes presence-turn{to{transform:rotate(1turn)}}@keyframes presence-listen{50%{opacity:.32}}.jarvis-presence[data-state="thinking"] .presence-orbit-inner{transform-box:view-box;transform-origin:120px 120px;animation:presence-turn 24s linear infinite}.jarvis-presence[data-state="listening"] .presence-orbit-outer{animation:presence-listen 1.8s ease-in-out infinite}
+.chat-preference-tuning{display:grid;grid-template-columns:1fr 1fr;gap:12px;border-bottom:1px solid rgba(119,161,167,.13)}.chat-preference-tuning label{min-width:0;min-height:64px;display:grid;grid-template-columns:1fr auto;align-items:center;gap:3px 6px;color:#c5dadd;font-size:10px}.chat-preference-tuning output{color:#8ce5e9;font-variant-numeric:tabular-nums}.chat-preference-tuning input{grid-column:1/-1;width:100%;min-height:44px;accent-color:var(--cyan)}
+@media(max-width:760px){.jarvis-presence{grid-template-columns:112px minmax(0,1fr);min-height:164px;gap:14px;margin-bottom:16px;padding:15px 16px;border-radius:16px}.presence-figure{width:112px;height:112px}.presence-figure:before{inset:12px}.presence-copy h2{font-size:clamp(23px,6vw,30px)}.presence-kicker{font-size:8px;letter-spacing:.1em}.presence-kicker span{display:block;margin-top:4px}.presence-copy>p:not(.presence-kicker){margin:6px 0 11px;font-size:12px}.presence-connection{grid-template-columns:8px 1fr;gap:6px;font-size:8px}.presence-connection strong{grid-column:2;margin:0;padding:4px 7px;font-size:9px}}
+@media(max-width:420px){.jarvis-presence{grid-template-columns:84px minmax(0,1fr);gap:11px;padding:13px}.presence-figure{width:84px;height:84px}.presence-copy h2{font-size:22px}.presence-copy>p:not(.presence-kicker){font-size:11px}.presence-kicker span{font-size:8px}}
+@media(prefers-reduced-motion:reduce){.presence-figure:before{transition:none}.jarvis-presence .presence-orbit-inner,.jarvis-presence .presence-orbit-outer{animation:none}}
+.overview-hud{max-width:1200px;min-height:438px;margin:0 auto 14px;display:grid;grid-template-columns:minmax(150px,.8fr) minmax(340px,1.8fr) minmax(190px,.95fr);align-items:center;gap:clamp(14px,2.3vw,30px)}.telemetry-rail{min-width:0;display:grid;align-content:center;gap:13px}.telemetry-readout{min-width:0;padding:12px 0;border-top:1px solid rgba(91,199,211,.22)}.telemetry-readout:last-child{border-bottom:1px solid rgba(91,199,211,.16)}.telemetry-readout h2{margin:0 0 8px;color:#8cb8be;font:600 9px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.13em;text-transform:uppercase}.telemetry-readout .large-value{margin:4px 0 3px;color:#e7fcfd;font-size:21px;line-height:1.2;font-weight:560;letter-spacing:-.025em;font-variant-numeric:tabular-nums}.telemetry-readout .muted{margin:4px 0 0;color:#9bb6bb;font-size:10px;line-height:1.5}.telemetry-readout #core-observed{color:#85a6ab;font-size:9px}.telemetry-readout #turn-breakdown{color:#9bb6bb}.activity-readout{align-self:stretch}.activity-readout #chart-caption{min-height:28px}.activity-readout .chart-bars{height:112px;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;margin:9px 0 0}.activity-readout .chart-day{min-width:0;gap:5px;color:#9bb6bb;font-size:8px}.activity-readout .chart-bar-track{height:72px}.activity-readout .chart-bar{width:min(13px,70%);border-radius:3px 3px 0 0}.jarvis-presence{min-width:0;min-height:420px;margin:0;display:grid;grid-template-columns:minmax(0,1fr);align-content:center;justify-items:center;gap:0;overflow:visible;padding:12px 0;border:0;border-radius:0;background:transparent;box-shadow:none;text-align:center}.jarvis-presence:after{display:none}.presence-figure{width:min(100%,380px);height:auto;aspect-ratio:1;margin:0 auto;filter:drop-shadow(0 16px 32px rgba(0,0,0,.27))}.presence-figure:before{inset:15%;background:radial-gradient(circle,rgba(59,217,228,.23),rgba(16,104,118,.12) 43%,transparent 72%)}.presence-figure svg{display:block;width:100%;height:100%;overflow:visible}.presence-orbit-outer{stroke:rgba(70,216,228,.72);stroke-width:1.3;stroke-dasharray:2 5}.presence-orbit-inner{stroke:rgba(95,220,231,.52);stroke-width:1.5;stroke-dasharray:35 8 5 9}.presence-orbit-reactor{fill:rgba(6,27,34,.83);stroke:rgba(104,229,236,.79);stroke-width:1.3;stroke-dasharray:98 12 12 9}.presence-core{fill:rgba(42,189,202,.09);stroke:rgba(108,234,239,.78);stroke-width:1.1;filter:drop-shadow(0 0 9px rgba(64,220,231,.22))}.presence-axis{stroke:rgba(88,211,221,.48);stroke-width:1.1}.presence-node{fill:#c8ffff;filter:drop-shadow(0 0 5px rgba(82,229,237,.86))}.presence-core-label{position:absolute;left:50%;top:50%;display:grid;gap:6px;transform:translate(-50%,-50%);color:#ddffff;font:550 clamp(13px,1.35vw,17px)/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.2em;text-shadow:0 0 18px rgba(77,230,237,.54);white-space:nowrap}.presence-core-label small{color:#89dbe0;font-size:8px;letter-spacing:.2em}.presence-copy{max-width:500px;margin-top:-17px;text-align:center}.presence-copy h2{font-size:22px;letter-spacing:-.025em}.presence-copy>p:not(.presence-kicker){margin:7px 0 12px;color:#b5d2d5;font-size:12px}.presence-connection{display:inline-grid;grid-template-columns:8px auto auto;gap:8px;padding:0 10px;color:#8db0b5;font-size:8px}.presence-connection strong{margin-left:3px;padding:5px 7px;font-size:9px}.jarvis-presence[data-state="idle"] .presence-orbit-inner{opacity:.76}.jarvis-presence[data-state="thinking"] .presence-orbit-inner{transform-box:view-box;transform-origin:120px 120px;animation:presence-turn 24s linear infinite}.jarvis-presence[data-state="listening"] .presence-orbit-outer{animation:presence-listen 1.8s ease-in-out infinite}.jarvis-presence[data-state="speaking"] .presence-orbit-reactor{stroke-dasharray:22 7;stroke-width:1.9}.jarvis-presence[data-state="error"] .presence-orbit-reactor,.jarvis-presence[data-state="error"] .presence-core{stroke:rgba(233,189,112,.86)}.command-panel{max-width:1200px;margin:10px auto 8px;padding:14px 18px;border:1px solid rgba(89,190,201,.23);border-radius:13px;background:linear-gradient(110deg,rgba(9,30,37,.88),rgba(7,22,29,.84));box-shadow:inset 0 1px rgba(255,255,255,.025)}.command-intro{font-size:10px}.command-kicker{color:#8ddce0;font-size:9px}.command-form{margin-top:9px}.quick-actions{margin-top:10px}.overview-hud+.command-panel{margin-top:8px}
+.jarvis-presence[data-connection="ready"] .presence-connection-dot{background:#66e3e6;box-shadow:0 0 9px rgba(88,228,235,.55)}.jarvis-presence[data-connection="error"] .presence-connection-dot{background:var(--amber);box-shadow:0 0 8px rgba(233,189,112,.5)}.jarvis-presence[data-connection="checking"] .presence-connection-dot{background:#83979a;box-shadow:none}
+@media(max-width:980px) and (min-width:761px){.overview-hud{grid-template-columns:minmax(125px,.75fr) minmax(300px,1.7fr) minmax(165px,.95fr);gap:13px}.jarvis-presence{min-height:380px}.presence-figure{width:min(100%,340px)}.telemetry-readout{padding-block:10px}.telemetry-readout .large-value{font-size:19px}}
+@media(max-width:760px){.overview-hud{display:flex;flex-direction:column;gap:16px;min-height:0;align-items:stretch}.jarvis-presence{grid-template-columns:minmax(0,1fr);order:-1;min-height:0;padding:2px 0 7px}.presence-figure{width:min(78vw,330px)}.presence-figure:before{inset:15%}.presence-copy{margin-top:-13px}.telemetry-rail{grid-template-columns:repeat(2,minmax(0,1fr));gap:0 18px;padding:0 4px}.telemetry-readout{padding:11px 0}.telemetry-readout .large-value{font-size:19px}.telemetry-readout .muted{font-size:10px}.activity-readout .chart-bars{height:116px}.activity-readout .chart-bar-track{height:74px}.command-panel{padding:12px;border-radius:12px}.command-intro{gap:8px}.command-intro>span:last-child{font-size:9px}.quick-actions{display:flex;flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px;scroll-snap-type:x proximity;overscroll-behavior-inline:contain}.quick-actions button{flex:0 0 auto;scroll-snap-align:start;min-height:44px}.command-hint{font-size:10px}}
+@media(max-width:430px){.presence-figure{width:min(82vw,290px)}.presence-copy h2{font-size:20px}.presence-connection{grid-template-columns:7px auto;gap:6px}.presence-connection strong{grid-column:2;justify-self:start;margin-left:0}.telemetry-rail{grid-template-columns:1fr 1fr;gap:0 12px}.telemetry-readout h2{font-size:8px}.activity-readout{grid-column:1/-1}.activity-readout .chart-bars{height:100px}.activity-readout .chart-bar-track{height:62px}}
+@media(prefers-reduced-motion:reduce){.jarvis-presence[data-state="thinking"] .presence-orbit-inner,.jarvis-presence[data-state="listening"] .presence-orbit-outer{animation:none;transform:none}}
+/* One authored reactor: continuous only while visible, with motion tied to real UI states. */
+@keyframes reactor-core-breathe{0%,100%{opacity:.72;transform:scale(.98)}50%{opacity:1;transform:scale(1.035)}}
+@keyframes reactor-listening{0%,100%{opacity:.58;stroke-width:1.2}50%{opacity:1;stroke-width:2.1}}
+@keyframes jarvis-halo-breathe{0%,100%{opacity:.35;transform:scale(.94)}50%{opacity:.78;transform:scale(1.06)}}
+.jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-orbit-inner{transform-box:view-box;transform-origin:120px 120px;animation:presence-turn 58s linear infinite}
+.jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-core{transform-box:view-box;transform-origin:120px 120px;animation:reactor-core-breathe 6s ease-in-out infinite}
+.jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="thinking"] .presence-orbit-inner{animation-duration:18s}
+.jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="thinking"] .presence-orbit-reactor{transform-box:view-box;transform-origin:120px 120px;animation:presence-turn 46s linear infinite reverse}
+.jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="listening"] .presence-orbit-outer{animation:reactor-listening 1.7s ease-in-out infinite}
+.jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="speaking"] .presence-orbit-reactor{transform-box:view-box;transform-origin:120px 120px;animation:presence-turn 34s linear infinite}
+html[data-page-visible="true"] .assistant-hud[data-state="idle"] .orb-halo{animation:jarvis-halo-breathe 7s ease-in-out infinite}
+html[data-page-visible="true"] .assistant-hud[data-state="listening"] .orb-halo{animation:jarvis-halo-breathe 1.7s ease-in-out infinite}
+html[data-page-visible="true"] .assistant-hud[data-state="speaking"] .orb-ring{animation:presence-turn 16s linear infinite}
+.voice-button,.send-button,.stop-button{min-height:44px}
+.voice-wake-controls{max-width:880px;margin:8px 3px 0;color:#9bb6bb;font-size:11px;line-height:1.5}
+.voice-wake-controls label{min-height:44px;display:flex;align-items:center;gap:10px;color:#cce2e5;cursor:pointer}
+.voice-wake-controls input{width:18px;height:18px;flex:none;accent-color:var(--cyan)}
+.voice-wake-controls p{margin:0 0 0 28px;max-width:74ch}
+.voice-wake-button[aria-pressed="true"]{border-color:#83d7bd;background:rgba(39,137,111,.2);color:#c4f7e5}
+@media(max-width:760px){.composer-actions{flex-wrap:wrap}.composer-hint{flex:1 0 100%;padding:2px 0 5px}.voice-wake-controls p{margin-left:0}}
+@media(prefers-reduced-motion:reduce){html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-orbit-inner,html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-orbit-reactor,html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-orbit-outer,html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-core,html:not([data-jarvis-motion="full"]) .assistant-hud .orb-halo,html:not([data-jarvis-motion="full"]) .assistant-hud .orb-ring{animation:none!important;transform:none!important}}
+@media(prefers-reduced-motion:reduce){html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-orbit-inner{animation:presence-turn 58s linear infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-core{animation:reactor-core-breathe 6s ease-in-out infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="thinking"] .presence-orbit-inner{animation:presence-turn 18s linear infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="thinking"] .presence-orbit-reactor{animation:presence-turn 46s linear infinite reverse!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="listening"] .presence-orbit-outer{animation:reactor-listening 1.7s ease-in-out infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="speaking"] .presence-orbit-reactor{animation:presence-turn 34s linear infinite!important}html[data-jarvis-motion="full"][data-page-visible="true"] .assistant-hud[data-state="idle"] .orb-halo{animation:jarvis-halo-breathe 7s ease-in-out infinite!important}html[data-jarvis-motion="full"][data-page-visible="true"] .assistant-hud[data-state="listening"] .orb-halo{animation:jarvis-halo-breathe 1.7s ease-in-out infinite!important}html[data-jarvis-motion="full"][data-page-visible="true"] .assistant-hud[data-state="speaking"] .orb-ring{animation:presence-turn 16s linear infinite!important}}
 '''.encode("utf-8")
 
 
@@ -342,7 +411,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     messages: byId("message-list"), welcome: byId("welcome-panel"),
     scroll: byId("message-scroll"), form: byId("composer"), input: byId("message-input"),
     send: byId("send-button"), stop: byId("stop-button"), notice: byId("chat-notice"),
-    voiceInput: byId("voice-input"), voiceStop: byId("voice-stop"), speechStop: byId("speech-stop"),
+    voiceInput: byId("voice-input"), voiceStop: byId("voice-stop"), voiceWake: byId("voice-wake-toggle"), speechStop: byId("speech-stop"),
     voiceStatus: byId("voice-status"),
     toggle: byId("history-toggle"), close: byId("history-close"), panel: byId("conversation-panel"),
     scrim: byId("panel-scrim"), newChat: byId("new-chat")
@@ -355,6 +424,9 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   let heartbeatNonce = null;
   let latestSequence = 0;
   let recognition = null;
+  let recognitionMode = "";
+  let wakePhraseHeard = false;
+  let presenceObserver = null;
   let speechUtterance = null;
   let voiceSupported = false;
   let synthesisSupported = false;
@@ -539,7 +611,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
             pitch: boundedPreferenceNumber(saved.pitch, 0, 2, 1),
             density: saved.density === "compact" ? "compact" : "comfortable",
             textSize: saved.textSize === "large" ? "large" : "normal",
-            motion: saved.motion === "reduce" ? "reduce" : "system"
+            motion: ["reduce", "full"].includes(saved.motion) ? saved.motion : "system"
           };
         }
       }
@@ -548,14 +620,21 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       ? "Voice and appearance choices are saved on this device. Microphone consent is never saved."
       : "Local preference storage is unavailable. Changes apply only until this page closes.";
     byId("preference-storage-status").hidden = false;
-    byId("speech-language").value = uiPreferences.language;
+    for (const id of ["speech-language", "chat-speech-language"]) byId(id).value = uiPreferences.language;
     byId("speech-voice").dataset.preferredVoice = uiPreferences.voiceURI;
     byId("speech-output").checked = uiPreferences.readAloud;
+    byId("chat-speech-output").checked = uiPreferences.readAloud;
     byId("speech-rate").value = String(uiPreferences.rate);
+    byId("chat-speech-rate").value = String(uiPreferences.rate);
     byId("speech-pitch").value = String(uiPreferences.pitch);
+    byId("chat-speech-pitch").value = String(uiPreferences.pitch);
     byId("ui-density").value = uiPreferences.density;
+    byId("chat-density").value = uiPreferences.density;
     byId("ui-text-size").value = uiPreferences.textSize;
+    byId("chat-text-size").value = uiPreferences.textSize;
     byId("ui-motion").value = uiPreferences.motion;
+    byId("chat-motion").value = uiPreferences.motion;
+    byId("chat-speech-consent-row").hidden = byId("speech-consent-row").hidden;
     applyAppearancePreferences();
     updateSpeechTuningLabels();
   }
@@ -575,12 +654,19 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     document.documentElement.dataset.jarvisTextSize = uiPreferences.textSize;
     document.documentElement.dataset.jarvisMotion = uiPreferences.motion;
   }
+  function pushToTalkEnabled() {
+    return byId("speech-consent").checked || byId("chat-speech-consent").checked;
+  }
   function updateSpeechTuningLabels() {
-    byId("speech-rate-value").textContent = `${Number(byId("speech-rate").value).toFixed(1)}×`;
-    byId("speech-pitch-value").textContent = Number(byId("speech-pitch").value).toFixed(1);
+    const rate = Number(byId("speech-rate").value);
+    const pitch = Number(byId("speech-pitch").value);
+    byId("speech-rate-value").textContent = `${rate.toFixed(1)}×`;
+    byId("speech-pitch-value").textContent = pitch.toFixed(1);
+    byId("chat-speech-rate-value").textContent = `${rate.toFixed(1)}×`;
+    byId("chat-speech-pitch-value").textContent = pitch.toFixed(1);
   }
   function shouldReduceMotion() {
-    return uiPreferences.motion === "reduce" || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    return uiPreferences.motion === "reduce" || (uiPreferences.motion !== "full" && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   }
   function updateSpeechVoiceStatus() {
     const status = byId("speech-voice-status");
@@ -596,9 +682,14 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   function stopRecognition(message = "") {
     const current = recognition;
     recognition = null;
+    recognitionMode = "";
+    wakePhraseHeard = false;
     ui.voiceStop.hidden = true;
     ui.voiceInput.hidden = !voiceSupported || !byId("speech-consent").checked;
     ui.voiceInput.dataset.listening = "false";
+    ui.voiceWake.setAttribute("aria-pressed", "false");
+    ui.voiceWake.textContent = "Enable foreground wake phrase";
+    ui.voiceWake.hidden = !voiceSupported || !pushToTalkEnabled();
     if (current) {
       current.onresult = current.onerror = current.onend = null;
       try { current.abort(); } catch (_) {}
@@ -625,7 +716,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     const utterance = new window.SpeechSynthesisUtterance(text);
     utterance.rate = Number(byId("speech-rate").value);
     utterance.pitch = Number(byId("speech-pitch").value);
-    const selectedVoice = byId("speech-voice").value;
+    const selectedVoice = uiPreferences.voiceURI;
     const voice = window.speechSynthesis.getVoices().find((candidate) => candidate.voiceURI === selectedVoice);
     if (voice) {
       utterance.voice = voice;
@@ -668,6 +759,9 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     const consentRow = byId("speech-consent-row");
     const unavailable = byId("speech-unavailable");
     consentRow.hidden = !voiceSupported;
+    byId("chat-speech-consent-row").hidden = !voiceSupported;
+    byId("voice-wake-controls").hidden = !voiceSupported || !pushToTalkEnabled();
+    ui.voiceWake.hidden = !voiceSupported || !pushToTalkEnabled();
     if (!Recognition) {
       unavailable.textContent = "Push-to-talk is not supported by this browser. You can still type your message.";
       unavailable.hidden = false;
@@ -691,6 +785,14 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
           option.textContent = `${voice.name} (${voice.lang})`;
           select.append(option);
         }
+        const chatSelect = byId("chat-speech-voice");
+        chatSelect.replaceChildren(...[...select.options].map((source) => {
+          const option = document.createElement("option");
+          option.value = source.value;
+          option.textContent = source.textContent;
+          return option;
+        }));
+        chatSelect.value = [...chatSelect.options].some((option) => option.value === previous) ? previous : select.value;
         byId("speech-voice-row").hidden = select.options.length === 0;
         if ([...select.options].some((option) => option.value === previous)) select.value = previous;
         else if (select.options.length) select.dataset.preferredVoice = "";
@@ -700,11 +802,12 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       window.speechSynthesis.onvoiceschanged = refreshVoices;
     }
   }
-  function startRecognition() {
+  function startRecognition(mode = "ptt") {
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!voiceSupported || !byId("speech-consent").checked || !Recognition
         || byId("main-content").hidden || document.visibilityState !== "visible") return;
     if (ui.input.disabled) return;
+    if (recognition) stopRecognition();
     stopSpeech();
     let current;
     try { current = new Recognition(); }
@@ -713,7 +816,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       setAssistantState("error", "Voice input unavailable");
       return;
     }
-    current.continuous = false;
+    current.continuous = mode === "wake";
     current.interimResults = false;
     current.lang = byId("speech-language").value;
     let transcriptReceived = false;
@@ -727,6 +830,43 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
         .map((result) => result[0] && result[0].transcript || "").join(" ").trim();
       if (!transcript) return;
       transcriptReceived = true;
+      if (mode === "wake") {
+        let command = transcript;
+        if (!wakePhraseHeard) {
+          const wake = transcript.match(/(?:^|\b)(?:hey\s+)?jarvis\b[\s,.:;!-]*(.*)$/i);
+          if (!wake) return;
+          wakePhraseHeard = true;
+          command = (wake[1] || "").trim();
+          if (!command) {
+            showVoiceStatus("Jarvis heard you. Say one command; it will not run until you review or explicitly enable hands-free sending.");
+            return;
+          }
+        }
+        if (command) {
+          const existingDraft = ui.input.value.trim();
+          const autoSend = byId("voice-handsfree-send").checked && !existingDraft;
+          stopRecognition();
+          const separator = ui.input.value && !/\s$/.test(ui.input.value) ? " " : "";
+          const limit = ui.input.maxLength >= 0 ? ui.input.maxLength : ui.input.value.length + command.length + separator.length;
+          const accepted = command.slice(0, Math.max(0, limit - ui.input.value.length - separator.length));
+          if (!accepted) {
+            showVoiceStatus("The message is at its character limit. You can edit it or start a new message.");
+            return;
+          }
+          ui.input.value = `${ui.input.value}${separator}${accepted}`;
+          ui.input.dispatchEvent(new Event("input", { bubbles: true }));
+          if (autoSend && accepted === command) {
+            showVoiceStatus("Hands-free command submitted after the wake phrase.");
+            ui.form.requestSubmit();
+          } else {
+            ui.input.focus({ preventScroll: true });
+            showVoiceStatus(existingDraft
+              ? "Command added beside your existing draft. Review before sending."
+              : "Command added to your message. Review it before sending.");
+          }
+        }
+        return;
+      }
       const existing = ui.input.value;
       const separator = existing && !/\s$/.test(existing) ? " " : "";
       const limit = ui.input.maxLength >= 0 ? ui.input.maxLength : existing.length + transcript.length + separator.length;
@@ -760,18 +900,31 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       if (recognition !== current) return;
       if (!captureEligible()) { stopRecognition(); return; }
       recognition = null;
-      ui.voiceInput.hidden = !byId("speech-consent").checked;
+      recognitionMode = "";
+      ui.voiceInput.hidden = !pushToTalkEnabled();
       ui.voiceInput.dataset.listening = "false";
       ui.voiceStop.hidden = true;
+      ui.voiceWake.setAttribute("aria-pressed", "false");
+      ui.voiceWake.textContent = "Enable foreground wake phrase";
       setAssistantState("ready", "Ready for your message");
-      if (!transcriptReceived) showVoiceStatus("Listening ended without a transcript. You can type your message instead.");
+      if (mode === "wake") showVoiceStatus("Foreground wake listening ended. You can enable it again or use push-to-talk.");
+      else if (!transcriptReceived) showVoiceStatus("Listening ended without a transcript. You can type your message instead.");
     };
     recognition = current;
+    recognitionMode = mode;
     ui.voiceInput.hidden = true;
     ui.voiceInput.dataset.listening = "true";
     ui.voiceStop.hidden = false;
-    setAssistantState("listening", "Listening once · review before sending");
-    showVoiceStatus("Listening once. Your speech will not be sent until you review and submit the text.");
+    ui.voiceWake.setAttribute("aria-pressed", String(mode === "wake"));
+    ui.voiceWake.textContent = mode === "wake" ? "Stop foreground wake phrase" : "Enable foreground wake phrase";
+    if (mode === "wake") {
+      byId("voice-wake-controls").hidden = false;
+      setAssistantState("listening", "Foreground wake phrase active");
+      showVoiceStatus("Listening for “Jarvis” in this visible Chat tab. Browser speech recognition may process audio outside Jarvis.");
+    } else {
+      setAssistantState("listening", "Listening once · review before sending");
+      showVoiceStatus("Listening once. Your speech will not be sent until you review and submit the text.");
+    }
     try { current.start(); }
     catch (_) {
       stopRecognition("Could not start speech input. Check microphone access or type your message.");
@@ -816,8 +969,8 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     });
     ui.historyFilterEmpty.hidden = conversations.length === 0 || filtered.length !== 0;
     ui.sessionCount.textContent = query
-      ? `${filtered.length} matching sessions · ${conversations.length} owned in total`
-      : `${conversations.length} owned session${conversations.length === 1 ? "" : "s"}`;
+      ? `${filtered.length} matching chats · ${conversations.length} owned in total`
+      : `${conversations.length} owned chat${conversations.length === 1 ? "" : "s"}`;
     for (const entry of filtered) {
       const button = document.createElement("button");
       button.type = "button";
@@ -829,12 +982,6 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       });
       ui.history.append(button);
     }
-  }
-  async function openSessions() {
-    await showView("chat", "sessions");
-    if (window.matchMedia("(max-width: 760px)").matches) setPanel(true);
-    const active = ui.history.querySelector('[aria-current="page"]');
-    (active || ui.newChat).focus({ preventScroll: true });
   }
   function setPanel(open) {
     const value = Boolean(open);
@@ -873,7 +1020,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       conversations = data.conversations.filter((item) => item && typeof item.id === "string" && typeof item.title === "string");
       renderHistory();
     } catch (error) {
-      ui.sessionCount.textContent = "Your owned session list is unavailable.";
+      ui.sessionCount.textContent = "Your chat list is unavailable.";
       throw error;
     }
   }
@@ -1249,7 +1396,8 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     }
   }
   async function showView(view, navSelection = view) {
-    const selected = ["chat", "capabilities", "settings"].includes(view) || featuresById.has(view) ? view : "chat";
+    byId("chat-preferences").open = false;
+    const selected = ["chat", "overview", "capabilities", "settings"].includes(view) || featuresById.has(view) ? view : "chat";
     const selectedNavigation = navSelection === "sessions" && selected === "chat" ? "sessions" : selected;
     if (selected !== currentView && mountedFeature) unmountFeature();
     if (selected !== currentView && currentView === "capabilities") unmountCapabilitiesDetails();
@@ -1257,22 +1405,23 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     const workspace = document.querySelector(".workspace");
     workspace.dataset.currentView = selected;
     ui.toggle.hidden = selected !== "chat";
-    if (selectedNavigation !== "sessions" && window.matchMedia("(max-width: 760px)").matches && ui.panel.dataset.open === "true") setPanel(false);
+    if (window.matchMedia("(max-width: 760px)").matches && ui.panel.dataset.open === "true") setPanel(false);
+    if (selectedNavigation === "sessions") setPanel(true);
     for (const panel of document.querySelectorAll("[data-view-panel]")) panel.hidden = panel.dataset.viewPanel !== selected;
     for (const button of document.querySelectorAll(".nav-item")) {
-      const buttonView = button.dataset.openSessions === "true" ? "sessions" : button.dataset.view;
-      if (buttonView === selectedNavigation) button.setAttribute("aria-current", "page");
+      const selectedButton = button.dataset.view === selected && (selectedNavigation !== "sessions" || button.dataset.openSessions === "true");
+      if (selectedButton) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
     }
     const groupForView = {
-      overview: "command-centre", chat: "conversations", sessions: "conversations",
+      overview: "command-centre", chat: "conversations",
       missions: "work", bots: "work", capabilities: "resources", "resources-learning": "resources",
       "native-inventory": "resources", files: "resources", context: "resources",
       "second-brain": "resources",
       settings: "system", "models-settings": "system", integrations: "system",
       activity: "system", "native-controls": "system"
     };
-    const currentGroup = groupForView[selectedNavigation] || groupForView[selected] || "command-centre";
+    const currentGroup = groupForView[selected] || "command-centre";
     for (const group of document.querySelectorAll(".nav-group")) {
       const active = group.dataset.navGroup === currentGroup;
       group.dataset.current = String(active);
@@ -1326,32 +1475,65 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   });
   ui.newChat.addEventListener("click", createConversation);
   ui.stop.addEventListener("click", stopTurn);
-  ui.voiceInput.addEventListener("click", startRecognition);
+  ui.voiceInput.addEventListener("click", () => startRecognition("ptt"));
+  ui.voiceWake.addEventListener("click", () => {
+    if (recognitionMode === "wake") stopRecognition("Foreground wake listening stopped. You can turn it on again any time.");
+    else startRecognition("wake");
+  });
   ui.voiceStop.addEventListener("click", () => stopRecognition("Speech input stopped. Review the text before sending."));
   ui.speechStop.addEventListener("click", () => stopSpeech("Reply audio stopped."));
-  byId("speech-consent").addEventListener("change", (event) => {
-    if (!event.currentTarget.checked) stopRecognition("Push-to-talk is off. You can continue by typing.");
+  for (const id of ["speech-consent", "chat-speech-consent"]) byId(id).addEventListener("change", (event) => {
+    const enabled = Boolean(event.currentTarget.checked);
+    byId("speech-consent").checked = enabled;
+    byId("chat-speech-consent").checked = enabled;
+    if (!enabled) {
+      stopRecognition("Voice input is off. You can continue by typing.");
+      byId("voice-handsfree-send").checked = false;
+      byId("voice-wake-controls").hidden = true;
+      ui.voiceWake.hidden = true;
+    }
     else {
+      byId("voice-wake-controls").hidden = !voiceSupported;
+      ui.voiceWake.hidden = !voiceSupported;
       ui.voiceInput.hidden = !voiceSupported || Boolean(activeTurnId);
       showVoiceStatus("Push-to-talk is enabled. Tap Speak when you are ready.");
     }
   });
-  byId("speech-output").addEventListener("change", (event) => {
+  for (const id of ["speech-output", "chat-speech-output"]) byId(id).addEventListener("change", (event) => {
+    byId("speech-output").checked = Boolean(event.currentTarget.checked);
+    byId("chat-speech-output").checked = Boolean(event.currentTarget.checked);
     if (!event.currentTarget.checked) stopSpeech("Read-aloud is off.");
     saveUIPreferences({readAloud: Boolean(event.currentTarget.checked)});
     updateSpeechVoiceStatus();
   });
-  byId("speech-voice").addEventListener("change", () => {
+  for (const id of ["speech-voice", "chat-speech-voice"]) byId(id).addEventListener("change", (event) => {
     stopSpeech("Speech voice changed.");
-    saveUIPreferences({voiceURI: byId("speech-voice").value});
+    byId("speech-voice").value = event.currentTarget.value;
+    byId("chat-speech-voice").value = event.currentTarget.value;
+    saveUIPreferences({voiceURI: event.currentTarget.value});
     updateSpeechVoiceStatus();
   });
-  byId("speech-language").addEventListener("change", () => saveUIPreferences({language: byId("speech-language").value}));
-  byId("speech-rate").addEventListener("input", () => { updateSpeechTuningLabels(); saveUIPreferences({rate: boundedPreferenceNumber(byId("speech-rate").value, 0.5, 2, 1)}); });
-  byId("speech-pitch").addEventListener("input", () => { updateSpeechTuningLabels(); saveUIPreferences({pitch: boundedPreferenceNumber(byId("speech-pitch").value, 0, 2, 1)}); });
-  for (const [id, key, allowed] of [["ui-density", "density", ["comfortable", "compact"]], ["ui-text-size", "textSize", ["normal", "large"]], ["ui-motion", "motion", ["system", "reduce"]]]) {
-    byId(id).addEventListener("change", (event) => {
+  for (const id of ["speech-language", "chat-speech-language"]) byId(id).addEventListener("change", (event) => {
+    byId("speech-language").value = event.currentTarget.value;
+    byId("chat-speech-language").value = event.currentTarget.value;
+    saveUIPreferences({language: event.currentTarget.value});
+  });
+  for (const id of ["speech-rate", "chat-speech-rate"]) byId(id).addEventListener("input", (event) => {
+    byId("speech-rate").value = event.currentTarget.value;
+    byId("chat-speech-rate").value = event.currentTarget.value;
+    updateSpeechTuningLabels();
+    saveUIPreferences({rate: boundedPreferenceNumber(event.currentTarget.value, 0.5, 2, 1)});
+  });
+  for (const id of ["speech-pitch", "chat-speech-pitch"]) byId(id).addEventListener("input", (event) => {
+    byId("speech-pitch").value = event.currentTarget.value;
+    byId("chat-speech-pitch").value = event.currentTarget.value;
+    updateSpeechTuningLabels();
+    saveUIPreferences({pitch: boundedPreferenceNumber(event.currentTarget.value, 0, 2, 1)});
+  });
+  for (const [ids, key, allowed] of [[ ["ui-density", "chat-density"], "density", ["comfortable", "compact"] ], [["ui-text-size", "chat-text-size"], "textSize", ["normal", "large"]], [["ui-motion", "chat-motion"], "motion", ["system", "reduce", "full"]]]) {
+    for (const id of ids) byId(id).addEventListener("change", (event) => {
       const value = allowed.includes(event.currentTarget.value) ? event.currentTarget.value : allowed[0];
+      for (const linked of ids) byId(linked).value = value;
       event.currentTarget.value = value;
       saveUIPreferences({[key]: value});
       applyAppearancePreferences();
@@ -1362,21 +1544,112 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   ui.scrim.addEventListener("click", () => setPanel(false));
   for (const button of document.querySelectorAll("[data-view]")) button.addEventListener("click", () => {
     for (const group of document.querySelectorAll(".nav-group")) group.open = false;
-    if (button.dataset.openSessions === "true") { openSessions().catch((error) => showError(error.message)); return; }
-    showView(button.dataset.view);
+    showView(button.dataset.view, button.dataset.openSessions === "true" ? "sessions" : button.dataset.view);
   });
   byId("jarvis-home").addEventListener("click", (event) => {
     event.preventDefault();
     for (const group of document.querySelectorAll(".nav-group")) group.open = false;
     showView("overview");
   });
-  window.addEventListener("pagehide", () => { closeStream(); stopRecognition(); stopSpeech(); unmountFeature(); });
+  const overviewForm = byId("overview-command-form");
+  const overviewInput = byId("overview-command-input");
+  const overviewStatus = byId("overview-command-status");
+  const overviewSend = overviewForm.querySelector('button[type="submit"]');
+  const overviewNewConversation = byId("overview-new-conversation");
+  let overviewCommandPending = false;
+  let overviewConversationPending = false;
+  async function sendOverviewCommand(event) {
+    event.preventDefault();
+    const text = overviewInput.value.trim();
+    if (!text || overviewCommandPending) return;
+    if (ui.connection.dataset.state !== "ready" || !conversationHydrated) {
+      overviewStatus.textContent = "The secure Jarvis connection is not ready. Your command is still here; try again after it reconnects.";
+      overviewStatus.hidden = false;
+      return;
+    }
+    if (activeTurnId || ui.input.disabled || overviewConversationPending) {
+      overviewStatus.textContent = "Jarvis is already responding in this conversation. Wait for the response before sending another command.";
+      overviewStatus.hidden = false;
+      return;
+    }
+    overviewCommandPending = true;
+    overviewInput.disabled = true;
+    overviewSend.disabled = true;
+    try {
+      await showView("chat");
+      const accepted = await sendMessage(text);
+      if (accepted) {
+        overviewInput.value = "";
+        overviewStatus.hidden = true;
+      } else {
+        overviewStatus.textContent = "Jarvis did not accept this command. Your text is preserved here; see the notice in Chat for details.";
+        overviewStatus.hidden = false;
+      }
+    } catch (error) {
+      overviewStatus.textContent = "Jarvis could not queue this command. Your text is preserved here; see the notice in Chat for details.";
+      overviewStatus.hidden = false;
+      showError(error.message);
+    } finally {
+      overviewCommandPending = false;
+      overviewInput.disabled = false;
+      overviewSend.disabled = false;
+    }
+  }
+  overviewForm.addEventListener("submit", sendOverviewCommand);
+  overviewInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+      event.preventDefault(); overviewForm.requestSubmit();
+    }
+  });
+  overviewInput.addEventListener("input", () => {
+    overviewInput.style.height = "auto";
+    overviewInput.style.height = `${Math.min(overviewInput.scrollHeight, 144)}px`;
+  });
+  for (const button of document.querySelectorAll("[data-command-prompt]")) button.addEventListener("click", () => {
+    overviewInput.value = button.dataset.commandPrompt;
+    overviewInput.dispatchEvent(new Event("input", {bubbles: true}));
+    overviewInput.focus({preventScroll: true});
+    overviewInput.setSelectionRange(overviewInput.value.length, overviewInput.value.length);
+  });
+  overviewNewConversation.addEventListener("click", async () => {
+    if (overviewCommandPending || overviewConversationPending) return;
+    if (ui.connection.dataset.state !== "ready" || !conversationHydrated) {
+      overviewStatus.textContent = "Wait for the secure Jarvis connection before starting a conversation.";
+      overviewStatus.hidden = false;
+      return;
+    }
+    if (activeTurnId || ui.input.disabled) {
+      overviewStatus.textContent = "Wait for Jarvis to finish the current response before starting a new conversation.";
+      overviewStatus.hidden = false;
+      return;
+    }
+    overviewConversationPending = true;
+    overviewNewConversation.disabled = true;
+    overviewStatus.hidden = true;
+    try {
+      await showView("chat");
+      await createConversation();
+    } finally {
+      overviewConversationPending = false;
+      overviewNewConversation.disabled = false;
+    }
+  });
+  window.addEventListener("pagehide", () => { closeStream(); stopRecognition(); stopSpeech(); if (presenceObserver) presenceObserver.disconnect(); unmountFeature(); });
   document.addEventListener("visibilitychange", () => {
+    document.documentElement.dataset.pageVisible = String(document.visibilityState === "visible");
     if (document.visibilityState !== "visible") {
-      stopRecognition("Push-to-talk stopped when this page went into the background.");
+      stopRecognition("Voice listening stopped when this page went into the background.");
       stopSpeech("Reply audio stopped when this page went into the background.");
     }
   });
+  const presence = byId("jarvis-presence");
+  document.documentElement.dataset.pageVisible = String(document.visibilityState === "visible");
+  if (presence && "IntersectionObserver" in window) {
+    presenceObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) if (entry.target === presence) presence.dataset.inViewport = String(entry.isIntersecting);
+    }, {threshold: 0.08});
+    presenceObserver.observe(presence);
+  } else if (presence) presence.dataset.inViewport = "true";
   loadUIPreferences();
   configureVoice();
   showView("overview");
