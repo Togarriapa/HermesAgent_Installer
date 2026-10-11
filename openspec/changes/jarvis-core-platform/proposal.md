@@ -39,3 +39,5 @@ Parallel implementation now has four bounded feature slices inside the existing 
 The next Resources slice requires a concrete root-held source prompt claim joined to actual native provider/parent invocation and inherited zero-additional-metered route evidence. Existing manual core process/settings observations cannot supply that authority. Fixed sanitized profile/cron reads may proceed independently through private typed core-client methods; no generic RPC is published.
 
 Owner skill-learning inspection uses independent root validation of the actual forwarded Access JWT and the original one-use ingress issuance, rather than an unimplemented owner-turn handle. The finite read-only snapshot preserves private diffs, original deadlines and native approval ownership.
+
+The actual Codex subscription bridge uses an explicitly enrolled protected core-process observer at the real transport seam. It does not relabel the older OpenAI API-bearer handler or claim root TLS interception, and preserves subscription-only zero-additional-metered routing.

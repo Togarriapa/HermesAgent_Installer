@@ -1809,3 +1809,14 @@ The system SHALL validate the forwarded Access JWT independently in root against
 #### Scenario: Read-only pending review
 - **WHEN** current owner admission and source custody pass
 - **THEN** root returns bounded sanitized pending candidates and diffs, reports partial failures truthfully and performs no approval or write.
+
+### Requirement: Protected subscription observer evidence
+The system SHALL admit Codex delegation route evidence only from the explicitly enrolled source-verified current core observer and an actual authenticated subscription response. It SHALL distinguish process-observed transport from root TLS observation and deny alternate or metered fallback routes.
+
+#### Scenario: Selected subscription path
+- **WHEN** the protected observer reports the exact current subscription attempt and successful correlated response
+- **THEN** root may issue a bounded route receipt under its subscription-only policy without claiming billing or quota guarantees.
+
+#### Scenario: Untrusted route assertion
+- **WHEN** only hook strings, token presence or a changed process/source/route is available
+- **THEN** no positive dispatch claim is issued.
