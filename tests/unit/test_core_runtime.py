@@ -54,7 +54,7 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False):
         (core.UNIT, "unit_sha256", os.getuid(), os.getuid(), 0o644),
         (core.LAUNCHER, "launcher_sha256", os.getuid(), os.getuid(), 0o755),
         (core.TOKEN, "token_sha256", os.getuid(), os.getgid(), 0o640)))
-    monkeypatch.setattr(core.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(core.os, "geteuid", lambda: core.ROOT_UID)
 
     class Account:
         pw_uid = 1000
