@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "record_kind": "operator_reported_current_jarvis_core_pi_status_partial",
+  "change_ids": ["jarvis-core-platform"],
+  "task_ids": ["BD-T266.1", "HI-T266.2", "RT-T266.3", "RB-T266.4", "VD-T266.5", "BD-T267.1"],
+  "current_candidate": {
+    "source_commit_prefix": "0891cd3ad139",
+    "pi_focused_suites": "five contract/native/gateway/chat suites passed",
+    "passed_suites_result": "pass",
+    "warnings": 19,
+    "elapsed_seconds": 6.55,
+    "scope": "Focused Pi checks only; not public chat, full installer, Resources, or full acceptance."
+  },
+  "planning_validation": {
+    "strict_openspec": "passed",
+    "current_plan": "passed",
+    "planning_tests": "passed",
+    "exit_code": 0
+  },
+  "gateway_and_core": {
+    "gateway_contract_candidate_prefix": "bafc16",
+    "gateway_contract_tests_passed": 15,
+    "gateway_contract_warnings": 0,
+    "gateway_contract_elapsed_seconds": 0.74,
+    "production_gateway_candidate_prefix": "d570",
+    "private_core_candidate_prefix": "8753",
+    "owner_access_jwt_private_ingress": "passed",
+    "dynamic_peer_bug": "fixed in the private implementation",
+    "public_route": "still returns HTTP 403 with root_inspection/OtherError",
+    "public_chat": "not verified"
+  },
+  "pending_patch_and_blocker": {
+    "missing_CoreGatewayDenied_import_fix_prefixes": ["274", "bafc"],
+    "fix_state": "prepared, not deployed",
+    "deployment_blocker": "Browser reconnect was lost and sudo now requires a password; no root deployment occurred."
+  },
+  "prior_private_core_evidence": {
+    "record": "jarvis-core-pi.json",
+    "candidate_prefix": "8753c8353743",
+    "claim": "Earlier separate Pi evidence records a completed private Jarvis chat and owned-unit restart/resume. It is not evidence of the current public route or this current candidate."
+  },
+  "acceptance_assertions": {
+    "AC01": null, "AC02": null, "AC03": null, "AC04": null, "AC05": null,
+    "AC06": null, "AC07": null, "AC08": null, "AC09": null, "AC10": null,
+    "AC11": null, "AC12": null, "AC13": null, "AC14": null, "AC15": null,
+    "AC16": null, "AC17": null, "AC18": null
+  },
+  "resource_delete_safe": false,
+  "claim_limit": "The current source has focused Pi test and planning passes, and a private owner-JWT gateway path was reported working. The public route is still 403, the missing-import fix is not deployed, and public chat, full installer, reboot/recovery, Resources, capability parity, phone usability, and full acceptance remain unverified. All AC01-AC18 and the core migration tasks remain open."
+}
