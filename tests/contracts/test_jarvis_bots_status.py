@@ -157,6 +157,7 @@ def test_routes_are_fixed_status_reads_and_one_pause_action():
         ("GET", "/chat/api/channels"),
         ("GET", "/chat/api/schedules"),
         ("POST", "/chat/api/schedules/{opaque_id}/pause"),
+        ("GET", "/chat/api/bot-rooms"),
     )
 
 
