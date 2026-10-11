@@ -20,14 +20,6 @@ from .jarvis_mobile_assets import (
 )
 
 
-_OVERVIEW_CORE_STATUS_HTML = '''<section class="overview-card" aria-labelledby="overview-core-heading">
-  <h2 id="overview-core-heading">Core service</h2>
-  <p data-core-status role="status" aria-live="polite">Checking verified status</p>
-  <p data-core-readiness>Functional readiness has not been verified.</p>
-  <p data-core-observed>No verified observation time</p>
-</section>'''
-
-
 _HTML = '''<!doctype html>
 <html lang="en">
 <head>
@@ -47,18 +39,21 @@ _HTML = '''<!doctype html>
         aria-label="Show conversations" aria-controls="conversation-panel" aria-expanded="false">
         <span aria-hidden="true">☰</span>
       </button>
-      <a class="brand" href="/chat" aria-label="Jarvis chat home">
+      <a class="brand" href="/chat" id="jarvis-home" aria-label="Jarvis command centre home">
         <span class="brand-mark" aria-hidden="true"><span></span></span>
         <span class="brand-copy"><strong>JARVIS</strong><small>PERSONAL ASSISTANT</small></span>
       </a>
       <nav class="primary-nav" aria-label="Jarvis sections">
-        <button type="button" class="nav-item" data-view="chat" aria-current="page">Chat</button>
-        <button type="button" class="nav-item" data-view="chat" data-open-sessions="true">Sessions</button>
-        <!-- JARVIS_OVERVIEW_NAV -->
-        <button type="button" class="nav-item" data-view="capabilities">Capabilities</button>
-        <button type="button" class="nav-item" data-view="settings">Settings</button>
-        <!-- JARVIS_FEATURE_NAV -->
+        <details class="nav-group" data-nav-group="command-centre"><summary>Command centre</summary><div class="nav-menu" aria-label="Command centre destinations"><!-- JARVIS_GROUP_COMMAND_CENTRE --></div></details>
+        <details class="nav-group" data-nav-group="conversations"><summary>Conversations</summary><div class="nav-menu" aria-label="Conversation destinations"><button type="button" class="nav-item" data-view="chat">Chat</button><button type="button" class="nav-item" data-view="chat" data-open-sessions="true">Sessions</button></div></details>
+        <details class="nav-group" data-nav-group="work"><summary>Work</summary><div class="nav-menu" aria-label="Work destinations"><!-- JARVIS_GROUP_WORK --></div></details>
+        <details class="nav-group" data-nav-group="resources"><summary>Resources</summary><div class="nav-menu" aria-label="Resource destinations"><button type="button" class="nav-item" data-view="capabilities">Capabilities</button><!-- JARVIS_GROUP_RESOURCES --></div></details>
+        <details class="nav-group" data-nav-group="system"><summary>System</summary><div class="nav-menu" aria-label="System destinations"><button type="button" class="nav-item" data-view="settings">Settings</button><!-- JARVIS_GROUP_SYSTEM --></div></details>
       </nav>
+      <div class="assistant-hud" id="assistant-hud" data-state="checking" aria-label="Jarvis status">
+        <span class="assistant-orb" aria-hidden="true"><span class="orb-core"></span><span class="orb-ring"></span><span class="orb-halo"></span></span>
+        <span class="assistant-state"><strong id="assistant-state-label">JARVIS · CHECKING</strong><span id="assistant-mode" role="status" aria-live="polite">Checking secure connection</span></span>
+      </div>
       <span class="connection" id="connection-state" role="status" aria-live="polite">
         <span class="connection-dot" aria-hidden="true"></span><span>Checking access…</span>
       </span>
@@ -87,14 +82,10 @@ _HTML = '''<!doctype html>
             <span class="eyebrow">PERSONAL ASSISTANT · PRIVATE SESSION</span>
             <h1 id="conversation-title">A clear mind, at your service.</h1>
           </div>
-          <div class="assistant-hud" id="assistant-hud" data-state="checking" aria-label="Jarvis status">
-            <span class="assistant-orb" aria-hidden="true"><span class="orb-core"></span><span class="orb-ring"></span><span class="orb-halo"></span></span>
-            <span class="assistant-state"><strong id="assistant-state-label">JARVIS · CHECKING</strong><span id="assistant-mode" role="status" aria-live="polite">Checking secure connection</span></span>
-          </div>
+          <div class="conversation-controls"><span>Current conversation</span><button type="button" class="nav-item" data-view="models-settings">Conversation model · session only</button></div>
         </div>
         <section class="message-scroll" id="message-scroll" aria-label="Conversation" aria-live="polite" aria-relevant="additions text">
           <div class="welcome" id="welcome-panel">
-            <div class="welcome-orbit" id="welcome-orb" data-state="checking" aria-hidden="true"><span></span><i></i></div>
             <p class="eyebrow">READY WHEN YOU ARE</p>
             <h2>What can I help you with?</h2>
             <p class="welcome-note">Ask a question or pick up a thought. Your conversation stays in this private space.</p>
@@ -209,17 +200,13 @@ _CSS = '''@charset "UTF-8";
 .assistant-hud[data-state="listening"] .orb-core{background:radial-gradient(circle at 38% 32%,#fff7df,#e9bd70 45%,#92703e 78%,#332717);box-shadow:0 0 15px rgba(233,189,112,.36)}
 .assistant-hud[data-state="listening"] .orb-ring,.assistant-hud[data-state="error"] .orb-ring{border-color:rgba(233,189,112,.78)}
 .assistant-hud[data-state="listening"] .assistant-state strong,.assistant-hud[data-state="error"] .assistant-state strong{color:var(--amber)}
-.assistant-hud[data-state="busy"] .orb-halo{animation:jarvis-orb-breathe 1.35s ease-in-out infinite}
+.assistant-hud[data-state="thinking"] .orb-halo{animation:jarvis-orb-breathe 1.35s ease-in-out infinite}
 .assistant-hud[data-state="speaking"] .orb-core{box-shadow:0 0 20px rgba(73,218,226,.72),inset 0 0 7px rgba(234,255,255,.7)}
 .assistant-hud[data-state="error"]{border-color:rgba(233,189,112,.48)}
-.welcome-orbit[data-state="listening"]{border-color:rgba(233,189,112,.56);box-shadow:0 0 40px rgba(233,189,112,.11),inset 0 0 24px rgba(233,189,112,.08)}
-.welcome-orbit[data-state="listening"]:before,.welcome-orbit[data-state="error"]:before{border-color:rgba(233,189,112,.72)}
-.welcome-orbit[data-state="listening"]:after,.welcome-orbit[data-state="error"]:after{border-color:rgba(233,189,112,.9)}
-.welcome-orbit[data-state="listening"] span{background:var(--amber);box-shadow:0 0 20px rgba(233,189,112,.82)}
-.welcome-orbit[data-state="speaking"] span{box-shadow:0 0 27px rgba(88,228,235,.95)}
-.welcome-orbit[data-state="busy"]:after{animation:jarvis-orb-breathe 1.35s ease-in-out infinite}
-@media(prefers-reduced-motion:reduce){.welcome-orbit[data-state="busy"]:after{animation:none;opacity:.72}}
-@keyframes jarvis-orb-breathe{0%,100%{opacity:.36}50%{opacity:1}}
+.assistant-hud[data-state="idle"] .assistant-state strong{color:#86cfc9}
+.assistant-hud[data-state="checking"] .orb-halo{opacity:.42}
+.assistant-hud[data-state="thinking"] .assistant-state strong{color:#91e8ec}
+@keyframes jarvis-orb-breathe{0%,100%{opacity:.36}25%{opacity:.64}50%{opacity:1}75%{opacity:.64}}
 .data-card{border-color:rgba(102,188,202,.18);background:linear-gradient(145deg,rgba(15,40,48,.84),rgba(8,24,31,.88));box-shadow:inset 0 1px rgba(255,255,255,.035),0 14px 40px rgba(0,0,0,.12)}
 .data-card h2{color:#bed3d4;letter-spacing:.015em}
 .readiness-banner{border-color:rgba(233,189,112,.25);background:linear-gradient(110deg,rgba(83,64,37,.19),rgba(25,32,30,.18));color:#ead5ad}
@@ -265,7 +252,7 @@ _CSS = '''@charset "UTF-8";
  .scrim:not([hidden]){inset:calc(64px + env(safe-area-inset-top)) 0 calc(66px + env(safe-area-inset-bottom))}
 }
 @media(max-width:390px){.assistant-hud{padding-right:7px}.assistant-state span{max-width:88px}.nav-item{min-width:60px;padding-inline:7px}}
-@media(prefers-reduced-motion:reduce){.assistant-hud[data-state="busy"] .orb-halo{animation:none;opacity:.72}.nav-item,.icon-button,.new-chat-button,.send-button,.stop-button,.voice-button,.data-card{transition:none}}
+@media(prefers-reduced-motion:reduce){.assistant-hud[data-state="thinking"] .orb-halo{animation:none;opacity:.72}.nav-item,.icon-button,.new-chat-button,.send-button,.stop-button,.voice-button,.data-card{transition:none}}
 @media(prefers-reduced-transparency:reduce){.topbar,.primary-nav,.data-card,.assistant-hud,.composer{backdrop-filter:none;background-color:#0a1d25}}
 @media(prefers-contrast:more){.assistant-hud,.data-card,.primary-nav,.composer{border-color:currentColor}}
 .voice-range-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:14px 0;border-bottom:1px solid var(--line)}.voice-range-row label{display:grid;grid-template-columns:1fr auto;align-items:center;gap:9px;color:#c4d8da;font-size:12px}.voice-range-row label strong{font-size:12px;font-weight:600}.voice-range-row output{color:var(--cyan);font-variant-numeric:tabular-nums}.voice-range-row input[type="range"]{grid-column:1/-1;width:100%;accent-color:var(--cyan);min-height:32px}.voice-range-row select{grid-column:1/-1;min-width:0;min-height:42px;padding:8px 10px;border:1px solid var(--line-strong);border-radius:9px;background:#0c1f26;color:var(--text);font:inherit}.voice-select-row small{max-width:600px;color:#8ba5aa;font-size:11px;line-height:1.5}.appearance-preferences label{align-items:start}.appearance-preferences select{grid-row:2}.appearance-preferences label strong{grid-row:1}
@@ -299,6 +286,48 @@ html[data-jarvis-motion="reduce"] *,html[data-jarvis-motion="reduce"] *::before,
 @media(prefers-reduced-motion:reduce){.message-row{animation:none}}
 @media(prefers-contrast:more){:root{--muted:#c4d3d5;--soft:#aabdc0;--line:rgba(200,235,239,.42);--line-strong:#91f2f7}.nav-item[aria-current="page"]{border-color:currentColor}}
 @media(forced-colors:active){.primary-nav,.nav-item,.data-main [data-feature-root] table,.data-main [data-feature-root] th,.data-main [data-feature-root] td{border-color:CanvasText}.nav-item[aria-current="page"]{outline:2px solid Highlight;outline-offset:-2px}.data-main [data-feature-root] button,.data-main [data-feature-root] select,.data-main [data-feature-root] input{border:1px solid ButtonText}}
+.primary-nav{position:relative;display:flex;align-items:center;justify-content:center;gap:2px;flex:1 1 0;min-width:0;overflow:visible}
+.nav-group{position:relative;flex:0 0 auto}
+.nav-group>summary{min-height:44px;display:flex;align-items:center;gap:8px;padding:0 10px;border:1px solid transparent;border-radius:10px;color:#9ab1b5;font-size:11px;white-space:nowrap;list-style:none;cursor:pointer;user-select:none}
+.nav-group>summary::-webkit-details-marker{display:none}
+.nav-group>summary:after{content:"";width:6px;height:6px;border-right:1px solid currentColor;border-bottom:1px solid currentColor;transform:rotate(45deg) translateY(-2px);opacity:.7}
+.nav-group[open]>summary,.nav-group>summary[aria-current="location"]{border-color:rgba(88,228,235,.25);background:rgba(88,228,235,.08);color:#ddfbfd}
+.nav-group[data-current="true"]>summary{color:#dcfafa}
+.nav-group>summary:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.nav-menu{position:absolute;z-index:30;top:calc(100% + 7px);left:0;width:max-content;min-width:220px;max-width:min(300px,90vw);max-height:min(70dvh,560px);display:grid;gap:3px;overflow:auto;padding:7px;border:1px solid rgba(91,199,211,.3);border-radius:14px;background:rgba(5,22,29,.98);box-shadow:0 18px 48px rgba(0,0,0,.5),inset 0 1px rgba(255,255,255,.04);backdrop-filter:blur(18px)}
+.nav-group:nth-last-child(-n+2) .nav-menu{left:auto;right:0}
+.nav-menu .nav-item{width:100%;min-height:44px;display:flex;align-items:center;justify-content:flex-start;padding:0 12px;border-radius:8px;text-align:left;font-size:12px}
+.primary-nav .nav-item{transition:none}
+.nav-item:active{transform:none}
+.workspace[data-current-view]:not([data-current-view="chat"]){display:block}
+.workspace[data-current-view]:not([data-current-view="chat"])>.conversation-panel{display:none}
+.workspace[data-current-view]:not([data-current-view="chat"])>.data-main{grid-column:1;grid-row:1}
+.workspace[data-current-view="chat"]>.chat-main{grid-column:2;grid-row:1}
+.workspace[data-current-view="chat"]>.data-main{grid-column:2;grid-row:1}
+.assistant-hud{flex:0 0 auto;min-width:168px;padding:6px 10px 6px 6px;gap:8px;border-radius:14px}
+.assistant-orb{width:42px;height:42px}.orb-core{inset:11px}.orb-ring{inset:4px}
+.assistant-state strong{font-size:8px}.assistant-state span{max-width:122px;font-size:10px}
+.assistant-hud[data-state="thinking"] .orb-ring{border-color:rgba(114,235,239,.86)}
+.assistant-hud[data-state="thinking"] .orb-halo{animation:jarvis-orb-breathe 2.4s linear infinite}
+.assistant-hud[data-state="speaking"] .orb-halo{box-shadow:0 0 14px rgba(73,218,226,.28)}
+.assistant-hud[data-state="error"] .orb-core{background:radial-gradient(circle at 38% 32%,#fff7df,#e9bd70 45%,#92703e 78%,#332717)}
+.conversation-controls{display:grid;justify-items:end;gap:4px;min-width:0}
+.conversation-controls>span{color:#819ca1;font-size:9px;letter-spacing:.08em;text-transform:uppercase}
+.conversation-controls .nav-item{min-height:44px;padding-inline:11px;border-color:rgba(102,188,202,.2);font-size:10px}
+@media(min-width:761px) and (max-width:1120px){.primary-nav{order:4;flex:1 1 100%;width:100%;justify-content:flex-start}.assistant-hud{margin-left:auto}}
+@media(max-width:760px){
+ .topbar{height:auto;min-height:64px;flex-wrap:wrap;gap:8px 10px;padding:8px 12px}
+ .brand{order:1}.assistant-hud{order:2;margin-left:auto;min-width:0;padding:4px 7px 4px 4px;gap:6px}.assistant-orb{width:36px;height:36px}.orb-core{inset:10px}.orb-ring{inset:3px}.assistant-state strong{font-size:7px;letter-spacing:.11em}.assistant-state span{max-width:96px;font-size:9px}
+ .connection{order:3;margin-left:0;font-size:10px}
+ .primary-nav{position:fixed;z-index:12;left:50%;bottom:calc(7px + env(safe-area-inset-bottom));order:4;width:min(calc(100% - 20px),540px);height:58px;margin:0;padding:5px;justify-content:space-between;gap:2px;overflow-x:auto;overscroll-behavior-inline:contain;transform:translateX(-50%);border:1px solid rgba(111,203,214,.2);border-radius:17px;background:rgba(7,23,30,.96);box-shadow:0 12px 32px rgba(0,0,0,.4),inset 0 1px rgba(255,255,255,.05);backdrop-filter:blur(16px) saturate(125%);scrollbar-width:none}
+ .primary-nav::-webkit-scrollbar{display:none}.nav-group{flex:1 0 auto}.nav-group>summary{min-height:46px;justify-content:center;padding-inline:7px;font-size:9px;gap:5px}.nav-group>summary:after{width:5px;height:5px}
+ .nav-menu,.nav-group:nth-last-child(-n+2) .nav-menu{position:fixed;left:10px;right:10px;top:auto;bottom:calc(76px + env(safe-area-inset-bottom));width:auto;max-width:none;max-height:min(64dvh,520px);padding:9px;border-radius:16px}
+ .workspace{padding-bottom:calc(68px + env(safe-area-inset-bottom))}.conversation-panel{top:calc(96px + env(safe-area-inset-top));bottom:calc(66px + env(safe-area-inset-bottom))}
+ .chat-heading .eyebrow{margin-bottom:7px}.conversation-controls{justify-items:start}.conversation-controls .nav-item{max-width:100%;white-space:normal;text-align:left}
+}
+@media(max-width:390px){.brand-copy small{display:none}.assistant-state span{max-width:80px}.nav-group>summary{padding-inline:5px;font-size:8px}}
+@media(prefers-reduced-motion:reduce){.assistant-hud[data-state="thinking"] .orb-halo{animation:none;opacity:.72}.nav-group>summary,.nav-menu .nav-item{transition:none}}
+@media(forced-colors:active){.nav-group>summary,.nav-menu{border:1px solid CanvasText}.nav-group>summary[aria-current="location"]{outline:2px solid Highlight;outline-offset:1px}}
 '''.encode("utf-8")
 
 
@@ -342,7 +371,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   let mountedFeature = null;
   let mountedFeatureCleanup = null;
   let capabilityDetailsCleanup = null;
-  let currentView = "chat";
+  let currentView = null;
 
   function mountCapabilitiesDetails() {
     if (capabilityDetailsCleanup) return;
@@ -420,7 +449,21 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       }
       return result;
     };
-    return Object.freeze({get: (path) => requestFeature("GET", path), post: (path, body) => requestFeature("POST", path, body)});
+    const api = {get: (path) => requestFeature("GET", path), post: (path, body) => requestFeature("POST", path, body)};
+    if (feature.id === "overview") api.command = async (text) => {
+      if (typeof text !== "string" || !text.trim() || text.length > 8000) throw new Error("Enter a message of up to 8,000 characters.");
+      if (ui.connection.dataset.state !== "ready") throw new Error("The secure Jarvis connection is not ready. Try again after it reconnects.");
+      if (activeTurnId || ui.input.disabled) throw new Error("Jarvis is already responding in this conversation. Continue in Chat or wait for the response to finish.");
+      await showView("chat");
+      await sendMessage(text.trim());
+    };
+    if (feature.id === "overview") api.newConversation = async () => {
+      if (ui.connection.dataset.state !== "ready") throw new Error("The secure Jarvis connection is not ready. Try again after it reconnects.");
+      if (activeTurnId || ui.input.disabled) throw new Error("A response is still active. Wait for it to finish before starting another conversation.");
+      await showView("chat");
+      await createConversation();
+    };
+    return Object.freeze(api);
   }
   function unmountFeature() {
     if (!mountedFeature) return;
@@ -459,8 +502,9 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   function setAssistantState(state, label) {
     const hud = byId("assistant-hud");
     if (!hud) return;
-    hud.dataset.state = ["checking", "ready", "listening", "busy", "speaking", "error"].includes(state) ? state : "checking";
-    byId("welcome-orb").dataset.state = hud.dataset.state;
+    const semanticState = ({ready: "idle", busy: "thinking"})[state] || state;
+    hud.dataset.state = ["checking", "idle", "listening", "thinking", "speaking", "error"].includes(semanticState) ? semanticState : "checking";
+    hud.setAttribute("aria-label", `Jarvis status: ${semanticState}`);
     byId("assistant-state-label").textContent = `JARVIS · ${hud.dataset.state.toUpperCase()}`;
     byId("assistant-mode").textContent = label;
   }
@@ -737,7 +781,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   function clearError() {
     ui.notice.textContent = "";
     ui.notice.hidden = true;
-    setAssistantState(activeTurnId ? "busy" : "ready", activeTurnId ? "Jarvis is responding" : "Ready for your message");
+    setAssistantState(activeTurnId ? "thinking" : ui.connection.dataset.state === "ready" ? "idle" : "checking", activeTurnId ? "Jarvis is responding" : "Ready for your message");
   }
   function setConnection(state, label) {
     ui.connection.dataset.state = state;
@@ -1148,6 +1192,9 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     if (selected !== currentView && mountedFeature) unmountFeature();
     if (selected !== currentView && currentView === "capabilities") unmountCapabilitiesDetails();
     currentView = selected;
+    const workspace = document.querySelector(".workspace");
+    workspace.dataset.currentView = selected;
+    ui.toggle.hidden = selected !== "chat";
     if (selectedNavigation !== "sessions" && window.matchMedia("(max-width: 760px)").matches && ui.panel.dataset.open === "true") setPanel(false);
     for (const panel of document.querySelectorAll("[data-view-panel]")) panel.hidden = panel.dataset.viewPanel !== selected;
     for (const button of document.querySelectorAll(".nav-item")) {
@@ -1155,13 +1202,20 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       if (buttonView === selectedNavigation) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
     }
-    const activeNavItem = [...document.querySelectorAll(".nav-item")].find((button) =>
-      (button.dataset.openSessions === "true" ? "sessions" : button.dataset.view) === selectedNavigation);
-    const primaryNav = activeNavItem && activeNavItem.closest(".primary-nav");
-    if (activeNavItem && primaryNav && primaryNav.scrollWidth > primaryNav.clientWidth) {
-      const left = activeNavItem.offsetLeft - (primaryNav.clientWidth - activeNavItem.offsetWidth) / 2;
-      const behavior = shouldReduceMotion() ? "auto" : "smooth";
-      primaryNav.scrollTo({ left: Math.max(0, left), behavior });
+    const groupForView = {
+      overview: "command-centre", chat: "conversations", sessions: "conversations",
+      missions: "work", bots: "work", capabilities: "resources", learning: "resources",
+      "native-inventory": "resources", files: "resources", context: "resources",
+      settings: "system", "models-settings": "system", integrations: "system",
+      activity: "system", "native-controls": "system"
+    };
+    const currentGroup = groupForView[selectedNavigation] || groupForView[selected] || "command-centre";
+    for (const group of document.querySelectorAll(".nav-group")) {
+      const active = group.dataset.navGroup === currentGroup;
+      group.dataset.current = String(active);
+      const summary = group.querySelector("summary");
+      if (active) summary.setAttribute("aria-current", "location");
+      else summary.removeAttribute("aria-current");
     }
     if (selected !== "chat") {
       stopRecognition("Push-to-talk stopped when leaving chat.");
@@ -1243,9 +1297,15 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   ui.toggle.addEventListener("click", () => setPanel(ui.panel.dataset.open !== "true"));
   ui.close.addEventListener("click", () => setPanel(false));
   ui.scrim.addEventListener("click", () => setPanel(false));
-  for (const button of document.querySelectorAll(".nav-item")) button.addEventListener("click", () => {
+  for (const button of document.querySelectorAll("[data-view]")) button.addEventListener("click", () => {
+    for (const group of document.querySelectorAll(".nav-group")) group.open = false;
     if (button.dataset.openSessions === "true") { openSessions().catch((error) => showError(error.message)); return; }
     showView(button.dataset.view);
+  });
+  byId("jarvis-home").addEventListener("click", (event) => {
+    event.preventDefault();
+    for (const group of document.querySelectorAll(".nav-group")) group.open = false;
+    showView("overview");
   });
   window.addEventListener("pagehide", () => { closeStream(); stopRecognition(); stopSpeech(); unmountFeature(); });
   document.addEventListener("visibilitychange", () => {
@@ -1256,6 +1316,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   });
   loadUIPreferences();
   configureVoice();
+  showView("overview");
   (async () => {
     try {
       await refreshConversations();
@@ -1281,10 +1342,10 @@ def _compose_feature_assets() -> None:
     _HTML = _HTML.replace(b"<!-- JARVIS_MOBILE_SETTINGS -->", SETTINGS_FRAGMENT_HTML.encode("utf-8"))
     _CSS += ("\n" + SETTINGS_FRAGMENT_CSS).encode("utf-8")
     validate_feature_assets(FEATURE_ASSETS)
-    nav: list[str] = []
-    overview_nav: list[str] = []
+    grouped_nav: dict[str, list[str]] = {
+        "command-centre": [], "work": [], "resources": [], "system": [],
+    }
     panels: list[str] = []
-    overview_panels: list[str] = []
     css_fragments: list[bytes] = []
     javascript: list[str] = []
     for feature in FEATURE_ASSETS:
@@ -1299,11 +1360,18 @@ def _compose_feature_assets() -> None:
             f'<section class="data-main" id="{feature_id}-view" '
             f'aria-label="{title}" data-view-panel="{feature_id}" hidden>'
             f'<div class="feature-view" data-feature-root="{feature_id}">'
-            f'{_OVERVIEW_CORE_STATUS_HTML if feature.feature_id == "overview" else ""}'
             f'{feature.view_html}</div></section>'
         )
-        (overview_nav if feature.feature_id == "overview" else nav).append(nav_markup)
-        (overview_panels if feature.feature_id == "overview" else panels).append(panel_markup)
+        group = {
+            "overview": "command-centre", "missions": "work", "bots": "work",
+            "learning": "resources", "native-inventory": "resources", "files": "resources",
+            "context": "resources", "native-controls": "system", "models-settings": "system",
+            "integrations": "system", "activity": "system",
+        }.get(feature.feature_id)
+        if group is None:
+            raise ValueError(f"reviewed feature has no Jarvis navigation group: {feature.feature_id}")
+        grouped_nav[group].append(nav_markup)
+        panels.append(panel_markup)
         if feature.css:
             css_fragments.append(feature.css.encode("utf-8"))
         routes = json.dumps(
@@ -1317,12 +1385,14 @@ def _compose_feature_assets() -> None:
         )
 
     html = _HTML.decode("utf-8")
-    html = html.replace("<!-- JARVIS_FEATURE_NAV -->", "".join(nav))
+    html = html.replace("<!-- JARVIS_GROUP_COMMAND_CENTRE -->", "".join(grouped_nav["command-centre"]))
+    html = html.replace("<!-- JARVIS_GROUP_WORK -->", "".join(grouped_nav["work"]))
+    html = html.replace("<!-- JARVIS_GROUP_RESOURCES -->", "".join(grouped_nav["resources"]))
+    html = html.replace("<!-- JARVIS_GROUP_SYSTEM -->", "".join(grouped_nav["system"]))
+    html = html.replace("<!-- JARVIS_OVERVIEW_PANEL -->", "")
     html = html.replace("<!-- JARVIS_FEATURE_PANELS -->", "".join(panels))
-    html = html.replace("<!-- JARVIS_OVERVIEW_NAV -->", "".join(overview_nav))
-    html = html.replace("<!-- JARVIS_OVERVIEW_PANEL -->", "".join(overview_panels))
     html = html.replace("__JARVIS_CAPABILITY_DETAILS__", _CAPABILITY_DETAILS_HTML)
-    if "JARVIS_FEATURE_" in html or "JARVIS_OVERVIEW_" in html:
+    if "JARVIS_FEATURE_" in html or "JARVIS_OVERVIEW_" in html or "JARVIS_GROUP_" in html:
         raise ValueError("Jarvis feature asset template markers were not fully replaced")
     script = _JS.decode("utf-8")
     script = script.replace("__JARVIS_CAPABILITY_DETAILS_MOUNT__", _CAPABILITY_DETAILS_MOUNT_JS)
