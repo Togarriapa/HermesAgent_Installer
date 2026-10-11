@@ -56,6 +56,39 @@ class CoreGatewayInspectorClientTests(unittest.TestCase):
             with core_gateway_inspector._RETAINED_INGRESS_LOCK:
                 core_gateway_inspector._RETAINED_INGRESS_ISSUES.clear()
 
+    def test_skill_learning_candidate_projection_checks_content_digest_and_bounds(self):
+        diff = "+ review only\n"
+        candidate = {
+            "opaque_id": "a" * 24, "revision_sha256": "b" * 64,
+            "action": "edit", "created_at": 1.25, "skill_label": "Calendar",
+            "summary": "Add an optional event parser.", "diff_text": diff,
+            "diff_sha256": hashlib.sha256(diff.encode("utf-8")).hexdigest(),
+            "truncated": False, "state": "pending-review",
+        }
+        self.assertTrue(core_gateway_inspector._valid_learning_candidates(
+            [candidate], "read-only-native-review"))
+        truncated = dict(candidate, diff_text="short preview", diff_sha256="f" * 64, truncated=True)
+        self.assertTrue(core_gateway_inspector._valid_learning_candidates(
+            [truncated], "partial"))
+        corrupted = dict(candidate, diff_sha256="c" * 64)
+        self.assertFalse(core_gateway_inspector._valid_learning_candidates(
+            [corrupted], "read-only-native-review"))
+        self.assertFalse(core_gateway_inspector._valid_learning_candidates(
+            [candidate, candidate], "partial"))
+        self.assertFalse(core_gateway_inspector._valid_learning_candidates(
+            [candidate], "unavailable"))
+        oversized = dict(candidate, diff_text="x" * (256 * 1024 + 1))
+        oversized["diff_sha256"] = hashlib.sha256(oversized["diff_text"].encode()).hexdigest()
+        self.assertFalse(core_gateway_inspector._valid_learning_candidates(
+            [oversized], "partial"))
+
+    def test_learning_pending_reasons_are_closed_and_unique(self):
+        accepted = ["pending_member_invalid", "pending_record_skipped"]
+        self.assertTrue(core_gateway_inspector._valid_learning_reasons(accepted))
+        self.assertFalse(core_gateway_inspector._valid_learning_reasons(
+            ["pending_member_invalid", "pending_member_invalid"]))
+        self.assertFalse(core_gateway_inspector._valid_learning_reasons(["internal_error"]))
+
     def test_module_entry_delegates_to_canonical_gateway_module(self):
         called = []
 

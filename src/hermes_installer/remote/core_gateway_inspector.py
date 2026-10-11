@@ -16,6 +16,7 @@ import subprocess
 import threading
 import time
 import pwd
+import selectors
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -61,17 +62,23 @@ CORE_CREDENTIALS_DIRECTORY = "/run/credentials/hermes-jarvis-core.service"
 MAX_REQUEST = 1024
 MAX_RESPONSE = 4096
 MAX_SKILL_LEARNING_REQUEST_BYTES = 20 * 1024
-MAX_SKILL_LEARNING_RESPONSE_BYTES = 300 * 1024
+MAX_SKILL_LEARNING_RESPONSE_BYTES = 700 * 1024
+MAX_SKILL_LEARNING_DIFF_BYTES = 256 * 1024
+NATIVE_SKILL_LEARNING_SHA256 = "4ae4111b95133ed2944335e7b0effa8113dd2be9564cf97671f5315fd83d5d25"
+NATIVE_SKILL_LEARNING_SIZE = 18_333
 MAX_OUTPUT = 16_384
 MAX_HASH_FILE_BYTES = 512 * 1024 * 1024
 MAX_PROOF_SECONDS = 5.0
 IPC_TIMEOUT = 2.0
 _PROOF_SEAL = object()
 _OVERVIEW_PROOF_SEAL = object()
+_SKILL_LEARNING_PROOF_SEAL = object()
 _SERVER_SLOTS = threading.BoundedSemaphore(16)
 _MAX_RETAINED_INGRESS_ISSUES = 128
 _RETAINED_INGRESS_ISSUES: dict[tuple[int, str, str, str], "_RetainedIngressIssue"] = {}
 _RETAINED_INGRESS_LOCK = threading.RLock()
+_LEARNING_JWKS_CACHE: Any = None
+_LEARNING_JWKS_LOCK = threading.Lock()
 _OBSERVATION_FIELDS = (
     "schema", "nonce", "boot_id", "issued_monotonic", "expires_monotonic",
     "peer_pid", "peer_uid", "peer_gid", "peer_start_ticks", "tunnel_invocation_id",
@@ -154,6 +161,245 @@ def _consume_ingress_issue(*, caller_pid: int, caller_start_ticks: str,
             or now >= retained.expires_monotonic):
         raise CoreInspectionDenied("original ingress proof is unavailable or expired")
     return retained
+
+
+def _learning_digest(values: dict[str, Any]) -> str:
+    canonical = json.dumps(values, sort_keys=True, separators=(",", ":"),
+                           allow_nan=False, ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(b"hermes-jarvis-skill-learning-v1\0" + canonical).hexdigest()
+
+
+def _valid_learning_candidates(candidates: Any, readiness: str) -> bool:
+    if readiness not in {"read-only-native-review", "partial", "unavailable"}:
+        return False
+    if not isinstance(candidates, list) or len(candidates) > 64:
+        return False
+    reasons = {"missing_store", "unsafe_store", "corrupt_record", "record_limit",
+               "diff_limit", "native_read_failed", "source_unavailable", "snapshot_changed"}
+    candidate_fields = {"opaque_id", "revision_sha256", "action", "created_at", "skill_label",
+                        "summary", "diff_text", "diff_sha256", "truncated", "state"}
+    total = 0
+    seen: set[str] = set()
+    for item in candidates:
+        if type(item) is not dict or set(item) != candidate_fields:
+            return False
+        if (not isinstance(item.get("opaque_id"), str)
+                or re.fullmatch(r"[0-9a-f]{24}", item["opaque_id"]) is None
+                or item["opaque_id"] in seen):
+            return False
+        seen.add(item["opaque_id"])
+        action = item.get("action")
+        if (not _is_hash(item.get("revision_sha256"))
+                or not isinstance(action, str)
+                or action not in {"create", "edit", "patch", "write_file",
+                                  "remove_file", "delete", "batch"}
+                or (item.get("created_at") is not None and
+                    (isinstance(item["created_at"], bool)
+                     or not isinstance(item["created_at"], (int, float))
+                     or not math.isfinite(item["created_at"])))
+                or not isinstance(item.get("skill_label"), str) or len(item["skill_label"]) > 120
+                or not isinstance(item.get("summary"), str) or len(item["summary"]) > 240
+                or not isinstance(item.get("diff_text"), str)
+                or not _is_hash(item.get("diff_sha256"))
+                or type(item.get("truncated")) is not bool
+                or item.get("state") != "pending-review"):
+            return False
+        raw = item["diff_text"].encode("utf-8", "strict")
+        total += len(raw)
+        if total > MAX_SKILL_LEARNING_DIFF_BYTES:
+            return False
+        if not item["truncated"] and hashlib.sha256(raw).hexdigest() != item["diff_sha256"]:
+            return False
+    return readiness != "unavailable" or not candidates
+
+
+def _valid_learning_reasons(value: Any) -> bool:
+    allowed = {"pending_directory_unavailable", "pending_member_invalid", "pending_limit_exceeded",
+               "pending_record_skipped", "pending_record_invalid", "native_diff_unavailable",
+               "diff_limit_reached", "pending_custody_changed"}
+    return (isinstance(value, list) and len(value) <= 16
+            and all(isinstance(item, str) and item in allowed for item in value)
+            and len(set(value)) == len(value))
+
+
+def _learning_jwks(config: CoreGatewayConfig, *, deadline: float) -> Any:
+    global _LEARNING_JWKS_CACHE
+    from .jwks import JWKSCache
+    remaining = deadline - time.monotonic()
+    if remaining <= 0.1:
+        raise TimeoutError
+    with _LEARNING_JWKS_LOCK:
+        cache = _LEARNING_JWKS_CACHE
+        if cache is None or cache.issuer != config.issuer:
+            cache = JWKSCache(config.issuer, ttl_seconds=30,
+                              timeout_seconds=min(3.0, max(0.1, remaining)))
+            _LEARNING_JWKS_CACHE = cache
+        return cache
+
+
+def _run_native_skill_learning_probe(*, deadline: float) -> dict[str, Any]:
+    helper = Path(__file__).resolve().with_name("native_skill_learning_probe.py")
+    for parent in helper.parents:
+        directory = os.lstat(parent)
+        if (not stat.S_ISDIR(directory.st_mode) or directory.st_uid != 0
+                or stat.S_IMODE(directory.st_mode) & 0o022):
+            raise ValueError("fixed native review source path custody differs")
+        if parent == parent.parent:
+            break
+    info = os.lstat(helper)
+    if (not stat.S_ISREG(info.st_mode) or info.st_size != NATIVE_SKILL_LEARNING_SIZE
+            or info.st_uid != 0 or info.st_nlink != 1
+            or stat.S_IMODE(info.st_mode) & 0o022
+            or _protected_file_sha(helper, owner_uid=0, deadline=deadline)
+                != NATIVE_SKILL_LEARNING_SHA256):
+        raise ValueError("fixed native review helper custody differs")
+    script = (
+        "import runpy,sys;"
+        f"sys.path.insert(0,{str(CORE_SOURCE)!r});"
+        f"p={str(helper)!r};"
+        "runpy.run_path(p)['main']()"
+    )
+    account = pwd.getpwnam("admin")
+    python_info = os.lstat(CORE_PYTHON_LINK)
+    if (account.pw_uid != 1000 or account.pw_gid != 1000
+            or not stat.S_ISLNK(python_info.st_mode)
+            or os.readlink(CORE_PYTHON_LINK) != CORE_PYTHON_LINK_TARGET):
+        raise ValueError("fixed native review runtime custody differs")
+    remaining = deadline - time.monotonic()
+    if remaining <= 0.1:
+        raise TimeoutError
+    environment = {
+        "HOME": str(CORE_ADMIN_HOME), "HERMES_HOME": str(CORE_HERMES_HOME),
+        "PATH": CORE_PATH, "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
+        "HERMES_DISABLE_LAZY_INSTALLS": "1", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8",
+    }
+    process = subprocess.Popen(
+        (str(CORE_PYTHON_LINK), "-I", "-B", "-c", script), stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, close_fds=True,
+        cwd=str(CORE_SOURCE), env=environment, user=account.pw_uid, group=account.pw_gid,
+        extra_groups=(), umask=0o077, start_new_session=True,
+    )
+    assert process.stdout is not None
+    os.set_blocking(process.stdout.fileno(), False)
+    output = bytearray()
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ)
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError
+            for key, _mask in selector.select(min(0.1, remaining)):
+                chunk = os.read(key.fd, 32 * 1024)
+                if chunk:
+                    output.extend(chunk)
+                    if len(output) > 640 * 1024:
+                        raise ValueError("native review output exceeded bound")
+                else:
+                    selector.unregister(key.fileobj)
+            if process.poll() is not None and not selector.get_map():
+                break
+        if process.wait(timeout=max(0.05, deadline-time.monotonic())) != 0:
+            raise ValueError("native review helper failed")
+    except Exception:
+        if process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except OSError:
+                process.kill()
+            try:
+                process.wait(timeout=0.5)
+            except subprocess.TimeoutExpired:
+                pass
+        raise
+    finally:
+        selector.close()
+        process.stdout.close()
+    raw = bytes(output)
+    if not raw.endswith(b"\n") or raw.count(b"\n") != 1:
+        raise ValueError("native review helper output framing differs")
+    result = json.loads(raw[:-1].decode("utf-8", "strict"), object_pairs_hook=_unique_pairs)
+    expected = {"schema", "state", "candidates", "pending_reasons", "candidate_count", "diff_bytes"}
+    if (type(result) is not dict or set(result) != expected or type(result.get("schema")) is not int
+            or result["schema"] != 1 or result.get("state") not in {"read-only-native-review", "partial"}
+            or not _valid_learning_reasons(result.get("pending_reasons"))):
+        raise ValueError("native review helper schema differs")
+    if (not _valid_learning_candidates(result.get("candidates"), result["state"])
+            or type(result.get("candidate_count")) is not int
+            or result["candidate_count"] != len(result["candidates"])
+            or type(result.get("diff_bytes")) is not int
+            or result["diff_bytes"] != sum(len(item["diff_text"].encode("utf-8"))
+                                           for item in result["candidates"])):
+        raise ValueError("native review helper content differs")
+    return result
+
+
+def observe_skill_learning(config: CoreGatewayConfig, *, request: dict[str, Any],
+                           caller_pid: int, caller_uid: int, caller_gid: int,
+                           peer_pid: int, peer_uid: int, peer_gid: int) -> dict[str, Any]:
+    required = {"schema", "op", "nonce", "peer_pid", "peer_uid", "peer_gid", "access_jwt",
+                "core_generation", "ingress_nonce", "ingress_proof_sha256"}
+    if (type(request) is not dict or set(request) != required or type(request.get("schema")) is not int
+            or request["schema"] != 1 or request.get("op") != "observe-skill-learning"
+            or (request.get("peer_pid"), request.get("peer_uid"), request.get("peer_gid"))
+                != (peer_pid, peer_uid, peer_gid)
+            or not all(type(value) is int for value in (peer_pid, peer_uid, peer_gid))
+            or not isinstance(request.get("nonce"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", request["nonce"]) is None
+            or not isinstance(request.get("ingress_nonce"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", request["ingress_nonce"]) is None
+            or not _is_hash(request.get("ingress_proof_sha256"))
+            or not _is_hash(request.get("core_generation"))
+            or not isinstance(request.get("access_jwt"), str)
+            or not 1 <= len(request["access_jwt"]) <= 16_384
+            or not request["access_jwt"].isascii()):
+        raise CoreInspectionDenied("native review request is invalid")
+    caller_start = _proc_start_ticks(caller_pid)
+    retained = _consume_ingress_issue(caller_pid=caller_pid,
+        caller_start_ticks=caller_start, nonce=request["ingress_nonce"],
+        proof_sha256=request["ingress_proof_sha256"],
+        peer=(peer_pid, peer_uid, peer_gid), core_generation=request["core_generation"],
+        config=config)
+    deadline = retained.expires_monotonic
+    # Rejoin SO_PEERCRED to the fixed gateway unit/source before validating the
+    # forwarded owner assertion or reading native pending content.
+    current = observe_current_ingress(config, nonce=retained.nonce,
+        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+        peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+        _issued=retained.issued_monotonic, _deadline=deadline, _retain_issuance=False)
+    if (current["proof_sha256"] != retained.proof_sha256
+            or current["core_generation"] != retained.core_generation
+            or current["boot_id"] != retained.boot_id
+            or current["config_sha256"] != retained.config_sha256
+            or time.monotonic() >= deadline):
+        raise CoreInspectionDenied("native review ingress changed")
+    from .gateway import validate_access_jwt
+    principal = validate_access_jwt(request["access_jwt"],
+        policy=config.policy(_learning_jwks(config, deadline=deadline)),
+        deadline_monotonic=deadline)
+    if time.monotonic() >= deadline:
+        raise CoreInspectionDenied("native review ingress expired")
+    native = _run_native_skill_learning_probe(deadline=deadline)
+    final = observe_current_ingress(config, nonce=retained.nonce,
+        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+        peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+        _issued=retained.issued_monotonic, _deadline=deadline, _retain_issuance=False)
+    if (final["proof_sha256"] != retained.proof_sha256 or time.monotonic() >= deadline
+            or principal.email.casefold() not in config.allowed_emails):
+        raise CoreInspectionDenied("native review proof expired or changed")
+    issued = retained.issued_monotonic
+    jwt_deadline = time.monotonic() + max(0.0, principal.expires_at-time.time())
+    expiry = min(deadline, jwt_deadline, issued + MAX_PROOF_SECONDS)
+    body = {
+        "schema": 1, "nonce": request["nonce"], "boot_id": retained.boot_id,
+        "issued_monotonic": issued, "expires_monotonic": expiry,
+        "config_sha256": retained.config_sha256, "core_generation": retained.core_generation,
+        "ingress_nonce": retained.nonce, "ingress_proof_sha256": retained.proof_sha256,
+        "readiness": native["state"], "pending_reasons": native["pending_reasons"],
+        "candidates": native["candidates"],
+    }
+    body["proof_sha256"] = _learning_digest(body)
+    return body
 
 
 def _overview_digest(values: dict[str, Any]) -> str:
@@ -964,6 +1210,74 @@ class CoreVerifiedOverviewObservation:
 
 
 @dataclass(frozen=True, slots=True)
+class CoreVerifiedSkillLearningObservation:
+    """Sealed, read-only pending skill-review snapshot for one accepted owner request."""
+
+    schema: int
+    nonce: str
+    boot_id: str
+    issued_monotonic: float
+    expires_monotonic: float
+    config_sha256: str
+    core_generation: str
+    ingress_nonce: str
+    ingress_proof_sha256: str
+    readiness: str
+    pending_reasons: tuple[str, ...]
+    candidates: tuple[dict[str, Any], ...]
+    proof_sha256: str
+    _access_fingerprint: str = field(repr=False, compare=False)
+    _seal: object = field(repr=False, compare=False)
+
+    def verify_current(self, config: CoreGatewayConfig, *, peer_pid: int,
+                       peer_uid: int, peer_gid: int, accepted_ingress: Any,
+                       now: float | None = None) -> bool:
+        current = time.monotonic() if now is None else now
+        try:
+            from .core_gateway import CoreAcceptedIngressObservation
+            claims = {
+                "schema": self.schema, "nonce": self.nonce, "boot_id": self.boot_id,
+                "issued_monotonic": self.issued_monotonic, "expires_monotonic": self.expires_monotonic,
+                "config_sha256": self.config_sha256, "core_generation": self.core_generation,
+                "ingress_nonce": self.ingress_nonce,
+                "ingress_proof_sha256": self.ingress_proof_sha256,
+                "readiness": self.readiness, "pending_reasons": list(self.pending_reasons),
+                "candidates": list(self.candidates),
+            }
+            accepted_root = accepted_ingress.root_observation
+            return bool(
+                self._seal is _SKILL_LEARNING_PROOF_SEAL
+                and type(self.schema) is int and self.schema == 1
+                and re.fullmatch(r"[0-9a-f]{64}", self.nonce)
+                and self.boot_id == config.boot_id
+                and self.config_sha256 == config.config_sha256
+                and self.core_generation == accepted_ingress.core_generation
+                and self.ingress_nonce == accepted_root.nonce
+                and self.ingress_proof_sha256 == accepted_root.proof_sha256
+                and self._access_fingerprint == accepted_ingress.principal.token_fingerprint
+                and isinstance(self.readiness, str)
+                and self.readiness in {"read-only-native-review", "partial", "unavailable"}
+                and _valid_learning_reasons(list(self.pending_reasons))
+                and _valid_learning_candidates(list(self.candidates), self.readiness)
+                and _is_hash(self.proof_sha256)
+                and _learning_digest(claims) == self.proof_sha256
+                and all(not isinstance(value, bool) and isinstance(value, (int, float))
+                        and math.isfinite(value) for value in
+                        (self.issued_monotonic, self.expires_monotonic, current))
+                and self.issued_monotonic == accepted_root.issued_monotonic
+                and self.issued_monotonic <= current < self.expires_monotonic
+                and self.issued_monotonic < self.expires_monotonic <= accepted_root.expires_monotonic
+                and self.expires_monotonic <= accepted_ingress.expires_monotonic
+                and type(accepted_ingress) is CoreAcceptedIngressObservation
+                and accepted_ingress.verify_current(config, now=current)
+                and (accepted_ingress.peer_pid, accepted_ingress.peer_uid, accepted_ingress.peer_gid)
+                    == (peer_pid, peer_uid, peer_gid)
+            )
+        except Exception:
+            return False
+
+
+@dataclass(frozen=True, slots=True)
 class CoreVerifiedIngressObservation:
     schema: int
     nonce: str
@@ -1024,11 +1338,12 @@ class CoreVerifiedIngressObservation:
             return False
 
 
-def _read_frame(conn: socket.socket, deadline: float, maximum: int) -> dict[str, Any]:
+def _read_frame(conn: socket.socket, deadline: float, maximum: int, *,
+                encoding: str = "ascii") -> dict[str, Any]:
     size = struct.unpack("!I", _read_exact(conn, 4, deadline))[0]
     if not 2 <= size <= maximum:
         raise ValueError("IPC message exceeded bound")
-    value = json.loads(_read_exact(conn, size, deadline).decode("ascii"), object_pairs_hook=_unique_pairs)
+    value = json.loads(_read_exact(conn, size, deadline).decode(encoding), object_pairs_hook=_unique_pairs)
     if not isinstance(value, dict):
         raise ValueError("IPC frame is not an object")
     return value
@@ -1044,20 +1359,28 @@ def _serve_connection(conn: socket.socket, config: CoreGatewayConfig) -> None:
         caller_pid, caller_uid, caller_gid = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
         if caller_uid != config.gateway_uid or caller_pid <= 1:
             return
-        request = _read_frame(conn, deadline, MAX_REQUEST)
-        if set(request) != {"op", "nonce", "peer_pid", "peer_uid", "peer_gid"}:
-            return
-        arguments = {"nonce": request["nonce"], "caller_pid": caller_pid,
-            "caller_uid": caller_uid, "caller_gid": caller_gid, "peer_pid": request["peer_pid"],
-            "peer_uid": request["peer_uid"], "peer_gid": request["peer_gid"]}
-        if request.get("op") == "observe-ingress":
-            result = observe_current_ingress(config, **arguments)
-        elif request.get("op") == "observe-core-overview":
-            result = observe_current_core_overview(config, **arguments, issued=issued, deadline=deadline)
+        request = _read_frame(conn, deadline, MAX_SKILL_LEARNING_REQUEST_BYTES)
+        if request.get("op") == "observe-skill-learning":
+            result = observe_skill_learning(config, request=request, caller_pid=caller_pid,
+                caller_uid=caller_uid, caller_gid=caller_gid, peer_pid=request.get("peer_pid"),
+                peer_uid=request.get("peer_uid"), peer_gid=request.get("peer_gid"))
+            maximum = MAX_SKILL_LEARNING_RESPONSE_BYTES
         else:
-            return
-        raw = json.dumps(result, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("ascii")
-        if len(raw) > MAX_RESPONSE or time.monotonic() >= deadline:
+            if set(request) != {"op", "nonce", "peer_pid", "peer_uid", "peer_gid"}:
+                return
+            arguments = {"nonce": request["nonce"], "caller_pid": caller_pid,
+                "caller_uid": caller_uid, "caller_gid": caller_gid, "peer_pid": request["peer_pid"],
+                "peer_uid": request["peer_uid"], "peer_gid": request["peer_gid"]}
+            maximum = MAX_RESPONSE
+            if request.get("op") == "observe-ingress":
+                result = observe_current_ingress(config, **arguments)
+            elif request.get("op") == "observe-core-overview":
+                result = observe_current_core_overview(config, **arguments, issued=issued, deadline=deadline)
+            else:
+                return
+        raw = json.dumps(result, sort_keys=True, separators=(",", ":"), allow_nan=False,
+                         ensure_ascii=False).encode("utf-8")
+        if len(raw) > maximum or time.monotonic() >= deadline:
             return
         conn.sendall(struct.pack("!I", len(raw)) + raw)
     except Exception:
@@ -1236,6 +1559,92 @@ def verify_current_core_overview(config: CoreGatewayConfig, *, peer_pid: int,
     except Exception as error:
         _log_ingress_denial("root_core_overview_currentness", error)
         raise CoreGatewayDenied("root core overview proof is invalid or stale") from None
+
+
+def verify_current_skill_learning(config: CoreGatewayConfig, *, access_jwt: str,
+                                  accepted_ingress: Any) -> CoreVerifiedSkillLearningObservation:
+    from .core_gateway import CoreAcceptedIngressObservation, _log_ingress_denial, _read_config_current
+    if (type(accepted_ingress) is not CoreAcceptedIngressObservation
+            or not isinstance(access_jwt, str) or not 1 <= len(access_jwt) <= 16_384
+            or not access_jwt.isascii()
+            or hashlib.sha256(access_jwt.encode("ascii")).hexdigest()
+                != accepted_ingress.principal.token_fingerprint):
+        raise CoreGatewayDenied("current accepted owner ingress is required")
+    _read_config_current(config)
+    if accepted_ingress.verify_current(config) is not True:
+        raise CoreGatewayDenied("current accepted owner ingress is required")
+    root_proof = accepted_ingress.root_observation
+    nonce = os.urandom(32).hex()
+    deadline = min(time.monotonic() + IPC_TIMEOUT, accepted_ingress.expires_monotonic)
+    info = os.lstat(CORE_INSPECTOR_SOCKET)
+    if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != 0 or info.st_gid != config.gateway_gid
+            or stat.S_IMODE(info.st_mode) != 0o660):
+        raise CoreGatewayDenied("root core learning inspector is unavailable")
+    conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        conn.settimeout(max(0.05, deadline-time.monotonic()))
+        conn.connect(str(CORE_INSPECTOR_SOCKET))
+        if not hasattr(socket, "SO_PEERCRED"):
+            raise ValueError
+        inspector_pid, inspector_uid, _inspector_gid = struct.unpack(
+            "3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+        if inspector_uid != 0 or inspector_pid <= 1:
+            raise ValueError
+        body = {
+            "schema": 1, "op": "observe-skill-learning", "nonce": nonce,
+            "peer_pid": accepted_ingress.peer_pid, "peer_uid": accepted_ingress.peer_uid,
+            "peer_gid": accepted_ingress.peer_gid, "access_jwt": access_jwt,
+            "core_generation": accepted_ingress.core_generation,
+            "ingress_nonce": root_proof.nonce,
+            "ingress_proof_sha256": root_proof.proof_sha256,
+        }
+        raw = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("ascii")
+        if len(raw) > MAX_SKILL_LEARNING_REQUEST_BYTES or time.monotonic() >= deadline:
+            raise ValueError
+        conn.sendall(struct.pack("!I", len(raw)) + raw)
+        result = _read_frame(conn, deadline, MAX_SKILL_LEARNING_RESPONSE_BYTES, encoding="utf-8")
+    except Exception as error:
+        _log_ingress_denial("root_skill_learning_exchange", error)
+        raise CoreGatewayDenied("root skill learning proof is unavailable") from None
+    finally:
+        conn.close()
+    fields = {"schema", "nonce", "boot_id", "issued_monotonic", "expires_monotonic",
+              "config_sha256", "core_generation", "ingress_nonce", "ingress_proof_sha256",
+              "readiness", "pending_reasons", "candidates", "proof_sha256"}
+    if set(result) != fields:
+        raise CoreGatewayDenied("root skill learning proof has an unknown schema")
+    claims = dict(result)
+    proof_sha = claims.pop("proof_sha256", None)
+    try:
+        expected = _learning_digest(claims)
+    except Exception:
+        raise CoreGatewayDenied("root skill learning proof is malformed") from None
+    if (proof_sha != expected or result.get("nonce") != nonce
+            or result.get("ingress_nonce") != root_proof.nonce
+            or result.get("ingress_proof_sha256") != root_proof.proof_sha256
+            or time.monotonic() >= deadline):
+        raise CoreGatewayDenied("root skill learning proof is mismatched or late")
+    try:
+        observation = CoreVerifiedSkillLearningObservation(
+            schema=result["schema"], nonce=result["nonce"], boot_id=result["boot_id"],
+            issued_monotonic=result["issued_monotonic"],
+            expires_monotonic=result["expires_monotonic"],
+            config_sha256=result["config_sha256"], core_generation=result["core_generation"],
+            ingress_nonce=result["ingress_nonce"],
+            ingress_proof_sha256=result["ingress_proof_sha256"],
+            readiness=result["readiness"], pending_reasons=tuple(result["pending_reasons"]),
+            candidates=tuple(result["candidates"]), proof_sha256=result["proof_sha256"],
+            _access_fingerprint=accepted_ingress.principal.token_fingerprint,
+            _seal=_SKILL_LEARNING_PROOF_SEAL)
+        _read_config_current(config)
+        if observation.verify_current(config, peer_pid=accepted_ingress.peer_pid,
+                peer_uid=accepted_ingress.peer_uid, peer_gid=accepted_ingress.peer_gid,
+                accepted_ingress=accepted_ingress) is not True:
+            raise ValueError
+        return observation
+    except Exception as error:
+        _log_ingress_denial("root_skill_learning_currentness", error)
+        raise CoreGatewayDenied("root skill learning proof is invalid or stale") from None
 
 
 def main() -> None:

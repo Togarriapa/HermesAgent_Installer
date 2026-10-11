@@ -21,6 +21,7 @@ _ROUTES = {
     "/chat/api/overview": "overview",
     "/chat/api/capabilities": "capabilities",
     "/chat/api/settings": "settings",
+    "/chat/api/resources/learning": "learning",
 }
 _BUNDLE_INVENTORY_NAME = "jarvis_capability_inventory.json"
 _BUNDLE_INVENTORY_SHA256 = "16ba9ef9b5a5a727cbfa29a43f12862e3aca6deb1a57cab52f9d7d9b96610860"
@@ -223,6 +224,33 @@ def install_jarvis_dashboard_routes(app: Any, service: Any) -> None:
         launch = request.app.get("core_gateway_launch")
         if accepted is None or launch is None:
             raise web.HTTPServiceUnavailable(text="current core projection unavailable")
+        if request.path == "/chat/api/resources/learning":
+            try:
+                assertions = request.headers.getall("Cf-Access-Jwt-Assertion", [])
+                if len(assertions) != 1:
+                    raise ValueError
+                from .core_gateway_inspector import verify_current_skill_learning
+                observation = await asyncio.wait_for(asyncio.to_thread(
+                    verify_current_skill_learning, launch.config,
+                    access_jwt=assertions[0], accepted_ingress=accepted), timeout=5.0)
+                from .jarvis_learning import build_learning_projection
+                payload = build_learning_projection(
+                    observation, config=launch.config,
+                    peer_pid=accepted.peer_pid, peer_uid=accepted.peer_uid,
+                    peer_gid=accepted.peer_gid, accepted_ingress=accepted)
+                current = service._current(request)
+                if (current.subject != principal.subject
+                        or current.core_generation != principal.core_generation
+                        or observation.verify_current(launch.config,
+                            peer_pid=accepted.peer_pid, peer_uid=accepted.peer_uid,
+                            peer_gid=accepted.peer_gid, accepted_ingress=accepted) is not True):
+                    raise ValueError
+                return web.json_response(
+                    payload, dumps=lambda value: json.dumps(
+                        value, ensure_ascii=False, separators=(",", ":"), allow_nan=False))
+            except Exception:
+                raise web.HTTPServiceUnavailable(
+                    text="current native learning review is unavailable") from None
         try:
             from .core_gateway import CoreAcceptedIngressObservation
             from .core_gateway_inspector import verify_current_core_overview
