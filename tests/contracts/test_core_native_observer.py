@@ -13,8 +13,10 @@ from hermes_installer.remote.core_native_observer import (
     CoreNativeObservationClient,
     CoreNativeObservationUnavailable,
     _codex_account_fingerprint,
+    _mission_binding_from_wire,
     install_native_codex_process_observer,
 )
+from hermes_installer.remote.jarvis_mission_executor import MissionBinding
 
 
 class _PluginContext:
@@ -100,3 +102,15 @@ def test_owner_turn_registration_is_not_available_from_core_worker_socket(tmp_pa
     # The native worker socket cannot mint owner authority from caller metadata.
     with pytest.raises(CoreNativeObservationUnavailable):
         client._rpc("register-owner-turn", {"gateway_turn_id": "caller-selected"})
+
+
+def test_mission_binding_roundtrips_only_the_root_sealed_typed_wire_shape():
+    binding = MissionBinding(
+        schema=1, mission_id="mission-17", revision=3,
+        plan_sha256="a" * 64, task_sha256="b" * 64,
+        source_profile_id="orchestrator",
+    )
+    assert _mission_binding_from_wire(None) is None
+    assert _mission_binding_from_wire(binding.to_wire()) == binding
+    with pytest.raises(CoreNativeObservationUnavailable):
+        _mission_binding_from_wire({**binding.to_wire(), "owner_subject_sha256": "c" * 64})

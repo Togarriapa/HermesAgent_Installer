@@ -26,6 +26,8 @@ from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Any, Callable, Mapping
 
+from hermes_installer.remote.jarvis_mission_executor import MissionBinding
+
 
 CORE_NATIVE_OBSERVER_SOCKET = Path("/run/hermes-jarvis-native-observer/native-observer.sock")
 _CORE_NATIVE_OBSERVER_GROUP = 1000
@@ -85,6 +87,18 @@ def _canonical(value: Any) -> bytes:
 
 def _hash(value: Any) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
+
+
+def _mission_binding_from_wire(value: Any) -> MissionBinding | None:
+    if value is None:
+        return None
+    try:
+        binding = MissionBinding.from_wire(value)
+        if type(binding) is not MissionBinding or binding.to_wire() != value:
+            raise ValueError
+        return binding
+    except Exception:
+        raise CoreNativeObservationUnavailable("mission binding payload is malformed") from None
 
 
 def _require_hash(value: Any, label: str) -> str:
@@ -366,6 +380,7 @@ class RootSelectedInternalProfileDispatchClaim:
     configured_parent_tool_names: tuple[str, ...]
     allow_inherited_mcp: bool
     allow_native_orchestrator_delegation: bool
+    mission_binding: MissionBinding | None
     profile_tool_names: tuple[str, ...]
     parent_privacy_grants: tuple[str, ...]
     profile_privacy_requirements: tuple[str, ...]
@@ -416,6 +431,8 @@ class RootSelectedInternalProfileDispatchClaim:
                 or type(self.allow_inherited_mcp) is not bool
                 or type(self.allow_native_orchestrator_delegation) is not bool
                 or not self.allow_native_orchestrator_delegation
+                or (self.mission_binding is not None
+                    and type(self.mission_binding) is not MissionBinding)
                 or not isinstance(self.profile_tool_names, tuple)
                 or len(self.profile_tool_names) > 256
                 or any(not _ID.fullmatch(item or "") for item in self.profile_tool_names)
@@ -596,12 +613,14 @@ class CoreNativeObservationClient:
             "delegation_policy_handle", "delegation_policy_sha256",
             "parent_tool_configuration_sha256", "configured_parent_tool_names",
             "allow_inherited_mcp", "allow_native_orchestrator_delegation",
+            "mission_binding",
         }
         if not isinstance(claim, dict) or set(claim) != required:
             raise CoreNativeObservationUnavailable("root dispatch claim payload is malformed")
         try:
             if type(claim["schema"]) is not int or claim["schema"] != 1:
                 raise ValueError
+            mission_binding = _mission_binding_from_wire(claim["mission_binding"])
             encoded_prompt = claim["prompt_b64"]
             if not isinstance(encoded_prompt, str) or len(encoded_prompt) > 4 * 128 * 1024:
                 raise ValueError
@@ -649,6 +668,7 @@ class CoreNativeObservationClient:
                 configured_parent_tool_names=tuple(configured_names),
                 allow_inherited_mcp=claim["allow_inherited_mcp"],
                 allow_native_orchestrator_delegation=claim["allow_native_orchestrator_delegation"],
+                mission_binding=mission_binding,
                 profile_tool_names=tuple(profile_tools), parent_privacy_grants=tuple(grants),
                 profile_privacy_requirements=tuple(privacy_requirements),
                 expires_monotonic=claim["expires_monotonic"],
@@ -1073,6 +1093,8 @@ class RootCoreNativeObservationRegistry:
                     "configured_parent_tool_names": list(policy.configured_parent_tool_names),
                     "allow_inherited_mcp": policy.allow_inherited_mcp,
                     "allow_native_orchestrator_delegation": policy.allow_native_orchestrator_delegation,
+                    "mission_binding": (owner.mission_binding.to_wire()
+                                        if owner.mission_binding is not None else None),
                     "expires_monotonic": claim["expiry"], "evidence_class": "protected-core-process-observation",
                     "provider": _CODEX_PROVIDER, "api_mode": _CODEX_MODE, "base_url": _CODEX_ENDPOINT,
                     "additional_metered_budget": 0}
