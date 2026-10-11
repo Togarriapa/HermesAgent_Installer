@@ -77,7 +77,9 @@ def test_context_feature_assets_are_static_and_avoid_native_rpc_or_markup_interp
         ("GET", "/chat/api/conversations/{conversation_id}/context"),
     )
     assert "innerHTML" not in FEATURE_ASSETS.mount_js
-    assert "item.textContent" in FEATURE_ASSETS.mount_js
+    assert ".textContent =" in FEATURE_ASSETS.mount_js
+    assert "text(selector, value)" in FEATURE_ASSETS.mount_js
+    assert ".append(" in FEATURE_ASSETS.mount_js
     assert "session_id" not in FEATURE_ASSETS.mount_js
     assert "profiles.describe" not in FEATURE_ASSETS.mount_js
 

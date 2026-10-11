@@ -217,8 +217,11 @@ def test_context_adapter_rejects_malformed_native_stats_and_open_ended_fields():
         asyncio.run(client.session_context_breakdown("runtime-owner-live"))
 
 
-def test_session_read_adapter_enforces_short_deadline_and_bounds_status_payload():
-    client = CoreRpcClient(token_file=Path("/private/fake/token"), timeout_seconds=0.01)
+def test_session_read_adapter_enforces_short_deadline_and_bounds_status_payload(monkeypatch):
+    from hermes_installer.remote import core_client
+
+    monkeypatch.setattr(core_client, "SESSION_READ_TIMEOUT_SECONDS", 0.01)
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
 
     async def slow_rpc(_method, _params):
         await asyncio.sleep(0.1)
