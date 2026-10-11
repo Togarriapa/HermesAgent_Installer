@@ -1,9 +1,11 @@
 """Fixed, journaled adoption of the pinned Hermes core service."""
 from __future__ import annotations
-import grp, hashlib, json, os, pwd, re, secrets, stat, subprocess, sys, tempfile, time
+import grp, hashlib, json, os, pwd, re, secrets, shlex, stat, subprocess, sys, tempfile, time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 SOURCE=Path("/home/admin/HermesInstaller/data/generations/hermes-agent-7085fbf77532")
+ADAPTER_SOURCE=Path(__file__).resolve(strict=True).parents[1]
 PYTHON=Path("/home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0/venv/bin/python")
 PYTHON_LINK_TARGET="/home/admin/HermesInstaller/data/tools/python-3.14.7+20260901-linux-arm64/bin/python3"
 PYTHON_REAL=Path("/home/admin/HermesInstaller/data/tools/python-3.14.7+20260901-linux-arm64/bin/python3.14")
@@ -16,6 +18,7 @@ TOKEN=Path("/etc/hermes-installer/jarvis-core/session-token")
 JOURNAL=Path("/var/lib/hermes-installer/core-runtime/ownership.json")
 RESOURCES_RECORD=Path("/var/lib/hermes-installer/core-runtime/resources-discovery.json")
 RESOURCES_CAS=Path("/var/lib/hermes-installer/core-runtime/resources-cas")
+ADAPTER_MIGRATION_BACKUP=Path("/var/lib/hermes-installer/core-runtime/adapter-migration-backup")
 # This exact older package was materialized before the importer helper was
 # hardened. Its only difference from the current package is that helper member;
 # the helper itself is not installed into the owner's Hermes tree.
@@ -55,6 +58,84 @@ ROOT_UID=0; GATEWAY_GID=981
 FILE_CONTRACT=((UNIT,"unit_sha256",ROOT_UID,ROOT_UID,0o644),(LAUNCHER,"launcher_sha256",ROOT_UID,ROOT_UID,0o755),
                (TOKEN,"token_sha256",ROOT_UID,GATEWAY_GID,0o640))
 class CoreRuntimeError(RuntimeError): pass
+
+_RESOURCES_PROFILE_SOURCE_SEAL = object()
+
+@dataclass(frozen=True, slots=True)
+class VerifiedResourcesProfileSource:
+ """Short-lived root-verified bytes for the one fixed orchestrator profile."""
+ schema:int
+ core_source_generation:str
+ hermes_revision:str
+ resources_revision:str
+ resources_tree:str
+ artifact_sha256:str
+ ownership_manifest_sha256:str
+ loaded_skill_inventory_sha256:str
+ profile_id:str
+ profile_prompt:bytes
+ profile_prompt_sha256:str
+ profile_manifest:bytes
+ profile_manifest_sha256:str
+ profile_member_manifest:bytes
+ profile_member_manifest_sha256:str
+ observed_at_utc:str
+ expires_monotonic:float
+ _seal:object=field(repr=False,compare=False)
+
+ def verify_current(self, *, core_source_generation, now=None):
+  """Re-read fixed root custody and require this exact snapshot to remain current."""
+  current=time.monotonic() if now is None else now
+  try:
+   if (type(self) is not VerifiedResourcesProfileSource
+       or self._seal is not _RESOURCES_PROFILE_SOURCE_SEAL
+       or current>=self.expires_monotonic
+       or core_source_generation!=self.core_source_generation):
+    return False
+   fresh=read_current_resources_profile_source(core_source_generation=core_source_generation)
+   return bool(fresh is not None and fresh._seal is _RESOURCES_PROFILE_SOURCE_SEAL
+    and fresh.profile_prompt_sha256==self.profile_prompt_sha256
+   and fresh.profile_manifest_sha256==self.profile_manifest_sha256
+    and fresh.profile_member_manifest_sha256==self.profile_member_manifest_sha256
+    and fresh.artifact_sha256==self.artifact_sha256
+    and fresh.ownership_manifest_sha256==self.ownership_manifest_sha256
+    and fresh.resources_revision==self.resources_revision
+    and fresh.resources_tree==self.resources_tree
+    and fresh.core_source_generation==self.core_source_generation
+    and current<self.expires_monotonic)
+  except Exception:
+   return False
+
+ def is_current_sealed(self, custody, now=None):
+  try:
+   from .remote import core_gateway_inspector as inspector
+   if (type(custody) is not inspector.CoreNativeObserverCustody
+       or custody._seal is not inspector._NATIVE_CUSTODY_SEAL
+       or custody.core_source_generation!=self.core_source_generation):
+    return False
+   return self.verify_current(core_source_generation=custody.core_source_generation,now=now)
+  except Exception:
+   return False
+
+ def resolve_current(self, custody):
+  try:
+   from .remote import core_gateway_inspector as inspector
+   if (type(self) is not VerifiedResourcesProfileSource
+       or self._seal is not _RESOURCES_PROFILE_SOURCE_SEAL
+       or type(custody) is not inspector.CoreNativeObserverCustody
+       or custody._seal is not inspector._NATIVE_CUSTODY_SEAL
+       or custody.core_source_generation!=self.core_source_generation):
+    return None
+   current=read_current_resources_profile_source(
+    core_source_generation=custody.core_source_generation)
+   if (current is None or current.profile_prompt_sha256!=self.profile_prompt_sha256
+       or current.profile_manifest_sha256!=self.profile_manifest_sha256
+       or current.profile_member_manifest_sha256!=self.profile_member_manifest_sha256
+       or not current.is_current_sealed(custody)):
+    return None
+   return current
+  except Exception:
+   return None
 def _digest(path):
  h=hashlib.sha256()
  with path.open("rb") as f:
@@ -669,6 +750,71 @@ def read_current_resources_discovery(*,core_source_generation):
  except Exception:
   return {**pending,"resources_state":"stale"}
 
+def read_current_resources_profile_source(*,core_source_generation):
+ """Return the fixed packaged orchestrator prompt only from a current root receipt.
+
+ The returned bytes are an internal root-process value, never a dashboard DTO.
+ Its short expiry and verifier force callers to re-read the receipt, CAS, owner
+ manifest, and complete installed member closure around any later projection.
+ """
+ if (os.geteuid()!=ROOT_UID or not isinstance(core_source_generation,str)
+     or re.fullmatch(r"[0-9a-f]{64}",core_source_generation) is None):
+  return None
+ before=read_current_resources_discovery(core_source_generation=core_source_generation)
+ if before.get("resources_state")!="discovered": return None
+ try:
+  record_bytes=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024)
+  record=json.loads(record_bytes)
+  if (record.get("core_source_generation")!=core_source_generation
+      or record.get("artifact_sha256")!=before.get("artifact_sha256")
+      or record.get("ownership_manifest_sha256") is None
+      or record.get("loaded_skill_inventory_sha256") is None):
+   return None
+  artifact_sha=record["artifact_sha256"]
+  archive=_projection_file(RESOURCES_CAS/(artifact_sha+".zip"),owner=ROOT_UID,
+   group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
+  if hashlib.sha256(archive).hexdigest()!=artifact_sha: return None
+  from .registry import manual_jarvis_skills as native
+  manifest,files=native._read_artifact(archive,artifact_sha)
+  row=next((item for item in manifest["profile_members"]
+            if item.get("source_id")=="orchestrator"),None)
+  if not isinstance(row,dict): return None
+  prompt=files["registry/profiles/orchestrator/SOUL.md"]
+  profile_manifest=files["registry/profiles/orchestrator/profile.yaml"]
+  if (not prompt or not profile_manifest or len(prompt)>1024*1024
+      or len(profile_manifest)>1024*1024
+      or hashlib.sha256(prompt).hexdigest()!=row.get("identity_sha256")
+      or hashlib.sha256(profile_manifest).hexdigest()!=row.get("profile_yaml_sha256")):
+   return None
+  prompt.decode("utf-8")
+  profile_manifest.decode("utf-8")
+  ownership_sha=_hash_generation_tree(HERMES_HOME,manifest,files,artifact_sha)
+  if ownership_sha!=record.get("ownership_manifest_sha256"): return None
+  profile_member_manifest=native._canonical_json(row)
+  profile_row_sha=hashlib.sha256(profile_member_manifest).hexdigest()
+  # Re-read both the durable receipt and full public projection after all
+  # archive/member work; no mutable dict from an earlier observation is trusted.
+  after_record=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,
+   mode=0o600,maximum=16*1024)
+  after=read_current_resources_discovery(core_source_generation=core_source_generation)
+  if (after_record!=record_bytes or after!=before
+      or hashlib.sha256(_projection_file(RESOURCES_CAS/(artifact_sha+".zip"),
+       owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024*1024)).hexdigest()!=artifact_sha
+      or _hash_generation_tree(HERMES_HOME,manifest,files,artifact_sha)!=ownership_sha):
+   return None
+  return VerifiedResourcesProfileSource(
+   schema=1,core_source_generation=core_source_generation,hermes_revision=record["hermes_revision"],
+   resources_revision=record["resources_revision"],resources_tree=record["resources_tree"],
+   artifact_sha256=artifact_sha,ownership_manifest_sha256=ownership_sha,
+   loaded_skill_inventory_sha256=record["loaded_skill_inventory_sha256"],profile_id="orchestrator",
+   profile_prompt=bytes(prompt),profile_prompt_sha256=hashlib.sha256(prompt).hexdigest(),
+   profile_manifest=bytes(profile_manifest),profile_manifest_sha256=hashlib.sha256(profile_manifest).hexdigest(),
+   profile_member_manifest=bytes(profile_member_manifest),profile_member_manifest_sha256=profile_row_sha,
+   observed_at_utc=record["observed_at_utc"],
+   expires_monotonic=time.monotonic()+5.0,_seal=_RESOURCES_PROFILE_SOURCE_SEAL)
+ except Exception:
+  return None
+
 def _replace_journal(record):
  if not JOURNAL.is_file() or JOURNAL.is_symlink(): raise CoreRuntimeError("ownership journal disappeared")
  st=JOURNAL.stat()
@@ -694,7 +840,33 @@ def _owned_file(path,body,mode,uid,gid,expected,repair):
   path.unlink()
   _sync_directory(path.parent)
  _atomic(path,body,mode,uid,gid)
+def _validate_adapter_source_path():
+ """Only add the root-owned immutable installer generation to core imports."""
+ declared=Path(__file__).absolute()
+ resolved=Path(__file__).resolve(strict=True)
+ if (declared!=resolved or ADAPTER_SOURCE!=resolved.parents[1]
+     or ADAPTER_SOURCE.parent.parent!=Path("/opt")
+     or not re.fullmatch(r"hermes-installer-core-[0-9a-f]{9,64}",ADAPTER_SOURCE.parent.name)):
+  raise CoreRuntimeError("fixed installer adapter generation path differs")
+ fd=os.open("/",os.O_RDONLY|getattr(os,"O_DIRECTORY",0)|getattr(os,"O_NOFOLLOW",0))
+ try:
+  for component in ADAPTER_SOURCE.parts[1:]:
+   child=os.open(component,os.O_RDONLY|getattr(os,"O_DIRECTORY",0)
+                 |getattr(os,"O_NOFOLLOW",0),dir_fd=fd)
+   info=os.fstat(child)
+   if (not stat.S_ISDIR(info.st_mode) or info.st_uid!=ROOT_UID
+       or stat.S_IMODE(info.st_mode)&0o022):
+    os.close(child); raise CoreRuntimeError("installer adapter generation custody differs")
+   os.close(fd); fd=child
+  info=os.stat(resolved,follow_symlinks=False)
+  if (not stat.S_ISREG(info.st_mode) or info.st_uid!=ROOT_UID or info.st_nlink!=1
+      or stat.S_IMODE(info.st_mode)&0o022):
+   raise CoreRuntimeError("installer adapter source file custody differs")
+ finally:
+  os.close(fd)
+
 def _identity(*,verify_python_version=True):
+ _validate_adapter_source_path()
  if not SOURCE.is_dir() or SOURCE.is_symlink(): raise CoreRuntimeError("pinned source unavailable")
  # The reviewed generation lives beneath admin's private installer tree. Reject
  # symlinked or differently-owned path components before asking Git to inspect it.
@@ -842,7 +1014,8 @@ def _repair_verified_pm_directory_fds(opened,parents,contract):
   if stat.S_IMODE(os.fstat(fd).st_mode)!=0o755:
    raise CoreRuntimeError("PM directory metadata repair failed")
 def _launcher():
- return b"""#!/bin/sh
+ pythonpath=shlex.quote(f"{SOURCE}:{ADAPTER_SOURCE}")
+ return f"""#!/bin/sh
 set -eu
 cred="$CREDENTIALS_DIRECTORY/hermes-session-token"
 test -f "$cred" && test ! -L "$cred"
@@ -854,10 +1027,10 @@ export HOME=/home/admin HERMES_HOME=/home/admin/.hermes
 export PATH=/home/admin/.hermes/bin:/home/admin/.local/bin:/usr/local/bin:/usr/bin:/bin
 export HERMES_DISABLE_LAZY_INSTALLS=1
 export PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1
-export PYTHONPATH=/home/admin/HermesInstaller/data/generations/hermes-agent-7085fbf77532
+export PYTHONPATH={pythonpath}
 cd /home/admin/.hermes/workspaces/jarvis-core
-exec /home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0/venv/bin/python -m hermes_cli.main serve --isolated --host 127.0.0.1 --port 8766
-"""
+exec /home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0/venv/bin/python -P -m hermes_cli.main serve --isolated --host 127.0.0.1 --port 8766
+""".encode("ascii")
 def _unit():
  a=pwd.getpwnam("admin")
  if a.pw_uid!=1000 or a.pw_gid!=1000 or a.pw_dir!="/home/admin": raise CoreRuntimeError("admin identity mismatch")
@@ -904,6 +1077,14 @@ def _journal():
    if (ps.st_uid,ps.st_gid,stat.S_IMODE(ps.st_mode),ps.st_nlink)!=(uid,gid,mode,1): raise CoreRuntimeError("owned service file metadata changed")
    if not (d["state"]=="retiring" and d.get("cleanup_allow_partial")) and _digest(p)!=d.get(k):
     raise CoreRuntimeError("owned service file changed")
+  if d.get("adapter_migration_state") == "preparing":
+   raise CoreRuntimeError("adapter source migration recovery is required")
+  if d.get("adapter_migration_state") == "active":
+  if (d.get("adapter_source")!=str(ADAPTER_SOURCE)
+       or not re.fullmatch(r"[0-9a-f]{64}",str(d.get("adapter_generation","")))
+       or not re.fullmatch(r"[0-9a-f]{64}",str(d.get("core_source_generation","")))
+       or not re.fullmatch(r"[0-9a-f]{64}",str(d.get("plugin_selection_sha256","")))):
+    raise CoreRuntimeError("adapter migration custody record is incomplete")
   if d["state"]!="retiring" and (hashlib.sha256(_unit()).hexdigest()!=d["unit_sha256"] or hashlib.sha256(_launcher()).hexdigest()!=d["launcher_sha256"]):
    raise CoreRuntimeError("owned service recipe differs from the reviewed source")
  return d
@@ -915,7 +1096,7 @@ def status():
   return f"pending: owned unit is {active or 'unknown'} or its process-bound loopback listener is unproven"
  return f"owned isolated service and process-bound loopback listener verified at 127.0.0.1:8766; authenticated chat and restart proof pending; source {d['source_commit']}"
 
-def _owned_listener():
+def _owned_listener(*,legacy_launcher=False):
  """Require systemd MainPID, expected argv/cgroup/UID, and its bound socket inode."""
  try:
   pid_text=_run(["systemctl","show","--property=MainPID","--value",SERVICE]).stdout.strip()
@@ -923,12 +1104,20 @@ def _owned_listener():
   if pid<=1: return False
   proc=Path("/proc")/str(pid)
   if int(proc.stat().st_uid)!=1000: return False
+  status_fields={line.split(":",1)[0]:line.split(":",1)[1].split()
+                 for line in (proc/"status").read_text().splitlines() if ":" in line}
+  if status_fields.get("Uid")!=["1000"]*4 or status_fields.get("Gid")!=["1000"]*4:
+   return False
   if Path(os.readlink(proc/"exe")).resolve(strict=True)!=PYTHON_REAL: return False
   if Path(os.readlink(proc/"cwd")).resolve(strict=True)!=WORKSPACE.resolve(strict=True): return False
   argv=(proc/"cmdline").read_bytes().decode(errors="replace").split("\0")
   if argv[-1]=="": argv.pop()
-  expected=[str(PYTHON),"-m","hermes_cli.main","serve","--isolated","--host","127.0.0.1","--port","8766"]
+  expected=[str(PYTHON),*([] if legacy_launcher else ["-P"]),"-m","hermes_cli.main","serve","--isolated","--host","127.0.0.1","--port","8766"]
   if argv!=expected: return False
+  environment=(proc/"environ").read_bytes().split(b"\0")
+  pythonpaths=[item[len(b"PYTHONPATH="):] for item in environment if item.startswith(b"PYTHONPATH=")]
+  expected_path=str(SOURCE if legacy_launcher else Path(f"{SOURCE}:{ADAPTER_SOURCE}")).encode("ascii")
+  if pythonpaths!=[expected_path]: return False
   if not any(SERVICE in line for line in (proc/"cgroup").read_text().splitlines()): return False
   socket_inodes=set()
   for fd in (proc/"fd").iterdir():
@@ -946,6 +1135,229 @@ def _owned_listener():
  except (OSError,ValueError,UnicodeError):
   return False
  return False
+
+def _legacy_launcher():
+ """Exact pre-adapter launcher eligible for the one-time journaled migration."""
+ return b"""#!/bin/sh
+set -eu
+cred="$CREDENTIALS_DIRECTORY/hermes-session-token"
+test -f "$cred" && test ! -L "$cred"
+IFS= read -r HERMES_DASHBOARD_SESSION_TOKEN < "$cred"
+test -n "$HERMES_DASHBOARD_SESSION_TOKEN"
+export HERMES_DASHBOARD_SESSION_TOKEN
+unset PYTHONHOME PYTHONUSERBASE PYTHONSTARTUP VIRTUAL_ENV
+export HOME=/home/admin HERMES_HOME=/home/admin/.hermes
+export PATH=/home/admin/.hermes/bin:/home/admin/.local/bin:/usr/local/bin:/usr/bin:/bin
+export HERMES_DISABLE_LAZY_INSTALLS=1
+export PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1
+export PYTHONPATH=/home/admin/HermesInstaller/data/generations/hermes-agent-7085fbf77532
+cd /home/admin/.hermes/workspaces/jarvis-core
+exec /home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0/venv/bin/python -m hermes_cli.main serve --isolated --host 127.0.0.1 --port 8766
+"""
+
+def _read_legacy_owned_runtime():
+ """Read back the complete fixed old journal/file/credential set without mutation."""
+ if not JOURNAL.is_file() or JOURNAL.is_symlink(): raise CoreRuntimeError("legacy core journal unavailable")
+ raw_journal=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+ try: record=json.loads(raw_journal)
+ except (ValueError,TypeError): raise CoreRuntimeError("legacy core journal invalid") from None
+ if (type(record) is not dict or record.get("schema")!=1 or record.get("service")!=SERVICE
+     or record.get("state") not in {"installed","active"} or record.get("port")!=8766
+     or record.get("host")!="127.0.0.1"):
+  raise CoreRuntimeError("legacy core journal identity unsupported")
+ identity=_identity()
+ for key,source_key in (("source_commit","commit"),("lock_sha256","lock_sha256"),
+                        ("python_sha256","python_sha256"),("python_link","python_link"),
+                        ("python_uid","python_uid"),("python_gid","python_gid"),
+                        ("python_mode","python_mode")):
+  if record.get(key)!=identity.get(source_key):
+   raise CoreRuntimeError("legacy core runtime identity changed")
+ files={}
+ for path,key,uid,gid,mode in FILE_CONTRACT:
+  content=_projection_file(path,owner=uid,group=gid,mode=mode,maximum=256*1024)
+  if record.get(key)!=hashlib.sha256(content).hexdigest():
+   raise CoreRuntimeError("legacy journal-owned file or credential changed")
+  files[path]=content
+ if files[UNIT]!=_unit():
+  raise CoreRuntimeError("legacy service unit differs from the fixed owned unit")
+ if files[LAUNCHER]!=_legacy_launcher():
+  raise CoreRuntimeError("legacy launcher differs from the fixed prior recipe")
+ token=files[TOKEN]
+ if (len(token)!=65 or not token.endswith(b"\n")
+     or any(char not in b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-" for char in token[:-1])):
+  raise CoreRuntimeError("legacy service credential content is invalid")
+ if not _owned_unit_loaded():
+  raise CoreRuntimeError("service name is not bound to the journal-owned unit")
+ if _run(["systemctl","is-active",SERVICE],False).stdout.strip()!="active" or not _owned_listener(legacy_launcher=True):
+  raise CoreRuntimeError("legacy owned core listener is not current")
+ return record,raw_journal,files
+
+def _owned_unit_loaded():
+ """Reject aliases and drop-ins that could change the journal-owned unit behavior."""
+ fragment=_run(["systemctl","show","--property=FragmentPath","--value",SERVICE],False).stdout.strip()
+ dropins=_run(["systemctl","show","--property=DropInPaths","--value",SERVICE],False).stdout.strip()
+ return fragment==str(UNIT) and not dropins
+
+def _save_adapter_migration_backup(raw_journal,files):
+ """Keep immutable rollback bytes under root-only custody before any mutation."""
+ _ensure_dir(ADAPTER_MIGRATION_BACKUP,ROOT_UID,ROOT_UID,0o700)
+ names={"journal.json":raw_journal,"unit":files[UNIT],"launcher":files[LAUNCHER]}
+ manifest={name:hashlib.sha256(content).hexdigest() for name,content in names.items()}
+ manifest_bytes=(json.dumps(manifest,sort_keys=True,separators=(",",":"))+"\n").encode("ascii")
+ allowed=set(names)|{"manifest.json"}
+ if not set(os.listdir(ADAPTER_MIGRATION_BACKUP))<=allowed:
+  raise CoreRuntimeError("adapter migration backup contains unowned entries")
+ for name,content in names.items():
+  path=ADAPTER_MIGRATION_BACKUP/name
+  if path.exists() or path.is_symlink():
+   existing=_projection_file(path,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=256*1024)
+   if existing!=content: raise CoreRuntimeError("prior adapter migration backup differs")
+  else: _atomic(path,content,0o600,ROOT_UID,ROOT_UID)
+ manifest_path=ADAPTER_MIGRATION_BACKUP/"manifest.json"
+ if manifest_path.exists() or manifest_path.is_symlink():
+  if _projection_file(manifest_path,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=4096)!=manifest_bytes:
+   raise CoreRuntimeError("prior adapter migration backup manifest differs")
+ else: _atomic(manifest_path,manifest_bytes,0o600,ROOT_UID,ROOT_UID)
+ return manifest
+
+def _restore_adapter_migration_backup():
+ """Restore only the three exact root-journal-owned prior bytes."""
+ directory=ADAPTER_MIGRATION_BACKUP.lstat()
+ if (not stat.S_ISDIR(directory.st_mode) or directory.st_uid!=ROOT_UID
+     or directory.st_gid!=ROOT_UID or stat.S_IMODE(directory.st_mode)!=0o700):
+  raise CoreRuntimeError("adapter migration backup custody differs")
+ if set(os.listdir(ADAPTER_MIGRATION_BACKUP))!={"journal.json","unit","launcher","manifest.json"}:
+  raise CoreRuntimeError("adapter migration backup is incomplete")
+ manifest_raw=_projection_file(ADAPTER_MIGRATION_BACKUP/"manifest.json",owner=ROOT_UID,
+                               group=ROOT_UID,mode=0o600,maximum=4096)
+ try: manifest=json.loads(manifest_raw)
+ except (ValueError,TypeError): raise CoreRuntimeError("adapter migration backup manifest invalid") from None
+ if type(manifest) is not dict or set(manifest)!={"journal.json","unit","launcher"}:
+  raise CoreRuntimeError("adapter migration backup manifest invalid")
+ paths={"journal.json":JOURNAL,"unit":UNIT,"launcher":LAUNCHER}
+ contents={}
+ for name,path in paths.items():
+  data=_projection_file(ADAPTER_MIGRATION_BACKUP/name,owner=ROOT_UID,group=ROOT_UID,
+                        mode=0o600,maximum=256*1024)
+  if manifest.get(name)!=hashlib.sha256(data).hexdigest():
+   raise CoreRuntimeError("adapter migration backup bytes changed")
+  contents[name]=data
+ for name,path in (("unit",UNIT),("launcher",LAUNCHER)):
+  mode=0o644 if path==UNIT else 0o755
+  _atomic_replace(path,contents[name],mode,ROOT_UID,ROOT_UID)
+ _atomic_replace(JOURNAL,contents["journal.json"],0o600,ROOT_UID,ROOT_UID)
+ return contents["journal.json"]
+
+def _recover_interrupted_adapter_migration():
+ """Undo an interrupted file switch before ordinary journal validation resumes."""
+ if not JOURNAL.is_file() or JOURNAL.is_symlink(): return
+ raw=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+ try: record=json.loads(raw)
+ except (ValueError,TypeError): return
+ if type(record) is not dict or record.get("adapter_migration_state")!="preparing": return
+ _restore_adapter_migration_backup()
+ _run(["systemctl","daemon-reload"])
+ if not _owned_unit_loaded(): raise CoreRuntimeError("service unit changed during interrupted migration")
+ active=_run(["systemctl","is-active",SERVICE],False).stdout.strip()
+ if active=="active":
+  if _owned_listener(legacy_launcher=True): return
+  if not _owned_listener():
+   raise CoreRuntimeError("interrupted migration left an unrecognized core process active")
+  _run(["systemctl","restart",SERVICE])
+  if not _owned_listener(legacy_launcher=True):
+   raise CoreRuntimeError("prior owned core did not recover from interrupted migration")
+
+def migrate_owned_core_to_adapter_path():
+ """Journaled one-time adoption of the exact active pre-adapter core service."""
+ if os.geteuid()!=ROOT_UID or not Path("/proc").is_dir():
+  raise CoreRuntimeError("requires installed Linux root actor")
+ _validate_adapter_source_path()
+ _recover_interrupted_adapter_migration()
+ current=_core_source_generation()
+ record,raw_journal,files=_read_legacy_owned_runtime()
+ backup_manifest=_save_adapter_migration_backup(raw_journal,files)
+ # The bridge transaction stages immutable code and uses Hermes' official enable
+ # API. It must succeed before this service's journaled files or process change.
+ try:
+  from hermes_installer.remote.native_plugin_bootstrap import (
+   enable_native_resources_plugin,verify_native_resources_plugin_selection,
+  )
+  staged=enable_native_resources_plugin()
+  if getattr(staged,"plugin_key",None)!="hermes-installer-resources-delegation":
+   raise CoreRuntimeError("native bridge activation did not verify the fixed plugin")
+  selection=verify_native_resources_plugin_selection()
+  selection_digest=getattr(selection,"selection_sha256",None)
+  if (getattr(selection,"plugin_key",None)!="hermes-installer-resources-delegation"
+      or not re.fullmatch(r"[0-9a-f]{64}",str(selection_digest or ""))):
+   raise CoreRuntimeError("native plugin selection is not currently verified")
+  from hermes_installer.remote.core_gateway_inspector import (
+   _current_native_adapter_generation,verify_staged_native_resources_plugin,
+  )
+  deadline=time.monotonic()+35.0
+  adapter_generation=_current_native_adapter_generation(deadline=deadline)
+  staged_digest=verify_staged_native_resources_plugin(deadline=deadline)
+  if not adapter_generation or not staged_digest:
+   raise CoreRuntimeError("native bridge activation is not current")
+ except CoreRuntimeError:
+  raise
+ except Exception:
+  raise CoreRuntimeError("native bridge activation is unavailable; existing core remains active") from None
+ # Activation runs a separate fixed PM interpreter. Rejoin the complete old
+ # unit, launcher, credential, journal and listener before changing any of them.
+ rechecked,raw_rechecked,files_rechecked=_read_legacy_owned_runtime()
+ if (raw_rechecked!=raw_journal or rechecked!=record
+     or files_rechecked!=files):
+  raise CoreRuntimeError("journal-owned core changed during native bridge activation")
+ marker={**record,"adapter_migration_state":"preparing",
+         "adapter_migration_backup":backup_manifest,
+         "adapter_source":str(ADAPTER_SOURCE),"adapter_generation":adapter_generation,
+         "plugin_selection_sha256":selection_digest}
+ _replace_journal(marker)
+ restart_attempted=False
+ try:
+  new_launcher,new_unit=_launcher(),_unit()
+  _atomic_replace(LAUNCHER,new_launcher,0o755,ROOT_UID,ROOT_UID)
+  _atomic_replace(UNIT,new_unit,0o644,ROOT_UID,ROOT_UID)
+  updated={**record,"unit_sha256":hashlib.sha256(new_unit).hexdigest(),
+           "launcher_sha256":hashlib.sha256(new_launcher).hexdigest(),
+           "adapter_source":str(ADAPTER_SOURCE),"adapter_generation":adapter_generation,
+           "adapter_migration_state":"active","adapter_migration_backup":backup_manifest,
+           "core_source_generation":current,"plugin_selection_sha256":selection_digest}
+  _replace_journal(updated)
+  _run(["systemctl","daemon-reload"])
+  if not _owned_unit_loaded():
+   raise CoreRuntimeError("service unit ownership changed before restart")
+  restart_attempted=True
+  _run(["systemctl","restart",SERVICE])
+  _wait_for_listener()
+  deadline=time.monotonic()+35.0
+  if (not _owned_listener()
+      or _current_native_adapter_generation(deadline=deadline)!=adapter_generation
+      or verify_staged_native_resources_plugin(deadline=deadline)!=staged_digest
+      or getattr(verify_native_resources_plugin_selection(),"selection_sha256",None)!=selection_digest
+      or _core_source_generation()!=current):
+   raise CoreRuntimeError("adapter core post-restart custody is not current")
+  final=_journal()
+  if (final.get("adapter_generation")!=adapter_generation
+      or final.get("adapter_source")!=str(ADAPTER_SOURCE)):
+   raise CoreRuntimeError("adapter core journal proof differs after restart")
+  return "journal-owned Hermes core migrated to the immutable installer adapter generation and verified active"
+ except Exception as exc:
+  try:
+   active=_run(["systemctl","is-active",SERVICE],False).stdout.strip()
+   if not _owned_unit_loaded(): raise CoreRuntimeError("service unit changed during migration rollback")
+   if active=="active" and not (_owned_listener() or _owned_listener(legacy_launcher=True)):
+    raise CoreRuntimeError("service process is no longer the journal-owned core")
+   _restore_adapter_migration_backup()
+   _run(["systemctl","daemon-reload"])
+   if active=="active" or restart_attempted:
+    _run(["systemctl","restart",SERVICE])
+    if not _owned_listener(legacy_launcher=True):
+     raise CoreRuntimeError("prior owned core did not recover after migration rollback")
+  except Exception:
+   raise CoreRuntimeError("adapter migration failed; protected backup retained for fixed recovery") from None
+  if isinstance(exc,CoreRuntimeError): raise
+  raise CoreRuntimeError("adapter migration failed; original core service files and journal were restored") from None
 def install_or_resume():
  if os.geteuid()!=0 or not Path("/proc").is_dir(): raise CoreRuntimeError("requires installed Linux root actor")
  identity=_identity(); account=pwd.getpwnam("admin")
@@ -960,7 +1372,10 @@ def install_or_resume():
  _ensure_dir(JOURNAL.parent,ROOT_UID,ROOT_UID,0o700)
  launcher,unit=_launcher(),_unit()
  if JOURNAL.exists() or JOURNAL.is_symlink():
-  record=_journal()
+  try:
+   record=_journal()
+  except CoreRuntimeError:
+   return migrate_owned_core_to_adapter_path()
   if record["state"]=="retiring":
    raise CoreRuntimeError("core service retirement is in progress; use the fixed rollback action")
   if any(record.get(key)!=identity.get(source_key) for key,source_key in
@@ -1091,4 +1506,5 @@ def rollback():
  JOURNAL.unlink()
  _sync_directory(JOURNAL.parent)
  return "journal-owned core service files removed; Hermes home, PM runtime, and workspace preserved"
-__all__=["CoreRuntimeError","install_or_resume","refresh_resources_discovery","rollback","status"]
+__all__=["CoreRuntimeError","install_or_resume","migrate_owned_core_to_adapter_path",
+         "refresh_resources_discovery","rollback","status"]

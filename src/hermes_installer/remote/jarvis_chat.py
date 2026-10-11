@@ -18,6 +18,7 @@ import secrets
 import sqlite3
 import stat
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Protocol
@@ -32,6 +33,7 @@ MAX_LEASE_SECONDS = 30.0
 SSE_CONNECTION_SECONDS = 4.0
 MAX_HISTORY_CHARS = 128_000
 MAX_TURN_SECONDS = 600.0
+MAX_OWNER_TURN_HANDLES = 512
 CHAT_STATE_DIRECTORY = Path("/var/lib/hermes-jarvis-chat")
 CHAT_STORE_PATH = CHAT_STATE_DIRECTORY / "chat.sqlite3"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{24,64}$")
@@ -766,9 +768,12 @@ def _secure_headers() -> dict[str, str]:
 
 class JarvisChatService:
     def __init__(self, store: JarvisChatStore, backend: OfficialChatBackend,
-                 *, principal_from_request: Callable[[Any], ChatPrincipal]):
+                 *, principal_from_request: Callable[[Any], ChatPrincipal],
+                 owner_turn_register: Callable[..., str] | None = None):
         if not callable(principal_from_request):
             raise ValueError("typed, current ingress principal resolver is required")
+        if owner_turn_register is not None and not callable(owner_turn_register):
+            raise ValueError("typed root owner-turn registration callback is required")
         self.store, self.backend = store, backend
         from .jarvis_activity import JarvisActivityStore
         from .jarvis_files import JarvisFilesStore
@@ -779,6 +784,31 @@ class JarvisChatService:
         self._worker_lock = asyncio.Lock()
         self._admission_lock = asyncio.Lock()
         self._resume_lock = asyncio.Lock()
+        self._owner_turn_register = owner_turn_register
+        self._owner_turn_handles: OrderedDict[str, str] = OrderedDict()
+
+    @staticmethod
+    def _capture_owner_turn_context(request) -> tuple[str, Any] | None:
+        """Copy only the exact ingress JWT and sealed proof for a later pre-submit check."""
+        try:
+            accepted = request.get("core_ingress")
+            values = request.headers.getall("Cf-Access-Jwt-Assertion", [])
+            if (accepted is None or len(values) != 1 or not isinstance(values[0], str)
+                    or not 1 <= len(values[0]) <= 16_384
+                    or any(ord(char) < 0x20 for char in values[0])):
+                return None
+            return values[0], accepted
+        except Exception:
+            return None
+
+    def owner_turn_handle_for(self, principal: ChatPrincipal, turn_id: str) -> str | None:
+        """Return a private process-local handle only to a trusted owner-bound server adapter."""
+        if not isinstance(principal, ChatPrincipal):
+            raise JarvisChatDenied("owner turn is unavailable")
+        turn = self.store.owned_turn(principal.subject, turn_id)
+        if turn["core_generation"] != principal.core_generation:
+            raise JarvisChatDenied("owner turn is unavailable")
+        return self._owner_turn_handles.get(turn_id)
 
     async def _ensure_current_runtime(self, request, principal: ChatPrincipal,
                                       conversation: sqlite3.Row) -> sqlite3.Row:
@@ -977,6 +1007,8 @@ class JarvisChatService:
             principal = self._current(request)
             turn_id, nonce, conversation = self.store.begin_turn(
                 principal.subject, conversation_id, text, idempotency_key, principal)
+            owner_turn_context = (self._capture_owner_turn_context(request)
+                                  if self._owner_turn_register is not None else None)
             try:
                 if before_schedule is not None:
                     if not callable(before_schedule):
@@ -991,7 +1023,8 @@ class JarvisChatService:
                 async with self._worker_lock:
                     task = asyncio.create_task(self._run(
                         turn_id, conversation["backend_id"], text, principal, conversation_id,
-                        stored_session_id=conversation["session_key"]))
+                        stored_session_id=conversation["session_key"],
+                        owner_turn_context=owner_turn_context))
                     self._workers[turn_id] = task
             except BaseException:
                 if on_schedule_failure is not None:
@@ -1011,7 +1044,8 @@ class JarvisChatService:
 
     async def _run(self, turn_id: str, session_id: str, text: str,
                    activity_principal: ChatPrincipal | None = None,
-                   conversation_id: str = "", *, stored_session_id: str = ""):
+                   conversation_id: str = "", *, stored_session_id: str = "",
+                   owner_turn_context: tuple[str, Any] | None = None):
         total = 0
         next_delta: asyncio.Task | None = None
         stream = None
@@ -1037,6 +1071,26 @@ class JarvisChatService:
                     self.store.rebind_active_turn_session(
                         activity_principal, conversation_id, turn_id, session_id, actual_session_id)
                     session_id = actual_session_id
+                    if self._owner_turn_register is not None and owner_turn_context is not None:
+                        access_jwt, accepted_ingress = owner_turn_context
+                        try:
+                            owner_handle = await asyncio.wait_for(asyncio.to_thread(
+                                self._owner_turn_register,
+                                access_jwt=access_jwt,
+                                accepted_ingress=accepted_ingress,
+                                session_id=actual_session_id,
+                                conversation_id=conversation_id,
+                                gateway_turn_id=turn_id,
+                                prompt_sha256=hashlib.sha256(
+                                    text.encode("utf-8", errors="strict")).hexdigest()), timeout=5.0)
+                            if (isinstance(owner_handle, str)
+                                    and re.fullmatch(r"[0-9a-f]{32}", owner_handle)):
+                                if len(self._owner_turn_handles) >= MAX_OWNER_TURN_HANDLES:
+                                    self._owner_turn_handles.popitem(last=False)
+                                self._owner_turn_handles[turn_id] = owner_handle
+                        except Exception:
+                            # Observation enriches delegation only; ordinary chat continues.
+                            pass
 
                 stream = resume_stream(stored_session_id, text,
                                       before_submit=bind_resumed_session).__aiter__()
@@ -1269,11 +1323,13 @@ def install_jarvis_chat_routes(app, service: JarvisChatService) -> None:
     service.install(app)
 
 
-def build_jarvis_chat_service(principal_from_request: Callable[[Any], ChatPrincipal]) -> JarvisChatService:
+def build_jarvis_chat_service(principal_from_request: Callable[[Any], ChatPrincipal], *,
+                              owner_turn_register: Callable[..., str] | None = None) -> JarvisChatService:
     """Build the one fixed Jarvis store/core client for the protected Unix gateway service."""
     if not callable(principal_from_request):
         raise ValueError("verified core-ingress principal resolver is required")
     from .core_client import CoreRpcClient
     return JarvisChatService(
         JarvisChatStore(CHAT_STORE_PATH, owner_uid=os.geteuid()), CoreRpcClient(),
-        principal_from_request=principal_from_request)
+        principal_from_request=principal_from_request,
+        owner_turn_register=owner_turn_register)
