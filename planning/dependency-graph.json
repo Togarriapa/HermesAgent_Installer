@@ -4118,5 +4118,15 @@
       },
       "acceptance": "manual MVP only; all AC OPEN"
     }
+  },
+  "jarvis_final_release_documentation_v268": {
+    "contract": "planning/jarvis-final-release-documentation-v268.json",
+    "amendment": "plans/amendments/2026-10-11-jarvis-final-release-documentation-v268.md",
+    "tasks": {
+      "VD-T268.1": [
+        "VD-T266.5"
+      ]
+    },
+    "acceptance": "final release OPEN"
   }
 }

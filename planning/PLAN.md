@@ -304,3 +304,8 @@ The 11 October user decision drops Desktop from the active product in favor of o
 ## Core restart/owned action v266a
 
 planning/jarvis-core-session-resume-owned-action-v266a.json refines the existing v266 tasks: private official stored-session resume and actual finite selected-target root install/resume/rollback. No caller command authority; all acceptance OPEN, Pi-only validation.
+
+
+## Final release gate v268
+
+VD-T268.1 follows actual phase-5 review: finished verified product README/usage/operations/troubleshooting/contributor/AI guides replace development-first presentation. No stable claim before acceptance. Mutable ledger retirement/relocation requires indexed historical evidence access; frozen baseline/tag and immutable amendments remain intact. See planning/jarvis-final-release-documentation-v268.json.

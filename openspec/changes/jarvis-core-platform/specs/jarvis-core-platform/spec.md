@@ -89,3 +89,17 @@ Active plans MUST exclude Desktop/Xpra/native presentation install/build/launch 
 - **THEN** the active entrypoint and supersession index identify it as historical and route retained functionality to current core phases.
 
 Cleanup additionally requires the new protected Jarvis route to be live at the existing owned hostname with actual owner chat and expiry/revocation proof. Do not strand the URL by removing its old path before replacement works.
+
+### Requirement: Verified final-release documentation
+After actual release qualification, the repository SHALL present finished product purpose, supported installer usage/operations, troubleshooting, contributor objectives and AI/AGENTS guides. Advertised commands/capabilities MUST match release evidence and state remaining limitations. Development-first presentation SHALL NOT be called stable before acceptance.
+
+#### Scenario: Release documentation prepared
+- **WHEN** phase-5 actual qualification supports a release
+- **THEN** primary docs describe verified product operation and limitations with usable user/contributor/AI guides.
+
+### Requirement: Historical access survives documentation retirement
+Relocation or retirement of mutable development ledgers MUST retain indexed source/task/evidence access and label superseded instructions. It SHALL NOT rewrite Git history or alter/delete/move the frozen baseline/tag or existing immutable amendments.
+
+#### Scenario: Live ledger moved to history
+- **WHEN** release presentation relocates a development ledger
+- **THEN** its evidence remains accessible through working historical links and frozen/tag integrity is preserved.

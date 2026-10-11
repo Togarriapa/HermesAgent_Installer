@@ -24,3 +24,8 @@ Install/resume/rollback executes the reviewed finite root action authorized by t
 After independent core proof, remove only journal/inventory-verified owned Desktop/Xpra units, exact process trees and dedicated AppDir/source/guard/helper/config artifacts. Retain verified recovery backups, canonical home/auth/PM core and Resources. Restore shared system changes only using verified journal backups and current-object checks; never blanket apt purge. Unowned/shared conflicts remain pending. Legacy Desktop proposals are preserved outside active changes; their functional/security obligations map to this core product and remaining non-Desktop functional changes.
 
 Cleanup additionally requires the new protected Jarvis route to be live at the existing owned hostname with actual owner chat and expiry/revocation proof. Do not strand the URL by removing its old path before replacement works.
+
+
+## Final release presentation
+
+VD-T268.1 follows actual VD-T266.5 qualification. Use planning/jarvis-final-release-documentation-v268.json as the release README/guide structure. The release docs must match real CLI commands/capabilities and honest limitations. Relocate mutable historical ledgers only with working evidence/source/task links and a historical index; never rewrite Git history, the frozen baseline/tag or immutable amendments. Update AGENTS to current finished product objectives without claiming unsupported behavior. This planning change does not prematurely rewrite stable docs.

@@ -33,3 +33,8 @@ Same phase tasks include server-only official stored-session resume after restar
 ## v267 Desktop removal
 
 The user removes Desktop from active Pi and planning; retain it only as capability benchmark. Verified owned cleanup is added; legacy mixed changes are historical at openspec/superseded/v267, with functional mappings retained. See planning/ACTIVE-PLAN.md.
+
+
+## Final release documentation v268
+
+After actual phase-5 checks, present the finished product through verified usage/operations/troubleshooting/contributor/AI guides rather than development-first ledgers. Preserve indexed historical evidence and frozen/tag integrity. No stable claim now.
