@@ -2061,3 +2061,28 @@ The system SHALL retain official Linux ARM64/mobile app availability and impleme
 #### Scenario: App or device not qualified
 - **WHEN** a vault works but the GUI/CLI, device open/edit or ongoing sync has not been verified
 - **THEN** vault functions remain usable and each missing native/device effect remains explicitly pending with concrete setup steps, preserving zero-spend and owner data.
+
+### Requirement: Root-issued current-Core Obsidian startup binding
+Root SHALL keep protected Obsidian registration unreadable to unprivileged consumers and issue the native Core a typed binding only after verifying actual current Core Unix peer/process/generation and fixed enrolled vault/owner. Gateway SHALL access only finite root projections and SHALL NOT open registration or vault files.
+
+#### Scenario: Stale process or registration
+- **WHEN** Core restarts, enrollment changes or the requester is not the actual current enrolled Core peer
+- **THEN** startup/store binding denies or invalidates without copying credentials/registration or widening file permissions.
+
+### Requirement: Exact root Obsidian call scope and empty Expert selection
+Each of the seven fixed native Obsidian tools SHALL require a root-issued typed scope joined to exact observed call/arguments, current registered owner/source and original deadlines. Master scope SHALL use its real owner turn/hermes identity; Expert scope SHALL join actual child/schema2 mission/source and root-selected note IDs. Missing scope SHALL deny, and empty Expert selection SHALL never mean wildcard.
+
+#### Scenario: No authentic Expert knowledge selection
+- **WHEN** a genuine Expert mission lacks an implemented root knowledge-selection producer
+- **THEN** selected_note_ids is an explicit empty set, finalized-note reads/search/graph return no private content, and source-bound private draft creation cannot dereference an unselected base note.
+
+#### Scenario: Altered call or stored plan claim
+- **WHEN** tool arguments/owner/source/process/mission/registration differ, the scope expires/replays or planning data claims note permission
+- **THEN** native invocation denies before vault effects; startup metadata cannot revive call authority.
+
+### Requirement: Existing exact promotion permit retained
+Only Jarvis master promotion SHALL use the existing exact owner-approved one-use FinalEffectPermit together with current Obsidian call scope, draft/base/destination digests and conditional write. Nonfinal read/draft tools SHALL NOT receive final-effect permits.
+
+#### Scenario: Expert promotion or stale write boundary
+- **WHEN** an Expert promotes or current scope/permit/base ownership cannot be verified at the actual write
+- **THEN** final mutation denies and prior notes/private drafts/recovery data remain intact.
