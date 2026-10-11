@@ -15,6 +15,7 @@ import socket
 import stat
 import struct
 import subprocess
+import threading
 import time
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -26,8 +27,12 @@ MAX_REQUEST = 1024
 MAX_RESPONSE = 1024
 MAX_OUTPUT = 65_536
 OBSERVATION_SECONDS = 5.0
+INSPECTION_IPC_TIMEOUT_SECONDS = 2.0
+MAX_INSPECTION_QUEUE_WAIT_SECONDS = 6.5
+WATCHDOG_INSPECTION_QUEUE_WAIT_SECONDS = 0.5
 MAX_APP_FILE_BYTES = 256 * 1024 * 1024
 MAX_APP_TREE_BYTES = 2 * 1024 * 1024 * 1024
+_INSPECTION_IPC_LOCK = threading.Lock()
 XPRA_CONTROL_STUB_PATH = Path("/usr/lib/python3/dist-packages/xpra/server/subsystem/stub.py")
 XPRA_CONTROL_STUB_SIZE = 5071
 XPRA_CONTROL_STUB_SHA256 = "da12f27c1421dc71248b568791f186ee3d470d0969c4020da0d9d6d7a1a02279"
@@ -674,8 +679,21 @@ def _unique_pairs(pairs):
     return result
 
 
-def verify_current_inspection(config: Any) -> str:
-    """Ask the root-only inspector for a fresh exact-state observation."""
+def verify_current_inspection(config: Any, *, queue_timeout_seconds: float = MAX_INSPECTION_QUEUE_WAIT_SECONDS) -> str:
+    """Ask for a fresh nonce-bound root observation, serializing the slow file walk."""
+    if (type(queue_timeout_seconds) not in (int, float)
+            or not 0.05 <= queue_timeout_seconds <= MAX_INSPECTION_QUEUE_WAIT_SECONDS):
+        raise StageInspectionDenied("root manual-stage proof queue bound is invalid")
+    if not _INSPECTION_IPC_LOCK.acquire(timeout=queue_timeout_seconds):
+        raise StageInspectionDenied("root manual-stage proof queue is busy")
+    try:
+        return _request_current_inspection(config)
+    finally:
+        _INSPECTION_IPC_LOCK.release()
+
+
+def _request_current_inspection(config: Any) -> str:
+    """Perform exactly one fresh IPC proof; callers never reuse this result."""
     nonce = os.urandom(32).hex()
     try:
         info = os.lstat(SOCKET_PATH)
@@ -683,7 +701,8 @@ def verify_current_inspection(config: Any) -> str:
                 or info.st_gid != config.gateway_gid or stat.S_IMODE(info.st_mode) != 0o660):
             raise ValueError
         conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        conn.settimeout(2.0)
+        deadline = time.monotonic() + INSPECTION_IPC_TIMEOUT_SECONDS
+        conn.settimeout(INSPECTION_IPC_TIMEOUT_SECONDS)
         conn.connect(str(SOCKET_PATH))
         try:
             if not hasattr(socket, "SO_PEERCRED"):
@@ -693,11 +712,16 @@ def verify_current_inspection(config: Any) -> str:
                 raise ValueError
             payload = json.dumps({"op": "observe", "nonce": nonce}, sort_keys=True,
                                  separators=(",", ":")).encode("ascii")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError
+            conn.settimeout(remaining)
             conn.sendall(struct.pack("!I", len(payload)) + payload)
-            length = struct.unpack("!I", _read_exact(conn, 4))[0]
+            length = struct.unpack("!I", _read_exact(conn, 4, deadline=deadline))[0]
             if not 2 <= length <= MAX_RESPONSE:
                 raise ValueError
-            result = json.loads(_read_exact(conn, length).decode("ascii"), object_pairs_hook=_unique_pairs)
+            result = json.loads(_read_exact(conn, length, deadline=deadline).decode("ascii"),
+                                object_pairs_hook=_unique_pairs)
         finally:
             conn.close()
         if not isinstance(result, dict) or set(result) != {

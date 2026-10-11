@@ -515,7 +515,10 @@ class StageGatewayPolicySessionAdapter:
     def refresh_active_inspection(self, handle: Any) -> None:
         with self._lock:
             record = self._current(handle)
-        self._verify_xpra_current()
+        # The WebSocket watchdog has a three-second overall budget.  Keep its
+        # wait behind concurrent admissions bounded well below that budget.
+        from .manual_stage_inspector import WATCHDOG_INSPECTION_QUEUE_WAIT_SECONDS
+        self._verify_xpra_current(queue_timeout_seconds=WATCHDOG_INSPECTION_QUEUE_WAIT_SECONDS)
         with self._lock:
             current = self._current(handle)
             if current is not record:
@@ -530,8 +533,8 @@ class StageGatewayPolicySessionAdapter:
             raise ManualStageDenied("manual-stage session is absent, stale, or configuration-changed")
         return record
 
-    def _verify_xpra_current(self) -> None:
-        StageXpraUnitReadback(self.config).verify()
+    def _verify_xpra_current(self, *, queue_timeout_seconds: float | None = None) -> None:
+        StageXpraUnitReadback(self.config).verify(queue_timeout_seconds=queue_timeout_seconds)
 
 
     def _purge(self, now: float) -> None:
@@ -544,12 +547,15 @@ class StageXpraUnitReadback:
     def __init__(self, config: ManualGatewayStageConfig):
         self.config = config
 
-    def verify(self) -> None:
+    def verify(self, *, queue_timeout_seconds: float | None = None) -> None:
         if os.geteuid() != self.config.gateway_uid:
             raise ManualStageDenied("manual gateway process does not match its dedicated configured UID")
         try:
             from .manual_stage_inspector import verify_current_inspection
-            verify_current_inspection(self.config)
+            if queue_timeout_seconds is None:
+                verify_current_inspection(self.config)
+            else:
+                verify_current_inspection(self.config, queue_timeout_seconds=queue_timeout_seconds)
         except Exception:
             raise ManualStageDenied("root current firewall, Xpra unit, or app readback is unavailable") from None
 
@@ -633,8 +639,10 @@ class StageFixedXpraConnector:
 
     def open(self, handle: Any):
         _read_config_current(self.config)
+        # Admission already performed a fresh nonce-bound full root inspection.
+        # Reuse only that exact session witness while assert_current_proofs
+        # confirms it remains inside its five-second validity window.
         self.sessions.assert_current_proofs(handle)
-        self.sessions.refresh_active_inspection(handle)
         admission = self.sessions.current(handle)
         if admission.route_id == "xpra-http":
             return _StageHTTPConnector(self, admission)

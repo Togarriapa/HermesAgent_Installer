@@ -2,7 +2,9 @@
 import base64
 import hashlib
 import json
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 import unittest
 from unittest import mock
 from urllib.parse import urlsplit, parse_qs
@@ -22,6 +24,7 @@ from hermes_installer.remote.manual_stage_inspector import (
     XPRA_WINDOW_SHA256, XPRA_WINDOW_SIZE, XPRA_COMMAND_PATH, XPRA_COMMAND_SIZE,
     XPRA_COMMAND_SHA256, StageInspectionDenied,
     _check_app_file_size, _validate_nft, _verify_pinned_xpra_modules,
+    verify_current_inspection,
 )
 
 try:
@@ -514,6 +517,85 @@ class ManualStageGatewayTests(unittest.TestCase):
         self.assertIn("/client/{tail}", paths)
         self.assertIsNone(runtime.private_origin_probe)
         self.assertEqual(runtime.max_lease_seconds, 30)
+
+    def test_inspector_serializes_fresh_proofs_without_caching_and_bounds_queue(self):
+        from hermes_installer.remote import manual_stage_inspector as inspector
+        active = 0
+        maximum = 0
+        calls = 0
+        guard = threading.Lock()
+
+        def observed(_config):
+            nonlocal active, maximum, calls
+            with guard:
+                calls += 1
+                serial = calls
+                active += 1
+                maximum = max(maximum, active)
+            try:
+                time.sleep(0.025)
+                return f"{serial:064x}"
+            finally:
+                with guard:
+                    active -= 1
+
+        with mock.patch.object(inspector, "_request_current_inspection", side_effect=observed):
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                proofs = list(pool.map(
+                    lambda _n: verify_current_inspection(self.config, queue_timeout_seconds=1.0), range(6)))
+            self.assertEqual(len(set(proofs)), 6)
+            self.assertEqual(calls, 6)
+            self.assertEqual(maximum, 1)
+
+            inspector._INSPECTION_IPC_LOCK.acquire()
+            try:
+                with self.assertRaises(StageInspectionDenied):
+                    verify_current_inspection(self.config, queue_timeout_seconds=0.05)
+                self.assertEqual(calls, 6)
+            finally:
+                inspector._INSPECTION_IPC_LOCK.release()
+
+    def test_connector_uses_only_fresh_admission_inspection_and_denies_stale_or_changed(self):
+        from hermes_installer.remote.manual_stage import StageFixedXpraConnector
+        principal = Principal("owner@example.net", "subject", time.time() + 120, "f" * 64)
+        clock = [100.0]
+        sessions = StageGatewayPolicySessionAdapter(self.config, self.verifier)
+        sessions.monotonic = lambda: clock[0]
+        connector = StageFixedXpraConnector(self.config, sessions)
+        fake_connector = object()
+        with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
+                mock.patch.object(self.verifier, "verify", return_value=(principal, 130.0, 140.0)), \
+                mock.patch.object(sessions, "_verify_xpra_current") as inspect, \
+                mock.patch("hermes_installer.remote.manual_stage._StageHTTPConnector", return_value=fake_connector) as create:
+            admission = sessions.admit(access_jwt="fixture-token", action="asset-read", route_id="xpra-http")
+            inspect.assert_called_once()
+            self.assertIs(connector.open(admission.handle), fake_connector)
+            # Opening the connector relies on the exact admission witness; it
+            # does not launch another full app-tree walk.
+            inspect.assert_called_once()
+            create.assert_called_once()
+
+            clock[0] = 105.01
+            with self.assertRaises(ManualStageDenied):
+                connector.open(admission.handle)
+            create.assert_called_once()
+
+        # A changed root-owned config fails before connector construction even
+        # when the admission's proof itself is still fresh.
+        clock[0] = 200.0
+        sessions = StageGatewayPolicySessionAdapter(self.config, self.verifier)
+        sessions.monotonic = lambda: clock[0]
+        connector = StageFixedXpraConnector(self.config, sessions)
+        with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
+                mock.patch.object(self.verifier, "verify", return_value=(principal, 230.0, 240.0)), \
+                mock.patch.object(sessions, "_verify_xpra_current"), \
+                mock.patch("hermes_installer.remote.manual_stage._StageHTTPConnector") as create:
+            admission = sessions.admit(access_jwt="fixture-token", action="asset-read", route_id="xpra-http")
+            with mock.patch("hermes_installer.remote.manual_stage._read_config_current",
+                            side_effect=ManualStageDenied("config changed")):
+                with self.assertRaises(ManualStageDenied):
+                    connector.open(admission.handle)
+            create.assert_not_called()
 
     def test_active_edge_watchdog_rechecks_and_closes_revoked_session(self):
         from hermes_installer.remote.gateway import validate_access_jwt
