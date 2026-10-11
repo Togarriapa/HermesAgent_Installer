@@ -1,6 +1,9 @@
 import dataclasses
 import importlib.util
+import json
+import shutil
 import sys
+import subprocess
 import time
 import types
 import unittest
@@ -291,7 +294,7 @@ class RemoteGatewayRootBridgeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Desktop session ended.", script)
         self.assertIn("textContent='Reconnect'", script)
         self.assertIn("reconnect.addEventListener('click',()=>location.replace('/client/bootstrap.html'))", script)
-        self.assertIn("if(!ending)sessionStorage.setItem('hd-challenge'", script)
+        self.assertIn("if(ending)return;sessionStorage.setItem('hd-challenge'", script)
         end_flow = script[script.index("async function end()") : script.index("const addButton")]
         reconnect = end_flow.index("reconnect.addEventListener")
         self.assertNotIn("location.replace('/client/bootstrap.html')", end_flow[:reconnect])
@@ -318,6 +321,49 @@ class RemoteGatewayRootBridgeTests(unittest.IsolatedAsyncioTestCase):
             json={"lease_id": session["lease_id"], "challenge": session["renewal_challenge"]})
         self.assertEqual(ended.status, 204)
         self.assertEqual(self.authority.records, {})
+
+    async def test_inflight_renewal_and_heartbeat_cannot_restore_keys_after_logout(self):
+        if shutil.which("node") is None:
+            self.skipTest("Node.js is needed to execute the browser script race fixture")
+        from hermes_installer.remote.server import _RENEW
+        from hermes_installer.remote.manual_stage import _STAGE_HEARTBEAT_SCRIPT
+        harness = r"""
+const vm=require('vm');
+const [renewScript,heartbeatScript]=JSON.parse(require('fs').readFileSync(0,'utf8'));
+function deferred(){let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve}}
+async function flush(){for(let i=0;i<8;i++)await Promise.resolve()}
+function context(initial){
+ const values=new Map(Object.entries(initial)),pending=[],timers=[],buttons=[],redirects=[];
+ const storage={getItem:k=>values.has(k)?values.get(k):null,setItem:(k,v)=>values.set(k,String(v)),removeItem:k=>values.delete(k)};
+ const body={children:[],appendChild(x){this.children.push(x)},replaceChildren(...xs){this.children=xs}};
+ const document={readyState:'complete',body,createElement(tag){const x={tag,events:{},addEventListener(k,f){this.events[k]=f},setAttribute(){},after(){}};buttons.push(x);return x}};
+ const c={sessionStorage:storage,document,window:{},location:{replace:x=>redirects.push(x)},
+   fetch:(url)=>{const d=deferred();pending.push({url,d});return d.promise},
+   setInterval:f=>(timers.push(f),timers.length),clearInterval(){},setTimeout:()=>1,clearTimeout(){},AbortController};
+ c.window=c.window;
+ return {c,values,pending,timers,buttons,redirects};
+}
+(async()=>{
+ const r=context({'hd-lease':'lease','hd-challenge':'challenge','hd-stage-sid':'sid','hd-stage-heartbeat':'a'.repeat(64)});
+ vm.runInNewContext(renewScript.replace(/^<script>/,'').replace('</script>',''),r.c);
+ const renewal=r.timers[0]();await flush();if(r.pending.length!==1||r.pending[0].url!=='/renew')throw Error('renew request did not start');
+ const ending=r.buttons[0].onclick();await flush();if(r.pending.length!==2||r.pending[1].url!=='/logout')throw Error('logout request did not start');
+ r.pending[1].d.resolve({status:204});await ending;
+ if(r.values.size!==0)throw Error('confirmed logout did not clear tab session keys');
+ r.pending[0].d.resolve({ok:true,json:async()=>({renewal_challenge:'late-renewal'})});await renewal;await flush();
+ if(r.values.size!==0)throw Error('late renewal restored a key after logout');
+ const h=context({'hd-lease':'lease','hd-challenge':'challenge','hd-stage-sid':'sid','hd-stage-heartbeat':'b'.repeat(64)});
+ vm.runInNewContext(heartbeatScript.replace(/^<script>/,'').replace('</script>',''),h.c);await flush();
+ if(h.pending.length!==1)throw Error('heartbeat request did not start');
+ h.c.window.__hdStageEnding=true;
+ h.pending[0].d.resolve({ok:true,json:async()=>({session_id:'sid',nonce:'c'.repeat(64)})});await flush();
+ if(h.values.get('hd-stage-heartbeat')!=='b'.repeat(64))throw Error('late heartbeat restored nonce after logout');
+ if(h.redirects.length)throw Error('ending flow navigated automatically');
+})().catch(e=>{process.stderr.write(String(e.message));process.exitCode=1});
+"""
+        result = subprocess.run(["node", "-e", harness], input=json.dumps([_RENEW, _STAGE_HEARTBEAT_SCRIPT]),
+            text=True, capture_output=True, timeout=5, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     async def test_access_denial_on_fresh_renewal_removes_session(self):
         created = await self.client.post("/session", headers=self.headers)

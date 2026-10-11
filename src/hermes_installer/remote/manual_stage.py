@@ -1070,7 +1070,7 @@ const sid=sessionStorage.getItem('hd-stage-sid');let nonce=sessionStorage.getIte
 if(!sid||!nonce)return;let busy=false,stopped=false;
 async function beat(){if(busy||stopped||window.__hdStageEnding)return;busy=true;const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),1500);
 try{const r=await fetch('/__stage_access_heartbeat',{method:'POST',cache:'no-store',credentials:'same-origin',signal:controller.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:sid,nonce})});
-if(!r.ok)throw Error();const x=await r.json();if(!x||Object.keys(x).sort().join(',')!=='nonce,session_id'||x.session_id!==sid||typeof x.nonce!=='string'||!/^[0-9a-f]{64}$/.test(x.nonce))throw Error();nonce=x.nonce;sessionStorage.setItem('hd-stage-heartbeat',nonce);
+if(!r.ok)throw Error();const x=await r.json();if(!x||Object.keys(x).sort().join(',')!=='nonce,session_id'||x.session_id!==sid||typeof x.nonce!=='string'||!/^[0-9a-f]{64}$/.test(x.nonce))throw Error();if(window.__hdStageEnding)return;nonce=x.nonce;sessionStorage.setItem('hd-stage-heartbeat',nonce);
 }catch(_){if(!window.__hdStageEnding){stopped=true;sessionStorage.removeItem('hd-lease');sessionStorage.removeItem('hd-challenge');sessionStorage.removeItem('hd-stage-sid');sessionStorage.removeItem('hd-stage-heartbeat');location.replace('/client/bootstrap.html')}}
 finally{clearTimeout(timer);busy=false}}
 beat();setInterval(beat,1500);
