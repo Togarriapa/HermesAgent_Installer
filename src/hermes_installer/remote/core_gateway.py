@@ -49,7 +49,8 @@ _INGRESS_DIAGNOSTIC_STAGES = frozenset({
     "proof_after_handler", "config_before_response", "proof_before_response",
     "unix_peer_socket", "unix_peer_family", "unix_peer_credentials",
     "unix_peer_address", "unix_peer_identity", "unix_peer_listener_metadata",
-    "unix_peer_listener_expected",
+    "unix_peer_listener_expected", "root_ipc_socket", "root_ipc_exchange",
+    "root_ipc_schema", "root_ipc_binding", "root_ipc_currentness",
 })
 _CHAT_CONTENT_SECURITY_POLICY = (
     "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; "

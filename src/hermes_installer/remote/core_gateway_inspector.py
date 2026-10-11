@@ -21,7 +21,7 @@ from typing import Any
 from .core_gateway import (
     CORE_CONFIG, CORE_GATEWAY_UNIT, CORE_GATEWAY_UNIT_PATH, CORE_HOST, CORE_INGRESS_SOCKET,
     CORE_INSPECTOR_SOCKET, CORE_PORT, CORE_SERVICE_UNIT, GATEWAY_ARGV, GATEWAY_EXECUTABLE,
-    CoreGatewayConfig,
+    CoreGatewayConfig, CoreGatewayDenied,
 )
 
 TUNNEL_UNIT = "hermes-jarvis-mvp-tunnel.service"
@@ -770,13 +770,14 @@ def serve_inspection_socket(config: CoreGatewayConfig) -> None:
 
 def verify_current_ingress(config: CoreGatewayConfig, *, peer_pid: int,
                            peer_uid: int, peer_gid: int) -> CoreVerifiedIngressObservation:
-    from .core_gateway import _read_config_current
+    from .core_gateway import _log_ingress_denial, _read_config_current
     _read_config_current(config)
     nonce = os.urandom(32).hex()
     deadline = time.monotonic() + IPC_TIMEOUT
     info = os.lstat(CORE_INSPECTOR_SOCKET)
     if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != 0 or info.st_gid != config.gateway_gid
             or stat.S_IMODE(info.st_mode) != 0o660):
+        _log_ingress_denial("root_ipc_socket", CoreGatewayDenied())
         raise CoreGatewayDenied("root core inspector socket is unavailable")
     conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     conn.settimeout(IPC_TIMEOUT)
@@ -795,19 +796,22 @@ def verify_current_ingress(config: CoreGatewayConfig, *, peer_pid: int,
             raise ValueError
         conn.sendall(struct.pack("!I", len(raw_request)) + raw_request)
         result = _read_frame(conn, deadline, MAX_RESPONSE)
-    except Exception:
+    except Exception as error:
+        _log_ingress_denial("root_ipc_exchange", error)
         raise CoreGatewayDenied("root core ingress proof is unavailable") from None
     finally:
         conn.close()
     fields = {field.name for field in CoreVerifiedIngressObservation.__dataclass_fields__.values()
               if not field.name.startswith("_")}
     if set(result) != fields:
+        _log_ingress_denial("root_ipc_schema", CoreGatewayDenied())
         raise CoreGatewayDenied("root core ingress proof has an unknown schema")
     body = dict(result)
     proof_sha = body.pop("proof_sha256", None)
     canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("ascii")
     if (proof_sha != hashlib.sha256(b"hermes-jarvis-core-ingress-v1\0" + canonical).hexdigest()
             or result.get("nonce") != nonce or time.monotonic() >= deadline):
+        _log_ingress_denial("root_ipc_binding", CoreGatewayDenied())
         raise CoreGatewayDenied("root core ingress proof is mismatched or late")
     try:
         observation = CoreVerifiedIngressObservation(**result, _seal=_PROOF_SEAL)
@@ -817,7 +821,8 @@ def verify_current_ingress(config: CoreGatewayConfig, *, peer_pid: int,
             peer_gid=peer_gid, listener_identity=(listener.st_dev, listener.st_ino)) is not True:
             raise ValueError
         return observation
-    except Exception:
+    except Exception as error:
+        _log_ingress_denial("root_ipc_currentness", error)
         raise CoreGatewayDenied("root core ingress proof is invalid or stale") from None
 
 

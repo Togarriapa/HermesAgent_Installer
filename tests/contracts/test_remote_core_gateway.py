@@ -23,6 +23,41 @@ from hermes_installer.remote import core_gateway, core_gateway_inspector
 from hermes_installer.remote.gateway import Principal, RemotePolicy
 
 
+class CoreGatewayInspectorClientTests(unittest.TestCase):
+    def test_real_ingress_verifier_denies_unowned_inspector_socket(self):
+        config = _config()
+        wrong_socket = SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=0,
+                                       st_gid=config.gateway_gid)
+        with patch.object(core_gateway_inspector, "_read_config_current", return_value=None), \
+             patch.object(core_gateway_inspector.os, "lstat", return_value=wrong_socket):
+            with self.assertRaises(core_gateway.CoreGatewayDenied):
+                core_gateway_inspector.verify_current_ingress(
+                    config, peer_pid=431, peer_uid=63324, peer_gid=63324)
+
+    def test_real_ingress_verifier_wraps_ipc_failure_without_nameerror(self):
+        config = _config()
+        owned_socket = SimpleNamespace(st_mode=stat.S_IFSOCK | 0o660, st_uid=0,
+                                       st_gid=config.gateway_gid)
+
+        class ConnectFailureSocket:
+            def settimeout(self, _seconds):
+                pass
+
+            def connect(self, _path):
+                raise OSError("private socket detail must not escape")
+
+            def close(self):
+                pass
+
+        with patch.object(core_gateway_inspector, "_read_config_current", return_value=None), \
+             patch.object(core_gateway_inspector.os, "lstat", return_value=owned_socket), \
+             patch.object(core_gateway_inspector.socket, "socket", return_value=ConnectFailureSocket()):
+            with self.assertRaisesRegex(core_gateway.CoreGatewayDenied,
+                                        "root core ingress proof is unavailable"):
+                core_gateway_inspector.verify_current_ingress(
+                    config, peer_pid=431, peer_uid=63324, peer_gid=63324)
+
+
 def _config():
     digest = "a" * 64
     return core_gateway.CoreGatewayConfig(
