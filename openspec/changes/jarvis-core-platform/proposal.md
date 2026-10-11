@@ -23,3 +23,8 @@ None in canonical runtime specs; historical proposals are linked and explicitly 
 ## Impact
 
 Sol v266 controls installer-bootstrap-desktop, remote-desktop-tunnel and v265 presentation assumptions. Luna implements CLI selection/preflight, official runtime adapters, owned service migration and later finite core/UI adapters. Frozen baseline and every remaining Resources/privacy/budget/account/hardware obligation persist. See planning/jarvis-core-first-migration-v266.json and the source-backed exploration.
+
+
+### v266a clarification
+
+Same phase tasks include server-only official stored-session resume after restart and the concrete selected-target reviewed root install/resume/rollback action. See planning/jarvis-core-session-resume-owned-action-v266a.json; no broader authority or completed acceptance.

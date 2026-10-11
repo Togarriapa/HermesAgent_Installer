@@ -3943,5 +3943,16 @@
       ]
     },
     "acceptance": "all OPEN; native Desktop product selection explicitly superseded"
+  },
+  "jarvis_core_session_resume_owned_action_v266a": {
+    "contract": "planning/jarvis-core-session-resume-owned-action-v266a.json",
+    "amendment": "plans/amendments/2026-10-11-jarvis-core-session-resume-owned-action-v266a.md",
+    "tasks": {
+      "BD-T266.1": [],
+      "RT-T266.3": [
+        "BD-T266.1"
+      ]
+    },
+    "acceptance": "same v266 phase tasks OPEN"
   }
 }

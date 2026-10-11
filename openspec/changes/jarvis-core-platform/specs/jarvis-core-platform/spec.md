@@ -55,3 +55,21 @@ Core precedes individual capabilities, UI, full Resources enrichment and end-to-
 #### Scenario: Initial useful increment
 - **WHEN** core and one actual capability are verified
 - **THEN** UI work may proceed while other capability and full acceptance tasks remain OPEN; no complete parity is claimed.
+
+### Requirement: Server-owned stored-session resume
+The private bridge SHALL retain principal/conversation ownership of stored_session_id. On core restart or generation change it MUST invalidate stale live IDs and use pinned official session.resume to bind a fresh runtime session_id to the same owned conversation. History/replay and interrupt MUST use that fresh ID; browser-supplied IDs SHALL NOT confer ownership.
+
+#### Scenario: Resume after core restart
+- **WHEN** an authenticated owner opens a retained conversation after restart
+- **THEN** the server resumes the exact stored session privately and uses the validated fresh runtime ID.
+
+#### Scenario: Unknown or stale resume state
+- **WHEN** ownership/state is unknown, ambiguous, malformed or the runtime changes during resume
+- **THEN** the bridge denies without creating replacement history or exposing another conversation.
+
+### Requirement: Concrete finite root installer action
+The selected-target user/root terminal action SHALL execute the actual reviewed finite core install/resume/rollback adapter. The adapter MUST verify source, PM executable/lock, owned unit/config/token custody, loopback, owner and journal. It SHALL NOT accept arbitrary commands, units, credentials or unowned services, or wait on a nonexistent callback.
+
+#### Scenario: Owned core switch and recovery
+- **WHEN** the authorized selected-target action switches or rolls back core
+- **THEN** only journaled owned files/pointers/services change and existing home/Codex auth, backups and unrelated services remain intact.
