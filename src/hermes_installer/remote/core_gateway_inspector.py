@@ -26,6 +26,10 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .jarvis_mission_executor import MissionBinding
 
+# Startup readiness and the native observer both bind to this exact closed
+# mission-turn contract; old six-field schema-1 rows are not upgraded by parsing.
+MISSION_BINDING_SCHEMA = 2
+
 from .core_gateway import (
     CORE_CONFIG, CORE_GATEWAY_UNIT, CORE_GATEWAY_UNIT_PATH, CORE_HOST, CORE_INGRESS_SOCKET,
     CORE_INSPECTOR_SOCKET, CORE_PORT, CORE_SERVICE_UNIT, GATEWAY_ARGV, GATEWAY_EXECUTABLE,
@@ -239,16 +243,31 @@ def _mission_binding_wire(value: Any) -> dict[str, Any] | None:
         if type(value) is not MissionBinding:
             raise ValueError
         wire = value.to_wire()
+        fields = {"schema", "mission_id", "revision", "plan_sha256", "task_sha256",
+                  "source_profile_id", "execution_mode", "autonomy_mode", "selected_source_ids",
+                  "scope_sha256", "authorization_sha256"}
+        source_ids = wire.get("selected_source_ids") if type(wire) is dict else None
         if (type(wire) is not dict
-                or set(wire) != {"schema", "mission_id", "revision", "plan_sha256",
-                                 "task_sha256", "source_profile_id"}
-                or type(wire.get("schema")) is not int or wire["schema"] != 1
+                or set(wire) != fields
+                or type(wire.get("schema")) is not int or wire["schema"] != MISSION_BINDING_SCHEMA
                 or wire.get("source_profile_id") != "orchestrator"
                 or type(wire.get("revision")) is not int or wire["revision"] < 1
                 or not isinstance(wire.get("mission_id"), str)
                 or re.fullmatch(r"[A-Za-z0-9_-]{24,64}", wire["mission_id"]) is None
                 or not _is_hash(wire.get("plan_sha256"))
-                or not _is_hash(wire.get("task_sha256"))):
+                or not _is_hash(wire.get("task_sha256"))
+                or wire.get("execution_mode") not in {"oneshot", "kanban"}
+                or wire.get("autonomy_mode") not in {"approval_required", "fully_autonomous"}
+                or not isinstance(source_ids, list) or not 1 <= len(source_ids) <= 12
+                or any(not isinstance(item, str)
+                       or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,95}", item) is None for item in source_ids)
+                or len(set(source_ids)) != len(source_ids)
+                or "orchestrator" not in source_ids
+                or not _is_hash(wire.get("scope_sha256"))
+                or (wire.get("autonomy_mode") == "approval_required"
+                    and wire.get("authorization_sha256") is not None)
+                or (wire.get("autonomy_mode") == "fully_autonomous"
+                    and not _is_hash(wire.get("authorization_sha256")))):
             raise ValueError
         decoded = MissionBinding.from_wire(wire)
         if type(decoded) is not MissionBinding or decoded != value:
@@ -261,9 +280,10 @@ def _mission_binding_wire(value: Any) -> dict[str, Any] | None:
 def _mission_binding_from_wire(value: Any) -> Any:
     if value is None:
         return None
-    if (type(value) is not dict
-            or set(value) != {"schema", "mission_id", "revision", "plan_sha256",
-                             "task_sha256", "source_profile_id"}):
+    fields = {"schema", "mission_id", "revision", "plan_sha256", "task_sha256",
+              "source_profile_id", "execution_mode", "autonomy_mode", "selected_source_ids",
+              "scope_sha256", "authorization_sha256"}
+    if type(value) is not dict or set(value) != fields:
         raise CoreInspectionDenied("mission binding wire shape is invalid")
     try:
         from .jarvis_mission_executor import MissionBinding

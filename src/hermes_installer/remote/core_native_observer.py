@@ -44,6 +44,8 @@ _RESOURCES_DELEGATE_REGISTRATION_SEAL = object()
 _RESOURCES_DELEGATE_SOURCE_SHA256 = "6eee1b932dfda36efc93e3901ccedf86af06af684d1c5c77bf882c1ba18a5d64"
 _RESOURCES_DELEGATE_SCHEMA_SHA256 = "9325cea421e122395475b0ba0d0517cb4aa4c16c3d4a14c5145f9fcc3f957f33"
 _MISSION_AUTHORIZATION_SEAL = object()
+_NATIVE_CHILD_AUTHORIZATION_SEAL = object()
+_MASTER_PLANNING_COMPLETION_SEAL = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -489,6 +491,125 @@ class RootVerifiedMissionDispatchAuthorization:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class RootVerifiedNativeChildAuthorization:
+    """Short-lived root admission for one exact native child session."""
+
+    owner_turn_handle: str
+    gateway_turn_id: str
+    owner_subject_sha256: str
+    core_generation: str
+    core_source_generation: str
+    parent_session_id: str
+    parent_turn_id: str
+    child_session_id: str
+    profile_id: str
+    source_generation_sha256: str
+    source_manifest_sha256: str
+    prompt_sha256: str
+    goal_sha256: str
+    account_fingerprint: str
+    mode: str
+    allowed_tool_names: tuple[str, ...]
+    tool_closure_sha256: str
+    additional_metered_budget: int
+    admission_handle: str
+    expires_monotonic: float
+    _parent_agent: Any
+    _child_agent: Any
+    _source: Any
+    _seal: object
+
+    def matches_child(self, *, parent_agent: Any, child: Any, source: Any,
+                      mode: Any, goal: str, now: float) -> bool:
+        try:
+            actual_names = tuple(sorted(getattr(child, "valid_tool_names")))
+            actual_source = (
+                getattr(source, "profile_id", getattr(source, "source_id", None)),
+                getattr(source, "generation_sha256", getattr(source, "artifact_sha256", None)),
+                getattr(source, "source_member_manifest_sha256",
+                        getattr(source, "profile_member_manifest_sha256", None)),
+                getattr(source, "effective_prompt_sha256",
+                        getattr(source, "profile_prompt_sha256", None)),
+            )
+            parent_route = tuple(getattr(parent_agent, key, None)
+                                 for key in ("provider", "api_mode", "base_url", "model"))
+            child_route = tuple(getattr(child, key, None)
+                                for key in ("provider", "api_mode", "base_url", "model"))
+        except (TypeError, AttributeError):
+            return False
+        fixed_names = frozenset(
+            {"web_search", "web_extract", "todo_list", "skills_list", "skill_view"}
+            if getattr(mode, "value", None) == "expert-read-research" else set()
+        )
+        expected_names = tuple(self.allowed_tool_names)
+        return bool(
+            type(self) is RootVerifiedNativeChildAuthorization
+            and self._seal is _NATIVE_CHILD_AUTHORIZATION_SEAL
+            and self._parent_agent is parent_agent and self._child_agent is child
+            and self._source is source
+            and self.owner_turn_handle and self.gateway_turn_id
+            and _HASH.fullmatch(self.owner_subject_sha256 or "")
+            and _HASH.fullmatch(self.core_generation or "")
+            and _HASH.fullmatch(self.core_source_generation or "")
+            and self.parent_session_id == getattr(parent_agent, "session_id", None)
+            and self.parent_turn_id == getattr(parent_agent, "_current_turn_id", None)
+            and self.child_session_id == getattr(child, "session_id", None)
+            and hashlib.sha256(goal.encode("utf-8", errors="strict")).hexdigest() == self.goal_sha256
+            and actual_source == (self.profile_id, self.source_generation_sha256,
+                                  self.source_manifest_sha256, self.prompt_sha256)
+            and tuple(sorted(expected_names)) == expected_names
+            and set(expected_names).issubset(fixed_names)
+            and actual_names == expected_names
+            and type(self.additional_metered_budget) is int
+            and self.additional_metered_budget == 0
+            and _hash(list(actual_names)) == self.tool_closure_sha256
+            and parent_route == child_route
+            and parent_route == (_CODEX_PROVIDER, _CODEX_MODE, _CODEX_ENDPOINT,
+                                 getattr(parent_agent, "model", None))
+            and _HASH.fullmatch(self.account_fingerprint or "")
+            and _HASH.fullmatch(self.goal_sha256 or "")
+            and type(self.expires_monotonic) in (int, float)
+            and math.isfinite(float(self.expires_monotonic))
+            and now < self.expires_monotonic <= now + 30.0
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CoreVerifiedJarvisMasterPlanningCompletion:
+    """Root-confirmed completion receipt for a no-tools Jarvis planner child."""
+
+    owner_subject_sha256: str
+    owner_turn_handle: str
+    gateway_turn_id: str
+    core_generation: str
+    core_source_generation: str
+    prompt_sha256: str
+    response_sha256: str
+    completion_handle: str
+    expires_monotonic: float
+    _client: Any
+    _seal: object
+
+    def is_current_sealed(self, config: Any = None, custody: Any = None,
+                          now: float | None = None) -> bool:
+        current = time.monotonic() if now is None else now
+        if (type(self) is not CoreVerifiedJarvisMasterPlanningCompletion
+                or self._seal is not _MASTER_PLANNING_COMPLETION_SEAL
+                or not _HASH.fullmatch(self.owner_subject_sha256 or "")
+                or not _HASH.fullmatch(self.core_generation or "")
+                or not _HASH.fullmatch(self.core_source_generation or "")
+                or not _HASH.fullmatch(self.prompt_sha256 or "")
+                or not _HASH.fullmatch(self.response_sha256 or "")
+                or not isinstance(self.owner_turn_handle, str)
+                or not isinstance(self.gateway_turn_id, str)
+                or not _OPAQUE.fullmatch(self.completion_handle or "")
+                or not current < self.expires_monotonic <= current + 30.0):
+            return False
+        verifier = getattr(self._client, "verify_planning_completion", None)
+        return bool(callable(verifier) and verifier(self, config=config, custody=custody) is True)
+
+
 class CoreNativeObservationClient:
     """Fixed bounded client for the root-owned current-core observation socket."""
 
@@ -505,7 +626,9 @@ class CoreNativeObservationClient:
         if operation not in {
             "register-attempt", "register-response",
             "register-tool-call", "prepare-dispatch", "consume-dispatch",
-            "authorize-mission-dispatch",
+            "authorize-mission-dispatch", "admit-native-child",
+            "admit-master-planner-child",
+            "complete-native-child", "verify-planning-completion",
         }:
             raise CoreNativeObservationUnavailable("observer operation is not supported")
         nonce = secrets.token_urlsafe(32)
@@ -559,10 +682,9 @@ class CoreNativeObservationClient:
         if (provider != _CODEX_PROVIDER or api_mode != _CODEX_MODE
                 or base_url.rstrip("/") != _CODEX_ENDPOINT or type(retry_count) is not int
                 or retry_count != 0 or not isinstance(parent_tool_names, tuple)
-                or not parent_tool_names or len(parent_tool_names) > 512
+                or len(parent_tool_names) > 512
                 or any(not isinstance(name, str) or not _ID.fullmatch(name) for name in parent_tool_names)
-                or len(set(parent_tool_names)) != len(parent_tool_names)
-                or "resources_delegate" not in parent_tool_names):
+                or len(set(parent_tool_names)) != len(parent_tool_names)):
             raise CoreNativeObservationUnavailable("attempt is outside the selected Codex subscription route")
         payload = {
             "session_id": _require_id(session_id, "session ID"),
@@ -584,11 +706,14 @@ class CoreNativeObservationClient:
             raise CoreNativeObservationUnavailable("root provider-attempt receipt is malformed") from None
 
     def register_response(self, *, attempt: ObservedProviderAttempt,
-                          response_sha256: str, tool_calls: list[dict[str, str]],
+                          response_sha256: str, response_text_sha256: str | None,
+                          tool_calls: list[dict[str, str]],
                           completed: bool) -> None:
         if type(attempt) is not ObservedProviderAttempt or type(completed) is not bool:
             raise CoreNativeObservationUnavailable("provider response is not correlated")
         calls = []
+        text_digest = (_require_hash(response_text_sha256, "response text digest")
+                       if response_text_sha256 is not None else None)
         if not isinstance(tool_calls, list) or len(tool_calls) > 128:
             raise CoreNativeObservationUnavailable("provider tool-call inventory is malformed")
         for call in tool_calls:
@@ -600,6 +725,7 @@ class CoreNativeObservationClient:
         self._rpc("register-response", {
             "attempt_handle": attempt.handle,
             "response_sha256": _require_hash(response_sha256, "response digest"),
+            "response_text_sha256": text_digest,
             "tool_calls": calls, "completed": completed,
         })
 
@@ -756,6 +882,262 @@ class CoreNativeObservationClient:
             _seal=_MISSION_AUTHORIZATION_SEAL,
         )
 
+    def admit_native_child(self, *, parent_claim: RootSelectedInternalProfileDispatchClaim,
+                           child: Any, source: Any, mode: Any, goal: str
+                           ) -> RootVerifiedNativeChildAuthorization:
+        """Root-admit one constructed child before any child provider request."""
+        from hermes_installer.remote.native_child_adapter import NativeChildMode
+        if (type(parent_claim) is not RootSelectedInternalProfileDispatchClaim
+                or type(mode) is not NativeChildMode or not isinstance(goal, str)
+                or not goal or len(goal.encode("utf-8", errors="strict")) > 32 * 1024):
+            raise CoreNativeObservationUnavailable("typed parent claim, child mode, and bounded goal are required")
+        parent = parent_claim.parent_agent
+        try:
+            profile_id = getattr(source, "profile_id", getattr(source, "source_id", None))
+            generation = getattr(source, "generation_sha256", getattr(source, "artifact_sha256", None))
+            manifest = getattr(source, "source_member_manifest_sha256",
+                               getattr(source, "profile_member_manifest_sha256", None))
+            prompt = getattr(source, "effective_prompt_sha256", getattr(source, "profile_prompt_sha256", None))
+            child_session = _require_id(getattr(child, "session_id"), "child session ID")
+            current_child_turn = getattr(child, "_current_turn_id", None)
+            child_turn = (_require_id(current_child_turn, "child turn ID")
+                          if current_child_turn else "")
+            tool_names = tuple(sorted(getattr(child, "valid_tool_names")))
+            provider, api_mode, base_url, model = tuple(
+                getattr(child, key, None) for key in ("provider", "api_mode", "base_url", "model"))
+        except (AttributeError, TypeError, ValueError):
+            raise CoreNativeObservationUnavailable("constructed child lineage is incomplete") from None
+        if (not isinstance(profile_id, str) or not isinstance(generation, str)
+                or not isinstance(manifest, str) or not isinstance(prompt, str)
+                or provider != _CODEX_PROVIDER or api_mode != _CODEX_MODE
+                or base_url != _CODEX_ENDPOINT or model != getattr(parent, "model", None)
+                or tuple(sorted(set(tool_names))) != tool_names):
+            raise CoreNativeObservationUnavailable("child differs from the selected source or Codex route")
+        row = self._rpc("admit-native-child", {
+            "parent_claim_handle": parent_claim.claim_handle,
+            "owner_turn_handle": parent_claim.owner_turn_handle,
+            "parent_session_id": parent_claim.session_id,
+            "parent_turn_id": parent_claim.turn_id,
+            "child_session_id": child_session,
+            "child_turn_id": child_turn,
+            "profile_id": _require_id(profile_id, "selected profile ID"),
+            "source_generation_sha256": _require_hash(generation, "selected source generation"),
+            "source_manifest_sha256": _require_hash(manifest, "selected source manifest"),
+            "prompt_sha256": _require_hash(prompt, "selected source prompt"),
+            "goal_sha256": hashlib.sha256(goal.encode("utf-8", errors="strict")).hexdigest(),
+            "mode": mode.value,
+            "tool_names": list(tool_names), "tool_closure_sha256": _hash(list(tool_names)),
+            "account_fingerprint": parent_claim.account_fingerprint,
+            "provider": provider, "api_mode": api_mode, "base_url": base_url, "model": model,
+        })
+        required = {"schema", "nonce", "ok", "admission_handle", "owner_turn_handle",
+                    "gateway_turn_id", "owner_subject_sha256", "core_generation",
+                    "core_source_generation", "parent_session_id", "parent_turn_id",
+                    "child_session_id", "profile_id", "source_generation_sha256",
+                    "source_manifest_sha256", "prompt_sha256", "goal_sha256",
+                    "account_fingerprint", "mode", "tool_names", "tool_closure_sha256",
+                    "additional_metered_budget", "expires_monotonic"}
+        if (set(row) != required or type(row.get("schema")) is not int or row["schema"] != 1
+                or row["owner_turn_handle"] != parent_claim.owner_turn_handle
+                or row["gateway_turn_id"] != parent_claim.gateway_turn_id
+                or row["owner_subject_sha256"] != parent_claim.owner_subject_sha256
+                or row["core_generation"] != parent_claim.core_generation
+                or row["core_source_generation"] != parent_claim.core_source_generation
+                or row["parent_session_id"] != parent_claim.session_id
+                or row["parent_turn_id"] != parent_claim.turn_id
+                or row["child_session_id"] != child_session
+                or row["profile_id"] != profile_id
+                or row["source_generation_sha256"] != generation
+                or row["source_manifest_sha256"] != manifest
+                or row["prompt_sha256"] != prompt
+                or row["goal_sha256"] != hashlib.sha256(goal.encode("utf-8")).hexdigest()
+                or row["account_fingerprint"] != parent_claim.account_fingerprint
+                or row["mode"] != mode.value
+                or row["tool_names"] != list(tool_names)
+                or row["tool_closure_sha256"] != _hash(list(tool_names))
+                or type(row["additional_metered_budget"]) is not int
+                or row["additional_metered_budget"] != 0
+                or not _OPAQUE.fullmatch(row["admission_handle"] or "")):
+            raise CoreNativeObservationUnavailable("root child admission does not match its request")
+        try:
+            expiry = float(row["expires_monotonic"])
+        except (TypeError, ValueError):
+            raise CoreNativeObservationUnavailable("root child admission expiry is malformed") from None
+        if not time.monotonic() < expiry <= min(parent_claim.expires_monotonic, time.monotonic() + 30.0):
+            raise CoreNativeObservationUnavailable("root child admission is stale")
+        return RootVerifiedNativeChildAuthorization(
+            owner_turn_handle=row["owner_turn_handle"], gateway_turn_id=row["gateway_turn_id"],
+            owner_subject_sha256=row["owner_subject_sha256"], core_generation=row["core_generation"],
+            core_source_generation=row["core_source_generation"],
+            parent_session_id=row["parent_session_id"], parent_turn_id=row["parent_turn_id"],
+            child_session_id=row["child_session_id"], profile_id=row["profile_id"],
+            source_generation_sha256=row["source_generation_sha256"],
+            source_manifest_sha256=row["source_manifest_sha256"], prompt_sha256=row["prompt_sha256"],
+            goal_sha256=row["goal_sha256"], account_fingerprint=row["account_fingerprint"],
+            mode=row["mode"], allowed_tool_names=tool_names,
+            tool_closure_sha256=row["tool_closure_sha256"],
+            additional_metered_budget=row["additional_metered_budget"],
+            admission_handle=row["admission_handle"], expires_monotonic=expiry,
+            _parent_agent=parent, _child_agent=child, _source=source,
+            _seal=_NATIVE_CHILD_AUTHORIZATION_SEAL,
+        )
+
+    def admit_master_planner_child(self, *, owner_turn_handle: str, parent_agent: Any,
+                                   child: Any, goal: str) -> RootVerifiedNativeChildAuthorization:
+        """Admit a no-tools Jarvis planner child from a registered live owner turn.
+
+        This bootstrap path intentionally does not consume a Resources delegation
+        claim: planning must be based on the root-verified active master source,
+        before any expert selection exists. The owner handle, session/turn and
+        Codex account are all rejoined by the root registry.
+        """
+        from hermes_installer.remote.native_child_adapter import NativeChildMode
+        from hermes_installer.components.resources_active_profile_source import RootVerifiedJarvisMasterSource
+        if (not isinstance(owner_turn_handle, str) or not _OPAQUE.fullmatch(owner_turn_handle)
+                or type(child) is type(None) or not isinstance(goal, str) or not goal
+                or len(goal.encode("utf-8", errors="strict")) > 32 * 1024):
+            raise CoreNativeObservationUnavailable("registered owner turn and bounded planner request are required")
+        try:
+            parent_session = _require_id(getattr(parent_agent, "session_id"), "parent session ID")
+            parent_turn = _require_id(getattr(parent_agent, "_current_turn_id"), "parent turn ID")
+            child_session = _require_id(getattr(child, "session_id"), "child session ID")
+            child_turn = getattr(child, "_current_turn_id", None)
+            child_turn = _require_id(child_turn, "child turn ID") if child_turn else ""
+            tool_names = tuple(sorted(getattr(child, "valid_tool_names")))
+            provider, api_mode, base_url, model = tuple(
+                getattr(child, key, None) for key in ("provider", "api_mode", "base_url", "model"))
+            source = self._master_source
+            source_generation = getattr(source, "generation_sha256", getattr(source, "artifact_sha256", None))
+            source_manifest = getattr(source, "source_member_manifest_sha256",
+                                      getattr(source, "profile_member_manifest_sha256", None))
+            prompt_sha256 = getattr(source, "effective_prompt_sha256", getattr(source, "profile_prompt_sha256", None))
+        except (AttributeError, TypeError, ValueError):
+            raise CoreNativeObservationUnavailable("planner child lineage is incomplete") from None
+        if (type(source) is not RootVerifiedJarvisMasterSource
+                or getattr(source, "profile_id", None) != "hermes"
+                or source.is_current_sealed(self._custody, now=time.monotonic()) is not True
+                or provider != _CODEX_PROVIDER or api_mode != _CODEX_MODE
+                or base_url != _CODEX_ENDPOINT or not isinstance(model, str)
+                or tuple(sorted(set(tool_names))) != tool_names or tool_names):
+            raise CoreNativeObservationUnavailable("current no-tools Jarvis planner source/route is unavailable")
+        parent_route = tuple(getattr(parent_agent, key, None)
+                             for key in ("provider", "api_mode", "base_url", "model"))
+        if parent_route != (provider, api_mode, base_url, model):
+            raise CoreNativeObservationUnavailable("planner child route differs from its live parent")
+        row = self._rpc("admit-master-planner-child", {
+            "owner_turn_handle": owner_turn_handle, "parent_session_id": parent_session,
+            "parent_turn_id": parent_turn, "child_session_id": child_session,
+            "child_turn_id": child_turn, "source_generation_sha256": _require_hash(source_generation, "master source generation"),
+            "source_manifest_sha256": _require_hash(source_manifest, "master source manifest"),
+            "prompt_sha256": _require_hash(prompt_sha256, "master prompt"),
+            "goal_sha256": hashlib.sha256(goal.encode("utf-8", errors="strict")).hexdigest(),
+            "provider": provider, "api_mode": api_mode, "base_url": base_url, "model": model,
+            "tool_names": [], "tool_closure_sha256": _hash([]),
+        })
+        required = {"schema", "nonce", "ok", "admission_handle", "owner_turn_handle",
+                    "gateway_turn_id", "owner_subject_sha256", "core_generation",
+                    "core_source_generation", "parent_session_id", "parent_turn_id",
+                    "child_session_id", "profile_id", "source_generation_sha256",
+                    "source_manifest_sha256", "prompt_sha256", "goal_sha256",
+                    "account_fingerprint", "mode", "tool_names", "tool_closure_sha256",
+                    "additional_metered_budget", "expires_monotonic"}
+        if (set(row) != required or row.get("schema") != 1
+                or row["owner_turn_handle"] != owner_turn_handle
+                or row["parent_session_id"] != parent_session or row["parent_turn_id"] != parent_turn
+                or row["child_session_id"] != child_session or row["profile_id"] != "hermes"
+                or row["source_generation_sha256"] != source_generation
+                or row["source_manifest_sha256"] != source_manifest or row["prompt_sha256"] != prompt_sha256
+                or row["goal_sha256"] != hashlib.sha256(goal.encode("utf-8", errors="strict")).hexdigest()
+                or row["mode"] != NativeChildMode.PLANNER.value or row["tool_names"] != []
+                or row["tool_closure_sha256"] != _hash([]) or row["additional_metered_budget"] != 0
+                or not _OPAQUE.fullmatch(row["admission_handle"] or "")):
+            raise CoreNativeObservationUnavailable("root planner admission does not match this request")
+        expiry = float(row["expires_monotonic"])
+        now = time.monotonic()
+        owner = self._owners.get(owner_turn_handle)
+        if owner is None or not now < expiry <= min(owner.expires_monotonic, now + 30.0):
+            raise CoreNativeObservationUnavailable("root planner admission is stale")
+        return RootVerifiedNativeChildAuthorization(
+            owner_turn_handle=owner_turn_handle, gateway_turn_id=row["gateway_turn_id"],
+            owner_subject_sha256=row["owner_subject_sha256"], core_generation=row["core_generation"],
+            core_source_generation=row["core_source_generation"], parent_session_id=parent_session,
+            parent_turn_id=parent_turn, child_session_id=child_session, profile_id="hermes",
+            source_generation_sha256=source_generation, source_manifest_sha256=source_manifest,
+            prompt_sha256=prompt_sha256, goal_sha256=row["goal_sha256"],
+            account_fingerprint=row["account_fingerprint"], mode=NativeChildMode.PLANNER.value,
+            allowed_tool_names=(), tool_closure_sha256=_hash([]), additional_metered_budget=0,
+            admission_handle=row["admission_handle"], expires_monotonic=expiry,
+            _parent_agent=parent_agent, _child_agent=child, _source=source,
+            _seal=_NATIVE_CHILD_AUTHORIZATION_SEAL,
+        )
+
+    def complete_native_child(self, *, authorization: RootVerifiedNativeChildAuthorization,
+                              result: Mapping[str, Any]) -> CoreVerifiedJarvisMasterPlanningCompletion | None:
+        if (type(authorization) is not RootVerifiedNativeChildAuthorization
+                or authorization._seal is not _NATIVE_CHILD_AUTHORIZATION_SEAL
+                or not isinstance(result, Mapping)):
+            raise CoreNativeObservationUnavailable("root-admitted child result is required")
+        if authorization.mode != "planner":
+            return None
+        if result.get("status") != "completed" or result.get("failed") is True:
+            raise CoreNativeObservationUnavailable("planner child did not complete successfully")
+        summary = result.get("summary")
+        if not isinstance(summary, str) or not summary:
+            raise CoreNativeObservationUnavailable("planner child completion text is unavailable")
+        response_sha256 = hashlib.sha256(summary.encode("utf-8", errors="strict")).hexdigest()
+        row = self._rpc("complete-native-child", {
+            "admission_handle": authorization.admission_handle,
+            "status": "completed", "response_sha256": response_sha256,
+        })
+        required = {"schema", "nonce", "ok", "completion_handle", "owner_subject_sha256",
+                    "owner_turn_handle", "gateway_turn_id", "core_generation",
+                    "core_source_generation", "prompt_sha256", "response_sha256",
+                    "expires_monotonic"}
+        if (set(row) != required or type(row.get("schema")) is not int or row["schema"] != 1
+                or row["completion_handle"] == ""
+                or row["owner_subject_sha256"] != authorization.owner_subject_sha256
+                or row["owner_turn_handle"] != authorization.owner_turn_handle
+                or row["gateway_turn_id"] != authorization.gateway_turn_id
+                or row["core_generation"] != authorization.core_generation
+                or row["core_source_generation"] != authorization.core_source_generation
+                or row["prompt_sha256"] != authorization.goal_sha256
+                or row["response_sha256"] != response_sha256
+                or not _OPAQUE.fullmatch(row["completion_handle"] or "")):
+            raise CoreNativeObservationUnavailable("root planning completion receipt is malformed")
+        expiry = float(row["expires_monotonic"])
+        if not time.monotonic() < expiry <= authorization.expires_monotonic:
+            raise CoreNativeObservationUnavailable("root planning completion expired")
+        return CoreVerifiedJarvisMasterPlanningCompletion(
+            owner_subject_sha256=row["owner_subject_sha256"],
+            owner_turn_handle=row["owner_turn_handle"], gateway_turn_id=row["gateway_turn_id"],
+            core_generation=row["core_generation"], core_source_generation=row["core_source_generation"],
+            prompt_sha256=row["prompt_sha256"], response_sha256=row["response_sha256"],
+            completion_handle=row["completion_handle"], expires_monotonic=expiry,
+            _client=self, _seal=_MASTER_PLANNING_COMPLETION_SEAL,
+        )
+
+    def verify_planning_completion(self, completion: CoreVerifiedJarvisMasterPlanningCompletion,
+                                   *, config: Any = None, custody: Any = None) -> bool:
+        if (type(completion) is not CoreVerifiedJarvisMasterPlanningCompletion
+                or completion._seal is not _MASTER_PLANNING_COMPLETION_SEAL):
+            return False
+        try:
+            row = self._rpc("verify-planning-completion", {
+                "completion_handle": completion.completion_handle,
+                "owner_turn_handle": completion.owner_turn_handle,
+                "gateway_turn_id": completion.gateway_turn_id,
+                "owner_subject_sha256": completion.owner_subject_sha256,
+                "core_generation": completion.core_generation,
+                "core_source_generation": completion.core_source_generation,
+                "prompt_sha256": completion.prompt_sha256,
+                "response_sha256": completion.response_sha256,
+            })
+            return (set(row) == {"schema", "nonce", "ok"}
+                    and type(row["schema"]) is int and row["schema"] == 1
+                    and row["ok"] is True)
+        except Exception:
+            return False
+
 
 class RootCoreNativeObservationRegistry:
     """Root-memory issuer joining real owner turns to protected native observations.
@@ -787,6 +1169,21 @@ class RootCoreNativeObservationRegistry:
         self._calls: dict[str, dict[str, Any]] = {}
         self._claims: dict[str, dict[str, Any]] = {}
         self._mission_pending: dict[str, dict[str, Any]] = {}
+        self._consumed_dispatches: dict[str, dict[str, Any]] = {}
+        self._child_sessions: dict[str, dict[str, Any]] = {}
+        self._planning_completions: dict[str, dict[str, Any]] = {}
+        self._master_selections: dict[str, dict[str, Any]] = {}
+        self._master_source: Any = None
+        try:
+            from hermes_installer.components.resources_active_profile_source import (
+                RootVerifiedJarvisMasterSource,
+            )
+            self._master_source = RootVerifiedJarvisMasterSource.current_master_source(
+                custody, config=config,
+            )
+        except Exception:
+            # Ordinary ingress stays available; planning/child admission stays unavailable.
+            self._master_source = None
         self._closed = False
 
     @classmethod
@@ -817,6 +1214,47 @@ class RootCoreNativeObservationRegistry:
                 self._owner_turn_bindings.pop(expired_handle, None)
                 self._close_fd(getattr(expired, "_core_pidfd", None))
         return handle
+
+    def enroll_master_decision(self, decision: Any) -> str:
+        """Retain a current root-sealed plan and exactly its verified selected sources."""
+        from hermes_installer.remote.jarvis_master_planning import CoreVerifiedJarvisMasterPlanDecision
+        from hermes_installer.components.resources_active_profile_source import RootSelectedActiveProfileSource
+        if (type(decision) is not CoreVerifiedJarvisMasterPlanDecision
+                or decision.is_current_sealed(self._config, custody=self._custody,
+                                              now=time.monotonic()) is not True):
+            raise CoreNativeObservationUnavailable("current Jarvis master plan decision is required")
+        with self._lock:
+            self._ensure_open()
+            owner = self._owners.get(decision.owner_turn_handle)
+            if (owner is None or owner.gateway_turn_id != decision.gateway_turn_id
+                    or owner.owner_subject_sha256 != decision.owner_subject_sha256
+                    or owner.core_generation != decision.core_generation
+                    or owner.core_source_generation != decision.core_source_generation):
+                raise CoreNativeObservationUnavailable("master plan does not match a retained owner turn")
+        resolver = getattr(RootSelectedActiveProfileSource, "resolve_selected", None)
+        if not callable(resolver):
+            raise CoreNativeObservationUnavailable("decision-bound Resources source resolver is unavailable")
+        sources = resolver(decision, self._custody, config=self._config)
+        if (not isinstance(sources, tuple) or len(sources) != len(decision.selected_source_ids)
+                or tuple(getattr(item, "profile_id", None) for item in sources)
+                    != tuple(decision.selected_source_ids)
+                or any(type(item) is not RootSelectedActiveProfileSource
+                       or item.is_current_sealed(self._custody, now=time.monotonic()) is not True
+                       for item in sources)):
+            raise CoreNativeObservationUnavailable("selected Resources sources are not current")
+        enrollment_handle = secrets.token_urlsafe(32)
+        expiry = min([float(decision.expires_monotonic),
+                      *(float(item.expires_monotonic) for item in sources)])
+        with self._lock:
+            self._ensure_open()
+            self._master_selections[enrollment_handle] = {
+                "decision": decision, "owner": owner,
+                "sources": {item.profile_id: item for item in sources},
+                "expiry": expiry,
+            }
+            while len(self._master_selections) > 128:
+                self._master_selections.pop(next(iter(self._master_selections)))
+        return enrollment_handle
 
     def enroll_current_orchestrator_policy(self, owner_turn_observation: Any,
                                            current_tool_configuration: Any
@@ -940,9 +1378,32 @@ class RootCoreNativeObservationRegistry:
         for handle, row in list(self._mission_pending.items()):
             if row["expiry"] <= now:
                 self._mission_pending.pop(handle, None)
+        for handle, row in list(self._consumed_dispatches.items()):
+            if row["expiry"] <= now:
+                self._consumed_dispatches.pop(handle, None)
+        for session_id, row in list(self._child_sessions.items()):
+            if row["expiry"] <= now:
+                self._child_sessions.pop(session_id, None)
+        for handle, row in list(self._planning_completions.items()):
+            if row["expiry"] <= now:
+                self._planning_completions.pop(handle, None)
+        for handle, row in list(self._master_selections.items()):
+            if row["expiry"] <= now:
+                self._master_selections.pop(handle, None)
 
     def _owner_for(self, session_id: str, turn_id: str) -> Any:
         now = time.monotonic()
+        child_row = self._child_sessions.get(session_id)
+        if child_row is not None and child_row["expiry"] > now:
+            owner = child_row["owner"]
+            if (owner.core_generation == self._custody.core_generation
+                    and owner.is_current_sealed(self._config, custody=self._custody, now=now) is True):
+                bound = child_row.get("turn_id")
+                if bound is None:
+                    child_row["turn_id"] = turn_id
+                    return owner
+                if bound == turn_id:
+                    return owner
         for handle, owner in list(self._owners.items()):
             if owner.expires_monotonic <= now:
                 self._owners.pop(handle, None)
@@ -1011,6 +1472,156 @@ class RootCoreNativeObservationRegistry:
         with self._lock:
             self._ensure_open()
             self._prune(time.monotonic())
+            if op == "admit-master-planner-child":
+                from hermes_installer.components.resources_active_profile_source import (
+                    RootVerifiedJarvisMasterSource,
+                )
+                required = {"schema", "op", "nonce", "owner_turn_handle", "parent_session_id",
+                            "parent_turn_id", "child_session_id", "child_turn_id",
+                            "source_generation_sha256", "source_manifest_sha256", "prompt_sha256",
+                            "goal_sha256", "provider", "api_mode", "base_url", "model",
+                            "tool_names", "tool_closure_sha256"}
+                if set(request) != required:
+                    raise ValueError("master planner admission schema mismatch")
+                now = time.monotonic()
+                owner = self._owners.get(request["owner_turn_handle"])
+                source = self._master_source
+                if (owner is None or owner.expires_monotonic <= now
+                        or owner.is_current_sealed(self._config, custody=self._custody, now=now) is not True
+                        or owner.session_id != request["parent_session_id"]
+                        or self._owner_turn_bindings.get(owner.owner_turn_handle) != request["parent_turn_id"]
+                        or type(source) is not RootVerifiedJarvisMasterSource
+                        or source.profile_id != "hermes"
+                        or source.is_current_sealed(self._custody, now=now) is not True
+                        or self._policy_for_owner(owner, now) is None
+                        or request["provider"] != _CODEX_PROVIDER or request["api_mode"] != _CODEX_MODE
+                        or request["base_url"] != _CODEX_ENDPOINT
+                        or not _ID.fullmatch(request["model"] or "")
+                        or request["tool_names"] != [] or request["tool_closure_sha256"] != _hash([])
+                        or not _HASH.fullmatch(request["goal_sha256"] or "")):
+                    raise ValueError("current owner turn or master source is unavailable")
+                attempt = next((row for row in reversed(tuple(self._attempts.values()))
+                                if row["owner"] is owner and row["session_id"] == owner.session_id
+                                and row["turn_id"] == request["parent_turn_id"]
+                                and row["response"] is not None
+                                and row["account"] and row.get("model")), None)
+                if (attempt is None or attempt["account"] == ""
+                        or request["model"] != attempt["model"]
+                        or request["source_generation_sha256"] != source.generation_sha256
+                        or request["source_manifest_sha256"] != source.source_member_manifest_sha256
+                        or request["prompt_sha256"] != source.effective_prompt_sha256):
+                    raise ValueError("planner route/source does not match a completed owner turn")
+                child_session = _require_id(request["child_session_id"], "child session ID")
+                if child_session in self._child_sessions or child_session == owner.session_id:
+                    raise ValueError("planner child session is already bound")
+                child_turn = request["child_turn_id"]
+                if child_turn and not _ID.fullmatch(child_turn):
+                    raise ValueError("planner child turn ID is malformed")
+                policy = self._policy_for_owner(owner, now)
+                admission = secrets.token_urlsafe(32)
+                expiry = min(float(owner.expires_monotonic), float(source.expires_monotonic),
+                             float(policy.expires_monotonic), now + 30.0)
+                child = {"admission_handle": admission, "owner_turn_handle": owner.owner_turn_handle,
+                    "owner": owner, "policy": policy, "parent_session_id": owner.session_id,
+                    "parent_turn_id": request["parent_turn_id"], "session_id": child_session,
+                    "turn_id": child_turn or None, "profile_id": source.profile_id,
+                    "source_generation_sha256": source.generation_sha256,
+                    "source_manifest_sha256": source.source_member_manifest_sha256,
+                    "prompt_sha256": source.effective_prompt_sha256,
+                    "goal_sha256": request["goal_sha256"], "account": attempt["account"],
+                    "mode": "planner", "tool_names": (), "tool_closure_sha256": _hash([]),
+                    "provider": _CODEX_PROVIDER, "api_mode": _CODEX_MODE,
+                    "base_url": _CODEX_ENDPOINT, "model": attempt["model"],
+                    "source": source, "attempts": [], "peer": peer, "expiry": expiry,
+                    "complete": False, "response_text_sha256": None}
+                self._child_sessions[child_session] = child
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                    "admission_handle": admission, "owner_turn_handle": owner.owner_turn_handle,
+                    "gateway_turn_id": owner.gateway_turn_id,
+                    "owner_subject_sha256": owner.owner_subject_sha256,
+                    "core_generation": owner.core_generation,
+                    "core_source_generation": owner.core_source_generation,
+                    "parent_session_id": owner.session_id,
+                    "parent_turn_id": request["parent_turn_id"],
+                    "child_session_id": child_session, "profile_id": source.profile_id,
+                    "source_generation_sha256": source.generation_sha256,
+                    "source_manifest_sha256": source.source_member_manifest_sha256,
+                    "prompt_sha256": source.effective_prompt_sha256,
+                    "goal_sha256": request["goal_sha256"], "account_fingerprint": attempt["account"],
+                    "mode": "planner", "tool_names": [], "tool_closure_sha256": _hash([]),
+                    "additional_metered_budget": 0, "expires_monotonic": expiry}
+            if op == "admit-native-child":
+                raise ValueError("legacy Resources-parent child admission is disabled")
+            if op == "complete-native-child":
+                if set(request) != {"schema", "op", "nonce", "admission_handle", "status", "response_sha256"}:
+                    raise ValueError("child completion schema mismatch")
+                child = next((row for row in self._child_sessions.values()
+                              if row["admission_handle"] == request["admission_handle"]), None)
+                now = time.monotonic()
+                if (child is None or child["peer"] != peer or child["expiry"] <= now
+                        or child["complete"] or request["status"] != "completed"
+                        or not _HASH.fullmatch(request["response_sha256"] or "")):
+                    raise ValueError("child completion is not a live admitted result")
+                owner, policy = child["owner"], child["policy"]
+                source = child.get("source")
+                attempts = [self._attempts.get(handle) for handle in child["attempts"]]
+                if (owner.is_current_sealed(self._config, custody=self._custody, now=now) is not True
+                        or self._policy_for_owner(owner, now) is not policy
+                        or not callable(getattr(source, "is_current_sealed", None))
+                        or source.is_current_sealed(self._custody, now=now) is not True
+                        or source.profile_id != child["profile_id"]
+                        or source.generation_sha256 != child["source_generation_sha256"]
+                        or source.effective_prompt_sha256 != child["prompt_sha256"]
+                        or child["turn_id"] is None or len(attempts) != 1
+                        or any(row is None or row["child_admission_handle"] != child["admission_handle"]
+                               or row["response"] is None for row in attempts)
+                        or child["mode"] != "planner"
+                        or attempts[0]["response"][1]
+                        or attempts[0]["response"][2] != request["response_sha256"]
+                        or attempts[0]["account"] != child["account"]):
+                    raise ValueError("planner completion lacks a current zero-tool provider result")
+                child["complete"] = True
+                child["response_text_sha256"] = request["response_sha256"]
+                completion_handle = secrets.token_urlsafe(32)
+                expiry = min(child["expiry"], now + 30.0)
+                self._planning_completions[completion_handle] = {
+                    "child": child, "response_sha256": request["response_sha256"],
+                    "expiry": expiry}
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                    "completion_handle": completion_handle,
+                    "owner_subject_sha256": owner.owner_subject_sha256,
+                    "owner_turn_handle": owner.owner_turn_handle,
+                    "gateway_turn_id": owner.gateway_turn_id,
+                    "core_generation": owner.core_generation,
+                    "core_source_generation": owner.core_source_generation,
+                    "prompt_sha256": child["goal_sha256"],
+                    "response_sha256": request["response_sha256"],
+                    "expires_monotonic": expiry}
+            if op == "verify-planning-completion":
+                fields = {"schema", "op", "nonce", "completion_handle", "owner_turn_handle",
+                          "gateway_turn_id", "owner_subject_sha256", "core_generation",
+                          "core_source_generation", "prompt_sha256", "response_sha256"}
+                if set(request) != fields:
+                    raise ValueError("planning completion schema mismatch")
+                record = self._planning_completions.get(request["completion_handle"])
+                if record is None or record["expiry"] <= time.monotonic():
+                    raise ValueError("planning completion expired")
+                child, owner = record["child"], record["child"]["owner"]
+                source = child.get("source")
+                if (child["complete"] is not True or child["peer"] != peer
+                        or owner.is_current_sealed(self._config, custody=self._custody,
+                                                   now=time.monotonic()) is not True
+                        or not callable(getattr(source, "is_current_sealed", None))
+                        or source.is_current_sealed(self._custody, now=time.monotonic()) is not True
+                        or request["owner_turn_handle"] != owner.owner_turn_handle
+                        or request["gateway_turn_id"] != owner.gateway_turn_id
+                        or request["owner_subject_sha256"] != owner.owner_subject_sha256
+                        or request["core_generation"] != owner.core_generation
+                        or request["core_source_generation"] != owner.core_source_generation
+                        or request["prompt_sha256"] != child["goal_sha256"]
+                        or request["response_sha256"] != record["response_sha256"]):
+                    raise ValueError("planning completion is stale or mismatched")
+                return {"schema": 1, "nonce": nonce, "ok": True}
             if op == "register-attempt":
                 required = {"schema", "op", "nonce", "session_id", "turn_id", "api_request_id",
                             "provider", "model", "base_url", "api_mode", "account_fingerprint",
@@ -1019,24 +1630,41 @@ class RootCoreNativeObservationRegistry:
                     raise ValueError("attempt schema mismatch")
                 owner = self._owner_for(request["session_id"], request["turn_id"])
                 policy = self._policy_for_owner(owner, time.monotonic()) if owner is not None else None
+                child = self._child_sessions.get(request["session_id"])
+                child_tools = tuple(child["tool_names"]) if child is not None else None
+                is_child_attempt = child is not None
                 if (owner is None or request["provider"] != _CODEX_PROVIDER
                         or request["api_mode"] != _CODEX_MODE or request["base_url"] != _CODEX_ENDPOINT
                         or type(request["retry_count"]) is not int or request["retry_count"] != 0
                         or not _HASH.fullmatch(request["account_fingerprint"])
                         or not _HASH.fullmatch(request["request_sha256"])
                         or not _HASH.fullmatch(request["prompt_sha256"])
-                        or request["prompt_sha256"] != owner.prompt_sha256
+                        or request["prompt_sha256"] != (child["goal_sha256"] if is_child_attempt
+                                                          else owner.prompt_sha256)
                         or not isinstance(request["parent_tool_names"], list)
-                        or not 1 <= len(request["parent_tool_names"]) <= 512
+                        or len(request["parent_tool_names"]) > 512
                         or any(not isinstance(name, str) or not _ID.fullmatch(name)
                                for name in request["parent_tool_names"])
                         or len(set(request["parent_tool_names"])) != len(request["parent_tool_names"])
                         or policy is None
-                        or not set(request["parent_tool_names"]).issubset(policy.configured_parent_tool_names)
-                        or "resources_delegate" not in request["parent_tool_names"]
-                        or (not policy.allow_inherited_mcp
-                            and any(name.startswith("mcp__") for name in request["parent_tool_names"]))):
+                        or (is_child_attempt and (
+                            child["owner"] is not owner or child["expiry"] <= time.monotonic()
+                            or child["peer"] != peer
+                            or child["turn_id"] not in (None, request["turn_id"])
+                            or request["account_fingerprint"] != child["account"]
+                            or tuple(request["parent_tool_names"]) != child_tools
+                            or (child["mode"] == "planner" and bool(request["parent_tool_names"]))
+                        ))
+                        or (not is_child_attempt and (
+                            not 1 <= len(request["parent_tool_names"])
+                            or not set(request["parent_tool_names"]).issubset(policy.configured_parent_tool_names)
+                            or "resources_delegate" not in request["parent_tool_names"]
+                            or (not policy.allow_inherited_mcp
+                                and any(name.startswith("mcp__") for name in request["parent_tool_names"]))
+                        ))):
                     raise ValueError("attempt is not an enrolled current subscription turn")
+                if is_child_attempt and child["turn_id"] is None:
+                    child["turn_id"] = request["turn_id"]
                 handle = secrets.token_urlsafe(32)
                 if len(self._attempts) >= 2048:
                     raise ValueError("native attempt registry is full")
@@ -1045,15 +1673,22 @@ class RootCoreNativeObservationRegistry:
                     "turn_id": request["turn_id"], "api_request_id": request["api_request_id"],
                     "account": request["account_fingerprint"], "expiry": expiry, "response": None,
                     "parent_tool_names": tuple(request["parent_tool_names"]),
-                    "policy_handle": policy.policy_handle}
+                    "policy_handle": policy.policy_handle, "model": request["model"],
+                    "child_admission_handle": child["admission_handle"] if is_child_attempt else None,
+                    "response_text_sha256": None}
+                if is_child_attempt:
+                    child["attempts"].append(handle)
                 return {"schema": 1, "nonce": nonce, "ok": True, "attempt_handle": handle,
                         "owner_turn_handle": owner.owner_turn_handle, "expires_monotonic": expiry}
             if op == "register-response":
-                if set(request) != {"schema", "op", "nonce", "attempt_handle", "response_sha256", "tool_calls", "completed"}:
+                if set(request) != {"schema", "op", "nonce", "attempt_handle", "response_sha256",
+                                    "response_text_sha256", "tool_calls", "completed"}:
                     raise ValueError("response schema mismatch")
                 row = self._attempts.get(request["attempt_handle"])
                 if (row is None or row["expiry"] <= time.monotonic() or row["response"] is not None
                         or type(request["completed"]) is not bool or not _HASH.fullmatch(request["response_sha256"])
+                        or (request["response_text_sha256"] is not None
+                            and not _HASH.fullmatch(request["response_text_sha256"]))
                         or not isinstance(request["tool_calls"], list) or len(request["tool_calls"]) > 128):
                     raise ValueError("response is not a live unique attempt result")
                 calls = {}
@@ -1063,7 +1698,20 @@ class RootCoreNativeObservationRegistry:
                             or not _HASH.fullmatch(item["arguments_sha256"]) or item["id"] in calls):
                         raise ValueError("provider call inventory is malformed")
                     calls[item["id"]] = item
-                row["response"] = (request["response_sha256"], calls) if request["completed"] else (None, {})
+                child = self._child_sessions.get(row["session_id"])
+                if child is not None:
+                    if (any(item["name"] not in child["tool_names"] for item in calls.values())
+                            or (child["mode"] == "planner" and calls)
+                            or (child["mode"] == "planner" and request["completed"]
+                                and not _HASH.fullmatch(request["response_text_sha256"] or ""))):
+                        raise ValueError("child response exceeds its admitted tool or text closure")
+                row["response"] = ((request["response_sha256"], calls,
+                                    request["response_text_sha256"])
+                                   if request["completed"] else (None, {}, None))
+                if request["completed"]:
+                    row["response_text_sha256"] = request["response_text_sha256"]
+                    if child is not None:
+                        child["response_text_sha256"] = request["response_text_sha256"]
                 return {"schema": 1, "nonce": nonce, "ok": True}
             if op == "register-tool-call":
                 if set(request) != {"schema", "op", "nonce", "attempt_handle", "tool_call_id", "canonical_arguments_b64"}:
@@ -1072,6 +1720,9 @@ class RootCoreNativeObservationRegistry:
                 if row is None or row["expiry"] <= time.monotonic() or row["response"] is None:
                     raise ValueError("tool call has no completed live response")
                 returned = row["response"][1].get(request["tool_call_id"])
+                child = self._child_sessions.get(row["session_id"])
+                if child is not None and (returned is None or returned["name"] not in child["tool_names"]):
+                    raise ValueError("child tool call is outside its admitted finite closure")
                 args = base64.b64decode(request["canonical_arguments_b64"], validate=True)
                 if (returned is None or hashlib.sha256(args).hexdigest() != returned["arguments_sha256"]
                         or not _ID.fullmatch(returned["name"])):
@@ -1147,6 +1798,11 @@ class RootCoreNativeObservationRegistry:
                         or (not policy.allow_inherited_mcp
                             and any(name.startswith("mcp__") for name in call["parent_tool_names"]))):
                     raise ValueError("dispatch lineage is no longer current")
+                if owner.mission_binding is not None and owner.mission_binding.execution_mode == "pending":
+                    raise ValueError("pending mission mode cannot dispatch")
+                self._consumed_dispatches[request["claim_handle"]] = {
+                    **claim, "expiry": min(claim["expiry"], time.monotonic() + 30.0),
+                }
                 # Source/tool/privacy intersection is completed by the consumer against
                 # the exact locally injected parent Agent; no Agent crosses this socket.
                 manifest = [{"path": item.path, "sha256": item.sha256, "size": item.size}
@@ -1269,6 +1925,10 @@ class RootCoreNativeObservationRegistry:
             self._calls.clear()
             self._claims.clear()
             self._mission_pending.clear()
+            self._consumed_dispatches.clear()
+            self._child_sessions.clear()
+            self._planning_completions.clear()
+            self._master_selections.clear()
 
 
 def serve_core_native_observer(registry: RootCoreNativeObservationRegistry, *,
@@ -1368,7 +2028,7 @@ def _response_tool_calls(response: Any) -> list[tuple[str, str, bytes]]:
 def _request_tool_names(request: Mapping[str, Any]) -> tuple[str, ...]:
     """Read the exact function-tool inventory sent to the provider."""
     tools = request.get("tools")
-    if not isinstance(tools, list) or not 1 <= len(tools) <= 512:
+    if not isinstance(tools, list) or len(tools) > 512:
         raise CoreNativeObservationUnavailable("native parent tool inventory is unavailable")
     names: list[str] = []
     for item in tools:
@@ -1404,6 +2064,21 @@ def _native_prompt_sha256(request: Mapping[str, Any]) -> str:
             or not isinstance(content[0].get("text"), str)):
         raise CoreNativeObservationUnavailable("native user prompt cannot be bound byte-for-byte")
     return hashlib.sha256(content[0]["text"].encode("utf-8", errors="strict")).hexdigest()
+
+
+def _native_delegate_execution_gate(*, tool_name: str, args: Any,
+                                    next_call: Callable[[Any], Any], **_event: Any) -> Any:
+    """Block model-issued direct delegation while preserving the Resources adapter.
+
+    Official PluginContext.dispatch_tool calls tools.registry.dispatch directly and
+    therefore does not traverse tool_execution middleware. The fixed Resources
+    handler is the only approved internal caller; ordinary model tool execution
+    reaches this middleware and is denied without invoking downstream dispatch.
+    """
+    if tool_name == "delegate_task":
+        return json.dumps({"success": False, "state": "native-delegation-requires-resources-policy",
+                           "message": "Use the owner-authorized Resources delegation route."})
+    return next_call(args)
 
 
 def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObservationClient,
@@ -1482,7 +2157,7 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
                 failure_bytes = _canonical({"completed": False})
                 client.register_response(attempt=attempt,
                     response_sha256=hashlib.sha256(failure_bytes).hexdigest(),
-                    tool_calls=[], completed=False)
+                    response_text_sha256=None, tool_calls=[], completed=False)
             except Exception:
                 pass
             raise
@@ -1496,12 +2171,19 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
             if not same_account:
                 return response
             calls = _response_tool_calls(response)
+            output_text = getattr(response, "output_text", None)
+            response_text_sha256 = None
+            if isinstance(output_text, str):
+                output_bytes = output_text.encode("utf-8", errors="strict")
+                if output_bytes and len(output_bytes) <= 32 * 1024:
+                    response_text_sha256 = hashlib.sha256(output_bytes).hexdigest()
             response_bytes = _canonical(response.model_dump(mode="json"))
             if not 1 <= len(response_bytes) <= MAX_FRAME:
                 return response
             try:
                 client.register_response(
                     attempt=attempt, response_sha256=hashlib.sha256(response_bytes).hexdigest(),
+                    response_text_sha256=response_text_sha256,
                     tool_calls=[{"id": call_id, "name": name,
                                  "arguments_sha256": hashlib.sha256(arguments).hexdigest()}
                                 for call_id, name, arguments in calls],
@@ -1524,6 +2206,9 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
     registrations = []
     try:
         registrations.append(register("llm_execution", observe))
+        # This is a model-call gate, not the trusted Resources wrapper path:
+        # PluginContext.dispatch_tool bypasses tool_execution middleware.
+        registrations.append(register("tool_execution", _native_delegate_execution_gate))
         return tuple(registrations)
     except Exception:
         raise CoreNativeObservationUnavailable("native Codex observer registration failed") from None
@@ -1727,7 +2412,8 @@ __all__ = [
     "CoreNativeResourcesDelegateRegistration", "current_resources_delegate_registration",
     "NativeSourceMember", "ObservedProviderAttempt", "OwnerTurnHandle",
     "RootSelectedInternalProfileDispatchClaim", "RootVerifiedMissionDispatchAuthorization",
-    "RootCoreNativeObservationRegistry",
+    "RootVerifiedNativeChildAuthorization", "CoreVerifiedJarvisMasterPlanningCompletion",
+    "RootCoreNativeObservationRegistry", "_native_delegate_execution_gate",
     "RootInternalProfileClaimSource", "serve_core_native_observer",
     "install_native_codex_process_observer", "register_native_resources_observer",
     "register_tool_call_from_current_parent",
