@@ -102,8 +102,7 @@ def test_registered_tool_dispatches_through_native_delegate_with_exact_parent():
     }
     tool_name, args, kwargs = context.dispatches[0]
     assert tool_name == "delegate_task"
-    assert args["role"] == "orchestrator"
-    assert set(args) == {"goal", "role", "context"}
+    assert set(args) == {"goal", "context"}
     assert "provider" not in args and "toolsets" not in args
     assert kwargs == {"parent_agent": parent}
     assert "source-selected internal profile identity" in args["context"]
