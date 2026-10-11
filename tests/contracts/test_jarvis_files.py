@@ -128,6 +128,9 @@ def test_file_upload_parser_accepts_only_bounded_utf8_text_with_safe_basename():
             self.raw = json.dumps(body, separators=(",", ":")).encode()
             self.content_length = len(self.raw)
 
+        def clone(self, **_kwargs):
+            return self
+
         async def read(self):
             return self.raw
 

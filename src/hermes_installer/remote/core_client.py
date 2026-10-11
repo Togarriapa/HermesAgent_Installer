@@ -10,6 +10,7 @@ import base64
 import hashlib
 import json
 import math
+import re
 import secrets
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Literal, Mapping
@@ -23,6 +24,7 @@ CORE_PATH = "/api/ws"
 MAX_RPC_FRAME_BYTES = 256 * 1024
 MAX_CORE_TEXT_CHARS = 64_000
 MAX_FILE_ATTACHMENT_BYTES = 128 * 1024
+_ATTACHMENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,119}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -339,7 +341,7 @@ class CoreRpcClient:
         callers cannot select a gateway filesystem path or the RPC method/params.
         """
         if (not _valid_session_id(session_id) or not isinstance(name, str)
-                or not 1 <= len(name) <= 120 or any(ord(char) < 0x20 for char in name)
+                or not _ATTACHMENT_NAME_RE.fullmatch(name) or ".." in name
                 or media_type not in {"text/plain", "text/markdown", "text/csv", "application/json"}
                 or not isinstance(content, bytes) or not 1 <= len(content) <= MAX_FILE_ATTACHMENT_BYTES):
             raise JarvisChatDenied("file attachment is outside the fixed adapter bounds")
