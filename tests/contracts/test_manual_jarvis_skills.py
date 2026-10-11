@@ -20,10 +20,14 @@ from hermes_installer.registry.manual_jarvis_skills import (
     ManualJarvisSkillsError,
     PRIMARY_SKILLS,
     _read_artifact,
+    _verify_owner_skill_overlay_transition,
     build_manual_jarvis_skills_artifact,
     install_and_verify_manual_jarvis_skills,
     install_manual_jarvis_skills,
     _verify_owned_generation,
+)
+from hermes_installer.registry.resources_skill_overlay import (
+    ResourcesSkillOverlayError, build_effective_artifact, pinned_skill_bytes,
 )
 from hermes_installer.registry.native_install import NativeInstallReceipt
 from hermes_installer.registry.jarvis_master_semantics import (
@@ -107,6 +111,37 @@ class ManualJarvisSkillsTests(unittest.TestCase):
             victim.write_bytes(victim.read_bytes() + b"user edit")
             with self.assertRaises(ManualJarvisSkillsError):
                 _verify_owned_generation(generation, files, self.digest)
+
+    def test_resources_skill_overlay_changes_only_selected_pinned_document(self):
+        original_manifest, original_files = _read_artifact(self.bundle, self.digest)
+        skill_id = "conversation-gateway"
+        original = pinned_skill_bytes(self.bundle, skill_id)
+        edited = original + b"\nOwner note: use the reviewed local gateway.\n"
+        effective, effective_sha = build_effective_artifact(self.bundle, skill_id, edited)
+        next_manifest, next_files = _read_artifact(effective, effective_sha)
+        self.assertEqual(original_files, _read_artifact(self.bundle, self.digest)[1])
+        changed = {name for name in original_files if original_files[name] != next_files[name]}
+        self.assertEqual(changed, {f"skills/{skill_id}/SKILL.md"})
+        self.assertEqual(next_files[f"skills/{skill_id}/SKILL.md"], edited)
+        self.assertEqual(next_manifest["source"], original_manifest["source"])
+        self.assertEqual(next_manifest["profile_members"], original_manifest["profile_members"])
+        _verify_owner_skill_overlay_transition(original_manifest, original_files, self.digest,
+                                               next_manifest, next_files)
+
+    def test_resources_skill_overlay_rejects_identity_change_and_protected_delta(self):
+        with self.assertRaises(ResourcesSkillOverlayError):
+            build_effective_artifact(self.bundle, "conversation-gateway",
+                b"---\nname: other-skill\n\nnot the selected identity\n")
+        original_manifest, original_files = _read_artifact(self.bundle, self.digest)
+        effective, effective_sha = build_effective_artifact(self.bundle, "conversation-gateway",
+            pinned_skill_bytes(self.bundle, "conversation-gateway") + b"\nowner edit\n")
+        next_manifest, next_files = _read_artifact(effective, effective_sha)
+        protected = "registry/profiles/orchestrator/SOUL.md"
+        altered_files = dict(next_files)
+        altered_files[protected] += b"unexpected change"
+        with self.assertRaises(ManualJarvisSkillsError):
+            _verify_owner_skill_overlay_transition(original_manifest, original_files, self.digest,
+                                                   next_manifest, altered_files)
 
     def test_stage_is_namespaced_owned_idempotent_and_preserves_existing_home(self):
         with tempfile.TemporaryDirectory() as tmp:

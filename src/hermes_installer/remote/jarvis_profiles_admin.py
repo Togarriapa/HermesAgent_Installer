@@ -83,8 +83,9 @@ class NativeSkillDescriptor:
     skill_id: str
     display_name: str
     sha256: str
-    source: Literal["pinned", "owner-added"]
+    source: Literal["resources", "owner-added"]
     editable: bool
+    overlay_active: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,8 +95,9 @@ class NativeSkillFile:
     content: str
     sha256: str
     source_generation: str
-    source: Literal["pinned", "owner-added"]
+    source: Literal["resources", "owner-added"]
     effective: bool
+    overlay_active: bool = False
 
 
 class JarvisProfileAdminProvider(Protocol):
@@ -131,12 +133,12 @@ class CoreGatewayProfileAdminProvider:
               profile_key: str | None = None, file_kind: str | None = None,
               skill_id: str | None = None,
               expected_sha256: str | None = None, content: str | None = None,
-              idempotency_key: str | None = None) -> Any:
+              idempotency_key: str | None = None, restore_id: str | None = None) -> Any:
         from .core_gateway_inspector import CoreGatewayInspector
         return CoreGatewayInspector(self._config).owner_profile_admin(access_jwt,
             accepted_ingress, action=action, profile_id=profile_key,
             file_kind=file_kind, skill_id=skill_id, expected_sha256=expected_sha256,
-            content=content, idempotency_key=idempotency_key)
+            content=content, idempotency_key=idempotency_key, restore_id=restore_id)
 
     def list_skills(self, *, core_generation: str, access_jwt: str,
                     accepted_ingress: Any) -> tuple[NativeSkillDescriptor, ...]:
@@ -147,16 +149,18 @@ class CoreGatewayProfileAdminProvider:
             raise JarvisChatDenied("current native skill inventory is invalid")
         result = []
         for row in rows:
-            if (type(row) is not dict or set(row) != {"skill_id", "name", "sha256", "source", "editable"}
+            if (type(row) is not dict or set(row) != {"skill_id", "name", "sha256", "source", "editable", "overlay_active"}
                     or not isinstance(row.get("skill_id"), str)
                     or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", row["skill_id"]) is None
                     or row.get("name") != row["skill_id"] or not _HASH.fullmatch(row.get("sha256", ""))
-                    or row.get("source") not in {"pinned", "owner-added"}
+                    or row.get("source") not in {"resources", "owner-added"}
                     or type(row.get("editable")) is not bool
-                    or row["editable"] != (row["source"] == "owner-added")):
+                    or row["editable"] is not True
+                    or type(row.get("overlay_active")) is not bool
+                    or (row["source"] == "owner-added" and row["overlay_active"])):
                 raise JarvisChatDenied("current native skill inventory is invalid")
             result.append(NativeSkillDescriptor(row["skill_id"], row["name"], row["sha256"],
-                row["source"], row["editable"]))
+                row["source"], row["editable"], row["overlay_active"]))
         return tuple(result)
 
     def read_skill(self, *, core_generation: str, skill_id: str, access_jwt: str,
@@ -166,20 +170,21 @@ class CoreGatewayProfileAdminProvider:
         row = self._call(action="skill-read", access_jwt=access_jwt,
             accepted_ingress=accepted_ingress, skill_id=skill_id)
         if (type(row) is not dict or set(row) != {"skill_id", "file_name", "content", "sha256",
-                "signature", "source_generation", "source", "effective"}
+                "signature", "source_generation", "source", "effective", "overlay_active"}
                 or row.get("skill_id") != skill_id
                 or row.get("file_name") != f"skills/{skill_id}/SKILL.md"
                 or type(row.get("signature")) is not list or len(row["signature"]) != 9
-                or row.get("source") not in {"pinned", "owner-added"}
+                or row.get("source") not in {"resources", "owner-added"}
                 or not isinstance(row.get("content"), str)
                 or not _valid_text(row["content"])
                 or not _HASH.fullmatch(row.get("sha256", ""))
                 or hashlib.sha256(row["content"].encode("utf-8")).hexdigest() != row["sha256"]
                 or not _valid_generation(row.get("source_generation"))
-                or type(row.get("effective")) is not bool):
+                or type(row.get("effective")) is not bool
+                or type(row.get("overlay_active")) is not bool):
             raise JarvisChatDenied("current native skill source is unavailable")
         return NativeSkillFile(row["skill_id"], row["file_name"], row["content"], row["sha256"],
-            row["source_generation"], row["source"], row["effective"])
+            row["source_generation"], row["source"], row["effective"], row["overlay_active"])
 
     def write_skill(self, *, core_generation: str, skill_id: str, expected_sha256: str,
                     content: str, idempotency_key: str, access_jwt: str,
@@ -206,6 +211,39 @@ class CoreGatewayProfileAdminProvider:
         if type(row) is not dict or set(row) != {"state", "skill_id", "source_generation", "sha256",
                 "recovery_id", "effective_readback"}:
             raise JarvisChatDenied("native skill archive result is unavailable")
+        return ProfileAdminWriteResult(row["state"], row["source_generation"], row["sha256"],
+            row["recovery_id"], row["effective_readback"])
+
+    def list_archived_skills(self, *, core_generation: str, skill_id: str,
+                             access_jwt: str, accepted_ingress: Any) -> tuple[dict[str, str], ...]:
+        if accepted_ingress.core_generation != core_generation:
+            raise JarvisChatDenied("skill Core generation changed")
+        row = self._call(action="skill-restore-list", access_jwt=access_jwt,
+            accepted_ingress=accepted_ingress, skill_id=skill_id)
+        versions = row.get("versions") if type(row) is dict and row.get("skill_id") == skill_id else None
+        if type(versions) is not list or len(versions) > 4096:
+            raise JarvisChatDenied("archived Resources versions are unavailable")
+        result = []
+        for item in versions:
+            if (type(item) is not dict or set(item) != {"restore_id", "sha256"}
+                    or not _HASH.fullmatch(item.get("restore_id", ""))
+                    or not _HASH.fullmatch(item.get("sha256", ""))):
+                raise JarvisChatDenied("archived Resources version inventory is invalid")
+            result.append(dict(item))
+        return tuple(result)
+
+    def restore_skill(self, *, core_generation: str, skill_id: str, expected_sha256: str,
+                      restore_id: str, idempotency_key: str, access_jwt: str,
+                      accepted_ingress: Any) -> ProfileAdminWriteResult:
+        if accepted_ingress.core_generation != core_generation:
+            raise JarvisChatDenied("skill Core generation changed")
+        row = self._call(action="skill-restore", access_jwt=access_jwt,
+            accepted_ingress=accepted_ingress, skill_id=skill_id,
+            expected_sha256=expected_sha256, idempotency_key=idempotency_key,
+            restore_id=restore_id)
+        if type(row) is not dict or set(row) != {"state", "skill_id", "source_generation", "sha256",
+                "recovery_id", "effective_readback"}:
+            raise JarvisChatDenied("Resources skill restore is unavailable")
         return ProfileAdminWriteResult(row["state"], row["source_generation"], row["sha256"],
             row["recovery_id"], row["effective_readback"])
 

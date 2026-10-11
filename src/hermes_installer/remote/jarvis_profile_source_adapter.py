@@ -218,6 +218,50 @@ def read_profile_skill(profile_id: str, skill_name: str) -> ProfileFileRead:
                            hashlib.sha256(raw).hexdigest(), signature)
 
 
+def read_resources_skill(skill_name: str) -> ProfileFileRead:
+    """Read the exact installed Resources generation member without following links."""
+    if os.geteuid() != 0 or not _SKILL_ID.fullmatch(skill_name):
+        raise ProfileFileCustodyError("pinned Resources skill selector is invalid")
+    from ..registry.manual_jarvis_skills import _GENERATION
+    flags = (os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+             | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+    fd = os.open("/", flags)
+    try:
+        for name, uid, gid, mode in (("home", 0, 0, 0o755), ("admin", HOME_UID, HOME_GID, 0o700),
+                (".hermes", HOME_UID, HOME_GID, 0o700), ("skills", HOME_UID, HOME_GID, None),
+                (_GENERATION, HOME_UID, HOME_GID, 0o700), ("skills", HOME_UID, HOME_GID, None),
+                (skill_name, HOME_UID, HOME_GID, None)):
+            child = os.open(name, flags, dir_fd=fd)
+            info = os.fstat(child)
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != uid or info.st_gid != gid
+                    or (mode is not None and stat.S_IMODE(info.st_mode) != mode)
+                    or stat.S_IMODE(info.st_mode) & 0o022):
+                os.close(child)
+                raise ProfileFileCustodyError("Resources skill directory custody differs")
+            os.close(fd)
+            fd = child
+        leaf = "SKILL.md"
+        file_fd = os.open(leaf, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                          | getattr(os, "O_CLOEXEC", 0), dir_fd=fd)
+        try:
+            raw, signature = _read_fd(file_fd)
+            named = os.stat(leaf, dir_fd=fd, follow_symlinks=False)
+            if _signature(named) != signature:
+                raise ProfileFileCustodyError("Resources skill changed during read")
+        finally:
+            os.close(file_fd)
+    finally:
+        os.close(fd)
+    try:
+        content = raw.decode("utf-8", "strict")
+    except UnicodeError:
+        raise ProfileFileCustodyError("Resources skill is not UTF-8") from None
+    if "\x00" in content:
+        raise ProfileFileCustodyError("Resources skill is not text")
+    return ProfileFileRead("hermes", "skill", f"{_GENERATION}/skills/{skill_name}/SKILL.md",
+        content, hashlib.sha256(raw).hexdigest(), signature)
+
+
 def current_profile_skill_files(pinned_skill_ids: tuple[str, ...]) -> tuple[dict[str, Any], ...]:
     """List exact existing Core-home SKILL.md leaves joined to pinned IDs."""
     if (os.geteuid() != 0 or type(pinned_skill_ids) is not tuple

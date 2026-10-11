@@ -1,6 +1,6 @@
 """Fixed, journaled adoption of the pinned Hermes core service."""
 from __future__ import annotations
-import grp, hashlib, json, os, pwd, re, secrets, shlex, stat, subprocess, sys, tempfile, time
+import fcntl, grp, hashlib, json, os, pwd, re, secrets, shlex, stat, subprocess, sys, tempfile, time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -21,6 +21,7 @@ RESOURCES_CAS=Path("/var/lib/hermes-installer/core-runtime/resources-cas")
 RESOURCES_MIGRATION_RECORD=Path("/var/lib/hermes-installer/core-runtime/resources-migration-backup.json")
 PRIMARY_PROMPT_JOURNAL=Path("/var/lib/hermes-installer/core-runtime/primary-prompt-ownership.json")
 PRIMARY_PROMPT_BACKUPS=Path("/var/lib/hermes-installer/core-runtime/primary-prompt-backups")
+RESOURCES_SKILL_OVERLAYS=Path("/var/lib/hermes-installer/core-runtime/resources-skill-overlays")
 ADAPTER_MIGRATION_BACKUP=Path("/var/lib/hermes-installer/core-runtime/adapter-migration-backup")
 # This exact older package was materialized before the importer helper was
 # hardened. Its only difference from the current package is that helper member;
@@ -783,8 +784,45 @@ def _verified_resources_payload(_admin_receipt=None,*,repair_umask_dirs=False):
  """Build a root-derived receipt and initiate a fresh pinned native-loader query."""
  from .registry import manual_jarvis_skills as native
  archive=native.build_manual_jarvis_skills_artifact()
+ base_archive=archive
  artifact_sha=hashlib.sha256(archive).hexdigest()
  manifest,files=native._read_artifact(archive,artifact_sha)
+ # Owner edits are root-journaled overlays over exact pinned member IDs. The
+ # source artifact remains byte-for-byte immutable and is rebuilt above.
+ overlay_record_path=RESOURCES_SKILL_OVERLAYS/"active.json"
+ try:
+  overlay_record_bytes=_projection_file(overlay_record_path,owner=ROOT_UID,group=ROOT_UID,
+    mode=0o600,maximum=256*1024)
+ except FileNotFoundError:
+  overlay_record_bytes=None
+ if overlay_record_bytes is not None:
+  try:
+   from .registry import resources_skill_overlay as skill_overlay
+   overlay_record=json.loads(overlay_record_bytes)
+   if (type(overlay_record) is not dict or set(overlay_record)!={"schema","base_artifact_sha256","skills"}
+       or overlay_record.get("schema")!=1 or overlay_record.get("base_artifact_sha256")!=artifact_sha
+       or type(overlay_record.get("skills")) is not dict or len(overlay_record["skills"])>396):
+    raise ValueError
+   pinned={row["skill_id"]:row for row in manifest["skill_members"]}
+   overlay_contents={}
+   for skill_id,row in sorted(overlay_record["skills"].items()):
+    if (skill_id not in pinned or type(row) is not dict
+        or set(row)!={"content_sha256","archive_sha256"}
+        or re.fullmatch(r"[0-9a-f]{64}",row["content_sha256"]) is None
+        or re.fullmatch(r"[0-9a-f]{64}",row["archive_sha256"]) is None):
+     raise ValueError
+    content=_projection_file(RESOURCES_SKILL_OVERLAYS/(row["content_sha256"]+".bin"),
+      owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=256*1024)
+    if hashlib.sha256(content).hexdigest()!=row["content_sha256"]:
+     raise ValueError
+    overlay_contents[skill_id]=content
+   archive,archive_digests=skill_overlay.compose_overlays(base_archive,overlay_contents)
+   for skill_id,row in overlay_record["skills"].items():
+    if archive_digests.get(skill_id)!=row["archive_sha256"]: raise ValueError
+   artifact_sha=hashlib.sha256(archive).hexdigest()
+   manifest,files=native._read_artifact(archive,artifact_sha)
+  except Exception:
+   raise CoreRuntimeError("root Resources skill overlay journal is malformed or unverifiable") from None
  expected_other=len(manifest["bundled_resource_inventory"])-len(manifest["skill_members"])-len(manifest["profile_members"])
  if len(manifest["skill_members"])!=396 or len(manifest["profile_members"])!=208 or expected_other!=88:
   raise CoreRuntimeError("pinned offline Resources inventory differs")
@@ -868,6 +906,227 @@ def _write_resources_discovery(*,repair_umask_dirs=False):
   _atomic(cas,archive,0o600,ROOT_UID,ROOT_UID)
  _atomic_replace(RESOURCES_RECORD,(json.dumps(record,sort_keys=True,separators=(",",":"))+"\n").encode("ascii"),0o600,ROOT_UID,ROOT_UID)
  return record
+
+def _resources_skill_overlay_read():
+ """Read the strict root journal and its content-addressed owner bytes."""
+ path=RESOURCES_SKILL_OVERLAYS/"active.json"
+ try: raw=_projection_file(path,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=256*1024)
+ except FileNotFoundError: raw=None
+ from .registry import manual_jarvis_skills as native
+ base_archive=native.build_manual_jarvis_skills_artifact(); base_sha=hashlib.sha256(base_archive).hexdigest()
+ if raw is None: return {"schema":1,"base_artifact_sha256":base_sha,"skills":{}}, {}, None
+ try:
+  record=json.loads(raw)
+  if (type(record) is not dict or set(record)!={"schema","base_artifact_sha256","skills"}
+      or record.get("schema")!=1 or record.get("base_artifact_sha256")!=base_sha
+      or type(record.get("skills")) is not dict or len(record["skills"])>396): raise ValueError
+  contents={}
+  for name,row in record["skills"].items():
+   if (type(row) is not dict or set(row)!={"content_sha256","archive_sha256"}
+       or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}",name) is None
+       or re.fullmatch(r"[0-9a-f]{64}",row["content_sha256"]) is None
+       or re.fullmatch(r"[0-9a-f]{64}",row["archive_sha256"]) is None): raise ValueError
+   content=_projection_file(RESOURCES_SKILL_OVERLAYS/(row["content_sha256"]+".bin"),
+     owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=256*1024)
+   if hashlib.sha256(content).hexdigest()!=row["content_sha256"]: raise ValueError
+   contents[name]=content
+  from .registry import resources_skill_overlay as transform
+  _,digests=transform.compose_overlays(base_archive,contents)
+  if any(digests.get(name)!=row["archive_sha256"] for name,row in record["skills"].items()): raise ValueError
+  return record,contents,raw
+ except Exception:
+  raise CoreRuntimeError("root Resources skill overlay journal is malformed or unverifiable") from None
+
+def list_archived_resources_skill_versions(skill_id,core_source_generation):
+ """List restorable owner versions after revalidating source, root files and hashes."""
+ if (os.geteuid()!=ROOT_UID or not isinstance(skill_id,str)
+     or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}",skill_id) is None
+     or not isinstance(core_source_generation,str)
+     or re.fullmatch(r"[0-9a-f]{64}",core_source_generation) is None):
+  raise CoreRuntimeError("Resources archive-list request is malformed")
+ recover_resources_skill_overlay()
+ current=read_current_resources_discovery(core_source_generation=core_source_generation)
+ if current.get("resources_state")!="discovered": raise CoreRuntimeError("verified Resources source is unavailable")
+ directory=RESOURCES_SKILL_OVERLAYS
+ try: names=os.listdir(directory)
+ except FileNotFoundError: return []
+ candidates=sorted(name[:-5] for name in names if re.fullmatch(r"[0-9a-f]{64}\.json",name))
+ if len(candidates)>4096: raise CoreRuntimeError("Resources archive inventory exceeds its bound")
+ results=[]
+ from .registry import resources_skill_overlay as transform
+ for restore_id in candidates:
+  raw=_projection_file(directory/(restore_id+".json"),owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=4096)
+  try:
+   metadata=json.loads(raw)
+   if (type(metadata) is not dict or set(metadata)!={"schema","skill_id","content_sha256","restore_id"}
+       or metadata.get("schema")!=1 or metadata.get("skill_id")!=skill_id
+       or metadata.get("restore_id")!=restore_id
+       or re.fullmatch(r"[0-9a-f]{64}",metadata.get("content_sha256","")) is None): continue
+   content=_projection_file(directory/(metadata["content_sha256"]+".bin"),owner=ROOT_UID,
+     group=ROOT_UID,mode=0o600,maximum=256*1024)
+   if hashlib.sha256(content).hexdigest()!=metadata["content_sha256"]: continue
+   from .registry import manual_jarvis_skills as native
+   transform.build_effective_artifact(native.build_manual_jarvis_skills_artifact(),skill_id,content)
+   results.append({"restore_id":restore_id,"sha256":metadata["content_sha256"]})
+  except (CoreRuntimeError,ValueError,TypeError,KeyError):
+   continue
+ return results
+
+def recover_resources_skill_overlay():
+ """Resolve a crash-window transaction only when the exact old or new tree is present."""
+ pending_path=RESOURCES_SKILL_OVERLAYS/"pending.json"
+ try: raw=_projection_file(pending_path,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=32*1024*1024)
+ except FileNotFoundError: return False
+ try:
+  pending=json.loads(raw)
+  if (type(pending) is not dict or set(pending)!={"schema","old_record","new_record","old_archive_sha256","new_archive_sha256","idempotency_key","request_sha256","result"}
+      or pending.get("schema")!=1
+      or re.fullmatch(r"[0-9a-f]{64}",pending.get("idempotency_key","")) is None
+      or re.fullmatch(r"[0-9a-f]{64}",pending.get("request_sha256","")) is None
+      or re.fullmatch(r"[0-9a-f]{64}",pending.get("old_archive_sha256","")) is None
+      or re.fullmatch(r"[0-9a-f]{64}",pending.get("new_archive_sha256","")) is None
+      or type(pending.get("result")) is not dict): raise ValueError
+  old_archive=_projection_file(RESOURCES_CAS/(pending["old_archive_sha256"]+".zip"),owner=ROOT_UID,
+    group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
+  new_archive=_projection_file(RESOURCES_CAS/(pending["new_archive_sha256"]+".zip"),owner=ROOT_UID,
+    group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
+  if (hashlib.sha256(old_archive).hexdigest()!=pending["old_archive_sha256"]
+      or hashlib.sha256(new_archive).hexdigest()!=pending["new_archive_sha256"]): raise ValueError
+  from .registry import manual_jarvis_skills as native
+  old_manifest,old_files=native._read_artifact(old_archive,pending["old_archive_sha256"])
+  new_manifest,new_files=native._read_artifact(new_archive,pending["new_archive_sha256"])
+  try:
+   _hash_generation_tree(HERMES_HOME,old_manifest,old_files,pending["old_archive_sha256"])
+   is_old=True
+  except CoreRuntimeError:
+   is_old=False
+  if is_old:
+   selected=pending["old_record"]
+  else:
+   _hash_generation_tree(HERMES_HOME,new_manifest,new_files,pending["new_archive_sha256"])
+   selected=pending["new_record"]
+  if selected is None: (RESOURCES_SKILL_OVERLAYS/"active.json").unlink(missing_ok=True)
+  else: _atomic_replace(RESOURCES_SKILL_OVERLAYS/"active.json",
+    (json.dumps(selected,sort_keys=True,separators=(",",":"))+"\n").encode("ascii"),0o600,ROOT_UID,ROOT_UID)
+  _write_resources_discovery()
+  if not is_old:
+   _ensure_dir(RESOURCES_SKILL_OVERLAYS/"operations",ROOT_UID,ROOT_UID,0o700)
+   operation={"schema":1,"request_sha256":pending["request_sha256"],"result":pending["result"]}
+   _atomic_replace(RESOURCES_SKILL_OVERLAYS/"operations"/(pending["idempotency_key"]+".json"),
+    (json.dumps(operation,sort_keys=True,separators=(",",":"))+"\n").encode("ascii"),0o600,ROOT_UID,ROOT_UID)
+  pending_path.unlink()
+  _sync_directory(pending_path.parent)
+  return True
+ except Exception:
+  raise CoreRuntimeError("Resources skill overlay recovery needs operator review; no retry was attempted") from None
+
+def admin_resources_skill(action,skill_id,*,expected_sha256,idempotency_key,core_source_generation,
+                          content=None,restore_id=None):
+ """Root-only CAS edit/archive/restore for one pinned Resources skill."""
+ if (os.geteuid()!=ROOT_UID or action not in {"write","archive","restore"}
+     or not isinstance(core_source_generation,str) or re.fullmatch(r"[0-9a-f]{64}",core_source_generation) is None
+     or not isinstance(idempotency_key,str) or re.fullmatch(r"[0-9a-f]{64}",idempotency_key) is None
+     or not isinstance(skill_id,str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}",skill_id) is None
+     or not isinstance(expected_sha256,str) or re.fullmatch(r"[0-9a-f]{64}",expected_sha256) is None):
+  raise CoreRuntimeError("Resources skill request is malformed")
+ _ensure_dir(RESOURCES_SKILL_OVERLAYS,ROOT_UID,ROOT_UID,0o700)
+ lock_path=RESOURCES_SKILL_OVERLAYS/"lock"
+ fd=os.open(lock_path,os.O_RDWR|os.O_CREAT|getattr(os,"O_NOFOLLOW",0),0o600)
+ try:
+  os.fchown(fd,ROOT_UID,ROOT_UID); os.fchmod(fd,0o600); fcntl.flock(fd,fcntl.LOCK_EX)
+  if recover_resources_skill_overlay(): pass
+  request_body=json.dumps({"action":action,"skill_id":skill_id,"expected_sha256":expected_sha256,
+   "content_sha256":hashlib.sha256(content).hexdigest() if isinstance(content,bytes) else None,
+   "restore_id":restore_id,"core_source_generation":core_source_generation},sort_keys=True,separators=(",",":" )).encode("ascii")
+  request_sha=hashlib.sha256(request_body).hexdigest()
+  operations_dir=RESOURCES_SKILL_OVERLAYS/"operations"
+  _ensure_dir(operations_dir,ROOT_UID,ROOT_UID,0o700)
+  operation_path=operations_dir/(idempotency_key+".json")
+  try:
+   prior=json.loads(_projection_file(operation_path,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=8192))
+   if prior.get("schema")!=1 or prior.get("request_sha256")!=request_sha or type(prior.get("result")) is not dict:
+    raise CoreRuntimeError("Resources skill idempotency key was reused with different input")
+   return prior["result"]
+  except FileNotFoundError: pass
+  before=read_current_resources_discovery(core_source_generation=core_source_generation)
+  if before.get("resources_state")!="discovered": raise CoreRuntimeError("verified Resources source is unavailable")
+  current_sha=before["artifact_sha256"]
+  current_archive=_projection_file(RESOURCES_CAS/(current_sha+".zip"),owner=ROOT_UID,group=ROOT_UID,
+    mode=0o600,maximum=16*1024*1024)
+  from .registry import manual_jarvis_skills as native
+  from .registry import resources_skill_overlay as transform
+  current_manifest,current_files=native._read_artifact(current_archive,current_sha)
+  row=next((item for item in current_manifest["skill_members"] if item["skill_id"]==skill_id),None)
+  if row is None: raise CoreRuntimeError("skill is not pinned in the current Resources source")
+  old_record,old_contents,old_raw=_resources_skill_overlay_read()
+  current_content=current_files[row["archive_path"]]
+  current_content_sha=hashlib.sha256(current_content).hexdigest()
+  if current_content_sha!=expected_sha256: raise CoreRuntimeError("Resources skill changed; reload before editing")
+  if action=="write":
+   if not isinstance(content,bytes): raise CoreRuntimeError("Resources skill content is missing")
+   next_content=content
+  elif action=="archive":
+   if skill_id not in old_contents: raise CoreRuntimeError("pinned Resources skills can be restored to base but not archived as owner edits")
+   next_content=None
+  else:
+   if not isinstance(restore_id,str) or re.fullmatch(r"[0-9a-f]{64}",restore_id) is None:
+    raise CoreRuntimeError("archived Resources skill version is unavailable")
+   archive_meta=_projection_file(RESOURCES_SKILL_OVERLAYS/(restore_id+".json"),owner=ROOT_UID,
+    group=ROOT_UID,mode=0o600,maximum=4096)
+   metadata=json.loads(archive_meta)
+   if (type(metadata) is not dict or set(metadata)!={"schema","skill_id","content_sha256","restore_id"}
+       or metadata.get("schema")!=1 or metadata.get("skill_id")!=skill_id
+       or metadata.get("restore_id")!=restore_id
+       or re.fullmatch(r"[0-9a-f]{64}",metadata.get("content_sha256","")) is None):
+    raise CoreRuntimeError("archived Resources skill version does not match")
+   next_content=_projection_file(RESOURCES_SKILL_OVERLAYS/(metadata["content_sha256"]+".bin"),
+    owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=256*1024)
+   if hashlib.sha256(next_content).hexdigest()!=metadata["content_sha256"]: raise CoreRuntimeError("archived skill bytes changed")
+  archived_id=None
+  if action in {"write","archive","restore"} and skill_id in old_contents:
+   archived_id=idempotency_key
+   archived_sha=hashlib.sha256(old_contents[skill_id]).hexdigest()
+   _atomic_replace(RESOURCES_SKILL_OVERLAYS/(archived_sha+".bin"),old_contents[skill_id],0o600,ROOT_UID,ROOT_UID)
+   _atomic_replace(RESOURCES_SKILL_OVERLAYS/(archived_id+".json"),json.dumps({"schema":1,"skill_id":skill_id,
+    "content_sha256":archived_sha,"restore_id":archived_id},sort_keys=True,separators=(",",":" )).encode("ascii"),0o600,ROOT_UID,ROOT_UID)
+  next_contents=dict(old_contents)
+  if next_content is None: next_contents.pop(skill_id,None)
+  else:
+   next_sha=hashlib.sha256(next_content).hexdigest()
+   _atomic_replace(RESOURCES_SKILL_OVERLAYS/(next_sha+".bin"),next_content,0o600,ROOT_UID,ROOT_UID)
+   next_contents[skill_id]=next_content
+  base_archive=native.build_manual_jarvis_skills_artifact()
+  next_archive,digests=transform.compose_overlays(base_archive,next_contents)
+  next_sha=hashlib.sha256(next_archive).hexdigest()
+  next_record={"schema":1,"base_artifact_sha256":hashlib.sha256(base_archive).hexdigest(),"skills":{
+   name:{"content_sha256":hashlib.sha256(value).hexdigest(),"archive_sha256":digests[name]}
+   for name,value in sorted(next_contents.items())}}
+  _ensure_dir(RESOURCES_CAS,ROOT_UID,ROOT_UID,0o700)
+  _atomic_replace(RESOURCES_CAS/(next_sha+".zip"),next_archive,0o600,ROOT_UID,ROOT_UID)
+  result={"state":"discovered","skill_id":skill_id,"sha256":hashlib.sha256(next_content if next_content is not None else transform.pinned_skill_bytes(base_archive,skill_id)).hexdigest(),
+   "source_generation":hashlib.sha256((core_source_generation+"\0"+next_sha).encode()).hexdigest(),
+   "recovery_id":archived_id,"effective_readback":True,"artifact_sha256":next_sha}
+  pending={"schema":1,"old_record":old_record if old_contents else None,"new_record":next_record,
+   "old_archive_sha256":current_sha,"new_archive_sha256":next_sha,"idempotency_key":idempotency_key,
+   "request_sha256":request_sha,"result":result}
+  _atomic_replace(RESOURCES_SKILL_OVERLAYS/"pending.json",
+   json.dumps(pending,sort_keys=True,separators=(",",":" )).encode("ascii"),0o600,ROOT_UID,ROOT_UID)
+  try:
+   native.install_and_verify_manual_jarvis_skills(next_archive,hermes_home=HERMES_HOME,
+    expected_sha256=next_sha,hermes_source=SOURCE,python=PYTHON,
+    replace_owned_from_archive=current_archive,replace_owned_from_sha256=current_sha)
+   _atomic_replace(RESOURCES_SKILL_OVERLAYS/"active.json",
+    (json.dumps(next_record,sort_keys=True,separators=(",",":"))+"\n").encode("ascii"),0o600,ROOT_UID,ROOT_UID)
+   receipt=_write_resources_discovery()
+   _atomic_replace(operation_path,(json.dumps({"schema":1,"request_sha256":request_sha,"result":result},
+    sort_keys=True,separators=(",",":"))+"\n").encode("ascii"),0o600,ROOT_UID,ROOT_UID)
+   (RESOURCES_SKILL_OVERLAYS/"pending.json").unlink(missing_ok=True); _sync_directory(RESOURCES_SKILL_OVERLAYS)
+  except Exception:
+   recover_resources_skill_overlay()
+   raise
+  return {**result,"artifact_sha256":receipt["artifact_sha256"]}
+ finally:
+  fcntl.flock(fd,fcntl.LOCK_UN); os.close(fd)
 
 def read_current_resources_discovery(*,core_source_generation):
  """Recheck the root receipt, held CAS, owner manifest, and every installed member."""

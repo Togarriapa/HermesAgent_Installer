@@ -466,6 +466,40 @@ def _read_artifact(archive_bytes: bytes, expected_sha256: str) -> tuple[dict[str
         raise ManualJarvisSkillsError("manual stage artifact contents are malformed or do not match its pin") from None
 
 
+def _verify_owner_skill_overlay_transition(previous_manifest, previous_files, previous_sha256,
+                                           manifest, files):
+    """Permit replacing an owned generation only for one pinned skill document."""
+    if previous_sha256 == LEGACY_MATERIALIZED_ARTIFACT_SHA256:
+        return
+    try:
+        if set(previous_files) != set(files):
+            raise ValueError
+        def normalized(source):
+            value = json.loads(_canonical_json(source))
+            for row in value["skill_members"]:
+                row.pop("size_bytes", None)
+                row.pop("sha256", None)
+            return value
+        if normalized(previous_manifest) != normalized(manifest):
+            raise ValueError
+        old_rows = {row["skill_id"]: row for row in previous_manifest["skill_members"]}
+        new_rows = {row["skill_id"]: row for row in manifest["skill_members"]}
+        if len(old_rows) != _BUNDLE_SKILL_COUNT or set(old_rows) != set(new_rows):
+            raise ValueError
+        changed_paths = {name for name in files if files[name] != previous_files[name]}
+        changed_ids = {skill_id for skill_id, row in old_rows.items()
+                       if previous_files.get(row["archive_path"]) != files.get(row["archive_path"])}
+        if (len(changed_ids) > 1 or len(changed_paths) > 1
+                or changed_ids != {skill_id for skill_id, row in old_rows.items()
+                                   if row["archive_path"] in changed_paths}
+                or (changed_paths and changed_paths != {
+                    old_rows[next(iter(changed_ids))]["archive_path"]})):
+            raise ValueError
+    except (KeyError, TypeError, ValueError):
+        raise ManualJarvisSkillsError(
+            "owned Resources replacement must change exactly one pinned SKILL.md document") from None
+
+
 def _regular_owned(path: Path, *, directory: bool) -> os.stat_result:
     try:
         info = path.lstat()
@@ -688,12 +722,12 @@ def install_manual_jarvis_skills(
     manifest, files = _read_artifact(archive_bytes, expected_sha256)
     previous_manifest = previous_files = None
     if replace_owned_from_archive is not None or replace_owned_from_sha256 is not None:
-        if replace_owned_from_sha256 != LEGACY_MATERIALIZED_ARTIFACT_SHA256:
-            raise ManualJarvisSkillsError("owned-generation migration source is not the single reviewed legacy artifact")
         if not isinstance(replace_owned_from_archive, bytes):
             raise ManualJarvisSkillsError("owned-generation migration archive is missing")
         previous_manifest, previous_files = _read_artifact(
             replace_owned_from_archive, replace_owned_from_sha256)
+        _verify_owner_skill_overlay_transition(previous_manifest, previous_files,
+            replace_owned_from_sha256, manifest, files)
     home_input = Path(hermes_home)
     if not home_input.is_absolute():
         raise ManualJarvisSkillsError("Hermes home must be an explicit absolute path")
