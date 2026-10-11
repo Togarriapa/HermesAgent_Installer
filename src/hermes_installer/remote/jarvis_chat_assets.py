@@ -379,6 +379,14 @@ html[data-page-visible="true"] .assistant-hud[data-state="speaking"] .orb-ring{a
 '''.encode("utf-8")
 
 
+_CSS += b'''
+/* Target sizes verified by the Pi phone/tablet/desktop render probe. */
+#jarvis-home,#history-toggle,#message-input,.conversation-item{min-height:44px}
+#history-toggle{min-width:44px}
+html[data-jarvis-motion="reduce"] *,html[data-jarvis-motion="reduce"] *::before,html[data-jarvis-motion="reduce"] *::after{transition-duration:0s!important}
+@media(prefers-reduced-motion:reduce){html:not([data-jarvis-motion="full"]) *,html:not([data-jarvis-motion="full"]) *::before,html:not([data-jarvis-motion="full"]) *::after{transition-duration:0s!important}}
+'''
+
 _JS = r'''/* Browser client is text-first with optional, explicitly enabled browser voice. */
 (() => {
   "use strict";
