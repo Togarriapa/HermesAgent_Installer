@@ -87,8 +87,12 @@ class CoreGatewayDenied(PermissionError):
 
 def _diagnostic_exception_kind(error: BaseException) -> str:
     """Collapse failures to a finite type label; never log exception text or data."""
+    from aiohttp import web
+    from .jarvis_chat import JarvisChatDenied
+    if isinstance(error, web.HTTPException) and error.status in {400, 401, 403, 404, 409, 413, 415, 429, 500, 503}:
+        return f"HTTP_{error.status}"
     known = (CoreGatewayDenied, GatewayDenied, TimeoutError, ValueError, TypeError,
-             OSError, PermissionError)
+             OSError, PermissionError, AttributeError, KeyError, JarvisChatDenied)
     if type(error) in known:
         return type(error).__name__
     return "OtherError"

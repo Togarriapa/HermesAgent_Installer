@@ -297,7 +297,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       if (!feature.routes.some((route) => route.method === method && featurePathMatches(route.path, path))) {
         return Promise.reject(new Error("This dashboard view is not allowed to call that service route."));
       }
-      return request(path, method === "GET" ? {method} : {method, body});
+      return request(path, method === "GET" ? {method} : {method, body: JSON.stringify(body)});
     };
     return Object.freeze({get: (path) => requestFeature("GET", path), post: (path, body) => requestFeature("POST", path, body)});
   }
