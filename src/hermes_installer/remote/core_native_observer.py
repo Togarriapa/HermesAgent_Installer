@@ -1402,6 +1402,8 @@ class RootInternalProfileClaimSource:
                 "owner_turn_handle": claim.owner_turn_handle,
                 "gateway_turn_id": claim.gateway_turn_id,
                 "tool_call_id": claim.tool_call_id,
+                "delegation_policy_sha256": claim.delegation_policy_sha256,
+                "parent_tool_configuration_sha256": claim.parent_tool_configuration_sha256,
             })
             return ResourcesDispatchClaim(
                 claim_id=claim.claim_handle, profile_id=claim.profile_id,
@@ -1414,9 +1416,17 @@ class RootInternalProfileClaimSource:
                 owner_subject_sha256=claim.owner_subject_sha256,
                 parent_tool_names=parent_tools,
                 profile_tool_names=frozenset(claim.profile_tool_names),
-                inherited_child_tool_names=frozenset(claim.profile_tool_names),
+                # This is native parent inheritance authorized by the distinct
+                # root policy, not a Resources profile tool grant.
+                inherited_child_tool_names=frozenset(claim.allowed_parent_tool_names),
                 parent_privacy_grants=frozenset(),
                 profile_privacy_requirements=frozenset(),
+                delegation_policy_handle=claim.delegation_policy_handle,
+                delegation_policy_sha256=claim.delegation_policy_sha256,
+                parent_tool_configuration_sha256=claim.parent_tool_configuration_sha256,
+                allowed_parent_tool_names=frozenset(claim.allowed_parent_tool_names),
+                allow_inherited_mcp=claim.allow_inherited_mcp,
+                allow_native_orchestrator_delegation=claim.allow_native_orchestrator_delegation,
                 route_class="existing-owner-codex-zero-additional-metered",
                 route_receipt_sha256=route_receipt,
                 max_additional_metered_microusd=0,
