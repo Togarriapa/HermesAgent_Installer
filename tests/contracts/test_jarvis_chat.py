@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import sys
 import time
+from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
@@ -318,7 +320,7 @@ def test_owner_turn_registration_uses_actual_rebound_session_and_final_prompt(tm
     assert calls[0] == {
         "access_jwt": access_jwt,
         "accepted_ingress": ingress,
-        "session_id": "runtime-subject-a",
+        "session_id": "runtime-after-idle",
         "conversation_id": conversation["id"],
         "gateway_turn_id": turn_ids[0],
         "prompt_sha256": hashlib.sha256(final_first_prompt.encode("utf-8")).hexdigest(),
@@ -335,6 +337,108 @@ def test_owner_turn_registration_uses_actual_rebound_session_and_final_prompt(tm
     current = store.get_conversation("subject-a", conversation["id"])
     assert current["backend_id"] == "runtime-after-idle"
     assert current["session_key"] == initial["session_key"]
+
+
+def test_mission_binding_is_captured_after_schedule_mapping_and_required_at_root_submit(
+        tmp_path, monkeypatch):
+    @dataclass(frozen=True, slots=True)
+    class MissionBinding:
+        schema: int
+        mission_id: str
+        revision: int
+        plan_sha256: str
+        task_sha256: str
+        source_profile_id: str
+
+        def to_wire(self):
+            return {
+                "schema": self.schema, "mission_id": self.mission_id,
+                "revision": self.revision, "plan_sha256": self.plan_sha256,
+                "task_sha256": self.task_sha256, "source_profile_id": self.source_profile_id,
+            }
+
+        @classmethod
+        def from_wire(cls, value):
+            if set(value) != {"schema", "mission_id", "revision", "plan_sha256",
+                              "task_sha256", "source_profile_id"}:
+                raise ValueError("closed MissionBinding fields required")
+            return cls(**value)
+
+    monkeypatch.setitem(sys.modules, "hermes_installer.remote.jarvis_mission_executor",
+                        SimpleNamespace(MissionBinding=MissionBinding))
+    store = JarvisChatStore(tmp_path / "chat.sqlite3")
+    conversation = new_conversation(store, "subject-a")
+    binding = MissionBinding(1, "m" * 24, 3, "a" * 64, "b" * 64, "orchestrator")
+    access_jwt, ingress = "accepted-mission-jwt", object()
+    order, registered, submitted = [], [], []
+
+    class Headers:
+        def getall(self, name, default=()):
+            return [access_jwt] if name == "Cf-Access-Jwt-Assertion" else list(default)
+
+    class Request:
+        headers = Headers()
+
+        def get(self, key):
+            return ingress if key == "core_ingress" else None
+
+    class Backend:
+        def stream_owned_turn(self, stored_session_id, text, *, before_submit):
+            async def events():
+                assert stored_session_id == "private-stored-session-subject-a-1"
+                assert text in {"server mission prompt", "ordinary prompt"}
+                await before_submit("runtime-for-mission")
+                submitted.append(text)
+                yield SimpleNamespace(kind="complete")
+            return events()
+
+        async def stop(self, _session_id):
+            pass
+
+    def register_owner_turn(**kwargs):
+        order.append("root-verify")
+        registered.append(kwargs)
+        if kwargs.get("mission_binding") is not None:
+            raise RuntimeError("mission binding unavailable at root")
+        return "c" * 32
+
+    service = JarvisChatService(
+        store, Backend(), principal_from_request=lambda _request: principal("subject-a"),
+        owner_turn_register=register_owner_turn)
+
+    async def exercise():
+        def bind_before_schedule(turn_id):
+            order.append(("persist-intent", turn_id))
+            return binding
+
+        def compensate(turn_id):
+            order.append(("invalidate", turn_id))
+
+        queued = await service.start_server_turn(
+            Request(), conversation_id=conversation["id"], text="server mission prompt",
+            idempotency_key="mission-binding-request-key-0001",
+            before_schedule=bind_before_schedule, on_schedule_failure=compensate)
+        for _ in range(100):
+            if store.owned_turn("subject-a", queued["turn_id"])["status"] == "failed":
+                break
+            await asyncio.sleep(0.01)
+        assert store.owned_turn("subject-a", queued["turn_id"])["status"] == "failed"
+
+        ordinary = await service.start_server_turn(
+            Request(), conversation_id=conversation["id"], text="ordinary prompt",
+            idempotency_key="mission-binding-ordinary-key-01")
+        for _ in range(100):
+            if store.owned_turn("subject-a", ordinary["turn_id"])["status"] == "completed":
+                break
+            await asyncio.sleep(0.01)
+        assert store.owned_turn("subject-a", ordinary["turn_id"])["status"] == "completed"
+
+    asyncio.run(exercise())
+    assert order[0][0] == "persist-intent"
+    assert order[1] == "root-verify"
+    assert registered[0]["mission_binding"] == binding
+    assert registered[1].get("mission_binding") is None
+    assert submitted == ["ordinary prompt"]
 
 
 def test_heartbeat_nonce_is_owner_bound_single_use_and_expiring(tmp_path):

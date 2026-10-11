@@ -788,8 +788,25 @@ class JarvisChatService:
         self._owner_turn_handles: OrderedDict[str, str] = OrderedDict()
 
     @staticmethod
-    def _capture_owner_turn_context(request) -> tuple[str, Any] | None:
-        """Copy only the exact ingress JWT and sealed proof for a later pre-submit check."""
+    def _normalize_mission_binding(mission_binding: Any | None) -> Any | None:
+        if mission_binding is None:
+            return None
+        try:
+            from .jarvis_mission_executor import MissionBinding
+            if type(mission_binding) is not MissionBinding:
+                raise ValueError
+            normalized = MissionBinding.from_wire(mission_binding.to_wire())
+            if type(normalized) is not MissionBinding:
+                raise ValueError
+            return normalized
+        except Exception:
+            raise JarvisChatDenied("approved mission turn binding is invalid") from None
+
+    @staticmethod
+    def _capture_owner_turn_context(request, mission_binding: Any | None = None
+                                    ) -> tuple[str, Any, Any | None] | None:
+        """Copy exact ingress proof and an optional approved mission binding for pre-submit."""
+        mission_binding = JarvisChatService._normalize_mission_binding(mission_binding)
         try:
             accepted = request.get("core_ingress")
             values = request.headers.getall("Cf-Access-Jwt-Assertion", [])
@@ -797,7 +814,7 @@ class JarvisChatService:
                     or not 1 <= len(values[0]) <= 16_384
                     or any(ord(char) < 0x20 for char in values[0])):
                 return None
-            return values[0], accepted
+            return values[0], accepted, mission_binding
         except Exception:
             return None
 
@@ -993,13 +1010,15 @@ class JarvisChatService:
 
     async def start_server_turn(self, request, *, conversation_id: str, text: str,
                                 idempotency_key: str, before_schedule=None,
-                                on_schedule_failure=None) -> dict[str, str]:
+                                on_schedule_failure=None,
+                                mission_binding: Any | None = None) -> dict[str, str]:
         """Queue one protected turn from a trusted server feature, before any native submit.
 
         ``before_schedule`` is an internal durable mapping hook, not an authorization source. It
         runs after the owner-bound turn is reserved and before its worker can call ``prompt.submit``.
         Any mapping/currentness failure terminalizes the reservation and never schedules a worker.
         """
+        mission_binding = self._normalize_mission_binding(mission_binding)
         async with self._admission_lock:
             principal = self._current(request)
             conversation = self.store.get_conversation(principal.subject, conversation_id)
@@ -1007,15 +1026,29 @@ class JarvisChatService:
             principal = self._current(request)
             turn_id, nonce, conversation = self.store.begin_turn(
                 principal.subject, conversation_id, text, idempotency_key, principal)
-            owner_turn_context = (self._capture_owner_turn_context(request)
-                                  if self._owner_turn_register is not None else None)
             try:
+                if mission_binding is not None and before_schedule is None:
+                    raise JarvisChatDenied("mission intent must be bound before scheduling")
                 if before_schedule is not None:
                     if not callable(before_schedule):
                         raise JarvisChatDenied("server turn mapping is invalid")
                     outcome = before_schedule(turn_id)
                     if inspect.isawaitable(outcome):
-                        await outcome
+                        outcome = await outcome
+                    if outcome is not None:
+                        outcome = self._normalize_mission_binding(outcome)
+                        if mission_binding is not None and outcome != mission_binding:
+                            raise JarvisChatDenied("mission turn binding changed before scheduling")
+                        mission_binding = outcome
+                if mission_binding is not None:
+                    if self._owner_turn_register is None:
+                        raise JarvisChatDenied("mission owner-turn verification is unavailable")
+                    owner_turn_context = self._capture_owner_turn_context(request, mission_binding)
+                    if owner_turn_context is None:
+                        raise JarvisChatDenied("mission owner-turn verification is unavailable")
+                else:
+                    owner_turn_context = (self._capture_owner_turn_context(request)
+                                          if self._owner_turn_register is not None else None)
                 current = self._current(request)
                 if (current.subject != principal.subject
                         or current.core_generation != principal.core_generation):
@@ -1045,7 +1078,7 @@ class JarvisChatService:
     async def _run(self, turn_id: str, session_id: str, text: str,
                    activity_principal: ChatPrincipal | None = None,
                    conversation_id: str = "", *, stored_session_id: str = "",
-                   owner_turn_context: tuple[str, Any] | None = None):
+                   owner_turn_context: tuple[str, Any, Any | None] | None = None):
         total = 0
         next_delta: asyncio.Task | None = None
         stream = None
@@ -1072,25 +1105,35 @@ class JarvisChatService:
                         activity_principal, conversation_id, turn_id, session_id, actual_session_id)
                     session_id = actual_session_id
                     if self._owner_turn_register is not None and owner_turn_context is not None:
-                        access_jwt, accepted_ingress = owner_turn_context
+                        access_jwt, accepted_ingress, mission_binding = owner_turn_context
                         try:
+                            registration = {
+                                "access_jwt": access_jwt,
+                                "accepted_ingress": accepted_ingress,
+                                "session_id": actual_session_id,
+                                "conversation_id": conversation_id,
+                                "gateway_turn_id": turn_id,
+                                "prompt_sha256": hashlib.sha256(
+                                    text.encode("utf-8", errors="strict")).hexdigest(),
+                            }
+                            if mission_binding is not None:
+                                registration["mission_binding"] = mission_binding
                             owner_handle = await asyncio.wait_for(asyncio.to_thread(
-                                self._owner_turn_register,
-                                access_jwt=access_jwt,
-                                accepted_ingress=accepted_ingress,
-                                session_id=actual_session_id,
-                                conversation_id=conversation_id,
-                                gateway_turn_id=turn_id,
-                                prompt_sha256=hashlib.sha256(
-                                    text.encode("utf-8", errors="strict")).hexdigest()), timeout=5.0)
-                            if (isinstance(owner_handle, str)
-                                    and re.fullmatch(r"[0-9a-f]{32}", owner_handle)):
+                                self._owner_turn_register, **registration), timeout=5.0)
+                            valid_handle = (isinstance(owner_handle, str)
+                                            and re.fullmatch(r"[0-9a-f]{32}", owner_handle))
+                            if mission_binding is not None and not valid_handle:
+                                raise JarvisChatDenied("mission owner-turn verification was not confirmed")
+                            if valid_handle:
                                 if len(self._owner_turn_handles) >= MAX_OWNER_TURN_HANDLES:
                                     self._owner_turn_handles.popitem(last=False)
                                 self._owner_turn_handles[turn_id] = owner_handle
                         except Exception:
-                            # Observation enriches delegation only; ordinary chat continues.
-                            pass
+                            # Ordinary chat stays useful without an optional observer, but a
+                            # mission-approved turn cannot run unless root bound its exact claim.
+                            if mission_binding is not None:
+                                raise JarvisChatDenied(
+                                    "mission owner-turn verification is unavailable") from None
 
                 stream = resume_stream(stored_session_id, text,
                                       before_submit=bind_resumed_session).__aiter__()
