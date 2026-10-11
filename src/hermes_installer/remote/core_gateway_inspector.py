@@ -57,13 +57,17 @@ CORE_SOURCE_FILES = {
 CORE_PYVENV_CFG_SHA256 = "d982d4b71a70c99f49afef3c0b2cf683c2f053a802da8885d366657b9565f1ad"
 CORE_PYTHON_SHA256 = "566f5e480aa1adccd3214f6251f50cab08daf768158d778fd9a73d19ab1fe001"
 CORE_WORKSPACE = Path("/home/admin/.hermes/workspaces/jarvis-core")
+CORE_NATIVE_OBSERVER_DIRECTORY = Path("/run/hermes-jarvis-native-observer")
+CORE_NATIVE_OBSERVER_SOCKET = CORE_NATIVE_OBSERVER_DIRECTORY / "native-observer.sock"
 CORE_PATH = "/home/admin/.hermes/bin:/home/admin/.local/bin:/usr/local/bin:/usr/bin:/bin"
 CORE_CREDENTIALS_DIRECTORY = "/run/credentials/hermes-jarvis-core.service"
 MAX_REQUEST = 1024
 MAX_RESPONSE = 4096
 MAX_SKILL_LEARNING_REQUEST_BYTES = 20 * 1024
 MAX_SKILL_LEARNING_RESPONSE_BYTES = 700 * 1024
+MAX_OWNER_TURN_REQUEST_BYTES = 24 * 1024
 MAX_SKILL_LEARNING_DIFF_BYTES = 256 * 1024
+MAX_OWNER_TURN_SECONDS = 600.0
 NATIVE_SKILL_LEARNING_SHA256 = "83c3c9fe8147612ab9e4f31d2c4951015626170091042a782fee0f001de8005b"
 NATIVE_SKILL_LEARNING_SIZE = 24_429
 MAX_OUTPUT = 16_384
@@ -73,12 +77,21 @@ IPC_TIMEOUT = 2.0
 _PROOF_SEAL = object()
 _OVERVIEW_PROOF_SEAL = object()
 _SKILL_LEARNING_PROOF_SEAL = object()
+_NATIVE_CUSTODY_SEAL = object()
+_OWNER_TURN_SEAL = object()
 _SERVER_SLOTS = threading.BoundedSemaphore(16)
 _MAX_RETAINED_INGRESS_ISSUES = 128
 _RETAINED_INGRESS_ISSUES: dict[tuple[int, str, str, str], "_RetainedIngressIssue"] = {}
 _RETAINED_INGRESS_LOCK = threading.RLock()
 _LEARNING_JWKS_CACHE: Any = None
 _LEARNING_JWKS_LOCK = threading.Lock()
+_CORE_NATIVE_CUSTODY: Any = None
+_CORE_NATIVE_REGISTRY: Any = None
+_CORE_NATIVE_REGISTRY_TYPE: Any = None
+_CORE_NATIVE_STOP: threading.Event | None = None
+_CORE_NATIVE_THREAD: threading.Thread | None = None
+_CORE_NATIVE_INIT_STOP: threading.Event | None = None
+_CORE_NATIVE_INIT_THREAD: threading.Thread | None = None
 _OBSERVATION_FIELDS = (
     "schema", "nonce", "boot_id", "issued_monotonic", "expires_monotonic",
     "peer_pid", "peer_uid", "peer_gid", "peer_start_ticks", "tunnel_invocation_id",
@@ -87,6 +100,16 @@ _OBSERVATION_FIELDS = (
     "core_invocation_id", "core_pid", "core_start_ticks", "core_listener_inode",
     "core_source_generation",
     "core_generation", "config_sha256",
+)
+_OWNER_TURN_FIELDS = (
+    "schema", "owner_turn_handle", "owner_subject_sha256", "token_fingerprint_sha256",
+    "jwt_expires_monotonic", "ingress_issued_monotonic", "ingress_expires_monotonic",
+    "accepted_monotonic", "expires_monotonic", "ingress_nonce", "ingress_proof_sha256",
+    "peer_gateway_pid", "peer_gateway_uid", "peer_gateway_gid", "peer_gateway_start_ticks",
+    "gateway_invocation_id", "tunnel_invocation_id", "core_generation", "core_pid",
+    "core_uid", "core_gid", "core_start_ticks", "core_invocation_id", "core_listener_inode",
+    "core_source_generation", "core_unit_sha256", "core_executable_sha256",
+    "pm_import_closure_sha256", "session_id", "conversation_id", "gateway_turn_id", "prompt_sha256",
 )
 
 
@@ -167,6 +190,12 @@ def _learning_digest(values: dict[str, Any]) -> str:
     canonical = json.dumps(values, sort_keys=True, separators=(",", ":"),
                            allow_nan=False, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(b"hermes-jarvis-skill-learning-v1\0" + canonical).hexdigest()
+
+
+def _owner_turn_digest(values: dict[str, Any]) -> str:
+    canonical = json.dumps(values, sort_keys=True, separators=(",", ":"),
+                           allow_nan=False).encode("utf-8")
+    return hashlib.sha256(b"hermes-jarvis-owner-turn-v1\0" + canonical).hexdigest()
 
 
 def _valid_learning_candidates(candidates: Any, readiness: str) -> bool:
@@ -398,6 +427,166 @@ def observe_skill_learning(config: CoreGatewayConfig, *, request: dict[str, Any]
     }
     body["proof_sha256"] = _learning_digest(body)
     return body
+
+
+def observe_owner_turn(config: CoreGatewayConfig, *, request: dict[str, Any],
+                       caller_pid: int, caller_uid: int, caller_gid: int,
+                       peer_pid: int, peer_uid: int, peer_gid: int,
+                       registry: Any) -> dict[str, Any]:
+    """Validate a fresh Access-backed turn ingress and register it in root memory."""
+    required = {"schema", "op", "nonce", "peer_pid", "peer_uid", "peer_gid", "access_jwt",
+                "core_generation", "ingress_nonce", "ingress_proof_sha256", "session_id",
+                "conversation_id", "gateway_turn_id", "prompt_sha256"}
+    if (type(request) is not dict or set(request) != required or type(request.get("schema")) is not int
+            or request["schema"] != 1 or request.get("op") != "observe-owner-turn"
+            or (request.get("peer_pid"), request.get("peer_uid"), request.get("peer_gid"))
+                != (peer_pid, peer_uid, peer_gid)
+            or not all(type(value) is int for value in (peer_pid, peer_uid, peer_gid))
+            or not isinstance(request.get("nonce"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", request["nonce"]) is None
+            or not isinstance(request.get("ingress_nonce"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", request["ingress_nonce"]) is None
+            or not _is_hash(request.get("ingress_proof_sha256"))
+            or not _is_hash(request.get("core_generation"))
+            or not isinstance(request.get("access_jwt"), str)
+            or not 1 <= len(request["access_jwt"]) <= 16_384 or not request["access_jwt"].isascii()
+            or not _is_hash(request.get("prompt_sha256"))
+            or not isinstance(request.get("session_id"), str)
+            or not 1 <= len(request["session_id"]) <= 512
+            or not request["session_id"].isascii()
+            or any(ord(char) < 0x20 for char in request["session_id"])
+            or any(not isinstance(request.get(key), str)
+                   or re.fullmatch(r"[A-Za-z0-9_-]{24,64}", request[key]) is None
+                   for key in ("conversation_id", "gateway_turn_id"))):
+        raise CoreInspectionDenied("owner turn request is invalid")
+    if (registry is None or registry is not _CORE_NATIVE_REGISTRY
+            or _CORE_NATIVE_REGISTRY_TYPE is None or type(registry) is not _CORE_NATIVE_REGISTRY_TYPE):
+        raise CoreInspectionDenied("native owner registry is unavailable")
+    caller_start = _proc_start_ticks(caller_pid)
+    retained = _consume_ingress_issue(caller_pid=caller_pid,
+        caller_start_ticks=caller_start, nonce=request["ingress_nonce"],
+        proof_sha256=request["ingress_proof_sha256"],
+        peer=(peer_pid, peer_uid, peer_gid), core_generation=request["core_generation"],
+        config=config)
+    deadline = retained.expires_monotonic
+    current = observe_current_ingress(config, nonce=retained.nonce,
+        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+        peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+        _issued=retained.issued_monotonic, _deadline=deadline, _retain_issuance=False)
+    if (current["proof_sha256"] != retained.proof_sha256
+            or current["core_generation"] != retained.core_generation
+            or current["boot_id"] != retained.boot_id
+            or current["config_sha256"] != retained.config_sha256
+            or time.monotonic() >= deadline):
+        raise CoreInspectionDenied("owner turn ingress changed")
+    from .gateway import validate_access_jwt
+    principal = validate_access_jwt(request["access_jwt"],
+        policy=config.policy(_learning_jwks(config, deadline=deadline)),
+        deadline_monotonic=deadline)
+    if (time.monotonic() >= deadline
+            or principal.email.casefold() not in config.allowed_emails):
+        raise CoreInspectionDenied("owner turn ingress expired")
+    final = observe_current_ingress(config, nonce=retained.nonce,
+        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+        peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+        _issued=retained.issued_monotonic, _deadline=deadline, _retain_issuance=False)
+    if (final["proof_sha256"] != retained.proof_sha256
+            or final["core_generation"] != retained.core_generation
+            or final["boot_id"] != retained.boot_id
+            or final["config_sha256"] != retained.config_sha256
+            or time.monotonic() >= deadline):
+        raise CoreInspectionDenied("owner turn custody changed")
+    custody = _CORE_NATIVE_CUSTODY
+    if (type(custody) is not CoreNativeObserverCustody
+            or custody._seal is not _NATIVE_CUSTODY_SEAL
+            or final["core_generation"] != custody.core_generation
+            or final["core_pid"] != custody.core_pid
+            or final["core_start_ticks"] != custody.core_start_ticks
+            or final["core_invocation_id"] != custody.core_invocation_id
+            or final["core_listener_inode"] != custody.core_listener_inode
+            or final["core_source_generation"] != custody.core_source_generation):
+        raise CoreInspectionDenied("current native core custody is unavailable")
+    gateway_pidfd, gateway_start, gateway_invocation = _check_unit_process(
+        config, unit=CORE_GATEWAY_UNIT, pid=caller_pid, deadline=deadline)
+    try:
+        if gateway_start != retained.caller_start_ticks:
+            raise CoreInspectionDenied("gateway process changed during owner turn registration")
+    finally:
+        os.close(gateway_pidfd)
+    pidfd = os.dup(custody._core_pidfd)
+    accepted_at = time.monotonic()
+    jwt_expiry = accepted_at + max(0.0, principal.expires_at - time.time())
+    owner_expiry = min(jwt_expiry, retained.issued_monotonic + MAX_OWNER_TURN_SECONDS)
+    if (accepted_at >= deadline or accepted_at >= owner_expiry
+            or not secrets.compare_digest(
+                hashlib.sha256(request["access_jwt"].encode("ascii")).hexdigest(),
+                principal.token_fingerprint)):
+        os.close(pidfd)
+        raise CoreInspectionDenied("owner turn registration expired")
+    claims = {
+        "schema": 1, "owner_turn_handle": secrets.token_hex(16),
+        "owner_subject_sha256": hashlib.sha256(principal.subject.encode("utf-8")).hexdigest(),
+        "token_fingerprint_sha256": hashlib.sha256(request["access_jwt"].encode("ascii")).hexdigest(),
+        "jwt_expires_monotonic": jwt_expiry,
+        "ingress_issued_monotonic": retained.issued_monotonic,
+        "ingress_expires_monotonic": retained.expires_monotonic,
+        "accepted_monotonic": accepted_at, "expires_monotonic": owner_expiry,
+        "ingress_nonce": retained.nonce, "ingress_proof_sha256": retained.proof_sha256,
+        "peer_gateway_pid": caller_pid, "peer_gateway_uid": caller_uid,
+        "peer_gateway_gid": caller_gid, "peer_gateway_start_ticks": gateway_start,
+        "gateway_invocation_id": gateway_invocation,
+        "tunnel_invocation_id": final["tunnel_invocation_id"],
+        "core_generation": final["core_generation"], "core_pid": custody.core_pid,
+        "core_uid": custody.core_uid, "core_gid": custody.core_gid,
+        "core_start_ticks": custody.core_start_ticks,
+        "core_invocation_id": custody.core_invocation_id,
+        "core_listener_inode": custody.core_listener_inode,
+        "core_source_generation": custody.core_source_generation,
+        "core_unit_sha256": custody.core_unit_sha256,
+        "core_executable_sha256": custody.core_executable_sha256,
+        "pm_import_closure_sha256": custody.pm_import_closure_sha256,
+        "session_id": request["session_id"], "conversation_id": request["conversation_id"],
+        "gateway_turn_id": request["gateway_turn_id"], "prompt_sha256": request["prompt_sha256"],
+    }
+    observation = CoreVerifiedOwnerTurnObservation(
+        **claims, proof_sha256=_owner_turn_digest(claims), _core_pidfd=pidfd,
+        _seal=_OWNER_TURN_SEAL)
+    if (observation.verify_current(config, custody=custody, now=accepted_at) is not True
+            or time.monotonic() >= deadline):
+        os.close(pidfd)
+        raise CoreInspectionDenied("owner turn proof changed during registration")
+    try:
+        handle = registry.register_owner_turn(observation)
+    except Exception:
+        os.close(pidfd)
+        raise CoreInspectionDenied("owner turn registration failed") from None
+    try:
+        post = observe_current_ingress(config, nonce=retained.nonce,
+            caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+            peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+            _issued=retained.issued_monotonic, _deadline=deadline, _retain_issuance=False)
+        custody_current = custody.verify_current(
+            config, observation, custody.core_pid, custody.core_uid, custody.core_gid)
+    except Exception:
+        try:
+            registry.revoke_owner_turn(observation.owner_turn_handle)
+        except Exception:
+            pass
+        raise CoreInspectionDenied("owner turn custody changed after registration") from None
+    if (not isinstance(handle, str) or handle != observation.owner_turn_handle
+            or post["proof_sha256"] != retained.proof_sha256
+            or post["core_generation"] != retained.core_generation
+            or post["config_sha256"] != retained.config_sha256
+            or time.monotonic() >= deadline
+            or custody_current is not True):
+        # A typed registry owns the descriptor after successful registration. Revoke the
+        # record synchronously if its claimed handle is not the root-generated one.
+        try:
+            registry.revoke_owner_turn(observation.owner_turn_handle)
+        except Exception:
+            pass
+        raise CoreInspectionDenied("owner turn registration result is invalid")
+    return {"schema": 1, "nonce": request["nonce"], "owner_turn_handle": handle}
 
 
 def _overview_digest(values: dict[str, Any]) -> str:
@@ -801,6 +990,164 @@ def _check_unit_process(config: CoreGatewayConfig, *, unit: str, pid: int, deadl
         return pidfd, start, props["InvocationID"]
     except Exception:
         raise
+
+
+def capture_current_core_native_custody(config: CoreGatewayConfig) -> CoreNativeObserverCustody:
+    """Capture the fixed, active core process for the private native observer socket."""
+    if os.geteuid() != 0 or type(config) is not CoreGatewayConfig:
+        raise CoreInspectionDenied("root core custody is required")
+    account = pwd.getpwnam("admin")
+    if (account.pw_uid != config.core_uid or account.pw_gid != config.core_gid
+            or account.pw_dir != str(CORE_ADMIN_HOME)):
+        raise CoreInspectionDenied("fixed core identity differs")
+    deadline = time.monotonic() + MAX_PROOF_SECONDS
+    _config_current(config)
+    props = _unit_properties(CORE_SERVICE_UNIT, deadline=deadline)
+    try:
+        core_pid = int(props.get("MainPID", "0"))
+    except ValueError:
+        _deny()
+    pidfd, start, invocation = _check_unit_process(
+        config, unit=CORE_SERVICE_UNIT, pid=core_pid, deadline=deadline)
+    try:
+        _current_core_credential(core_pid, config, deadline=deadline)
+        source_generation = _current_core_source(config, deadline=deadline)
+        if Path(f"/proc/{core_pid}/cwd").resolve(strict=True) != CORE_WORKSPACE:
+            _deny()
+        listener_inode = _core_listener_inode(core_pid)
+        generation_payload = (f"{invocation}\0{core_pid}\0{start}\0{listener_inode}\0"
+                              f"{source_generation}").encode("ascii")
+        core_generation = hashlib.sha256(
+            b"hermes-jarvis-core-generation-v1\0" + generation_payload).hexdigest()
+        if (time.monotonic() >= deadline or _boot_id() != config.boot_id
+                or _proc_start_ticks(core_pid) != start
+                or int(_unit_properties(CORE_SERVICE_UNIT, deadline=deadline).get("MainPID", "0")) != core_pid
+                or _core_listener_inode(core_pid) != listener_inode):
+            _deny()
+        custody = CoreNativeObserverCustody(
+            core_pid=core_pid, core_uid=config.core_uid, core_gid=config.core_gid,
+            core_start_ticks=start, core_generation=core_generation,
+            core_invocation_id=invocation, core_listener_inode=listener_inode,
+            core_source_generation=source_generation, core_unit_sha256=config.core_unit_sha256,
+            core_executable_sha256=config.core_python_sha256,
+            pm_import_closure_sha256=source_generation, boot_id=config.boot_id,
+            config_sha256=config.config_sha256, _core_pidfd=pidfd, _seal=_NATIVE_CUSTODY_SEAL)
+        poller = select.poll()
+        poller.register(pidfd, select.POLLIN | select.POLLHUP | select.POLLERR)
+        if poller.poll(0):
+            _deny()
+        return custody
+    except Exception:
+        os.close(pidfd)
+        raise
+
+
+def _start_optional_core_native_observer(config: CoreGatewayConfig,
+                                         stop: threading.Event | None = None) -> bool:
+    """Start the separate admin-readable observer only with verified current source custody."""
+    global _CORE_NATIVE_CUSTODY, _CORE_NATIVE_REGISTRY, _CORE_NATIVE_REGISTRY_TYPE
+    global _CORE_NATIVE_STOP, _CORE_NATIVE_THREAD
+    custody = None
+    registry = None
+    worker = None
+    stop = stop or threading.Event()
+    try:
+        if stop.is_set():
+            return False
+        from ..components.resources_active_profile_source import RootSelectedActiveProfileSource
+        from .core_native_observer import RootCoreNativeObservationRegistry, serve_core_native_observer
+        custody = capture_current_core_native_custody(config)
+        if stop.is_set():
+            raise CoreInspectionDenied("optional native observer startup was cancelled")
+        source = RootSelectedActiveProfileSource.resolve_current(custody)
+        if (type(source) is not RootSelectedActiveProfileSource
+                or source.is_current_sealed(custody=custody, now=time.monotonic()) is not True):
+            raise CoreInspectionDenied("active Resources source is unavailable")
+        registry = RootCoreNativeObservationRegistry.from_current_core_custody(
+            custody, selected_profile_source=source, config=config)
+        if type(registry) is not RootCoreNativeObservationRegistry:
+            raise CoreInspectionDenied("native observation registry is unavailable")
+        if stop.is_set():
+            raise CoreInspectionDenied("optional native observer startup was cancelled")
+        worker = threading.Thread(target=serve_core_native_observer,
+            kwargs={"registry": registry, "socket_path": CORE_NATIVE_OBSERVER_SOCKET,
+                    "admin_gid": 1000, "stop_event": stop}, daemon=True,
+            name="jarvis-native-observer")
+        worker.start()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not stop.is_set():
+            if not worker.is_alive():
+                raise CoreInspectionDenied("native observer listener did not start")
+            try:
+                parent = os.lstat(CORE_NATIVE_OBSERVER_DIRECTORY)
+                listener = os.lstat(CORE_NATIVE_OBSERVER_SOCKET)
+                if (stat.S_ISDIR(parent.st_mode) and parent.st_uid == 0 and parent.st_gid == 1000
+                        and stat.S_IMODE(parent.st_mode) == 0o750
+                        and stat.S_ISSOCK(listener.st_mode) and listener.st_uid == 0
+                        and listener.st_gid == 1000 and stat.S_IMODE(listener.st_mode) == 0o660):
+                    if source.is_current_sealed(custody=custody, now=time.monotonic()) is not True:
+                        raise CoreInspectionDenied("active Resources source changed at observer startup")
+                    if stop.is_set():
+                        raise CoreInspectionDenied("optional native observer startup was cancelled")
+                    _CORE_NATIVE_CUSTODY = custody
+                    _CORE_NATIVE_REGISTRY = registry
+                    _CORE_NATIVE_REGISTRY_TYPE = RootCoreNativeObservationRegistry
+                    _CORE_NATIVE_STOP = stop
+                    _CORE_NATIVE_THREAD = worker
+                    return True
+            except FileNotFoundError:
+                pass
+            time.sleep(0.02)
+        raise CoreInspectionDenied("native observer listener is unavailable")
+    except Exception:
+        stop.set()
+        if worker is not None and worker is not threading.current_thread():
+            worker.join(timeout=1.0)
+        if registry is not None:
+            try:
+                registry.close()
+            except Exception:
+                pass
+        if custody is not None:
+            try:
+                os.close(custody._core_pidfd)
+            except OSError:
+                pass
+        return False
+
+
+def _stop_optional_core_native_observer() -> None:
+    global _CORE_NATIVE_CUSTODY, _CORE_NATIVE_REGISTRY, _CORE_NATIVE_REGISTRY_TYPE
+    global _CORE_NATIVE_STOP, _CORE_NATIVE_THREAD
+    global _CORE_NATIVE_INIT_STOP, _CORE_NATIVE_INIT_THREAD
+    init_stop, init_thread = _CORE_NATIVE_INIT_STOP, _CORE_NATIVE_INIT_THREAD
+    _CORE_NATIVE_INIT_STOP = None
+    _CORE_NATIVE_INIT_THREAD = None
+    if init_stop is not None:
+        init_stop.set()
+    if init_thread is not None and init_thread is not threading.current_thread():
+        init_thread.join(timeout=1.0)
+    stop, worker, registry, custody = (
+        _CORE_NATIVE_STOP, _CORE_NATIVE_THREAD, _CORE_NATIVE_REGISTRY, _CORE_NATIVE_CUSTODY)
+    _CORE_NATIVE_STOP = None
+    _CORE_NATIVE_THREAD = None
+    _CORE_NATIVE_REGISTRY = None
+    _CORE_NATIVE_REGISTRY_TYPE = None
+    _CORE_NATIVE_CUSTODY = None
+    if stop is not None:
+        stop.set()
+    if worker is not None and worker is not threading.current_thread():
+        worker.join(timeout=1.0)
+    if registry is not None:
+        try:
+            registry.close()
+        except Exception:
+            pass
+    if custody is not None:
+        try:
+            os.close(custody._core_pidfd)
+        except OSError:
+            pass
 
 
 def _socket_identity(path: Path, config: CoreGatewayConfig) -> tuple[int, int]:
@@ -1336,6 +1683,188 @@ class CoreVerifiedIngressObservation:
             return False
 
 
+@dataclass(frozen=True, slots=True)
+class CoreNativeObserverCustody:
+    """Root-held PIDFD and fixed service facts for the current native observer peer."""
+
+    core_pid: int
+    core_uid: int
+    core_gid: int
+    core_start_ticks: str
+    core_generation: str
+    core_invocation_id: str
+    core_listener_inode: int
+    core_source_generation: str
+    core_unit_sha256: str
+    core_executable_sha256: str
+    pm_import_closure_sha256: str
+    boot_id: str
+    config_sha256: str
+    _core_pidfd: int = field(repr=False, compare=False)
+    _seal: object = field(repr=False, compare=False)
+
+    def verify_current(self, config: CoreGatewayConfig, accepted_ingress: Any,
+                       peer_pid: int, peer_uid: int, peer_gid: int) -> bool:
+        now = time.monotonic()
+        try:
+            if (self._seal is not _NATIVE_CUSTODY_SEAL
+                    or type(accepted_ingress) is not CoreVerifiedOwnerTurnObservation
+                    or not accepted_ingress.verify_current(config, custody=self, now=now)
+                    or (peer_pid, peer_uid, peer_gid) != (self.core_pid, self.core_uid, self.core_gid)
+                    or self.config_sha256 != config.config_sha256
+                    or self.boot_id != config.boot_id or _boot_id() != config.boot_id
+                    or self.core_unit_sha256 != config.core_unit_sha256
+                    or self.core_executable_sha256 != config.core_python_sha256
+                    or self.core_uid != config.core_uid or self.core_gid != config.core_gid
+                    or self.pm_import_closure_sha256 != self.core_source_generation):
+                return False
+            held = select.poll()
+            held.register(self._core_pidfd, select.POLLIN | select.POLLHUP | select.POLLERR)
+            if held.poll(0) or _proc_start_ticks(self.core_pid) != self.core_start_ticks:
+                return False
+            deadline = min(now + MAX_PROOF_SECONDS, accepted_ingress.expires_monotonic)
+            props = _unit_properties(CORE_SERVICE_UNIT, deadline=deadline)
+            if (int(props.get("MainPID", "0")) != self.core_pid
+                    or props.get("InvocationID") != self.core_invocation_id):
+                return False
+            pidfd, start, invocation = _check_unit_process(
+                config, unit=CORE_SERVICE_UNIT, pid=self.core_pid, deadline=deadline)
+            try:
+                if start != self.core_start_ticks or invocation != self.core_invocation_id:
+                    return False
+            finally:
+                os.close(pidfd)
+            if (_core_listener_inode(self.core_pid) != self.core_listener_inode
+                    or _current_core_source(config, deadline=deadline) != self.core_source_generation
+                    or Path(f"/proc/{self.core_pid}/cwd").resolve(strict=True) != CORE_WORKSPACE):
+                return False
+            _current_core_credential(self.core_pid, config, deadline=deadline)
+            return time.monotonic() < min(deadline, accepted_ingress.expires_monotonic)
+        except Exception:
+            return False
+
+    def verify_peer(self, config: CoreGatewayConfig, accepted_ingress: Any,
+                    connection: socket.socket) -> bool:
+        try:
+            if not hasattr(socket, "SO_PEERCRED"):
+                return False
+            pid, uid, gid = struct.unpack(
+                "3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            return self.verify_current(config, accepted_ingress, pid, uid, gid)
+        except Exception:
+            return False
+
+
+@dataclass(frozen=True, slots=True)
+class CoreVerifiedOwnerTurnObservation:
+    """Root-sealed registration of one accepted user turn; prompt text is never retained."""
+
+    schema: int
+    owner_turn_handle: str
+    owner_subject_sha256: str
+    token_fingerprint_sha256: str
+    jwt_expires_monotonic: float
+    ingress_issued_monotonic: float
+    ingress_expires_monotonic: float
+    accepted_monotonic: float
+    expires_monotonic: float
+    ingress_nonce: str
+    ingress_proof_sha256: str
+    peer_gateway_pid: int
+    peer_gateway_uid: int
+    peer_gateway_gid: int
+    peer_gateway_start_ticks: str
+    gateway_invocation_id: str
+    tunnel_invocation_id: str
+    core_generation: str
+    core_pid: int
+    core_uid: int
+    core_gid: int
+    core_start_ticks: str
+    core_invocation_id: str
+    core_listener_inode: int
+    core_source_generation: str
+    core_unit_sha256: str
+    core_executable_sha256: str
+    pm_import_closure_sha256: str
+    session_id: str
+    conversation_id: str
+    gateway_turn_id: str
+    prompt_sha256: str
+    _core_pidfd: int = field(repr=False, compare=False)
+    _seal: object = field(repr=False, compare=False)
+
+    def verify_current(self, config: CoreGatewayConfig, *, custody: CoreNativeObserverCustody,
+                       now: float | None = None) -> bool:
+        current = time.monotonic() if now is None else now
+        try:
+            claims = {name: getattr(self, name) for name in _OWNER_TURN_FIELDS}
+            issued = self.ingress_issued_monotonic
+            return bool(
+                self._seal is _OWNER_TURN_SEAL and type(self.schema) is int and self.schema == 1
+                and type(custody) is CoreNativeObserverCustody
+                and custody._seal is _NATIVE_CUSTODY_SEAL
+                and all(_is_hash(value) for value in (
+                    self.owner_subject_sha256, self.token_fingerprint_sha256,
+                    self.ingress_proof_sha256, self.core_generation, self.core_source_generation,
+                    self.core_unit_sha256, self.core_executable_sha256,
+                    self.pm_import_closure_sha256, self.prompt_sha256))
+                and re.fullmatch(r"[0-9a-f]{32}", self.owner_turn_handle) is not None
+                and re.fullmatch(r"[0-9a-f]{64}", self.ingress_nonce) is not None
+                and all(type(value) is int and value > 1 for value in
+                        (self.peer_gateway_pid, self.core_pid))
+                and all(type(value) is int and value >= 0 for value in
+                        (self.peer_gateway_uid, self.peer_gateway_gid, self.core_uid, self.core_gid,
+                         self.core_listener_inode))
+                and self.peer_gateway_start_ticks.isdecimal() and self.core_start_ticks.isdecimal()
+                and all(re.fullmatch(r"[0-9a-fA-F-]{32,36}", value) for value in
+                        (self.gateway_invocation_id, self.tunnel_invocation_id,
+                         self.core_invocation_id))
+                and self.core_pid == custody.core_pid and self.core_uid == custody.core_uid
+                and self.core_gid == custody.core_gid and self.core_start_ticks == custody.core_start_ticks
+                and self.core_generation == custody.core_generation
+                and self.core_invocation_id == custody.core_invocation_id
+                and self.core_listener_inode == custody.core_listener_inode
+                and self.core_source_generation == custody.core_source_generation
+                and self.core_unit_sha256 == custody.core_unit_sha256
+                and self.core_executable_sha256 == custody.core_executable_sha256
+                and self.pm_import_closure_sha256 == custody.pm_import_closure_sha256
+                and isinstance(self.session_id, str) and 1 <= len(self.session_id) <= 512
+                and not any(ord(char) < 0x20 for char in self.session_id)
+                and all(isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{24,64}", value)
+                        for value in (self.conversation_id, self.gateway_turn_id))
+                and self.ingress_issued_monotonic < self.ingress_expires_monotonic
+                and self.ingress_expires_monotonic <= issued + MAX_PROOF_SECONDS
+                and self.accepted_monotonic >= issued
+                and self.accepted_monotonic < self.ingress_expires_monotonic
+                and self.accepted_monotonic < self.expires_monotonic
+                and all(type(value) in (int, float) and math.isfinite(value) for value in
+                        (self.jwt_expires_monotonic, self.ingress_issued_monotonic,
+                         self.ingress_expires_monotonic, self.accepted_monotonic,
+                         self.expires_monotonic, current))
+                and self.accepted_monotonic <= current < self.expires_monotonic
+                and self.expires_monotonic <= min(
+                    self.jwt_expires_monotonic, issued + MAX_OWNER_TURN_SECONDS)
+                and self.peer_gateway_uid == config.gateway_uid
+                and self.core_uid == config.core_uid and self.core_gid == config.core_gid
+                and self.core_unit_sha256 == config.core_unit_sha256
+                and self.core_executable_sha256 == config.core_python_sha256
+                and custody.boot_id == config.boot_id and custody.config_sha256 == config.config_sha256
+                and _owner_turn_digest(claims) == self.proof_sha256
+            )
+        except Exception:
+            return False
+
+    def is_current_sealed(self, config: CoreGatewayConfig, *,
+                          custody: CoreNativeObserverCustody,
+                          now: float | None = None) -> bool:
+        return bool(type(self) is CoreVerifiedOwnerTurnObservation
+                    and self._seal is _OWNER_TURN_SEAL
+                    and self.verify_current(config, custody=custody, now=now))
+
+    proof_sha256: str
+
+
 def _read_frame(conn: socket.socket, deadline: float, maximum: int, *,
                 encoding: str = "ascii") -> dict[str, Any]:
     size = struct.unpack("!I", _read_exact(conn, 4, deadline))[0]
@@ -1357,12 +1886,18 @@ def _serve_connection(conn: socket.socket, config: CoreGatewayConfig) -> None:
         caller_pid, caller_uid, caller_gid = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
         if caller_uid != config.gateway_uid or caller_pid <= 1:
             return
-        request = _read_frame(conn, deadline, MAX_SKILL_LEARNING_REQUEST_BYTES)
+        request = _read_frame(conn, deadline, MAX_OWNER_TURN_REQUEST_BYTES)
         if request.get("op") == "observe-skill-learning":
             result = observe_skill_learning(config, request=request, caller_pid=caller_pid,
                 caller_uid=caller_uid, caller_gid=caller_gid, peer_pid=request.get("peer_pid"),
                 peer_uid=request.get("peer_uid"), peer_gid=request.get("peer_gid"))
             maximum = MAX_SKILL_LEARNING_RESPONSE_BYTES
+        elif request.get("op") == "observe-owner-turn":
+            result = observe_owner_turn(config, request=request, caller_pid=caller_pid,
+                caller_uid=caller_uid, caller_gid=caller_gid, peer_pid=request.get("peer_pid"),
+                peer_uid=request.get("peer_uid"), peer_gid=request.get("peer_gid"),
+                registry=_CORE_NATIVE_REGISTRY)
+            maximum = MAX_RESPONSE
         else:
             if set(request) != {"op", "nonce", "peer_pid", "peer_uid", "peer_gid"}:
                 return
@@ -1416,6 +1951,16 @@ def serve_inspection_socket(config: CoreGatewayConfig) -> None:
         os.chmod(CORE_INSPECTOR_SOCKET, 0o660)
         server.listen(16)
         server.settimeout(0.5)
+        # Optional profile/source projection may take longer than the regular
+        # inspector's ingress deadline. Keep the core observation socket serving
+        # while that separately bounded feature initializes.
+        global _CORE_NATIVE_INIT_STOP, _CORE_NATIVE_INIT_THREAD
+        init_stop = threading.Event()
+        init_thread = threading.Thread(target=_start_optional_core_native_observer,
+            args=(config, init_stop), daemon=True, name="jarvis-native-observer-init")
+        _CORE_NATIVE_INIT_STOP = init_stop
+        _CORE_NATIVE_INIT_THREAD = init_thread
+        init_thread.start()
         while not stopping:
             try:
                 conn, _ = server.accept()
@@ -1432,6 +1977,7 @@ def serve_inspection_socket(config: CoreGatewayConfig) -> None:
                 conn.close()
                 raise
     finally:
+        _stop_optional_core_native_observer()
         server.close()
         for sig, prior in previous.items():
             signal.signal(sig, prior)
@@ -1643,6 +2189,82 @@ def verify_current_skill_learning(config: CoreGatewayConfig, *, access_jwt: str,
     except Exception as error:
         _log_ingress_denial("root_skill_learning_currentness", error)
         raise CoreGatewayDenied("root skill learning proof is invalid or stale") from None
+
+
+def verify_current_owner_turn(config: CoreGatewayConfig, *, access_jwt: str,
+                              accepted_ingress: Any, session_id: str,
+                              conversation_id: str, gateway_turn_id: str,
+                              prompt_sha256: str) -> str:
+    """Ask the root inspector to mint one current owner-turn handle; return no proof fields."""
+    from .core_gateway import CoreAcceptedIngressObservation, _log_ingress_denial, _read_config_current
+    if (type(accepted_ingress) is not CoreAcceptedIngressObservation
+            or not isinstance(access_jwt, str) or not 1 <= len(access_jwt) <= 16_384
+            or not access_jwt.isascii()
+            or hashlib.sha256(access_jwt.encode("ascii")).hexdigest()
+                != accepted_ingress.principal.token_fingerprint
+            or not isinstance(session_id, str) or not 1 <= len(session_id) <= 512
+            or not session_id.isascii()
+            or any(ord(char) < 0x20 for char in session_id)
+            or any(not isinstance(value, str)
+                   or re.fullmatch(r"[A-Za-z0-9_-]{24,64}", value) is None
+                   for value in (conversation_id, gateway_turn_id))
+            or not _is_hash(prompt_sha256)):
+        raise CoreGatewayDenied("current accepted owner turn is required")
+    _read_config_current(config)
+    if accepted_ingress.verify_current(config) is not True:
+        raise CoreGatewayDenied("current accepted owner turn is required")
+    root_proof = accepted_ingress.root_observation
+    nonce = os.urandom(32).hex()
+    deadline = min(time.monotonic() + MAX_PROOF_SECONDS, accepted_ingress.expires_monotonic)
+    info = os.lstat(CORE_INSPECTOR_SOCKET)
+    if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != 0 or info.st_gid != config.gateway_gid
+            or stat.S_IMODE(info.st_mode) != 0o660):
+        raise CoreGatewayDenied("root owner-turn inspector is unavailable")
+    conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        conn.settimeout(max(0.05, deadline-time.monotonic()))
+        conn.connect(str(CORE_INSPECTOR_SOCKET))
+        if not hasattr(socket, "SO_PEERCRED"):
+            raise ValueError
+        inspector_pid, inspector_uid, _inspector_gid = struct.unpack(
+            "3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+        if inspector_uid != 0 or inspector_pid <= 1:
+            raise ValueError
+        body = {
+            "schema": 1, "op": "observe-owner-turn", "nonce": nonce,
+            "peer_pid": accepted_ingress.peer_pid, "peer_uid": accepted_ingress.peer_uid,
+            "peer_gid": accepted_ingress.peer_gid, "access_jwt": access_jwt,
+            "core_generation": accepted_ingress.core_generation,
+            "ingress_nonce": root_proof.nonce,
+            "ingress_proof_sha256": root_proof.proof_sha256,
+            "session_id": session_id, "conversation_id": conversation_id,
+            "gateway_turn_id": gateway_turn_id, "prompt_sha256": prompt_sha256,
+        }
+        raw = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("ascii")
+        if len(raw) > MAX_OWNER_TURN_REQUEST_BYTES or time.monotonic() >= deadline:
+            raise ValueError
+        conn.sendall(struct.pack("!I", len(raw)) + raw)
+        result = _read_frame(conn, deadline, MAX_RESPONSE)
+    except Exception as error:
+        _log_ingress_denial("root_owner_turn_exchange", error)
+        raise CoreGatewayDenied("root owner-turn proof is unavailable") from None
+    finally:
+        conn.close()
+    if (set(result) != {"schema", "nonce", "owner_turn_handle"}
+            or type(result.get("schema")) is not int or result["schema"] != 1
+            or result.get("nonce") != nonce
+            or not isinstance(result.get("owner_turn_handle"), str)
+            or re.fullmatch(r"[0-9a-f]{32}", result["owner_turn_handle"]) is None
+            or time.monotonic() >= deadline):
+        raise CoreGatewayDenied("root owner-turn proof is mismatched or late")
+    try:
+        _read_config_current(config)
+        if accepted_ingress.verify_current(config) is not True:
+            raise ValueError
+    except Exception as error:
+        _log_ingress_denial("root_owner_turn_currentness", error)
+        raise CoreGatewayDenied("root owner-turn proof is stale") from None
+    return result["owner_turn_handle"]
 
 
 def main() -> None:
