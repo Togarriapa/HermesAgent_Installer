@@ -31,6 +31,17 @@ MAX_APP_TREE_BYTES = 2 * 1024 * 1024 * 1024
 XPRA_CONTROL_STUB_PATH = Path("/usr/lib/python3/dist-packages/xpra/server/subsystem/stub.py")
 XPRA_CONTROL_STUB_SIZE = 5071
 XPRA_CONTROL_STUB_SHA256 = "da12f27c1421dc71248b568791f186ee3d470d0969c4020da0d9d6d7a1a02279"
+XPRA_CORE_PATH = Path("/usr/lib/python3/dist-packages/xpra/server/core.py")
+XPRA_CORE_SIZE = 75_743
+XPRA_CORE_SHA256 = "95a8bb41304181555ac33482931ba1c2460b4a1b03e458c3c5e8825adcf34e77"
+XPRA_WINDOW_PATH = Path("/usr/lib/python3/dist-packages/xpra/server/subsystem/window.py")
+XPRA_WINDOW_SIZE = 42_476
+XPRA_WINDOW_SHA256 = "7fd74d70e6a50e2f02727e263bdbec34826d23871abf4feedb230741ef09264f"
+XPRA_PINNED_MODULES = (
+    (XPRA_CONTROL_STUB_PATH, XPRA_CONTROL_STUB_SIZE, XPRA_CONTROL_STUB_SHA256),
+    (XPRA_CORE_PATH, XPRA_CORE_SIZE, XPRA_CORE_SHA256),
+    (XPRA_WINDOW_PATH, XPRA_WINDOW_SIZE, XPRA_WINDOW_SHA256),
+)
 
 
 class StageInspectionDenied(PermissionError):
@@ -421,7 +432,7 @@ def observe_stage(config: Any, *, nonce: str) -> dict[str, Any]:
             raise _deny()
         if _hash_path(config.unit_fragment) != config.unit_sha256:
             raise _deny()
-        xpra_control_stub_digest = _verify_pinned_xpra_control_stub()
+        xpra_pinned_modules_digest = _verify_pinned_xpra_modules()
         app_digest = _check_immutable_tree(config.appdir, config.appdir_manifest_sha256)
         if _pid_start_ticks(pid) != start_ticks or _pidfd_exited(pidfd):
             raise _deny()
@@ -432,26 +443,31 @@ def observe_stage(config: Any, *, nonce: str) -> dict[str, Any]:
     proof = hashlib.sha256(b"hermes-manual-stage-inspection-v1\0" + b"\0".join((
         config.config_sha256.encode(), hashlib.sha256(table).hexdigest().encode(),
         props["InvocationID"].encode(), str(pid).encode(), start_ticks.encode(),
-        argv_digest.encode(), xpra_control_stub_digest.encode(), app_digest.encode(),
+        argv_digest.encode(), xpra_pinned_modules_digest.encode(), app_digest.encode(),
         boot_id.encode(), nonce.encode()))).hexdigest()
     return {"schema": 1, "nonce": nonce, "proof_sha256": proof,
             "boot_id": boot_id, "issued_monotonic": started,
             "expires_monotonic": min(deadline, time.monotonic() + OBSERVATION_SECONDS)}
 
 
-def _verify_pinned_xpra_control_stub() -> str:
-    digest = _hash_path(XPRA_CONTROL_STUB_PATH, expected_size=XPRA_CONTROL_STUB_SIZE,
-                        require_root_readonly=True)
-    if digest != XPRA_CONTROL_STUB_SHA256:
+def _verify_pinned_xpra_modules() -> str:
+    binding = []
+    if (len(XPRA_PINNED_MODULES) != 3
+            or len({row[0] for row in XPRA_PINNED_MODULES}) != 3):
         raise _deny()
-    return digest
+    for path, size, expected_digest in XPRA_PINNED_MODULES:
+        digest = _hash_path(path, expected_size=size, require_root_readonly=True)
+        if digest != expected_digest:
+            raise _deny()
+        binding.extend((str(path).encode("ascii"), str(size).encode("ascii"), digest.encode("ascii")))
+    return hashlib.sha256(b"hermes-xpra-pinned-modules-v261\0" + b"\0".join(binding)).hexdigest()
 
 
 def _hash_path(path: Path, *, expected_size: int | None = None,
                require_root_readonly: bool = False) -> str:
     parent_fd = None
     if require_root_readonly:
-        if path != XPRA_CONTROL_STUB_PATH or not path.is_absolute():
+        if path not in {row[0] for row in XPRA_PINNED_MODULES} or not path.is_absolute():
             raise _deny()
         try:
             parent_fd = os.open("/", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) |
