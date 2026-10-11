@@ -43,3 +43,5 @@ Owner skill-learning inspection uses independent root validation of the actual f
 The actual Codex subscription bridge uses an explicitly enrolled protected core-process observer at the real transport seam. It does not relabel the older OpenAI API-bearer handler or claim root TLS interception, and preserves subscription-only zero-additional-metered routing.
 
 Implement the next useful ports proportionately: owner-approved pause-only schedules, read-only native controls and truthful model drafts, plus the separate source-verified core observer leaf. Align learning reason enums to the actual fixed helper vocabulary and verify skill-base read custody before and after native diff.
+
+Mission owner consent can be persisted independently of execution readiness through a finite approve endpoint. Its bounded intent nonce does not authorize native dispatch and cannot trigger later unattended execution.

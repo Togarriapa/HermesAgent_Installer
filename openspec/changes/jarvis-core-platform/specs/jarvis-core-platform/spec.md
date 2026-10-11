@@ -1827,3 +1827,14 @@ The system SHALL accept schedule pause only for an owner-bound opaque current jo
 #### Scenario: Resume or uncertain effect
 - **WHEN** a caller asks to resume/run or a pause result is uncertain
 - **THEN** no catch-up/run action or automatic duplicate effect occurs.
+
+### Requirement: Mission consent separate from execution
+The system SHALL allow an owner to persist consent for an exact current mission revision and plan digest while native execution is pending. A bounded one-use intent nonce SHALL represent consent only, and SHALL NOT replace native execution authority.
+
+#### Scenario: Producer unavailable
+- **WHEN** an approved mission has no genuine native producer
+- **THEN** it remains approved-pending-execution and never starts automatically later.
+
+#### Scenario: Expired or changed intent
+- **WHEN** intent expires or mission revision/source changes
+- **THEN** launch denies and requires fresh explicit owner approval.
