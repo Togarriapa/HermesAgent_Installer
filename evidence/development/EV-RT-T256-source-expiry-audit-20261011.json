@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "id": "EV-RT-T256-source-expiry-audit-20261011",
+  "audit": {
+    "owner": "luna_xpra_runtime_builder",
+    "head": "0b6166204cee8219086fc07976cd013392ed076b",
+    "gap": "RootSetupComponentSourceCAS quarantine expires min(selection,request,now+600); per artifact receipt expires min(selection,proof); RootVerifiedXpraDebianLicenseClosure expires earliest of399 <=30s package proofs. No current reobserver exists. Full build-selection verifier also reads expiry-bound _members, so cannot lawfully refresh sources by reusing expired member origins.",
+    "classes": [
+      "RootXpraNativeSourceVerifier",
+      "RootXpraNativeSourceRequest",
+      "RootVerifiedXpraAcquiredArtifact",
+      "RootQuarantinedSetupSourceObject",
+      "RootAcquiredSourceObjectReceipt",
+      "RootVerifiedXpraDebianLicenseClosure",
+      "RootSelectedRemoteRuntimeRegistry"
+    ]
+  },
+  "method": "read-only source plus owner API review; no runtime success",
+  "acceptance": "All AC OPEN"
+}
