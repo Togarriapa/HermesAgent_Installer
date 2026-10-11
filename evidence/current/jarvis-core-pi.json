@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "record_kind": "operator_reported_live_pi_jarvis_core_milestone_partial",
+  "change_ids": ["jarvis-core-platform"],
+  "task_ids": ["BD-T266.1", "HI-T266.2", "RT-T266.3", "RB-T266.4", "VD-T266.5"],
+  "candidate": {
+    "commit": "8753c8353743925328030f1e72fddc4670a6d175",
+    "source_archive_path": "/opt/hermes-installer-core-8753c8353",
+    "source_archive_bytes": 4836082,
+    "source_archive_sha256": "a50e2fca84f2e8fa9ffe32eeb7d938bd41544119375845074872c237d271af26",
+    "official_hermes_source_commit": "7085fbf7753266fc4943c55ac04926186bc90005",
+    "runtime": "official PM-managed Python 3.14.7"
+  },
+  "target_observations": {
+    "target": "PI-HERMES",
+    "canonical_hermes_home": "/home/admin/.hermes",
+    "existing_codex_account_reused": true,
+    "credential_values_or_identifiers_retained": false,
+    "core_unit": "hermes-jarvis-core.service",
+    "unit_main_process_argv_executable_uid_cgroup_verified": true,
+    "owned_loopback_socket": "127.0.0.1:8766",
+    "fresh_session": {
+      "history_before_prompt": 0,
+      "prompt_completed": true,
+      "elapsed_seconds": 5.22,
+      "rendered_reply": "My name is Jarvis, your assistant in Hermes."
+    },
+    "unit_restart_resume": {
+      "restart_observed": true,
+      "session_resume_used_stored_mapping": true,
+      "resumed_session_id_was_fresh": true,
+      "previous_ready_history_preserved": true,
+      "rendered_reply": "My name is Jarvis."
+    },
+    "codex_auth_file_sha256_unchanged": true,
+    "auth_or_session_identifiers_logged": false
+  },
+  "focused_validation": {
+    "core_chat_gateway_http_tests_passed": 33,
+    "elapsed_seconds": 0.81,
+    "warnings": "Four AppKey deprecation warnings were reported.",
+    "scope": "Root-reported Pi run; not a full installer, public gateway, or acceptance run."
+  },
+  "remaining_gates": {
+    "bd_t266_1": "partial evidence only; installation/adoption, reversible owned Desktop retirement, fresh-install path, and full lifecycle acceptance remain open",
+    "hi_t266_2": "partial: actual core chat and one owned restart/resume succeeded; individual Desktop capability parity remains open",
+    "rt_t266_3": "implementation and phone usability/accessibility/family acceptance remain open",
+    "rb_t266_4": "Resources import, native enrichment, and all 692-resource obligations remain open",
+    "vd_t266_5": "end-to-end security, recovery, and capability review remains open",
+    "public_jarvis_route": "not verified",
+    "public_route_denial_expiry_revocation": "not verified",
+    "fresh_installer_acceptance": "not verified",
+    "full_capability_parity": "not verified",
+    "phone_input_and_family_usability": "not verified",
+    "gateway_fixture_followup": "Two newer gateway fixture failures remain unresolved; do not infer a pass from the focused core suite."
+  },
+  "acceptance_assertions": {
+    "AC01": null, "AC02": null, "AC03": null, "AC04": null, "AC05": null,
+    "AC06": null, "AC07": null, "AC08": null, "AC09": null, "AC10": null,
+    "AC11": null, "AC12": null, "AC13": null, "AC14": null, "AC15": null,
+    "AC16": null, "AC17": null, "AC18": null
+  },
+  "resource_delete_safe": false,
+  "claim_limit": "This is a partial live Pi milestone: the official core served a real Jarvis-identity chat and resumed after an owned unit restart while retaining prior READY history. It does not establish the migration phase, public route, phone input/usability, capability parity, Resources completion, fresh installation, or overall acceptance. All AC01-AC18 and all five Jarvis core migration tasks remain open."
+}
