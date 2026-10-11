@@ -36,6 +36,7 @@ _HTML = '''<!doctype html>
       </a>
       <nav class="primary-nav" aria-label="Jarvis sections">
         <button type="button" class="nav-item" data-view="chat" aria-current="page">Chat</button>
+        <button type="button" class="nav-item" data-view="chat" data-open-sessions="true">Sessions</button>
         <button type="button" class="nav-item" data-view="overview">Overview</button>
         <button type="button" class="nav-item" data-view="capabilities">Capabilities</button>
         <button type="button" class="nav-item" data-view="settings">Settings</button>
@@ -49,13 +50,17 @@ _HTML = '''<!doctype html>
     <div class="workspace">
       <aside class="conversation-panel" id="conversation-panel" aria-label="Conversations">
         <div class="panel-heading">
-          <div><span class="eyebrow">YOUR SPACE</span><h2>Conversations</h2></div>
+          <div><span class="eyebrow">YOUR SPACE</span><h2>Sessions</h2></div>
           <button class="icon-button panel-close" id="history-close" type="button" aria-label="Close conversations">×</button>
         </div>
         <button class="new-chat-button" id="new-chat" type="button"><span aria-hidden="true">＋</span> New conversation</button>
-        <p class="list-caption">RECENT</p>
-        <nav class="conversation-list" id="conversation-list" aria-label="Recent conversations"></nav>
-        <p class="history-empty" id="history-empty">Your conversations will appear here.</p>
+        <p class="list-caption">YOUR CONVERSATIONS</p>
+        <label class="session-search-label" for="session-search">Find a session</label>
+        <input class="session-search" id="session-search" type="search" autocomplete="off" placeholder="Search sessions" aria-describedby="session-count">
+        <p class="session-count" id="session-count" role="status" aria-live="polite">Loading sessions…</p>
+        <nav class="conversation-list" id="conversation-list" aria-label="Owned conversation sessions"></nav>
+        <p class="history-empty" id="history-empty">No sessions yet. Start a new conversation.</p>
+        <p class="history-empty" id="history-filter-empty" hidden>No sessions match this search.</p>
         <div class="panel-footer"><span class="privacy-mark" aria-hidden="true">◈</span><span>Private conversations</span></div>
       </aside>
 
@@ -94,7 +99,7 @@ _HTML = '''<!doctype html>
               <button class="stop-button" id="stop-button" type="button" hidden>Stop response</button>
               <button class="voice-button" id="voice-input" type="button" aria-label="Start push to talk" hidden>Speak</button>
               <button class="voice-button" id="voice-stop" type="button" hidden>Stop listening</button>
-              <button class="voice-button" id="speech-stop" type="button" hidden>Stop audio</button>
+              <button class="voice-button" id="speech-stop" type="button" aria-label="Stop reply audio" hidden disabled>Stop audio</button>
             </div>
           </form>
           <p class="voice-status" id="voice-status" role="status" aria-live="polite" hidden></p>
@@ -113,6 +118,7 @@ _HTML = '''<!doctype html>
       <section class="data-main" id="capabilities-view" aria-label="Capabilities" data-view-panel="capabilities" hidden>
         <div class="page-heading"><span class="eyebrow">BUNDLED INVENTORY</span><h1>Capabilities</h1><p>Search the fixed offline catalog. Bundled items are declarations, not proof that a resource is enabled or working.</p></div>
         <div id="capability-readiness" class="readiness-banner" role="status">Loading verified capability inventory…</div>
+        <p class="capability-state-guide"><strong>Bundled</strong> means declared in the verified catalog. <strong>Discovered</strong> means observed in the source-bound Core inventory. Neither means <strong>ready</strong>; this view does not verify that a capability operates.</p>
         <div class="capability-filters">
           <label for="capability-search">Search inventory</label>
           <input id="capability-search" type="search" autocomplete="off" placeholder="Search names, IDs, and descriptions">
@@ -120,6 +126,10 @@ _HTML = '''<!doctype html>
           <select id="capability-kind"><option value="">All types</option></select>
           <p id="capability-count" role="status" aria-live="polite">Waiting for inventory…</p>
         </div>
+        <section class="catalog-map" aria-labelledby="catalog-map-title">
+          <div class="catalog-map-heading"><h2 id="catalog-map-title">Catalog by type</h2><p>Counts come from the verified offline catalog. Select a type to filter the inventory.</p></div>
+          <div id="capability-map" class="capability-map" aria-label="Catalog entries grouped by type"></div>
+        </section>
         <p id="capability-source" class="muted capability-source"></p>
         <div id="capability-discovery" class="readiness-banner" role="status"></div>
         <div id="capability-list" class="capability-list" aria-live="polite"></div>
@@ -127,10 +137,12 @@ _HTML = '''<!doctype html>
       <section class="data-main" id="settings-view" aria-label="Settings" data-view-panel="settings" hidden>
         <div class="page-heading"><span class="eyebrow">CONFIGURATION</span><h1>Settings</h1><p>Verified configuration labels and read-only integration status.</p></div>
         <section class="data-card settings-card"><h2>Assistant runtime</h2><dl id="settings-list" class="settings-list"><div><dt>Status</dt><dd>Loading verified configuration…</dd></div></dl><p class="muted">Configured model labels do not prove account authentication or the route selected for an individual reply. Secure settings changes are not available here.</p></section>
-        <section class="data-card voice-settings-card"><h2>Browser voice</h2>
+        <section class="data-card voice-settings-card"><h2>Voice preferences</h2>
           <p class="muted">Optional browser features. Text chat remains available on every device.</p>
+          <h3 class="voice-group-title">Speech input</h3>
           <label class="voice-choice" id="speech-consent-row" hidden><input id="speech-consent" type="checkbox"><span><strong>Enable push-to-talk for this page</strong><small>Browser speech recognition may process audio through your browser or platform speech service outside Jarvis. Audio is not sent to the Jarvis chat service. Availability and processing depend on your browser.</small></span></label>
           <p class="voice-unavailable" id="speech-unavailable" hidden></p>
+          <h3 class="voice-group-title">Speech output</h3>
           <label class="voice-choice" id="speech-output-row" hidden><input id="speech-output" type="checkbox"><span><strong>Read completed replies aloud on this page</strong><small>Uses voices available from your browser or operating system; selected voices may use their platform speech service. No separate Jarvis TTS provider is used. Replies are spoken only after Jarvis finishes.</small></span></label>
           <label class="voice-choice voice-select-row" id="speech-voice-row" hidden><span><strong>Speech voice</strong><select id="speech-voice" aria-label="Speech voice"></select></span></label>
           <p class="voice-unavailable" id="speech-output-unavailable" hidden></p>
@@ -196,6 +208,25 @@ _CSS = '''@charset "UTF-8";
 .nav-item{min-height:44px}.nav-item[aria-current="page"]{border-color:rgba(88,228,235,.42);background:linear-gradient(135deg,rgba(24,129,140,.22),rgba(15,68,77,.2));color:#e4feff;box-shadow:inset 0 0 0 1px rgba(88,228,235,.06)}
 .nav-item:active,.icon-button:active,.new-chat-button:active,.send-button:active,.stop-button:active,.voice-button:active{transform:scale(.97)}
 :focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+.session-search-label{display:block;margin:18px 8px 7px;color:#91aeb2;font-size:11px;font-weight:600}
+.session-search{width:100%;min-height:44px;padding:9px 11px;border:1px solid var(--line-strong);border-radius:10px;background:rgba(6,20,26,.82);color:var(--text);font:inherit;font-size:14px}
+.session-search:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.session-count{margin:8px 9px;color:#78969b;font-size:10px;line-height:1.4}
+.conversation-list{min-height:0}
+.catalog-map{max-width:1080px;margin:0 auto 15px;padding:16px;border:1px solid rgba(102,188,202,.15);border-radius:13px;background:rgba(9,27,34,.58)}
+.catalog-map-heading h2{margin:0;color:#bed3d4;font-size:13px;font-weight:600}
+.catalog-map-heading p{margin:5px 0 12px;color:#8ba5aa;font-size:11px;line-height:1.5}
+.capability-map{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr));gap:8px}
+.capability-state-guide{max-width:1080px;margin:-5px auto 16px;color:#9ab2b6;font-size:11px;line-height:1.55}
+.capability-state-guide strong{color:#d3e7e8;font-weight:650}
+.capability-kind{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 12px;align-items:center;min-width:0;min-height:58px;padding:9px 11px;border:1px solid rgba(102,188,202,.16);border-radius:10px;background:rgba(14,41,49,.66);color:#d5edef;text-align:left;cursor:pointer}
+.capability-kind:hover,.capability-kind[aria-pressed="true"]{border-color:rgba(88,228,235,.56);background:rgba(25,104,114,.22)}
+.capability-kind-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:600}
+.capability-kind-count{color:#93b4b8;font-size:10px;font-variant-numeric:tabular-nums}
+.capability-kind-track{grid-column:1/-1;display:block;height:4px;overflow:hidden;border-radius:999px;background:rgba(117,166,174,.14)}
+.capability-kind-fill{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#137c88,#56dbe2)}
+.voice-group-title{margin:18px 0 0;padding-top:12px;border-top:1px solid var(--line);color:#a9c4c7;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+.voice-group-title:first-of-type{border-top:0;padding-top:0}
 @media(hover:hover) and (pointer:fine){.data-card{transition:border-color 160ms ease}.data-card:hover{border-color:rgba(102,188,202,.3)}}
 @media(min-width:761px) and (max-width:1120px){.topbar{height:auto;min-height:72px;flex-wrap:wrap;padding-block:9px}.primary-nav{order:3;flex:1 1 100%;width:100%;margin:0;overflow-x:auto;scrollbar-width:thin}.nav-item{flex:0 0 auto}.workspace{min-height:0}}
 @media(max-width:760px){
@@ -208,6 +239,7 @@ _CSS = '''@charset "UTF-8";
  .primary-nav::-webkit-scrollbar{display:none}
  .nav-item{flex:0 0 auto;min-width:64px;min-height:46px;padding:0 9px;scroll-snap-align:center}
  .conversation-panel{top:calc(64px + env(safe-area-inset-top));bottom:calc(66px + env(safe-area-inset-bottom))}
+ .composer-actions{flex-wrap:wrap;gap:7px}.composer-hint{flex:1 1 100%;margin-right:0}
  .scrim:not([hidden]){inset:calc(64px + env(safe-area-inset-top)) 0 calc(66px + env(safe-area-inset-bottom))}
 }
 @media(max-width:390px){.assistant-hud{padding-right:7px}.assistant-state span{max-width:88px}.nav-item{min-width:60px;padding-inline:7px}}
@@ -223,7 +255,8 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   const byId = (id) => document.getElementById(id);
   const ui = {
     connection: byId("connection-state"), history: byId("conversation-list"),
-    empty: byId("history-empty"), title: byId("conversation-title"),
+    empty: byId("history-empty"), historyFilterEmpty: byId("history-filter-empty"),
+    sessionSearch: byId("session-search"), sessionCount: byId("session-count"), title: byId("conversation-title"),
     messages: byId("message-list"), welcome: byId("welcome-panel"),
     scroll: byId("message-scroll"), form: byId("composer"), input: byId("message-input"),
     send: byId("send-button"), stop: byId("stop-button"), notice: byId("chat-notice"),
@@ -339,7 +372,8 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     const wasSpeaking = speechUtterance !== null;
     if (synthesisSupported) window.speechSynthesis.cancel();
     speechUtterance = null;
-    ui.speechStop.hidden = true;
+    ui.speechStop.hidden = !synthesisSupported;
+    ui.speechStop.disabled = true;
     if (wasSpeaking && !activeTurnId) setAssistantState("ready", "Ready for your message");
     if (message && wasSpeaking) showVoiceStatus(message);
   }
@@ -360,10 +394,11 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     speechUtterance = utterance;
     setAssistantState("speaking", "Reading the completed reply aloud");
     ui.speechStop.hidden = false;
+    ui.speechStop.disabled = false;
     utterance.onend = () => {
       if (speechUtterance === utterance) {
         speechUtterance = null;
-        ui.speechStop.hidden = true;
+        ui.speechStop.disabled = true;
         setAssistantState("ready", "Ready for your message");
         showVoiceStatus("Reply audio finished.");
       }
@@ -371,7 +406,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     utterance.onerror = () => {
       if (speechUtterance === utterance) {
         speechUtterance = null;
-        ui.speechStop.hidden = true;
+        ui.speechStop.disabled = true;
         setAssistantState("error", "Read-aloud unavailable");
         showVoiceStatus("This device could not play the reply. Text chat is still available.");
       }
@@ -379,7 +414,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     try { window.speechSynthesis.speak(utterance); }
     catch (_) {
       speechUtterance = null;
-      ui.speechStop.hidden = true;
+      ui.speechStop.disabled = true;
       setAssistantState("error", "Read-aloud unavailable");
       showVoiceStatus("This device could not play the reply. Text chat is still available.");
     }
@@ -388,6 +423,8 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     voiceSupported = Boolean(Recognition && window.isSecureContext);
     synthesisSupported = "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+    ui.speechStop.hidden = !synthesisSupported;
+    ui.speechStop.disabled = true;
     const consentRow = byId("speech-consent-row");
     const unavailable = byId("speech-unavailable");
     consentRow.hidden = !voiceSupported;
@@ -528,15 +565,32 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   function renderHistory() {
     ui.history.replaceChildren();
     ui.empty.hidden = conversations.length !== 0;
-    for (const entry of conversations) {
+    const query = ui.sessionSearch.value.trim().toLocaleLowerCase();
+    const filtered = conversations.filter((entry) => {
+      const text = [entry.title, entry.id].filter((part) => typeof part === "string").join(" ").toLocaleLowerCase();
+      return !query || text.includes(query);
+    });
+    ui.historyFilterEmpty.hidden = conversations.length === 0 || filtered.length !== 0;
+    ui.sessionCount.textContent = query
+      ? `${filtered.length} matching sessions · ${conversations.length} owned in total`
+      : `${conversations.length} owned session${conversations.length === 1 ? "" : "s"}`;
+    for (const entry of filtered) {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "conversation-item";
       button.textContent = typeof entry.title === "string" && entry.title.trim() ? entry.title : "New conversation";
       if (entry.id === conversationId) button.setAttribute("aria-current", "page");
-      button.addEventListener("click", () => loadConversation(entry.id));
+      button.addEventListener("click", () => {
+        loadConversation(entry.id).catch((error) => showError(error.message)).finally(() => setPanel(false));
+      });
       ui.history.append(button);
     }
+  }
+  async function openSessions() {
+    await showView("chat", "sessions");
+    if (window.matchMedia("(max-width: 760px)").matches) setPanel(true);
+    const active = ui.history.querySelector('[aria-current="page"]');
+    (active || ui.newChat).focus({ preventScroll: true });
   }
   function setPanel(open) {
     const value = Boolean(open);
@@ -569,10 +623,15 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     catch (_) { throw new Error("Jarvis returned an unreadable response. Please reload this conversation."); }
   }
   async function refreshConversations() {
-    const data = await request(`${API}/conversations`);
-    if (!data || !Array.isArray(data.conversations)) throw new Error("Conversation history is unavailable.");
-    conversations = data.conversations.filter((item) => item && typeof item.id === "string" && typeof item.title === "string");
-    renderHistory();
+    try {
+      const data = await request(`${API}/conversations`);
+      if (!data || !Array.isArray(data.conversations)) throw new Error("Conversation history is unavailable.");
+      conversations = data.conversations.filter((item) => item && typeof item.id === "string" && typeof item.title === "string");
+      renderHistory();
+    } catch (error) {
+      ui.sessionCount.textContent = "Your owned session list is unavailable.";
+      throw error;
+    }
   }
   async function loadConversation(id) {
     if (typeof id !== "string" || !id) return;
@@ -807,6 +866,43 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     renderTurnChart(chat.turnCountsByDay);
   }
   let capabilityItems = [];
+  function renderCapabilityMap() {
+    const map = byId("capability-map");
+    map.replaceChildren();
+    const counts = new Map();
+    for (const item of capabilityItems) {
+      if (typeof item.kind === "string") counts.set(item.kind, (counts.get(item.kind) || 0) + 1);
+    }
+    const maxCount = Math.max(1, ...counts.values());
+    for (const [kind, count] of [...counts.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "capability-kind";
+      button.dataset.kind = kind;
+      button.setAttribute("aria-pressed", String(byId("capability-kind").value === kind));
+      button.setAttribute("aria-label", `${kind}: ${count} catalog entries. Select to filter.`);
+      const label = document.createElement("span");
+      label.className = "capability-kind-name";
+      label.textContent = kind.split(/[-_]/).map((part) => part ? part[0].toLocaleUpperCase() + part.slice(1) : "").join(" ");
+      const total = document.createElement("span");
+      total.className = "capability-kind-count";
+      total.textContent = `${count} entries`;
+      const track = document.createElement("span");
+      track.className = "capability-kind-track";
+      track.setAttribute("aria-hidden", "true");
+      const fill = document.createElement("span");
+      fill.className = "capability-kind-fill";
+      fill.style.width = `${Math.max(3, Math.round(count / maxCount * 100))}%`;
+      track.append(fill);
+      button.append(label, total, track);
+      button.addEventListener("click", () => {
+        const select = byId("capability-kind");
+        select.value = select.value === kind ? "" : kind;
+        renderCapabilities();
+      });
+      map.append(button);
+    }
+  }
   function renderCapabilities() {
     const list = byId("capability-list");
     list.replaceChildren();
@@ -817,6 +913,9 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       const text = [item.id, item.name, item.summary, item.kind].filter((part) => typeof part === "string").join(" ").toLocaleLowerCase();
       return !query || text.includes(query);
     });
+    for (const button of byId("capability-map").querySelectorAll(".capability-kind")) {
+      button.setAttribute("aria-pressed", String(button.dataset.kind === kind));
+    }
     byId("capability-count").textContent = `${filtered.length} of ${capabilityItems.length} catalog entries`;
     if (!filtered.length) {
       const empty = document.createElement("p");
@@ -862,6 +961,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     const selector = byId("capability-kind");
     selector.replaceChildren(new Option("All types", ""));
     for (const value of kinds) selector.add(new Option(value, value));
+    renderCapabilityMap();
     const source = data.source || {};
     byId("capability-source").textContent = source.kind === "offline-bundle"
       ? `Source: verified offline bundle · catalog ${source.catalogVersion || "unknown"} · revision ${source.revision || "unknown"}`
@@ -898,16 +998,20 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       list.append(row);
     }
   }
-  async function showView(view) {
+  async function showView(view, navSelection = view) {
     const selected = ["chat", "overview", "capabilities", "settings"].includes(view) || featuresById.has(view) ? view : "chat";
+    const selectedNavigation = navSelection === "sessions" && selected === "chat" ? "sessions" : selected;
     if (selected !== currentView && mountedFeature) unmountFeature();
     currentView = selected;
+    if (selectedNavigation !== "sessions" && window.matchMedia("(max-width: 760px)").matches && ui.panel.dataset.open === "true") setPanel(false);
     for (const panel of document.querySelectorAll("[data-view-panel]")) panel.hidden = panel.dataset.viewPanel !== selected;
     for (const button of document.querySelectorAll(".nav-item")) {
-      if (button.dataset.view === selected) button.setAttribute("aria-current", "page");
+      const buttonView = button.dataset.openSessions === "true" ? "sessions" : button.dataset.view;
+      if (buttonView === selectedNavigation) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
     }
-    const activeNavItem = document.querySelector(`.nav-item[data-view="${CSS.escape(selected)}"]`);
+    const activeNavItem = [...document.querySelectorAll(".nav-item")].find((button) =>
+      (button.dataset.openSessions === "true" ? "sessions" : button.dataset.view) === selectedNavigation);
     const primaryNav = activeNavItem && activeNavItem.closest(".primary-nav");
     if (activeNavItem && primaryNav && primaryNav.scrollWidth > primaryNav.clientWidth) {
       const left = activeNavItem.offsetLeft - (primaryNav.clientWidth - activeNavItem.offsetWidth) / 2;
@@ -942,6 +1046,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
         byId("capability-count").textContent = "Catalog entries are unavailable.";
         byId("capability-source").textContent = "Catalog provenance is unavailable.";
         byId("capability-discovery").textContent = "Runtime discovery is unavailable.";
+        byId("capability-map").replaceChildren();
         byId("capability-list").replaceChildren();
       }
     } else if (selected === "settings") {
@@ -950,6 +1055,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   }
   byId("capability-search").addEventListener("input", renderCapabilities);
   byId("capability-kind").addEventListener("change", renderCapabilities);
+  ui.sessionSearch.addEventListener("input", renderHistory);
   ui.form.addEventListener("submit", (event) => {
     event.preventDefault();
     const text = ui.input.value;
@@ -987,7 +1093,10 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   ui.toggle.addEventListener("click", () => setPanel(ui.panel.dataset.open !== "true"));
   ui.close.addEventListener("click", () => setPanel(false));
   ui.scrim.addEventListener("click", () => setPanel(false));
-  for (const button of document.querySelectorAll(".nav-item")) button.addEventListener("click", () => showView(button.dataset.view));
+  for (const button of document.querySelectorAll(".nav-item")) button.addEventListener("click", () => {
+    if (button.dataset.openSessions === "true") { openSessions().catch((error) => showError(error.message)); return; }
+    showView(button.dataset.view);
+  });
   window.addEventListener("pagehide", () => { closeStream(); stopRecognition(); stopSpeech(); unmountFeature(); });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState !== "visible") {

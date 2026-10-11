@@ -23,7 +23,7 @@ class JarvisChatAssetTests(unittest.TestCase):
     def test_navigation_and_read_only_views_use_finite_account_scoped_endpoints(self):
         _content_type, page = reviewed_chat_asset("/chat")
         source = page.decode("utf-8")
-        for label in ("Chat", "Overview", "Capabilities", "Settings"):
+        for label in ("Chat", "Sessions", "Overview", "Capabilities", "Settings"):
             with self.subTest(label=label):
                 self.assertIn(f">{label}</button>", source)
         self.assertIn('id="turn-chart"', source)
@@ -32,6 +32,13 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('id="capability-kind"', source)
         self.assertIn('id="capability-discovery"', source)
         self.assertIn('id="turn-active"', source)
+        self.assertIn('id="session-search" type="search"', source)
+        self.assertIn('id="session-count" role="status" aria-live="polite"', source)
+        self.assertIn('aria-label="Owned conversation sessions"', source)
+        self.assertIn('id="capability-map" class="capability-map"', source)
+        self.assertIn("Speech input", source)
+        self.assertIn("Speech output", source)
+        self.assertIn('id="speech-stop" type="button" aria-label="Stop reply audio"', source)
         self.assertIn("read-only integration status", source)
 
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
@@ -43,10 +50,12 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn("function featurePathMatches(template, path)", client)
         self.assertIn("feature.mount(root, featureApi(feature)", client)
         self.assertIn("unmountFeature();", client)
-        navigation = client.split("async function showView(view) {", 1)[1].split("if (selected !== \"chat\")", 1)[0]
+        navigation = client.split("async function showView(view, navSelection = view) {", 1)[1].split("if (selected !== \"chat\")", 1)[0]
         self.assertIn('button.setAttribute("aria-current", "page")', navigation)
         self.assertIn('primaryNav.scrollTo({ left: Math.max(0, left), behavior })', navigation)
         self.assertIn('window.matchMedia("(prefers-reduced-motion: reduce)")', navigation)
+        self.assertIn('button.dataset.openSessions === "true" ? "sessions" : button.dataset.view', navigation)
+        self.assertIn('showView("chat", "sessions")', client)
         _content_type, stylesheet = reviewed_chat_asset("/chat/assets/app.css")
         self.assertIn(".nav-item{min-height:44px}", stylesheet.decode("utf-8"))
         self.assertIn("Runtime readiness pending", client)
@@ -67,6 +76,22 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn("identity.textContent = isProfile", renderer)
         self.assertNotIn(".innerHTML", renderer)
         self.assertIn("source.catalogVersion", client)
+        self.assertIn("function renderCapabilityMap()", client)
+        self.assertIn("counts.set(item.kind", client)
+        self.assertIn("fill.style.width =", client)
+        self.assertIn('button.setAttribute("aria-pressed"', client)
+
+    def test_sessions_are_searchable_owned_rows_and_read_aloud_can_always_be_stopped(self):
+        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
+        client = script.decode("utf-8")
+        history = client.split("function renderHistory() {", 1)[1].split("async function openSessions()", 1)[0]
+        self.assertIn('ui.sessionSearch.value.trim().toLocaleLowerCase()', history)
+        self.assertIn("conversations.filter((entry)", history)
+        self.assertIn("loadConversation(entry.id)", history)
+        self.assertIn('ui.sessionCount.textContent', history)
+        self.assertIn('ui.speechStop.hidden = !synthesisSupported', client)
+        self.assertIn('ui.speechStop.disabled = true', client)
+        self.assertIn('ui.speechStop.disabled = false', client)
 
     def test_assistant_hud_reflects_real_chat_and_voice_lifecycle(self):
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
