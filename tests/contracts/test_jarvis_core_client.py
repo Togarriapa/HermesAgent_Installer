@@ -143,6 +143,99 @@ def test_models_status_rejects_ambiguous_or_malformed_codex_authentication():
         asyncio.run(client.get_model_provider_status())
 
 
+def test_context_and_status_reads_use_only_owner_resolved_live_session_and_strip_native_extras():
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
+    calls = []
+    native_context = {
+        "categories": [{"color": "var(--private-color)", "id": "conversation",
+                        "label": "Conversation", "tokens": 14}],
+        "context_max": 100, "context_percent": 14, "context_used": 14,
+        "estimated_total": 17, "context_estimated": False,
+        "context_source": "provider_usage", "model": "zai/glm-5.2",
+        "context_files": [{"path": "/home/private/CLAUDE.md", "chars": 42}],
+    }
+    native_status = {"output": (
+        "Path: /home/private/workspace\nSession ID: private-runtime\n"
+        "Created: 2026-10-11 09:30\nLast Activity: 2026-10-11 09:45\n"
+        "Tokens: 14\nAgent Running: No\n")}
+
+    async def rpc(method, params):
+        calls.append((method, params))
+        return native_context if method == "session.context_breakdown" else native_status
+
+    client._rpc = rpc
+    context = asyncio.run(client.session_context_breakdown("runtime-owner-live"))
+    status = asyncio.run(client.session_status("runtime-owner-live"))
+    assert calls == [
+        ("session.context_breakdown", {"session_id": "runtime-owner-live"}),
+        ("session.status", {"session_id": "runtime-owner-live"}),
+    ]
+    assert context == {
+        "categories": [{"id": "conversation", "label": "Conversation", "tokens": 14}],
+        "context_max": 100, "context_percent": 14, "context_used": 14,
+        "estimated_total": 17, "context_estimated": False,
+        "context_source": "provider_usage", "model": "zai/glm-5.2",
+    }
+    assert "private" not in repr(context)
+    assert set(status) == {"output"}
+    assert "/home/private" in status["output"]  # raw status stays private for Jarvis' allowlist parser
+    from hermes_installer.remote.jarvis_context import decode_session_status
+    projected = decode_session_status(status)
+    assert projected["state"] == "observed" and projected["running"] is False
+    assert "/home/private" not in repr(projected)
+    assert "private-runtime" not in repr(projected)
+
+
+@pytest.mark.parametrize("session_id", ["", "bad\nsession", {"session_id": "runtime"}])
+def test_session_context_reads_reject_unresolved_or_malformed_session_selectors(session_id):
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
+    calls = []
+
+    async def rpc(method, params):
+        calls.append((method, params))
+        return {}
+
+    client._rpc = rpc
+    with pytest.raises(JarvisChatDenied):
+        asyncio.run(client.session_context_breakdown(session_id))
+    assert calls == []
+
+
+def test_context_adapter_rejects_malformed_native_stats_and_open_ended_fields():
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
+
+    async def rpc(_method, _params):
+        return {
+            "categories": [], "context_max": True, "context_percent": 0, "context_used": 0,
+            "estimated_total": 0, "context_estimated": False,
+            "context_source": "provider_usage", "model": "zai/glm-5.2",
+            "private_secret": "should never pass through",
+        }
+
+    client._rpc = rpc
+    with pytest.raises(JarvisChatDenied):
+        asyncio.run(client.session_context_breakdown("runtime-owner-live"))
+
+
+def test_session_read_adapter_enforces_short_deadline_and_bounds_status_payload():
+    client = CoreRpcClient(token_file=Path("/private/fake/token"), timeout_seconds=0.01)
+
+    async def slow_rpc(_method, _params):
+        await asyncio.sleep(0.1)
+        return {"output": "never reached"}
+
+    client._rpc = slow_rpc
+    with pytest.raises(JarvisChatDenied, match="deadline"):
+        asyncio.run(client.session_status("runtime-owner-live"))
+
+    async def oversized_rpc(_method, _params):
+        return {"output": "x" * 8_193}
+
+    client._rpc = oversized_rpc
+    with pytest.raises(JarvisChatDenied):
+        asyncio.run(client.session_status("runtime-owner-live"))
+
+
 def test_models_selection_constructs_only_fixed_session_scoped_native_call():
     client = CoreRpcClient(token_file=Path("/private/fake/token"))
     socket = _ModelsWebSocket()

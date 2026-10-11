@@ -28,7 +28,21 @@ MAX_CORE_TEXT_CHARS = 64_000
 MAX_FILE_ATTACHMENT_BYTES = 128 * 1024
 MAX_EARLY_MODEL_SESSION_INFO = 16
 MODEL_SESSION_READY_TIMEOUT_SECONDS = 9.0
+SESSION_READ_TIMEOUT_SECONDS = 3.5
 _ATTACHMENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,119}$")
+_CONTEXT_CATEGORY_LABELS = {
+    "system_prompt": "System prompt",
+    "tool_definitions": "Tool definitions",
+    "rules": "Rules",
+    "skills": "Skills",
+    "mcp": "MCP tools",
+    "subagent_definitions": "Subagent definitions",
+    "memory": "Memory",
+    "conversation": "Conversation",
+}
+_CONTEXT_SOURCES = {"local_estimate", "provider_usage", "provider_usage_plus_estimate"}
+_CONTEXT_MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+ -]{0,159}$")
+_MAX_CONTEXT_TOKENS = 2_000_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +166,7 @@ class CoreRpcClient:
     async def _rpc(self, method: str, params: dict[str, Any]) -> dict:
         # Method names are not parameters to public endpoints; this still defends internal misuse.
         if method not in {"session.create", "session.resume", "session.history", "session.interrupt",
+                          "session.context_breakdown", "session.status",
                           "profiles.list", "cron.manage", "plugins.list", "mcp.servers.status",
                           "file.attach", "tools.list", "skills.manage", "config.get", "config.set"}:
             raise JarvisChatDenied("core method is outside the fixed adapter")
@@ -205,6 +220,92 @@ class CoreRpcClient:
             "codex_credential_configured": codex_rows[0] if codex_rows else None,
             "known_model": model in CODEX_KNOWN_MODEL_ID_SET,
         }
+
+    async def _session_read_rpc(self, method: str, session_id: str) -> dict[str, Any]:
+        """Read one current live session already resolved by the owner-bound Jarvis store."""
+        if (method not in {"session.context_breakdown", "session.status"}
+                or not _valid_session_id(session_id)):
+            raise JarvisChatDenied("owned core session read is outside the fixed adapter")
+        try:
+            return await asyncio.wait_for(
+                self._rpc(method, {"session_id": session_id}),
+                timeout=min(SESSION_READ_TIMEOUT_SECONDS, self._timeout_seconds),
+            )
+        except asyncio.TimeoutError:
+            raise JarvisChatDenied("official core session read exceeded its deadline") from None
+
+    async def session_context_breakdown(self, session_id: str) -> dict[str, Any]:
+        """Return the native context gauge for a server-resolved live session.
+
+        Hermes' session-scoped method requires a live runtime ID. The caller must obtain it from
+        the authenticated conversation mapping and check its core generation before and after.
+        This adapter never resumes sessions or accepts browser-provided selectors.
+        """
+        result = await self._session_read_rpc("session.context_breakdown", session_id)
+        required = {"categories", "context_max", "context_percent", "context_used",
+                    "estimated_total", "context_estimated", "context_source", "model"}
+        if (not isinstance(result, dict) or not required.issubset(result)
+                or set(result) - required - {"context_files"}):
+            raise JarvisChatDenied("official core context breakdown was invalid")
+        files = result.get("context_files")
+        if files is not None and (not isinstance(files, list) or len(files) > 512):
+            raise JarvisChatDenied("official core context breakdown was invalid")
+        categories = result["categories"]
+        if not isinstance(categories, list) or len(categories) > len(_CONTEXT_CATEGORY_LABELS):
+            raise JarvisChatDenied("official core context breakdown was invalid")
+        projected_categories = []
+        seen: set[str] = set()
+        total = 0
+        for row in categories:
+            if not isinstance(row, dict) or set(row) != {"color", "id", "label", "tokens"}:
+                raise JarvisChatDenied("official core context category was invalid")
+            category_id, tokens = row.get("id"), row.get("tokens")
+            if (not isinstance(category_id, str) or category_id not in _CONTEXT_CATEGORY_LABELS
+                    or category_id in seen or type(tokens) is not int
+                    or not 0 <= tokens <= _MAX_CONTEXT_TOKENS):
+                raise JarvisChatDenied("official core context category was invalid")
+            seen.add(category_id)
+            total += tokens
+            if total > _MAX_CONTEXT_TOKENS:
+                raise JarvisChatDenied("official core context category total was invalid")
+            projected_categories.append({"id": category_id,
+                                         "label": _CONTEXT_CATEGORY_LABELS[category_id],
+                                         "tokens": tokens})
+        maximum, percent = result["context_max"], result["context_percent"]
+        used, estimated_total = result["context_used"], result["estimated_total"]
+        estimated, source, model = (result["context_estimated"], result["context_source"],
+                                    result["model"])
+        if (type(maximum) is not int or not 0 <= maximum <= _MAX_CONTEXT_TOKENS
+                or type(percent) is not int or not 0 <= percent <= 100
+                or type(used) is not int or not 0 <= used <= _MAX_CONTEXT_TOKENS
+                or type(estimated_total) is not int or not 0 <= estimated_total <= _MAX_CONTEXT_TOKENS
+                or type(estimated) is not bool or not isinstance(source, str)
+                or source not in _CONTEXT_SOURCES
+                or not isinstance(model, str)
+                or (model and (not _CONTEXT_MODEL_RE.fullmatch(model)
+                               or ".." in model or "//" in model or "://" in model or "\\" in model))):
+            raise JarvisChatDenied("official core context breakdown was invalid")
+        return {
+            "categories": projected_categories,
+            "context_max": maximum,
+            "context_percent": percent,
+            "context_used": used,
+            "estimated_total": estimated_total,
+            "context_estimated": estimated,
+            "context_source": source,
+            "model": model,
+        }
+
+    async def session_status(self, session_id: str) -> dict[str, str]:
+        """Return bounded private native status text for the fixed Jarvis status parser."""
+        result = await self._session_read_rpc("session.status", session_id)
+        if not isinstance(result, dict) or set(result) != {"output"}:
+            raise JarvisChatDenied("official core session status was invalid")
+        output = result.get("output")
+        if (not isinstance(output, str) or len(output) > 8_192
+                or any(ord(char) < 0x20 and char not in "\n\r\t" for char in output)):
+            raise JarvisChatDenied("official core session status was invalid")
+        return {"output": output}
 
     async def _rpc_on_socket(self, ws: Any, ws_types: Any, method: str,
                              params: dict[str, Any], *, deadline: float | None = None,
