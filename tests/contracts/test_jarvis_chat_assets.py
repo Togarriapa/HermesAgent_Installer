@@ -232,6 +232,23 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-core', css)
         self.assertIn('animation:none!important;transform:none!important', css)
 
+    def test_presence_stops_offline_until_protected_refresh_confirms_connection(self):
+        _content_type, script = reviewed_client_bundle()
+        client = script.decode("utf-8")
+        _content_type, stylesheet = reviewed_chat_asset("/chat/assets/app.css")
+        css = stylesheet.decode("utf-8")
+
+        offline = client.index('window.addEventListener("offline", () => {')
+        online = client.index('window.addEventListener("online", async () => {')
+        refresh = client.index("await refreshConversations();", online)
+        ready = client.index('setConnection("ready", "Secure connection");', refresh)
+        self.assertLess(offline, online)
+        self.assertLess(refresh, ready)
+        self.assertIn('document.documentElement.dataset.networkOnline = "false"', client[offline:online])
+        self.assertIn('presence.dataset.state = "checking"', client[offline:online])
+        self.assertIn('.jarvis-presence:not([data-connection="ready"]) .presence-orbit-inner', css)
+        self.assertIn('.jarvis-presence:not([data-connection="ready"]) .presence-core{animation:none!important;transform:none!important}', css)
+
     def test_only_exact_reviewed_asset_routes_are_available(self):
         expected = {
             "/chat": "text/html; charset=utf-8",

@@ -376,6 +376,8 @@ html[data-page-visible="true"] .assistant-hud[data-state="speaking"] .orb-ring{a
 @media(max-width:760px){.composer-actions{flex-wrap:wrap}.composer-hint{flex:1 0 100%;padding:2px 0 5px}.voice-wake-controls p{margin-left:0}}
 @media(prefers-reduced-motion:reduce){html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-orbit-inner,html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-orbit-reactor,html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-orbit-outer,html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-core,html:not([data-jarvis-motion="full"]) .assistant-hud .orb-halo,html:not([data-jarvis-motion="full"]) .assistant-hud .orb-ring{animation:none!important;transform:none!important}}
 @media(prefers-reduced-motion:reduce){html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-orbit-inner{animation:presence-turn 58s linear infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-core{animation:reactor-core-breathe 6s ease-in-out infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="thinking"] .presence-orbit-inner{animation:presence-turn 18s linear infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="thinking"] .presence-orbit-reactor{animation:presence-turn 46s linear infinite reverse!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="listening"] .presence-orbit-outer{animation:reactor-listening 1.7s ease-in-out infinite!important}html[data-jarvis-motion="full"] .jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="speaking"] .presence-orbit-reactor{animation:presence-turn 34s linear infinite!important}html[data-jarvis-motion="full"][data-page-visible="true"] .assistant-hud[data-state="idle"] .orb-halo{animation:jarvis-halo-breathe 7s ease-in-out infinite!important}html[data-jarvis-motion="full"][data-page-visible="true"] .assistant-hud[data-state="listening"] .orb-halo{animation:jarvis-halo-breathe 1.7s ease-in-out infinite!important}html[data-jarvis-motion="full"][data-page-visible="true"] .assistant-hud[data-state="speaking"] .orb-ring{animation:presence-turn 16s linear infinite!important}}
+/* Network availability is only a hint until a protected refresh succeeds. */
+.jarvis-presence:not([data-connection="ready"]) .presence-orbit-inner,.jarvis-presence:not([data-connection="ready"]) .presence-orbit-reactor,.jarvis-presence:not([data-connection="ready"]) .presence-orbit-outer,.jarvis-presence:not([data-connection="ready"]) .presence-core{animation:none!important;transform:none!important}
 '''.encode("utf-8")
 
 
@@ -1722,6 +1724,53 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   });
   const presence = byId("jarvis-presence");
   syncPageVisibility();
+  let networkRefreshPending = false;
+  window.addEventListener("offline", () => {
+    document.documentElement.dataset.networkOnline = "false";
+    setConnection("error", "Offline · status unverified");
+    if (presence) {
+      presence.dataset.state = "checking";
+      byId("jarvis-presence-state").textContent = "Offline · current status unverified";
+    }
+  });
+  window.addEventListener("online", async () => {
+    // navigator.onLine is advisory; movement/readiness returns only after a real
+    // owner-authenticated history refresh succeeds.
+    document.documentElement.dataset.networkOnline = "checking";
+    setConnection("checking", "Checking secure connection…");
+    if (presence) {
+      presence.dataset.state = "checking";
+      byId("jarvis-presence-state").textContent = "Checking secure connection";
+    }
+    if (networkRefreshPending) return;
+    networkRefreshPending = true;
+    try {
+      await refreshConversations();
+      if (navigator.onLine === false) return;
+      document.documentElement.dataset.networkOnline = "true";
+      setConnection("ready", "Secure connection");
+      if (!conversationHydrated && conversations.length) {
+        await loadConversation(conversations[0].id);
+        conversationHydrated = true;
+      }
+      const hud = byId("assistant-hud");
+      if (presence && hud) {
+        presence.dataset.state = hud.dataset.state;
+        byId("jarvis-presence-state").textContent = byId("assistant-mode").textContent;
+      }
+    } catch (error) {
+      if (navigator.onLine === false) return;
+      document.documentElement.dataset.networkOnline = "false";
+      setConnection("error", "Connection could not be verified");
+      if (presence) {
+        presence.dataset.state = "checking";
+        byId("jarvis-presence-state").textContent = "Connection could not be verified";
+      }
+      showError(error.message);
+    } finally {
+      networkRefreshPending = false;
+    }
+  });
   if (presence && "IntersectionObserver" in window) {
     presenceObserver = new IntersectionObserver((entries) => {
       for (const entry of entries) if (entry.target === presence) presence.dataset.inViewport = String(entry.isIntersecting);
@@ -1733,7 +1782,18 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   showView("overview");
   (async () => {
     try {
+      if (navigator.onLine === false) {
+        document.documentElement.dataset.networkOnline = "false";
+        setConnection("error", "Offline · status unverified");
+        if (presence) {
+          presence.dataset.state = "checking";
+          byId("jarvis-presence-state").textContent = "Offline · current status unverified";
+        }
+        return;
+      }
       await refreshConversations();
+      if (navigator.onLine === false) return;
+      document.documentElement.dataset.networkOnline = "true";
       setConnection("ready", "Secure connection");
       setAssistantState("ready", "Ready for your message");
       if (conversations.length) await loadConversation(conversations[0].id);
