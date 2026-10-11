@@ -823,9 +823,26 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       return;
     }
     if (selected === "overview") {
-      try { await loadOverview(); } catch (error) { byId("chart-caption").textContent = error.message; }
+      try { await loadOverview(); } catch (_) {
+        byId("core-status").textContent = "Unavailable";
+        byId("core-readiness").textContent = "The status request failed; functional readiness is not verified.";
+        byId("core-observed").textContent = "No current observation is available.";
+        byId("conversation-count").textContent = "Unavailable";
+        byId("turn-total").textContent = "Unavailable";
+        byId("turn-active").textContent = "Unavailable";
+        byId("last-turn").textContent = "Last turn is unavailable.";
+        byId("turn-breakdown").textContent = "Turn totals are unavailable.";
+        byId("chart-caption").textContent = "Recorded daily activity is unavailable.";
+        byId("turn-chart").replaceChildren();
+      }
     } else if (selected === "capabilities") {
-      try { await loadCapabilities(); } catch (error) { byId("capability-readiness").textContent = error.message; }
+      try { await loadCapabilities(); } catch (_) {
+        byId("capability-readiness").textContent = "The catalog request failed. Runtime readiness is not verified.";
+        byId("capability-count").textContent = "Catalog entries are unavailable.";
+        byId("capability-source").textContent = "Catalog provenance is unavailable.";
+        byId("capability-discovery").textContent = "Runtime discovery is unavailable.";
+        byId("capability-list").replaceChildren();
+      }
     } else if (selected === "settings") {
       try { await loadSettings(); } catch (error) { byId("settings-list").replaceChildren(); const row = document.createElement("div"); const term = document.createElement("dt"); const value = document.createElement("dd"); term.textContent = "Status"; value.textContent = error.message; row.append(term, value); byId("settings-list").append(row); }
     }
