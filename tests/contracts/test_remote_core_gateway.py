@@ -106,30 +106,29 @@ class CoreGatewayInspectorClientTests(unittest.TestCase):
 
         with patch.object(CoreRpcClient, "_rpc", fixed_tools_rpc):
             names = core_gateway_inspector._read_session_tool_configuration(
-                "jarvis-session-123", deadline=time.monotonic() + 5)
+                "jarvis-session-123", selected_toolsets=("web",),
+                deadline=time.monotonic() + 5)
         self.assertEqual(calls, [("tools.list", {"session_id": "jarvis-session-123"})])
         self.assertEqual(names, ("web_fetch", "web_search"))
 
-        ambiguous = [dict(row, enabled=True) for row in rows]
+        disabled_metadata = [dict(row, enabled=True) for row in rows]
         async def ambiguous_tools_rpc(_client, method, params):
-            return {"toolsets": ambiguous}
+            return {"toolsets": disabled_metadata}
         with patch.object(CoreRpcClient, "_rpc", ambiguous_tools_rpc):
-            with self.assertRaises(core_gateway_inspector.CoreInspectionDenied):
-                core_gateway_inspector._read_session_tool_configuration(
-                    "jarvis-session-123", deadline=time.monotonic() + 5)
+            selected = core_gateway_inspector._read_session_tool_configuration(
+                "jarvis-session-123", selected_toolsets=("terminal",),
+                deadline=time.monotonic() + 5)
+        self.assertEqual(selected, ("terminal",))
 
-    def test_native_inheritance_policy_requires_explicit_closed_booleans(self):
+    def test_native_tool_projection_only_uses_explicit_configured_toolsets(self):
         raw = (
-            b"platform_toolsets:\n  cli: [web]\n"
-            b"inherit_mcp_toolsets: false\n"
-            b"delegation:\n  orchestrator_enabled: true\n"
+            b"platform_toolsets:\n  cli: [web, terminal]\n"
         )
-        inherit_mcp, orchestrator, digest = core_gateway_inspector._parse_native_inheritance_config(raw)
-        self.assertFalse(inherit_mcp)
-        self.assertTrue(orchestrator)
+        selected, digest = core_gateway_inspector._parse_native_inheritance_config(raw)
+        self.assertEqual(selected, ("terminal", "web"))
         self.assertEqual(digest, hashlib.sha256(raw).hexdigest())
 
-        ambiguous = b"platform_toolsets:\n  cli: [web]\n"
+        ambiguous = b"inherit_mcp_toolsets: true\ndelegation:\n  orchestrator_enabled: true\n"
         with self.assertRaises(core_gateway_inspector.CoreInspectionDenied):
             core_gateway_inspector._parse_native_inheritance_config(ambiguous)
 

@@ -86,6 +86,10 @@ _SKILL_LEARNING_PROOF_SEAL = object()
 _NATIVE_CUSTODY_SEAL = object()
 _OWNER_TURN_SEAL = object()
 _NATIVE_TOOL_CONFIGURATION_SEAL = object()
+_RESOURCES_DELEGATE_NAME = "resources_delegate"
+_RESOURCES_DELEGATE_TOOLSET = "resources_internal"
+_RESOURCES_DELEGATE_SCHEMA_SHA256 = "9325cea421e122395475b0ba0d0517cb4aa4c16c3d4a14c5145f9fcc3f957f33"
+_RESOURCES_DISPATCH_SOURCE_SHA256 = "4111e1244887f5bcb5f92cf449a0e55888f9b2637c78ebe43232fa1db968e2f2"
 _SERVER_SLOTS = threading.BoundedSemaphore(16)
 _MAX_RETAINED_INGRESS_ISSUES = 128
 _RETAINED_INGRESS_ISSUES: dict[tuple[int, str, str, str], "_RetainedIngressIssue"] = {}
@@ -1369,8 +1373,8 @@ def _fixed_model_config_bytes() -> bytes | None:
                             mode=0o600, maximum=MAX_CORE_USER_CONFIG_BYTES)
 
 
-def _parse_native_inheritance_config(raw: bytes) -> tuple[bool, bool, str]:
-    """Read only the two explicit native-inheritance switches from protected config bytes."""
+def _parse_native_inheritance_config(raw: bytes) -> tuple[tuple[str, ...], str]:
+    """Read only the explicit configured parent toolset maximum from protected bytes."""
     import yaml
     from yaml.constructor import ConstructorError
 
@@ -1396,9 +1400,8 @@ def _parse_native_inheritance_config(raw: bytes) -> tuple[bool, bool, str]:
     document = yaml.load(raw, Loader=UniqueSafeLoader)
     if not isinstance(document, dict):
         raise CoreInspectionDenied("fixed native configuration is unavailable")
-    # Require an explicit, non-empty selected parent toolset list. Hermes' tools.list
-    # RPC reports every row enabled when the live enabled-set is empty/None, so such
-    # inventory cannot prove a finite inherited closure.
+    # Require an explicit non-empty configured selection. The root treats this as an
+    # upper bound only; live native blocked/disabled/platform filters remain authoritative.
     platform_toolsets = document.get("platform_toolsets")
     cli_selection = platform_toolsets.get("cli") if isinstance(platform_toolsets, dict) else None
     if (not isinstance(cli_selection, list) or not cli_selection or len(cli_selection) > 256
@@ -1406,21 +1409,25 @@ def _parse_native_inheritance_config(raw: bytes) -> tuple[bool, bool, str]:
                    or not item.isascii() or any(ord(char) < 0x20 for char in item)
                    for item in cli_selection)):
         raise CoreInspectionDenied("explicit parent tool selection is unavailable")
-    inherit_mcp = document.get("inherit_mcp_toolsets")
-    delegation = document.get("delegation")
-    orchestrator_enabled = (delegation.get("orchestrator_enabled")
-                            if isinstance(delegation, dict) else None)
-    if type(inherit_mcp) is not bool or type(orchestrator_enabled) is not bool:
-        raise CoreInspectionDenied("explicit native-inheritance policy is unavailable")
-    return inherit_mcp, orchestrator_enabled, hashlib.sha256(raw).hexdigest()
+    if len(set(cli_selection)) != len(cli_selection):
+        raise CoreInspectionDenied("explicit parent tool selection is ambiguous")
+    return tuple(sorted(cli_selection)), hashlib.sha256(raw).hexdigest()
 
 
-def _read_session_tool_configuration(session_id: str, *, deadline: float) -> tuple[str, ...]:
-    """Read the fixed pinned tools.list method for this exact live core session."""
+def _read_session_tool_configuration(
+        session_id: str, *, selected_toolsets: tuple[str, ...], deadline: float) -> tuple[str, ...]:
+    """Build a configured maximum from protected selections and current toolset metadata.
+
+    The RPC's `enabled` field omits disabled and platform-gated filtering, so it is
+    validated as metadata but never used as an effective dispatch allowlist.
+    """
     if (not isinstance(session_id, str) or not session_id.isascii()
             or not 1 <= len(session_id) <= 512
             or any(ord(char) < 0x20 for char in session_id)):
         raise CoreInspectionDenied("current parent session is unavailable")
+    if (not isinstance(selected_toolsets, tuple) or not selected_toolsets
+            or tuple(sorted(set(selected_toolsets))) != selected_toolsets):
+        raise CoreInspectionDenied("configured parent tool maximum is unavailable")
     if time.monotonic() >= deadline - 1.0:
         raise CoreInspectionDenied("current parent tool inventory exceeded its deadline")
     from .core_client import CoreRpcClient
@@ -1444,8 +1451,8 @@ def _read_session_tool_configuration(session_id: str, *, deadline: float) -> tup
     rows = result.get("toolsets")
     if not isinstance(rows, list) or not 1 <= len(rows) <= 256:
         raise CoreInspectionDenied("current parent tool inventory is empty or ambiguous")
-    enabled_toolsets: set[str] = set()
     seen_toolsets: set[str] = set()
+    matched_toolsets: set[str] = set()
     all_tools: set[str] = set()
     total = 0
     for row in rows:
@@ -1463,8 +1470,6 @@ def _read_session_tool_configuration(session_id: str, *, deadline: float) -> tup
         if toolset_name in seen_toolsets:
             raise CoreInspectionDenied("current parent tool inventory contains duplicate toolsets")
         seen_toolsets.add(toolset_name)
-        if row["enabled"]:
-            enabled_toolsets.add(toolset_name)
         row_tools: set[str] = set()
         for tool in row["tools"]:
             if (not isinstance(tool, str) or not tool.isascii()
@@ -1475,13 +1480,11 @@ def _read_session_tool_configuration(session_id: str, *, deadline: float) -> tup
         total += len(row_tools)
         if total > 2048:
             raise CoreInspectionDenied("current parent tool inventory exceeded its bound")
-        if row["enabled"]:
+        if toolset_name in selected_toolsets:
+            matched_toolsets.add(toolset_name)
             all_tools.update(row_tools)
-    # Pinned Hermes reports enabled=True for all rows when its session's enabled
-    # set is empty/None. That result cannot prove actual inheritance; require a
-    # strict subset and non-empty resolved names.
-    if len(enabled_toolsets) == len(rows) or not all_tools:
-        raise CoreInspectionDenied("current parent tool inventory is ambiguous")
+    if matched_toolsets != set(selected_toolsets) or not all_tools:
+        raise CoreInspectionDenied("selected configured tool metadata is incomplete")
     return tuple(sorted(all_tools))
 
 
@@ -2009,18 +2012,60 @@ class CoreVerifiedOwnerTurnObservation:
     proof_sha256: str
 
 
+def _current_resources_delegate_registration(*, deadline: float) -> dict[str, str]:
+    """Join the sealed plugin descriptor to the exact root-installed handler source bytes."""
+    from .core_native_observer import (
+        CoreNativeResourcesDelegateRegistration,
+        current_resources_delegate_registration,
+    )
+    registration = current_resources_delegate_registration()
+    if (type(registration) is not CoreNativeResourcesDelegateRegistration
+            or registration.schema != 1
+            or registration.name != _RESOURCES_DELEGATE_NAME
+            or registration.toolset != _RESOURCES_DELEGATE_TOOLSET
+            or registration.package_relative_path != "components/resources_internal_dispatch.py"
+            or registration.schema_sha256 != _RESOURCES_DELEGATE_SCHEMA_SHA256):
+        raise CoreInspectionDenied("fixed Resources delegate registration is unavailable")
+    inspector_path = Path(__file__).resolve(strict=True)
+    package_root = inspector_path.parents[1]
+    if package_root.name != "hermes_installer":
+        raise CoreInspectionDenied("installed package root is unavailable")
+    current = package_root
+    while True:
+        info = os.lstat(current)
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0
+                or stat.S_IMODE(info.st_mode) & 0o022):
+            raise CoreInspectionDenied("installed package path custody differs")
+        if current == current.parent:
+            break
+        current = current.parent
+    member = package_root / "components" / "resources_internal_dispatch.py"
+    source_sha256 = _protected_file_sha(member, owner_uid=0, deadline=deadline)
+    if (source_sha256 != _RESOURCES_DISPATCH_SOURCE_SHA256
+            or registration.source_sha256 != source_sha256):
+        raise CoreInspectionDenied("Resources delegate source bytes are not the reviewed member")
+    return {
+        "resources_delegate_name": registration.name,
+        "resources_delegate_toolset": registration.toolset,
+        "resources_delegate_schema_sha256": registration.schema_sha256,
+        "resources_delegate_source_sha256": source_sha256,
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class CoreVerifiedNativeToolConfiguration:
-    """Root-sealed, session-scoped tool closure plus explicit native inheritance policy."""
+    """Root-sealed configured maximum and registered Resources wrapper provenance."""
 
     schema: int
     core_generation: str
     core_source_generation: str
     owner_subject_sha256: str
     tool_configuration_sha256: str
-    allowed_parent_tool_names: tuple[str, ...]
-    allow_inherited_mcp: bool
-    allow_native_orchestrator_delegation: bool
+    configured_parent_tool_names: tuple[str, ...]
+    resources_delegate_name: str
+    resources_delegate_toolset: str
+    resources_delegate_schema_sha256: str
+    resources_delegate_source_sha256: str
     issued_monotonic: float
     expires_monotonic: float
     _config: CoreGatewayConfig = field(repr=False, compare=False)
@@ -2044,14 +2089,17 @@ class CoreVerifiedNativeToolConfiguration:
                     or self.core_source_generation != owner_turn.core_source_generation
                     or self.owner_subject_sha256 != owner_turn.owner_subject_sha256
                     or not _is_hash(self.tool_configuration_sha256)
-                    or not isinstance(self.allowed_parent_tool_names, tuple)
-                    or not self.allowed_parent_tool_names
-                    or tuple(sorted(set(self.allowed_parent_tool_names))) != self.allowed_parent_tool_names
+                    or not isinstance(self.configured_parent_tool_names, tuple)
+                    or not self.configured_parent_tool_names
+                    or tuple(sorted(set(self.configured_parent_tool_names))) != self.configured_parent_tool_names
                     or any(not isinstance(name, str) or not name.isascii()
                            or re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,127}", name) is None
-                           for name in self.allowed_parent_tool_names)
-                    or type(self.allow_inherited_mcp) is not bool
-                    or type(self.allow_native_orchestrator_delegation) is not bool
+                           for name in self.configured_parent_tool_names)
+                    or self.resources_delegate_name != _RESOURCES_DELEGATE_NAME
+                    or self.resources_delegate_toolset != _RESOURCES_DELEGATE_TOOLSET
+                    or self.resources_delegate_name not in self.configured_parent_tool_names
+                    or not _is_hash(self.resources_delegate_schema_sha256)
+                    or not _is_hash(self.resources_delegate_source_sha256)
                     or any(type(value) not in (int, float) or not math.isfinite(value)
                            for value in (self.issued_monotonic, self.expires_monotonic, current))
                     or not owner_turn.accepted_monotonic <= self.issued_monotonic < self.expires_monotonic
@@ -2066,10 +2114,11 @@ class CoreVerifiedNativeToolConfiguration:
             if time.monotonic() >= min(owner_turn.expires_monotonic, self.expires_monotonic):
                 return False
             return (fresh["tool_configuration_sha256"] == self.tool_configuration_sha256
-                    and fresh["allowed_parent_tool_names"] == self.allowed_parent_tool_names
-                    and fresh["allow_inherited_mcp"] == self.allow_inherited_mcp
-                    and fresh["allow_native_orchestrator_delegation"]
-                        == self.allow_native_orchestrator_delegation
+                    and fresh["configured_parent_tool_names"] == self.configured_parent_tool_names
+                    and fresh["resources_delegate_name"] == self.resources_delegate_name
+                    and fresh["resources_delegate_toolset"] == self.resources_delegate_toolset
+                    and fresh["resources_delegate_schema_sha256"] == self.resources_delegate_schema_sha256
+                    and fresh["resources_delegate_source_sha256"] == self.resources_delegate_source_sha256
                     and custody.verify_current(config, owner_turn, custody.core_pid,
                                               custody.core_uid, custody.core_gid) is True)
         except Exception:
@@ -2079,7 +2128,7 @@ class CoreVerifiedNativeToolConfiguration:
 def _read_native_tool_configuration_claims(
         config: CoreGatewayConfig, custody: CoreNativeObserverCustody,
         owner_turn: CoreVerifiedOwnerTurnObservation) -> dict[str, Any]:
-    """Re-read protected user policy and the actual current session's finite tools.list response."""
+    """Re-read protected selections, registered wrapper source, and current tool metadata."""
     if (type(config) is not CoreGatewayConfig
             or type(custody) is not CoreNativeObserverCustody
             or type(owner_turn) is not CoreVerifiedOwnerTurnObservation
@@ -2088,16 +2137,21 @@ def _read_native_tool_configuration_claims(
         raise CoreInspectionDenied("current native tool configuration custody is unavailable")
     deadline = min(time.monotonic() + MAX_PROOF_SECONDS, owner_turn.expires_monotonic)
     native_source_digest = _current_native_tool_source(config, deadline=deadline)
+    delegate_registration = _current_resources_delegate_registration(deadline=deadline)
     raw = _fixed_model_config_bytes()
     if not isinstance(raw, bytes) or not raw or len(raw) > MAX_CORE_USER_CONFIG_BYTES:
         raise CoreInspectionDenied("fixed native tool configuration is unavailable")
-    inherit_mcp, orchestrator_enabled, config_digest = _parse_native_inheritance_config(raw)
-    names = _read_session_tool_configuration(owner_turn.session_id, deadline=deadline)
+    selected_toolsets, config_digest = _parse_native_inheritance_config(raw)
+    names = _read_session_tool_configuration(owner_turn.session_id,
+        selected_toolsets=selected_toolsets, deadline=deadline)
+    names = tuple(sorted(set(names) | {_RESOURCES_DELEGATE_NAME}))
     if time.monotonic() >= deadline:
         raise CoreInspectionDenied("current native tool configuration expired")
     current_raw = _fixed_model_config_bytes()
     current_native_source_digest = _current_native_tool_source(config, deadline=deadline)
+    current_delegate_registration = _current_resources_delegate_registration(deadline=deadline)
     if (current_native_source_digest != native_source_digest
+            or current_delegate_registration != delegate_registration
             or not isinstance(current_raw, bytes)
             or not secrets.compare_digest(hashlib.sha256(current_raw).hexdigest(), config_digest)):
         raise CoreInspectionDenied("fixed native tool configuration changed")
@@ -2112,18 +2166,17 @@ def _read_native_tool_configuration_claims(
         "session_id": owner_turn.session_id,
         "fixed_config_sha256": config_digest,
         "native_tool_source_sha256": native_source_digest,
-        "allowed_parent_tool_names": list(names),
-        "allow_inherited_mcp": inherit_mcp,
-        "allow_native_orchestrator_delegation": orchestrator_enabled,
+        "selected_parent_toolsets": list(selected_toolsets),
+        "configured_parent_tool_names": list(names),
+        **delegate_registration,
     }
     digest = hashlib.sha256(b"hermes-jarvis-native-tool-configuration-v1\0" +
         json.dumps(values, sort_keys=True, separators=(",", ":"), allow_nan=False)
         .encode("ascii")).hexdigest()
     return {
         "tool_configuration_sha256": digest,
-        "allowed_parent_tool_names": names,
-        "allow_inherited_mcp": inherit_mcp,
-        "allow_native_orchestrator_delegation": orchestrator_enabled,
+        "configured_parent_tool_names": names,
+        **delegate_registration,
     }
 
 
@@ -2140,9 +2193,11 @@ def observe_current_native_tool_configuration(
             core_source_generation=owner_turn.core_source_generation,
             owner_subject_sha256=owner_turn.owner_subject_sha256,
             tool_configuration_sha256=claims["tool_configuration_sha256"],
-            allowed_parent_tool_names=claims["allowed_parent_tool_names"],
-            allow_inherited_mcp=claims["allow_inherited_mcp"],
-            allow_native_orchestrator_delegation=claims["allow_native_orchestrator_delegation"],
+            configured_parent_tool_names=claims["configured_parent_tool_names"],
+            resources_delegate_name=claims["resources_delegate_name"],
+            resources_delegate_toolset=claims["resources_delegate_toolset"],
+            resources_delegate_schema_sha256=claims["resources_delegate_schema_sha256"],
+            resources_delegate_source_sha256=claims["resources_delegate_source_sha256"],
             issued_monotonic=now, expires_monotonic=expires,
             _config=config, _seal=_NATIVE_TOOL_CONFIGURATION_SEAL)
         if expires <= now:
