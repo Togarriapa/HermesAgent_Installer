@@ -715,17 +715,35 @@ def run(args: argparse.Namespace) -> CommandResult:
             request_path=args.request, result_path=args.result,
         )
     if args.command in {"install", "resume"}:
-        if getattr(args, "core_only", False):
+        if getattr(args, "core_only", False) or (
+                args.command == "resume" and os.geteuid() == 0
+                and Path("/var/lib/hermes-installer/core-runtime/ownership.json").is_file()):
             if getattr(args, "dry_run", False):
                 return CommandResult("install", OutcomeState.PENDING,
                     "Core-only dry run is descriptive; the root service adoption remains pending.",
                     (Finding("core-runtime.adoption", "No service, credential, or account was changed.", OutcomeState.PENDING),),
                     resume_command="sudo -- hermes-installer-root-setup core-service install")
-            return CommandResult("install", OutcomeState.PENDING,
+            root_command=("resume" if args.command=="resume" else "install")
+            if os.geteuid()==0:
+                try:
+                    from .core_runtime import install_or_resume
+                    from .root_setup import _require_root_linux
+                    _require_root_linux()
+                    message=install_or_resume()
+                except Exception as exc:
+                    return CommandResult(args.command, OutcomeState.PENDING,
+                        f"Core service action is pending ({type(exc).__name__}); no unrelated Desktop or Resources state was changed.",
+                        (Finding("core-runtime.adoption", "Fixed core service action requires source/runtime and owned service proof.", OutcomeState.PENDING),),
+                        resume_command="sudo -- hermes-installer-root-setup core-service resume", exit_code=4)
+                return CommandResult(args.command, OutcomeState.PENDING,
+                    f"{message}. Core service stage is live; private authentication, chat, restart and public-route acceptance remain pending.",
+                    (Finding("core-runtime.adoption", "Owned service was started and process-bound loopback listener was verified.", OutcomeState.READY),),
+                    resume_command="sudo -- hermes-installer-root-setup core-service resume", exit_code=4)
+            return CommandResult(args.command, OutcomeState.PENDING,
                 "Core-only adoption is delegated to the fixed root-owned service action; no desktop or resource stages are implied.",
                 (Finding("core-runtime.adoption", "Pinned PM runtime and isolated authenticated loopback service require root verification.", OutcomeState.PENDING),),
                 resume_command=("sudo -- hermes-installer-root-setup core-service resume"
-                                if args.command == "resume" else
+                                if root_command == "resume" else
                                 "sudo -- hermes-installer-root-setup core-service install"))
         facts = discover_host()
         if not facts.supported_arm64_linux:

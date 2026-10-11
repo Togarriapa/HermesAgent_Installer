@@ -1053,6 +1053,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("action", choices=tuple(item.value for item in RootSetupAction))
     parser.add_argument("--suite", choices=tuple(item.value for item in RootInstalledQualificationSuite))
     args = parser.parse_args(arguments)
+    if args.action == RootSetupAction.RESUME.value:
+        from .core_runtime import JOURNAL, install_or_resume
+        if JOURNAL.is_file():
+            try:
+                _require_root_linux()
+                message = install_or_resume()
+                print(message, file=sys.stderr)
+                return 0
+            except Exception as exc:
+                print(f"Core service resume pending ({type(exc).__name__}).", file=sys.stderr)
+                print("Resume with: sudo -- hermes-installer-root-setup core-service resume", file=sys.stderr)
+                return 4
     if args.action == RootSetupAction.QUALIFY.value:
         if (args.suite is None or len(arguments) != 3
                 or arguments[0] != RootSetupAction.QUALIFY.value
