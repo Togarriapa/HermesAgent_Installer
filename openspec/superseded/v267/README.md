@@ -1,0 +1,3 @@
+# Superseded Desktop product plans — v267
+
+These two complete proposal/spec/design/task histories are preserved verbatim. They are outside active OpenSpec changes and are not archived as implemented or merged into canonical runtime specs. The explicit user decisions v266/v267 remove active Desktop/Xpra installation and native presentation. Their source requirements, aliases and functional/security obligations remain traceable through planning/active-obligation-index-v267.json; only the Desktop product/deployment choice is superseded. Frozen plans and immutable amendments are historical evidence, not current execution instructions. No checkbox is declared passed by this move.

@@ -148,7 +148,7 @@ Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected
 
 - [ ] RB-T205.1: Implement Jarvis sole default user entry and protected isolated specialist map, including explicit primary SOUL.md persona instructions and truthful runtime-derived model/provider disclosure.
 - [ ] RB-T205.2: Preserve state/secrets with journaled idempotent owned migration and deny unowned conflicts.
-- [ ] VD-T205.3: Verify genuine backend/Desktop listing/routing/delegation and migration effects; acceptance separate.
+- Historical v267 superseded deployment/benchmark reference (not an active checkbox): VD-T205.3: Verify genuine backend/Desktop listing/routing/delegation and migration effects; acceptance separate. Retained functional portions map to the core phases in planning/active-obligation-index-v267.json.
 
 - [ ] RB-T213.1: Produce current held-home completed materialization/active source crosswalk joins.
 - [ ] HI-T213.2: Wire selected task/home digest/grant to actual fixed/hermes custody mount.

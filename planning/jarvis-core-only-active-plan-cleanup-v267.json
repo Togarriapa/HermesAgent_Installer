@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "id": "jarvis-core-only-active-plan-cleanup-v267",
+  "extends": [
+    "planning/jarvis-core-first-migration-v266.json",
+    "planning/jarvis-core-session-resume-owned-action-v266a.json"
+  ],
+  "decision": "User requests removal of Desktop remainders from active Pi and planning; Desktop remains capability benchmark only.",
+  "active_entrypoint": "planning/ACTIVE-PLAN.md",
+  "obligation_index": "planning/active-obligation-index-v267.json",
+  "tasks": [
+    "BD-T267.1",
+    "VD-T267.2"
+  ],
+  "cleanup": {
+    "gate": "independent owned core service health, real configured-account chat, restart/resume and current home/auth/PM custody proof AND actual new protected Jarvis route live at the existing owned hostname with successful owner chat and expiry/revocation checks; never strand the URL",
+    "targets": "Only journal/inventory-verified owned Desktop/Xpra units, process trees, AppDir/runtime files, dedicated source/guard/helper artifacts and Desktop-only configuration",
+    "preserve": [
+      "canonical Hermes home/config/memories/Codex auth/credentials",
+      "official PM core runtime/toolchain and shared core dependencies",
+      "Resources and core source",
+      "recovery backups and journals",
+      "unrelated Pi services/data",
+      "owned Cloudflare hostname OTP/binding and safe connector"
+    ],
+    "shared_changes": "Restore legitimate shared system changes only from verified prior journal backups with ownership/current-byte checks; no blanket apt purge or guessed restoration",
+    "recovery": "record exact removed object digests/ownership and verified recovery copies, stop exact units only; unknown/conflicting/shared objects remain pending"
+  },
+  "planning": "Superseded legacy changes kept intact outside active changes; frozen baseline/tag and immutable amendment history unchanged. No task falsely completed. No active Desktop install/Xpra/native presentation dependency.",
+  "validation": "Source/spec/Git only locally; root performs Pi tests/validation.",
+  "status": "cleanup and retained capability parity acceptance OPEN"
+}

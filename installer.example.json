@@ -7,7 +7,7 @@
   },
   "components": {
     "hermes_agent": true,
-    "hermes_desktop": true
+    "hermes_desktop": false
   },
   "privacy": {
     "additional_metered_budget": 0

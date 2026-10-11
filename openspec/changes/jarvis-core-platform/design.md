@@ -17,3 +17,10 @@ Immediate core migration recipe: reuse the currently proven official PM runtime 
 Persist the server-derived principal → opaque conversation → official stored_session_id mapping. Treat live session_id as generation-local. Privately call the pinned official session.resume for that stored ID after restart, validate its result against the current runtime, then atomically replace the live mapping; history/replay/interrupt use only the fresh ID. Never infer ownership from client IDs, silently create substitute history or revive stale state. Exact method/response fields require source-backed implementation.
 
 Install/resume/rollback executes the reviewed finite root action authorized by the explicit selected-target migration and root terminal action. It verifies the existing source/PM/exe/lock/unit/config/token/loopback/owner journal and invokes only the fixed serve adapter; no general command authority or nonexistent callback is introduced. See planning/jarvis-core-session-resume-owned-action-v266a.json; the original five task IDs and Pi-only evidence boundary remain.
+
+
+## v267 owned cleanup
+
+After independent core proof, remove only journal/inventory-verified owned Desktop/Xpra units, exact process trees and dedicated AppDir/source/guard/helper/config artifacts. Retain verified recovery backups, canonical home/auth/PM core and Resources. Restore shared system changes only using verified journal backups and current-object checks; never blanket apt purge. Unowned/shared conflicts remain pending. Legacy Desktop proposals are preserved outside active changes; their functional/security obligations map to this core product and remaining non-Desktop functional changes.
+
+Cleanup additionally requires the new protected Jarvis route to be live at the existing owned hostname with actual owner chat and expiry/revocation proof. Do not strand the URL by removing its old path before replacement works.

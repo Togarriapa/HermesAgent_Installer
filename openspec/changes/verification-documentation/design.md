@@ -1,3 +1,5 @@
+> Active v267 scope: core Hermes + custom Jarvis + Resources. Any Desktop/Xpra/native-presentation deployment clause below is superseded history/benchmark, not an active implementation prerequisite. Retained functionality/security maps through planning/active-obligation-index-v267.json. No acceptance is marked passed.
+
 # Design
 
 ## Context

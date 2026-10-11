@@ -28,3 +28,8 @@ Sol v266 controls installer-bootstrap-desktop, remote-desktop-tunnel and v265 pr
 ### v266a clarification
 
 Same phase tasks include server-only official stored-session resume after restart and the concrete selected-target reviewed root install/resume/rollback action. See planning/jarvis-core-session-resume-owned-action-v266a.json; no broader authority or completed acceptance.
+
+
+## v267 Desktop removal
+
+The user removes Desktop from active Pi and planning; retain it only as capability benchmark. Verified owned cleanup is added; legacy mixed changes are historical at openspec/superseded/v267, with functional mappings retained. See planning/ACTIVE-PLAN.md.

@@ -1,3 +1,7 @@
+# Current execution entrypoint
+
+Use [ACTIVE-PLAN.md](ACTIVE-PLAN.md). v266/v267 supersede Desktop as product; the following accumulated ledger is historical traceability, not an active Desktop/Xpra task queue. All retained functional obligations remain OPEN and mapped to core/Jarvis/Resources.
+
 # Immutable specification baseline — 2026-10-09 v1
 
 Destination: https://github.com/Togarriapa/HermesAgent_Installer. Specification/task creation/refinement: GPT-6.1 Sol. Development: GPT-6 Luna. The model handoff is explicitly authorized. This plan covers the complete original prompt; it is not implementation or Pi deployment evidence.

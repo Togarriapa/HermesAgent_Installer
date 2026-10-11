@@ -73,3 +73,19 @@ The selected-target user/root terminal action SHALL execute the actual reviewed 
 #### Scenario: Owned core switch and recovery
 - **WHEN** the authorized selected-target action switches or rolls back core
 - **THEN** only journaled owned files/pointers/services change and existing home/Codex auth, backups and unrelated services remain intact.
+
+### Requirement: Owned Desktop cleanup without core loss
+After independent core proof, cleanup SHALL remove only verified owned Desktop/Xpra units, processes and dedicated files/configuration/source guards. It MUST preserve canonical home/auth, PM core, Resources, recovery backups and unrelated services. Shared changes SHALL be restored only from verified journal backups; blanket apt purge is prohibited.
+
+#### Scenario: Shared or unknown object
+- **WHEN** ownership or dependency of a cleanup object is unknown or shared
+- **THEN** cleanup leaves it intact and reports the exact pending action without guessing or deleting core dependencies.
+
+### Requirement: Active plan excludes Desktop deployment
+Active plans MUST exclude Desktop/Xpra/native presentation install/build/launch tasks and use Desktop only as a capability benchmark. Historical artifacts SHALL remain explicitly superseded without false completed acceptance; every retained functional obligation MUST remain mapped to core/UI/Resources phases.
+
+#### Scenario: Historical Desktop instruction found
+- **WHEN** an implementer reads a legacy native presentation plan
+- **THEN** the active entrypoint and supersession index identify it as historical and route retained functionality to current core phases.
+
+Cleanup additionally requires the new protected Jarvis route to be live at the existing owned hostname with actual owner chat and expiry/revocation proof. Do not strand the URL by removing its old path before replacement works.

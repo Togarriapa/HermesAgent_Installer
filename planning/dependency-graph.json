@@ -1,47 +1,39 @@
 {
   "change_dependencies": {
-    "installer-bootstrap-desktop": [],
     "resource-registry-import": [
-      "installer-bootstrap-desktop"
+      "jarvis-core-platform"
     ],
     "providers-credentials-budgets-privacy": [
-      "installer-bootstrap-desktop"
+      "jarvis-core-platform"
     ],
     "colibri-coral": [
-      "installer-bootstrap-desktop",
+      "jarvis-core-platform",
       "providers-credentials-budgets-privacy"
     ],
     "skills-memory-applications": [
-      "installer-bootstrap-desktop",
+      "jarvis-core-platform",
       "resource-registry-import",
       "providers-credentials-budgets-privacy"
     ],
     "mcp-connections": [
-      "installer-bootstrap-desktop",
+      "jarvis-core-platform",
       "resource-registry-import",
       "providers-credentials-budgets-privacy"
     ],
     "lifecycle-recovery": [
-      "installer-bootstrap-desktop"
+      "jarvis-core-platform"
     ],
     "verification-documentation": [
-      "installer-bootstrap-desktop",
+      "jarvis-core-platform",
       "resource-registry-import",
       "providers-credentials-budgets-privacy",
       "colibri-coral",
       "skills-memory-applications",
       "mcp-connections",
       "lifecycle-recovery",
-      "remote-desktop-tunnel",
       "resources-bundle-native-enrichment",
       "remote-policy-read-authority",
       "host-principal-custody"
-    ],
-    "remote-desktop-tunnel": [
-      "installer-bootstrap-desktop",
-      "resource-registry-import",
-      "providers-credentials-budgets-privacy",
-      "lifecycle-recovery"
     ],
     "resources-bundle-native-enrichment": [
       "resource-registry-import",
@@ -49,14 +41,15 @@
       "providers-credentials-budgets-privacy"
     ],
     "remote-policy-read-authority": [
-      "remote-desktop-tunnel"
+      "jarvis-core-platform"
     ],
     "host-principal-custody": [
-      "installer-bootstrap-desktop",
+      "jarvis-core-platform",
       "resource-registry-import",
       "providers-credentials-budgets-privacy",
       "lifecycle-recovery"
-    ]
+    ],
+    "jarvis-core-platform": []
   },
   "task_dependencies": {
     "BD-F01": [],
@@ -2471,12 +2464,9 @@
   },
   "note": "Change gates are integration readiness, not a reason to postpone independent fixture work; task edges define precise executable order. No unverified target claim. v99: HI-T08 native candidate compilation consumes the source registration projection before HI-T11 dispatch; RB-T08 and MC-F01 retain their existing native/source/schema prerequisite edges. No active-before-assembly dependency introduced. v100: HI-T11 source issuance resolves current purpose-specific private input consent before any provider egress; existing HI-T12/PR-F03 grant checks retain all parent ceilings and current revocation. v101: HI-T09/HI-T13 selected display startup requires measured Xpra source plus actual transform/output/runtime receipts; source pin is not process readiness. v102: prepared source receipt precedes Resources profile selection/native assembly; active publication follows actual PM/materialization output receipts. Dispatch current consent check is non-consuming after ingress. v104: SK-F03 selected runtime qualification probe precedes active application runtime row; actual owned application manager terminal plus artifact validation precedes functional evidence. Existing HI selected launch prerequisites retained.",
   "host_tool_observation_v105": "HI-T09/HI-T13 network-owned host_tool_observation.py actual installed package/dependency observation before nft launch; kernel proof pending and all AC open",
-  "xpra_managed_transform_v106": "HI-T09/HI-T13 actual PM/build/source/module/terminal/CAS before overlay runtime; build owner producer, remote patch receipt, acceptance pending",
   "application_request_source_v107": "Actual root qualification producer -> v104 admission; no existing native mapping for four fixtures, original application/AC12 still open",
   "private_memory_endpoint_v108": "Provider actual owned private text/embed endpoint/deployment/consent -> memory exact engine registry; existing lifecycle artifacts and semantic memory proof required, allACopen",
-  "xpra_regular_source_pin_v109": "Actual frozen transform source/regular topology/file builder/data role; managed proof and allAC pending",
   "native_local_result_bounds_v110": "Actual eight local registration schema/handler/source joins; finance/wallet/web typedbackend result remains pending; all18 obligations unchanged",
-  "xpra_source_pin_v111": "Final source committed exact target-byte pins before managed transform; actual acceptance pending",
   "native_local_schema_artifacts_v112": "Eight actual packaged schema files -> root artifact receipt/installed validator -> pre-active assembly -> active native registration; all18 acceptance open",
   "protected_native_registration_records_v113": "Actual release source42 + source61 effect recipes/schema/observer selections -> staged exactarrays -> nativeoutput -> atomic activepublisher; bounded toolresults data not authority; all18open",
   "native_schema_catalog_identity_v114": "Exact eight catalog-compatible IDs -> actual root artifact source receipts -> v113 staged registrations; no aliases/allACopen",
@@ -3141,54 +3131,6 @@
     },
     "acceptance": "All AC OPEN"
   },
-  "concrete_remote_runtime_substrate_v209": {
-    "contract": "planning/concrete-remote-runtime-substrate-v209.json",
-    "amendment": "plans/amendments/2026-10-10-concrete-remote-runtime-substrate-v209.md",
-    "tasks": {
-      "RT-T209.1": [
-        "HI-T160.1",
-        "HI-T197.2"
-      ],
-      "RT-T209.2": [
-        "RT-T209.1"
-      ],
-      "RT-T209.3": [
-        "RT-T209.1"
-      ],
-      "RT-T209.4": [
-        "RT-T209.1"
-      ],
-      "VD-T209.5": [
-        "RT-T209.1",
-        "RT-T209.2",
-        "RT-T209.3",
-        "RT-T209.4"
-      ]
-    },
-    "acceptance": "All AC OPEN"
-  },
-  "production_remote_role_nss_roots_v212": {
-    "contract": "planning/production-remote-role-nss-roots-v212.json",
-    "amendment": "plans/amendments/2026-10-10-production-remote-role-nss-roots-v212.md",
-    "tasks": {
-      "RT-T212.1": [],
-      "RT-T212.2": [
-        "RT-T212.1"
-      ],
-      "VD-T212.3": [
-        "RT-T212.1",
-        "RT-T212.2"
-      ]
-    },
-    "existing_runtime_tasks": [
-      "HI-T160.1",
-      "HI-T197.2",
-      "VD-T197.4",
-      "RT-T209.3",
-      "VD-T209.5"
-    ],
-    "acceptance": "All AC OPEN"
-  },
   "home_assistant_metadata_functional_read_v210": {
     "contract": "planning/home-assistant-metadata-functional-read-v210.json",
     "tasks": {
@@ -3220,21 +3162,6 @@
     ],
     "acceptance": "All AC OPEN"
   },
-  "official_desktop_build_acquisition_v218": {
-    "contract": "planning/official-desktop-build-acquisition-v218.json",
-    "tasks": {
-      "BD-T218.1": [
-        "HI-T197.2"
-      ],
-      "BD-T218.2": [
-        "BD-T218.1"
-      ],
-      "VD-T218.3": [
-        "BD-T218.2"
-      ]
-    },
-    "acceptance": "All AC OPEN"
-  },
   "ha_setup_observation_receipts_v216": {
     "contract": "planning/ha-setup-observation-receipts-v216.json",
     "tasks": [
@@ -3257,21 +3184,6 @@
     ],
     "acceptance": "All AC OPEN"
   },
-  "official_remote_role_definition_producer_v222": {
-    "contract": "planning/official-remote-role-definition-producer-v222.json",
-    "tasks": {
-      "RT-T222.1": [
-        "HI-T197.2"
-      ],
-      "RT-T222.2": [
-        "RT-T222.1"
-      ],
-      "VD-T222.3": [
-        "RT-T222.2"
-      ]
-    },
-    "acceptance": "All AC OPEN"
-  },
   "current_published_pm_home_runtime_v221": {
     "contract": "planning/current-published-pm-home-runtime-v221.json",
     "tasks": {
@@ -3283,21 +3195,6 @@
       ],
       "VD-T221.3": [
         "HI-T221.2"
-      ]
-    },
-    "acceptance": "All AC OPEN"
-  },
-  "xpra_native_build_acquisition_v219": {
-    "contract": "planning/xpra-native-build-acquisition-v219.json",
-    "amendment": "plans/amendments/2026-10-10-xpra-native-build-acquisition-v219.md",
-    "tasks": {
-      "RT-T219.1": [],
-      "RT-T219.2": [
-        "RT-T219.1"
-      ],
-      "VD-T219.3": [
-        "RT-T219.1",
-        "RT-T219.2"
       ]
     },
     "acceptance": "All AC OPEN"
@@ -3380,62 +3277,6 @@
       "VD-T225.3": [
         "RT-T225.1",
         "RT-T225.2"
-      ]
-    },
-    "acceptance": "All AC OPEN"
-  },
-  "official_desktop_native_build_inputs_v226": {
-    "contract": "planning/official-desktop-native-build-inputs-v226.json",
-    "tasks": {
-      "RT-T226.1": [
-        "BD-T218.1"
-      ],
-      "RT-T226.2": [
-        "RT-T226.1",
-        "BD-T218.2"
-      ],
-      "VD-T226.3": [
-        "RT-T226.1",
-        "RT-T226.2"
-      ]
-    },
-    "acceptance": "All AC OPEN"
-  },
-  "preactive_xpra_acquisition_build_v227": {
-    "contract": "planning/preactive-xpra-acquisition-build-v227.json",
-    "tasks": {
-      "RT-T227.1": [
-        "RT-T219.1"
-      ],
-      "RT-T227.2": [
-        "RT-T227.1",
-        "RT-T219.2"
-      ],
-      "RT-T227.3": [
-        "RT-T227.2",
-        "RT-T223.2"
-      ],
-      "VD-T227.4": [
-        "RT-T227.1",
-        "RT-T227.2",
-        "RT-T227.3"
-      ]
-    },
-    "acceptance": "All AC OPEN"
-  },
-  "official_desktop_ws_types_repair_v229": {
-    "contract": "planning/official-desktop-ws-types-repair-v229.json",
-    "tasks": {
-      "RT-T229.1": [
-        "RT-T226.1"
-      ],
-      "RT-T229.2": [
-        "RT-T229.1",
-        "RT-T226.2"
-      ],
-      "VD-T229.3": [
-        "RT-T229.1",
-        "RT-T229.2"
       ]
     },
     "acceptance": "All AC OPEN"
@@ -3612,47 +3453,6 @@
     },
     "acceptance": "All AC OPEN"
   },
-  "xpra_native_source_policy_v238": {
-    "contract": "planning/xpra-native-source-policy-v238.json",
-    "tasks": {
-      "RT-T238.1": [
-        "RT-T227.1"
-      ],
-      "RT-T238.2": [
-        "RT-T238.1",
-        "RT-T227.2"
-      ],
-      "VD-T238.3": [
-        "RT-T238.1",
-        "RT-T238.2"
-      ]
-    },
-    "acceptance": "All AC OPEN"
-  },
-  "preactive_remote_build_output_receipts_v239": {
-    "contract": "planning/preactive-remote-build-output-receipts-v239.json",
-    "tasks": {
-      "RT-T239.1": [
-        "RT-T209.2",
-        "RT-T237.1"
-      ],
-      "RT-T239.2": [
-        "RT-T239.1",
-        "RT-T212.1"
-      ],
-      "RT-T239.3": [
-        "RT-T239.2",
-        "RT-T222.1"
-      ],
-      "VD-T239.4": [
-        "RT-T239.1",
-        "RT-T239.2",
-        "RT-T239.3"
-      ]
-    },
-    "owner": "luna_remote_receipt_pipeline with central runtime and native executor owners",
-    "acceptance": "All AC OPEN"
-  },
   "candidate_update_source_review_v241": {
     "contract": "planning/candidate-update-source-review-v241.json",
     "source_commit": "ae39993068be32f22629dd529c1d36e86584d59f",
@@ -3678,23 +3478,6 @@
     },
     "acceptance": "All AC OPEN"
   },
-  "official_desktop_measured_headers_managed_plan_v240": {
-    "contract": "planning/official-desktop-measured-headers-managed-plan-v240.json",
-    "tasks": {
-      "RT-T240.1": [
-        "RT-T226.1"
-      ],
-      "RT-T240.2": [
-        "RT-T240.1",
-        "RT-T237.1"
-      ],
-      "VD-T240.3": [
-        "RT-T240.1",
-        "RT-T240.2"
-      ]
-    },
-    "acceptance": "All AC OPEN"
-  },
   "gateway_source_wheel_issuers_v244": {
     "amendment": "plans/amendments/2026-10-10-gateway-source-wheel-issuers-v244.md",
     "contract": "planning/gateway-source-wheel-issuers-v244.json",
@@ -3712,29 +3495,6 @@
     },
     "acceptance": "open"
   },
-  "remote_source_active_digest_acyclic_v246": {
-    "contract": "planning/remote-source-active-digest-acyclic-v246.json",
-    "tasks": [
-      "RT-T246.1",
-      "RT-T246.2",
-      "VD-T246.3"
-    ],
-    "dependencies": [
-      "RT-T225.1",
-      "RT-T225.2",
-      "RT-T239.2",
-      "RT-T239.3",
-      "HI-T231.1"
-    ],
-    "ordering": [
-      "immutable source2",
-      "complete generation selector/full hash",
-      "active claim/publication",
-      "current signed adoption",
-      "runtime activation"
-    ],
-    "acceptance": "All AC OPEN"
-  },
   "source_update_entry_source_review_v247": {
     "contract": "planning/source-update-entry-source-review-v247.json",
     "source_commit": "7b7f402800b378d9420a6b8da09680cce430a40e",
@@ -3742,23 +3502,6 @@
       "VD-T242.2": [
         "BD-T242.1",
         "VD-T235.3"
-      ]
-    },
-    "acceptance": "All AC OPEN"
-  },
-  "xpra_sysroot_html5_v245": {
-    "contract": "planning/xpra-sysroot-html5-v245.json",
-    "tasks": {
-      "RT-T245.1": [
-        "RT-T238.1"
-      ],
-      "RT-T245.2": [
-        "RT-T238.1"
-      ],
-      "VD-T245.3": [
-        "RT-T245.1",
-        "RT-T245.2",
-        "RT-T238.2"
       ]
     },
     "acceptance": "All AC OPEN"
@@ -3780,31 +3523,6 @@
     },
     "acceptance": "open"
   },
-  "jarvis_visible_desktop_mvp_stage_v259": {
-    "contract": "planning/jarvis-visible-desktop-mvp-stage-v259.json",
-    "amendment": "plans/amendments/2026-10-11-jarvis-visible-desktop-mvp-stage-v259.md",
-    "tasks": {
-      "BD-T259.1": [],
-      "PR-T259.2": [
-        "BD-T259.1"
-      ],
-      "RT-T259.3": [
-        "BD-T259.1"
-      ],
-      "LC-T259.4": [
-        "PR-T259.2",
-        "RT-T259.3"
-      ],
-      "VD-T259.5": [
-        "BD-T259.1",
-        "PR-T259.2",
-        "RT-T259.3",
-        "LC-T259.4"
-      ]
-    },
-    "priority": "four actual MVP milestones before unrelated extras; full baseline remains OPEN",
-    "acceptance": "MVP and full baseline tracked separately"
-  },
   "jarvis_manual_stage_gateway_seam_v259b": {
     "contract": "planning/jarvis-manual-stage-gateway-seam-v259b.json",
     "amendment": "plans/amendments/2026-10-11-jarvis-manual-stage-gateway-seam-v259b.md",
@@ -3815,52 +3533,6 @@
     ],
     "extends": "jarvis_visible_desktop_mvp_stage_v259",
     "acceptance": "actual edge revocation/unit/connector/restart required; all AC OPEN"
-  },
-  "xpra_disabled_control_mvp_repair_v260": {
-    "contract": "planning/xpra-disabled-control-mvp-repair-v260.json",
-    "amendment": "plans/amendments/2026-10-11-xpra-disabled-control-mvp-repair-v260.md",
-    "tasks": {
-      "BD-T259.1": [
-        "BD-T260.1",
-        "VD-T260.2"
-      ],
-      "VD-T260.2": [
-        "BD-T260.1"
-      ]
-    },
-    "scope": "guard-only owned local xpra-server rebuild under BD259.1; all AC OPEN"
-  },
-  "xpra_disabled_control_complete_startup_repair_v261": {
-    "contract": "planning/xpra-disabled-control-complete-startup-repair-v261.json",
-    "amendment": "plans/amendments/2026-10-11-xpra-disabled-control-complete-startup-repair-v261.md",
-    "tasks": {
-      "BD-T261.1": [
-        "BD-T260.1"
-      ],
-      "VD-T261.2": [
-        "BD-T261.1"
-      ],
-      "BD-T259.1": [
-        "VD-T261.2"
-      ]
-    },
-    "acceptance": "only fixed MVP startup guards/offflag, all AC OPEN"
-  },
-  "xpra_fixed_app_child_no_client_command_repair_v262": {
-    "contract": "planning/xpra-fixed-app-child-no-client-command-repair-v262.json",
-    "amendment": "plans/amendments/2026-10-11-xpra-fixed-app-child-no-client-command-repair-v262.md",
-    "tasks": {
-      "BD-T262.1": [
-        "BD-T261.1"
-      ],
-      "VD-T262.2": [
-        "BD-T262.1"
-      ],
-      "BD-T259.1": [
-        "VD-T262.2"
-      ]
-    },
-    "acceptance": "exact fixedapp startup separate from deniedclient effects, all AC OPEN"
   },
   "jarvis_binding_cookie_unix_heartbeat_v263": {
     "contract": "planning/jarvis-binding-cookie-unix-heartbeat-v263.json",
@@ -3887,19 +3559,6 @@
       ]
     },
     "acceptance": "clarification only; all AC OPEN"
-  },
-  "jarvis_native_observation_burst_sharing_v264": {
-    "contract": "planning/jarvis-native-observation-burst-sharing-v264.json",
-    "amendment": "plans/amendments/2026-10-11-jarvis-native-observation-burst-sharing-v264.md",
-    "tasks": {
-      "RT-T264.1": [
-        "RT-T263.1"
-      ],
-      "VD-T264.2": [
-        "RT-T264.1"
-      ]
-    },
-    "acceptance": "manual MVP only; all AC OPEN"
   },
   "jarvis_practical_mobile_family_stage_v265": {
     "contract": "planning/jarvis-practical-mobile-family-stage-v265.json",
@@ -3954,5 +3613,510 @@
       ]
     },
     "acceptance": "same v266 phase tasks OPEN"
+  },
+  "gateway_wheel_license_transport_v248": {
+    "amendment": "plans/amendments/2026-10-10-gateway-wheel-license-transport-v248.md",
+    "contract": "planning/gateway-wheel-license-transport-v248.json",
+    "tasks": {
+      "RT-T248.1": [
+        "RT-T244.1"
+      ],
+      "RT-T248.2": [
+        "RT-T248.1",
+        "RT-T244.2"
+      ],
+      "VD-T248.3": [
+        "RT-T248.1",
+        "RT-T248.2"
+      ]
+    },
+    "acceptance": "open"
+  },
+  "gateway_license_policy_release_role_v248b": {
+    "contract": "planning/gateway-license-policy-release-role-v248b.json",
+    "amendment": "plans/amendments/2026-10-10-gateway-license-policy-release-role-v248b.md",
+    "tasks": [
+      "RT-T248.1",
+      "RT-T248.2",
+      "VD-T248.3"
+    ],
+    "acceptance": "open"
+  },
+  "native_plugin_backend_composition_v253": {
+    "amendment": "plans/amendments/2026-10-11-native-plugin-backend-composition-v253.md",
+    "contract": "planning/native-plugin-backend-composition-v253.json",
+    "tasks": {
+      "RB-T253.1": [
+        "HI-T231.1"
+      ],
+      "HI-T253.2": [
+        "RB-T253.1",
+        "BD-T231.2"
+      ],
+      "VD-T253.3": [
+        "HI-T253.2"
+      ]
+    },
+    "acceptance": "All AC OPEN"
+  },
+  "native_plugin_producer_sealed_api_v253b": {
+    "contract": "planning/native-plugin-producer-sealed-api-v253b.json",
+    "tasks": [
+      "RB-T253.1",
+      "HI-T253.2",
+      "VD-T253.3"
+    ],
+    "acceptance": "All AC OPEN"
+  },
+  "current_owned_remote_network_observation_v254": {
+    "contract": "planning/current-owned-remote-network-observation-v254.json",
+    "amendment": "plans/amendments/2026-10-11-current-owned-remote-network-observation-v254.md",
+    "tasks": {
+      "HI-T254.1": [
+        "RT-T234.2"
+      ],
+      "LC-T254.2": [
+        "HI-T254.1"
+      ],
+      "VD-T254.3": [
+        "LC-T254.2"
+      ]
+    },
+    "acceptance": "All AC OPEN; sustained Desktop separate"
+  },
+  "active_plan_v267": {
+    "entrypoint": "planning/ACTIVE-PLAN.md",
+    "obligation_index": "planning/active-obligation-index-v267.json",
+    "contract": "planning/jarvis-core-only-active-plan-cleanup-v267.json",
+    "amendment": "plans/amendments/2026-10-11-jarvis-core-only-active-plan-cleanup-v267.md",
+    "tasks": {
+      "BD-T267.1": [
+        "BD-T266.1"
+      ],
+      "VD-T267.2": [
+        "BD-T267.1"
+      ]
+    },
+    "historical_subgraphs": "All prior versioned Desktop/Xpra subgraphs are superseded history, not active prerequisites; retained functional joins map through obligation index."
+  },
+  "superseded_desktop_history_v267": {
+    "xpra_managed_transform_v106": "HI-T09/HI-T13 actual PM/build/source/module/terminal/CAS before overlay runtime; build owner producer, remote patch receipt, acceptance pending",
+    "xpra_regular_source_pin_v109": "Actual frozen transform source/regular topology/file builder/data role; managed proof and allAC pending",
+    "xpra_source_pin_v111": "Final source committed exact target-byte pins before managed transform; actual acceptance pending",
+    "concrete_remote_runtime_substrate_v209": {
+      "contract": "planning/concrete-remote-runtime-substrate-v209.json",
+      "amendment": "plans/amendments/2026-10-10-concrete-remote-runtime-substrate-v209.md",
+      "tasks": {
+        "RT-T209.1": [
+          "HI-T160.1",
+          "HI-T197.2"
+        ],
+        "RT-T209.2": [
+          "RT-T209.1"
+        ],
+        "RT-T209.3": [
+          "RT-T209.1"
+        ],
+        "RT-T209.4": [
+          "RT-T209.1"
+        ],
+        "VD-T209.5": [
+          "RT-T209.1",
+          "RT-T209.2",
+          "RT-T209.3",
+          "RT-T209.4"
+        ]
+      },
+      "acceptance": "All AC OPEN"
+    },
+    "production_remote_role_nss_roots_v212": {
+      "contract": "planning/production-remote-role-nss-roots-v212.json",
+      "amendment": "plans/amendments/2026-10-10-production-remote-role-nss-roots-v212.md",
+      "tasks": {
+        "RT-T212.1": [],
+        "RT-T212.2": [
+          "RT-T212.1"
+        ],
+        "VD-T212.3": [
+          "RT-T212.1",
+          "RT-T212.2"
+        ]
+      },
+      "existing_runtime_tasks": [
+        "HI-T160.1",
+        "HI-T197.2",
+        "VD-T197.4",
+        "RT-T209.3",
+        "VD-T209.5"
+      ],
+      "acceptance": "All AC OPEN"
+    },
+    "official_desktop_build_acquisition_v218": {
+      "contract": "planning/official-desktop-build-acquisition-v218.json",
+      "tasks": {
+        "BD-T218.1": [
+          "HI-T197.2"
+        ],
+        "BD-T218.2": [
+          "BD-T218.1"
+        ],
+        "VD-T218.3": [
+          "BD-T218.2"
+        ]
+      },
+      "acceptance": "All AC OPEN"
+    },
+    "official_remote_role_definition_producer_v222": {
+      "contract": "planning/official-remote-role-definition-producer-v222.json",
+      "tasks": {
+        "RT-T222.1": [
+          "HI-T197.2"
+        ],
+        "RT-T222.2": [
+          "RT-T222.1"
+        ],
+        "VD-T222.3": [
+          "RT-T222.2"
+        ]
+      },
+      "acceptance": "All AC OPEN"
+    },
+    "xpra_native_build_acquisition_v219": {
+      "contract": "planning/xpra-native-build-acquisition-v219.json",
+      "amendment": "plans/amendments/2026-10-10-xpra-native-build-acquisition-v219.md",
+      "tasks": {
+        "RT-T219.1": [],
+        "RT-T219.2": [
+          "RT-T219.1"
+        ],
+        "VD-T219.3": [
+          "RT-T219.1",
+          "RT-T219.2"
+        ]
+      },
+      "acceptance": "All AC OPEN"
+    },
+    "official_desktop_native_build_inputs_v226": {
+      "contract": "planning/official-desktop-native-build-inputs-v226.json",
+      "tasks": {
+        "RT-T226.1": [
+          "BD-T218.1"
+        ],
+        "RT-T226.2": [
+          "RT-T226.1",
+          "BD-T218.2"
+        ],
+        "VD-T226.3": [
+          "RT-T226.1",
+          "RT-T226.2"
+        ]
+      },
+      "acceptance": "All AC OPEN"
+    },
+    "preactive_xpra_acquisition_build_v227": {
+      "contract": "planning/preactive-xpra-acquisition-build-v227.json",
+      "tasks": {
+        "RT-T227.1": [
+          "RT-T219.1"
+        ],
+        "RT-T227.2": [
+          "RT-T227.1",
+          "RT-T219.2"
+        ],
+        "RT-T227.3": [
+          "RT-T227.2",
+          "RT-T223.2"
+        ],
+        "VD-T227.4": [
+          "RT-T227.1",
+          "RT-T227.2",
+          "RT-T227.3"
+        ]
+      },
+      "acceptance": "All AC OPEN"
+    },
+    "official_desktop_ws_types_repair_v229": {
+      "contract": "planning/official-desktop-ws-types-repair-v229.json",
+      "tasks": {
+        "RT-T229.1": [
+          "RT-T226.1"
+        ],
+        "RT-T229.2": [
+          "RT-T229.1",
+          "RT-T226.2"
+        ],
+        "VD-T229.3": [
+          "RT-T229.1",
+          "RT-T229.2"
+        ]
+      },
+      "acceptance": "All AC OPEN"
+    },
+    "xpra_native_source_policy_v238": {
+      "contract": "planning/xpra-native-source-policy-v238.json",
+      "tasks": {
+        "RT-T238.1": [
+          "RT-T227.1"
+        ],
+        "RT-T238.2": [
+          "RT-T238.1",
+          "RT-T227.2"
+        ],
+        "VD-T238.3": [
+          "RT-T238.1",
+          "RT-T238.2"
+        ]
+      },
+      "acceptance": "All AC OPEN"
+    },
+    "official_desktop_measured_headers_managed_plan_v240": {
+      "contract": "planning/official-desktop-measured-headers-managed-plan-v240.json",
+      "tasks": {
+        "RT-T240.1": [
+          "RT-T226.1"
+        ],
+        "RT-T240.2": [
+          "RT-T240.1",
+          "RT-T237.1"
+        ],
+        "VD-T240.3": [
+          "RT-T240.1",
+          "RT-T240.2"
+        ]
+      },
+      "acceptance": "All AC OPEN"
+    },
+    "preactive_remote_build_output_receipts_v239": {
+      "contract": "planning/preactive-remote-build-output-receipts-v239.json",
+      "tasks": {
+        "RT-T239.1": [
+          "RT-T209.2",
+          "RT-T237.1"
+        ],
+        "RT-T239.2": [
+          "RT-T239.1",
+          "RT-T212.1"
+        ],
+        "RT-T239.3": [
+          "RT-T239.2",
+          "RT-T222.1"
+        ],
+        "VD-T239.4": [
+          "RT-T239.1",
+          "RT-T239.2",
+          "RT-T239.3"
+        ]
+      },
+      "owner": "luna_remote_receipt_pipeline with central runtime and native executor owners",
+      "acceptance": "All AC OPEN"
+    },
+    "remote_source_active_digest_acyclic_v246": {
+      "contract": "planning/remote-source-active-digest-acyclic-v246.json",
+      "tasks": [
+        "RT-T246.1",
+        "RT-T246.2",
+        "VD-T246.3"
+      ],
+      "dependencies": [
+        "RT-T225.1",
+        "RT-T225.2",
+        "RT-T239.2",
+        "RT-T239.3",
+        "HI-T231.1"
+      ],
+      "ordering": [
+        "immutable source2",
+        "complete generation selector/full hash",
+        "active claim/publication",
+        "current signed adoption",
+        "runtime activation"
+      ],
+      "acceptance": "All AC OPEN"
+    },
+    "xpra_sysroot_html5_v245": {
+      "contract": "planning/xpra-sysroot-html5-v245.json",
+      "tasks": {
+        "RT-T245.1": [
+          "RT-T238.1"
+        ],
+        "RT-T245.2": [
+          "RT-T238.1"
+        ],
+        "VD-T245.3": [
+          "RT-T245.1",
+          "RT-T245.2",
+          "RT-T238.2"
+        ]
+      },
+      "acceptance": "All AC OPEN"
+    },
+    "xpra_link_count_correction_v250": {
+      "contract": "planning/xpra-link-count-correction-v250.json",
+      "tasks": {
+        "RT-T250.1": [
+          "RT-T245.1"
+        ],
+        "VD-T250.2": [
+          "RT-T250.1",
+          "VD-T245.3"
+        ]
+      },
+      "acceptance": "All AC OPEN"
+    },
+    "official_desktop_native_source_policy_v251": {
+      "contract": "planning/official-desktop-native-source-policy-v251.json",
+      "amendment": "plans/amendments/2026-10-11-official-desktop-native-source-policy-v251.md",
+      "tasks": {
+        "RT-T251.1": [
+          "RT-T226.1",
+          "RT-T240.1"
+        ],
+        "RT-T251.2": [
+          "RT-T251.1",
+          "RT-T240.2"
+        ],
+        "VD-T251.3": [
+          "RT-T251.1",
+          "RT-T251.2"
+        ]
+      },
+      "acceptance": "All AC OPEN"
+    },
+    "official_desktop_native_build_direction_v251b": {
+      "contract": "planning/official-desktop-native-build-direction-v251b.json",
+      "tasks": {
+        "RT-T251b.1": [
+          "RT-T251.1"
+        ],
+        "RT-T251b.2": [
+          "RT-T251b.1",
+          "RT-T251.2"
+        ],
+        "VD-T251b.3": [
+          "RT-T251b.2",
+          "VD-T251.3"
+        ]
+      },
+      "acceptance": "All AC OPEN"
+    },
+    "official_desktop_prepared_packaging_direction_v251c": {
+      "contract": "planning/official-desktop-prepared-packaging-direction-v251c.json",
+      "tasks": {
+        "RT-T251c.1": [
+          "RT-T251b.1",
+          "RT-T251.1"
+        ],
+        "RT-T251c.2": [
+          "RT-T251c.1",
+          "RT-T251b.2"
+        ],
+        "VD-T251c.3": [
+          "RT-T251c.2",
+          "VD-T251b.3"
+        ]
+      },
+      "acceptance": "All AC OPEN"
+    },
+    "durable_source_custody_fresh_xpra_observation_v256": {
+      "contract": "planning/durable-source-custody-fresh-xpra-observation-v256.json",
+      "amendment": "plans/amendments/2026-10-11-durable-source-custody-fresh-xpra-observation-v256.md",
+      "tasks": {
+        "RT-T256.1": [
+          "RT-T238.1"
+        ],
+        "RT-T256.2": [
+          "RT-T256.1",
+          "RT-T245.1"
+        ],
+        "VD-T256.3": [
+          "RT-T256.2"
+        ]
+      },
+      "acceptance": "All AC OPEN"
+    },
+    "jarvis_visible_desktop_mvp_stage_v259": {
+      "contract": "planning/jarvis-visible-desktop-mvp-stage-v259.json",
+      "amendment": "plans/amendments/2026-10-11-jarvis-visible-desktop-mvp-stage-v259.md",
+      "tasks": {
+        "BD-T259.1": [],
+        "PR-T259.2": [
+          "BD-T259.1"
+        ],
+        "RT-T259.3": [
+          "BD-T259.1"
+        ],
+        "LC-T259.4": [
+          "PR-T259.2",
+          "RT-T259.3"
+        ],
+        "VD-T259.5": [
+          "BD-T259.1",
+          "PR-T259.2",
+          "RT-T259.3",
+          "LC-T259.4"
+        ]
+      },
+      "priority": "four actual MVP milestones before unrelated extras; full baseline remains OPEN",
+      "acceptance": "MVP and full baseline tracked separately"
+    },
+    "xpra_disabled_control_mvp_repair_v260": {
+      "contract": "planning/xpra-disabled-control-mvp-repair-v260.json",
+      "amendment": "plans/amendments/2026-10-11-xpra-disabled-control-mvp-repair-v260.md",
+      "tasks": {
+        "BD-T259.1": [
+          "BD-T260.1",
+          "VD-T260.2"
+        ],
+        "VD-T260.2": [
+          "BD-T260.1"
+        ]
+      },
+      "scope": "guard-only owned local xpra-server rebuild under BD259.1; all AC OPEN"
+    },
+    "xpra_disabled_control_complete_startup_repair_v261": {
+      "contract": "planning/xpra-disabled-control-complete-startup-repair-v261.json",
+      "amendment": "plans/amendments/2026-10-11-xpra-disabled-control-complete-startup-repair-v261.md",
+      "tasks": {
+        "BD-T261.1": [
+          "BD-T260.1"
+        ],
+        "VD-T261.2": [
+          "BD-T261.1"
+        ],
+        "BD-T259.1": [
+          "VD-T261.2"
+        ]
+      },
+      "acceptance": "only fixed MVP startup guards/offflag, all AC OPEN"
+    },
+    "xpra_fixed_app_child_no_client_command_repair_v262": {
+      "contract": "planning/xpra-fixed-app-child-no-client-command-repair-v262.json",
+      "amendment": "plans/amendments/2026-10-11-xpra-fixed-app-child-no-client-command-repair-v262.md",
+      "tasks": {
+        "BD-T262.1": [
+          "BD-T261.1"
+        ],
+        "VD-T262.2": [
+          "BD-T262.1"
+        ],
+        "BD-T259.1": [
+          "VD-T262.2"
+        ]
+      },
+      "acceptance": "exact fixedapp startup separate from deniedclient effects, all AC OPEN"
+    },
+    "jarvis_native_observation_burst_sharing_v264": {
+      "contract": "planning/jarvis-native-observation-burst-sharing-v264.json",
+      "amendment": "plans/amendments/2026-10-11-jarvis-native-observation-burst-sharing-v264.md",
+      "tasks": {
+        "RT-T264.1": [
+          "RT-T263.1"
+        ],
+        "VD-T264.2": [
+          "RT-T264.1"
+        ]
+      },
+      "acceptance": "manual MVP only; all AC OPEN"
+    }
   }
 }

@@ -3,9 +3,9 @@ context: |
   This is the authorized greenfield Togarriapa/HermesAgent_Installer repository.
   GPT-6.1 Sol owns specifications/task creation/refinement; GPT-6 Luna owns development.
   Frozen baseline plans/2026-10-09-v1 plus immutable annotated tag must never change.
-  Append-only Sol amendments and live planning/OpenSpec artifacts evolve separately.
+  Append-only Sol amendments and live planning/OpenSpec artifacts evolve separately. Read planning/ACTIVE-PLAN.md; Desktop/Xpra history under openspec/superseded/v267 is not active deployment scope.
   Target: Raspberry Pi5, nominal16GB RAM,1TB SSD, Coral USB or PCIe/M.2; detect actual facts.
-  Supported64-bit Linux ARM64; v266 core-first Hermes, incremental capability ports, then custom Jarvis UI.
+  Supported64-bit Linux ARM64; v266/v267 core-first Hermes, incremental capability ports, then custom Jarvis UI; Desktop benchmark only.
   Thin shell bootstrap and typed modular Python; isolated dependencies, official Hermes PM Python3.14.
   Upstream Hermes7085fbf7753266fc4943c55ac04926186bc90005; registry113f42d33be9e0c8f0f47f5ca998e687323dec83.
   Read SOURCES.md and COMPATIBILITY.md for dated primary evidence; revalidate at configuration/update.

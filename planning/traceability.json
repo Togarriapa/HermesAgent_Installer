@@ -383,7 +383,7 @@
       "source_section": 1,
       "source_subsection": "",
       "text": "Build an installer for this machine:",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "capability": "bootstrap-desktop",
       "task_id": "BD-R0023",
       "test_id": "EV-R0023",
@@ -392,7 +392,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/preflight.py",
-      "verification_method": "Fresh/adopt host fixtures assert detected OS/ARM64/RAM/SSD/device/session/services/ports facts and preserve preexisting data/settings; unsafe platform/root/service takeover denied before writes"
+      "verification_method": "Fresh/adopt host fixtures assert detected OS/ARM64/RAM/SSD/device/session/services/ports facts and preserve preexisting data/settings; unsafe platform/root/service takeover denied before writes",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "R0024",
@@ -400,7 +401,7 @@
       "source_section": 1,
       "source_subsection": "",
       "text": "Raspberry Pi 5 with 16 GB RAM.",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "capability": "bootstrap-desktop",
       "task_id": "BD-R0024",
       "test_id": "EV-R0024",
@@ -409,7 +410,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/preflight.py",
-      "verification_method": "Fresh/adopt host fixtures assert detected OS/ARM64/RAM/SSD/device/session/services/ports facts and preserve preexisting data/settings; unsafe platform/root/service takeover denied before writes"
+      "verification_method": "Fresh/adopt host fixtures assert detected OS/ARM64/RAM/SSD/device/session/services/ports facts and preserve preexisting data/settings; unsafe platform/root/service takeover denied before writes",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "R0025",
@@ -417,7 +419,7 @@
       "source_section": 1,
       "source_subsection": "",
       "text": "1 TB SSD. Detect its actual usable capacity, free space, filesystem, mount, and connection type.",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "capability": "bootstrap-desktop",
       "task_id": "BD-R0025",
       "test_id": "EV-R0025",
@@ -426,7 +428,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/preflight.py",
-      "verification_method": "Fresh/adopt host fixtures assert detected OS/ARM64/RAM/SSD/device/session/services/ports facts and preserve preexisting data/settings; unsafe platform/root/service takeover denied before writes"
+      "verification_method": "Fresh/adopt host fixtures assert detected OS/ARM64/RAM/SSD/device/session/services/ports facts and preserve preexisting data/settings; unsafe platform/root/service takeover denied before writes",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "R0026",
@@ -434,7 +437,7 @@
       "source_section": 1,
       "source_subsection": "",
       "text": "Google Coral TPU. Detect whether it is USB or PCIe/M.2 before choosing drivers.",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "capability": "bootstrap-desktop",
       "task_id": "BD-R0026",
       "test_id": "EV-R0026",
@@ -446,7 +449,8 @@
       "verification_method": "Fresh/adopt host fixtures assert detected OS/ARM64/RAM/SSD/device/session/services/ports facts and preserve preexisting data/settings; unsafe platform/root/service takeover denied before writes",
       "related_task_ids": [
         "HW-F03"
-      ]
+      ],
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "R0027",
@@ -454,7 +458,7 @@
       "source_section": 1,
       "source_subsection": "",
       "text": "A supported 64-bit Linux installation, preferably Raspberry Pi OS with a desktop when compatible with the selected dependencies.",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "capability": "bootstrap-desktop",
       "task_id": "BD-R0027",
       "test_id": "EV-R0027",
@@ -463,7 +467,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/desktop.py",
-      "verification_method": "User-session/official-source build and fallback fixtures assert the exact obligation; native window/backend/resource/tool/cancellation proof is separately required on authorized graphical Pi"
+      "verification_method": "User-session/official-source build and fallback fixtures assert the exact obligation; native window/backend/resource/tool/cancellation proof is separately required on authorized graphical Pi",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "R0028",
@@ -471,7 +476,7 @@
       "source_section": 1,
       "source_subsection": "",
       "text": "Install Hermes Desktop and its Hermes Agent backend, preinstall my profiles and skills, and integrate the requested projects and MCP connections to the extent their real upstream capabilities and my accounts permit.",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "capability": "bootstrap-desktop",
       "task_id": "BD-R0028",
       "test_id": "EV-R0028",
@@ -480,7 +485,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/desktop.py",
-      "verification_method": "User-session/official-source build and fallback fixtures assert the exact obligation; native window/backend/resource/tool/cancellation proof is separately required on authorized graphical Pi"
+      "verification_method": "User-session/official-source build and fallback fixtures assert the exact obligation; native window/backend/resource/tool/cancellation proof is separately required on authorized graphical Pi",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "R0029",
@@ -488,7 +494,7 @@
       "source_section": 1,
       "source_subsection": "",
       "text": "The result must work for both a fresh supported system and a machine with an existing installation. Preserve existing user data, configurations, credentials, memories, and unrelated services. Detect existing Home Assistant, model servers, speech services, and occupied ports before making changes.",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "capability": "bootstrap-desktop",
       "task_id": "BD-R0029",
       "test_id": "EV-R0029",
@@ -497,7 +503,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/preflight.py",
-      "verification_method": "Fresh/adopt host fixtures assert detected OS/ARM64/RAM/SSD/device/session/services/ports facts and preserve preexisting data/settings; unsafe platform/root/service takeover denied before writes"
+      "verification_method": "Fresh/adopt host fixtures assert detected OS/ARM64/RAM/SSD/device/session/services/ports facts and preserve preexisting data/settings; unsafe platform/root/service takeover denied before writes",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "R0030",
@@ -505,7 +512,7 @@
       "source_section": 1,
       "source_subsection": "",
       "text": "Do not reimage the machine, format storage, or replace an existing service as a side effect of routine installation.",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "capability": "bootstrap-desktop",
       "task_id": "BD-R0030",
       "test_id": "EV-R0030",
@@ -514,7 +521,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/preflight.py",
-      "verification_method": "Fresh/adopt host fixtures assert detected OS/ARM64/RAM/SSD/device/session/services/ports facts and preserve preexisting data/settings; unsafe platform/root/service takeover denied before writes"
+      "verification_method": "Fresh/adopt host fixtures assert detected OS/ARM64/RAM/SSD/device/session/services/ports facts and preserve preexisting data/settings; unsafe platform/root/service takeover denied before writes",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "R0031",
@@ -522,7 +530,7 @@
       "source_section": 1,
       "source_subsection": "",
       "text": "Use English for the installer and documentation. Default new installer-owned schedules and displayed times to `Europe/Lisbon`, while preserving an existing host timezone unless the user selects a change.",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "capability": "bootstrap-desktop",
       "task_id": "BD-R0031",
       "test_id": "EV-R0031",
@@ -531,7 +539,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/config.py",
-      "verification_method": "Config/wizard fixture asserts English output, Europe/Lisbon new schedule/display default and unchanged existing host timezone unless explicitly selected"
+      "verification_method": "Config/wizard fixture asserts English output, Europe/Lisbon new schedule/display default and unchanged existing host timezone unless explicitly selected",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "R0032",
@@ -556,7 +565,7 @@
       "source_section": 2,
       "source_subsection": "Hermes Desktop",
       "text": "Use NousResearch/hermes-agent (https://github.com/NousResearch/hermes-agent) as the canonical upstream. Read its current Desktop README (https://github.com/NousResearch/hermes-agent/blob/main/apps/desktop/README.md), build instructions, installation guide, and platform support (https://hermes-agent.nousresearch.com/docs/getting-started/platform-support).",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "capability": "bootstrap-desktop",
       "task_id": "BD-R0033",
       "test_id": "EV-R0033",
@@ -565,7 +574,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/desktop.py",
-      "verification_method": "User-session/official-source build and fallback fixtures assert the exact obligation; native window/backend/resource/tool/cancellation proof is separately required on authorized graphical Pi"
+      "verification_method": "User-session/official-source build and fallback fixtures assert the exact obligation; native window/backend/resource/tool/cancellation proof is separately required on authorized graphical Pi",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "R0034",
@@ -573,7 +583,7 @@
       "source_section": 2,
       "source_subsection": "Hermes Desktop",
       "text": "The research snapshot lists Linux aarch64 as a supported agent platform and documents `hermes desktop` for building/launching the official GUI against an existing install. It also says Linux desktop release packaging is currently disabled. Therefore:",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "capability": "bootstrap-desktop",
       "task_id": "BD-R0034",
       "test_id": "EV-R0034",
@@ -582,7 +592,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/desktop.py",
-      "verification_method": "User-session/official-source build and fallback fixtures assert the exact obligation; native window/backend/resource/tool/cancellation proof is separately required on authorized graphical Pi"
+      "verification_method": "User-session/official-source build and fallback fixtures assert the exact obligation; native window/backend/resource/tool/cancellation proof is separately required on authorized graphical Pi",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "R0035",
@@ -590,7 +601,7 @@
       "source_section": 2,
       "source_subsection": "Hermes Desktop",
       "text": "Prefer an official compatible release if one exists at implementation time; otherwise implement and verify the official ARM64 source-build path.",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "capability": "bootstrap-desktop",
       "task_id": "BD-R0035",
       "test_id": "EV-R0035",
@@ -599,7 +610,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/desktop.py",
-      "verification_method": "User-session/official-source build and fallback fixtures assert the exact obligation; native window/backend/resource/tool/cancellation proof is separately required on authorized graphical Pi"
+      "verification_method": "User-session/official-source build and fallback fixtures assert the exact obligation; native window/backend/resource/tool/cancellation proof is separately required on authorized graphical Pi",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "R0036",
@@ -607,7 +619,7 @@
       "source_section": 2,
       "source_subsection": "Hermes Desktop",
       "text": "Resolve Agent and Desktop versions separately when upstream releases them separately.",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "capability": "bootstrap-desktop",
       "task_id": "BD-R0036",
       "test_id": "EV-R0036",
@@ -616,7 +628,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/desktop.py",
-      "verification_method": "User-session/official-source build and fallback fixtures assert the exact obligation; native window/backend/resource/tool/cancellation proof is separately required on authorized graphical Pi"
+      "verification_method": "User-session/official-source build and fallback fixtures assert the exact obligation; native window/backend/resource/tool/cancellation proof is separately required on authorized graphical Pi",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "R0037",
@@ -624,7 +637,7 @@
       "source_section": 2,
       "source_subsection": "Hermes Desktop",
       "text": "Verify the native window opens under the actual graphical session, connects to the intended backend, displays imported resources, and completes a conversation.",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "capability": "bootstrap-desktop",
       "task_id": "BD-R0037",
       "test_id": "EV-R0037",
@@ -633,7 +646,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/desktop.py",
-      "verification_method": "On the actual authorized Pi graphical session, probe the official native window, intended backend identity, imported resources and synthetic Hello conversation; fixture GUI launch/control tests prove orchestration only and missing Pi remains pending"
+      "verification_method": "On the actual authorized Pi graphical session, probe the official native window, intended backend identity, imported resources and synthetic Hello conversation; fixture GUI launch/control tests prove orchestration only and missing Pi remains pending",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "R0038",
@@ -641,7 +655,7 @@
       "source_section": 2,
       "source_subsection": "Hermes Desktop",
       "text": "Run the desktop under the intended desktop user. Use appropriate user-session startup; a headless system service is not a graphical login session.",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "capability": "bootstrap-desktop",
       "task_id": "BD-R0038",
       "test_id": "EV-R0038",
@@ -650,15 +664,16 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/desktop.py",
-      "verification_method": "User-session/official-source build and fallback fixtures assert the exact obligation; native window/backend/resource/tool/cancellation proof is separately required on authorized graphical Pi"
+      "verification_method": "User-session/official-source build and fallback fixtures assert the exact obligation; native window/backend/resource/tool/cancellation proof is separately required on authorized graphical Pi",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "R0039",
       "source_line": 82,
       "source_section": 2,
       "source_subsection": "Hermes Desktop",
-      "text": "If native Desktop is blocked, retain a working supported agent and offer its browser interface or a documented remote-Desktop connection as a clearly labeled fallback. Do not label that fallback “Desktop installed.” Record the exact failure and recovery route.",
-      "change": "installer-bootstrap-desktop",
+      "text": "If native Desktop is blocked, retain a working supported agent and offer its browser interface or a documented remote-Desktop connection as a clearly labeled fallback. Do not label that fallback \u201cDesktop installed.\u201d Record the exact failure and recovery route.",
+      "change": "jarvis-core-platform",
       "capability": "bootstrap-desktop",
       "task_id": "BD-R0039",
       "test_id": "EV-R0039",
@@ -667,7 +682,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/desktop.py",
-      "verification_method": "User-session/official-source build and fallback fixtures assert the exact obligation; native window/backend/resource/tool/cancellation proof is separately required on authorized graphical Pi"
+      "verification_method": "User-session/official-source build and fallback fixtures assert the exact obligation; native window/backend/resource/tool/cancellation proof is separately required on authorized graphical Pi",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "R0040",
@@ -675,7 +691,7 @@
       "source_section": 2,
       "source_subsection": "Hermes Desktop",
       "text": "Do not silently substitute a community fork, an unrelated Hermes application, or an unofficial Python package.",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "capability": "bootstrap-desktop",
       "task_id": "BD-R0040",
       "test_id": "EV-R0040",
@@ -684,7 +700,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/desktop.py",
-      "verification_method": "User-session/official-source build and fallback fixtures assert the exact obligation; native window/backend/resource/tool/cancellation proof is separately required on authorized graphical Pi"
+      "verification_method": "User-session/official-source build and fallback fixtures assert the exact obligation; native window/backend/resource/tool/cancellation proof is separately required on authorized graphical Pi",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "R0041",
@@ -946,7 +963,7 @@
       "source_line": 110,
       "source_section": 3,
       "source_subsection": "",
-      "text": "Preserve the repository's intended topology: user → Hermes → Orchestrator → internal specialists/teams → Orchestrator → Hermes. Specialists must not become independent user-facing channels. Preserve the declared response contract, scoped recruitment, contributor reporting, and material dissent where applicable.",
+      "text": "Preserve the repository's intended topology: user \u2192 Hermes \u2192 Orchestrator \u2192 internal specialists/teams \u2192 Orchestrator \u2192 Hermes. Specialists must not become independent user-facing channels. Preserve the declared response contract, scoped recruitment, contributor reporting, and material dissent where applicable.",
       "change": "resource-registry-import",
       "capability": "registry-runtime",
       "task_id": "RG-R0056",
@@ -1660,7 +1677,7 @@
       "source_line": 169,
       "source_section": 4,
       "source_subsection": "MCP connections",
-      "text": "Playwright MCP, written “playright”: Local official MCP using a pinned `@playwright/mcp` package and verified ARM64 browser.",
+      "text": "Playwright MCP, written \u201cplayright\u201d: Local official MCP using a pinned `@playwright/mcp` package and verified ARM64 browser.",
       "change": "mcp-connections",
       "capability": "mcp-connectivity",
       "task_id": "MC-R0098",
@@ -1897,7 +1914,7 @@
       "id": "R0112",
       "source_line": 198,
       "source_section": 5,
-      "source_subsection": "GLM-5.2 through Project Colibrì",
+      "source_subsection": "GLM-5.2 through Project Colibr\u00ec",
       "text": "Use JustVugg/colibri (https://github.com/JustVugg/colibri), its current quickstart (https://github.com/JustVugg/colibri/blob/main/docs/quickstart.md), and verified GLM-5.2 model artifacts.",
       "change": "colibri-coral",
       "capability": "hardware-inference",
@@ -1914,7 +1931,7 @@
       "id": "R0113",
       "source_line": 200,
       "source_section": 5,
-      "source_subsection": "GLM-5.2 through Project Colibrì",
+      "source_subsection": "GLM-5.2 through Project Colibr\u00ec",
       "text": "Preserve GLM-5.2 as the requested model. At research time the recommended converted package is approximately 429 GB, and upstream lists 16 GB minimum / 24 GB recommended or measured-ready RAM. Its published low-memory laptop result is not a Pi benchmark. Do not assert acceptable performance on this Pi without measurement.",
       "change": "colibri-coral",
       "capability": "hardware-inference",
@@ -1931,7 +1948,7 @@
       "id": "R0114",
       "source_line": 202,
       "source_section": 5,
-      "source_subsection": "GLM-5.2 through Project Colibrì",
+      "source_subsection": "GLM-5.2 through Project Colibr\u00ec",
       "text": "Implement the complete experimental local-model path:",
       "change": "colibri-coral",
       "capability": "hardware-inference",
@@ -1948,7 +1965,7 @@
       "id": "R0115",
       "source_line": 204,
       "source_section": 5,
-      "source_subsection": "GLM-5.2 through Project Colibrì",
+      "source_subsection": "GLM-5.2 through Project Colibr\u00ec",
       "text": "Build the engine for actual Linux ARM64; do not download an x86-only Linux binary.",
       "change": "colibri-coral",
       "capability": "hardware-inference",
@@ -1965,7 +1982,7 @@
       "id": "R0116",
       "source_line": 205,
       "source_section": 5,
-      "source_subsection": "GLM-5.2 through Project Colibrì",
+      "source_subsection": "GLM-5.2 through Project Colibr\u00ec",
       "text": "Resolve a supported, licensed, revision-pinned model artifact and quantization, including any required MTP data. Never silently substitute GLM-5.3 or a smaller model.",
       "change": "colibri-coral",
       "capability": "hardware-inference",
@@ -1982,7 +1999,7 @@
       "id": "R0117",
       "source_line": 206,
       "source_section": 5,
-      "source_subsection": "GLM-5.2 through Project Colibrì",
+      "source_subsection": "GLM-5.2 through Project Colibr\u00ec",
       "text": "Show total download, temporary/conversion, final-storage, and update/rollback space requirements before the user selects the large download. Support an existing model path and resumable integrity-checked downloads.",
       "change": "colibri-coral",
       "capability": "hardware-inference",
@@ -1999,7 +2016,7 @@
       "id": "R0118",
       "source_line": 207,
       "source_section": 5,
-      "source_subsection": "GLM-5.2 through Project Colibrì",
+      "source_subsection": "GLM-5.2 through Project Colibr\u00ec",
       "text": "Reserve space for the OS, Hermes, user data, caches, logs, and recovery. Avoid duplicating hundreds of gigabytes solely to create a generic backup.",
       "change": "colibri-coral",
       "capability": "hardware-inference",
@@ -2016,7 +2033,7 @@
       "id": "R0119",
       "source_line": 208,
       "source_section": 5,
-      "source_subsection": "GLM-5.2 through Project Colibrì",
+      "source_subsection": "GLM-5.2 through Project Colibr\u00ec",
       "text": "Measure memory use, SSD throughput, first-token latency, prompt processing, token generation, and tool-use behavior on this host. Distinguish cold and warm tests.",
       "change": "colibri-coral",
       "capability": "hardware-inference",
@@ -2033,7 +2050,7 @@
       "id": "R0120",
       "source_line": 209,
       "source_section": 5,
-      "source_subsection": "GLM-5.2 through Project Colibrì",
+      "source_subsection": "GLM-5.2 through Project Colibr\u00ec",
       "text": "Give the model a bounded, cancellable service and an authenticated/loopback API adapter appropriate to the current Colibri server.",
       "change": "colibri-coral",
       "capability": "hardware-inference",
@@ -2050,7 +2067,7 @@
       "id": "R0121",
       "source_line": 210,
       "source_section": 5,
-      "source_subsection": "GLM-5.2 through Project Colibrì",
+      "source_subsection": "GLM-5.2 through Project Colibr\u00ec",
       "text": "Keep Desktop responsive. Restrict concurrent local inference and suspend competing installer-managed heavy workloads where necessary. Do not promise that swap solves insufficient physical RAM.",
       "change": "colibri-coral",
       "capability": "hardware-inference",
@@ -2067,7 +2084,7 @@
       "id": "R0122",
       "source_line": 211,
       "source_section": 5,
-      "source_subsection": "GLM-5.2 through Project Colibrì",
+      "source_subsection": "GLM-5.2 through Project Colibr\u00ec",
       "text": "Enable it as an interactive default only if measured behavior satisfies documented, configurable acceptance thresholds. Otherwise retain an explicitly experimental/manual route with its measured limitations.",
       "change": "colibri-coral",
       "capability": "hardware-inference",
@@ -2084,7 +2101,7 @@
       "id": "R0123",
       "source_line": 213,
       "source_section": 5,
-      "source_subsection": "GLM-5.2 through Project Colibrì",
+      "source_subsection": "GLM-5.2 through Project Colibr\u00ec",
       "text": "Build this support even if the target hardware is unavailable during development. Clearly separate implementing the installation path from having downloaded and tested the model on the actual Pi. An optional smaller model can be offered separately; it must never count as the requested GLM model passing.",
       "change": "colibri-coral",
       "capability": "hardware-inference",
@@ -2306,7 +2323,7 @@
       "source_line": 245,
       "source_section": 6,
       "source_subsection": "",
-      "text": "Keep memory stores namespaced by user/profile, preserve provenance, prevent recursive ingestion of generated memories, and provide export/backup/removal controls. Validate the selected provider by storing a synthetic fact, completing extraction, restarting, and retrieving it in a new session. A configured or “available” status is not sufficient proof.",
+      "text": "Keep memory stores namespaced by user/profile, preserve provenance, prevent recursive ingestion of generated memories, and provide export/backup/removal controls. Validate the selected provider by storing a synthetic fact, completing extraction, restarting, and retrieving it in a new session. A configured or \u201cavailable\u201d status is not sufficient proof.",
       "change": "skills-memory-applications",
       "capability": "component-integration",
       "task_id": "SK-R0136",
@@ -2425,7 +2442,7 @@
       "source_line": 257,
       "source_section": 7,
       "source_subsection": "",
-      "text": "For every required setting, show what it is, why it is needed, the official setup link, concrete steps to obtain it, and a connection test. Collect secrets through secure input and supported credential storage. Allow “configure later” and resume without repeating successful setup. Explain account/billing prerequisites before asking for a key.",
+      "text": "For every required setting, show what it is, why it is needed, the official setup link, concrete steps to obtain it, and a connection test. Collect secrets through secure input and supported credential storage. Allow \u201cconfigure later\u201d and resume without repeating successful setup. Explain account/billing prerequisites before asking for a key.",
       "change": "lifecycle-recovery",
       "capability": "managed-lifecycle",
       "task_id": "LC-R0143",
@@ -2578,7 +2595,7 @@
       "source_line": 272,
       "source_section": 7,
       "source_subsection": "",
-      "text": "Use appropriate systemd/user-session supervision with startup ordering, restart limits, health probes, timeouts, log rotation, and clean shutdown. Detect already-managed services to prevent duplicate listeners, model processes, jobs, and memory workers. Start with conservative, configurable concurrency—for example, one browser worker and a small cloud-agent pool—and tune from measurements.",
+      "text": "Use appropriate systemd/user-session supervision with startup ordering, restart limits, health probes, timeouts, log rotation, and clean shutdown. Detect already-managed services to prevent duplicate listeners, model processes, jobs, and memory workers. Start with conservative, configurable concurrency\u2014for example, one browser worker and a small cloud-agent pool\u2014and tune from measurements.",
       "change": "lifecycle-recovery",
       "capability": "managed-lifecycle",
       "task_id": "LC-R0152",
@@ -2969,7 +2986,7 @@
       "source_line": 316,
       "source_section": 10,
       "source_subsection": "",
-      "text": "Native Desktop launch, backend connection, a basic “Hello” response, cancellation, restart, and one harmless tool workflow.",
+      "text": "Native Desktop launch, backend connection, a basic \u201cHello\u201d response, cancellation, restart, and one harmless tool workflow.",
       "change": "verification-documentation",
       "capability": "acceptance-evidence",
       "task_id": "VD-R0175",
@@ -2986,7 +3003,7 @@
       "source_line": 317,
       "source_section": 10,
       "source_subsection": "",
-      "text": "Provider inference and tool calls, account-ineligible states, rate limiting, no unapproved paid fallback, and private-data routing—including memory extraction and retries.",
+      "text": "Provider inference and tool calls, account-ineligible states, rate limiting, no unapproved paid fallback, and private-data routing\u2014including memory extraction and retries.",
       "change": "verification-documentation",
       "capability": "acceptance-evidence",
       "task_id": "VD-R0176",
@@ -3309,7 +3326,7 @@
       "source_line": 342,
       "source_section": 11,
       "source_subsection": "",
-      "text": "Finish with the project location, exact install/resume/verify commands, what is verified functional, what remains pending and why, and the evidence supporting readiness. The definition of done is a reproducible installer with demonstrable integrations and explicit limits—not the number of repositories downloaded.",
+      "text": "Finish with the project location, exact install/resume/verify commands, what is verified functional, what remains pending and why, and the evidence supporting readiness. The definition of done is a reproducible installer with demonstrable integrations and explicit limits\u2014not the number of repositories downloaded.",
       "change": "verification-documentation",
       "capability": "acceptance-evidence",
       "task_id": "VD-R0195",
@@ -3328,7 +3345,7 @@
       "source_section": 12,
       "source_subsection": "Direct user Cloudflare additions",
       "text": "The wizard SHALL ask for the desired hostname with an empty input and no prefilled/default domain, validate it and require explicit user selection for noninteractive configuration.",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "capability": "remote-desktop-access",
       "task_id": "RT-R0196",
       "test_id": "EV-R0196",
@@ -3337,7 +3354,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/remote/config.py",
-      "verification_method": "Blank hostname and historical value: wizard starts with no configured hostname or user submits blank/invalid input -> the input SHALL remain blank initially; blank/invalid data SHALL be rejected without API mutation; hermes.togarriapahome.uk SHALL NOT be silently supplied; Explicit hostname: the user enters a valid authorized hostname through wizard or validated config -> plan SHALL use exactly that hostname and show the matched account/zone; no unrelated DNS names SHALL be modified"
+      "verification_method": "Blank hostname and historical value: wizard starts with no configured hostname or user submits blank/invalid input -> the input SHALL remain blank initially; blank/invalid data SHALL be rejected without API mutation; hermes.togarriapahome.uk SHALL NOT be silently supplied; Explicit hostname: the user enters a valid authorized hostname through wizard or validated config -> plan SHALL use exactly that hostname and show the matched account/zone; no unrelated DNS names SHALL be modified",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "R0197",
@@ -3346,7 +3364,7 @@
       "source_section": 12,
       "source_subsection": "Direct user Cloudflare additions",
       "text": "The wizard SHALL securely request a scoped Cloudflare API token or secret reference, explain official permissions and discover authorized account/zone without logging token values.",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "capability": "remote-desktop-access",
       "task_id": "RT-R0197",
       "test_id": "EV-R0197",
@@ -3355,7 +3373,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/remote/cloudflare.py",
-      "verification_method": "Scoped token discovery: secure input/reference resolves a token with read access to one account and the zone containing the entered hostname -> discovery SHALL identify the exact authorized account/zone, validate needed edit permissions and prompt selection only for genuine ambiguity; secrets SHALL not appear in source/argv/log/evidence; Insufficient token: token validation returns403 or no matching editable zone -> setup SHALL stop before mutation with exact missing permission/ownership and resume guidance; no global API key or broader unrelated authority SHALL be requested automatically"
+      "verification_method": "Scoped token discovery: secure input/reference resolves a token with read access to one account and the zone containing the entered hostname -> discovery SHALL identify the exact authorized account/zone, validate needed edit permissions and prompt selection only for genuine ambiguity; secrets SHALL not appear in source/argv/log/evidence; Insufficient token: token validation returns403 or no matching editable zone -> setup SHALL stop before mutation with exact missing permission/ownership and resume guidance; no global API key or broader unrelated authority SHALL be requested automatically",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "R0198",
@@ -3364,7 +3383,7 @@
       "source_section": 12,
       "source_subsection": "Direct user Cloudflare additions",
       "text": "The installer SHALL automatically provision or reuse a dedicated installer-owned Cloudflare Tunnel and least-privilege runtime credential under the selected account.",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "capability": "remote-desktop-access",
       "task_id": "RT-R0198",
       "test_id": "EV-R0198",
@@ -3373,7 +3392,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/remote/cloudflare.py",
-      "verification_method": "Create owned tunnel: selected token/account/hostname intent is valid and no matching owned tunnel exists -> adapter SHALL create one tagged/ledger-owned tunnel, capture its resource ID/checkpoint and generate runtime-only cloudflared credentials through secure references; admin API token SHALL NOT enter runtime Desktop/cloudflared environment; Idempotent reuse: resume/repeated install finds the same owned resource IDs and compatible config -> adapter SHALL reuse rather than duplicate tunnel, reconcile actual state before retry after ambiguous API result and preserve any unowned tunnel"
+      "verification_method": "Create owned tunnel: selected token/account/hostname intent is valid and no matching owned tunnel exists -> adapter SHALL create one tagged/ledger-owned tunnel, capture its resource ID/checkpoint and generate runtime-only cloudflared credentials through secure references; admin API token SHALL NOT enter runtime Desktop/cloudflared environment; Idempotent reuse: resume/repeated install finds the same owned resource IDs and compatible config -> adapter SHALL reuse rather than duplicate tunnel, reconcile actual state before retry after ambiguous API result and preserve any unowned tunnel",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "R0199",
@@ -3382,7 +3402,7 @@
       "source_section": 12,
       "source_subsection": "Direct user Cloudflare additions",
       "text": "The installer SHALL automatically configure the exact DNS hostname route and tunnel ingress to the loopback Desktop authorization gateway with a terminal404 catch-all.",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "capability": "remote-desktop-access",
       "task_id": "RT-R0199",
       "test_id": "EV-R0199",
@@ -3391,7 +3411,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/remote/cloudflare.py",
-      "verification_method": "Exact ingress and DNS: owned tunnel has healthy loopback gateway and the entered hostname has no conflicting unowned DNS record -> adapter SHALL create the exact tunnel DNS route/hostname ingress plus final404 catch-all and SHALL NOT expose raw Desktop/backend/Xpra/SSH/host-management ports; Conflicting DNS: hostname already has an unowned conflicting DNS record or another tunnel ingress -> adapter SHALL leave that record/tunnel unchanged, report the conflict and selected-identity resume step, and SHALL NOT overwrite/repoint it blindly"
+      "verification_method": "Exact ingress and DNS: owned tunnel has healthy loopback gateway and the entered hostname has no conflicting unowned DNS record -> adapter SHALL create the exact tunnel DNS route/hostname ingress plus final404 catch-all and SHALL NOT expose raw Desktop/backend/Xpra/SSH/host-management ports; Conflicting DNS: hostname already has an unowned conflicting DNS record or another tunnel ingress -> adapter SHALL leave that record/tunnel unchanged, report the conflict and selected-identity resume step, and SHALL NOT overwrite/repoint it blindly",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "R0200",
@@ -3400,7 +3421,7 @@
       "source_section": 12,
       "source_subsection": "Direct user Cloudflare additions",
       "text": "The installer SHALL automatically configure Cloudflare Access self-hosted application, email one-time-code login and explicit allowed-email policy for the entered hostname.",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "capability": "remote-desktop-access",
       "task_id": "RT-R0200",
       "test_id": "EV-R0200",
@@ -3409,7 +3430,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/remote/cloudflare.py",
-      "verification_method": "Automatic email-code Access: the configured allowed-email list is nonempty and token permits reviewed Access application/policy/identity-provider operations -> adapter SHALL create/reuse only the owned app/policy and documented compatible one-time-code provider, bind entire hostname HTTP and WebSocket routes, and require allowlisted identity before any origin content; Conflicting or unsupported Access: an unowned broad Access app overlaps hostname, provider/account eligibility is unavailable or policy cannot be verified -> activation SHALL fail closed with exact state/resume reason; no public/bypass policy, local-password substitute, paid purchase or modification to unrelated account policies SHALL occur"
+      "verification_method": "Automatic email-code Access: the configured allowed-email list is nonempty and token permits reviewed Access application/policy/identity-provider operations -> adapter SHALL create/reuse only the owned app/policy and documented compatible one-time-code provider, bind entire hostname HTTP and WebSocket routes, and require allowlisted identity before any origin content; Conflicting or unsupported Access: an unowned broad Access app overlaps hostname, provider/account eligibility is unavailable or policy cannot be verified -> activation SHALL fail closed with exact state/resume reason; no public/bypass policy, local-password substitute, paid purchase or modification to unrelated account policies SHALL occur",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "R0201",
@@ -3418,7 +3440,7 @@
       "source_section": 12,
       "source_subsection": "Direct user Cloudflare additions",
       "text": "Remote origin SHALL validate signed Cloudflare Access JWT algorithm, signature, configured issuer/audience, time claims and allowed principal before serving any asset, pixel, control or stream.",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "capability": "remote-desktop-access",
       "task_id": "RT-R0201",
       "test_id": "EV-R0201",
@@ -3427,7 +3449,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/remote/gateway.py",
-      "verification_method": "JWT denial matrix: GET asset/page or WebSocket upgrade presents missing/forged/expired/wrong-issuer/wrong-audience JWT or unallowed email -> gateway SHALL reject before forwarding upstream bytes/controls, ignore spoofed email-only headers and record redacted denial; user/backend session SHALL not start; Verified JWT and key rotation: request carries valid configured Access JWT and currently trusted HTTPS JWKS key -> gateway SHALL admit only configured paths/principal with bounded key cache/clock tolerance; unknown keys or unavailable stale trust data SHALL fail closed"
+      "verification_method": "JWT denial matrix: GET asset/page or WebSocket upgrade presents missing/forged/expired/wrong-issuer/wrong-audience JWT or unallowed email -> gateway SHALL reject before forwarding upstream bytes/controls, ignore spoofed email-only headers and record redacted denial; user/backend session SHALL not start; Verified JWT and key rotation: request carries valid configured Access JWT and currently trusted HTTPS JWKS key -> gateway SHALL admit only configured paths/principal with bounded key cache/clock tolerance; unknown keys or unavailable stale trust data SHALL fail closed",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "R0202",
@@ -3436,7 +3459,7 @@
       "source_section": 12,
       "source_subsection": "Direct user Cloudflare additions",
       "text": "Remote gateway SHALL allow only dedicated Desktop client assets/session/renewal/WebSocket routes and reject arbitrary targets, paths, origins and backend-management transports.",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "capability": "remote-desktop-access",
       "task_id": "RT-R0202",
       "test_id": "EV-R0202",
@@ -3445,7 +3468,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/remote/gateway.py",
-      "verification_method": "Route and transport denial: authenticated browser requests /terminal,/ssh,/api/backend or supplies arbitrary Xpra server URL/display/hostname -> gateway SHALL return denied404/403 without upstream connection; no shell, full host desktop, backend management or arbitrary origin proxy SHALL be exposed; Fixed upstream: allowlisted Desktop WebSocket handshake uses expected browser origin and principal-bound session token -> gateway SHALL route only to the owned loopback application-stream session and strip/limit untrusted forwarding headers; raw bridge listener remains private"
+      "verification_method": "Route and transport denial: authenticated browser requests /terminal,/ssh,/api/backend or supplies arbitrary Xpra server URL/display/hostname -> gateway SHALL return denied404/403 without upstream connection; no shell, full host desktop, backend management or arbitrary origin proxy SHALL be exposed; Fixed upstream: allowlisted Desktop WebSocket handshake uses expected browser origin and principal-bound session token -> gateway SHALL route only to the owned loopback application-stream session and strip/limit untrusted forwarding headers; raw bridge listener remains private",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "R0203",
@@ -3454,7 +3478,7 @@
       "source_section": 12,
       "source_subsection": "Direct user Cloudflare additions",
       "text": "The remote bridge SHALL stream the genuine official Hermes Desktop application in a dedicated constrained native session, never a web dashboard or whole existing host desktop.",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "capability": "remote-desktop-access",
       "task_id": "RT-R0203",
       "test_id": "EV-R0203",
@@ -3463,7 +3487,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/remote/session.py",
-      "verification_method": "Only native app windows: authorized principal starts the selected remote session on a supported ARM64 Pi -> bridge SHALL launch pinned official Hermes Desktop under the intended unprivileged user/session and export only its allowed application windows; no host-panel/terminal/desktop capture appears; Unsupported app-only confinement: only shadow/full-desktop mode, insecure Electron sandbox escape or unrelated application-window forwarding works -> remote Desktop SHALL remain unavailable with exact supported-resolution next step; a browser dashboard or unsandboxed whole-display fallback SHALL NOT be labeled protected Hermes Desktop"
+      "verification_method": "Only native app windows: authorized principal starts the selected remote session on a supported ARM64 Pi -> bridge SHALL launch pinned official Hermes Desktop under the intended unprivileged user/session and export only its allowed application windows; no host-panel/terminal/desktop capture appears; Unsupported app-only confinement: only shadow/full-desktop mode, insecure Electron sandbox escape or unrelated application-window forwarding works -> remote Desktop SHALL remain unavailable with exact supported-resolution next step; a browser dashboard or unsandboxed whole-display fallback SHALL NOT be labeled protected Hermes Desktop",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "R0204",
@@ -3472,7 +3497,7 @@
       "source_section": 12,
       "source_subsection": "Direct user Cloudflare additions",
       "text": "The bridge SHALL disable remote new-command/session/shell/control, file transfer/opening, clipboard, printing, device/audio and unnecessary proxy/debug features through server controls.",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "capability": "remote-desktop-access",
       "task_id": "RT-R0204",
       "test_id": "EV-R0204",
@@ -3481,7 +3506,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/remote/session.py",
-      "verification_method": "Host escape attempt: authenticated fixture client submits start-command,start-desktop,shell/control,file/clipboard/printing or arbitrary-display packets -> actual bridge/server policy SHALL deny without spawning processes/opening files/accessing host devices; hiding HTML controls alone SHALL not count as enforcement; Restricted client: minimal client connects to fixed admitted native app session -> only necessary screen/input operations SHALL load; retained browser/Electron sandbox and private X authority SHALL isolate the session from unowned host display/processes"
+      "verification_method": "Host escape attempt: authenticated fixture client submits start-command,start-desktop,shell/control,file/clipboard/printing or arbitrary-display packets -> actual bridge/server policy SHALL deny without spawning processes/opening files/accessing host devices; hiding HTML controls alone SHALL not count as enforcement; Restricted client: minimal client connects to fixed admitted native app session -> only necessary screen/input operations SHALL load; retained browser/Electron sandbox and private X authority SHALL isolate the session from unowned host display/processes",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "R0205",
@@ -3490,7 +3516,7 @@
       "source_section": 12,
       "source_subsection": "Direct user Cloudflare additions",
       "text": "Each remote browser session SHALL bind verified Access principal and native profile state; concurrent access SHALL respect configured one-session limits and prevent cross-user state/session hijack.",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "capability": "remote-desktop-access",
       "task_id": "RT-R0205",
       "test_id": "EV-R0205",
@@ -3499,7 +3525,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/remote/session.py",
-      "verification_method": "Cross-principal replay: user B replays user A session ticket or requests A display/home while both are allowed-email identities -> gateway/session broker SHALL deny before pixels/context/input, keep profile namespaces separate and never run concurrent writers in one HERMES_HOME; Resource limit: one managed remote session is active and a second request would exceed configured CPU/RAM/concurrency allowance -> new request SHALL return a bounded busy/queue response, preserve core chat and existing session, and not create duplicate native workers"
+      "verification_method": "Cross-principal replay: user B replays user A session ticket or requests A display/home while both are allowed-email identities -> gateway/session broker SHALL deny before pixels/context/input, keep profile namespaces separate and never run concurrent writers in one HERMES_HOME; Resource limit: one managed remote session is active and a second request would exceed configured CPU/RAM/concurrency allowance -> new request SHALL return a bounded busy/queue response, preserve core chat and existing session, and not create duplicate native workers",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "R0206",
@@ -3508,7 +3535,7 @@
       "source_section": 12,
       "source_subsection": "Direct user Cloudflare additions",
       "text": "Active WebSocket input/output SHALL stop on JWT expiry or stale authorization lease; revocation SHALL be enforced through bounded fresh protected HTTP renewal, not assumed edge socket termination.",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "capability": "remote-desktop-access",
       "task_id": "RT-R0206",
       "test_id": "EV-R0206",
@@ -3517,7 +3544,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/remote/gateway.py",
-      "verification_method": "Long-lived socket expiry: an admitted WebSocket JWT expires or its short authorization lease is not renewed through a fresh protected request -> gateway watchdog SHALL close forwarding/input by configured bounds and discard the ticket; an existing socket SHALL not remain authorized merely because its initial upgrade passed; Revoked session: edge denies fresh protected renewal after Access revocation/allowed-email removal -> origin SHALL stop the stream within at most configured lease duration, require fresh login to reconnect and fail closed when current validity cannot be established; WS frames cannot renew their own lease"
+      "verification_method": "Long-lived socket expiry: an admitted WebSocket JWT expires or its short authorization lease is not renewed through a fresh protected request -> gateway watchdog SHALL close forwarding/input by configured bounds and discard the ticket; an existing socket SHALL not remain authorized merely because its initial upgrade passed; Revoked session: edge denies fresh protected renewal after Access revocation/allowed-email removal -> origin SHALL stop the stream within at most configured lease duration, require fresh login to reconnect and fail closed when current validity cannot be established; WS frames cannot renew their own lease",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "R0207",
@@ -3526,7 +3554,7 @@
       "source_section": 12,
       "source_subsection": "Direct user Cloudflare additions",
       "text": "Cloudflare/remote component lifecycle SHALL be checkpointed, idempotent and ownership-aware across automatic setup, resume, update, rollback, disable and uninstall.",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "capability": "remote-desktop-access",
       "task_id": "RT-R0207",
       "test_id": "EV-R0207",
@@ -3535,7 +3563,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/remote/lifecycle.py",
-      "verification_method": "Partial API failure: tunnel/app/DNS creation succeeds partially then a timeout/429/process crash occurs -> journal SHALL retain exact owned IDs, reconcile remote result before retry and resume without duplicates; rollback SHALL touch only positively owned resources and preserve unrelated DNS/apps/tunnels/policies; Config update rollback: owned hostname/policy/service update fails health/auth/app-only checks -> prior protected working configuration SHALL remain/restored, external changes with uncertain ownership SHALL be quarantined and active public routes SHALL never bypass Access while recovering"
+      "verification_method": "Partial API failure: tunnel/app/DNS creation succeeds partially then a timeout/429/process crash occurs -> journal SHALL retain exact owned IDs, reconcile remote result before retry and resume without duplicates; rollback SHALL touch only positively owned resources and preserve unrelated DNS/apps/tunnels/policies; Config update rollback: owned hostname/policy/service update fails health/auth/app-only checks -> prior protected working configuration SHALL remain/restored, external changes with uncertain ownership SHALL be quarantined and active public routes SHALL never bypass Access while recovering",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "R0208",
@@ -3544,7 +3573,7 @@
       "source_section": 12,
       "source_subsection": "Direct user Cloudflare additions",
       "text": "Cloudflare setup SHALL activate public DNS/ingress only after Access protection and loopback origin validation are ready, with a fail-closed transaction order.",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "capability": "remote-desktop-access",
       "task_id": "RT-R0208",
       "test_id": "EV-R0208",
@@ -3553,7 +3582,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/remote/cloudflare.py",
-      "verification_method": "No exposure window: setup is interrupted after tunnel creation but before validated Access policy or gateway health -> public route SHALL remain absent/inactive or terminate404; no native GUI/assets/backend SHALL be reachable unauthenticated during any intermediate checkpoint; Protection first: Access app/policy, JWT gateway and constrained native session checks pass -> DNS/ingress activation SHALL be the final bounded owned-resource step followed by unauthorized HTTP/WS and allowed-principal functional probes"
+      "verification_method": "No exposure window: setup is interrupted after tunnel creation but before validated Access policy or gateway health -> public route SHALL remain absent/inactive or terminate404; no native GUI/assets/backend SHALL be reachable unauthenticated during any intermediate checkpoint; Protection first: Access app/policy, JWT gateway and constrained native session checks pass -> DNS/ingress activation SHALL be the final bounded owned-resource step followed by unauthorized HTTP/WS and allowed-principal functional probes",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "R0209",
@@ -3562,7 +3592,7 @@
       "source_section": 12,
       "source_subsection": "Direct user Cloudflare additions",
       "text": "Cloudflare management token SHALL remain only in secure setup credential storage; runtime cloudflared receives dedicated tunnel credential and gateway receives only necessary nonsecret trust/session configuration.",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "capability": "remote-desktop-access",
       "task_id": "RT-R0209",
       "test_id": "EV-R0209",
@@ -3571,7 +3601,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/remote/credentials.py",
-      "verification_method": "Secret canary separation: setup token and tunnel credential are synthetic distinguishable canaries and runtime services start -> runtime env/argv/logs/config/evidence SHALL contain no setup/admin token; tunnel credential SHALL be delivered through supported secret-file/reference mechanism and sensitive diagnostic fields redacted; Revoke or rotate: runtime tunnel token is revoked/rotated while a scoped management reference remains unavailable -> runtime SHALL fail/recover with explicit credential status and bounded reconnect; it SHALL not escalate to the management token or leak secret values"
+      "verification_method": "Secret canary separation: setup token and tunnel credential are synthetic distinguishable canaries and runtime services start -> runtime env/argv/logs/config/evidence SHALL contain no setup/admin token; tunnel credential SHALL be delivered through supported secret-file/reference mechanism and sensitive diagnostic fields redacted; Revoke or rotate: runtime tunnel token is revoked/rotated while a scoped management reference remains unavailable -> runtime SHALL fail/recover with explicit credential status and bounded reconnect; it SHALL not escalate to the management token or leak secret values",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "R0210",
@@ -3580,7 +3611,7 @@
       "source_section": 12,
       "source_subsection": "Direct user Cloudflare additions",
       "text": "The wizard/CLI SHALL support configure-later, secure noninteractive references, automatic setup resumption and component doctor/verify without repeated routine approvals.",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "capability": "remote-desktop-access",
       "task_id": "RT-R0210",
       "test_id": "EV-R0210",
@@ -3589,7 +3620,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/remote/config.py",
-      "verification_method": "Configure later: user skips hostname/token/allowed emails or no target is enrolled -> other independent installer work SHALL continue; remote component SHALL be pending with exact missing field and resumable command, never green or dropped; Noninteractive setup: validated hostname/account-selection/allowed-email and secret-reference config is supplied -> installer SHALL perform already-authorized scoped owned-resource setup automatically, emit structured checkpoint/errors and request input only for genuine ownership/conflict/account ambiguity"
+      "verification_method": "Configure later: user skips hostname/token/allowed emails or no target is enrolled -> other independent installer work SHALL continue; remote component SHALL be pending with exact missing field and resumable command, never green or dropped; Noninteractive setup: validated hostname/account-selection/allowed-email and secret-reference config is supplied -> installer SHALL perform already-authorized scoped owned-resource setup automatically, emit structured checkpoint/errors and request input only for genuine ownership/conflict/account ambiguity",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "R0211",
@@ -3598,7 +3630,7 @@
       "source_section": 12,
       "source_subsection": "Direct user Cloudflare additions",
       "text": "Remote acceptance SHALL separately prove unauthorized HTTP/WS denial, actual official Desktop pixels/control, app-only confinement, expiry/revocation and owned-resource recovery on the exact target/account.",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "capability": "remote-desktop-access",
       "task_id": "RT-R0211",
       "test_id": "EV-R0211",
@@ -3607,7 +3639,8 @@
       "kind": "requirement",
       "state": "specified; implementation-pending",
       "implementation_module": "src/hermes_installer/remote/verify.py",
-      "verification_method": "Fixture versus live proof: API/JWT/bridge fixtures pass but physical Pi/Cloudflare credentials are absent -> code/config/fixtures/docs/executable target-verifier SHALL be delivered, while live protected Desktop/account/DNS acceptance remains pending with exact target/credential resume input; Actual target functional proof: enrolled Pi/Cloudflare account and allowed test principal are selected -> verifier SHALL record candidate/source/service/resource IDs, unauthorized GET/assets/WS denial, native Hello/tool/cancel/restart and expiry/revocation/isolation/lifecycle results with redacted digests; configured-only tunnel status SHALL not pass"
+      "verification_method": "Fixture versus live proof: API/JWT/bridge fixtures pass but physical Pi/Cloudflare credentials are absent -> code/config/fixtures/docs/executable target-verifier SHALL be delivered, while live protected Desktop/account/DNS acceptance remains pending with exact target/credential resume input; Actual target functional proof: enrolled Pi/Cloudflare account and allowed test principal are selected -> verifier SHALL record candidate/source/service/resource IDs, unauthorized GET/assets/WS denial, native Hello/tool/cancel/restart and expiry/revocation/isolation/lifecycle results with redacted digests; configured-only tunnel status SHALL not pass",
+      "historical_change": "remote-desktop-tunnel"
     }
   ],
   "source_line_mapping": [
@@ -5144,7 +5177,7 @@
   "tasks": [
     {
       "id": "BD-F01",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "description": "Create typed orchestration package, thin bootstrap, configuration/result interfaces and sandboxed command runner; verify CLI help, read-only plan fixture and unsupported-host rejection; document bootstrap",
       "depends_on": [],
       "test_paths": [
@@ -5152,11 +5185,12 @@
       ],
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "foundation"
+      "kind": "foundation",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "BD-F02",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "description": "Implement complete preflight facts and adoption inventory with ownership boundaries; verify fresh/existing ARM64 fixtures, absent graphical session, locked package manager and unrelated-service preservation; document compatibility",
       "depends_on": [
         "BD-F01"
@@ -5166,11 +5200,12 @@
       ],
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "foundation"
+      "kind": "foundation",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "BD-F03",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "description": "Implement pinned official Agent install and separate Desktop release/source builders, safe user-session startup and truthful fallback; verify build fixture invocation and actual native target workflow; document source build",
       "depends_on": [
         "BD-F01"
@@ -5180,7 +5215,8 @@
       ],
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "foundation"
+      "kind": "foundation",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "RG-F01",
@@ -6574,7 +6610,7 @@
     },
     {
       "id": "BD-R0023",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "description": "Build an installer for this machine:",
       "source_line": 55,
       "requirement_ids": [
@@ -6591,11 +6627,12 @@
       "docs": "docs/bootstrap-desktop.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "BD-R0024",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "description": "Raspberry Pi 5 with 16 GB RAM.",
       "source_line": 57,
       "requirement_ids": [
@@ -6612,11 +6649,12 @@
       "docs": "docs/bootstrap-desktop.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "BD-R0025",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "description": "1 TB SSD. Detect its actual usable capacity, free space, filesystem, mount, and connection type.",
       "source_line": 58,
       "requirement_ids": [
@@ -6633,11 +6671,12 @@
       "docs": "docs/bootstrap-desktop.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "BD-R0026",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "description": "Google Coral TPU. Detect whether it is USB or PCIe/M.2 before choosing drivers.",
       "source_line": 59,
       "requirement_ids": [
@@ -6654,11 +6693,12 @@
       "docs": "docs/bootstrap-desktop.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "BD-R0027",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "description": "A supported 64-bit Linux installation, preferably Raspberry Pi OS with a desktop when compatible with the selected dependencies.",
       "source_line": 60,
       "requirement_ids": [
@@ -6675,11 +6715,12 @@
       "docs": "docs/bootstrap-desktop.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "BD-R0028",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "description": "Install Hermes Desktop and its Hermes Agent backend, preinstall my profiles and skills, and integrate the requested projects and MCP connections to the extent their real upstream capabilities and my accounts permit.",
       "source_line": 62,
       "requirement_ids": [
@@ -6696,11 +6737,12 @@
       "docs": "docs/bootstrap-desktop.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "BD-R0029",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "description": "The result must work for both a fresh supported system and a machine with an existing installation. Preserve existing user data, configurations, credentials, memories, and unrelated services. Detect existing Home Assistant, model servers, speech services, and occupied ports before making changes.",
       "source_line": 64,
       "requirement_ids": [
@@ -6717,11 +6759,12 @@
       "docs": "docs/bootstrap-desktop.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "BD-R0030",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "description": "Do not reimage the machine, format storage, or replace an existing service as a side effect of routine installation.",
       "source_line": 64,
       "requirement_ids": [
@@ -6738,11 +6781,12 @@
       "docs": "docs/bootstrap-desktop.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "BD-R0031",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "description": "Use English for the installer and documentation. Default new installer-owned schedules and displayed times to `Europe/Lisbon`, while preserving an existing host timezone unless the user selects a change.",
       "source_line": 66,
       "requirement_ids": [
@@ -6759,7 +6803,8 @@
       "docs": "docs/bootstrap-desktop.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "PR-R0032",
@@ -6784,7 +6829,7 @@
     },
     {
       "id": "BD-R0033",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "description": "Use NousResearch/hermes-agent (https://github.com/NousResearch/hermes-agent) as the canonical upstream. Read its current Desktop README (https://github.com/NousResearch/hermes-agent/blob/main/apps/desktop/README.md), build instructions, installation guide, and platform support (https://hermes-agent.nousresearch.com/docs/getting-started/platform-support).",
       "source_line": 74,
       "requirement_ids": [
@@ -6801,11 +6846,12 @@
       "docs": "docs/bootstrap-desktop.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "BD-R0034",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "description": "The research snapshot lists Linux aarch64 as a supported agent platform and documents `hermes desktop` for building/launching the official GUI against an existing install. It also says Linux desktop release packaging is currently disabled. Therefore:",
       "source_line": 76,
       "requirement_ids": [
@@ -6822,11 +6868,12 @@
       "docs": "docs/bootstrap-desktop.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "BD-R0035",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "description": "Prefer an official compatible release if one exists at implementation time; otherwise implement and verify the official ARM64 source-build path.",
       "source_line": 78,
       "requirement_ids": [
@@ -6843,11 +6890,12 @@
       "docs": "docs/bootstrap-desktop.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "BD-R0036",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "description": "Resolve Agent and Desktop versions separately when upstream releases them separately.",
       "source_line": 79,
       "requirement_ids": [
@@ -6864,11 +6912,12 @@
       "docs": "docs/bootstrap-desktop.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "BD-R0037",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "description": "Verify the native window opens under the actual graphical session, connects to the intended backend, displays imported resources, and completes a conversation.",
       "source_line": 80,
       "requirement_ids": [
@@ -6885,11 +6934,12 @@
       "docs": "docs/bootstrap-desktop.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "BD-R0038",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "description": "Run the desktop under the intended desktop user. Use appropriate user-session startup; a headless system service is not a graphical login session.",
       "source_line": 81,
       "requirement_ids": [
@@ -6906,12 +6956,13 @@
       "docs": "docs/bootstrap-desktop.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "BD-R0039",
-      "change": "installer-bootstrap-desktop",
-      "description": "If native Desktop is blocked, retain a working supported agent and offer its browser interface or a documented remote-Desktop connection as a clearly labeled fallback. Do not label that fallback “Desktop installed.” Record the exact failure and recovery route.",
+      "change": "jarvis-core-platform",
+      "description": "If native Desktop is blocked, retain a working supported agent and offer its browser interface or a documented remote-Desktop connection as a clearly labeled fallback. Do not label that fallback \u201cDesktop installed.\u201d Record the exact failure and recovery route.",
       "source_line": 82,
       "requirement_ids": [
         "R0039"
@@ -6927,11 +6978,12 @@
       "docs": "docs/bootstrap-desktop.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "BD-R0040",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "description": "Do not silently substitute a community fork, an unrelated Hermes application, or an unofficial Python package.",
       "source_line": 83,
       "requirement_ids": [
@@ -6948,7 +7000,8 @@
       "docs": "docs/bootstrap-desktop.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "id": "HW-R0041",
@@ -7268,7 +7321,7 @@
     {
       "id": "RG-R0056",
       "change": "resource-registry-import",
-      "description": "Preserve the repository's intended topology: user → Hermes → Orchestrator → internal specialists/teams → Orchestrator → Hermes. Specialists must not become independent user-facing channels. Preserve the declared response contract, scoped recruitment, contributor reporting, and material dissent where applicable.",
+      "description": "Preserve the repository's intended topology: user \u2192 Hermes \u2192 Orchestrator \u2192 internal specialists/teams \u2192 Orchestrator \u2192 Hermes. Specialists must not become independent user-facing channels. Preserve the declared response contract, scoped recruitment, contributor reporting, and material dissent where applicable.",
       "source_line": 110,
       "requirement_ids": [
         "R0056"
@@ -8150,7 +8203,7 @@
     {
       "id": "MC-R0098",
       "change": "mcp-connections",
-      "description": "Playwright MCP, written “playright”: Local official MCP using a pinned `@playwright/mcp` package and verified ARM64 browser.",
+      "description": "Playwright MCP, written \u201cplayright\u201d: Local official MCP using a pinned `@playwright/mcp` package and verified ARM64 browser.",
       "source_line": 169,
       "requirement_ids": [
         "R0098"
@@ -8948,7 +9001,7 @@
     {
       "id": "SK-R0136",
       "change": "skills-memory-applications",
-      "description": "Keep memory stores namespaced by user/profile, preserve provenance, prevent recursive ingestion of generated memories, and provide export/backup/removal controls. Validate the selected provider by storing a synthetic fact, completing extraction, restarting, and retrieving it in a new session. A configured or “available” status is not sufficient proof.",
+      "description": "Keep memory stores namespaced by user/profile, preserve provenance, prevent recursive ingestion of generated memories, and provide export/backup/removal controls. Validate the selected provider by storing a synthetic fact, completing extraction, restarting, and retrieving it in a new session. A configured or \u201cavailable\u201d status is not sufficient proof.",
       "source_line": 245,
       "requirement_ids": [
         "R0136"
@@ -9095,7 +9148,7 @@
     {
       "id": "LC-R0143",
       "change": "lifecycle-recovery",
-      "description": "For every required setting, show what it is, why it is needed, the official setup link, concrete steps to obtain it, and a connection test. Collect secrets through secure input and supported credential storage. Allow “configure later” and resume without repeating successful setup. Explain account/billing prerequisites before asking for a key.",
+      "description": "For every required setting, show what it is, why it is needed, the official setup link, concrete steps to obtain it, and a connection test. Collect secrets through secure input and supported credential storage. Allow \u201cconfigure later\u201d and resume without repeating successful setup. Explain account/billing prerequisites before asking for a key.",
       "source_line": 257,
       "requirement_ids": [
         "R0143"
@@ -9284,7 +9337,7 @@
     {
       "id": "LC-R0152",
       "change": "lifecycle-recovery",
-      "description": "Use appropriate systemd/user-session supervision with startup ordering, restart limits, health probes, timeouts, log rotation, and clean shutdown. Detect already-managed services to prevent duplicate listeners, model processes, jobs, and memory workers. Start with conservative, configurable concurrency—for example, one browser worker and a small cloud-agent pool—and tune from measurements.",
+      "description": "Use appropriate systemd/user-session supervision with startup ordering, restart limits, health probes, timeouts, log rotation, and clean shutdown. Detect already-managed services to prevent duplicate listeners, model processes, jobs, and memory workers. Start with conservative, configurable concurrency\u2014for example, one browser worker and a small cloud-agent pool\u2014and tune from measurements.",
       "source_line": 272,
       "requirement_ids": [
         "R0152"
@@ -10043,7 +10096,7 @@
     {
       "id": "VD-R0175",
       "change": "verification-documentation",
-      "description": "Native Desktop launch, backend connection, a basic “Hello” response, cancellation, restart, and one harmless tool workflow.",
+      "description": "Native Desktop launch, backend connection, a basic \u201cHello\u201d response, cancellation, restart, and one harmless tool workflow.",
       "source_line": 316,
       "requirement_ids": [
         "R0175"
@@ -10087,7 +10140,7 @@
     {
       "id": "VD-R0176",
       "change": "verification-documentation",
-      "description": "Provider inference and tool calls, account-ineligible states, rate limiting, no unapproved paid fallback, and private-data routing—including memory extraction and retries.",
+      "description": "Provider inference and tool calls, account-ineligible states, rate limiting, no unapproved paid fallback, and private-data routing\u2014including memory extraction and retries.",
       "source_line": 317,
       "requirement_ids": [
         "R0176"
@@ -10923,7 +10976,7 @@
     {
       "id": "VD-R0195",
       "change": "verification-documentation",
-      "description": "Finish with the project location, exact install/resume/verify commands, what is verified functional, what remains pending and why, and the evidence supporting readiness. The definition of done is a reproducible installer with demonstrable integrations and explicit limits—not the number of repositories downloaded.",
+      "description": "Finish with the project location, exact install/resume/verify commands, what is verified functional, what remains pending and why, and the evidence supporting readiness. The definition of done is a reproducible installer with demonstrable integrations and explicit limits\u2014not the number of repositories downloaded.",
       "source_line": 342,
       "requirement_ids": [
         "R0195"
@@ -10966,7 +11019,7 @@
     },
     {
       "id": "RT-F01",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "description": "Implement secure Cloudflare API discovery/owned-resource transaction adapter with recording HTTP fixtures; verify scoped permissions, no public exposure window, conflict preservation, ambiguous-failure reconciliation and no repeated-approval setup; document token/domain/email setup",
       "depends_on": [
         "BD-F01",
@@ -10979,11 +11032,12 @@
       ],
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "foundation"
+      "kind": "foundation",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "RT-F02",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "description": "Implement origin JWT/session/lease gateway and reviewed constrained official native app bridge; verify actual deny before pixels/control, only fixed upstream, expiry/revocation/command/window isolation; document browser-only native Desktop access",
       "depends_on": [
         "BD-F03",
@@ -10996,11 +11050,12 @@
       ],
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "foundation"
+      "kind": "foundation",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "RT-F03",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "description": "Implement remote lifecycle/doctor/verification CLI and authorized-target browser workflow; verify recovery/idempotency/redaction and protected native-window tests; document configure-later/resume",
       "depends_on": [
         "RT-F01",
@@ -11012,11 +11067,12 @@
       ],
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "foundation"
+      "kind": "foundation",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "RT-R0196",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "description": "The wizard SHALL ask for the desired hostname with an empty input and no prefilled/default domain, validate it and require explicit user selection for noninteractive configuration.",
       "source_file": "planning/user-additions/2026-10-09-remote-desktop.md",
       "source_line": 11,
@@ -11034,11 +11090,12 @@
       "docs": "docs/remote-desktop-access.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "RT-R0197",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "description": "The wizard SHALL securely request a scoped Cloudflare API token or secret reference, explain official permissions and discover authorized account/zone without logging token values.",
       "source_file": "planning/user-additions/2026-10-09-remote-desktop.md",
       "source_line": 11,
@@ -11056,11 +11113,12 @@
       "docs": "docs/remote-desktop-access.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "RT-R0198",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "description": "The installer SHALL automatically provision or reuse a dedicated installer-owned Cloudflare Tunnel and least-privilege runtime credential under the selected account.",
       "source_file": "planning/user-additions/2026-10-09-remote-desktop.md",
       "source_line": 11,
@@ -11078,11 +11136,12 @@
       "docs": "docs/remote-desktop-access.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "RT-R0199",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "description": "The installer SHALL automatically configure the exact DNS hostname route and tunnel ingress to the loopback Desktop authorization gateway with a terminal404 catch-all.",
       "source_file": "planning/user-additions/2026-10-09-remote-desktop.md",
       "source_line": 11,
@@ -11100,11 +11159,12 @@
       "docs": "docs/remote-desktop-access.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "RT-R0200",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "description": "The installer SHALL automatically configure Cloudflare Access self-hosted application, email one-time-code login and explicit allowed-email policy for the entered hostname.",
       "source_file": "planning/user-additions/2026-10-09-remote-desktop.md",
       "source_line": 11,
@@ -11122,11 +11182,12 @@
       "docs": "docs/remote-desktop-access.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "RT-R0201",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "description": "Remote origin SHALL validate signed Cloudflare Access JWT algorithm, signature, configured issuer/audience, time claims and allowed principal before serving any asset, pixel, control or stream.",
       "source_file": "planning/user-additions/2026-10-09-remote-desktop.md",
       "source_line": 11,
@@ -11144,11 +11205,12 @@
       "docs": "docs/remote-desktop-access.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "RT-R0202",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "description": "Remote gateway SHALL allow only dedicated Desktop client assets/session/renewal/WebSocket routes and reject arbitrary targets, paths, origins and backend-management transports.",
       "source_file": "planning/user-additions/2026-10-09-remote-desktop.md",
       "source_line": 11,
@@ -11166,11 +11228,12 @@
       "docs": "docs/remote-desktop-access.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "RT-R0203",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "description": "The remote bridge SHALL stream the genuine official Hermes Desktop application in a dedicated constrained native session, never a web dashboard or whole existing host desktop.",
       "source_file": "planning/user-additions/2026-10-09-remote-desktop.md",
       "source_line": 11,
@@ -11188,11 +11251,12 @@
       "docs": "docs/remote-desktop-access.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "RT-R0204",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "description": "The bridge SHALL disable remote new-command/session/shell/control, file transfer/opening, clipboard, printing, device/audio and unnecessary proxy/debug features through server controls.",
       "source_file": "planning/user-additions/2026-10-09-remote-desktop.md",
       "source_line": 11,
@@ -11210,11 +11274,12 @@
       "docs": "docs/remote-desktop-access.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "RT-R0205",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "description": "Each remote browser session SHALL bind verified Access principal and native profile state; concurrent access SHALL respect configured one-session limits and prevent cross-user state/session hijack.",
       "source_file": "planning/user-additions/2026-10-09-remote-desktop.md",
       "source_line": 11,
@@ -11232,11 +11297,12 @@
       "docs": "docs/remote-desktop-access.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "RT-R0206",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "description": "Active WebSocket input/output SHALL stop on JWT expiry or stale authorization lease; revocation SHALL be enforced through bounded fresh protected HTTP renewal, not assumed edge socket termination.",
       "source_file": "planning/user-additions/2026-10-09-remote-desktop.md",
       "source_line": 11,
@@ -11254,11 +11320,12 @@
       "docs": "docs/remote-desktop-access.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "RT-R0207",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "description": "Cloudflare/remote component lifecycle SHALL be checkpointed, idempotent and ownership-aware across automatic setup, resume, update, rollback, disable and uninstall.",
       "source_file": "planning/user-additions/2026-10-09-remote-desktop.md",
       "source_line": 11,
@@ -11276,11 +11343,12 @@
       "docs": "docs/remote-desktop-access.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "RT-R0208",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "description": "Cloudflare setup SHALL activate public DNS/ingress only after Access protection and loopback origin validation are ready, with a fail-closed transaction order.",
       "source_file": "planning/user-additions/2026-10-09-remote-desktop.md",
       "source_line": 11,
@@ -11298,11 +11366,12 @@
       "docs": "docs/remote-desktop-access.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "RT-R0209",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "description": "Cloudflare management token SHALL remain only in secure setup credential storage; runtime cloudflared receives dedicated tunnel credential and gateway receives only necessary nonsecret trust/session configuration.",
       "source_file": "planning/user-additions/2026-10-09-remote-desktop.md",
       "source_line": 11,
@@ -11320,11 +11389,12 @@
       "docs": "docs/remote-desktop-access.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "RT-R0210",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "description": "The wizard/CLI SHALL support configure-later, secure noninteractive references, automatic setup resumption and component doctor/verify without repeated routine approvals.",
       "source_file": "planning/user-additions/2026-10-09-remote-desktop.md",
       "source_line": 11,
@@ -11342,11 +11412,12 @@
       "docs": "docs/remote-desktop-access.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "remote-desktop-tunnel"
     },
     {
       "id": "RT-R0211",
-      "change": "remote-desktop-tunnel",
+      "change": "jarvis-core-platform",
       "description": "Remote acceptance SHALL separately prove unauthorized HTTP/WS denial, actual official Desktop pixels/control, app-only confinement, expiry/revocation and owned-resource recovery on the exact target/account.",
       "source_file": "planning/user-additions/2026-10-09-remote-desktop.md",
       "source_line": 11,
@@ -11364,7 +11435,8 @@
       "docs": "docs/remote-desktop-access.md",
       "state": "not-started",
       "owner_model": "gpt-6-luna",
-      "kind": "requirement"
+      "kind": "requirement",
+      "historical_change": "remote-desktop-tunnel"
     }
   ],
   "evidence": [
@@ -12061,7 +12133,7 @@
         "BD-R0039"
       ],
       "method": "User-session/official-source build and fallback fixtures assert the exact obligation; native window/backend/resource/tool/cancellation proof is separately required on authorized graphical Pi",
-      "assertion": "If native Desktop is blocked, retain a working supported agent and offer its browser interface or a documented remote-Desktop connection as a clearly labeled fallback. Do not label that fallback “Desktop installed.” Record the exact failure and recovery route.",
+      "assertion": "If native Desktop is blocked, retain a working supported agent and offer its browser interface or a documented remote-Desktop connection as a clearly labeled fallback. Do not label that fallback \u201cDesktop installed.\u201d Record the exact failure and recovery route.",
       "fixture_test": "tests/contracts/test_desktop.py",
       "platform": "fixture first; actual ARM64/Pi/accounts separately when relevant",
       "result": "not-run",
@@ -12367,7 +12439,7 @@
         "RG-R0056"
       ],
       "method": "Catalog/inheritance/quality/topology fixture asserts source constraint, missing dependency fail-closed, complete source/runtime crosswalk and independent readiness state; compare generated artifacts/provenance",
-      "assertion": "Preserve the repository's intended topology: user → Hermes → Orchestrator → internal specialists/teams → Orchestrator → Hermes. Specialists must not become independent user-facing channels. Preserve the declared response contract, scoped recruitment, contributor reporting, and material dissent where applicable.",
+      "assertion": "Preserve the repository's intended topology: user \u2192 Hermes \u2192 Orchestrator \u2192 internal specialists/teams \u2192 Orchestrator \u2192 Hermes. Specialists must not become independent user-facing channels. Preserve the declared response contract, scoped recruitment, contributor reporting, and material dissent where applicable.",
       "fixture_test": "tests/contracts/test_adapter.py",
       "platform": "fixture first; actual ARM64/Pi/accounts separately when relevant",
       "result": "not-run",
@@ -13123,7 +13195,7 @@
         "MC-R0098"
       ],
       "method": "Local fixture navigation/accessibility snapshot/screenshot; inspect output image and timeout/cancel/reconnect; no personal cookies or --no-sandbox; fixture and pending/live states remain separate",
-      "assertion": "Playwright MCP, written “playright”: Local official MCP using a pinned `@playwright/mcp` package and verified ARM64 browser.",
+      "assertion": "Playwright MCP, written \u201cplayright\u201d: Local official MCP using a pinned `@playwright/mcp` package and verified ARM64 browser.",
       "fixture_test": "tests/integrations/test_playwright_mcp.py",
       "platform": "fixture first; actual ARM64/Pi/accounts separately when relevant",
       "result": "not-run",
@@ -13807,7 +13879,7 @@
         "SK-R0136"
       ],
       "method": "HTTP Range/digest and filesystem capacity fixtures: verify required capacity calculation, interrupted resume, mismatch/ENOSPC containment and preservation of prior generation",
-      "assertion": "Keep memory stores namespaced by user/profile, preserve provenance, prevent recursive ingestion of generated memories, and provide export/backup/removal controls. Validate the selected provider by storing a synthetic fact, completing extraction, restarting, and retrieving it in a new session. A configured or “available” status is not sufficient proof.",
+      "assertion": "Keep memory stores namespaced by user/profile, preserve provenance, prevent recursive ingestion of generated memories, and provide export/backup/removal controls. Validate the selected provider by storing a synthetic fact, completing extraction, restarting, and retrieving it in a new session. A configured or \u201cavailable\u201d status is not sufficient proof.",
       "fixture_test": "tests/contracts/test_downloads.py",
       "platform": "fixture first; actual ARM64/Pi/accounts separately when relevant",
       "result": "not-run",
@@ -13933,7 +14005,7 @@
         "LC-R0143"
       ],
       "method": "Temporary owned/unowned roots and injected process/package/network/filesystem failure fixtures exercise the stated CLI/lifecycle operation; compare exact state/data preservation, idempotence, recovery and blocked exit/report/resume behavior",
-      "assertion": "For every required setting, show what it is, why it is needed, the official setup link, concrete steps to obtain it, and a connection test. Collect secrets through secure input and supported credential storage. Allow “configure later” and resume without repeating successful setup. Explain account/billing prerequisites before asking for a key.",
+      "assertion": "For every required setting, show what it is, why it is needed, the official setup link, concrete steps to obtain it, and a connection test. Collect secrets through secure input and supported credential storage. Allow \u201cconfigure later\u201d and resume without repeating successful setup. Explain account/billing prerequisites before asking for a key.",
       "fixture_test": "tests/contracts/test_lifecycle.py",
       "platform": "fixture first; actual ARM64/Pi/accounts separately when relevant",
       "result": "not-run",
@@ -14095,7 +14167,7 @@
         "LC-R0152"
       ],
       "method": "Temporary owned/unowned roots and injected process/package/network/filesystem failure fixtures exercise the stated CLI/lifecycle operation; compare exact state/data preservation, idempotence, recovery and blocked exit/report/resume behavior",
-      "assertion": "Use appropriate systemd/user-session supervision with startup ordering, restart limits, health probes, timeouts, log rotation, and clean shutdown. Detect already-managed services to prevent duplicate listeners, model processes, jobs, and memory workers. Start with conservative, configurable concurrency—for example, one browser worker and a small cloud-agent pool—and tune from measurements.",
+      "assertion": "Use appropriate systemd/user-session supervision with startup ordering, restart limits, health probes, timeouts, log rotation, and clean shutdown. Detect already-managed services to prevent duplicate listeners, model processes, jobs, and memory workers. Start with conservative, configurable concurrency\u2014for example, one browser worker and a small cloud-agent pool\u2014and tune from measurements.",
       "fixture_test": "tests/contracts/test_lifecycle.py",
       "platform": "fixture first; actual ARM64/Pi/accounts separately when relevant",
       "result": "not-run",
@@ -14509,7 +14581,7 @@
         "VD-R0175"
       ],
       "method": "On authorized physical Pi graphical user session, open official native Desktop/window, identify intended backend/resource catalog, get synthetic Hello, cancel/restart and execute harmless local tool fixture; headless/mock/browser fallback never passes native GUI criterion.",
-      "assertion": "Native Desktop launch, backend connection, a basic “Hello” response, cancellation, restart, and one harmless tool workflow.",
+      "assertion": "Native Desktop launch, backend connection, a basic \u201cHello\u201d response, cancellation, restart, and one harmless tool workflow.",
       "fixture_test": "tests/acceptance/test_ac07.py",
       "platform": "fixture first; actual ARM64/Pi/accounts separately when relevant",
       "result": "not-run",
@@ -14527,7 +14599,7 @@
         "VD-R0176"
       ],
       "method": "Recording provider fixtures cover live catalog vs auth/entitlement, inference/tool schema, Claude Free incompatibility, shared rate limits/429/Retry-After/cancel, paid fallback disabled, and private system/tool/memory/extraction/retry data never reaching public-only route; actual account test separately.",
-      "assertion": "Provider inference and tool calls, account-ineligible states, rate limiting, no unapproved paid fallback, and private-data routing—including memory extraction and retries.",
+      "assertion": "Provider inference and tool calls, account-ineligible states, rate limiting, no unapproved paid fallback, and private-data routing\u2014including memory extraction and retries.",
       "fixture_test": "tests/acceptance/test_ac08.py",
       "platform": "fixture first; actual ARM64/Pi/accounts separately when relevant",
       "result": "not-run",
@@ -14869,7 +14941,7 @@
         "VD-R0195"
       ],
       "method": "HTTP Range/digest and filesystem capacity fixtures: verify required capacity calculation, interrupted resume, mismatch/ENOSPC containment and preservation of prior generation",
-      "assertion": "Finish with the project location, exact install/resume/verify commands, what is verified functional, what remains pending and why, and the evidence supporting readiness. The definition of done is a reproducible installer with demonstrable integrations and explicit limits—not the number of repositories downloaded.",
+      "assertion": "Finish with the project location, exact install/resume/verify commands, what is verified functional, what remains pending and why, and the evidence supporting readiness. The definition of done is a reproducible installer with demonstrable integrations and explicit limits\u2014not the number of repositories downloaded.",
       "fixture_test": "tests/contracts/test_downloads.py",
       "platform": "fixture first; actual ARM64/Pi/accounts separately when relevant",
       "result": "not-run",
@@ -15291,7 +15363,7 @@
     {
       "id": "AC07",
       "source_line": 316,
-      "text": "Native Desktop launch, backend connection, a basic “Hello” response, cancellation, restart, and one harmless tool workflow.",
+      "text": "Native Desktop launch, backend connection, a basic \u201cHello\u201d response, cancellation, restart, and one harmless tool workflow.",
       "requirement_ids": [
         "R0175"
       ],
@@ -15311,7 +15383,7 @@
     {
       "id": "AC08",
       "source_line": 317,
-      "text": "Provider inference and tool calls, account-ineligible states, rate limiting, no unapproved paid fallback, and private-data routing—including memory extraction and retries.",
+      "text": "Provider inference and tool calls, account-ineligible states, rate limiting, no unapproved paid fallback, and private-data routing\u2014including memory extraction and retries.",
       "requirement_ids": [
         "R0176"
       ],
@@ -15413,21 +15485,23 @@
   "critical_scenarios": [
     {
       "requirement_id": "R0037",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "scenario": "Wrong graphical user or disabled sandbox",
       "when": "the Desktop launch fixture has no selected-user display session, or its only successful launcher requires --no-sandbox",
       "then": "the adapter SHALL report native Desktop unavailable, SHALL NOT start a root/headless or unsandboxed native GUI, and SHALL preserve an agent/browser fallback with separate status; the native-window acceptance remains pending/failed",
       "task_id": "BD-R0037",
-      "evidence_id": "EV-R0037"
+      "evidence_id": "EV-R0037",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "requirement_id": "R0029",
-      "change": "installer-bootstrap-desktop",
+      "change": "jarvis-core-platform",
       "scenario": "Adoption conflict preserves unowned service",
       "when": "an existing Home Assistant service occupies the requested port and its config contains a sentinel not owned by this installer",
       "then": "plan SHALL report the collision and an explicit alternate/configure-later route; install SHALL NOT stop/replace that service, change its sentinel bytes or count it as installer-owned",
       "task_id": "BD-R0029",
-      "evidence_id": "EV-R0029"
+      "evidence_id": "EV-R0029",
+      "historical_change": "installer-bootstrap-desktop"
     },
     {
       "requirement_id": "R0032",

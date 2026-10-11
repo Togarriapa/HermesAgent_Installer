@@ -33,3 +33,7 @@ Follow planning/user-additions/2026-10-09-remote-desktop.md. Hostname prompt sta
 ## Direct user override — core-first Jarvis, 11 October 2026
 
 Append-only v266 and `openspec/changes/jarvis-core-platform/` supersede the earlier native-Desktop-only product requirement. Install/adopt official core Hermes first; reversibly retire owned Desktop after independent core proof, port capabilities individually, then responsive Jarvis UI, full Resources and end-to-end review. Preserve all other scope, data/Codex auth, secrets, WIP and owned Cloudflare OTP/binding security. Public exposure is finite authenticated Jarvis adapters, never raw backend management/shell/RPC. HA is deferred. All tests, fixtures, previews and npm validation run only on Pi via root browser; local source/spec reading/editing and Git are permitted.
+
+## Active plan cleanup — v267
+
+Read planning/ACTIVE-PLAN.md first. Desktop is removed from active install/Pi product paths and remains capability benchmark only. Legacy installer-bootstrap-desktop/remote-desktop-tunnel changes are preserved at openspec/superseded/v267, not passed acceptance. Cleanup only verified owned Desktop/Xpra artifacts after independent core proof; preserve core home/auth/PM/Resources/backups/unrelated services, no blanket apt purge. Frozen baseline and immutable amendments remain historical and unchanged.

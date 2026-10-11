@@ -32,7 +32,7 @@ GPT-6 Luna implements; Sol owns refinement. All original and RB/RP tasks remain 
 
 ## 7. Fixed native local-service transport
 
-- [ ] 7.1 `HI-T07` Implement HI07 protected target catalog and typed private-namespace local connector; prerequisites HI-T01, HI-T02, HI-T03, HI-T09. Verify EV-HI07 through actual distinct UIDs/namespaces/cgroups: allowed fixed synthetic local TCP request plus denied arbitrary target/port/URL/namespace, sibling/external traffic, stale generation/nonce, queue exhaustion, cancellation and retained-handle expiry. Add meaningful effect/failure tests and docs/host-principal-custody.md; native Xpra/Colibri/memory/MCP target acceptance remains separately pending.
+- Historical v267 superseded deployment/benchmark reference (not an active checkbox): 7.1 `HI-T07` Implement HI07 protected target catalog and typed private-namespace local connector; prerequisites HI-T01, HI-T02, HI-T03, HI-T09. Verify EV-HI07 through actual distinct UIDs/namespaces/cgroups: allowed fixed synthetic local TCP request plus denied arbitrary target/port/URL/namespace, sibling/external traffic, stale generation/nonce, queue exhaustion, cancellation and retained-handle expiry. Add meaningful effect/failure tests and docs/host-principal-custody.md; native Xpra/Colibri/memory/MCP target acceptance remains separately pending. Retained functional portions map to the core phases in planning/active-obligation-index-v267.json.
 
 ## 8. Trusted native request and source lineage
 
@@ -462,7 +462,7 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 
 - [ ] RB-T213.1 / HI-T213.2 / VD-T213.3 (v215): Implement distinct protected source mapping, typed live admission/home binding, unchanged service identity and genuine prepared/publication claim joins.
 
-- [ ] BD-T218.1: Implement Desktop-specific selected sourcepolicy/acquisition phase and locked toolchain/dependency/license receipts.
+- Historical v267 superseded deployment/benchmark reference (not an active checkbox): BD-T218.1: Implement Desktop-specific selected sourcepolicy/acquisition phase and locked toolchain/dependency/license receipts. Retained functional portions map to the core phases in planning/active-obligation-index-v267.json.
 - [ ] BD-T218.2: Consume held closure in fixed offline209212 rolebuild with native ABI/script proof.
 - [ ] VD-T218.3: Verify source/phase/integrity/TLS/architecture/script/currentness failures and actual target evidence separately.
 
@@ -508,3 +508,60 @@ RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member 
 - [ ] RT-T244.1 Implement fixed held release source receipt/member projection and reviewed exact source-member cohort.
 - [ ] RT-T244.2 Implement Gateway lock/PM/choice-bound bounded acquisition, license verification, immutable CAS and retained provider/source projection integration.
 - [ ] VD-T244.3 Exercise spoofed receipts, changed lock/source/PM, stale choice, cancellation, conflicting CAS, bounded dependency/license failure and genuine ARM64 production positives; target acceptance separately open.
+
+
+## Gateway license and official acquisition custody v248
+
+- [ ] RT-T248.1 Implement exact held policy source and wheel/metadata/notice eligibility issuer with preserved package notices.
+- [ ] RT-T248.2 Implement root-only no-proxy/no-redirect official metadata/file transport, DNS/TLS/currentness/cancellation custody and v244 CAS integration without subprocess network.
+- [ ] VD-T248.3 Verify metadata/license mismatch, unsafe archive, redirect/private DNS/changed hash, deadline/cancel cleanup and all13 genuine selected wheel positives; native/Pi acceptance separately open.
+
+
+### Gateway license policy role correction v248b
+
+Apply `planning/gateway-license-policy-release-role-v248b.json`: existing gateway-source-member for the exact separate policy row, no generic source enum or inclusion in application input closure. RT-T248.1/.2 and VD-T248.3 remain open.
+
+
+## v250 Original Xpra archive link count correction
+
+- [ ] RT-T250.1 Consume exact3093 symlink/0 hardlink source cohort and reject changed origin/kind.
+- [ ] VD-T250.2 Verify independent raw archive facts and preserve currentness/managed runtime gates; all AC OPEN.
+
+Exact contract: `planning/xpra-link-count-correction-v250.json`.
+
+
+## v251 Desktop native source and packaging
+## Native plugin backend composition v253
+
+- Historical v267 superseded deployment/benchmark reference (not an active checkbox): RT-T251.1 Implement distinct held Desktop policy/verifier/one-use grant/CAS and native provider; exact signed253 package and licensing closure, failure/currentness/cancellation effects. Retained functional portions map to the core phases in planning/active-obligation-index-v267.json.
+- Historical v267 superseded deployment/benchmark reference (not an active checkbox): RT-T251.2 Produce independently observed native/sysroot/prepared packaging manifests with actual offline compiler/HUD/Electron ABI and licensed owned PNG toolset, preserve sandbox/stamp and v240 fixed driver. Retained functional portions map to the core phases in planning/active-obligation-index-v267.json.
+- [ ] VD-T251.3 Exercise changed signature/index/hash/control/relations/license/links, wrong issuer/role/choice/controller, cancellation, PNG failures and actual managed ARM64 output; genuine runtime/Pi acceptance separately open.
+Append-only contract `planning/native-plugin-backend-composition-v253.json` closes the actual missing root account/action/target enrollment and production broker composition. Preserve original full registration/action/workflow scope, current package/source/grants, privacy and zero additional budget. HA remains deferred; all target/account acceptance OPEN.
+
+Exact contract: `planning/official-desktop-native-source-policy-v251.json`; all AC OPEN.
+- [ ] RB-T253.1: Implement typed root selected backend choice, actual fixed source/account/target/credential observers and sealed precompile bundle; pending exact prerequisites.
+- [ ] HI-T253.2: Implement signed active aggregate/strict parser/catalog/current root backend factory and compose existing broker handlers with exact current grants/result source joins.
+- [ ] VD-T253.3: Verify genuine complete fixture effect/replay/failure/restart chain; record actual account/native target acceptance separately OPEN.
+
+
+## v251b Non-circular Desktop native pipeline
+
+- [ ] RT-T251b.1 Implement true prebuild input manifest/provider and remove native generated outputs as source prerequisites, preserving genuine signed/source/current receipt joins.
+- [ ] RT-T251b.2 Generate native tree/joined manifest through actual fixed managed driver and independently reopen retained packaged native facts before receipt; no hash-only native completion.
+- [ ] VD-T251b.3 Test missing/generated-input cycle, forged native result, absent retained tree, selfhash, ABI/packaged mapping/cancellation/currentness failure and genuine bounded offline ARM64 pipeline; runtime acceptance separate.
+- [ ] RB-T253.1 / HI-T253.2 / VD-T253.3 (v253b): Implement reviewed sealed dependency/result-schema/GitHub observation corrections; confirmation protocols cannot authorize writes.
+
+
+## v251c Packaging source and generated record
+
+- [ ] RT-T251c.1 Implement source-only packaging intent and deterministic origin-bound normalized inputs receipts/closure with separate tar-byte digest; remove future prepared fields from prebuild.
+- [ ] RT-T251c.2 Generate true upstream prepared.json through fixed driver after materialization/native effects and retain/reobserve it in actual AppDir joined output.
+- [ ] VD-T251c.3 Test stale path/source, missing notice/helper/library, normalization/tar hash confusion, forged future prepared proof, link/extra member/selfhash/currentness/cancellation failures and genuine bounded offline prepared packaging effects.
+- [ ] HI-T254.1: Integrate same-owned still-live fresh observation renewal with current protected generation/source/adoption/NSS joins and atomic FD custody.
+- [ ] LC-T254.2: Separate actual network observation from unchanged finite process/start/access deadlines, continuously supervise and stop exact managed unit on currentness failure; preserve cleanup domain.
+- Historical v267 superseded deployment/benchmark reference (not an active checkbox): VD-T254.3: Verify actual refresh/currentness/expiry/concurrency/watchdog/terminal/access failures and original recipe cap, leaving sustained Desktop/native acceptance separate OPEN. Retained functional portions map to the core phases in planning/active-obligation-index-v267.json.
+
+
+- [ ] RT-T256.1: Implement issuer-only source authority snapshot and durable private root CAS/journal content custody without weakening old expiry/build guards.
+- Historical v267 superseded deployment/benchmark reference (not an active checkbox): RT-T256.2: Implement independent signed metadata/control/full399 license reobservation and new atomic current closure/member receipts; wire actual Xpra input provider/central full verifier. Retained functional portions map to the core phases in planning/active-obligation-index-v267.json.
+- [ ] VD-T256.3: Verify aggregate-age/old-expiry denial/new-current positive/cancel/tamper/restart/metadata/license/authority failures and genuine source-to-build fixture effects, target acceptance OPEN.

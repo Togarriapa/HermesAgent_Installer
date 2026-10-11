@@ -1,3 +1,5 @@
+> Active v267 scope: core Hermes + custom Jarvis + Resources. Any Desktop/Xpra/native-presentation deployment clause below is superseded history/benchmark, not an active implementation prerequisite. Retained functionality/security maps through planning/active-obligation-index-v267.json. No acceptance is marked passed.
+
 # Why
 
 A fresh HTTP request with an unexpired Access JWT does not prove current out-of-band policy membership. Existing R0206 needs actual fresh authority while R0209 forbids setup/API secrets in the gateway.
