@@ -733,7 +733,7 @@ class CoreRpcClient:
             name = self._bounded_profile_text(row.get("name"), limit=96)
             key = self._bounded_profile_text(row.get("key"), limit=96)
             source = row.get("source")
-            if (name is None or key is None or source not in {"bundled", "user", "git", "catalog", "unknown"}
+            if (name is None or key is None or source not in {"bundled", "user", "git", "entrypoint", "catalog", "unknown"}
                     or not isinstance(row.get("version"), str) or len(row["version"]) > 64
                     or not isinstance(row.get("status"), str) or len(row["status"]) > 48):
                 raise JarvisChatDenied("official plugin management row was invalid")

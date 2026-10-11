@@ -15,7 +15,7 @@ _VIEW = '''<section class="extensions-page" data-feature-root="extensions" aria-
     <form data-add-mcp><h3>Add an MCP server</h3><label>Official catalog name<input name="catalog_name" maxlength="160" required autocomplete="off"></label><button>Add MCP server</button><p>Credentials and custom commands are not collected here.</p></form>
   </div>
   <div data-extension-list class="extension-list"></div>
-  <p class="extensions-note">“Hermes” identifies a built-in plugin. Bundled Resources and owner-added items show their observed source. Skill editing/removal and custom MCP connection edits are unavailable in the pinned Hermes API.</p>
+  <p class="extensions-note">“Hermes” identifies a built-in item. Bundled Resources and owner-added items show their observed source. Owner-added skills can be edited or archived with a recoverable root backup; restoring that archive is not available in this dashboard. Custom MCP connection edits are unavailable in the pinned Hermes API.</p>
 </section>'''
 
 _CSS = '''[data-feature-root="extensions"]{max-width:1100px;margin:0 auto;padding:clamp(18px,3vw,32px);color:var(--text,#edf5f6)}
@@ -35,6 +35,9 @@ _CSS = '''[data-feature-root="extensions"]{max-width:1100px;margin:0 auto;paddin
 [data-feature-root="extensions"] .extension-card p{margin:6px 0;font-size:.86rem;overflow-wrap:anywhere}
 [data-feature-root="extensions"] .extension-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 [data-feature-root="extensions"] .extension-note{font-size:.8rem}
+[data-feature-root="extensions"] dialog{width:min(760px,92vw);border:1px solid #3c858b;border-radius:10px;background:#0b1b20;color:#e4f3f3;padding:16px}
+[data-feature-root="extensions"] dialog::backdrop{background:rgba(0,0,0,.72)}
+[data-feature-root="extensions"] dialog textarea{width:100%;min-height:360px;resize:vertical;border:1px solid #315058;border-radius:6px;background:#061115;color:#e4f3f3;padding:12px;font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}
 @media(max-width:600px){[data-feature-root="extensions"] .extensions-head{flex-direction:column}[data-feature-root="extensions"] .extensions-head button{width:100%}}'''
 
 _MOUNT = r'''function mount(container, api) {
@@ -49,7 +52,7 @@ _MOUNT = r'''function mount(container, api) {
     if (!exactConfirm(phrase)) return;
     busy = true; status.textContent = 'Applying the confirmed owner action…';
     try { const result = await api.post(path, {...body, confirmation:phrase, idempotency_key:makeKey(), revision:snapshot.revision});
-      status.textContent = result && result.status === 'applied' ? 'Owner action applied; refreshing observed state.' : 'The action may still be pending. Refresh to check current state.';
+      status.textContent = result && result.status === 'applied' ? (result.result && result.result.recoveryId ? `Skill archived with recoverable backup ${result.result.recoveryId}; restore is not available in this dashboard.` : 'Owner action applied; refreshing observed state.') : 'The action may still be pending. Refresh to check current state.';
     } catch (_) { status.textContent = 'The action was not confirmed. Refresh to see the current native state.'; }
     finally { busy = false; await load(); }
   }
@@ -57,10 +60,33 @@ _MOUNT = r'''function mount(container, api) {
     const box = document.createElement('article'); box.className='extension-card';
     text(box,'h3',item.label); text(box,'p',`${item.kind} · ${item.source}`);
     const detail = item.kind === 'plugins' ? `${item.state || 'status unknown'} · ${item.version || 'version unknown'}`
-      : item.kind === 'mcps' ? `${item.transport} · ${item.enabled ? 'enabled' : 'disabled'}` : item.category;
+      : item.kind === 'mcps' ? `${item.transport} · ${item.enabled ? 'enabled' : 'disabled'}` : `${item.category} · ${item.loaded ? 'loaded' : 'source present, not loaded'}`;
     text(box,'p',detail);
     if (item.updateAvailable === true) text(box,'p','A catalog update is available; review remains required.');
     const actions = document.createElement('div'); actions.className='extension-actions';
+    if (item.kind === 'skills' && item.source === 'useradded' && item.editable) {
+      const edit=text(actions,'button','Edit skill'); edit.type='button'; edit.addEventListener('click',async()=>{
+        try {
+          const file=await api.post('/chat/api/extensions/skills/read',{item_id:item.id,revision:snapshot.revision});
+          const dialog=document.createElement('dialog'); dialog.setAttribute('aria-labelledby','extension-skill-edit-title');
+          const form=document.createElement('form'); form.method='dialog';
+          const heading=text(form,'h3',`Edit ${item.label}`); heading.id='extension-skill-edit-title';
+          const area=document.createElement('textarea'); area.value=file.content; area.maxLength=65536; area.rows=22; area.setAttribute('aria-label','Skill instructions');
+          const save=document.createElement('button'); save.type='button'; save.textContent='Save skill';
+          const cancel=document.createElement('button'); cancel.type='button'; cancel.textContent='Cancel';
+          form.append(area,save,cancel); dialog.append(form); root.append(dialog);
+          cancel.addEventListener('click',()=>dialog.close());
+          save.addEventListener('click',async()=>{ const content=area.value; dialog.close(); dialog.remove();
+            await mutate('/chat/api/extensions/skills/edit',{item_id:item.id,content},`EDIT ${item.label}`);
+          });
+          dialog.addEventListener('close',()=>dialog.remove(),{once:true}); dialog.showModal(); area.focus();
+        } catch (_) { status.textContent='Current skill source is unavailable; refresh and retry.'; }
+      });
+      const archive=text(actions,'button','Archive skill'); archive.type='button'; archive.addEventListener('click',()=>{
+        if (!window.confirm(`Archive ${item.label}? Its SKILL.md entrypoint will be removed from discovery. A root-private recovery backup is retained; this dashboard does not provide restore.`)) return;
+        void mutate('/chat/api/extensions/skills/remove',{item_id:item.id},`ARCHIVE (RECOVERABLE) ${item.label}`);
+      });
+    }
     if (item.kind === 'plugins' && item.editable && Array.isArray(item.settings) && item.settings.some((field)=>['string','number','boolean','enum'].includes(field.type))) {
       const edit = text(actions,'button','Edit settings'); edit.type='button'; edit.addEventListener('click',async()=>{
         const values={};

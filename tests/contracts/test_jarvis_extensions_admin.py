@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -96,6 +97,30 @@ def test_extension_snapshot_keeps_provenance_and_prefixes_builtins():
     assert result["availableActions"]["mcps"]["edit"] is False
 
 
+def test_skill_snapshot_joins_root_manifest_to_native_skills_and_preserves_source():
+    result = build_extension_snapshot(
+        skills=[{"category": "general", "names": ["owner-helper"]}],
+        plugins=[], mcps=[], skill_catalog={"resource-helper"},
+        native_skill_files=[
+            SimpleNamespace(skill_id="owner-helper", display_name="owner-helper",
+                sha256="a" * 64, source="owner-added", editable=True),
+            SimpleNamespace(skill_id="resource-helper", display_name="resource-helper",
+                sha256="b" * 64, source="pinned", editable=False),
+            SimpleNamespace(skill_id="core-helper", display_name="core-helper",
+                sha256="c" * 64, source="pinned", editable=False),
+        ])
+    by_name = {row["name"]: row for row in result["items"] if row["kind"] == "skills"}
+    assert by_name["owner-helper"]["source"] == "useradded"
+    assert by_name["owner-helper"]["editable"] is True
+    assert by_name["owner-helper"]["loaded"] is True
+    assert by_name["resource-helper"]["source"] == "bundledResources"
+    assert by_name["resource-helper"]["label"] == "resource-helper"
+    assert by_name["core-helper"]["source"] == "builtin"
+    assert by_name["core-helper"]["label"] == "Hermes core-helper"
+    assert result["availableActions"]["skills"]["edit"] is True
+    assert result["availableActions"]["skills"]["remove"] is True
+
+
 def test_extension_snapshot_rejects_unbounded_native_inventory():
     with pytest.raises(ValueError, match="exceeded its bound"):
         build_extension_snapshot(skills=[], plugins=[{}] * 513, mcps=[])
@@ -106,6 +131,7 @@ def test_extension_snapshot_rejects_unbounded_native_inventory():
     ("user", "useradded", "files"),
     ("config", "useradded", "files"),
     ("plugin", "bundledResources", "files"),
+    ("entrypoint", "unknown", "files"),
     ("unrecognized", "unknown", "files"),
 ])
 def test_provenance_labels_are_truthful(source, provenance, label):
@@ -123,3 +149,5 @@ def test_extensions_feature_asset_uses_only_fixed_routes():
     validate_feature_assets((FEATURE_ASSETS,))
     assert ("GET", "/chat/api/extensions") in FEATURE_ASSETS.api_routes
     assert ("POST", "/chat/api/extensions/plugins/remove") in FEATURE_ASSETS.api_routes
+    assert ("POST", "/chat/api/extensions/skills/edit") in FEATURE_ASSETS.api_routes
+    assert ("POST", "/chat/api/extensions/skills/remove") in FEATURE_ASSETS.api_routes

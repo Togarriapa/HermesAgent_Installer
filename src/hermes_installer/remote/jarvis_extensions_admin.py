@@ -1,7 +1,7 @@
-"""Owner-operated extensions setup backed by the pinned Hermes management RPCs.
+"""Owner-operated extension management through pinned RPCs and native source custody.
 
-Only catalog skill/plugin/MCP additions and the upstream-supported plugin settings,
-toggle and removal actions are exposed. This is not a generic RPC or shell proxy.
+Only catalog setup actions, upstream plugin settings/toggle/remove and fixed native
+skill source edit/archive operations are exposed. There is no generic RPC or shell proxy.
 """
 from __future__ import annotations
 
@@ -16,6 +16,9 @@ from typing import Any
 FEATURE_ROUTES = (
     ("GET", "/chat/api/extensions"),
     ("POST", "/chat/api/extensions/skills/add"),
+    ("POST", "/chat/api/extensions/skills/read"),
+    ("POST", "/chat/api/extensions/skills/edit"),
+    ("POST", "/chat/api/extensions/skills/remove"),
     ("POST", "/chat/api/extensions/plugins/add"),
     ("POST", "/chat/api/extensions/plugins/edit"),
     ("POST", "/chat/api/extensions/plugins/toggle"),
@@ -66,6 +69,7 @@ def _source_label(source: str, name: str) -> tuple[str, str]:
 
 
 def build_extension_snapshot(*, skills: Any, plugins: Any, mcps: Any,
+                             native_skill_files: Any = (),
                              skill_catalog: set[str] | None = None) -> dict[str, Any]:
     """Build a closed, secret-free inventory. Missing source claims remain unknown."""
     rows: list[dict[str, Any]] = []
@@ -73,6 +77,7 @@ def build_extension_snapshot(*, skills: Any, plugins: Any, mcps: Any,
         skills = []
     catalog = skill_catalog or set()
     total = 0
+    skill_categories: dict[str, str] = {}
     for group in skills:
         if not isinstance(group, dict) or not isinstance(group.get("names"), list):
             continue
@@ -87,10 +92,40 @@ def build_extension_snapshot(*, skills: Any, plugins: Any, mcps: Any,
             if total > _MAX_SKILLS:
                 raise ValueError("native skill inventory exceeded its bound")
             source = "bundledResources" if _slug(name) in catalog else "unknown"
+            skill_categories[_slug(name)] = category
             rows.append({"kind": "skills", "name": name, "category": category,
                          "source": source, "label": name,
                          "editable": False, "removable": False,
                          "actionState": "catalog-install-supported"})
+    if not isinstance(native_skill_files, (list, tuple)) or len(native_skill_files) > _MAX_SKILLS:
+        raise ValueError("native skill source inventory exceeded its bound")
+    seen_skill_ids: set[str] = set()
+    for descriptor in native_skill_files:
+        skill_id = getattr(descriptor, "skill_id", None)
+        display_name = getattr(descriptor, "display_name", None)
+        source_kind = getattr(descriptor, "source", None)
+        sha256 = getattr(descriptor, "sha256", None)
+        editable = getattr(descriptor, "editable", None)
+        if (not isinstance(skill_id, str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", skill_id) is None
+                or skill_id in seen_skill_ids or not isinstance(display_name, str)
+                or source_kind not in {"pinned", "owner-added"}
+                or not isinstance(sha256, str) or re.fullmatch(r"[0-9a-f]{64}", sha256) is None
+                or type(editable) is not bool or editable != (source_kind == "owner-added")):
+            raise ValueError("native skill source row was invalid")
+        seen_skill_ids.add(skill_id)
+        rows = [row for row in rows if not (row.get("kind") == "skills"
+                                             and _slug(row.get("name", "")) == skill_id)]
+        loaded_name = next((name for group in skills if isinstance(group, dict)
+                            for name in group.get("names", []) if isinstance(name, str)
+                            and _slug(name) == skill_id), None)
+        source = ("useradded" if source_kind == "owner-added" else
+                  "bundledResources" if _slug(display_name) in catalog or skill_id in catalog else "builtin")
+        label = f"Hermes {display_name}" if source == "builtin" else display_name
+        rows.append({"kind": "skills", "name": skill_id, "label": label,
+                     "category": skill_categories.get(skill_id, "native"), "source": source,
+                     "editable": editable, "removable": editable, "sha256": sha256,
+                     "loaded": loaded_name is not None,
+                     "actionState": "loaded" if loaded_name is not None else "source-present-not-loaded"})
     for kind, values in (("plugins", plugins), ("mcps", mcps)):
         if not isinstance(values, list) or len(values) > 512:
             raise ValueError("native extension inventory exceeded its bound")
@@ -126,9 +161,8 @@ def build_extension_snapshot(*, skills: Any, plugins: Any, mcps: Any,
     return {"schema": 1, "readiness": "observed", "revision": hashlib.sha256(canonical.encode()).hexdigest(),
             "items": rows,
             "availableActions": {
-                "skills": {"add": True, "edit": False, "remove": False,
-                           "reason": ("Pinned Hermes skills.manage supports install only; "
-                                      "skill edit/remove has no profile-scoped RPC.")},
+                "skills": {"add": True, "edit": True, "remove": True,
+                           "reason": "Owner-added skill files use the root-journaled native source adapter; pinned skills are read-only."},
                 "plugins": {"add": True, "edit": True, "remove": True,
                             "reason": ("Removal permanently deletes the plugin package and Hermes "
                                        "registration; the owner must explicitly confirm it.")},
@@ -167,14 +201,35 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
             raise JarvisChatDenied("single-owner identity or action origin was not verified")
         return principal
 
-    async def inventory() -> dict[str, Any]:
+    def access_jwt(request: Any) -> str:
+        values = request.headers.getall("Cf-Access-Jwt-Assertion", [])
+        if (len(values) != 1 or not isinstance(values[0], str) or not 1 <= len(values[0]) <= 16_384
+                or not values[0].isascii()):
+            raise JarvisChatDenied("current Access token is unavailable")
+        return values[0]
+
+    def skill_provider(request: Any) -> Any:
+        from .jarvis_profiles_admin import CoreGatewayProfileAdminProvider
+        launch = request.app.get("core_gateway_launch")
+        config = getattr(launch, "config", None)
+        try:
+            return CoreGatewayProfileAdminProvider(config)
+        except Exception:
+            raise JarvisChatDenied("current native skill source adapter is unavailable") from None
+
+    async def inventory(request: Any) -> dict[str, Any]:
         skills, plugins, mcps = await asyncio.gather(
             service.backend.skills_inventory(), service.backend.list_managed_plugins(),
             service.backend.list_mcp_servers())
+        accepted = request.get("core_ingress")
+        principal = current_owner(request)
+        skill_files = skill_provider(request).list_skills(core_generation=principal.core_generation,
+            access_jwt=access_jwt(request), accepted_ingress=accepted)
         bundle = _verified_bundle_inventory()
         skill_catalog = {_slug(row["name"]) for row in bundle["items"]
                          if row.get("kind") == "skills" and isinstance(row.get("name"), str)}
         return build_extension_snapshot(skills=skills, plugins=plugins, mcps=mcps,
+                                        native_skill_files=skill_files,
                                         skill_catalog=skill_catalog)
 
     async def get_extensions(request: Any) -> Any:
@@ -182,7 +237,7 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
             if request.raw_path != request.path:
                 raise web.HTTPNotFound(text="not found", headers=_secure_headers())
             before = current_owner(request)
-            payload = await asyncio.wait_for(inventory(), timeout=8.0)
+            payload = await asyncio.wait_for(inventory(request), timeout=8.0)
             after = current_owner(request)
             if (after.subject != before.subject or after.core_generation != before.core_generation):
                 raise JarvisChatDenied("owner or core generation changed during inventory")
@@ -261,20 +316,22 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                 raise web.HTTPNotFound(text="not found", headers=_secure_headers())
             before = current_owner(request, require_origin=True)
             body = await _read_body(request, _BODY_FIELDS[operation])
-            before_inventory = await asyncio.wait_for(inventory(), timeout=8.0)
+            before_inventory = await asyncio.wait_for(inventory(request), timeout=8.0)
             if not isinstance(body.get("revision"), str) or body["revision"] != before_inventory["revision"]:
                 raise web.HTTPConflict(text="extension inventory changed; refresh before retrying",
                                        headers=_secure_headers())
             name = body.get("catalog_name") or body.get("identifier")
             target = None
-            if operation in {"plugins:edit", "plugins:toggle", "plugins:remove", "mcps:remove"}:
-                kind = "plugins" if operation.startswith("plugins:") else "mcps"
+            if operation in {"skills:edit", "skills:remove", "plugins:edit", "plugins:toggle", "plugins:remove", "mcps:remove"}:
+                kind = ("skills" if operation.startswith("skills:") else
+                        "plugins" if operation.startswith("plugins:") else "mcps")
                 target = resolve_item_id(body, before_inventory["items"], kind,
                                          before.subject, before.core_generation)
                 name = target["name"]
             if not isinstance(name, str) or not _KEY.fullmatch(name) or ".." in name.split("/"):
                 raise web.HTTPBadRequest(text="invalid request", headers=_secure_headers())
-            confirm_words = {"skills:add": "ADD", "plugins:add": "ADD", "plugins:edit": "EDIT",
+            confirm_words = {"skills:add": "ADD", "skills:edit": "EDIT", "skills:remove": "ARCHIVE (RECOVERABLE)",
+                             "plugins:add": "ADD", "plugins:edit": "EDIT",
                              "plugins:toggle": "ENABLE" if body.get("enabled") is True else "DISABLE",
                              "plugins:remove": "DELETE PERMANENTLY",
                              "mcps:add": "ADD", "mcps:remove": "DELETE"}
@@ -295,6 +352,25 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                     if (not _valid_plugin_setting(field, value)
                             or (field.get("required") is True and value == "")):
                         raise web.HTTPBadRequest(text="invalid plugin setting value", headers=_secure_headers())
+            if operation in {"skills:edit", "skills:remove"}:
+                if target.get("source") != "useradded" or target.get("editable") is not True:
+                    raise web.HTTPConflict(text="pinned Hermes and bundled skills are read-only",
+                                           headers=_secure_headers())
+                current_file = skill_provider(request).read_skill(core_generation=before.core_generation,
+                    skill_id=target["name"], access_jwt=access_jwt(request),
+                    accepted_ingress=request.get("core_ingress"))
+                if current_file.source != "owner-added" or current_file.sha256 != target.get("sha256"):
+                    raise web.HTTPConflict(text="skill source changed; refresh before editing",
+                                           headers=_secure_headers())
+                if operation == "skills:edit":
+                    content = body.get("content")
+                    try:
+                        encoded_content = content.encode("utf-8", "strict") if isinstance(content, str) else b""
+                    except UnicodeError:
+                        encoded_content = b"x" * (64 * 1024 + 1)
+                    if (not isinstance(content, str) or len(encoded_content) > 64 * 1024
+                            or "\x00" in content or any(ord(char) < 0x20 and char not in "\n\r\t" for char in content)):
+                        raise web.HTTPBadRequest(text="invalid skill content", headers=_secure_headers())
             if operation == "plugins:toggle" and (type(body.get("enabled")) is not bool
                                                    or target.get("source") != "useradded"):
                 raise web.HTTPConflict(text="this plugin cannot be changed", headers=_secure_headers())
@@ -314,6 +390,47 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                 reload_result = await service.backend.reload_skills()
                 result["reload"] = reload_result
                 status = 201
+            elif operation == "skills:edit":
+                write = skill_provider(request).write_skill(core_generation=before.core_generation,
+                    skill_id=target["name"], expected_sha256=current_file.sha256,
+                    content=body["content"], idempotency_key=body["idempotency_key"],
+                    access_jwt=access_jwt(request), accepted_ingress=request.get("core_ingress"))
+                if write.state == "conflict":
+                    complete_action(body, before.subject)
+                    raise web.HTTPConflict(text="skill source changed; refresh and retry",
+                                           headers=_secure_headers())
+                if (write.state != "active" or write.effective_readback is not True
+                        or write.sha256 != hashlib.sha256(body["content"].encode("utf-8")).hexdigest()
+                        or not isinstance(write.source_generation, str)
+                        or not re.fullmatch(r"[0-9a-f]{64}", write.source_generation)
+                        or not isinstance(write.recovery_id, str)
+                        or not re.fullmatch(r"[A-Za-z0-9_-]{16,96}", write.recovery_id)):
+                    return web.json_response({"status": "pending", "reason": "skill source was saved but active readback is pending"},
+                                             status=202, headers=_secure_headers())
+                result = {"state": write.state, "sha256": write.sha256,
+                          "sourceGeneration": write.source_generation,
+                          "reload": await service.backend.reload_skills()}
+                status = 200
+            elif operation == "skills:remove":
+                archived = skill_provider(request).archive_skill(core_generation=before.core_generation,
+                    skill_id=target["name"], expected_sha256=current_file.sha256,
+                    idempotency_key=body["idempotency_key"], access_jwt=access_jwt(request),
+                    accepted_ingress=request.get("core_ingress"))
+                if archived.state == "conflict":
+                    complete_action(body, before.subject)
+                    raise web.HTTPConflict(text="skill source changed; refresh and retry",
+                                           headers=_secure_headers())
+                if (archived.state != "archived" or archived.effective_readback is not True
+                        or archived.sha256 != current_file.sha256
+                        or not isinstance(archived.recovery_id, str)
+                        or not re.fullmatch(r"[A-Za-z0-9_-]{16,96}", archived.recovery_id)):
+                    return web.json_response({"status": "pending", "reason": "skill archive outcome is pending"},
+                                             status=202, headers=_secure_headers())
+                reload_result = await service.backend.reload_skills()
+                result = {"state": archived.state, "recoveryId": archived.recovery_id,
+                          "sourceGeneration": archived.source_generation,
+                          "reload": reload_result, "effectiveReadback": archived.effective_readback}
+                status = 200
             elif operation == "plugins:add":
                 result = await service.backend.install_plugin(body["catalog_name"])
                 status = 201
@@ -353,6 +470,42 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
     async def skills_add(request: Any) -> Any:
         return await mutate(request, operation="skills:add")
 
+    async def skills_edit(request: Any) -> Any:
+        return await mutate(request, operation="skills:edit")
+
+    async def skills_remove(request: Any) -> Any:
+        return await mutate(request, operation="skills:remove")
+
+    async def skills_read(request: Any) -> Any:
+        from aiohttp import web
+        try:
+            if request.raw_path != request.path:
+                raise web.HTTPNotFound(text="not found", headers=_secure_headers())
+            before = current_owner(request, require_origin=True)
+            body = await _read_body(request, _BODY_FIELDS["skills:read"])
+            snapshot = await asyncio.wait_for(inventory(request), timeout=8.0)
+            if body.get("revision") != snapshot["revision"]:
+                raise web.HTTPConflict(text="extension inventory changed; refresh before reading",
+                                       headers=_secure_headers())
+            row = resolve_item_id(body, snapshot["items"], "skills", before.subject, before.core_generation)
+            if not row.get("editable"):
+                raise web.HTTPConflict(text="only owner-added skill sources can be edited",
+                                       headers=_secure_headers())
+            value = skill_provider(request).read_skill(core_generation=before.core_generation,
+                skill_id=row["name"], access_jwt=access_jwt(request),
+                accepted_ingress=request.get("core_ingress"))
+            after = current_owner(request, require_origin=True)
+            if after.subject != before.subject or after.core_generation != before.core_generation:
+                raise JarvisChatDenied("owner or core generation changed during skill read")
+            return web.json_response({"name": value.skill_id, "content": value.content,
+                "sha256": value.sha256, "sourceGeneration": value.source_generation,
+                "effective": value.effective}, headers=_secure_headers())
+        except web.HTTPException:
+            raise
+        except Exception:
+            raise web.HTTPServiceUnavailable(text="current native skill source is unavailable",
+                                             headers=_secure_headers()) from None
+
     async def plugins_add(request: Any) -> Any:
         return await mutate(request, operation="plugins:add")
 
@@ -374,6 +527,9 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
     app.router.add_get("/chat/api/extensions", get_extensions, allow_head=False)
     for path, handler in (
         ("/chat/api/extensions/skills/add", skills_add),
+        ("/chat/api/extensions/skills/read", skills_read),
+        ("/chat/api/extensions/skills/edit", skills_edit),
+        ("/chat/api/extensions/skills/remove", skills_remove),
         ("/chat/api/extensions/plugins/add", plugins_add),
         ("/chat/api/extensions/plugins/edit", plugins_edit),
         ("/chat/api/extensions/plugins/toggle", plugins_toggle),
@@ -386,6 +542,9 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
 
 _BODY_FIELDS = {
     "skills:add": {"identifier", "confirmation", "idempotency_key", "revision"},
+    "skills:read": {"item_id", "revision"},
+    "skills:edit": {"item_id", "content", "confirmation", "idempotency_key", "revision"},
+    "skills:remove": {"item_id", "confirmation", "idempotency_key", "revision"},
     "plugins:add": {"catalog_name", "confirmation", "idempotency_key", "revision"},
     "plugins:edit": {"item_id", "values", "confirmation", "idempotency_key", "revision"},
     "plugins:toggle": {"item_id", "enabled", "confirmation", "idempotency_key", "revision"},
