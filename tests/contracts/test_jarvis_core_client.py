@@ -165,7 +165,8 @@ def test_stream_filters_to_current_session_text_and_real_terminal_result():
             ws.send_json = original_send
 
     items = asyncio.run(collect())
-    assert items == [CoreTurnEvent("delta", "hello"), CoreTurnEvent("complete")]
+    assert [item.kind for item in items] == ["delta", "activity", "complete"]
+    assert items[1].activity.event_type == "message.complete"
     assert ws.sent["method"] == "prompt.submit"
     assert ws.sent["params"] == {"session_id": "runtime-a", "text": "hi"}
 
@@ -196,8 +197,9 @@ def test_final_only_response_is_projected_as_text_before_success():
     async def collect():
         return [item async for item in client.stream("runtime-a", "question")]
 
-    assert asyncio.run(collect()) == [
-        CoreTurnEvent("delta", "answer without deltas"), CoreTurnEvent("complete")]
+    items = asyncio.run(collect())
+    assert [item.kind for item in items] == ["delta", "activity", "complete"]
+    assert items[1].activity.event_type == "message.complete"
 
 
 @pytest.mark.parametrize(("status", "expected"), [
@@ -230,7 +232,9 @@ def test_backend_failure_or_interrupt_never_becomes_success(status, expected):
     async def collect():
         return [item async for item in client.stream("runtime-a", "question")]
 
-    assert asyncio.run(collect()) == [expected]
+    items = asyncio.run(collect())
+    assert [item.kind for item in items] == ["activity", expected.kind]
+    assert items[0].activity.event_type == "message.complete"
 
 
 def test_final_text_mismatch_does_not_emit_a_false_success():
@@ -293,3 +297,92 @@ def test_stream_eof_without_backend_terminal_is_never_success():
 
     with pytest.raises(JarvisChatDenied):
         asyncio.run(collect())
+
+
+def test_native_activity_projection_is_session_bound_and_excludes_payload_content():
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
+    frame = {"method": "event", "params": {
+        "type": "tool.complete", "session_id": "runtime-a", "payload": {
+            "tool_id": "tool-123", "name": "browser", "duration_s": 1.25,
+            "args": {"token": "private-argument"}, "result": "private-result",
+        }}}
+    projected = client._activity_from_frame(frame, "runtime-a")
+    assert projected.event_type == "tool.complete"
+    assert projected.status == "returned"
+    assert projected.duration_ms == 1250
+    assert projected.source_identity == "tool-123"
+    assert "private-argument" not in repr(projected)
+    assert client._activity_from_frame(frame, "runtime-b") is None
+
+    delegation = {"method": "event", "params": {
+        "type": "subagent.complete", "session_id": "runtime-a", "payload": {
+            "goal": "secret user prompt", "subagent_id": "private-child-id", "status": "failed",
+            "duration_seconds": 3.5, "tokens": 250,
+        }}}
+    subagent = client._activity_from_frame(delegation, "runtime-a")
+    assert subagent.event_type == "subagent.complete"
+    assert subagent.status == "failed"
+    assert subagent.duration_ms == 3500
+    assert subagent.usage is None
+    assert "secret user prompt" not in repr(subagent)
+    assert "private-child-id" not in repr(subagent)
+
+
+def test_approval_event_observations_are_session_bound_and_do_not_reply():
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
+    approval = {"method": "approval", "id": "server-request-1", "params": {
+        "session_id": "runtime-a", "command": "private command"}}
+    assert client._activity_from_frame(approval, "runtime-a").status == "pending"
+    assert client._activity_from_frame(approval, "runtime-b") is None
+    cancelled = {"method": "event", "params": {"type": "approval.cancelled",
+        "session_id": "", "payload": {"session_id": "runtime-a", "request_ids": ["secret-id"]}}}
+    projected = client._activity_from_frame(cancelled, "runtime-a")
+    assert projected.status == "cancelled"
+    assert projected.source_identity
+    assert "secret-id" not in repr(projected)
+
+
+def test_fixed_status_adapters_drop_metadata_and_use_server_default_profile():
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
+    calls = []
+
+    async def rpc(method, params):
+        calls.append((method, params))
+        if method == "profiles.list":
+            return {"profiles": [
+                {"name": "other", "is_default": False, "path": "/private/other"},
+                {"name": "default", "display_name": "Home", "is_default": True,
+                 "path": "/private/home", "model": "private-model", "provider": "private"},
+            ]}
+        if method == "cron.manage":
+            return {"success": True, "jobs": [{"job_id": "job-secret-id", "name": "private prompt fallback",
+                "prompt_preview": "private prompt", "schedule": "daily", "enabled": True,
+                "next_run_at": "2026-10-12T09:00:00Z", "last_run_at": None,
+                "last_status": "ok", "state": "scheduled", "paused_at": None,
+                "workdir": "/private/path"}]}
+        if method == "plugins.list":
+            return {"plugins": [{"name": "local", "version": "1.2", "enabled": True,
+                                 "settings": {"secret": "private"}}]}
+        return {"servers": [{"name": "mcp", "transport": "stdio", "tools": 2,
+                             "connected": False, "disabled": False, "status": "lazy",
+                             "source": "private", "plugin": "private-name", "command": "secret"}],
+                "checked_at": 1_791_691_200_000}
+
+    client._rpc = rpc
+    assert asyncio.run(client.list_profiles()) == [
+        {"name": "default", "display_name": "Home", "is_default": True}]
+    schedules = asyncio.run(client.list_schedules())
+    assert schedules[0]["name"] == "Scheduled job"
+    assert schedules[0]["schedule"] == "daily"
+    assert schedules[0]["next_run_at"] == "2026-10-12T09:00:00Z"
+    assert "workdir" not in schedules[0]
+    assert asyncio.run(client.list_plugins()) == [
+        {"name": "local", "version": "1.2", "enabled": True}]
+    assert asyncio.run(client.mcp_status()) == {"servers": [{
+        "name": "mcp", "transport": "stdio", "tools": 2, "connected": False,
+        "disabled": False, "status": "lazy"}], "checked_at": 1_791_691_200_000}
+    assert calls == [
+        ("profiles.list", {"include_sessions": False}),
+        ("cron.manage", {"action": "list", "include_disabled": True}),
+        ("plugins.list", {}), ("mcp.servers.status", {}),
+    ]

@@ -6,13 +6,16 @@ It never relays arbitrary methods or exposes the service token/runtime session i
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import math
 import secrets
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Literal
+from typing import Any, AsyncIterator, Literal, Mapping
 from urllib.parse import quote
 
 from .jarvis_chat import JarvisChatDenied, _read_private_secret
+from .jarvis_activity import NativeActivityEvent, _STATUSES, _USAGE_FIELDS
 
 CORE_PORT = 8766
 CORE_PATH = "/api/ws"
@@ -27,8 +30,9 @@ def _valid_session_id(value: Any) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class CoreTurnEvent:
-    kind: Literal["delta", "complete", "failed", "cancelled"]
+    kind: Literal["delta", "complete", "failed", "cancelled", "activity"]
     text: str = ""
+    activity: NativeActivityEvent | None = None
 
 
 class CoreRpcClient:
@@ -107,9 +111,13 @@ class CoreRpcClient:
                 if not isinstance(result, dict):
                     raise JarvisChatDenied("official core gateway result was invalid")
                 return result
-            if session_id is not None and frame.get("method") == "event":
+            if session_id is not None and frame.get("method") in {"event", "approval"}:
                 params = frame.get("params")
-                if isinstance(params, dict) and params.get("session_id") == session_id:
+                direct_match = isinstance(params, dict) and params.get("session_id") == session_id
+                payload = params.get("payload") if isinstance(params, dict) else None
+                global_approval = (isinstance(params, dict) and params.get("type") == "approval.cancelled"
+                                   and isinstance(payload, dict) and payload.get("session_id") == session_id)
+                if direct_match or global_approval:
                     if early_events is not None:
                         if len(early_events) >= 128:
                             raise JarvisChatDenied("official core sent too many early events")
@@ -119,7 +127,8 @@ class CoreRpcClient:
 
     async def _rpc(self, method: str, params: dict[str, Any]) -> dict:
         # Method names are not parameters to public endpoints; this still defends internal misuse.
-        if method not in {"session.create", "session.resume", "session.history", "session.interrupt"}:
+        if method not in {"session.create", "session.resume", "session.history", "session.interrupt",
+                          "profiles.list", "cron.manage", "plugins.list", "mcp.servers.status"}:
             raise JarvisChatDenied("core method is outside the fixed adapter")
         client, ws, ws_types = await self._connect()
         request_id = secrets.token_hex(12)
@@ -133,6 +142,207 @@ class CoreRpcClient:
         finally:
             await ws.close()
             await client.close()
+
+    @staticmethod
+    def _bounded_profile_text(value: Any, *, limit: int = 160) -> str | None:
+        if not isinstance(value, str):
+            return None
+        value = value.strip()
+        if not value or len(value) > limit or any(ord(char) < 0x20 for char in value):
+            return None
+        return value
+
+    async def list_profiles(self) -> list[dict[str, Any]]:
+        """Return at most the default row, with no filesystem/session/roster metadata."""
+        result = await self._rpc("profiles.list", {"include_sessions": False})
+        rows = result.get("profiles")
+        if not isinstance(rows, list) or len(rows) > 512:
+            raise JarvisChatDenied("official core profile status was invalid")
+        defaults = [row for row in rows if isinstance(row, dict) and row.get("is_default") is True]
+        if not defaults:
+            return []
+        if len(defaults) != 1:
+            raise JarvisChatDenied("official core default profile was ambiguous")
+        row = defaults[0]
+        name = self._bounded_profile_text(row.get("name"), limit=96)
+        if name is None:
+            raise JarvisChatDenied("official core default profile was invalid")
+        return [{
+            "name": name,
+            "display_name": self._bounded_profile_text(row.get("display_name")) or name,
+            "is_default": True,
+        }]
+
+    async def list_schedules(self) -> list[dict[str, Any]]:
+        """Read the current gateway process profile's schedule store; no profile selector."""
+        result = await self._rpc("cron.manage", {"action": "list", "include_disabled": True})
+        rows = result.get("jobs")
+        if result.get("success") is not True:
+            raise JarvisChatDenied("official core schedule read was not confirmed")
+        if not isinstance(rows, list) or len(rows) > 512:
+            raise JarvisChatDenied("official core schedule status was invalid")
+        projected = []
+        allowed_states = {"scheduled", "paused", "disabled", "running", "pending", "completed",
+                          "error", "blocked_config", "ok", "delivery_queued", "delivery_failed", "failed"}
+        for row in rows:
+            if not isinstance(row, dict):
+                raise JarvisChatDenied("official core schedule row was invalid")
+            job_id = self._bounded_profile_text(row.get("job_id"), limit=256)
+            if job_id is None:
+                raise JarvisChatDenied("official core schedule row was invalid")
+            def timestamp(key: str) -> str | None:
+                value = row.get(key)
+                if not isinstance(value, str) or len(value) > 96 or any(ord(c) < 0x20 for c in value):
+                    return None
+                return value or None
+            status = row.get("last_status")
+            state = row.get("state")
+            projected.append({
+                "job_id": job_id,
+                # _format_job falls back to prompt[:50] when there is no explicit label. Never
+                # forward that ambiguous field to Jarvis; native content stays private.
+                "name": "Scheduled job",
+                "enabled": row.get("enabled") if type(row.get("enabled")) is bool else None,
+                "schedule": self._bounded_profile_text(row.get("schedule"), limit=96),
+                "next_run_at": timestamp("next_run_at"),
+                "last_run_at": timestamp("last_run_at"),
+                "last_status": status if isinstance(status, str) and status in allowed_states else None,
+                "state": state if isinstance(state, str) and state in allowed_states else "unknown",
+                "paused_at": timestamp("paused_at"),
+            })
+        return projected
+
+    async def list_plugins(self) -> list[dict[str, Any]]:
+        """Return only the pinned gateway's loaded-plugin label/version/enabled snapshot."""
+        result = await self._rpc("plugins.list", {})
+        rows = result.get("plugins")
+        if not isinstance(rows, list) or len(rows) > 512:
+            raise JarvisChatDenied("official core plugin status was invalid")
+        projected = []
+        for row in rows:
+            if not isinstance(row, dict):
+                raise JarvisChatDenied("official core plugin row was invalid")
+            name = self._bounded_profile_text(row.get("name"), limit=96)
+            version = self._bounded_profile_text(row.get("version"), limit=64)
+            enabled = row.get("enabled")
+            if name is None or version is None or type(enabled) is not bool:
+                raise JarvisChatDenied("official core plugin row was invalid")
+            projected.append({"name": name, "version": version, "enabled": enabled})
+        return projected
+
+    async def mcp_status(self) -> dict[str, Any]:
+        """Read cached MCP connection states; native status RPC does not probe/connect."""
+        result = await self._rpc("mcp.servers.status", {})
+        rows = result.get("servers")
+        checked_at = result.get("checked_at")
+        if (not isinstance(rows, list) or len(rows) > 512
+                or type(checked_at) is not int or not 0 <= checked_at <= 2**53 - 1):
+            raise JarvisChatDenied("official core MCP status was invalid")
+        statuses = {"connected", "disabled", "connecting", "failed", "lazy", "configured"}
+        projected = []
+        for row in rows:
+            if not isinstance(row, dict):
+                raise JarvisChatDenied("official core MCP row was invalid")
+            name = self._bounded_profile_text(row.get("name"), limit=96)
+            transport = self._bounded_profile_text(row.get("transport"), limit=48)
+            tools = row.get("tools")
+            connected, disabled = row.get("connected"), row.get("disabled")
+            status = row.get("status")
+            if (name is None or transport is None or type(tools) is not int or not 0 <= tools <= 100_000
+                    or type(connected) is not bool or type(disabled) is not bool or status not in statuses):
+                raise JarvisChatDenied("official core MCP row was invalid")
+            projected.append({"name": name, "transport": transport, "tools": tools,
+                              "connected": connected, "disabled": disabled, "status": status})
+        return {"servers": projected, "checked_at": checked_at}
+
+    @staticmethod
+    def _activity_from_frame(frame: Mapping[str, Any], session_id: str) -> NativeActivityEvent | None:
+        """Validate/project one pinned Hermes event or approval request without raw payload retention."""
+        method = frame.get("method")
+        params = frame.get("params")
+        if not isinstance(params, dict):
+            return None
+        event_type = ""
+        payload: Mapping[str, Any] = params
+        native_id: Any = None
+        if method == "approval":
+            if params.get("session_id") != session_id:
+                return None
+            event_type, native_id = "approval", frame.get("id")
+            status = "pending"
+        elif method == "event":
+            event_type = params.get("type") if isinstance(params.get("type"), str) else ""
+            candidate = params.get("payload")
+            if not isinstance(candidate, dict):
+                return None
+            payload = candidate
+            if params.get("session_id") != session_id:
+                if not (event_type == "approval.cancelled" and payload.get("session_id") == session_id):
+                    return None
+        else:
+            return None
+        if event_type not in {
+                "tool.start", "tool.complete", "tool.generating", "status.update",
+                "subagent.spawn_requested", "subagent.start", "subagent.progress",
+                "subagent.thinking", "subagent.tool", "subagent.complete",
+                "approval", "approval.cancelled", "request.cancel", "todo.updated", "session.usage",
+                "message.complete"}:
+            return None
+        duration = None
+        identity: str | None = None
+        usage: tuple[tuple[str, int], ...] | None = None
+        if event_type in {"tool.start", "tool.complete"}:
+            native_id = payload.get("tool_id")
+            status = "running" if event_type == "tool.start" else "returned"
+            raw_duration = payload.get("duration_s")
+            if type(raw_duration) in (int, float) and math.isfinite(raw_duration) and 0 <= raw_duration <= 3600:
+                duration = round(raw_duration * 1000)
+        elif event_type == "tool.generating":
+            status = "generating"
+        elif event_type == "status.update":
+            raw_status = payload.get("kind")
+            status = raw_status if isinstance(raw_status, str) and raw_status in _STATUSES else "unknown"
+        elif event_type.startswith("subagent."):
+            status_by_event = {
+                "subagent.spawn_requested": "queued", "subagent.start": "running",
+                "subagent.progress": "running", "subagent.thinking": "running",
+                "subagent.tool": "running",
+            }
+            raw_status = payload.get("status")
+            if event_type == "subagent.complete" and isinstance(raw_status, str) and raw_status in _STATUSES:
+                status = raw_status
+            else:
+                status = status_by_event.get(event_type, "unknown")
+            native_id = payload.get("subagent_id") or payload.get("delegation_id")
+            raw_duration = payload.get("duration_seconds")
+            if type(raw_duration) in (int, float) and math.isfinite(raw_duration) and 0 <= raw_duration <= 3600:
+                duration = round(raw_duration * 1000)
+        elif event_type == "approval.cancelled":
+            status = "cancelled"
+            ids = payload.get("request_ids")
+            if isinstance(ids, list) and ids and len(ids) <= 32 and all(
+                    isinstance(value, str) and 1 <= len(value) <= 128 for value in ids):
+                native_id = hashlib.sha256("\0".join(ids).encode("utf-8")).hexdigest()
+        elif event_type == "request.cancel":
+            native_id = payload.get("id")
+            reason = payload.get("reason")
+            status = "cancelled" if reason in {"timeout", "interrupted", "resolved", "tui_close"} else "unknown"
+        elif event_type == "todo.updated":
+            status = "updated"
+        elif event_type in {"session.usage", "message.complete"}:
+            status = "observed" if event_type == "session.usage" else (
+                payload.get("status") if payload.get("status") in {"complete", "error", "interrupted"}
+                else "unknown")
+            raw_usage = payload.get("usage")
+            if isinstance(raw_usage, dict):
+                counters = tuple((key, value) for key, value in raw_usage.items()
+                                 if key in _USAGE_FIELDS and type(value) is int and 0 <= value <= 10**15)
+                usage = counters or None
+        if isinstance(native_id, str) and 0 < len(native_id) <= 512:
+            identity = native_id
+        return NativeActivityEvent(event_type=event_type, status=status, session_id=session_id,
+                                   source_identity=identity, duration_ms=duration, usage=usage,
+                                   source_at=None)
 
     async def create_session(self) -> tuple[str, str]:
         result = await self._rpc("session.create", {
@@ -227,14 +437,8 @@ class CoreRpcClient:
                 params = frame.get("params")
                 event_name = params.get("type") if isinstance(params, dict) else ""
                 payload = params.get("payload") if isinstance(params, dict) else None
-                if event_name == "message.delta" and isinstance(payload, dict):
-                    delta = payload.get("text")
-                    if isinstance(delta, str) and delta:
-                        if len(streamed_text) + len(delta) > MAX_CORE_TEXT_CHARS:
-                            raise JarvisChatDenied("official core text exceeded its bound")
-                        streamed_text += delta
-                        yield CoreTurnEvent("delta", delta)
-                elif event_name == "message.complete" and isinstance(payload, dict):
+                activity = self._activity_from_frame(frame, session_id)
+                if event_name == "message.complete" and isinstance(payload, dict):
                     status = payload.get("status")
                     if status == "complete":
                         final_text = payload.get("text")
@@ -256,17 +460,28 @@ class CoreRpcClient:
                                 if suffix:
                                     yield CoreTurnEvent("delta", suffix)
                             else:
-                                # The public stream is append-only. Do not claim success when
-                                # Hermes' authoritative final answer cannot be reconciled safely.
                                 raise JarvisChatDenied("official core final text did not match its stream")
-                        elif not streamed_text:
-                            raise JarvisChatDenied("official core completed without assistant text")
+                        if activity is not None:
+                            yield CoreTurnEvent("activity", activity=activity)
                         yield CoreTurnEvent("complete")
                     elif status == "interrupted":
+                        if activity is not None:
+                            yield CoreTurnEvent("activity", activity=activity)
                         yield CoreTurnEvent("cancelled")
                     else:
+                        if activity is not None:
+                            yield CoreTurnEvent("activity", activity=activity)
                         yield CoreTurnEvent("failed")
                     return
+                if activity is not None:
+                    yield CoreTurnEvent("activity", activity=activity)
+                if event_name == "message.delta" and isinstance(payload, dict):
+                    delta = payload.get("text")
+                    if isinstance(delta, str) and delta:
+                        if len(streamed_text) + len(delta) > MAX_CORE_TEXT_CHARS:
+                            raise JarvisChatDenied("official core text exceeded its bound")
+                        streamed_text += delta
+                        yield CoreTurnEvent("delta", delta)
         except JarvisChatDenied:
             raise
         except asyncio.CancelledError:

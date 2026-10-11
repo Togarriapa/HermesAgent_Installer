@@ -475,6 +475,8 @@ class JarvisChatService:
         if not callable(principal_from_request):
             raise ValueError("typed, current ingress principal resolver is required")
         self.store, self.backend = store, backend
+        from .jarvis_activity import JarvisActivityStore
+        self.activity_store = JarvisActivityStore(store)
         self._principal_from_request = principal_from_request
         self._workers: dict[str, asyncio.Task] = {}
         self._worker_lock = asyncio.Lock()
@@ -519,6 +521,8 @@ class JarvisChatService:
         app.router.add_get("/chat/api/turns/{turn_id}/events", self.events)
         app.router.add_post("/chat/api/turns/{turn_id}/stop", self.stop)
         app.router.add_post("/chat/api/heartbeat", self.heartbeat)
+        from .jarvis_activity import install_jarvis_activity_routes
+        install_jarvis_activity_routes(app, self)
 
     def _current(self, request) -> ChatPrincipal:
         try:
@@ -646,7 +650,9 @@ class JarvisChatService:
             turn_id, nonce, conversation = self.store.begin_turn(
                 principal.subject, request.match_info.get("conversation_id", ""), body["text"], key, principal)
             async with self._worker_lock:
-                task = asyncio.create_task(self._run(turn_id, conversation["backend_id"], body["text"]))
+                task = asyncio.create_task(self._run(
+                    turn_id, conversation["backend_id"], body["text"], principal,
+                    request.match_info.get("conversation_id", "")))
                 self._workers[turn_id] = task
             self._current(request)
             return web.json_response({"turnId": turn_id, "status": "queued", "heartbeatNonce": nonce},
@@ -664,7 +670,9 @@ class JarvisChatService:
         except Exception:
             raise web.HTTPServiceUnavailable(text="chat unavailable", headers=_secure_headers()) from None
 
-    async def _run(self, turn_id: str, session_id: str, text: str):
+    async def _run(self, turn_id: str, session_id: str, text: str,
+                   activity_principal: ChatPrincipal | None = None,
+                   conversation_id: str = ""):
         total = 0
         next_delta: asyncio.Task | None = None
         stream = None
@@ -697,7 +705,20 @@ class JarvisChatService:
                 except StopAsyncIteration:
                     break
                 kind = getattr(item, "kind", None)
-                if kind == "delta":
+                if kind == "activity":
+                    observation = getattr(item, "activity", None)
+                    if activity_principal is not None and conversation_id:
+                        try:
+                            self.activity_store.record_core_event(
+                                principal=activity_principal, conversation_id=conversation_id,
+                                turn_id=turn_id, core_generation=activity_principal.core_generation,
+                                event=observation)
+                        except JarvisChatDenied:
+                            # Activity is an observational projection; it cannot change the chat turn.
+                            pass
+                        except Exception:
+                            pass
+                elif kind == "delta":
                     delta = getattr(item, "text", "")
                     if isinstance(delta, str):
                         room = MAX_ASSISTANT_CHARS - total
@@ -802,7 +823,8 @@ class JarvisChatService:
                     cursor = row["sequence"]
                     name = row["name"]
                     payload = row["data"]
-                    if name not in {"message.delta", "message.completed", "turn.completed", "turn.failed", "turn.cancelled"}:
+                    if name not in {"message.delta", "message.completed", "turn.completed", "turn.failed",
+                                    "turn.cancelled", "activity.event"}:
                         continue
                     try:
                         self._current(request)
