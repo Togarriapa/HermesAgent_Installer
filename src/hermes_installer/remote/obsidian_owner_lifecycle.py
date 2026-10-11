@@ -81,9 +81,14 @@ def read_registration() -> tuple[Path, str, str]:
     return OWNER_DATA_ROOT, value["owner_subject_sha256"], hashlib.sha256(raw).hexdigest()
 
 
-def _query_existing_chat_owners_as_core() -> tuple[str, ...]:
-    if os.geteuid() != 1000:
-        raise ObsidianOwnerLifecycleError("Jarvis owner query requires the selected Core UID")
+def _query_existing_chat_owners_as_gateway(*, gateway_uid: int) -> tuple[str, ...]:
+    """Read only the fixed chat-owner projection as the verified gateway UID.
+
+    The live store is owned by the gateway account (UID 996 on the Pi), not
+    Core UID 1000. This query does not change its ownership or permissions.
+    """
+    if os.geteuid() != gateway_uid:
+        raise ObsidianOwnerLifecycleError("Jarvis owner query requires the configured gateway UID")
     from .jarvis_chat import CHAT_STATE_DIRECTORY, CHAT_STORE_PATH
 
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
@@ -94,14 +99,14 @@ def _query_existing_chat_owners_as_core() -> tuple[str, ...]:
             os.close(fd)
             fd = child
             info = os.fstat(fd)
-            expected_uid = 0 if index < len(CHAT_STATE_DIRECTORY.parts[1:]) - 1 else 1000
+            expected_uid = 0 if index < len(CHAT_STATE_DIRECTORY.parts[1:]) - 1 else gateway_uid
             expected_mode = None if expected_uid == 0 else 0o700
             if (not stat.S_ISDIR(info.st_mode) or info.st_uid != expected_uid
                     or (expected_mode is not None and stat.S_IMODE(info.st_mode) != expected_mode)
                     or (expected_uid == 0 and stat.S_IMODE(info.st_mode) & 0o022)):
                 raise ObsidianOwnerLifecycleError("existing Jarvis owner database directory is unavailable")
         info = os.stat(CHAT_STORE_PATH.name, dir_fd=fd, follow_symlinks=False)
-        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 1000
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != gateway_uid
                 or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1
                 or info.st_size < 1):
             raise ObsidianOwnerLifecycleError("existing Jarvis owner database custody differs")
@@ -123,17 +128,21 @@ def _query_existing_chat_owners_as_core() -> tuple[str, ...]:
     return owners
 
 
-def _existing_chat_owners() -> tuple[str, ...]:
-    """Read the current WAL-aware owner scope in a dropped-UID-1000 child."""
+def _existing_chat_owners(config: Any) -> tuple[str, ...]:
+    """Read current WAL-aware owner scope in a dropped configured-gateway child."""
+    gateway_uid, gateway_gid = config.gateway_uid, config.gateway_gid
+    if (type(gateway_uid) is not int or gateway_uid <= 0
+            or type(gateway_gid) is not int or gateway_gid <= 0):
+        raise ObsidianOwnerLifecycleError("configured gateway identity is unavailable")
     read_fd, write_fd = os.pipe()
     pid = os.fork()
     if pid == 0:
         try:
             os.close(read_fd)
             os.setgroups([])
-            os.setgid(1000)
-            os.setuid(1000)
-            owners = _query_existing_chat_owners_as_core()
+            os.setgid(gateway_gid)
+            os.setuid(gateway_uid)
+            owners = _query_existing_chat_owners_as_gateway(gateway_uid=gateway_uid)
             raw = json.dumps({"owners": list(owners)}, separators=(",", ":")).encode("ascii")
             if len(raw) > 512:
                 raise ValueError("owner query result exceeded bound")
@@ -278,7 +287,7 @@ def prepare_existing_chat_owner(owner_subject_sha256: str) -> dict[str, Any]:
         raise ObsidianOwnerLifecycleError("one allowlisted selected-owner Core scope is required")
     _read_config_current(config)
     before = _current_core(config)
-    if _existing_chat_owners() != (owner_subject_sha256,):
+    if _existing_chat_owners(config) != (owner_subject_sha256,):
         raise ObsidianOwnerLifecycleError("selector does not name the sole current existing Jarvis DB owner")
     # Refuse a different existing enrollment before the UID-1000 process can
     # touch the persistent vault tree. Recovery/rebinding is a separate action.
@@ -300,5 +309,87 @@ def prepare_existing_chat_owner(owner_subject_sha256: str) -> dict[str, Any]:
             "owner_uid": 1000, "mode": "0700"}
 
 
+def _legacy_owned_core_current() -> None:
+    """Qualify the journaled P-less listener without opening its credential."""
+    from hermes_installer import core_runtime
+
+    journal = core_runtime.JOURNAL
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(journal, flags)
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1
+                or not 1 <= info.st_size <= 65536):
+            raise ObsidianOwnerLifecycleError("legacy ownership journal custody differs")
+        raw = bytearray()
+        while len(raw) <= 65536:
+            chunk = os.read(fd, min(8192, 65537 - len(raw)))
+            if not chunk:
+                break
+            raw.extend(chunk)
+        if len(raw) != info.st_size or len(raw) > 65536:
+            raise ObsidianOwnerLifecycleError("legacy ownership journal changed during read")
+    finally:
+        os.close(fd)
+    try:
+        record = json.loads(bytes(raw).decode("utf-8", "strict"), object_pairs_hook=_unique_pairs)
+        identity = core_runtime._identity()
+        expected = {
+            "schema": 1, "state": record.get("state"), "service": core_runtime.SERVICE,
+            "source_commit": identity["commit"], "lock_sha256": identity["lock_sha256"],
+            "python_sha256": identity["python_sha256"], "python_link": identity["python_link"],
+            "python_uid": identity["python_uid"], "python_gid": identity["python_gid"],
+            "python_mode": identity["python_mode"], "admin_uid": 1000, "admin_gid": 1000,
+            "host": "127.0.0.1", "port": 8766,
+            "unit_sha256": hashlib.sha256(core_runtime._unit()).hexdigest(),
+            "launcher_sha256": hashlib.sha256(core_runtime._legacy_launcher()).hexdigest(),
+        }
+        if (type(record) is not dict or record.get("state") not in {"installed", "active"}
+                or any(record.get(key) != value for key, value in expected.items())
+                or core_runtime._digest(core_runtime.UNIT) != record["unit_sha256"]
+                or core_runtime._digest(core_runtime.LAUNCHER) != record["launcher_sha256"]
+                or not core_runtime._owned_listener(legacy_launcher=True)):
+            raise ValueError
+    except Exception:
+        raise ObsidianOwnerLifecycleError("exact legacy Core ownership and listener are not current") from None
+
+
+def prepare_sole_existing_chat_owner_for_legacy_migration() -> dict[str, Any]:
+    """Enroll the sole existing owner before the exact journaled Core restart.
+
+    This is a bounded prestart path: it accepts only the root-owned legacy
+    journal plus the exact legacy process-bound listener. It does not read or
+    emit the session credential and does not grant authentication authority.
+    """
+    if os.geteuid() != 0:
+        raise ObsidianOwnerLifecycleError("root enrollment actor is required")
+    from .core_gateway import CoreGatewayConfig, _read_config_current
+
+    config = CoreGatewayConfig.load(expected_owner_uid=0)
+    if (len(config.allowed_emails) != 1 or config.core_uid != 1000
+            or config.gateway_uid <= 0 or config.gateway_gid <= 0):
+        raise ObsidianOwnerLifecycleError("one configured owner and fixed Core/gateway identities are required")
+    _read_config_current(config)
+    _legacy_owned_core_current()
+    owners = _existing_chat_owners(config)
+    if len(owners) != 1:
+        raise ObsidianOwnerLifecycleError("one exact existing Jarvis owner scope is required")
+    owner_subject_sha256 = owners[0]
+    try:
+        _root, registered_owner, _digest = read_registration()
+    except FileNotFoundError:
+        registered_owner = None
+    if registered_owner is not None and registered_owner != owner_subject_sha256:
+        raise ObsidianOwnerLifecycleError("another owner is already enrolled; explicit root recovery is required")
+    _prepare_as_core(owner_subject_sha256)
+    _legacy_owned_core_current()
+    _read_config_current(config)
+    _write_registration(owner_subject_sha256)
+    return {"schema": 1, "state": "prepared-before-legacy-migration",
+            "data_root": str(OWNER_DATA_ROOT), "owner_uid": 1000, "mode": "0700"}
+
+
 __all__ = ["OWNER_DATA_ROOT", "OWNER_REGISTRATION", "ObsidianOwnerLifecycleError",
-           "prepare_existing_chat_owner", "read_registration"]
+           "prepare_existing_chat_owner", "prepare_sole_existing_chat_owner_for_legacy_migration",
+           "read_registration"]

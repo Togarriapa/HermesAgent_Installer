@@ -6,10 +6,9 @@ def register(ctx):
     """Install only the root-backed observer and exact Resources tool.
 
     The official loader calls this function for the selected fixed plugin.
-    Resources registration is independent of inspector startup order. Obsidian
-    tools are registered only when the root observer can issue a fixed-owner
-    binding at plugin load; after owner enrollment or inspector recovery, Core
-    must reload this plugin so the native handlers bind the prepared store.
+    Resources and Obsidian registration are independent of inspector startup
+    order. Each admitted Obsidian call obtains a fresh fixed-owner binding
+    before its handler opens the selected store.
     """
     if getattr(ctx, "plugin_id", None) != PLUGIN_ID:
         return ()
@@ -51,12 +50,12 @@ def register(ctx):
     effect_registrations = install_jarvis_final_effect_middleware(
         ctx, client, obsidian_binding=obsidian_binding)
     obsidian_registrations = ()
-    if obsidian_store is not None:
-        try:
-            from hermes_installer.remote.obsidian_native_tools import ObsidianNativeTools
-            obsidian_registrations = ObsidianNativeTools(obsidian_store).register(ctx)
-        except Exception:
-            obsidian_registrations = ()
+    try:
+        from hermes_installer.remote.obsidian_native_tools import ObsidianNativeTools
+        obsidian_registrations = ObsidianNativeTools().register(ctx)
+    except Exception:
+        # Optional vault tools cannot prevent the fixed Resources bridge.
+        obsidian_registrations = ()
     project_context_registration = install_current_project_context_middleware(ctx)
     try:
         install_pinned_tool_executor_dispatch_bridge()

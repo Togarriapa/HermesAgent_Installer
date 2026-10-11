@@ -12,6 +12,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 import hashlib
+import os
+from pathlib import Path
 import re
 from typing import Any, Iterator, Mapping
 
@@ -156,12 +158,26 @@ _DESCRIPTIONS = {
 
 
 class ObsidianNativeTools:
-    """Register the finite Obsidian tools against one root-selected fixed store."""
+    """Register fixed handlers; resolve the root-selected store per admitted call."""
 
-    def __init__(self, store: ObsidianVaultStore):
-        if type(store) is not ObsidianVaultStore:
+    def __init__(self, store: ObsidianVaultStore | None = None):
+        if store is not None and type(store) is not ObsidianVaultStore:
             raise TypeError("root-selected persistent Obsidian vault store is required")
         self._store = store
+
+    def _store_for(self, context: AdmittedObsidianCall) -> ObsidianVaultStore:
+        if self._store is not None:
+            return self._store
+        if os.geteuid() != 1000:
+            raise ObsidianNativeToolUnavailable("selected Core UID is required to open the vault")
+        from .obsidian_second_brain import ObsidianVaultConfig, ObsidianVaultStore
+        binding = context.binding
+        if (type(binding) is not RootSelectedObsidianVaultBinding
+                or binding.selected_owner_uid != 1000
+                or binding.owner_subject_sha256 != context.scope.owner_subject_sha256):
+            raise ObsidianNativeToolUnavailable("current root-selected vault binding is unavailable")
+        return ObsidianVaultStore(ObsidianVaultConfig(
+            Path(binding.vault_root), binding.owner_subject_sha256, owner_uid=1000))
 
     def register(self, ctx: Any) -> tuple[str, ...]:
         register = getattr(ctx, "register_tool", None)
@@ -179,32 +195,33 @@ class ObsidianNativeTools:
 
         def invoke(args: object) -> dict[str, Any]:
             context = _current_context(self._store, name, args)
+            store = self._store_for(context)
             selected = (context.scope.selected_note_ids
                         if context.scope.mode == "expert_read" else None)
             if name == "obsidian_list_notes":
                 values = _args(args, {"limit", "cursor"})
-                result = self._store.list_notes(limit=values.get("limit", 20),
+                result = store.list_notes(limit=values.get("limit", 20),
                                                 cursor=values.get("cursor"), note_scope=selected)
                 return result.to_projection()
             if name == "obsidian_search_notes":
                 values = _args(args, {"query", "limit", "cursor"})
-                result = self._store.search_notes(values["query"], limit=values.get("limit", 20),
+                result = store.search_notes(values["query"], limit=values.get("limit", 20),
                                                   cursor=values.get("cursor"), note_scope=selected)
                 return result.to_projection()
             if name == "obsidian_read_note":
                 values = _args(args, {"note_id"})
-                return self._store.read_note(values["note_id"], note_scope=selected).to_projection()
+                return store.read_note(values["note_id"], note_scope=selected).to_projection()
             if name == "obsidian_note_links":
                 values = _args(args, {"note_id"})
-                return self._store.links_for(values["note_id"], note_scope=selected).to_projection()
+                return store.links_for(values["note_id"], note_scope=selected).to_projection()
             if name == "obsidian_graph_snapshot":
                 _args(args, set())
-                return self._store.graph_snapshot(note_scope=selected).to_projection()
+                return store.graph_snapshot(note_scope=selected).to_projection()
             if name == "obsidian_create_private_draft":
                 values = _args(args, {"title", "markdown", "base_note_id", "base_sha256", "citations"})
                 if context.scope.mode not in {"master_read", "expert_read"}:
                     raise ObsidianNativeToolUnavailable("private draft creation requires an admitted owner or Expert execution")
-                draft = self._store.create_private_draft(
+                draft = store.create_private_draft(
                     execution_id=context.scope.execution_id,
                     source_instance_id=context.scope.source_instance_id,
                     title=values["title"], markdown=values["markdown"],
@@ -217,7 +234,7 @@ class ObsidianNativeTools:
             permit = context.permit
             if permit is None:
                 raise ObsidianNativeToolUnavailable("root middleware did not forward the exact one-use final-effect permit")
-            saved = self._store.promote_reviewed_draft(
+            saved = store.promote_reviewed_draft(
                 execution_id=context.scope.execution_id, draft_id=values["draft_id"],
                 expected_draft_sha256=values["expected_draft_sha256"],
                 destination=values["destination"], expected_base_sha256=values["expected_base_sha256"],
@@ -229,11 +246,13 @@ class ObsidianNativeTools:
         return invoke
 
 
-def _current_context(store: ObsidianVaultStore, name: str, args: object) -> AdmittedObsidianCall:
+def _current_context(store: ObsidianVaultStore | None, name: str, args: object) -> AdmittedObsidianCall:
     context = _CURRENT.get()
     if (type(context) is not AdmittedObsidianCall or context._seal is not _SEAL
             or context.scope.tool_name != name
-            or context.scope.owner_subject_sha256 != store._config.owner_scope_sha256
+            or context.scope.owner_subject_sha256 != context.binding.owner_subject_sha256
+            or (store is not None
+                and context.scope.owner_subject_sha256 != store._config.owner_scope_sha256)
             or not context.scope.matches(context.observed_call, context.binding)):
         raise ObsidianNativeToolUnavailable("native Obsidian tool lacks its exact admitted root call")
     values = _args(args, set(_SCHEMAS[name]["properties"]))

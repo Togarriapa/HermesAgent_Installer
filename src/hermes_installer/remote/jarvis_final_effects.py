@@ -558,12 +558,9 @@ def install_jarvis_final_effect_middleware(ctx: Any, client: Any, *,
                 if name not in _TOOL_NAMES:
                     return deny("Obsidian tool blocked: name is outside the fixed tool registry.")
                 try:
-                    if obsidian_binding is None:
-                        return deny("Obsidian tool blocked: Core startup vault binding is unavailable.")
-                    # Refresh the startup-bound receipt over the authenticated
-                    # current Core peer so a long-lived Core is not limited by
-                    # the short binding lease. The root observer verifies the
-                    # same PID, birth time, custody and registration each time.
+                    # Obtain a fresh receipt over the authenticated current
+                    # Core peer. This also handles the normal startup ordering
+                    # where Core registers tools before its root inspector starts.
                     binding = client.bind_obsidian_native_vault()
                     scope = client.authorize_obsidian_call_scope(
                         observed_call=observed, binding=binding)

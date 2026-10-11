@@ -1,11 +1,12 @@
 """Native-call wrapper contracts for the Obsidian storage leaf.
 
 These tests bind synthetic root receipts only to exercise the wrapper. They do
-not prove ROOT's middleware issuance, startup vault binding, or Pi acceptance.
+not prove ROOT's middleware issuance, per-call vault binding, or Pi acceptance.
 """
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 import time
 from unittest.mock import patch
 
@@ -101,6 +102,33 @@ def test_registers_finite_tools_without_identity_or_path_arguments(tmp_path):
     for row in context.tools.values():
         assert not {"owner", "owner_subject_sha256", "execution_id", "source_instance_id",
                     "note_scope", "vault_path", "permit"} & set(row["schema"]["properties"])
+
+
+def test_lazy_registration_does_not_need_startup_observer_binding(tmp_path):
+    root = tmp_path / "managed"
+    root.mkdir(mode=0o700)
+    store = prepare_obsidian_vault(ObsidianVaultConfig(root, OWNER, owner_uid=1000))
+    args = {"query": "owner"}
+    observed, scope, binding, _permit, dispatch, *_ = _binding(
+        store, "obsidian_search_notes", args)
+    binding = replace(binding, vault_root=str(root))
+    context = _PluginContext()
+    tools = ObsidianNativeTools()
+
+    with patch("hermes_installer.remote.obsidian_native_tools.ObsidianVaultStore",
+               side_effect=lambda _config: store) as open_store:
+        names = tools.register(context)
+        assert set(names) == set(context.tools)
+        open_store.assert_not_called()
+        with patch("hermes_installer.remote.obsidian_native_tools.os.geteuid",
+                   return_value=1000), patch(
+                "hermes_installer.remote.obsidian_native_tools.current_native_tool_dispatch",
+                return_value=dispatch), _admit_current_obsidian_call(
+                observed_call=observed, scope=scope, binding=binding):
+            result = context.tools["obsidian_search_notes"]["handler"](args)
+
+    assert result["notes"] == []
+    open_store.assert_called_once()
 
 
 def test_master_read_uses_exact_current_call_and_fixed_owner_store(tmp_path):
