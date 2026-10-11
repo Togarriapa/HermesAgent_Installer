@@ -38,3 +38,8 @@ The user removes Desktop from active Pi and planning; retain it only as capabili
 ## Final release documentation v268
 
 After actual phase-5 checks, present the finished product through verified usage/operations/troubleshooting/contributor/AI guides rather than development-first ledgers. Preserve indexed historical evidence and frozen/tag integrity. No stable claim now.
+
+
+## v266b authorization lease clarification
+
+The <=30s bound is per independently issued lease, not whole assistant turn. Fresh protected continuation preserves original JWT/run bounds and <=5s revocation witness. No old proof is extended or revived; same task scope.

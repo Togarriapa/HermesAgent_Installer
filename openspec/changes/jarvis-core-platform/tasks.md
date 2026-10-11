@@ -23,3 +23,6 @@ Historical traceability only (not active checkboxes or deployment prerequisites)
 
 
 - [ ] VD-T268.1 After VD-T266.5 actual qualification, publish finished truthful README/user operations/troubleshooting/contributor/AI guides, check command/capability evidence and historical links on Pi; preserve frozen/tag/immutable history and report residual limitations. Final release acceptance OPEN.
+
+
+RT-T266.3 / VD-T266.5 (v266b): prove >30s actual core turn with fresh protected leases, <=5s absence/refusal cancellation, immutable original JWT/600s/stricter deadlines, same ownership, replay/expired-lease denial. No separate feature or completed acceptance.

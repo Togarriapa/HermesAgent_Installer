@@ -29,3 +29,8 @@ Cleanup additionally requires the new protected Jarvis route to be live at the e
 ## Final release presentation
 
 VD-T268.1 follows actual VD-T266.5 qualification. Use planning/jarvis-final-release-documentation-v268.json as the release README/guide structure. The release docs must match real CLI commands/capabilities and honest limitations. Relocate mutable historical ledgers only with working evidence/source/task links and a historical index; never rewrite Git history, the frozen baseline/tag or immutable amendments. Update AGENTS to current finished product objectives without claiming unsupported behavior. This planning change does not prematurely rewrite stable docs.
+
+
+## Core turn lease lifetime v266b
+
+At actual initial authorization retain monotonic acceptance, original admitted JWT expiry, same principal/conversation/runtime turn and min(original JWT deadline, acceptance+600s, stricter backend deadline). A fresh protected HTTP nonce heartbeat may issue a distinct <=30s lease only before the existing lease and original bounds expire. Every byte requires <=5s independently fresh ingress witness and live authorization; SSE segment <=4s. Never restamp request-start, renew from cached proofs or revive an expired turn. Later JWT only narrows the retained original ceiling. Missing/refused/stale proof cancels exact turn within freshness bound. See planning/jarvis-core-turn-lease-bound-v266b.json; actual longer-turn and deny tests run on Pi.

@@ -18,3 +18,6 @@ Cleanup additionally requires the new protected Jarvis route to be live at the e
 ## Final release gate v268
 
 VD-T268.1 follows actual phase-5 review: finished verified product README/usage/operations/troubleshooting/contributor/AI guides replace development-first presentation. No stable claim before acceptance. Mutable ledger retirement/relocation requires indexed historical evidence access; frozen baseline/tag and immutable amendments remain intact. See planning/jarvis-final-release-documentation-v268.json.
+
+
+Core-turn continuation v266b: <=30s per new genuinely authorized lease; unchanged original JWT/600s/stricter run ceiling, <=5s fresh ingress revocation witness and <=4s SSE segments. No cached proof/restamp/expired revival. Actual Pi proof OPEN.

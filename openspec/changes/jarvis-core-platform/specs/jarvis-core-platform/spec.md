@@ -103,3 +103,17 @@ Relocation or retirement of mutable development ledgers MUST retain indexed sour
 #### Scenario: Live ledger moved to history
 - **WHEN** release presentation relocates a development ledger
 - **THEN** its evidence remains accessible through working historical links and frozen/tag integrity is preserved.
+
+### Requirement: Fresh bounded core-turn continuation
+Each authorization lease SHALL expire within30 seconds and SHALL NOT be extended or revived. Before expiry, a fresh protected HTTP heartbeat MAY issue a distinct lease for the same owned live turn. Every byte MUST have live authorization and a <=5-second fresh ingress witness; SSE segments SHALL remain <=4 seconds.
+
+#### Scenario: Valid turn exceeds one lease duration
+- **WHEN** a same-owner turn takes more than30 seconds and independently fresh protected nonce heartbeats pass before each lease expiry
+- **THEN** new bounded leases allow continuation without mutating old proofs or extending the original turn deadline.
+
+### Requirement: Immutable original turn ceiling
+The turn deadline MUST be min(original admitted JWT deadline, initial acceptance+600 seconds, any stricter backend/task deadline). Later JWT SHALL NOT extend that ceiling or change principal/ownership. Missing/refused/stale witness SHALL deny further bytes and cancel the exact owned turn within the <=5-second freshness bound.
+
+#### Scenario: Original expiry or lost heartbeat
+- **WHEN** original JWT/run bounds expire or fresh witness is unavailable
+- **THEN** continuation stops despite later credentials and an expired lease cannot revive the run.

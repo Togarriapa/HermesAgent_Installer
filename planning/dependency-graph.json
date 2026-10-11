@@ -4128,5 +4128,14 @@
       ]
     },
     "acceptance": "final release OPEN"
+  },
+  "jarvis_core_turn_lease_bound_v266b": {
+    "contract": "planning/jarvis-core-turn-lease-bound-v266b.json",
+    "amendment": "plans/amendments/2026-10-11-jarvis-core-turn-lease-bound-v266b.md",
+    "tasks": [
+      "RT-T266.3",
+      "VD-T266.5"
+    ],
+    "acceptance": "same scope; actual Pi proofs OPEN"
   }
 }
