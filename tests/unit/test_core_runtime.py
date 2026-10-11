@@ -21,6 +21,8 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False):
     home = tmp_path / "home" / "admin" / ".hermes"
     for path in (etc, var.parent, unit_dir, libexec, home):
         path.mkdir(parents=True, exist_ok=True)
+    for path in (etc, unit_dir, libexec):
+        path.chmod(0o755)
     monkeypatch.setattr(core, "ETC_INSTALLER", etc)
     monkeypatch.setattr(core, "VAR_LIB_INSTALLER", var)
     monkeypatch.setattr(core, "SYSTEMD_UNIT_DIR", unit_dir)
