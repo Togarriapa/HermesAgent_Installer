@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
 import secrets
@@ -36,6 +37,20 @@ HERMES_STAGE_EXECUTABLE = Path("/opt/hermes-jarvis-mvp-20261011/Hermes-Desktop.A
 PROFILE = "hermes-desktop"
 MAX_LEASE_SECONDS = 30
 MAX_PROBE_SECONDS = 5
+_STAGE_DIAGNOSTIC = logging.getLogger("hermes_installer.remote.manual_stage")
+_STAGE_PHASES = frozenset({"headers", "jwt", "unix-peer", "root-inspector", "listener-join",
+                           "ingress-proof-join", "middleware-ingress", "handler", "heartbeat-handler", "route-response",
+                           "response-currentness", "session-response", "index-injection"})
+
+
+def _log_stage_denial(phase: str, exception: BaseException | str) -> None:
+    """Emit fixed phase and exception type only; never include request data or exception text."""
+    if phase not in _STAGE_PHASES:
+        phase = "handler"
+    name = exception if isinstance(exception, str) else type(exception).__name__
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,63}", name):
+        name = "OtherException"
+    _STAGE_DIAGNOSTIC.warning("manual-stage denial phase=%s exception=%s", phase, name)
 
 
 class ManualStageDenied(PermissionError):
@@ -869,6 +884,7 @@ async def _accept_stage_ingress(request, config: ManualGatewayStageConfig,
                                 policy: RemotePolicy, *,
                                 listener_identity: tuple[int, int] | None = None) -> StageAcceptedIngressObservation:
     request_started = time.monotonic()
+    phase = "headers"
     try:
         host_rows = request.headers.getall("Host", [])
         assertion_rows = request.headers.getall("Cf-Access-Jwt-Assertion", [])
@@ -885,22 +901,27 @@ async def _accept_stage_ingress(request, config: ManualGatewayStageConfig,
         token = assertion_rows[0]
         if not isinstance(token, str) or not 1 <= len(token) <= 16_384:
             raise ValueError
+        phase = "jwt"
         principal = validate_access_jwt(token, policy=policy,
                                         deadline_monotonic=request_started + MAX_PROBE_SECONDS)
+        phase = "unix-peer"
         peer_pid, peer_uid, peer_gid = _request_peer_credentials(request, config)
         listener = os.lstat(config.ingress_socket)
         current_identity = (listener.st_dev, listener.st_ino)
         if (listener_identity is not None and current_identity != listener_identity):
             raise ValueError
+        phase = "root-inspector"
         from .manual_stage_inspector import verify_current_ingress
         observation = await asyncio.wait_for(asyncio.to_thread(
             verify_current_ingress, config, peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid),
             timeout=MAX_PROBE_SECONDS)
+        phase = "listener-join"
         if (observation.origin_socket_device != listener.st_dev
                 or observation.origin_socket_inode != listener.st_ino
                 or os.lstat(config.ingress_socket).st_ino != listener.st_ino
                 or os.lstat(config.ingress_socket).st_dev != listener.st_dev):
             raise ValueError
+        phase = "ingress-proof-join"
         accepted = _mint_accepted_ingress(config, request_started=request_started,
             token=token, principal=principal, peer_pid=peer_pid, peer_uid=peer_uid,
             peer_gid=peer_gid, root_observation=observation,
@@ -908,7 +929,8 @@ async def _accept_stage_ingress(request, config: ManualGatewayStageConfig,
         if time.monotonic() - request_started > MAX_PROBE_SECONDS:
             raise ValueError
         return accepted
-    except Exception:
+    except Exception as exc:
+        _log_stage_denial(phase, exc)
         raise ManualStageDenied("protected Access ingress is unavailable or stale") from None
 
 
@@ -936,7 +958,8 @@ async def _stage_heartbeat(request):
             session_id=body["session_id"], nonce=body["nonce"], accepted_ingress=accepted)
         return web.json_response({"session_id": body["session_id"], "nonce": next_nonce},
             headers={"Cache-Control": "no-store", "Pragma": "no-cache", "X-Content-Type-Options": "nosniff"})
-    except Exception:
+    except Exception as exc:
+        _log_stage_denial("heartbeat-handler", exc)
         raise ManualStageDenied("stage heartbeat was denied") from None
 
 
@@ -950,19 +973,26 @@ async def _stage_ingress_middleware(request, handler):
             raise ManualStageDenied("fixed stage listener identity is unavailable")
         accepted = await _accept_stage_ingress(request, launch.stage_sessions.config, launch.policy,
                                                listener_identity=listener_identity)
-    except Exception:
+    except Exception as exc:
+        _log_stage_denial("middleware-ingress", exc)
         return web.Response(status=403, text="Forbidden", headers={"Cache-Control": "no-store"})
     request["stage_ingress"] = accepted
     context_token = _CURRENT_INGRESS.set(accepted)
     try:
         response = await handler(request)
+    except Exception as exc:
+        _log_stage_denial("handler", exc)
+        raise
     finally:
         _CURRENT_INGRESS.reset(context_token)
+    if response.status >= 400:
+        _log_stage_denial("route-response", "HTTPException")
     if request.headers.get("Upgrade", "").casefold() != "websocket":
         try:
             _read_config_current(launch.stage_sessions.config)
             accepted.verify_current(launch.stage_sessions.config)
-        except Exception:
+        except Exception as exc:
+            _log_stage_denial("response-currentness", exc)
             return web.Response(status=403, text="Forbidden", headers={"Cache-Control": "no-store"})
     if request.path == "/session" and 200 <= response.status < 300:
         try:
@@ -976,7 +1006,8 @@ async def _stage_ingress_middleware(request, handler):
                 headers = {key: value for key, value in response.headers.items()
                            if key.casefold() not in {"content-length", "content-type"}}
                 response = web.json_response(body, status=response.status, headers=headers)
-        except Exception:
+        except Exception as exc:
+            _log_stage_denial("session-response", exc)
             return web.Response(status=403, text="Forbidden", headers={"Cache-Control": "no-store"})
     if (request.path == "/client/index.html" and 200 <= response.status < 300
             and "text/html" in response.headers.get("Content-Type", "")):
@@ -991,7 +1022,8 @@ async def _stage_ingress_middleware(request, handler):
                        if key.casefold() != "content-length"}
             response = web.Response(status=response.status, body=text.encode("utf-8"),
                 headers={**headers, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
-        except Exception:
+        except Exception as exc:
+            _log_stage_denial("index-injection", exc)
             return web.Response(status=403, text="Forbidden", headers={"Cache-Control": "no-store"})
     return response
 

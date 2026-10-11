@@ -266,6 +266,28 @@ class ManualStageGatewayTests(unittest.TestCase):
         with self.assertRaises(ManualStageDenied):
             asyncio.run(manual_stage._accept_stage_ingress(request, self.config, self.verifier.policy))
 
+    def test_ingress_diagnostic_excludes_token_identity_and_header_values(self):
+        import asyncio
+        from types import SimpleNamespace
+        from hermes_installer.remote import manual_stage
+        token = self.token()
+        class Headers(dict):
+            def getall(self, key, default=()):
+                value = self.get(key, default)
+                return value if isinstance(value, list) else [value] if value != default else []
+        request = SimpleNamespace(headers=Headers({
+            "Host": self.config.hostname,
+            "Cf-Access-Jwt-Assertion": token,
+            "Origin": "https://private-diagnostic.invalid",
+        }), path="/client/bootstrap.html", method="GET", transport=None)
+        with self.assertLogs("hermes_installer.remote.manual_stage", level="WARNING") as captured:
+            with self.assertRaises(ManualStageDenied):
+                asyncio.run(manual_stage._accept_stage_ingress(request, self.config, self.verifier.policy))
+        diagnostic = "\n".join(captured.output)
+        self.assertIn("phase=headers exception=ValueError", diagnostic)
+        for secret in (token, "owner@example.net", "private-diagnostic.invalid"):
+            self.assertNotIn(secret, diagnostic)
+
     def test_root_inspector_accepts_only_exact_gateway_uid_output_rule(self):
         rows = {"nftables": [
             {"metainfo": {"version": "1.0"}},
@@ -677,8 +699,11 @@ class ManualStageGatewayTests(unittest.TestCase):
         async def index(_request):
             return web.Response(text="<html><head><script src='/client/js/Client.js'></script></head><body></body></html>",
                                 content_type="text/html")
+        async def denied(_request):
+            return web.Response(status=403, text="private-handler-detail")
         app.router.add_get("/", redirect)
         app.router.add_get("/client/index.html", index)
+        app.router.add_get("/denied", denied)
 
         async def exercise():
             client = TestClient(TestServer(app))
@@ -696,6 +721,16 @@ class ManualStageGatewayTests(unittest.TestCase):
                 self.assertEqual(delivered.status, 200)
                 self.assertIn(_STAGE_HEARTBEAT_SCRIPT, body)
                 self.assertLess(body.index(_STAGE_HEARTBEAT_SCRIPT), body.index("/client/js/Client.js"))
+                with mock.patch("hermes_installer.remote.manual_stage._read_config_current"), \
+                        mock.patch("hermes_installer.remote.manual_stage._accept_stage_ingress",
+                                   new=mock.AsyncMock(return_value=ingress)), \
+                        self.assertLogs("hermes_installer.remote.manual_stage", level="WARNING") as captured:
+                    response = await client.get("/denied")
+                diagnostic = "\n".join(captured.output)
+                self.assertEqual(response.status, 403)
+                self.assertIn("phase=route-response exception=HTTPException", diagnostic)
+                self.assertNotIn("private-handler-detail", diagnostic)
+                self.assertNotIn("owner@example.net", diagnostic)
             finally:
                 await client.close()
         asyncio.run(exercise())
