@@ -43,6 +43,33 @@ def test_non_codex_routes_pass_through_without_observation(tmp_path: Path):
     assert seen == [{"model": "gpt-test"}]
 
 
+def test_selected_codex_route_passes_through_when_root_observer_is_not_started(
+        tmp_path: Path, monkeypatch):
+    import hermes_installer.remote.core_native_observer as observer
+
+    ctx = _PluginContext()
+    client = CoreNativeObservationClient(socket_path=tmp_path / "not-started.sock")
+    install_native_codex_process_observer(ctx, client=client)
+    monkeypatch.setattr(observer, "_codex_account_fingerprint", lambda _resolver: "a" * 64)
+    request = {
+        "model": "gpt-6-luna",
+        "tools": [{"name": "resources_delegate"}],
+        "input": [{"type": "message", "role": "user",
+                   "content": [{"type": "input_text", "text": "ordinary chat"}]}],
+    }
+    seen = []
+
+    result = ctx.middleware["llm_execution"][0](
+        provider="openai-codex", api_mode="codex_responses",
+        base_url="https://chatgpt.com/backend-api/codex", model="gpt-6-luna",
+        request=request, session_id="session-1", turn_id="turn-1",
+        api_request_id="request-1", next_call=lambda value: seen.append(value) or "completed",
+    )
+
+    assert result == "completed"
+    assert seen == [request]
+
+
 @pytest.mark.parametrize("retry_count", [None, -1, 1, True])
 def test_codex_attempt_rejects_unknown_or_retry_count_before_ipc(tmp_path: Path, retry_count):
     client = CoreNativeObservationClient(socket_path=tmp_path / "unused.sock")
