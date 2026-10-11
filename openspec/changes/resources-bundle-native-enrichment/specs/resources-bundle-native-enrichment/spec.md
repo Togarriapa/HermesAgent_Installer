@@ -448,7 +448,7 @@ The installer SHALL require actual fresh foreground input and per-input public d
 ## ADDED Requirements
 
 ### Requirement: Jarvis sole native user entry
-The installer SHALL provide Jarvis as the sole user-facing default profile while preserving all208 imported Resources source profiles as native usable identities through the protected isolated-home mapping in planning/jarvis-sole-user-profile-contract-v205.json.
+The installer SHALL provide Jarvis as the sole user-facing default profile while preserving all208 imported Resources source profiles as native usable identities through the protected isolated-home mapping in planning/jarvis-sole-user-profile-contract-v205.json. Primary persona and model/provider identity SHALL remain distinct.
 
 #### Scenario: Pinned backend lists primary profiles
 - **WHEN** the Jarvis Desktop backend lists its selected owned HERMES_HOME
@@ -457,6 +457,10 @@ The installer SHALL provide Jarvis as the sole user-facing default profile while
 #### Scenario: Existing unowned identity conflicts
 - **WHEN** migration encounters an unowned Jarvis identity or modified owned state
 - **THEN** it preserves data and secrets, refuses unsafe overwrite and provides exact recovery without deleting internal profiles
+
+#### Scenario: Primary assistant and provider identity
+- **WHEN** the primary assistant is asked its name or which model/provider powers it
+- **THEN** it identifies its user-facing persona as Jarvis and reports model/provider identity only from current runtime configuration, or says the information is unavailable
 
 ## ADDED Requirements
 

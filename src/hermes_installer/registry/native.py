@@ -91,6 +91,9 @@ _STANDALONE_HERMES = re.compile(r"(?<![A-Za-z0-9_-])Hermes(?![A-Za-z0-9_-])")
 PRIMARY_USER_SOURCE_PROFILE_ID = "hermes"
 PRIMARY_NATIVE_PROFILE_KEY = "default"
 PRIMARY_USER_DISPLAY_NAME = "Jarvis"
+_PRIMARY_USER_IDENTITY_INSTRUCTIONS = """## Assistant identity
+
+Your name and user-facing assistant identity are Jarvis. When asked your name or who you are as the user's assistant, identify yourself as Jarvis. You are the user's primary assistant persona running within the Hermes application; Jarvis is not the name of the underlying AI model or provider. When asked which model or provider powers you, report only the model/provider identified by the current runtime configuration. If that information is unavailable, say you do not know; do not infer it from the Hermes or Jarvis names, or claim a model/provider that the runtime has not identified."""
 
 
 def _jarvis_identity_text(value: Any) -> Any:
@@ -148,6 +151,8 @@ def _profile_files(item: ResolvedResource, source_path: str, source_document: Ma
     soul = (
         f"# {native_title}\n\n"
         + (f"{description.strip()}\n\n" if description.strip() else "")
+        + (_PRIMARY_USER_IDENTITY_INSTRUCTIONS + "\n\n"
+           if name == PRIMARY_USER_SOURCE_PROFILE_ID else "")
         + "\n\n".join(content_sections)
         + "\n\n## Complete registry profile declaration\n\n"
         + "```yaml\n"

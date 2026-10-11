@@ -71,6 +71,22 @@ class NativeRegistryTests(unittest.TestCase):
   soul=files["homes/profiles/ai-developer/SOUL.md"]
   self.assertIn(b"Complete registry profile declaration",soul)
   self.assertIn(b"instructions:",soul)
+  self.assertNotIn(b"Your name and user-facing assistant identity are Jarvis",soul)
+ def test_primary_materialization_explicitly_names_jarvis_without_claiming_provider(self):
+  result=self.registry.discover(["profiles/hermes@*"])
+  first=self.registry.materialize(result)["homes/profiles/hermes/SOUL.md"]
+  second=self.registry.materialize(result)["homes/profiles/hermes/SOUL.md"]
+  self.assertEqual(first,second)
+  text=first.decode("utf-8")
+  self.assertTrue(text.startswith("# Jarvis\n"))
+  self.assertIn("Your name and user-facing assistant identity are Jarvis.",text)
+  self.assertIn("identify yourself as Jarvis",text)
+  self.assertIn("report only the model/provider identified by the current runtime configuration",text)
+  self.assertIn("do not infer it from the Hermes or Jarvis names",text)
+  self.assertIn("hermes-response-contract",text)
+  self.assertIn("Complete registry profile declaration",text)
+  self.assertIn("Source: profiles/hermes.yaml; version: 1.2.0",text)
+  self.assertIn(self.registry.source.revision,text)
  def test_selected_profile_stages_only_hermes_visible_skill_closure(self):
   result=self.registry.discover(["profiles/ai-developer"])
   files=self.registry.materialize(result)

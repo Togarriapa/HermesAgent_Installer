@@ -146,7 +146,7 @@ Selected runtime/profile currentness v102: `plans/amendments/2026-10-10-selected
 
 - [ ] HI-T174.1 Event issuer/TTY/consent/observer/composer: actual initial public source producer before admission and strict current disclosure/replay/ancestry tests.
 
-- [ ] RB-T205.1: Implement Jarvis sole default user entry and protected isolated specialist map.
+- [ ] RB-T205.1: Implement Jarvis sole default user entry and protected isolated specialist map, including explicit primary SOUL.md persona instructions and truthful runtime-derived model/provider disclosure.
 - [ ] RB-T205.2: Preserve state/secrets with journaled idempotent owned migration and deny unowned conflicts.
 - [ ] VD-T205.3: Verify genuine backend/Desktop listing/routing/delegation and migration effects; acceptance separate.
 

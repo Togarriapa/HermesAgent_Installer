@@ -166,6 +166,8 @@ Initial public TTY source v174: `plans/amendments/2026-10-10-initial-public-tty-
 
 Jarvis sole user-facing profile v205: direct user requirement and audited supported default/display_name mapping; all208 source profiles preserved,207 protected isolated delegate homes, actual native/UI/default routing and ownership-safe migration required. Contract planning/jarvis-sole-user-profile-contract-v205.json; all acceptance open.
 
+Primary persona materialization clarification: generated primary SOUL.md must explicitly identify the assistant as Jarvis while preserving truthful, runtime-derived model/provider disclosure; specialist profile names and source identities remain unchanged.
+
 Jarvis selected task home custody v213: planning/jarvis-selected-task-home-custody-v213.json; current active held home→existing consumed task grant→fixed/hermes unprivileged mount. Root discovery not usability; all208/source/toolpolicy/namespace/private-public boundaries preserved. RB-T213.1/HI-T213.2/VD-T213.3 OPEN.
 
 RB-T213.1/HI-T213.2 also require actual publication-owned core crosswalk/member readback and post-setup restart/current active home registry; setup-only maps cannot complete Jarvis delegate scope.
