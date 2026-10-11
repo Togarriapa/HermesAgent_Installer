@@ -8,7 +8,11 @@ Source `12b9e83dd246052558ba64f4299b52ad63e2b5f1` is deployed at <https://jarvis
 
 The public route is protected by Cloudflare Access email OTP and the gateway's origin JWT, binding, and conversation-ownership checks. A fresh email-OTP login succeeded. The broader public denial, expiry, revocation, and long-lived-session matrices remain open.
 
+The development candidate `d8d15533a240732bc0bacac5a97ed165cc773cbc` is on the development line but is not the deployed public UI. It includes Overview/Integrations navigation work, renames the former Plugins/MCP menus, and targets 14 menus; it also changes mission prompt/consumer binding and cold-model readiness. At this snapshot, the public site still serves the 12b source with 13 menus. The joined Pi suite for the newer development candidate was running; no result was reported, so it is not recorded as passing.
+
 The Pi run for source `12b9e83dd246052558ba64f4299b52ad63e2b5f1` reported 199 tests passed, 17 warnings, no skips, in 15.27 seconds; generated JavaScript syntax passed. Strict OpenSpec, current-plan, and status/apply checks passed, with eight broad acceptance groups still open. Pi test logs are retained under `/var/tmp/hermes-jarvis-core-checks-20261011/`. The prior `8cfbee0a4` test/deployment logs remain under `/var/tmp/hermes-jarvis-core-checks-20261011/` and `/var/tmp/hermes-jarvis-deploy-8cfbee0a4/`, respectively; those are historical paths, not evidence of the 12b deployment run.
+
+The later exact native Resources refresh produced receipt `15493e256…`. Root-helper/manual-skill checks reported 23 passed in 11.61 seconds. The native readback verified all 396 bundled skill digests and the 449-skill total (53 stock plus 396 bundled), the owned member tree, unchanged lifecycle state, and the preserved core PID. This resolves the earlier pending receipt-refresh readback; it does not qualify all imported operations or resource obligations. The compiled primary content differs from the raw SOUL file, and the imported primary logic has not been proven active. Managed-block implementation remains in progress.
 
 ## Observed public UI and owner use
 
@@ -25,11 +29,11 @@ After the fresh email-OTP login, the interface displayed Chat, Sessions, Overvie
 
 Private-core chat identity/history and one owned-unit restart/resume were previously observed on candidate `8753c8353743925328030f1e72fddc4670a6d175`; see [`jarvis-core-pi.json`](../../evidence/current/jarvis-core-pi.json). This is separate from the deployed public source and does not prove durable public model selection.
 
-Private operator screenshots from this UI observation are retained outside the repository at `/private/tmp/jarvis-live-voice-settings-20261011.png`, `/private/tmp/jarvis-live-activity-charts-20261011.png`, and `/private/tmp/jarvis-live-model-controls-20261011.png`.
+Private operator screenshots from this UI observation are retained outside the repository at `/private/tmp/jarvis-live-voice-settings-20261011.png`, `/private/tmp/jarvis-live-activity-charts-20261011.png`, `/private/tmp/jarvis-live-model-controls-20261011.png`, and `/private/tmp/jarvis-live-model-chat-20261011.png`.
 
 ## Remaining acceptance
 
-The selected model was accepted for a request, but no inference result, durable default, or cold resume was established. The Resources refresh remains pending an independent native-readback digest match; the offline bundle is portable, while completed native receipt refresh and operational use remain separate unfinished work. The plan tracks 219 requirements and 62 capability/component mappings; counts, menus, and status output do not complete those obligations.
+The selected model was accepted for a request and a subsequent chat completed, but the response does not establish model attribution, a durable default, or cold resume. The native receipt refresh succeeded; the offline bundle is portable, while activation of the imported primary logic, managed-block work, and operational use remain separate unfinished work. The plan tracks 219 requirements and 62 capability/component mappings; counts, menus, and status output do not complete those obligations.
 
 Phone access/input and practical family usability are unqualified. The current UI's HTML textarea has not been directly tested on a phone; no failure of its soft keyboard is claimed. Family concurrency, mission execution, Bots/channel configuration, browser-use controls, native learning effects, all 219 requirements, all 62 mappings, full capability parity, fresh installation, reboot/recovery, and the public denial/expiry/revocation matrix remain open. Home Assistant is deferred.
 
