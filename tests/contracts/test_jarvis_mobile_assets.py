@@ -62,8 +62,9 @@ def test_icon_is_a_small_scriptless_local_vector_with_no_external_references():
     lowered = icon.lower()
     assert content_type == "image/svg+xml"
     assert b"<svg " in lowered and b'viewbox="0 0 512 512"' in lowered
+    assert b'xmlns="http://www.w3.org/2000/svg"' in lowered
     assert b"<title" in lowered and b"jarvis" in lowered
-    for forbidden in (b"<script", b"<foreignobject", b"javascript:", b"xlink:href", b"http://", b"https://"):
+    for forbidden in (b"<script", b"<foreignobject", b"javascript:", b"href=", b"src=", b"url("):
         assert forbidden not in lowered
 
 
@@ -71,8 +72,8 @@ def test_settings_fragment_keeps_install_help_adjacent_to_voice_and_has_no_top_l
     assert 'data-mobile-settings="jarvis"' in SETTINGS_FRAGMENT_HTML
     assert "Voice preferences" in SETTINGS_FRAGMENT_HTML
     assert "if one is offered" in SETTINGS_FRAGMENT_HTML
-    assert "depends on the browser" in SETTINGS_FRAGMENT_HTML
     assert "not available offline" in SETTINGS_FRAGMENT_HTML
+    assert "Browser speech recognition may use a platform service outside Jarvis." in SETTINGS_FRAGMENT_HTML
     assert "Android assistant-role access and locked-screen wake are separate features" in SETTINGS_FRAGMENT_HTML
     assert 'id="speech-consent"' not in SETTINGS_FRAGMENT_HTML
     assert 'id="speech-output"' not in SETTINGS_FRAGMENT_HTML
