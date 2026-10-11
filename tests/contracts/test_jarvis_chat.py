@@ -45,6 +45,8 @@ def test_history_failure_logs_only_fixed_phase_and_exception_class(tmp_path, cap
 def test_message_reload_resumes_stored_session_even_when_core_generation_is_unchanged(tmp_path):
     store = JarvisChatStore(tmp_path / "chat.sqlite3")
     conversation = new_conversation(store, "subject-a")
+    stored = store.get_conversation("subject-a", conversation["id"])
+    stored_session_key = stored["session_key"]
     calls = []
 
     class Backend:
@@ -63,9 +65,9 @@ def test_message_reload_resumes_stored_session_even_when_core_generation_is_unch
     assert response.status == 200
     assert '"content": "answer"' in response.text
     updated = store.get_conversation("subject-a", conversation["id"])
-    assert calls == [conversation["session_key"]]
+    assert calls == [stored_session_key]
     assert updated["backend_id"] == "fresh-runtime-session"
-    assert updated["session_key"] == conversation["session_key"]
+    assert updated["session_key"] == stored_session_key
     assert updated["core_generation"] == "core-generation-a"
 
 
