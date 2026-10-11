@@ -42,6 +42,7 @@ _MOUNT = r'''function mount(container, api, state) {
   let active = true;
   let requestSerial = 0;
   let selected = "bots";
+  let unresolvedPauseRevision = null;
   const pauseApprovals = new Map();
   const click = async (event) => {
     const sectionButton = event.target.closest("[data-bots-section]");
@@ -51,13 +52,14 @@ _MOUNT = r'''function mount(container, api, state) {
     if (pauseButton) {
       const id = pauseButton.dataset.schedulePause;
       const approval = pauseApprovals.get(id);
-      if (!approval) return;
+      if (!approval || unresolvedPauseRevision === approval.revision) return;
       pauseButton.disabled = true;
       container.querySelector("[data-bots-status]").textContent = "Submitting the one-use pause approval…";
       const keyBytes = new Uint8Array(24);
       crypto.getRandomValues(keyBytes);
       const idempotencyKey = Array.from(keyBytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
       pauseApprovals.delete(id);
+      unresolvedPauseRevision = approval.revision;
       let result = { status: "pending" };
       try {
         result = await api.post("/chat/api/schedules/" + encodeURIComponent(id) + "/pause", {
@@ -69,6 +71,7 @@ _MOUNT = r'''function mount(container, api, state) {
         result = { status: "pending" };
       }
       if (!active) return;
+      if (result.status === "paused") unresolvedPauseRevision = null;
       await load();
       if (!active) return;
       const status = container.querySelector("[data-bots-status]");
@@ -105,6 +108,8 @@ _MOUNT = r'''function mount(container, api, state) {
     if (selected === "bots") items = Array.isArray(snapshot.profiles) ? snapshot.profiles : [];
     if (selected === "channels") items = Array.isArray(snapshot.channels) ? snapshot.channels : [];
     if (selected === "schedules") items = Array.isArray(snapshot.schedules) ? snapshot.schedules : [];
+    if (selected === "schedules" && unresolvedPauseRevision && items.length
+        && items[0].revision !== unresolvedPauseRevision) unresolvedPauseRevision = null;
     if (!items.length) rows.appendChild(node("p", selected === "channels"
       ? "Channel state is unavailable from the reviewed native status API."
       : "No current native status rows were returned.", "bots-empty"));
@@ -127,7 +132,8 @@ _MOUNT = r'''function mount(container, api, state) {
         addField(card, "Timezone", item.timezone);
         addField(card, "Next run", item.next_run_at);
         addField(card, "Last state", item.last_state);
-        if (item.enabled === true && item.opaque_id && item.revision && item.pause_approval_nonce) {
+        if (item.enabled === true && item.opaque_id && item.revision && item.pause_approval_nonce
+            && item.revision !== unresolvedPauseRevision) {
           pauseApprovals.set(item.opaque_id, { revision: item.revision, nonce: item.pause_approval_nonce });
           const pause = node("button", "Pause schedule", "bots-refresh");
           pause.type = "button";
@@ -139,6 +145,10 @@ _MOUNT = r'''function mount(container, api, state) {
     });
     status.textContent = "Observed " + (snapshot.observed_at || "at unknown time")
       + " · core generation " + (snapshot.core_generation || "unknown");
+    if (selected === "schedules" && unresolvedPauseRevision
+        && items.some((item) => item.revision === unresolvedPauseRevision)) {
+      status.textContent = "Pause result is unconfirmed. Current status is shown below; no pause action from this unchanged snapshot can be submitted. Refresh status to resolve it.";
+    }
   };
   const load = async () => {
     if (!active) return;
@@ -153,7 +163,9 @@ _MOUNT = r'''function mount(container, api, state) {
       if (active && serial === requestSerial) render(snapshot);
     } catch (_) {
       if (active && serial === requestSerial) {
-        status.textContent = "Status could not be read. Try refreshing after core connectivity returns.";
+        status.textContent = unresolvedPauseRevision
+          ? "Pause result is unconfirmed and current status could not be read. Refresh before trying another action."
+          : "Status could not be read. Try refreshing after core connectivity returns.";
         container.querySelector("[data-bots-rows]").replaceChildren();
       }
     }
