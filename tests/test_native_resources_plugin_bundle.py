@@ -19,9 +19,12 @@ def test_official_register_entrypoint_installs_hooks_before_observer_startup(mon
         ("observer", ctx, runtime)) or ("observer-hook",)
     monkeypatch.setitem(sys.modules, bridge.__name__, bridge)
     effects = importlib.import_module("hermes_installer.remote.jarvis_final_effects")
+    projects = importlib.import_module("hermes_installer.remote.jarvis_project_context_engine")
     invocations = importlib.import_module("hermes_installer.native_invocations")
     monkeypatch.setattr(effects, "install_jarvis_final_effect_middleware",
                         lambda ctx, client: calls.append(("gate", ctx, client)) or ("effect-gate",))
+    monkeypatch.setattr(projects, "install_current_project_context_middleware",
+                        lambda ctx: calls.append(("projects", ctx)) or "projects-hook")
     monkeypatch.setattr(invocations, "install_pinned_tool_executor_dispatch_bridge",
                         lambda: calls.append(("pin",)) or "installed")
     class Context:
@@ -29,11 +32,11 @@ def test_official_register_entrypoint_installs_hooks_before_observer_startup(mon
 
     ctx = Context()
     registrations = plugin.register(ctx)
-    assert [call[0] for call in calls] == ["gate", "pin", "observer"]
+    assert [call[0] for call in calls] == ["gate", "projects", "pin", "observer"]
     assert calls[0][1] is ctx
     assert type(calls[0][2]) is Client
     assert calls[-1] == ("observer", ctx, None)
-    assert registrations == ("observer-hook", "effect-gate")
+    assert registrations == ("observer-hook", "effect-gate", "projects-hook")
 
 
 def test_executor_pin_failure_keeps_effect_gate_and_observer_registered(monkeypatch):
@@ -49,9 +52,12 @@ def test_executor_pin_failure_keeps_effect_gate_and_observer_registered(monkeypa
         ("observer", ctx, runtime)) or ("observer-hook",)
     monkeypatch.setitem(sys.modules, bridge.__name__, bridge)
     effects = importlib.import_module("hermes_installer.remote.jarvis_final_effects")
+    projects = importlib.import_module("hermes_installer.remote.jarvis_project_context_engine")
     invocations = importlib.import_module("hermes_installer.native_invocations")
     monkeypatch.setattr(effects, "install_jarvis_final_effect_middleware",
                         lambda ctx, client: calls.append(("gate", ctx, client)) or ("effect-gate",))
+    monkeypatch.setattr(projects, "install_current_project_context_middleware",
+                        lambda ctx: calls.append(("projects", ctx)) or "projects-hook")
 
     def stale_pin():
         calls.append(("pin-failed",))
@@ -64,10 +70,10 @@ def test_executor_pin_failure_keeps_effect_gate_and_observer_registered(monkeypa
 
     ctx = Context()
     registrations = plugin.register(ctx)
-    assert [call[0] for call in calls] == ["gate", "pin-failed", "observer"]
+    assert [call[0] for call in calls] == ["gate", "projects", "pin-failed", "observer"]
     assert calls[0][1] is ctx
     assert type(calls[0][2]) is Client
-    assert registrations == ("observer-hook", "effect-gate")
+    assert registrations == ("observer-hook", "effect-gate", "projects-hook")
 
 
 def test_official_register_entrypoint_ignores_another_plugin_scope(monkeypatch):

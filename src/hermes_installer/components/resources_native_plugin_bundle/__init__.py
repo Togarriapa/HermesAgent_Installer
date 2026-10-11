@@ -19,6 +19,9 @@ def register(ctx):
         register_native_resources_observer,
     )
     from hermes_installer.remote.jarvis_final_effects import install_jarvis_final_effect_middleware
+    from hermes_installer.remote.jarvis_project_context_engine import (
+        install_current_project_context_middleware,
+    )
     from hermes_installer.native_invocations import install_pinned_tool_executor_dispatch_bridge
 
     client = CoreNativeObservationClient()
@@ -54,6 +57,7 @@ def register(ctx):
             obsidian_registrations = ObsidianNativeTools(obsidian_store).register(ctx)
         except Exception:
             obsidian_registrations = ()
+    project_context_registration = install_current_project_context_middleware(ctx)
     try:
         install_pinned_tool_executor_dispatch_bridge()
     except Exception:
@@ -61,4 +65,5 @@ def register(ctx):
         # branch prevents downstream native dispatch.
         pass
     observer_registrations = register_native_resources_observer(ctx, None)
-    return (*observer_registrations, *effect_registrations, *obsidian_registrations)
+    return (*observer_registrations, *effect_registrations,
+            *obsidian_registrations, project_context_registration)

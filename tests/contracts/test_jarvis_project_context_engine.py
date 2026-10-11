@@ -4,6 +4,7 @@ from hermes_installer.remote.core_native_observer import CoreNativeObservationCl
 from hermes_installer.remote.jarvis_project_context_engine import (
     CurrentProjectContextProvider,
     ProjectContextEngine,
+    install_current_project_context_middleware,
 )
 
 
@@ -79,3 +80,34 @@ def test_project_context_does_not_inject_without_current_user_or_system_message(
     messages = [{"role": "user", "content": "no system prompt"}]
     assert engine.select_context(messages, incoming_message={"role": "user", "content": "text"}) is None
     assert calls == []
+
+
+def test_official_request_middleware_adds_root_context_to_provider_instructions(monkeypatch):
+    import hashlib
+
+    client = CoreNativeObservationClient(socket_path=Path("/unused/observer.sock"))
+    calls = []
+    monkeypatch.setattr(client, "current_project_context", lambda **kw: calls.append(kw) or
+                        root_context(kw["session_id"], kw["prompt_sha256"],
+                                     "Owner project context; Obsidian excerpt"))
+
+    class Context:
+        def register_middleware(self, kind, callback):
+            assert kind == "llm_request"
+            self.callback = callback
+            return "registered"
+
+    ctx = Context()
+    assert install_current_project_context_middleware(
+        ctx, CurrentProjectContextProvider(client)) == "registered"
+    original = {"model": "codex", "instructions": "base instructions", "input": [
+        {"type": "message", "role": "user", "content": [
+            {"type": "input_text", "text": "exact accepted user text"}]},
+    ]}
+    changed = ctx.callback(request=original, session_id="core-session")
+    assert "Owner project context" in changed["request"]["instructions"]
+    assert changed["request"]["input"] == original["input"]
+    assert original["input"] == [{"type": "message", "role": "user", "content": [
+        {"type": "input_text", "text": "exact accepted user text"}]}]
+    assert calls == [{"session_id": "core-session",
+                      "prompt_sha256": hashlib.sha256(b"exact accepted user text").hexdigest()}]

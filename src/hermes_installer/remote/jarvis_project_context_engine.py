@@ -172,3 +172,59 @@ class ProjectContextEngine:
             base + "\n\n" + marker + "\n" + snapshot.text
             + "\n[/Jarvis Projects context]")
         return result
+
+
+def install_current_project_context_middleware(ctx: Any, *,
+                                              provider: CurrentProjectContextProvider | None = None) -> Any:
+    """Attach owner context at Hermes' supported per-provider-request seam.
+
+    Hermes constructs the selected ContextEngine inside each agent after plugin
+    discovery. Its official plugin ContextEngine registration is a replacement
+    selected only when ``context.engine`` names it, so it cannot transparently
+    decorate the built-in compressor or an existing user-selected engine. The
+    official ``llm_request`` middleware runs after that engine's request selection
+    on every attempt/retry. It preserves the configured engine and appends to the
+    Codex Responses ``instructions`` field only when root proves the exact session
+    and final user prompt belong to an active Jarvis owner turn.
+    """
+    register = getattr(ctx, "register_middleware", None)
+    if not callable(register):
+        raise RuntimeError("official Hermes LLM request middleware is unavailable")
+    source = provider or CurrentProjectContextProvider()
+
+    def add_project_context(*, request: Any, session_id: str = "", **_event: Any) -> Any:
+        if type(request) is not dict or not isinstance(session_id, str):
+            return None
+        # The official Codex Responses builder emits one exact ``input_text`` user
+        # message. Other transports have different role/content rules and are left
+        # byte-for-byte unchanged until an equivalent official adapter is reviewed.
+        items = request.get("input")
+        if not isinstance(items, list):
+            return None
+        try:
+            from .core_native_observer import _native_prompt_sha256
+            prompt_sha256 = _native_prompt_sha256(request)
+            snapshot = source.read(session_id=session_id, prompt_sha256=prompt_sha256)
+        except Exception:
+            # Context is optional for ordinary/non-Jarvis requests. The root API
+            # returns data only for a current owner-turn join, and errors fail closed.
+            return None
+        if snapshot is None or not snapshot.text:
+            return None
+        if not snapshot.is_current_shape(session_id=session_id, prompt_sha256=prompt_sha256):
+            return None
+        marker = f"[Jarvis Projects context {snapshot.context_sha256}]"
+        updated = dict(request)
+        instructions = request.get("instructions")
+        if not isinstance(instructions, str):
+            return None
+        if marker in instructions:
+            return None
+        updated["instructions"] = (
+            instructions + "\n\n" + marker + "\n" + snapshot.text
+            + "\n[/Jarvis Projects context]"
+        )
+        return {"request": updated, "source": "jarvis_projects",
+                "reason": "root-verified owner-turn project context"}
+
+    return register("llm_request", add_project_context)
