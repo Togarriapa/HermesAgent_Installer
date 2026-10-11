@@ -23,3 +23,8 @@ Policy reads establish current explicit policy membership, not token-revocation 
 Luna consumes additive RP mapping alongside original211 and RB mapping. Six unchecked tasks plus AC17, no frozen files or shared runtime implementation touched. CI strict spec/frozen checks, meaningful runtime fixtures and separately authorized target probes precede completion/archive. Preserve complete owned Resources bundle offline update/repair path.
 
 Remote dual-principal issuer/closure proof v3: plans/amendments/2026-10-09-remote-dual-principal-issuer-closure-proof-v3.md binds activeenrollment OTP/principal/gateway records, dedicatedroot perframeissuer withoutcontextrelabel, isolatedverifierclient, actualtoken/origin receipts and loadedclosure proofs. ExistingHI08/09/11/13/RP/RTtasksremainopen.
+
+
+## v267 functional security mapping clarification
+
+RP01..RP06 are retained core/Jarvis authorization and credential-custody obligations, not Desktop deployment. Their active checkboxes remain OPEN; historical native presentation text does not remove policy-read security scope. Actual unavailable read credentials remain pending without management-token fallback. The approved manual-stage Unix/browser witness path is distinct and cannot be reported as policy-API verification.

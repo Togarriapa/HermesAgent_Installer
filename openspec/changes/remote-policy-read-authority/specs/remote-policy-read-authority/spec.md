@@ -70,3 +70,8 @@ The installer SHALL bind verified remote native principal and actual gateway ker
 #### Scenario: Gateway context relabel or metadata-only origin activation
 - **WHEN** caller claims native principal from gateway context or activation lacks actual current root readiness/token/mount proof
 - **THEN** deny before bytes/activation, preserve configured checkpoint and exact native/account resume requirements.
+
+
+### v267 retained core interpretation
+
+The RP01..RP06 functional security requirements apply to the active core/Jarvis product. References to Desktop custody mean the replaced core runtime/UI must likewise receive no setup/read secret. No Desktop installation or Xpra dependency is required. The separate approved manual-stage witness lane does not claim policy-API membership inspection, and unavailable policy-read authority remains honestly pending.
