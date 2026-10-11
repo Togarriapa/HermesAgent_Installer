@@ -11,6 +11,9 @@ from types import MappingProxyType
 
 from .jarvis_feature_contract import validate_feature_assets
 from .jarvis_feature_registry import FEATURE_ASSETS
+from .jarvis_capability_details_assets import CSS as _CAPABILITY_DETAILS_CSS
+from .jarvis_capability_details_assets import MOUNT_JS as _CAPABILITY_DETAILS_MOUNT_JS
+from .jarvis_capability_details_assets import VIEW_HTML as _CAPABILITY_DETAILS_HTML
 
 
 _HTML = '''<!doctype html>
@@ -134,6 +137,7 @@ _HTML = '''<!doctype html>
         <p id="capability-source" class="muted capability-source"></p>
         <div id="capability-discovery" class="readiness-banner" role="status"></div>
         <div id="capability-list" class="capability-list" aria-live="polite"></div>
+        <div id="capability-details-root">__JARVIS_CAPABILITY_DETAILS__</div>
       </section>
       <section class="data-main" id="settings-view" aria-label="Settings" data-view-panel="settings" hidden>
         <div class="page-heading"><span class="eyebrow">CONFIGURATION</span><h1>Settings</h1><p>Verified configuration labels and read-only integration status.</p></div>
@@ -294,11 +298,39 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   let uiPreferences = {...preferenceDefaults};
   let preferenceStorageAvailable = true;
   const API = "/chat/api";
+  const mountCapabilityDetails = (__JARVIS_CAPABILITY_DETAILS_MOUNT__);
   const FEATURE_ASSETS = __JARVIS_FEATURE_ASSETS__;
   const featuresById = new Map(FEATURE_ASSETS.map((feature) => [feature.id, feature]));
   let mountedFeature = null;
   let mountedFeatureCleanup = null;
+  let capabilityDetailsCleanup = null;
   let currentView = "chat";
+
+  function mountCapabilitiesDetails() {
+    if (capabilityDetailsCleanup) return;
+    const root = byId("capability-details-root");
+    if (!root) return;
+    const allowed = new Set([
+      "/chat/api/capabilities",
+      "/chat/api/native-capabilities",
+      "/chat/api/resources/learning",
+    ]);
+    const reader = Object.freeze({get(path) {
+      if (!allowed.has(path)) return Promise.reject(new Error("Capability details route is not allowed."));
+      return request(path, {method:"GET"});
+    }});
+    try { capabilityDetailsCleanup = mountCapabilityDetails(root, reader); }
+    catch (_) {
+      const status = root.querySelector("[data-capability-status]");
+      if (status) status.textContent = "Capability details could not be opened.";
+    }
+  }
+  function unmountCapabilitiesDetails() {
+    if (typeof capabilityDetailsCleanup === "function") {
+      try { capabilityDetailsCleanup(); } catch (_) { /* keep navigation available */ }
+    }
+    capabilityDetailsCleanup = null;
+  }
 
   function featurePathMatches(template, path) {
     if (typeof path !== "string" || path.includes("?") || path.includes("#")) return false;
@@ -1098,6 +1130,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     const selected = ["chat", "overview", "capabilities", "settings"].includes(view) || featuresById.has(view) ? view : "chat";
     const selectedNavigation = navSelection === "sessions" && selected === "chat" ? "sessions" : selected;
     if (selected !== currentView && mountedFeature) unmountFeature();
+    if (selected !== currentView && currentView === "capabilities") unmountCapabilitiesDetails();
     currentView = selected;
     if (selectedNavigation !== "sessions" && window.matchMedia("(max-width: 760px)").matches && ui.panel.dataset.open === "true") setPanel(false);
     for (const panel of document.querySelectorAll("[data-view-panel]")) panel.hidden = panel.dataset.viewPanel !== selected;
@@ -1145,6 +1178,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
         byId("capability-map").replaceChildren();
         byId("capability-list").replaceChildren();
       }
+      if (currentView === "capabilities") mountCapabilitiesDetails();
     } else if (selected === "settings") {
       try { await loadSettings(); } catch (error) { byId("settings-list").replaceChildren(); const row = document.createElement("div"); const term = document.createElement("dt"); const value = document.createElement("dd"); term.textContent = "Status"; value.textContent = error.message; row.append(term, value); byId("settings-list").append(row); }
     }
@@ -1271,15 +1305,22 @@ def _compose_feature_assets() -> None:
     html = _HTML.decode("utf-8")
     html = html.replace("<!-- JARVIS_FEATURE_NAV -->", "".join(nav))
     html = html.replace("<!-- JARVIS_FEATURE_PANELS -->", "".join(panels))
+    html = html.replace("__JARVIS_CAPABILITY_DETAILS__", _CAPABILITY_DETAILS_HTML)
     if "JARVIS_FEATURE_" in html:
         raise ValueError("Jarvis feature asset template markers were not fully replaced")
     script = _JS.decode("utf-8").replace(
         "__JARVIS_FEATURE_ASSETS__", "[" + ",".join(javascript) + "]"
     )
+    script = script.replace("__JARVIS_CAPABILITY_DETAILS_MOUNT__", _CAPABILITY_DETAILS_MOUNT_JS)
     if "__JARVIS_FEATURE_ASSETS__" in script:
         raise ValueError("Jarvis feature registry marker was not fully replaced")
+    if "__JARVIS_CAPABILITY_DETAILS_MOUNT__" in script:
+        raise ValueError("Jarvis capability detail marker was not fully replaced")
+    if "__JARVIS_CAPABILITY_DETAILS__" in html:
+        raise ValueError("Jarvis capability detail markup was not composed")
     _HTML = html.encode("utf-8")
     _CSS += ("\n".encode("utf-8") + b"\n".join(css_fragments)) if css_fragments else b""
+    _CSS += ("\n" + _CAPABILITY_DETAILS_CSS).encode("utf-8")
     _JS = script.encode("utf-8")
 
 

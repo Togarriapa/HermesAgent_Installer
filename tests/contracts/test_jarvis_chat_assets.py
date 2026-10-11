@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 import tempfile
 import unittest
@@ -80,6 +81,37 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn("counts.set(item.kind", client)
         self.assertIn("fill.style.width =", client)
         self.assertIn('button.setAttribute("aria-pressed"', client)
+
+    def test_capability_detail_workspace_is_composed_inside_existing_capabilities_panel(self):
+        _content_type, page = reviewed_chat_asset("/chat")
+        markup = page.decode("utf-8")
+        panel = markup.split('id="capabilities-view"', 1)[1].split('id="settings-view"', 1)[0]
+        self.assertIn('id="capability-details-root"', panel)
+        self.assertIn('id="capability-workspace-title"', panel)
+        self.assertIn('id="capability-learning-title"', panel)
+        self.assertNotIn("__JARVIS_CAPABILITY_DETAILS__", markup)
+        self.assertEqual(markup.count('data-view="capabilities"'), 1)
+        self.assertNotIn('data-view="capability-details"', markup)
+
+        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
+        client = script.decode("utf-8")
+        self.assertIn("mountCapabilitiesDetails();", client)
+        self.assertIn("if (currentView === \"capabilities\") mountCapabilitiesDetails();", client)
+        self.assertIn("mountCapabilityDetails(root, reader)", client)
+        self.assertIn('request(path, {method:"GET"})', client)
+        allowed = client.split("const allowed = new Set([", 1)[1].split("]);", 1)[0]
+        self.assertEqual(set(re.findall(r'"(/chat/api/[^\"]+)"', allowed)), {
+            "/chat/api/capabilities",
+            "/chat/api/native-capabilities",
+            "/chat/api/resources/learning",
+        })
+        self.assertIn("unmountCapabilitiesDetails();", client)
+        self.assertIn("Review remains in /skills pending.", client)
+
+        _content_type, stylesheet = reviewed_chat_asset("/chat/assets/app.css")
+        style = stylesheet.decode("utf-8")
+        self.assertIn(".capability-workspace-layout", style)
+        self.assertIn(".capability-learning-diff", style)
 
     def test_sessions_are_searchable_owned_rows_and_read_aloud_can_always_be_stopped(self):
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
