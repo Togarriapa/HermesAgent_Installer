@@ -1866,3 +1866,10 @@ The system SHALL restrict model changes to a current owner conversation, the rev
 #### Scenario: Busy or uncertain selection
 - **WHEN** the session is busy, model availability is unproved or routing/currentness fails
 - **THEN** selection denies or stays explicitly pending without fallback or repeated mutation.
+
+### Requirement: Useful parallel dashboard increments
+The system SHALL deliver voice/settings, authentic activity statistics and capability/learning detail as independent reviewed feature fragments using current finite interfaces. Displayed readiness and measurements SHALL reflect actual available evidence rather than fabricated activity or permissions.
+
+#### Scenario: Missing source or browser feature
+- **WHEN** voice, usage or a management adapter is unavailable
+- **THEN** text and read-only views remain usable and the missing capability is stated explicitly.

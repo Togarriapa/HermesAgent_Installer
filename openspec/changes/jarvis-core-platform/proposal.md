@@ -53,3 +53,5 @@ The first specialization deliberately uses supported native parent-tool inherita
 Align the verified resources_delegate {goal} schema and configured-maximum inventory terminology. Remaining Models, Logs/browser, integrations, statistics, voice/Android and full Resources capabilities are prioritized as bounded owner packages within the existing eight groups, without inferring live acceptance.
 
 Provide a useful first Models effect through the native session-only selector and fixed source-known Codex IDs, preserving owner conversation and subscription route boundaries. Persistent global configuration and dynamic catalogs remain separate.
+
+Prioritize three independent visible increments on existing backend support: browser voice/personal settings, truthful activity/statistics and capability/native-learning detail. These improve useful daily interaction without introducing another architecture or claiming full parity.
