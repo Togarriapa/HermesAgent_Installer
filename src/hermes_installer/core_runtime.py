@@ -1455,6 +1455,7 @@ def migrate_owned_core_to_adapter_path():
          "adapter_source":str(ADAPTER_SOURCE),"core_source_generation":current,
          "plugin_selection_sha256":selection_backup.migrated_selection_sha256}
  _replace_journal(marker)
+ marker_raw=(json.dumps(marker,sort_keys=True)+"\n").encode()
  # The bridge transaction stages immutable code and uses Hermes' official enable
  # API. It must succeed before this service's journaled files or process change.
  try:
@@ -1494,7 +1495,7 @@ def migrate_owned_core_to_adapter_path():
  # Activation runs a separate fixed PM interpreter. Rejoin the complete old
  # unit, launcher, credential, journal and listener before changing any of them.
  rechecked,raw_rechecked,files_rechecked=_read_legacy_owned_runtime()
- if (raw_rechecked!=raw_journal or rechecked!=record
+ if (raw_rechecked!=marker_raw or rechecked!=marker
      or files_rechecked!=files):
   raise CoreRuntimeError("journal-owned core changed during native bridge activation")
  marker={**marker,"adapter_generation":adapter_generation,
