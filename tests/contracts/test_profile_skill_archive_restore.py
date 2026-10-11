@@ -21,6 +21,8 @@ def _file_read(path: Path, skill_id: str):
         raw.decode("utf-8"), hashlib.sha256(raw).hexdigest(), adapter._signature(info))
 
 
+@pytest.mark.skipif(os.geteuid() != 0,
+    reason="owner-skill archive journals and writes require the production root role")
 def test_owner_skill_edit_cas_idempotency_archive_and_exact_restore(tmp_path, monkeypatch):
     skill_id = "owner-tool"
     body = b"---\nname: owner-tool\n\nOriginal owner skill.\n"
@@ -105,6 +107,8 @@ def test_owner_skill_edit_cas_idempotency_archive_and_exact_restore(tmp_path, mo
     assert replayed_restore.state == "restored"
 
 
+@pytest.mark.skipif(os.geteuid() != 0,
+    reason="owner-skill restore custody checks require the production root role")
 def test_owner_skill_archive_rejects_symlinked_restore_leaf_without_following(tmp_path, monkeypatch):
     skill_id = "owner-tool"
     path = tmp_path / "skills" / skill_id
