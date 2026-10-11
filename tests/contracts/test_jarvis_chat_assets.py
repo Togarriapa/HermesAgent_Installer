@@ -38,7 +38,8 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertEqual(source.count('data-view-panel="overview"'), 1)
         self.assertIn('id="overview-core-heading"', source)
         self.assertIn('data-core-status', source)
-        self.assertIn('data-status-bars', source)
+        for metric in ("total", "completed", "active", "failed"):
+            self.assertIn(f'data-metric="{metric}"', source)
         self.assertIn('data-duration-bars', source)
         self.assertIn('id="capability-list"', source)
         self.assertIn('id="capability-search" type="search"', source)
@@ -70,11 +71,12 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn("unmountFeature();", client)
         navigation = client.split("async function showView(view, navSelection = view) {", 1)[1].split("if (selected !== \"chat\")", 1)[0]
         self.assertIn('button.setAttribute("aria-current", "page")', navigation)
-        self.assertIn('primaryNav.scrollTo({ left: Math.max(0, left), behavior })', navigation)
-        self.assertIn('shouldReduceMotion()', navigation)
+        self.assertIn('group.dataset.current = String(active)', navigation)
+        self.assertIn('summary.setAttribute("aria-current", "location")', navigation)
         self.assertIn('window.matchMedia("(prefers-reduced-motion: reduce)")', client)
         self.assertIn('button.dataset.openSessions === "true" ? "sessions" : button.dataset.view', navigation)
         self.assertIn('showView("chat", "sessions")', client)
+        self.assertIn('showView("overview");', client)
         _content_type, stylesheet = reviewed_chat_asset("/chat/assets/app.css")
         self.assertIn(".nav-item{min-height:44px}", stylesheet.decode("utf-8"))
         self.assertIn("Runtime readiness pending", client)
@@ -87,7 +89,11 @@ class JarvisChatAssetTests(unittest.TestCase):
         features_tag = '<script defer src="/chat/assets/features.js"></script>'
         app_tag = '<script defer src="/chat/assets/app.js"></script>'
         self.assertLess(markup.index(features_tag), markup.index(app_tag))
-        self.assertEqual(markup.count('<button type="button" class="nav-item"'), 4 + len(FEATURE_ASSETS))
+        primary_nav = markup.split('<nav class="primary-nav"', 1)[1].split('</nav>', 1)[0]
+        self.assertEqual(primary_nav.count('<button type="button" class="nav-item"'), 4 + len(FEATURE_ASSETS))
+        for group in ("command-centre", "conversations", "work", "resources", "system"):
+            self.assertEqual(primary_nav.count(f'data-nav-group="{group}"'), 1)
+        self.assertIn('Conversation model · session only', markup)
         self.assertEqual(markup.count('data-view="overview"'), 1)
         self.assertEqual(markup.count('data-view="integrations"'), 1)
         self.assertEqual(markup.count('>Plugins &amp; MCP</button>'), 1)
