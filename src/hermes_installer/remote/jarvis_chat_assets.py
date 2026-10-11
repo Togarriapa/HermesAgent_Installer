@@ -1707,15 +1707,21 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     }
   });
   window.addEventListener("pagehide", () => { closeStream(); stopRecognition(); stopSpeech(); if (presenceObserver) presenceObserver.disconnect(); unmountFeature(); });
+  function syncPageVisibility() {
+    const visible = String(document.visibilityState === "visible");
+    document.documentElement.dataset.pageVisible = visible;
+    const presence = byId("jarvis-presence");
+    if (presence) presence.dataset.pageVisible = visible;
+  }
   document.addEventListener("visibilitychange", () => {
-    document.documentElement.dataset.pageVisible = String(document.visibilityState === "visible");
+    syncPageVisibility();
     if (document.visibilityState !== "visible") {
       stopRecognition("Voice listening stopped when this page went into the background.");
       stopSpeech("Reply audio stopped when this page went into the background.");
     }
   });
   const presence = byId("jarvis-presence");
-  document.documentElement.dataset.pageVisible = String(document.visibilityState === "visible");
+  syncPageVisibility();
   if (presence && "IntersectionObserver" in window) {
     presenceObserver = new IntersectionObserver((entries) => {
       for (const entry of entries) if (entry.target === presence) presence.dataset.inViewport = String(entry.isIntersecting);

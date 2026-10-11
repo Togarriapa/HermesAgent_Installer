@@ -217,6 +217,21 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('days.reduce((sum, day) => sum + Math.max(0, day.total), 0)', client)
         self.assertIn('presence.dataset.connection = state', client)
 
+    def test_presence_motion_tracks_actual_page_visibility_and_reduced_motion(self):
+        _content_type, script = reviewed_client_bundle()
+        client = script.decode("utf-8")
+        _content_type, stylesheet = reviewed_chat_asset("/chat/assets/app.css")
+        css = stylesheet.decode("utf-8")
+
+        self.assertIn('presence.dataset.pageVisible = visible', client)
+        self.assertIn('document.documentElement.dataset.pageVisible = visible', client)
+        self.assertIn('document.addEventListener("visibilitychange", () => {\n    syncPageVisibility();', client)
+        self.assertIn('syncPageVisibility();\n  if (presence && "IntersectionObserver" in window)', client)
+        self.assertIn('.jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-orbit-inner', css)
+        self.assertIn('.jarvis-presence[data-in-viewport="true"][data-page-visible="true"][data-state="idle"] .presence-core', css)
+        self.assertIn('html:not([data-jarvis-motion="full"]) .jarvis-presence .presence-core', css)
+        self.assertIn('animation:none!important;transform:none!important', css)
+
     def test_only_exact_reviewed_asset_routes_are_available(self):
         expected = {
             "/chat": "text/html; charset=utf-8",
