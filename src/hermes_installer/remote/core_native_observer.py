@@ -43,6 +43,11 @@ _CODEX_MODE = "codex_responses"
 _OBSERVER_RUNTIME_DIR = Path("/run/hermes-jarvis-native-observer")
 _MASTER_PLAN_STORE_MAX_BYTES = 48 * 1024
 _MASTER_PLAN_STORE_MAX_RECORDS = 4096
+_NATIVE_ACTIVITY_STORE_NAME = "native-child-activity.json"
+_NATIVE_ACTIVITY_MAX_BYTES = 512 * 1024
+_NATIVE_ACTIVITY_MAX_INSTANCES = 100
+_NATIVE_ACTIVITY_MAX_EVENTS_PER_INSTANCE = 16
+_NATIVE_ACTIVITY_MAX_EVENTS_PER_READ = 200
 _NATIVE_INHERITANCE_POLICY_SEAL = object()
 _MASTER_PLAN_RECORD_SEAL = object()
 
@@ -359,6 +364,157 @@ def _root_master_plan_record_from_bytes(raw: bytes, *, owner_subject_sha256: str
         values["_seal"] = _MASTER_PLAN_RECORD_SEAL
         record = RootObservedMasterPlanRecord(**values)
         return record if record.is_root_observed() is True else None
+    except Exception:
+        return None
+
+
+def _read_root_native_activity_bytes() -> bytes | None:
+    """Read the bounded activity snapshot from the existing protected core journal."""
+    directory_fd = _open_root_master_plan_store()
+    try:
+        try:
+            fd = os.open(_NATIVE_ACTIVITY_STORE_NAME,
+                         os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+        except FileNotFoundError:
+            return None
+        try:
+            before = os.fstat(fd)
+            if (not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_gid != 0
+                    or stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1
+                    or not 1 <= before.st_size <= _NATIVE_ACTIVITY_MAX_BYTES):
+                raise PermissionError("native activity journal custody changed")
+            chunks: list[bytes] = []
+            remaining = _NATIVE_ACTIVITY_MAX_BYTES + 1
+            while remaining:
+                chunk = os.read(fd, min(8192, remaining))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            raw = b"".join(chunks)
+            after = os.fstat(fd)
+            named = os.stat(_NATIVE_ACTIVITY_STORE_NAME, dir_fd=directory_fd,
+                            follow_symlinks=False)
+            if (len(raw) != before.st_size or len(raw) > _NATIVE_ACTIVITY_MAX_BYTES
+                    or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+                        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+                    or (after.st_dev, after.st_ino) != (named.st_dev, named.st_ino)):
+                raise PermissionError("native activity journal changed during read")
+            return raw
+        finally:
+            os.close(fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _publish_root_native_activity_bytes(raw: bytes) -> None:
+    """Atomically replace the bounded event snapshot under existing journal custody."""
+    if not isinstance(raw, bytes) or not 1 <= len(raw) <= _NATIVE_ACTIVITY_MAX_BYTES:
+        raise ValueError("native activity snapshot exceeds its fixed bound")
+    directory_fd = _open_root_master_plan_store()
+    temp = ".native-activity-" + secrets.token_hex(16) + ".tmp"
+    created = False
+    try:
+        try:
+            existing = os.stat(_NATIVE_ACTIVITY_STORE_NAME, dir_fd=directory_fd,
+                               follow_symlinks=False)
+        except FileNotFoundError:
+            existing = None
+        if existing is not None and (not stat.S_ISREG(existing.st_mode) or existing.st_uid != 0
+                or existing.st_gid != 0 or stat.S_IMODE(existing.st_mode) != 0o600
+                or existing.st_nlink != 1):
+            raise PermissionError("native activity snapshot custody changed")
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                     | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=directory_fd)
+        created = True
+        try:
+            os.fchown(fd, 0, 0)
+            os.fchmod(fd, 0o600)
+            offset = 0
+            while offset < len(raw):
+                written = os.write(fd, raw[offset:])
+                if written <= 0:
+                    raise OSError("short native activity journal write")
+                offset += written
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(temp, _NATIVE_ACTIVITY_STORE_NAME,
+                   src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+        created = False
+        os.fsync(directory_fd)
+        if _read_root_native_activity_bytes() != raw:
+            raise OSError("published native activity snapshot failed readback")
+    finally:
+        if created:
+            try:
+                os.unlink(temp, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass
+        os.close(directory_fd)
+
+
+def _native_activity_snapshot_from_bytes(raw: bytes) -> list[dict[str, Any]] | None:
+    """Validate the exact small root-owned child activity snapshot."""
+    if not isinstance(raw, bytes) or not 1 <= len(raw) <= _NATIVE_ACTIVITY_MAX_BYTES:
+        return None
+    try:
+        value = json.loads(raw.decode("utf-8", errors="strict"), object_pairs_hook=_unique_json_pairs)
+        if (type(value) is not dict or set(value) != {"schema", "instances"}
+                or type(value["schema"]) is not int or value["schema"] != 1
+                or type(value["instances"]) is not list
+                or len(value["instances"]) > _NATIVE_ACTIVITY_MAX_INSTANCES
+                or json.dumps(value, ensure_ascii=False, sort_keys=True,
+                    separators=(",", ":"), allow_nan=False).encode("utf-8") != raw):
+            return None
+        seen: set[str] = set()
+        fields = {"execution_key", "display_alias", "owner_subject_sha256", "mission_id",
+            "mission_revision", "gateway_turn_id", "profile_id", "source_revision",
+            "source_generation_sha256", "source_manifest_sha256", "core_generation",
+            "core_source_generation", "child_lineage_sha256", "parent_lineage_sha256",
+            "created_at", "updated_at", "status", "events"}
+        event_fields = {"event_id", "kind", "status", "at", "duration_ms", "tool_count"}
+        for row in value["instances"]:
+            if (type(row) is not dict or set(row) != fields
+                    or not _OPAQUE.fullmatch(row.get("execution_key", ""))
+                    or row["execution_key"] in seen
+                    or not isinstance(row["display_alias"], str)
+                    or re.fullmatch(r"[A-Za-z][A-Za-z0-9 .·_-]{1,48}", row["display_alias"]) is None
+                    or not all(_HASH.fullmatch(row.get(name, "")) for name in (
+                        "owner_subject_sha256", "source_generation_sha256", "source_manifest_sha256",
+                        "core_generation", "core_source_generation", "child_lineage_sha256",
+                        "parent_lineage_sha256"))
+                    or not isinstance(row["profile_id"], str) or not _ID.fullmatch(row["profile_id"])
+                    or not isinstance(row["source_revision"], str)
+                    or not 1 <= len(row["source_revision"]) <= 128
+                    or not isinstance(row["gateway_turn_id"], str)
+                    or not _ID.fullmatch(row["gateway_turn_id"])
+                    or (row["mission_id"] is not None
+                        and (not isinstance(row["mission_id"], str) or not _ID.fullmatch(row["mission_id"])))
+                    or (row["mission_revision"] is not None
+                        and (type(row["mission_revision"]) is not int or row["mission_revision"] < 1))
+                    or ((row["mission_id"] is None) != (row["mission_revision"] is None))
+                    or any(type(row[name]) not in (int, float) or not math.isfinite(row[name])
+                           for name in ("created_at", "updated_at"))
+                    or row["status"] not in {"admitted", "running", "responded", "completed", "unknown"}
+                    or type(row["events"]) is not list
+                    or len(row["events"]) > _NATIVE_ACTIVITY_MAX_EVENTS_PER_INSTANCE):
+                return None
+            seen.add(row["execution_key"])
+            event_ids: set[str] = set()
+            for event in row["events"]:
+                if (type(event) is not dict or set(event) != event_fields
+                        or not _HASH.fullmatch(event.get("event_id", ""))
+                        or event["event_id"] in event_ids
+                        or event["kind"] not in {"admitted", "attempt", "response", "tool_call", "completed"}
+                        or event["status"] not in {"accepted", "started", "completed", "incomplete", "observed"}
+                        or type(event["at"]) not in (int, float) or not math.isfinite(event["at"])
+                        or (event["duration_ms"] is not None
+                            and (type(event["duration_ms"]) is not int or event["duration_ms"] < 0))
+                        or type(event["tool_count"]) is not int or not 0 <= event["tool_count"] <= 128):
+                    return None
+                event_ids.add(event["event_id"])
+        return value["instances"]
     except Exception:
         return None
 _RESOURCES_DELEGATE_REGISTRATION_SEAL = object()
@@ -1990,6 +2146,173 @@ class RootCoreNativeObservationRegistry:
             # Ordinary ingress stays available; planning/child admission stays unavailable.
             self._master_source = None
         self._closed = False
+        self._activity_started_at = time.time()
+        self._activity_records: dict[str, dict[str, Any]] = {}
+        self._activity_store_ok = True
+        try:
+            saved = _read_root_native_activity_bytes()
+            if saved is not None:
+                rows = _native_activity_snapshot_from_bytes(saved)
+                if rows is None:
+                    raise ValueError("native activity journal is malformed")
+                self._activity_records = {row["execution_key"]: row for row in rows}
+        except Exception:
+            self._activity_store_ok = False
+
+    @staticmethod
+    def _activity_role(profile_id: str) -> str:
+        words = re.split(r"[-_]", profile_id)
+        first = words[0].casefold() if words else profile_id.casefold()
+        short = {"developer": "Dev", "dev": "Dev", "researcher": "Research",
+                 "designer": "Design", "orchestrator": "Orchestrator"}.get(first)
+        role = short or " ".join(word[:1].upper() + word[1:] for word in words if word)
+        role = re.sub(r"[^A-Za-z0-9 ]", "", role)[:24].strip()
+        return role or "Worker"
+
+    def _new_activity_alias(self, owner_hash: str, profile_id: str, execution_key: str) -> str:
+        names = ("Peter", "Sarah", "Alex", "Jamie", "Morgan", "Riley", "Taylor", "Jordan",
+                 "Casey", "Quinn", "Avery", "Robin", "Sam", "Charlie", "Drew", "Harper")
+        offset = int(hashlib.sha256(execution_key.encode("ascii")).hexdigest()[:8], 16) % len(names)
+        role = self._activity_role(profile_id)
+        used = {row["display_alias"] for row in self._activity_records.values()
+                if row["owner_subject_sha256"] == owner_hash}
+        for step in range(len(names)):
+            base = f"{role} {names[(offset + step) % len(names)]}"
+            if base not in used:
+                return base
+        base = f"{role} {names[offset]}"
+        suffix = 2
+        while f"{base} ·{suffix}" in used:
+            suffix += 1
+        return f"{base} ·{suffix}"
+
+    def _persist_activity(self) -> None:
+        if not self._activity_store_ok:
+            return
+        rows = sorted(self._activity_records.values(), key=lambda row: row["created_at"])
+        payload = {"schema": 1, "instances": rows}
+        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                          separators=(",", ":"), allow_nan=False).encode("utf-8")
+        if len(raw) > _NATIVE_ACTIVITY_MAX_BYTES:
+            self._activity_store_ok = False
+            return
+        try:
+            _publish_root_native_activity_bytes(raw)
+        except Exception:
+            self._activity_store_ok = False
+
+    def _record_child_activity(self, child: dict[str, Any], *, kind: str,
+                               status: str, event_id: str, duration_ms: int | None = None,
+                               tool_count: int = 0) -> None:
+        """Persist only callback facts already checked by the root observer."""
+        owner = child.get("owner")
+        if owner is None or not self._activity_store_ok:
+            return
+        row = child.get("activity")
+        if row is None:
+            binding = owner.mission_binding
+            mission_id = revision = None
+            if type(binding) is MissionBinding:
+                mission_id, revision = binding.mission_id, binding.revision
+            elif owner.planning_context is not None:
+                mission_id, revision = (owner.planning_context.mission_id,
+                                        owner.planning_context.revision)
+            source = child.get("source")
+            if source is None:
+                return
+            execution_key = secrets.token_urlsafe(24)
+            alias = self._new_activity_alias(owner.owner_subject_sha256,
+                                             child["profile_id"], execution_key)
+            row = {
+                "execution_key": execution_key, "display_alias": alias,
+                "owner_subject_sha256": owner.owner_subject_sha256,
+                "mission_id": mission_id, "mission_revision": revision,
+                "gateway_turn_id": owner.gateway_turn_id,
+                "profile_id": child["profile_id"],
+                "source_revision": source.source_revision,
+                "source_generation_sha256": child["source_generation_sha256"],
+                "source_manifest_sha256": child["source_manifest_sha256"],
+                "core_generation": owner.core_generation,
+                "core_source_generation": owner.core_source_generation,
+                "child_lineage_sha256": hashlib.sha256(
+                    b"jarvis-native-child-lineage-v1\0" + child["session_id"].encode("utf-8")).hexdigest(),
+                "parent_lineage_sha256": hashlib.sha256(
+                    b"jarvis-native-parent-lineage-v1\0" + child["parent_session_id"].encode("utf-8")
+                    + b"\0" + child["parent_turn_id"].encode("utf-8")).hexdigest(),
+                "created_at": time.time(), "updated_at": time.time(),
+                "status": "admitted", "events": [],
+            }
+            child["activity"] = row
+            self._activity_records[execution_key] = row
+            if len(self._activity_records) > _NATIVE_ACTIVITY_MAX_INSTANCES:
+                oldest = min(self._activity_records.values(), key=lambda item: item["created_at"])
+                if oldest is not row:
+                    self._activity_records.pop(oldest["execution_key"], None)
+            kind, status = "admitted", "accepted"
+            event_id = hashlib.sha256(
+                b"jarvis-native-activity-admitted-v1\0" + execution_key.encode("ascii")).hexdigest()
+        events = row["events"]
+        if any(event["event_id"] == event_id for event in events):
+            return
+        events.append({"event_id": event_id, "kind": kind, "status": status,
+                       "at": time.time(), "duration_ms": duration_ms,
+                       "tool_count": tool_count})
+        del events[:-_NATIVE_ACTIVITY_MAX_EVENTS_PER_INSTANCE]
+        row["updated_at"] = time.time()
+        row["status"] = ("completed" if kind == "completed" and status == "completed" else
+                         "responded" if kind == "response" and status == "completed" else
+                         "unknown" if kind == "response" and status == "incomplete" else
+                         "running" if kind == "attempt" else row["status"])
+        self._persist_activity()
+
+    def read_native_activity(self, *, owner_subject_sha256: str,
+                             core_generation: str, core_source_generation: str,
+                             now: float | None = None) -> dict[str, Any]:
+        """Return a bounded sanitized projection for a JWT-derived owner only."""
+        current = time.monotonic() if now is None else now
+        with self._lock:
+            self._ensure_open()
+            source = self._current_master_source()
+            if (not _HASH.fullmatch(owner_subject_sha256 or "")
+                    or core_generation != self._custody.core_generation
+                    or core_source_generation != self._custody.core_source_generation
+                    or source is None or source.is_current_sealed(self._custody, now=current) is not True
+                    or not self._activity_store_ok):
+                raise CoreNativeObservationUnavailable("current owner activity is unavailable")
+            instances = []
+            event_total = 0
+            for row in sorted(self._activity_records.values(),
+                              key=lambda item: item["updated_at"], reverse=True):
+                if (row["owner_subject_sha256"] != owner_subject_sha256
+                        or row["core_generation"] != core_generation
+                        or row["core_source_generation"] != core_source_generation
+                        or row["source_generation_sha256"] != source.artifact_sha256
+                        or row["created_at"] < time.time() - 7 * 24 * 60 * 60):
+                    continue
+                remaining = _NATIVE_ACTIVITY_MAX_EVENTS_PER_READ - event_total
+                if remaining <= 0:
+                    break
+                recent = row["events"][-remaining:]
+                stale_after_restart = (row["status"] != "completed"
+                                       and row["updated_at"] < self._activity_started_at)
+                visible_status = "unknown" if stale_after_restart else row["status"]
+                instances.append({
+                    "execution_key": row["execution_key"], "display_alias": row["display_alias"],
+                    "gateway_turn_id": row["gateway_turn_id"], "mission_id": row["mission_id"],
+                    "mission_revision": row["mission_revision"], "profile_id": row["profile_id"],
+                    "source_revision": row["source_revision"],
+                    "source_generation_sha256": row["source_generation_sha256"],
+                    "status": visible_status, "stale": stale_after_restart,
+                    "created_at": row["created_at"], "updated_at": row["updated_at"],
+                    "tool_count": sum(event["tool_count"] for event in row["events"]),
+                    "events": [{key: event[key] for key in
+                        ("kind", "status", "at", "duration_ms", "tool_count")} for event in recent],
+                })
+                event_total += len(recent)
+                if len(instances) >= _NATIVE_ACTIVITY_MAX_INSTANCES or event_total >= _NATIVE_ACTIVITY_MAX_EVENTS_PER_READ:
+                    break
+            return {"schema": 1, "observed_at": time.time(), "window_seconds": 7 * 24 * 60 * 60,
+                    "coverage": "observed-callbacks", "instances": instances, "relations": []}
 
     @classmethod
     def from_current_core_custody(cls, custody: Any, *, selected_profile_source: Any = None,
@@ -2951,6 +3274,8 @@ class RootCoreNativeObservationRegistry:
                     "source": source, "attempts": [], "peer": peer, "expiry": expiry,
                     "complete": False, "response_text_sha256": None}
                 self._child_sessions[child_session] = child
+                self._record_child_activity(child, kind="admitted", status="accepted",
+                    event_id=hashlib.sha256(("admitted\0" + child["admission_handle"]).encode()).hexdigest())
                 return {"schema": 1, "nonce": nonce, "ok": True,
                     "admission_handle": admission, "owner_turn_handle": owner.owner_turn_handle,
                     "gateway_turn_id": owner.gateway_turn_id,
@@ -3032,6 +3357,8 @@ class RootCoreNativeObservationRegistry:
                     "source": source, "attempts": [], "peer": peer, "expiry": expiry,
                     "complete": False, "response_text_sha256": None}
                 self._child_sessions[child_session] = child
+                self._record_child_activity(child, kind="admitted", status="accepted",
+                    event_id=hashlib.sha256(("admitted\0" + child["admission_handle"]).encode()).hexdigest())
                 return {"schema": 1, "nonce": nonce, "ok": True,
                     "admission_handle": admission, "owner_turn_handle": owner.owner_turn_handle,
                     "gateway_turn_id": owner.gateway_turn_id,
@@ -3138,6 +3465,8 @@ class RootCoreNativeObservationRegistry:
                     "source": source, "attempts": [], "peer": peer,
                     "expiry": run_expiry, "complete": False, "response_text_sha256": None}
                 self._child_sessions[child_session] = child
+                self._record_child_activity(child, kind="admitted", status="accepted",
+                    event_id=hashlib.sha256(("admitted\0" + child["admission_handle"]).encode()).hexdigest())
                 return {"schema": 1, "nonce": nonce, "ok": True,
                     "admission_handle": admission, "owner_turn_handle": owner.owner_turn_handle,
                     "gateway_turn_id": owner.gateway_turn_id,
@@ -3186,6 +3515,8 @@ class RootCoreNativeObservationRegistry:
                     raise ValueError("planner completion lacks a current zero-tool provider result")
                 child["complete"] = True
                 child["response_text_sha256"] = request["response_sha256"]
+                self._record_child_activity(child, kind="completed", status="completed",
+                    event_id=hashlib.sha256(("completed\0" + child["admission_handle"]).encode()).hexdigest())
                 completion_handle = secrets.token_urlsafe(32)
                 expiry = min(child["expiry"], now + 30.0)
                 self._planning_completions[completion_handle] = {
@@ -3321,13 +3652,16 @@ class RootCoreNativeObservationRegistry:
                     "request_sha256": request["request_sha256"],
                     "retry_count": request["retry_count"],
                     "child_admission_handle": child["admission_handle"] if is_child_attempt else None,
-                    "response_text_sha256": None}
+                    "response_text_sha256": None,
+                    "activity_started_monotonic": time.monotonic() if is_child_attempt else None}
                 if is_child_attempt:
                     if child["turn_id"] is None:
                         # Bind only after every attempt field/source/route check
                         # succeeds; an invalid first frame cannot reserve a turn.
                         child["turn_id"] = request["turn_id"]
                     child["attempts"].append(handle)
+                    self._record_child_activity(child, kind="attempt", status="started",
+                        event_id=hashlib.sha256(("attempt\0" + handle).encode()).hexdigest())
                 return {"schema": 1, "nonce": nonce, "ok": True, "attempt_handle": handle,
                         "owner_turn_handle": owner.owner_turn_handle, "expires_monotonic": expiry}
             if op == "register-response":
@@ -3370,6 +3704,16 @@ class RootCoreNativeObservationRegistry:
                 row["response"] = ((request["response_sha256"], calls,
                                     request["response_text_sha256"])
                                    if request["completed"] else (None, {}, None))
+                child = self._child_sessions.get(row["session_id"])
+                if child is not None:
+                    started = row.get("activity_started_monotonic")
+                    elapsed = (max(0, round((time.monotonic() - started) * 1000))
+                               if isinstance(started, (int, float)) else None)
+                    complete_status = "completed" if request["completed"] else "incomplete"
+                    self._record_child_activity(child, kind="response", status=complete_status,
+                        event_id=hashlib.sha256(("response\0" + request["attempt_handle"]
+                            + ("\0completed" if request["completed"] else "\0incomplete")).encode()).hexdigest(),
+                        duration_ms=elapsed)
                 if request["completed"]:
                     row["response_text_sha256"] = request["response_text_sha256"]
                     if child is not None:
@@ -3400,6 +3744,10 @@ class RootCoreNativeObservationRegistry:
                     "tool_call_id": request["tool_call_id"], "tool_name": returned["name"],
                     "arguments": args, "arguments_sha256": returned["arguments_sha256"],
                     "expiry": row["expiry"], "peer": peer, "claim": None}
+                if child is not None:
+                    self._record_child_activity(child, kind="tool_call", status="observed",
+                        event_id=hashlib.sha256(("tool-call\0" + request["attempt_handle"]
+                            + "\0" + request["tool_call_id"]).encode()).hexdigest(), tool_count=1)
                 return {"schema": 1, "nonce": nonce, "ok": True, "observed_call_handle": call_handle,
                         "attempt_handle": request["attempt_handle"],
                         "owner_turn_handle": row["owner"].owner_turn_handle,

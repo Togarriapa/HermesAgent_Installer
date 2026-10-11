@@ -104,6 +104,7 @@ MAX_REQUEST = 1024
 MAX_RESPONSE = 4096
 MAX_FINAL_EFFECT_RESPONSE = 64 * 1024
 MAX_MASTER_PLAN_RESPONSE = 32 * 1024
+MAX_NATIVE_ACTIVITY_RESPONSE = 128 * 1024
 MAX_SKILL_LEARNING_REQUEST_BYTES = 20 * 1024
 MAX_SKILL_LEARNING_RESPONSE_BYTES = 700 * 1024
 MAX_OWNER_TURN_REQUEST_BYTES = 24 * 1024
@@ -1519,6 +1520,78 @@ def observe_read_master_plan(config: CoreGatewayConfig, *, request: dict[str, An
     except Exception:
         raise CoreInspectionDenied("durable master plan is unavailable or stale") from None
     return {"schema": 1, "nonce": request["nonce"], "ok": True, "plan_data": row}
+
+
+def observe_read_native_activity(config: CoreGatewayConfig, *, request: dict[str, Any],
+                                 caller_pid: int, caller_uid: int, caller_gid: int,
+                                 peer_pid: int, peer_uid: int, peer_gid: int,
+                                 custody: Any, registry: Any) -> dict[str, Any]:
+    """Return real native-child callbacks after a fresh owner JWT/ingress join."""
+    required = {"schema", "op", "nonce", "peer_pid", "peer_uid", "peer_gid", "access_jwt",
+                "core_generation", "ingress_nonce", "ingress_proof_sha256"}
+    if (type(request) is not dict or set(request) != required or request.get("schema") != 1
+            or request.get("op") != "read-native-activity"
+            or (request.get("peer_pid"), request.get("peer_uid"), request.get("peer_gid"))
+                != (peer_pid, peer_uid, peer_gid)
+            or re.fullmatch(r"[0-9a-f]{64}", request.get("nonce", "")) is None
+            or not isinstance(request.get("access_jwt"), str)
+            or not 1 <= len(request["access_jwt"]) <= 16_384
+            or not request["access_jwt"].isascii()
+            or not _is_hash(request.get("core_generation"))
+            or re.fullmatch(r"[0-9a-f]{64}", request.get("ingress_nonce", "")) is None
+            or not _is_hash(request.get("ingress_proof_sha256"))):
+        raise CoreInspectionDenied("native activity read request is invalid")
+    caller_start = _proc_start_ticks(caller_pid)
+    issue_key = (caller_pid, caller_start, request["ingress_nonce"],
+                 request["ingress_proof_sha256"])
+    with _RETAINED_INGRESS_LOCK:
+        retained = _RETAINED_INGRESS_ISSUES.get(issue_key)
+    if (retained is None or retained.peer != (peer_pid, peer_uid, peer_gid)
+            or retained.core_generation != request["core_generation"]
+            or retained.config_sha256 != config.config_sha256
+            or time.monotonic() >= retained.expires_monotonic):
+        raise CoreInspectionDenied("native activity ingress is stale")
+    deadline = retained.expires_monotonic
+    ingress = observe_current_ingress(config, nonce=retained.nonce,
+        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+        peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+        _issued=retained.issued_monotonic, _deadline=deadline, _retain_issuance=False)
+    from .gateway import validate_access_jwt
+    principal = validate_access_jwt(request["access_jwt"],
+        policy=config.policy(_learning_jwks(config, deadline=deadline)), deadline_monotonic=deadline)
+    owner_hash = hashlib.sha256(principal.subject.encode("utf-8")).hexdigest()
+    if (principal.email.casefold() not in config.allowed_emails
+            or hashlib.sha256(request["access_jwt"].encode("ascii")).hexdigest()
+                != principal.token_fingerprint
+            or ingress["proof_sha256"] != retained.proof_sha256
+            or ingress["core_source_generation"] != custody.core_source_generation
+            or ingress["core_generation"] != custody.core_generation
+            or registry is not _CORE_NATIVE_REGISTRY
+            or _CORE_NATIVE_REGISTRY_TYPE is None
+            or type(registry) is not _CORE_NATIVE_REGISTRY_TYPE
+            or not callable(getattr(registry, "read_native_activity", None))):
+        raise CoreInspectionDenied("native activity owner ingress changed")
+    try:
+        activity = registry.read_native_activity(owner_subject_sha256=owner_hash,
+            core_generation=custody.core_generation,
+            core_source_generation=custody.core_source_generation)
+        final = observe_current_ingress(config, nonce=retained.nonce,
+            caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+            peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+            _issued=retained.issued_monotonic, _deadline=deadline, _retain_issuance=False)
+        if (final["proof_sha256"] != retained.proof_sha256 or time.monotonic() >= deadline
+                or type(activity) is not dict or set(activity) != {
+                    "schema", "observed_at", "window_seconds", "coverage", "instances", "relations"}
+                or activity.get("schema") != 1
+                or not isinstance(activity.get("instances"), list)
+                or len(activity["instances"]) > 100
+                or sum(len(item.get("events", [])) for item in activity["instances"]
+                       if isinstance(item, dict)) > 200
+                or activity.get("relations") != []):
+            raise ValueError
+    except Exception:
+        raise CoreInspectionDenied("current native activity is unavailable") from None
+    return {"schema": 1, "nonce": request["nonce"], "ok": True, "activity": activity}
 
 
 def observe_final_effect_request(config: CoreGatewayConfig, *, request: dict[str, Any],
@@ -3451,6 +3524,13 @@ def _serve_connection(conn: socket.socket, config: CoreGatewayConfig) -> None:
                 peer_gid=request.get("peer_gid"), custody=_CORE_NATIVE_CUSTODY,
                 registry=_CORE_NATIVE_REGISTRY)
             maximum = MAX_MASTER_PLAN_RESPONSE
+        elif request.get("op") == "read-native-activity":
+            result = observe_read_native_activity(config, request=request,
+                caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+                peer_pid=request.get("peer_pid"), peer_uid=request.get("peer_uid"),
+                peer_gid=request.get("peer_gid"), custody=_CORE_NATIVE_CUSTODY,
+                registry=_CORE_NATIVE_REGISTRY)
+            maximum = MAX_NATIVE_ACTIVITY_RESPONSE
         elif request.get("op") in {"list-final-effects", "decide-final-effect"}:
             result = observe_final_effect_request(config, request=request, caller_pid=caller_pid,
                 caller_uid=caller_uid, caller_gid=caller_gid, peer_pid=request.get("peer_pid"),
@@ -3996,6 +4076,72 @@ class CoreGatewayInspector:
             return data
         except Exception:
             raise CoreGatewayDenied("root durable master plan data is invalid") from None
+
+    def read_native_activity(self, access_jwt: str, accepted_ingress: Any) -> dict[str, Any]:
+        """Read only this accepted principal's bounded current-source worker events."""
+        from .core_gateway import CoreAcceptedIngressObservation, _read_config_current
+        if (type(accepted_ingress) is not CoreAcceptedIngressObservation
+                or not isinstance(access_jwt, str) or not 1 <= len(access_jwt) <= 16_384
+                or not access_jwt.isascii()
+                or hashlib.sha256(access_jwt.encode("ascii")).hexdigest()
+                    != accepted_ingress.principal.token_fingerprint):
+            raise CoreGatewayDenied("current authenticated activity ingress is required")
+        _read_config_current(self._config)
+        if accepted_ingress.verify_current(self._config) is not True:
+            raise CoreGatewayDenied("current authenticated activity ingress is required")
+        proof = accepted_ingress.root_observation
+        nonce = os.urandom(32).hex()
+        deadline = min(time.monotonic() + MAX_PROOF_SECONDS, accepted_ingress.expires_monotonic)
+        info = os.lstat(CORE_INSPECTOR_SOCKET)
+        if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != 0
+                or info.st_gid != self._config.gateway_gid
+                or stat.S_IMODE(info.st_mode) != 0o660):
+            raise CoreGatewayDenied("root native activity inspector is unavailable")
+        body = {"schema": 1, "op": "read-native-activity", "nonce": nonce,
+            "peer_pid": accepted_ingress.peer_pid, "peer_uid": accepted_ingress.peer_uid,
+            "peer_gid": accepted_ingress.peer_gid, "access_jwt": access_jwt,
+            "core_generation": accepted_ingress.core_generation,
+            "ingress_nonce": proof.nonce, "ingress_proof_sha256": proof.proof_sha256}
+        raw = json.dumps(body, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("ascii")
+        if len(raw) > MAX_OWNER_TURN_REQUEST_BYTES:
+            raise CoreGatewayDenied("root native activity request exceeded its bound")
+        conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            conn.settimeout(max(0.05, deadline - time.monotonic()))
+            conn.connect(str(CORE_INSPECTOR_SOCKET))
+            if not hasattr(socket, "SO_PEERCRED"):
+                raise ValueError
+            pid, uid, _gid = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            if uid != 0 or pid <= 1:
+                raise ValueError
+            conn.sendall(struct.pack("!I", len(raw)) + raw)
+            result = _read_frame(conn, deadline, MAX_NATIVE_ACTIVITY_RESPONSE)
+        except Exception:
+            raise CoreGatewayDenied("root native activity is unavailable") from None
+        finally:
+            conn.close()
+        _read_config_current(self._config)
+        if accepted_ingress.verify_current(self._config) is not True:
+            raise CoreGatewayDenied("native activity owner ingress changed during read")
+        try:
+            if (set(result) != {"schema", "nonce", "ok", "activity"}
+                    or result.get("schema") != 1 or result.get("nonce") != nonce
+                    or result.get("ok") is not True or time.monotonic() >= deadline):
+                raise ValueError
+            activity = result["activity"]
+            if (type(activity) is not dict or set(activity) != {
+                    "schema", "observed_at", "window_seconds", "coverage", "instances", "relations"}
+                    or activity["schema"] != 1
+                    or activity["window_seconds"] != 7 * 24 * 60 * 60
+                    or activity["coverage"] != "observed-callbacks"
+                    or type(activity["instances"]) is not list or len(activity["instances"]) > 100
+                    or activity["relations"] != []
+                    or sum(len(item.get("events", [])) for item in activity["instances"]
+                           if isinstance(item, dict)) > 200):
+                raise ValueError
+            return activity
+        except Exception:
+            raise CoreGatewayDenied("root native activity response is invalid") from None
 
     def preflight_native_mission(self, binding: Any, *, owner_subject_sha256: str,
                                  gateway_turn_id: str) -> bool:
