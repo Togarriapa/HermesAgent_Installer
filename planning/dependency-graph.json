@@ -3921,5 +3921,27 @@
       ]
     },
     "acceptance": "new practical stage separate from full AC; all OPEN"
+  },
+  "jarvis_core_first_migration_v266": {
+    "contract": "planning/jarvis-core-first-migration-v266.json",
+    "amendment": "plans/amendments/2026-10-11-jarvis-core-first-migration-v266.md",
+    "change": "jarvis-core-platform",
+    "tasks": {
+      "BD-T266.1": [],
+      "HI-T266.2": [
+        "BD-T266.1"
+      ],
+      "RT-T266.3": [
+        "BD-T266.1",
+        "HI-T266.2"
+      ],
+      "RB-T266.4": [
+        "RT-T266.3"
+      ],
+      "VD-T266.5": [
+        "RB-T266.4"
+      ]
+    },
+    "acceptance": "all OPEN; native Desktop product selection explicitly superseded"
   }
 }

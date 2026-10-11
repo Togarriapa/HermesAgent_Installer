@@ -332,3 +332,8 @@ Manual owned MVP source/package/configuration/runtime evidence may establish thi
 ## Fixed app child without client commands v262
 
 `planning/xpra-fixed-app-child-no-client-command-repair-v262.json` separates server-owned configured child from denied client hello/command-start/signal. Exact +jarvis3 command member, retained prior guards and inspector/readback gate commands=yes with start-new/shell/control/logging=no. No other command/config authority; all AC OPEN.
+
+
+## v266 explicit core-first supersession
+
+The direct user decision replaces active Desktop installation/presentation with core Hermes and custom Jarvis. See `../jarvis-core-platform/` and `planning/jarvis-core-first-migration-v266.json`. Preserve this history and all remaining capability obligations; Desktop-only product acceptance is superseded, never checked off as passed. Five phase tasks are owned by the new change; HA deferred and tests/validation Pi-only.

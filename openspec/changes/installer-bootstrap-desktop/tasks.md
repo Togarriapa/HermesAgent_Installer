@@ -372,3 +372,8 @@ Actual edb349 Pi update evidence: `evidence/development/EV-BD-T249-pi-update-edb
 
 - [ ] BD-T262.1: Implement reviewed client-command/signalling denies, retained guards/local+jarvis3 and exact owned native child configuration/inspector.
 - [ ] VD-T262.2: Verify zero denied client Popen/signal effects, direct-handler failures, enabled semantics/fixed child effect/package graph and actual native launch separately.
+
+
+## v266 explicit core-first supersession
+
+The direct user decision replaces active Desktop installation/presentation with core Hermes and custom Jarvis. See `../jarvis-core-platform/` and `planning/jarvis-core-first-migration-v266.json`. Preserve this history and all remaining capability obligations; Desktop-only product acceptance is superseded, never checked off as passed. Five phase tasks are owned by the new change; HA deferred and tests/validation Pi-only.

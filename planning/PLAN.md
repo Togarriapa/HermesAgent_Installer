@@ -290,3 +290,8 @@ Confirmed jarvis.togarriapahome.uk. `planning/jarvis-visible-desktop-mvp-stage-v
 ## Practical mobile/family Jarvis v265
 
 `planning/jarvis-practical-mobile-family-stage-v265.json`; four bounded tasks OPEN. Responsive authenticated chat+owned conversations before optimization; native owner-admin Desktop/full original scope preserved, no parity claim or live acceptance.
+
+
+## Direct core-first override v266
+
+The 11 October user decision drops Desktop from the active product in favor of official core Hermes → individual capability ports → responsive Jarvis UI → full Resources → review. `planning/jarvis-core-first-migration-v266.json` and `openspec/changes/jarvis-core-platform/` control the new sequence. Preserve historical native-only instructions as superseded history, current Cloudflare OTP/binding resources, data/authentication and full other obligations. No false completed acceptance; all five phase tasks OPEN. Pi-only tests/validation.

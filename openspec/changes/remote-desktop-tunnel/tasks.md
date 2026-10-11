@@ -263,3 +263,8 @@ RT-T259.3/LC-T259.4/VD-T259.5 additionally require the separate stage adapter, p
 - [ ] `RT-T265.2` Implement strict protected chat adapter and actual local official API activation/current process/key custody; per-principal durable conversation/run ownership, bounded streaming/heartbeat and all deny cases. See exact v265 contract; all acceptance OPEN.
 - [ ] `RT-T265.3` Implement two-user bounded simultaneous conversations independent from native admin stream, honest busy/queue/recovery and preserve state/credentials/features. Document separate HA channel as deferred, not currently wired. See exact v265 contract; all acceptance OPEN.
 - [ ] `VD-T265.4` Verify production adapter effects and negative authorization/XSS/CSRF/IDOR/replay/revocation/expiry; actual phone typing/chat+two identities+native coexistence+restart. Record truthful feature matrix, deferred HA and full AC OPEN. See exact v265 contract; all acceptance OPEN.
+
+
+## v266 explicit core-first supersession
+
+The direct user decision replaces active Desktop installation/presentation with core Hermes and custom Jarvis. See `../jarvis-core-platform/` and `planning/jarvis-core-first-migration-v266.json`. Preserve this history and all remaining capability obligations; Desktop-only product acceptance is superseded, never checked off as passed. Five phase tasks are owned by the new change; HA deferred and tests/validation Pi-only.
