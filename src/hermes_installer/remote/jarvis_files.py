@@ -394,5 +394,5 @@ async def upload_file(request):
 
 def install_jarvis_files_routes(app, service) -> None:
     """Install only the fixed owner-bound file list/upload endpoints."""
-    app.router.add_get("/chat/api/conversations/{conversation_id}/files", list_files)
+    app.router.add_get("/chat/api/conversations/{conversation_id}/files", list_files, allow_head=False)
     app.router.add_post("/chat/api/conversations/{conversation_id}/files", upload_file)
