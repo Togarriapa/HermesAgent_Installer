@@ -1207,7 +1207,7 @@ class CoreNativeObservationClient:
         if (provider != _CODEX_PROVIDER or api_mode != _CODEX_MODE or base_url != _CODEX_ENDPOINT
                 or not isinstance(model, str) or not model
                 or tuple(sorted(set(tool_names))) != tool_names
-                or not set(tool_names).issubset({"web_search", "web_extract", "skills_list", "skill_view"}))):
+                or not set(tool_names).issubset({"web_search", "web_extract", "skills_list", "skill_view"})):
             raise CoreNativeObservationUnavailable("expert child route or finite tool closure differs")
         row = self._rpc("admit-selected-expert-child", {
             "claim_handle": native_claim.claim_handle,
