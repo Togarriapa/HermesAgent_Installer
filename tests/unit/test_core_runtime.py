@@ -233,12 +233,13 @@ def test_root_discards_admin_discovery_booleans_and_uses_separate_readback(tmp_p
 
 
 def test_discovery_refresh_requires_current_owned_listener_and_never_changes_service(monkeypatch):
- monkeypatch.setattr(core.os, "geteuid", lambda: 0)
- monkeypatch.setattr(core, "_identity", lambda **_kwargs: {"commit": core.COMMIT})
- monkeypatch.setattr(core, "_journal", lambda: {"state": "installed", "source_commit": core.COMMIT})
- repairs=[]
- monkeypatch.setattr(core, "_repair_pinned_pm_directory_modes",
-                     lambda identity, record: repairs.append((identity,record)))
+    monkeypatch.setattr(core, "ROOT_UID", os.getuid())
+    monkeypatch.setattr(core.os, "geteuid", lambda: os.getuid())
+    monkeypatch.setattr(core, "_identity", lambda **_kwargs: {"commit": core.COMMIT})
+    monkeypatch.setattr(core, "_journal", lambda: {"state": "installed", "source_commit": core.COMMIT})
+    repairs=[]
+    monkeypatch.setattr(core, "_repair_pinned_pm_directory_modes",
+                        lambda identity, record: repairs.append((identity,record)))
     writes = []
     monkeypatch.setattr(core, "_write_resources_discovery", lambda **kwargs: writes.append(kwargs) or {
         "resource_counts": {"native_skills": 396}})
@@ -256,7 +257,7 @@ def test_discovery_refresh_requires_current_owned_listener_and_never_changes_ser
 
 def test_pm_directory_repair_changes_only_exact_0775_held_directory(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "ROOT_UID", os.getuid())
-    monkeypatch.setattr(core.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(core.os, "geteuid", lambda: os.getuid())
     target = tmp_path / "pm-bin"
     target.mkdir(mode=0o775)
     target.chmod(0o775)

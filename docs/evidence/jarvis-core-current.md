@@ -1,26 +1,31 @@
 # Jarvis core runtime evidence
 
-Requirement/task mapping: jarvis-core-platform; BD-T266.1, HI-T266.2, RT-T266.3, RB-T266.4, VD-T266.5. This is partial acceptance evidence, not a release qualification.
+Requirement/task mapping: `jarvis-core-platform`; BD-T266.1, HI-T266.2, RT-T266.3, RB-T266.4, VD-T266.5. These are observed partial results, not release qualification.
 
-## Verified on the selected Pi
+## Selected Pi and source
 
-Target: PI-HERMES, Raspberry Pi 5, ARM64, Debian Trixie. Product tests, OpenSpec execution and validators in this checkpoint ran in the Pi browser terminal. Local activity was source editing, Git coordination and artifact packaging.
+PI-HERMES is a Raspberry Pi 5 running ARM64 Debian Trixie. Product tests, validators, OpenSpec commands and runtime checks run only through its browser terminal. Local work is source/spec editing, Git coordination and artifact packaging.
 
-- Official Hermes source: `7085fbf7753266fc4943c55ac04926186bc90005`, using its PM-managed Python 3.14.7 environment and existing Codex authentication.
-- Private core service and durable chat resume across its owned service restart were verified at installer source `8753c8353`.
-- Public gateway source `6f4992a25` served a native HTML composer through the existing Cloudflare Access protection at `https://jarvis.togarriapahome.uk/`. An actual new chat returned “My name is Jarvis.” This proves the observed owner chat, not family isolation, phone wake-word support or every capability.
-- Installer source `06876bc50f0213ba5c19c5caf744a96237238b4d` imported the offline Resources bundle into the selected Hermes home. Native discovery reported 396 skills; 208 profile records, including 207 internal records, and 88 other declarations were preserved. Existing authentication, configuration and primary identity files retained their exact contents. The private import receipt is on the Pi; it contains no authentication material.
-- The focused importer/core tests passed 17 cases. At source `374161cf95965524f0a0d0acef661cfca4ffe5b3`, the integrated core, wizard, importer, dashboard, gateway, chat/history, assets and planning checks passed 92 cases with no skips. The pinned native Hermes environment exercised the isolated 208-profile/396-skill handoff fixture. Earlier three skips were caused by unset optional native-environment test variables, not missing root privileges. Fixtures do not substitute for live capability acceptance.
-- Sol's next settings/voice/profile dispatch refinement, published at `b73c9e90c`, passed `validate:specs`, `validate:plan` and all 19 planning tests on the Pi. OpenSpec reported the four artifacts ready and all eight acceptance groups still open.
+Official Hermes remains the unmodified `7085fbf7753266fc4943c55ac04926186bc90005` generation, with PM-managed Python 3.14.7 and existing Codex authentication. The owned isolated core listens on `127.0.0.1:8766`. Public gateway and inspector source `8cfbee0a4` is deployed at <https://jarvis.togarriapahome.uk/> behind Cloudflare Access email OTP and origin JWT/ownership/expiry checks.
 
-## Remaining boundaries
+The integrated Pi suite at `8cfbee0a4` passed **178 tests**, with 17 warnings and no skips. OpenSpec status/apply and both spec/plan validators passed. All eight broad acceptance groups remain open. Private test logs reside under `/var/tmp/hermes-jarvis-core-checks-20261011/`; deployment logs and protected rollback copies are under `/var/tmp/hermes-jarvis-deploy-8cfbee0a4/`.
 
-Gateway and inspector source `374161cf9` is deployed. The protected public site displayed Chat, Overview, Capabilities and Settings; Overview used stored conversation/turn counts and a seven-day activity graph, and Capabilities loaded 692 catalog records. A stored conversation restored its actual “My name is Jarvis.” reply. A new Codex turn returned the requested “Ready.” and the browser reported reply-audio completion with the selected system voice. This qualifies observed chat/history and browser TTS completion; it does not prove microphone capture, physical phone audio or Android wake-word behavior.
+## Observed public behavior
 
-The parallel missions, Bots/channels/schedules, activity/usage and capability/learning handoff was published at `fb8ee8537`. OpenSpec status/apply, both validators and all 19 planning tests passed on the Pi. Implementations and their separate acceptance remain open.
+The authenticated interface displayed Chat, Sessions, Overview, Capabilities, Settings, Missions, Bots, Logs, Integrations, Learning, Tools & Skills and Files. Menu visibility does not qualify every operation within those menus.
 
-Skill discovery is distinct from internal profile routing, plugin authentication, adapter effects and enrichment by additional repositories. The import receipt deliberately leaves functional, enabled and target-verified states false. Private prompt records do not appear as family-selectable profiles and do not provide a process or filesystem sandbox.
+- An actual owned Codex chat returned **“I'm Jarvis, your assistant.”** The deployed adapter resumes its durable session and submits on the same WebSocket, atomically binding the actual runtime session before submission. A longer idle/reaping scenario still needs observation after this fix.
+- Stored conversations restored actual message history. Overview displayed observed service/listener status, owned conversation/turn counts and a seven-day turn graph.
+- Native discovery and the public Tools & Skills panel reported **449 skills: 53 stock plus all 396 bundled Resources skills**, and 63 toolsets/1,348 tool metadata entries. Discovery is distinct from successful use or effective permission to invoke a tool.
+- The offline import preserved 208 source profile records, including 207 internal records, and 88 other declarations. Existing authentication, configuration and primary identity bytes were preserved. Internal profiles are not family-selectable identities or process/filesystem sandboxes.
+- Missions saved and previewed a harmless owned draft. Execution was unavailable pending the native dispatcher/parent-turn integration. No mission was launched.
+- Logs displayed a real owned `message.complete` event and native usage counters. Cost and browser-tool attribution stayed unknown; no invented values or arbitrary raw tool output were exposed.
+- A prior browser TTS run reported spoken-reply completion. Physical phone microphone/audio and Android assistant/wake-word behavior remain unqualified.
 
-Browser voice, effective settings projection, Bots/channel configuration, full capability parity, Android assistant/wake-word behavior, fresh installation, boot qualification and complete resource dispatch remain open. Home Assistant live configuration is deferred. Owned Desktop retirement waits for replacement security, restart and recovery evidence; shared services, user data and recovery backups must survive it.
+## Remaining acceptance
 
-The deployment used the authorized Pi root browser shell. It preserved the private core service, PM runtime, credentials, selected Hermes home and shared tunnel, and retained protected gateway/inspector unit and configuration backups before switching their reviewed source path. Fresh boot qualification and complete release acceptance remain pending.
+Resources root discovery-receipt refresh is pending the verified PM ancestor-mode repair. Live native skill discovery is observed, but full internal routing, imported plugin effects, external authentication and enrichment remain open. Model controls, richer voice settings, capability details and activity charts require their matching source tests and public browser checks.
+
+Family concurrency/isolation, mission execution, Bots/channel configuration, browser-use controls, native learning effects, full capability parity, fresh installation, restart/recovery and boot qualification remain open. Home Assistant is deferred. The gateway is not boot-qualified. Owned retired-runtime cleanup must preserve shared services, PM/runtime data, credentials, selected Hermes home and recovery copies.
+
+Deployments preserve the private core process unless an explicitly verified owned-core restart is required. Gateway/inspector/tunnel source changes retain protected unit/configuration backups and check that only identified owned services are changed.
