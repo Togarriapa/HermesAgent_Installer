@@ -433,11 +433,11 @@ The installer SHALL satisfy: Enforces relevant execution boundaries through actu
 - **AND** missing dependency/account/hardware or failed evidence leaves acceptance OPEN with exact next action, preserving data and prior working state.
 
 ### Requirement: R0055 current functional obligation
-The installer SHALL satisfy: Activates a validated generation atomically and retains a rollback target. Updates must preserve local/private learning and quarantine conflicting or permission-expanding changes.
+The installer SHALL satisfy: Activate validated generations atomically and retain rollback. Preserve private/local learning; quarantine conflicts or expanded permissions. Hermes-native skill creation/refinement requires versioned provenance, review/diff, bounded approved writes and restore without replacing pristine Resources source or user edits.
 
 #### Scenario: Verified capability or exact pending state
 - **WHEN** this obligation is implemented for a selected authorized target/account
-- **THEN** verification MUST exercise Recording dispatch fixture: assert exact destination/model/data classification and aggregate budget; deny paid/private-ineligible retry/fallback/extraction and preserve unavailable-route reason
+- **THEN** verification MUST exercise Actual selected skill creation/refinement, original/new digest and diff, approval/denial, restart durability and rollback restore; conflicting user edits remain preserved and private transcripts never enter ineligible background routes.
 - **AND** missing dependency/account/hardware or failed evidence leaves acceptance OPEN with exact next action, preserving data and prior working state.
 
 ### Requirement: R0056 current functional obligation
@@ -1045,7 +1045,7 @@ The installer SHALL satisfy: Use the installed Hermes version's documented skill
 
 #### Scenario: Verified capability or exact pending state
 - **WHEN** this obligation is implemented for a selected authorized target/account
-- **THEN** verification MUST exercise Skill tree/host-hook or cross-session memory fixture asserts full references, scoped discovery, one-owner namespace/persistence and on-demand capability/resource controls
+- **THEN** verification MUST exercise Use pinned official skill_manage/refine/approval and profile/MCP interfaces through finite adapters; verify generated skill discovery/use, source-linked review.summary, pending approval and rollback. API existence or a self-improvement summary alone does not establish working learning.
 - **AND** missing dependency/account/hardware or failed evidence leaves acceptance OPEN with exact next action, preserving data and prior working state.
 
 ### Requirement: R0132 current functional obligation

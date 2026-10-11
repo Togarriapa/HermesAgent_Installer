@@ -545,11 +545,11 @@
     },
     {
       "id": "R0055",
-      "text": "Activates a validated generation atomically and retains a rollback target. Updates must preserve local/private learning and quarantine conflicting or permission-expanding changes.",
+      "text": "Activate validated generations atomically and retain rollback. Preserve private/local learning; quarantine conflicts or expanded permissions. Hermes-native skill creation/refinement requires versioned provenance, review/diff, bounded approved writes and restore without replacing pristine Resources source or user edits.",
       "phase": 4,
       "task_id": "RB-T266.4",
       "implementation_module": "src/hermes_installer/policy.py",
-      "verification_method": "Recording dispatch fixture: assert exact destination/model/data classification and aggregate budget; deny paid/private-ineligible retry/fallback/extraction and preserve unavailable-route reason",
+      "verification_method": "Actual selected skill creation/refinement, original/new digest and diff, approval/denial, restart durability and rollback restore; conflicting user edits remain preserved and private transcripts never enter ineligible background routes.",
       "test_path": "tests/contracts/test_policy.py",
       "acceptance": "OPEN"
     },
@@ -1309,7 +1309,7 @@
       "phase": 2,
       "task_id": "HI-T266.2",
       "implementation_module": "src/hermes_installer/skills.py",
-      "verification_method": "Skill tree/host-hook or cross-session memory fixture asserts full references, scoped discovery, one-owner namespace/persistence and on-demand capability/resource controls",
+      "verification_method": "Use pinned official skill_manage/refine/approval and profile/MCP interfaces through finite adapters; verify generated skill discovery/use, source-linked review.summary, pending approval and rollback. API existence or a self-improvement summary alone does not establish working learning.",
       "test_path": "tests/contracts/test_skills.py",
       "acceptance": "OPEN"
     },
@@ -3868,6 +3868,152 @@
     "prompt_sha256": "d7608378a9207686fd1f9ba395e36d8f472111b317bd7877cd2c3732dd548ad5",
     "upstream_commit": "7085fbf7753266fc4943c55ac04926186bc90005",
     "status": "source-read-only; Pi validation and full acceptance pending",
-    "scope": "All211 original obligation IDs and62 components retained; explicit user replacement of Desktop presentation; latest UI/phone/Resources details refine existing obligations."
+    "scope": "All211 original obligation IDs and62 components retained; explicit user replacement of Desktop presentation; latest UI/phone/Resources details refine existing obligations.",
+    "additional_video_references": [
+      {
+        "url": "https://www.youtube.com/shorts/2NKpA6smfwg",
+        "status": "caption/content review pending; no behavior claim",
+        "maps_to": [
+          "R0140",
+          "R0203",
+          "R0055",
+          "R0131"
+        ]
+      },
+      {
+        "url": "https://youtu.be/Acw0NtkyNtM",
+        "status": "caption/content review pending; no behavior claim",
+        "maps_to": [
+          "R0140",
+          "R0203",
+          "R0055",
+          "R0131"
+        ]
+      },
+      {
+        "url": "https://youtu.be/s3WkutktHsw",
+        "status": "caption/content review pending; no behavior claim",
+        "maps_to": [
+          "R0140",
+          "R0203",
+          "R0055",
+          "R0131"
+        ]
+      },
+      {
+        "url": "https://youtu.be/MeEZpjGrpm0",
+        "status": "caption/content review pending; no behavior claim",
+        "maps_to": [
+          "R0140",
+          "R0203",
+          "R0055",
+          "R0131"
+        ]
+      },
+      {
+        "url": "https://youtu.be/acsXZP3SA6w",
+        "status": "caption/content review pending; no behavior claim",
+        "maps_to": [
+          "R0140",
+          "R0203",
+          "R0055",
+          "R0131"
+        ]
+      },
+      {
+        "url": "https://www.youtube.com/shorts/V6kvapGV9qk",
+        "status": "caption/content review pending; no behavior claim",
+        "maps_to": [
+          "R0140",
+          "R0203",
+          "R0055",
+          "R0131"
+        ]
+      },
+      {
+        "url": "https://youtu.be/KUvSzvFeZls",
+        "status": "caption/content review pending; no behavior claim",
+        "maps_to": [
+          "R0140",
+          "R0203",
+          "R0055",
+          "R0131"
+        ]
+      },
+      {
+        "url": "https://youtu.be/FiOTrxq9ckM",
+        "status": "caption/content review pending; no behavior claim",
+        "maps_to": [
+          "R0140",
+          "R0203",
+          "R0055",
+          "R0131"
+        ]
+      },
+      {
+        "url": "https://youtu.be/6Tb41ORADgs",
+        "status": "caption/content review pending; no behavior claim",
+        "maps_to": [
+          "R0140",
+          "R0203",
+          "R0055",
+          "R0131"
+        ]
+      },
+      {
+        "url": "https://youtu.be/cQqOkx5qnWo",
+        "status": "caption/content review pending; no behavior claim",
+        "maps_to": [
+          "R0140",
+          "R0203",
+          "R0055",
+          "R0131"
+        ]
+      },
+      {
+        "url": "https://youtu.be/h9SsHkRSHxo?t=18",
+        "status": "caption/content review pending; no behavior claim",
+        "maps_to": [
+          "R0140",
+          "R0203",
+          "R0055",
+          "R0131"
+        ]
+      },
+      {
+        "url": "https://youtu.be/Iup815Xz_ZU",
+        "status": "caption/content review pending; no behavior claim",
+        "maps_to": [
+          "R0140",
+          "R0203",
+          "R0055",
+          "R0131"
+        ]
+      },
+      {
+        "url": "https://youtu.be/Ytpp65paFpY?t=23",
+        "status": "caption/content review pending; no behavior claim",
+        "maps_to": [
+          "R0140",
+          "R0203",
+          "R0055",
+          "R0131"
+        ]
+      },
+      {
+        "url": "https://youtu.be/u7f0ygnrvf8",
+        "status": "caption/content review pending; no behavior claim",
+        "maps_to": [
+          "R0140",
+          "R0203",
+          "R0055",
+          "R0131"
+        ]
+      }
+    ],
+    "duplicate_video_ids": [
+      "h9SsHkRSHxo",
+      "Ytpp65paFpY"
+    ]
   }
 }

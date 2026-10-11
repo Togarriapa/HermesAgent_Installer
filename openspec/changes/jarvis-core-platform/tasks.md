@@ -22,3 +22,5 @@ Complete obligation/component/AC mapping: requirements/current-scope.json. Usefu
 - VD-T266.5: review every matrix row and all62 component statuses against actual Pi/device/account effects, failures, restart and current provenance; report unknown/pending explicitly.
 
 These slices retain the eight checkbox task IDs/dependency graph; implementation progress and live qualification are separately evidenced. Video research is inspiration pending actual content evidence, never acceptance or purchasing authority.
+
+Within HI-T266.2/R0055/R0131, add one bounded native skill-create/refine→review/diff→approval→discovery/use→rollback slice with provenance/private-budget denials. RT-T266.3 may surface its real pending/history/result state. Caption research remains separate from implementation and does not delay the practical Pi MVP.

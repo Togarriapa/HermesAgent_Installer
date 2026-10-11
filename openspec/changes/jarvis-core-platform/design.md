@@ -65,3 +65,11 @@ Video research owner reviewed auto-generated captions for https://www.youtube.co
 ### Current source gaps
 
 At7f7c32fd normal install invokes existing-target adoption with fixed admin1000/GID981/source/PM paths; fresh setup and configurable owner selection remain separate work. The wizard's remote_desktop display text still incorrectly names Desktop. Resources importer stores all source prompts and exposes skills but does not implement207 delegated prompts, plugin effects or additive primary prompt integration; active prompt mismatch stays pending. These are concrete implementation gaps, not acceptance exceptions.
+
+## Native learning within existing skill scope
+
+R0055/R0131 already cover version-aware skills, private learning and supported Hermes interfaces; R0140/R0203 cover video-derived voice/UI ideas. No new requirement ID or product migration follows from the fourteen research links in current-scope. Duplicate h9SsHkRSHxo/Ytpp65paFpY references count once; content remains pending until actual captions/source are reviewed. Claude-specific features must map to actual Hermes contracts or remain explicitly unsupported.
+
+Pinned7085 source has skill_manage creation/edit and staged apply_skill_pending (tools/skill_manager_tool.py), background preflight guards (tools/skill_manager_guards.py), atomic batch snapshots/rollback (tools/skill_manager_batch.py), and explicit conversation refinement (tui_gateway/methods_slash.py). tui_gateway/server.py wires review.summary. These establish source feasibility, not Pi acceptance or permission to expose broad skill-write routes.
+
+Implement as a finite owner learning workflow: selected owned conversation→permitted review→candidate skill/version with provenance/diff→existing approval gate→actual native discovery/use→rollback. Preserve pristine bundled resources and user edits in separate owned generations. Family learning needs explicit namespace/policy; no shared private-memory isolation claim. Background provider/privacy/budget/account and original task deadlines remain mandatory. Learning cannot rewrite its own authorization, credentials, tools or system instructions; no unattended permission expansion. Jarvis displays pending proposals/history/result with truthful source timestamps, not fictitious self-improvement scores.
