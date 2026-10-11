@@ -102,7 +102,7 @@ def test_corrupt_member_silently_skipped_by_native_api_is_explicit_partial(owner
     result = probe._collect(home, NativeSkips(pending))
 
     assert result["state"] == "partial"
-    assert result["pending_reasons"] == ["corrupt_record"]
+    assert result["pending_reasons"] == ["pending_record_skipped"]
     assert result["candidates"] == []
 
 
@@ -128,7 +128,7 @@ def test_pending_membership_mutation_during_native_diff_discards_snapshot(owner_
     result = probe._collect(home, native)
 
     assert result["state"] == "partial"
-    assert "snapshot_changed" in result["pending_reasons"]
+    assert "pending_custody_changed" in result["pending_reasons"]
     assert result["candidates"] == []
 
 
@@ -144,7 +144,7 @@ def test_invalid_action_and_path_payload_is_partial_without_native_diff(owner_pe
     result = probe._collect(home, native)
 
     assert result["state"] == "partial"
-    assert result["pending_reasons"] == ["corrupt_record"]
+    assert result["pending_reasons"] == ["pending_record_invalid"]
     assert native.calls == [("list", "skills")]
 
 
@@ -162,7 +162,7 @@ def test_native_list_record_must_exactly_match_preread_object(owner_pending):
     result = probe._collect(home, native)
 
     assert result["state"] == "partial"
-    assert result["pending_reasons"] == ["snapshot_changed"]
+    assert result["pending_reasons"] == ["pending_custody_changed"]
     assert result["candidates"] == []
     assert native.calls == [("list", "skills")]
 
@@ -180,7 +180,7 @@ def test_skill_base_content_mutation_during_native_diff_discards_candidate(owner
     result = probe._collect(home, native)
 
     assert result["state"] == "partial"
-    assert result["pending_reasons"] == ["snapshot_changed"]
+    assert result["pending_reasons"] == ["pending_custody_changed"]
     assert result["candidates"] == []
 
 
@@ -199,6 +199,39 @@ def test_unowned_or_symlink_skill_base_is_rejected_before_native_diff(owner_pend
     result = probe._collect(home, native)
 
     assert result["state"] == "partial"
-    assert result["pending_reasons"] == ["unsafe_store"]
+    assert result["pending_reasons"] == ["pending_member_invalid"]
     assert result["candidates"] == []
     assert native.calls == [("list", "skills")]
+
+
+def test_batch_skill_base_is_snapshotted_and_late_change_discards_all_candidates(owner_pending):
+    home, pending = owner_pending
+    first = stage(pending, pending_id="a1b2c3d4", action="edit")
+    second = stage(pending, pending_id="b1c2d3e4", action="edit")
+    first_record = json.loads(first.read_text())
+    first_record["action"] = "batch"
+    first_record["payload"] = {"action": "batch", "operations": [
+        {"action": "edit", "name": "jarvis-helper"},
+        {"action": "patch", "name": "jarvis-other", "file_path": "SKILL.md"},
+    ]}
+    first.write_text(json.dumps(first_record), encoding="utf-8")
+    first.chmod(0o600)
+    second_record = json.loads(second.read_text())
+    second_record["payload"]["name"] = "jarvis-other"
+    second.write_text(json.dumps(second_record), encoding="utf-8")
+    second.chmod(0o600)
+    first_base = stage_base(home, "jarvis-helper")
+    other_base = stage_base(home, "jarvis-other")
+    native = NativeApproval(pending)
+
+    def mutate_first_after_its_diff():
+        if native.calls.count(("diff", "b1c2d3e4")):
+            (first_base / "SKILL.md").write_text("late change after first diff\n", encoding="utf-8")
+
+    native.on_diff = mutate_first_after_its_diff
+    result = probe._collect(home, native)
+
+    assert result["state"] == "partial"
+    assert result["pending_reasons"] == ["pending_custody_changed"]
+    assert result["candidates"] == []
+    assert other_base.is_dir()

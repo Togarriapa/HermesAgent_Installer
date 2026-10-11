@@ -31,8 +31,9 @@ _ID = re.compile(r"[0-9a-f]{8}\Z")
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.-]{0,119}\Z")
 _ACTIONS = frozenset({"create", "edit", "patch", "write_file", "remove_file", "delete", "batch"})
 _REASONS = frozenset({
-    "missing_store", "unsafe_store", "corrupt_record", "record_limit",
-    "diff_limit", "native_read_failed", "source_unavailable", "snapshot_changed",
+    "pending_directory_unavailable", "pending_member_invalid", "pending_limit_exceeded",
+    "pending_record_skipped", "pending_record_invalid", "native_diff_unavailable",
+    "diff_limit_reached", "pending_custody_changed",
 })
 
 
@@ -314,6 +315,12 @@ def _native_diff_reads_stay_in_owned_skills(home: Path, action: str,
         return None
 
 
+def _reads_skill_base(action: str, payload: dict[str, Any]) -> bool:
+    operations = payload.get("operations", []) if action == "batch" else [payload]
+    return any(isinstance(item, dict) and item.get("action") in {"edit", "patch", "write_file"}
+               for item in operations)
+
+
 def _partial(reasons: set[str], candidates: list[dict[str, Any]] | None = None,
              diff_bytes: int = 0) -> dict[str, Any]:
     bounded = sorted(reason for reason in reasons if reason in _REASONS)
@@ -329,7 +336,7 @@ def _partial(reasons: set[str], candidates: list[dict[str, Any]] | None = None,
 
 def _collect(home: Path, approval: Any) -> dict[str, Any]:
     if home != _CANONICAL_HOME:
-        return _partial({"source_unavailable"})
+        return _partial({"pending_directory_unavailable"})
     directory = home / "pending" / "skills"
     try:
         before_directory, before_members = _scan(directory)
@@ -347,7 +354,7 @@ def _collect(home: Path, approval: Any) -> dict[str, Any]:
                 pending_signature = None
             records = approval.list_pending("skills")
             if records != []:
-                return _partial({"corrupt_record"})
+                return _partial({"pending_record_invalid"})
             home_after = _safe_directory_identity(home, home=home,
                                                   components=("home", "admin", ".hermes"))
             try:
@@ -356,15 +363,15 @@ def _collect(home: Path, approval: Any) -> dict[str, Any]:
             except FileNotFoundError:
                 pending_after = None
             if home_signature != home_after or pending_signature != pending_after:
-                return _partial({"snapshot_changed"})
+                return _partial({"pending_custody_changed"})
         except Exception:
-            return _partial({"source_unavailable"})
+            return _partial({"pending_directory_unavailable"})
         return _partial(set())
     except NativeSkillLearningProbeUnavailable as exc:
-        reason = "record_limit" if "bound" in str(exc) else "unsafe_store"
+        reason = "pending_limit_exceeded" if "bound" in str(exc) else "pending_member_invalid"
         return _partial({reason})
     except OSError:
-        return _partial({"source_unavailable"})
+        return _partial({"pending_directory_unavailable"})
 
     reasons: set[str] = set()
     expected_ids: set[str] = set()
@@ -375,83 +382,83 @@ def _collect(home: Path, approval: Any) -> dict[str, Any]:
         try:
             record = _strict_json(raw)
         except (UnicodeError, ValueError):
-            reasons.add("corrupt_record")
+            reasons.add("pending_record_invalid")
             continue
         if not isinstance(record, dict) or record.get("id") != file_id or record.get("subsystem") != "skills":
-            reasons.add("corrupt_record")
+            reasons.add("pending_record_invalid")
         else:
             expected_records[file_id] = record
 
     try:
         records = approval.list_pending("skills")
     except Exception:
-        return _partial(reasons | {"source_unavailable"})
+        return _partial(reasons | {"pending_directory_unavailable"})
     if not isinstance(records, list):
-        return _partial(reasons | {"corrupt_record"})
+        return _partial(reasons | {"pending_record_invalid"})
 
     returned_ids: set[str] = set()
     valid_records: list[tuple[dict[str, Any], bytes]] = []
     for record in records:
         if not isinstance(record, dict):
-            reasons.add("corrupt_record")
+            reasons.add("pending_record_invalid")
             continue
         pending_id = record.get("id")
         if (not isinstance(pending_id, str) or not _ID.fullmatch(pending_id)
                 or pending_id in returned_ids or pending_id + ".json" not in before_members):
-            reasons.add("corrupt_record")
+            reasons.add("pending_record_invalid")
             continue
         returned_ids.add(pending_id)
         preread = expected_records.get(pending_id)
         native_bytes = _canonical_record(record)
         preread_bytes = _canonical_record(preread)
         if preread is None or native_bytes is None or native_bytes != preread_bytes:
-            reasons.add("snapshot_changed")
+            reasons.add("pending_custody_changed")
             continue
         raw = before_members[pending_id + ".json"][1]
         payload = record.get("payload")
         action = record.get("action")
         if not isinstance(action, str) or not _validate_payload(action, payload):
-            reasons.add("corrupt_record")
+            reasons.add("pending_record_invalid")
             continue
-        if action in {"edit", "patch", "write_file"} and _native_diff_reads_stay_in_owned_skills(home, action, payload) is None:
-            reasons.add("unsafe_store")
+        if _reads_skill_base(action, payload) and _native_diff_reads_stay_in_owned_skills(home, action, payload) is None:
+            reasons.add("pending_member_invalid")
             continue
         valid_records.append((record, raw))
     if returned_ids != expected_ids:
-        reasons.add("corrupt_record")
+        reasons.add("pending_record_skipped")
 
     candidates: list[dict[str, Any]] = []
     remaining = _MAX_DIFF_BYTES
     base_snapshots: dict[str, tuple[tuple[str, tuple[Any, ...]], ...]] = {}
     for record, raw in valid_records:
-        if record["action"] in {"edit", "patch", "write_file"}:
+        if _reads_skill_base(record["action"], record["payload"]):
             before_base = _native_diff_reads_stay_in_owned_skills(home, record["action"], record["payload"])
             if before_base is None:
-                reasons.add("unsafe_store")
+                reasons.add("pending_member_invalid")
                 continue
             base_snapshots[record["id"]] = before_base
         try:
             diff = approval.skill_pending_diff(record)
         except Exception:
-            reasons.add("native_read_failed")
+            reasons.add("native_diff_unavailable")
             continue
         if not isinstance(diff, str):
-            reasons.add("native_read_failed")
+            reasons.add("native_diff_unavailable")
             continue
         try:
             encoded = diff.encode("utf-8", errors="strict")
         except UnicodeEncodeError:
-            reasons.add("native_read_failed")
+            reasons.add("native_diff_unavailable")
             continue
         if any(ord(char) < 0x20 and char not in "\n\r\t" or ord(char) == 0x7f for char in diff):
-            reasons.add("native_read_failed")
+            reasons.add("native_diff_unavailable")
             continue
         full_digest = hashlib.sha256(encoded).hexdigest()
         truncated = len(encoded) > remaining
         if truncated:
             shown = encoded[:remaining].decode("utf-8", errors="ignore")
             shown_bytes = len(shown.encode("utf-8"))
-            reasons.add("diff_limit")
+            reasons.add("diff_limit_reached")
         else:
             shown = diff
             shown_bytes = len(encoded)
@@ -485,17 +492,23 @@ def _collect(home: Path, approval: Any) -> dict[str, Any]:
         if record["id"] in base_snapshots:
             after_base = _native_diff_reads_stay_in_owned_skills(home, record["action"], record["payload"])
             if after_base is None or after_base != base_snapshots[record["id"]]:
-                reasons.add("snapshot_changed")
+                reasons.add("pending_custody_changed")
                 return _partial(reasons)
 
     try:
         after_directory, after_members = _scan(directory)
     except Exception:
-        return _partial(reasons | {"snapshot_changed"})
+        return _partial(reasons | {"pending_custody_changed"})
     if before_directory != after_directory or before_members.keys() != after_members.keys() or any(
         before_members[name][0] != after_members[name][0] for name in before_members
     ):
-        return _partial(reasons | {"snapshot_changed"})
+        return _partial(reasons | {"pending_custody_changed"})
+    for record, _raw in valid_records:
+        snapshot = base_snapshots.get(record["id"])
+        if snapshot is not None:
+            current = _native_diff_reads_stay_in_owned_skills(home, record["action"], record["payload"])
+            if current is None or current != snapshot:
+                return _partial(reasons | {"pending_custody_changed"})
     used = _MAX_DIFF_BYTES - remaining
     return _partial(reasons, candidates, used)
 
@@ -505,22 +518,22 @@ def read_native_skill_learning_candidates() -> dict[str, Any]:
     try:
         if (os.getuid() != _UID or os.geteuid() != _UID
                 or os.getgid() != _UID or os.getegid() != _UID):
-            return _partial({"source_unavailable"})
+            return _partial({"pending_directory_unavailable"})
         from hermes_constants import get_hermes_home
         import tools.write_approval as approval
 
         home = Path(get_hermes_home())
         if home != _CANONICAL_HOME:
-            return _partial({"source_unavailable"})
+            return _partial({"pending_directory_unavailable"})
         return _collect(home, approval)
     except Exception:
-        return _partial({"source_unavailable"})
+        return _partial({"pending_directory_unavailable"})
 
 
 def main() -> int:
     """Fixed no-argument CLI for the root's PM-Python launcher."""
     if len(sys.argv) != 1:
-        print(json.dumps(_partial({"source_unavailable"}), separators=(",", ":")))
+        print(json.dumps(_partial({"pending_directory_unavailable"}), separators=(",", ":")))
         return 2
     result = read_native_skill_learning_candidates()
     print(json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
