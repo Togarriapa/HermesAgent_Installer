@@ -713,11 +713,11 @@ The installer SHALL satisfy: humanizer: Portable writing skill.
 - **AND** missing dependency/account/hardware or failed evidence leaves acceptance OPEN with exact next action, preserving data and prior working state.
 
 ### Requirement: R0090 current functional obligation
-The installer SHALL satisfy: obsidian-skills: Portable file-format skills; separately validate optional desktop/CLI tools and approved vault paths.
+The installer SHALL satisfy: obsidian-skills: Implement Obsidian as the required primary second brain with a persistent owner-isolated Pi vault, actual Hermes/Jarvis read/search/link/draft/reviewed-write integration and provenance-backed dashboard knowledge graph; preserve portable format skills and qualify native ARM64/mobile app and sync separately.
 
 #### Scenario: Verified capability or exact pending state
 - **WHEN** this obligation is implemented for a selected authorized target/account
-- **THEN** verification MUST exercise Synthetic markdown/canvas fixture with approved temp vault; deny writes outside vault and classify unavailable optional desktop tools honestly; fixture and pending/live states remain separate
+- **THEN** verification MUST exercise Persistent Pi vault read/search/link/reviewed-write/restart effects, owner/expert-draft isolation, symlink/traversal/CAS/conflict/recovery denials and source-backed dashboard graph; retain Markdown/Canvas fixtures and separate native app/device/sync acceptance
 - **AND** missing dependency/account/hardware or failed evidence leaves acceptance OPEN with exact next action, preserving data and prior working state.
 
 ### Requirement: R0091 current functional obligation
@@ -2033,3 +2033,31 @@ The living dashboard SHALL keep a central original Jarvis reactor with truthful 
 #### Scenario: Accessible metadata with failed source playback
 - **WHEN** a reference page exposes title/caption but its video cannot play
 - **THEN** the intake records only those inspected metadata facts and explicit playback failure, without asserting observed motion, functionality or integration.
+
+### Requirement: Required persistent primary Obsidian second brain
+The system SHALL implement Obsidian as its primary durable knowledge store in a persistent selected-owner Pi vault with interoperable Markdown/links and preserved existing content/settings. Native Hermes/Jarvis SHALL actually read/search/link and write through finite owned adapters; a generic graph or portable fixture alone SHALL NOT satisfy this requirement.
+
+#### Scenario: Native knowledge use after restart
+- **WHEN** Jarvis writes an exact permitted reviewed note and the service restarts
+- **THEN** actual read/search/backlink and dashboard projection return the persistent note with provenance, while installer/runtime generations and credentials remain separate.
+
+### Requirement: Private Expert drafts and reviewed conditional knowledge writes
+Experts SHALL have only scoped note retrieval and their own private execution drafts. Final shared knowledge writes SHALL require Jarvis review and current owner action scope, bind exact destination/content/base digest and preserve conflict/recovery bytes. Stored plans, notes and model claims SHALL NOT authorize effects.
+
+#### Scenario: Expert final write or concurrent owner edit
+- **WHEN** an Expert requests final shared write or the note changes after review
+- **THEN** final mutation denies, the private proposal/conflict survives and Jarvis requires a current reviewed owner-authorized conditional write.
+
+### Requirement: Actual vault graph and single capture owner
+Dashboard search/knowledge graphs SHALL derive from authorized actual vault files and resolved links with bounded source coverage, unknown/ambiguous links and accessible list alternatives. Obsidian SHALL preserve native working memory and one automatic capture owner per active profile; it SHALL NOT silently import histories or enable competing capture/embedding services.
+
+#### Scenario: Private data or partial scan
+- **WHEN** a read/graph includes another owner's note/private Expert draft, an external link or incomplete index coverage
+- **THEN** private/external data is not exposed or fetched, partial coverage remains explicit and knowledge links confer no communication or execution authority.
+
+### Requirement: Separate native Obsidian app and device evidence
+The system SHALL retain official Linux ARM64/mobile app availability and implement a usable compatible vault without claiming app installation/launch or synchronization from file support. Android/tablet use SHALL provide accessible actual vault visibility and a concrete granted handoff or existing verified sync route, without automatic paid Sync.
+
+#### Scenario: App or device not qualified
+- **WHEN** a vault works but the GUI/CLI, device open/edit or ongoing sync has not been verified
+- **THEN** vault functions remain usable and each missing native/device effect remains explicitly pending with concrete setup steps, preserving zero-spend and owner data.

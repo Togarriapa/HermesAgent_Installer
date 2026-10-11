@@ -895,11 +895,11 @@
     },
     {
       "id": "R0090",
-      "text": "obsidian-skills: Portable file-format skills; separately validate optional desktop/CLI tools and approved vault paths.",
+      "text": "obsidian-skills: Implement Obsidian as the required primary second brain with a persistent owner-isolated Pi vault, actual Hermes/Jarvis read/search/link/draft/reviewed-write integration and provenance-backed dashboard knowledge graph; preserve portable format skills and qualify native ARM64/mobile app and sync separately.",
       "phase": 2,
       "task_id": "HI-T266.2",
       "implementation_module": "src/hermes_installer/components/obsidian_skills.py",
-      "verification_method": "Synthetic markdown/canvas fixture with approved temp vault; deny writes outside vault and classify unavailable optional desktop tools honestly; fixture and pending/live states remain separate",
+      "verification_method": "Persistent Pi vault read/search/link/reviewed-write/restart effects, owner/expert-draft isolation, symlink/traversal/CAS/conflict/recovery denials and source-backed dashboard graph; retain Markdown/Canvas fixtures and separate native app/device/sync acceptance",
       "test_path": "tests/integrations/test_obsidian_skills.py",
       "acceptance": "OPEN"
     },
@@ -2788,10 +2788,10 @@
       "task_ids": [
         "HI-T266.2"
       ],
-      "verification_method": "Synthetic markdown/canvas fixture with approved temp vault; deny writes outside vault and classify unavailable optional desktop tools honestly",
-      "required_handling": "Portable file-format skills; separately validate optional desktop/CLI tools and approved vault paths.",
+      "verification_method": "Persistent Obsidian vault effects and owner/draft/review/CAS/recovery denials; retain Markdown/Canvas fixture coverage and separately qualify native app/device/sync",
+      "required_handling": "Required primary Obsidian second brain: persistent owner-isolated Pi vault, native read/search/links and expert drafts with Jarvis-reviewed final writes, dashboard graph; retain portable skills and separate native ARM64/mobile app/sync evidence.",
       "license_status": "See source_evidence; absent/NOASSERTION blocks redistribution pending review",
-      "component_type": "file-format skill + optional tools",
+      "component_type": "primary Obsidian vault + portable skills + separately qualified native apps",
       "acceptance": "OPEN"
     },
     {
