@@ -108,6 +108,93 @@ def test_stop_uses_only_fixed_session_interrupt_and_requires_confirmation():
         asyncio.run(client.stop("runtime-a"))
 
 
+def test_lifecycle_startup_probe_uses_only_fixed_rpc_and_closed_single_use_receipt():
+    class Socket:
+        def __init__(self):
+            self.frames = []
+            self.closed = False
+
+        async def send_json(self, frame):
+            self.frames.append(frame)
+
+        async def close(self):
+            self.closed = True
+
+    class ClientSession:
+        def __init__(self):
+            self.closed = False
+
+        async def close(self):
+            self.closed = True
+
+    socket = Socket()
+    session = ClientSession()
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
+
+    async def connect(*, total_timeout=None):
+        assert total_timeout == 120.0
+        return session, socket, SimpleNamespace()
+
+    async def receive(_ws, _types, *, expected_id=None, deadline=None, **_kwargs):
+        assert expected_id == socket.frames[0]["id"]
+        assert deadline is not None
+        return {"schema": 1, "probe_handle": "p" * 32,
+                "completion_handle": "c" * 32, "status": "completed",
+                "response_sha256": "a" * 64}
+
+    client._connect = connect
+    client._receive = receive
+    assert asyncio.run(client.lifecycle_startup_probe("p" * 32)) == {
+        "schema": 1, "probe_handle": "p" * 32,
+        "completion_handle": "c" * 32, "status": "completed",
+        "response_sha256": "a" * 64,
+    }
+    assert socket.frames[0]["method"] == "jarvis.lifecycle_startup_probe"
+    assert socket.frames[0]["params"] == {"probe_handle": "p" * 32}
+    assert socket.closed and session.closed
+
+
+@pytest.mark.parametrize("result", [
+    {"schema": 1, "probe_handle": "p" * 32, "completion_handle": "c" * 32,
+     "status": "completed", "response_sha256": "a" * 64, "answer": "raw"},
+    {"schema": 1, "probe_handle": "p" * 32, "completion_handle": "c" * 32,
+     "status": "completed", "response_sha256": "a" * 63},
+    {"schema": 1, "probe_handle": "p" * 32, "completion_handle": "c" * 32,
+     "status": "pending", "response_sha256": "a" * 64},
+])
+def test_lifecycle_startup_probe_rejects_open_or_incomplete_wire_results(result):
+    class Socket:
+        async def send_json(self, _frame):
+            pass
+
+        async def close(self):
+            pass
+
+    class ClientSession:
+        async def close(self):
+            pass
+
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
+
+    async def connect(*, total_timeout=None):
+        assert total_timeout == 120.0
+        return ClientSession(), Socket(), SimpleNamespace()
+
+    async def receive(*_args, **_kwargs):
+        return result
+
+    client._connect = connect
+    client._receive = receive
+    with pytest.raises(JarvisChatDenied):
+        asyncio.run(client.lifecycle_startup_probe("p" * 32))
+
+
+def test_lifecycle_startup_probe_rejects_caller_control_and_malformed_handles():
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
+    with pytest.raises(JarvisChatDenied):
+        asyncio.run(client.lifecycle_startup_probe("short"))
+
+
 def test_models_status_projects_only_codex_authentication_and_known_catalog():
     client = CoreRpcClient(token_file=Path("/private/fake/token"))
     calls = []
