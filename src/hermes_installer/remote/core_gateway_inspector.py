@@ -5325,4 +5325,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    # ``python -m`` executes this file as ``__main__``.  Keep runtime classes,
+    # seals, and custody construction in the canonical package module so that
+    # exact-type checks in the native observer see the same class objects.
+    from hermes_installer.remote.core_gateway_inspector import main as canonical_main
+
+    canonical_main()

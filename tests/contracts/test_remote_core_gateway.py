@@ -404,6 +404,36 @@ class CoreGatewayInspectorClientTests(unittest.TestCase):
         # use it to construct runtime state or invoke its duplicate main().
         self.assertIsNot(executed["CoreGatewayConfig"], core_gateway.CoreGatewayConfig)
 
+    def test_inspector_module_entry_uses_canonical_custody_for_native_registry(self):
+        from hermes_installer.remote import core_native_observer as observer
+
+        accepted = []
+
+        def canonical_entry():
+            custody = object.__new__(core_gateway_inspector.CoreNativeObserverCustody)
+            with patch.object(observer, "_load_root_obsidian_origin_state",
+                              return_value=({}, {})), \
+                 patch.object(observer, "_load_root_obsidian_history", return_value=[]), \
+                 patch.object(observer, "_read_root_native_activity_bytes", return_value=None), \
+                 patch("hermes_installer.components.resources_active_profile_source."
+                       "RootVerifiedJarvisMasterSource.current_master_source",
+                       return_value=None):
+                registry = observer.RootCoreNativeObservationRegistry.from_current_core_custody(
+                    custody, config=object())
+            accepted.append((custody, registry))
+
+        with patch.object(core_gateway_inspector, "main", canonical_entry), \
+             warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            executed = runpy.run_module(
+                "hermes_installer.remote.core_gateway_inspector", run_name="__main__")
+
+        self.assertEqual(len(accepted), 1)
+        custody, registry = accepted[0]
+        self.assertIs(type(custody), core_gateway_inspector.CoreNativeObserverCustody)
+        self.assertIs(registry._custody, custody)
+        self.assertIsNot(executed["CoreNativeObserverCustody"], type(custody))
+
     def test_real_ingress_verifier_denies_unowned_inspector_socket(self):
         config = _config()
         wrong_socket = SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=0,
