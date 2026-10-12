@@ -1,5 +1,7 @@
 # Proposal
 
+Close the existing M1 absent-primary-record deadlock with genuine fixed Root initial adoption under exact new starting custody before its chat probe. Reuse the real append/backup/native-readback transaction and refresh starting Resources/cohort joins from actual resulting HOME SOUL; bundled profile identity is not adopted identity. Previously adopted rebase stays byte-identical. Preserve owner prefix/auth/overlay/vault and exact interruption recovery; pending adoption cannot commit as functional. No new scope or acceptance closure.
+
 Reference-ledger correction within R0203/RT-T266.3/VD-T266.5: the portable all14-image intake now records full-display visual review, replacing the obsolete six-of14 roadmap count. Preserve requested running-service orbital idle motion separately from genuine task/audio/Team signals. Image intake is not candidate-rendered UX or runtime proof; video/TikTok/Murphmaxxing limits and all existing Android/voice/household obligations remain. M1 stays first; no scope/acceptance change.
 
 Close the existing M1 usable-chat producer gap with one Root-only fixed new-peer lifecycle probe: actual native Jarvis identity/Resources readback, ephemeral no-memory/no-tools official agent, existing authenticated Codex route and real terminal provider/native observations bound to exact starting custody. Reuse the pinned loopback client/native registration and observer mechanics without inventing an owner/planner receipt. Missing producers/login remain pending; all acceptance groups stay OPEN.
