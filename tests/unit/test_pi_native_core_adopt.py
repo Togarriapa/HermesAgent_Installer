@@ -288,6 +288,7 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
     events = []
     legacy = {"value": True}
     states = {adopt.GATEWAY: "active", adopt.TUNNEL: "active", adopt.INSPECTOR: "active"}
+    backup_state = {"present": False}
 
     def migrate():
         assert states[adopt.GATEWAY] == states[adopt.TUNNEL] == "inactive"
@@ -342,13 +343,14 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
 
     class Backup:
         def exists(self):
-            return False
+            return backup_state["present"]
 
         def is_symlink(self):
             return False
 
         def unlink(self, **_kwargs):
             events.append("remove-backup")
+            backup_state["present"] = False
 
     monkeypatch.setattr(adopt, "INGRESS_BACKUP", Backup())
     monkeypatch.setattr(adopt.os, "geteuid", lambda: 0)
@@ -379,7 +381,11 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
         old_config, config_info,
         {adopt.FIXED_UNITS[adopt.GATEWAY]: new_gateway,
          adopt.FIXED_UNITS[adopt.INSPECTOR]: new_inspector}, new_config))
-    monkeypatch.setattr(adopt, "_save_ingress_backup", lambda *_args: events.append("save-backup"))
+    def save_backup(*_args):
+        events.append("save-backup")
+        backup_state["present"] = True
+
+    monkeypatch.setattr(adopt, "_save_ingress_backup", save_backup)
     monkeypatch.setattr(adopt, "_set_backup_state", lambda state: events.append(("backup-state", state)))
 
     def run(*args, **_kwargs):
@@ -425,7 +431,8 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
         assert migrate_at < events.index("verify-migrated-core")
         assert events.index("verify-migrated-core") < events.index(("restart", adopt.INSPECTOR))
         assert events.index(("restart", adopt.INSPECTOR)) < fresh_at
-        assert events.index("remove-backup") > gateway_tunnel_starts[-1]
+        assert backup_state["present"]
+        assert "save-backup" in events and "remove-backup" not in events
     else:
         assert result == 4
         assert not gateway_tunnel_starts
