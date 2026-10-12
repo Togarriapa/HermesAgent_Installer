@@ -27,7 +27,9 @@ NEW_SOURCE = b"/opt/hermes-installer-core-bbbbbbbbb/src"
 def _unit(module, source=OLD_SOURCE):
     return (b"[Service]\nEnvironment=PYTHONPATH=" + source + b"\n"
             b"ExecStart=/opt/hermes-jarvis-mvp-gateway-venv/bin/python -m hermes_installer.remote."
-            + module.encode("ascii") + b"\n")
+            + module.encode("ascii") + b"\nUser=root\nGroup=981\n"
+            b"RuntimeDirectory=hermes-jarvis-mvp-core\nRuntimeDirectoryMode=0750\n"
+            b"ProtectSystem=strict\n")
 
 
 def test_recovery_resolves_preparing_journal_before_accepting_legacy_listener():
@@ -95,6 +97,43 @@ def test_switch_changes_only_two_import_roots_and_gateway_digest(monkeypatch):
     }
     assert after["credential_ref"] == "keyring:codex-primary"
     assert after["selected_data_root"] == "/home/admin/.hermes"
+
+
+def test_runtime_inspector_recipe_preserves_primary_group_and_adds_only_fixed_paths():
+    raw = _unit("core_gateway_inspector")
+    repaired = adopt._runtime_repaired_inspector(raw)
+    text = repaired.decode("ascii")
+    assert "Group=981\n" in text
+    assert adopt.NATIVE_OBSERVER_PRESTART in text
+    assert adopt.NATIVE_OBSERVER_READ_WRITE in text
+    assert adopt.NATIVE_OBSERVER_SUPPLEMENTARY_GROUPS in text
+    assert text.count(adopt.NATIVE_OBSERVER_PRESTART) == 1
+    assert adopt._runtime_repaired_inspector(repaired) == repaired
+    bad_template = raw.replace(
+        b"RuntimeDirectory=hermes-jarvis-mvp-core\n",
+        b"RuntimeDirectory=hermes-jarvis-mvp-core hermes-jarvis-native-observer:root:admin\n")
+    assert b"RuntimeDirectory=hermes-jarvis-mvp-core\n" in adopt._runtime_repaired_inspector(bad_template)
+
+    with pytest.raises(RuntimeError, match="unexpected runtime-access directive"):
+        adopt._runtime_repaired_inspector(raw + b"SupplementaryGroups=audio\n")
+
+
+def test_runtime_inspector_digest_journal_is_candidate_cas_bound(monkeypatch):
+    candidate, base, repaired = "a" * 40, "b" * 64, "c" * 64
+    record = {"schema": 1, "candidate_sha": candidate,
+              "new_inspector_sha256": base, "state": "recovery-required"}
+    writes = []
+    info = SimpleNamespace(st_mode=stat.S_IFREG | 0o600)
+    monkeypatch.setattr(adopt, "_read_fixed", lambda *_args, **_kwargs:
+                        (json.dumps(record).encode(), info))
+    monkeypatch.setattr(adopt, "_atomic_fixed", lambda _path, raw, **_kwargs:
+                        writes.append(json.loads(raw)))
+
+    adopt._set_runtime_inspector_digest(candidate, base, repaired)
+    assert writes == [{**record, "runtime_inspector_sha256": repaired}]
+    with pytest.raises(RuntimeError, match="protected Inspector repair journal changed"):
+        adopt._set_runtime_inspector_digest("d" * 40, base, repaired)
+    assert len(writes) == 1
 
 
 def test_core_config_resume_refresh_is_journal_bound_and_commit_before_write(monkeypatch):
@@ -504,6 +543,8 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
         backup_state["present"] = True
 
     monkeypatch.setattr(adopt, "_save_ingress_backup", save_backup)
+    monkeypatch.setattr(adopt, "_set_runtime_inspector_digest",
+                        lambda *_args: events.append("journal-runtime-inspector"))
     monkeypatch.setattr(adopt, "_set_backup_state", lambda state: events.append(("backup-state", state)))
 
     def run(*args, **_kwargs):
@@ -550,14 +591,19 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
                              if isinstance(event, tuple) and event[0] == "start"
                              and event[1] in {adopt.GATEWAY, adopt.TUNNEL}]
     migrate_at = events.index("migrate-core") if "migrate-core" in events else None
-    fresh_at = events.index("fresh-observer") if "fresh-observer" in events else None
+    fresh_checks = [index for index, event in enumerate(events) if event == "fresh-observer"]
+    fresh_at = fresh_checks[0] if fresh_checks else None
     if failure is None:
         assert result == 0
         assert migrate_at is not None and fresh_at is not None
         assert gateway_tunnel_starts
-        assert all(index > migrate_at and index > fresh_at for index in gateway_tunnel_starts)
+        assert len(fresh_checks) == 2
+        assert all(index > migrate_at and index > fresh_checks[-1]
+                   for index in gateway_tunnel_starts)
         assert events.index("prepare-owner") < migrate_at < fresh_at
         assert migrate_at < events.index("verify-migrated-core")
+        assert events.index("save-backup") < events.index("journal-runtime-inspector")
+        assert events.index("journal-runtime-inspector") < events.index("switch-fixed-units")
         assert events.index("verify-migrated-core") < events.index(("restart", adopt.INSPECTOR))
         assert events.index(("restart", adopt.INSPECTOR)) < fresh_at
         assert backup_state["present"]
@@ -609,6 +655,10 @@ def test_resume_requires_exact_saved_candidate_and_keeps_ingress_closed_until_ob
     monkeypatch.setattr(adopt, "_unit_is_exact_and_active", lambda name: states[name] == "active")
     monkeypatch.setattr(adopt, "_verify_inspector_process", lambda *_args: events.append("verify-inspector"))
     monkeypatch.setattr(adopt, "_read_fixed", lambda path, **_kwargs: (files[path], info))
+    monkeypatch.setattr(adopt, "_set_runtime_inspector_digest",
+                        lambda *_args: events.append("journal-runtime-inspector"))
+    monkeypatch.setattr(adopt, "_atomic_fixed",
+                        lambda path, raw, **_kwargs: files.__setitem__(path, raw))
     monkeypatch.setattr(adopt, "_refresh_migrated_core_config",
                         lambda *_args: events.append("refresh-config") or current_config)
     monkeypatch.setattr(adopt, "_verify_gateway_tunnel",
@@ -643,6 +693,11 @@ def test_resume_requires_exact_saved_candidate_and_keeps_ingress_closed_until_ob
         adopt._resume_adoption(candidate, source, core, config_type, tmp_path / "observer.sock")
         assert events.index("refresh-config") < events.index(("restart", adopt.INSPECTOR))
         assert events.index(("restart", adopt.INSPECTOR)) < events.index("wait-observer")
-        assert events.index("wait-observer") < events.index(("start", adopt.GATEWAY))
+        observer_checks = [index for index, event in enumerate(events) if event == "wait-observer"]
+        assert len(observer_checks) == 2
+        assert events.index("journal-runtime-inspector") < max(
+            index for index, event in enumerate(events)
+            if event == ("restart", adopt.INSPECTOR))
+        assert observer_checks[-1] < events.index(("start", adopt.GATEWAY))
         assert events.index(("start", adopt.GATEWAY)) < events.index(("start", adopt.TUNNEL))
         assert ("backup-state", "migrated") in events

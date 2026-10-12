@@ -31,6 +31,12 @@ FIXED_UNITS = {
 }
 GATEWAY_CONFIG = Path("/etc/hermes-installer/jarvis-core-gateway.json")
 INGRESS_BACKUP = Path("/var/lib/hermes-installer/core-runtime/native-adoption-ingress-backup.json")
+NATIVE_OBSERVER_DIRECTORY = Path("/run/hermes-jarvis-native-observer")
+NATIVE_OBSERVER_PRESTART = (
+    "ExecStartPre=/usr/bin/install -d -o root -g 1000 -m 0750 "
+    "/run/hermes-jarvis-native-observer")
+NATIVE_OBSERVER_READ_WRITE = "ReadWritePaths=/var/lib/hermes-installer/core-runtime"
+NATIVE_OBSERVER_SUPPLEMENTARY_GROUPS = "SupplementaryGroups=1000"
 _SOURCE_PATH = re.compile(rb"/opt/hermes-installer-core-[0-9a-f]{9,64}/src\Z")
 
 _CORE_MIGRATION_REASON_CODES = {
@@ -361,6 +367,61 @@ def _set_backup_state(state: str) -> None:
     _atomic_fixed(INGRESS_BACKUP, replacement, uid=0, gid=0, mode=stat.S_IMODE(info.st_mode))
 
 
+def _set_runtime_inspector_digest(candidate_sha: str, base_digest: str,
+                                  runtime_digest: str) -> None:
+    """Journal the exact fixed Inspector repair before replacing its unit bytes."""
+    value, info = _read_fixed(INGRESS_BACKUP, uid=0, gid=0, mode=0o600, maximum=128 * 1024)
+    try:
+        record = json.loads(value, object_pairs_hook=_unique_pairs)
+        if (type(record) is not dict or record.get("schema") != 1
+                or record.get("candidate_sha") != candidate_sha
+                or record.get("new_inspector_sha256") != base_digest
+                or (record.get("runtime_inspector_sha256") not in (None, runtime_digest))):
+            raise ValueError
+        record["runtime_inspector_sha256"] = runtime_digest
+    except Exception:
+        raise RuntimeError("protected Inspector repair journal changed") from None
+    replacement = (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
+    _atomic_fixed(INGRESS_BACKUP, replacement, uid=0, gid=0, mode=stat.S_IMODE(info.st_mode))
+
+
+def _runtime_repaired_inspector(raw: bytes) -> bytes:
+    """Add only the fixed observer runtime setup and private sidecar write path."""
+    try:
+        lines = raw.decode("ascii", "strict").splitlines()
+    except UnicodeError:
+        raise RuntimeError("fixed Inspector unit is not ASCII") from None
+    if lines.count("[Service]") != 1:
+        raise RuntimeError("fixed Inspector unit Service section is not unique")
+    service_start = lines.index("[Service]") + 1
+    service_end = next((i for i in range(service_start, len(lines))
+                        if lines[i].startswith("[")), len(lines))
+    service = lines[service_start:service_end]
+    required = {"User=root", "Group=981", "ProtectSystem=strict"}
+    if not required.issubset(set(service)):
+        raise RuntimeError("fixed Inspector runtime security contract differs")
+    runtime_dirs = [line for line in service if line.startswith("RuntimeDirectory=")]
+    if runtime_dirs == ["RuntimeDirectory=hermes-jarvis-mvp-core hermes-jarvis-native-observer:root:admin"]:
+        bad_runtime_line = runtime_dirs[0]
+        lines[lines.index(bad_runtime_line)] = "RuntimeDirectory=hermes-jarvis-mvp-core"
+        service = lines[service_start:service_end]
+    if ([line for line in service if line.startswith("RuntimeDirectory=")] !=
+            ["RuntimeDirectory=hermes-jarvis-mvp-core"]
+            or [line for line in service if line.startswith("RuntimeDirectoryMode=")] !=
+            ["RuntimeDirectoryMode=0750"]):
+        raise RuntimeError("fixed Inspector runtime-directory contract differs")
+    additions = (NATIVE_OBSERVER_PRESTART, NATIVE_OBSERVER_READ_WRITE,
+                 NATIVE_OBSERVER_SUPPLEMENTARY_GROUPS)
+    for prefix, expected in (("ExecStartPre=", NATIVE_OBSERVER_PRESTART),
+                             ("ReadWritePaths=", NATIVE_OBSERVER_READ_WRITE),
+                             ("SupplementaryGroups=", NATIVE_OBSERVER_SUPPLEMENTARY_GROUPS)):
+        rows = [line for line in service if line.startswith(prefix)]
+        if rows and rows != [expected]:
+            raise RuntimeError("fixed Inspector has an unexpected runtime-access directive")
+    repaired = [line for line in additions if line not in service]
+    return ("\n".join(lines[:service_end] + repaired + lines[service_end:]) + "\n").encode("ascii")
+
+
 def _backup_value(candidate_sha: str) -> tuple[dict, bytes, bytes, bytes]:
     raw, _info = _read_fixed(INGRESS_BACKUP, uid=0, gid=0, mode=0o600, maximum=128 * 1024)
     try:
@@ -368,17 +429,24 @@ def _backup_value(candidate_sha: str) -> tuple[dict, bytes, bytes, bytes]:
         keys = {"schema", "state", "candidate_sha", "gateway_unit", "inspector_unit",
                 "gateway_config", "gateway_mode", "gateway_gid", "old_gateway_sha256",
                 "old_inspector_sha256", "old_config_sha256", "new_gateway_sha256",
-                "new_inspector_sha256", "new_config_sha256", "post_core_config_sha256"}
-        legacy_keys = keys - {"post_core_config_sha256"}
+                "new_inspector_sha256", "new_config_sha256", "post_core_config_sha256",
+                "runtime_inspector_sha256"}
+        legacy_keys = keys - {"post_core_config_sha256", "runtime_inspector_sha256"}
         if type(value) is dict and set(value) == legacy_keys:
             value["post_core_config_sha256"] = None
+            value["runtime_inspector_sha256"] = None
+        elif type(value) is dict and set(value) == keys - {"runtime_inspector_sha256"}:
+            value["runtime_inspector_sha256"] = None
         if (type(value) is not dict or set(value) != keys or type(value["schema"]) is not int
                 or value["schema"] != 1 or value["candidate_sha"] != candidate_sha
                 or value["state"] not in {"prepared", "units-switched", "migrated", "recovery-required"}
                 or value["gateway_mode"] != 0o440 or value["gateway_gid"] != 981
                 or (value["post_core_config_sha256"] is not None
                     and (not isinstance(value["post_core_config_sha256"], str)
-                         or re.fullmatch(r"[0-9a-f]{64}", value["post_core_config_sha256"]) is None))):
+                         or re.fullmatch(r"[0-9a-f]{64}", value["post_core_config_sha256"]) is None))
+                or (value["runtime_inspector_sha256"] is not None
+                    and (not isinstance(value["runtime_inspector_sha256"], str)
+                         or re.fullmatch(r"[0-9a-f]{64}", value["runtime_inspector_sha256"]) is None))):
             raise ValueError
         decoded = tuple(base64.b64decode(value[key], validate=True) for key in
                         ("gateway_unit", "inspector_unit", "gateway_config"))
@@ -505,7 +573,8 @@ def _restore_old_ingress(value: dict, old_gateway: bytes, old_inspector: bytes,
         if (sha256(current_gateway).hexdigest() not in
                 {value["new_gateway_sha256"], sha256(old_gateway).hexdigest()}
                 or sha256(current_inspector).hexdigest() not in
-                {value["new_inspector_sha256"], sha256(old_inspector).hexdigest()}
+                {value["new_inspector_sha256"], value.get("runtime_inspector_sha256"),
+                 sha256(old_inspector).hexdigest()}
                 or sha256(current_config).hexdigest() not in
                 {value["new_config_sha256"], value.get("post_core_config_sha256"),
                  sha256(old_config).hexdigest()}):
@@ -716,8 +785,12 @@ def _resume_adoption(candidate_sha: str, expected_source: Path, core_runtime,
                               mode=0o644, maximum=64 * 1024)
     inspector, _ = _read_fixed(FIXED_UNITS[INSPECTOR], uid=0, gid=0,
                                 mode=0o644, maximum=64 * 1024)
+    inspector_sha = hashlib.sha256(inspector).hexdigest()
+    expected_runtime_inspector = _runtime_repaired_inspector(inspector)
+    runtime_inspector_sha = hashlib.sha256(expected_runtime_inspector).hexdigest()
     if (hashlib.sha256(gateway).hexdigest() != value["new_gateway_sha256"]
-            or hashlib.sha256(inspector).hexdigest() != value["new_inspector_sha256"]
+            or inspector_sha not in {value["new_inspector_sha256"],
+                                     value.get("runtime_inspector_sha256")}
             or _unit_source(gateway, "core_gateway") != str(expected_source).encode("ascii")
             or _unit_source(inspector, "core_gateway_inspector") != str(expected_source).encode("ascii")
             or not _unit_is_exact_and_active(INSPECTOR)):
@@ -758,7 +831,26 @@ def _resume_adoption(candidate_sha: str, expected_source: Path, core_runtime,
         _verify_inspector_process(inspector, str(expected_source).encode("ascii"))
         phase = "verify fresh native observer socket"
         print("Resume phase: " + phase, flush=True)
-        _wait_observer_socket(previous_inode=previous_inode)
+        observer_identity = _wait_observer_socket(previous_inode=previous_inode)
+        phase = "journal and install persistent native observer runtime access"
+        print("Resume phase: " + phase, flush=True)
+        if inspector_sha != runtime_inspector_sha:
+            if inspector_sha != value["new_inspector_sha256"]:
+                raise RuntimeError("fixed Inspector differs from both journaled runtime states")
+            _set_runtime_inspector_digest(candidate_sha, inspector_sha, runtime_inspector_sha)
+            _atomic_fixed(FIXED_UNITS[INSPECTOR], expected_runtime_inspector,
+                          uid=0, gid=0, mode=0o644)
+            _run("systemctl", "daemon-reload")
+            phase = "restart Inspector with persistent observer runtime access"
+            print("Resume phase: " + phase, flush=True)
+            _run("systemctl", "restart", INSPECTOR)
+            if not _unit_is_exact_and_active(INSPECTOR):
+                raise RuntimeError("Inspector did not recover with persistent observer access")
+            _verify_inspector_process(expected_runtime_inspector,
+                                      str(expected_source).encode("ascii"))
+            phase = "verify observer after persistent runtime repair"
+            print("Resume phase: " + phase, flush=True)
+            observer_identity = _wait_observer_socket(previous_inode=observer_identity)
         phase = "start Gateway and tunnel"
         print("Resume phase: " + phase, flush=True)
         _run("systemctl", "start", GATEWAY)
@@ -861,12 +953,15 @@ def main() -> int:
                               hashlib.sha256(current_inspector).hexdigest(),
                               hashlib.sha256(current_config).hexdigest())
             if (current_hashes[0] not in {value["new_gateway_sha256"], value["old_gateway_sha256"]}
-                    or current_hashes[1] not in {value["new_inspector_sha256"], value["old_inspector_sha256"]}
+                    or current_hashes[1] not in {value["new_inspector_sha256"],
+                                                  value.get("runtime_inspector_sha256"),
+                                                  value["old_inspector_sha256"]}
                     or current_hashes[2] not in {value["new_config_sha256"], value["old_config_sha256"],
                                                  value.get("post_core_config_sha256")}
                     or (current_hashes[0] == value["new_gateway_sha256"]
                         and _unit_source(current_gateway, "core_gateway") != source)
-                    or (current_hashes[1] == value["new_inspector_sha256"]
+                    or (current_hashes[1] in {value["new_inspector_sha256"],
+                                              value.get("runtime_inspector_sha256")}
                         and _unit_source(current_inspector, "core_gateway_inspector") != source)):
                 raise RuntimeError("fixed ingress files differ from both saved transaction states")
             if any(not _unit_is_fixed(name) for name in (INSPECTOR, GATEWAY, TUNNEL)):
@@ -901,6 +996,12 @@ def main() -> int:
         saved, old_config, config_info, new_units, new_config = _source_switch(expected_adapter_source)
         _save_ingress_backup(args.candidate_sha, saved, old_config, config_info,
                              new_units, new_config)
+        base_inspector_sha = hashlib.sha256(new_units[FIXED_UNITS[INSPECTOR]]).hexdigest()
+        repaired_inspector = _runtime_repaired_inspector(new_units[FIXED_UNITS[INSPECTOR]])
+        runtime_inspector_sha = hashlib.sha256(repaired_inspector).hexdigest()
+        _set_runtime_inspector_digest(args.candidate_sha, base_inspector_sha,
+                                      runtime_inspector_sha)
+        new_units[FIXED_UNITS[INSPECTOR]] = repaired_inspector
         old_gateway = saved[FIXED_UNITS[GATEWAY]][0]
         old_inspector = saved[FIXED_UNITS[INSPECTOR]][0]
         try:
