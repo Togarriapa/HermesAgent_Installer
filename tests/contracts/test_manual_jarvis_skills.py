@@ -350,6 +350,10 @@ class ManualJarvisSkillsTests(unittest.TestCase):
                 "LANG": "C.UTF-8", "PYTHONPATH": str(Path(manual_skills.__file__).parents[2]),
                 "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
             }
+            # The origin verifier compares the runuser child's argv with its
+            # own sys.executable. Use the resolved executable spelling so a
+            # venv symlink cannot make the legitimate root invocation differ.
+            interpreter = str(Path(core_runtime.PYTHON).resolve(strict=True))
             framed = struct.pack(">QQ", len(self.bundle), len(old_archive)) + self.bundle + old_archive
             direct_owner_script = (
                 "import subprocess,sys; "
@@ -361,7 +365,7 @@ class ManualJarvisSkillsTests(unittest.TestCase):
                 "b'fixed root runuser and inherited root pipe' in p.stderr else 91)"
             )
             direct_owner = subprocess.run(
-                ["/usr/sbin/runuser", "-u", "admin", "--", str(core_runtime.PYTHON),
+                ["/usr/sbin/runuser", "-u", "admin", "--", interpreter,
                  "-P", "-c", direct_owner_script, *cli_args[1:]],
                 input=framed, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 timeout=600, env=env, check=False)
@@ -369,7 +373,7 @@ class ManualJarvisSkillsTests(unittest.TestCase):
                              direct_owner.stderr.decode("utf-8", "replace"))
 
             command = [
-                "/usr/sbin/runuser", "-u", "admin", "--", str(core_runtime.PYTHON), "-P", "-m",
+                "/usr/sbin/runuser", "-u", "admin", "--", interpreter, "-P", "-m",
                 *cli_args,
             ]
             result = subprocess.run(command, input=framed, stdout=subprocess.PIPE,
