@@ -319,8 +319,8 @@ def test_resources_write_cas_idempotency_archive_restore_and_native_readback(ove
     assert effective.read_bytes() == edited
     restored_versions = core.list_archived_resources_skill_versions(
         fixture.skill_id, fixture.generation)
-    assert {row["restore_id"] for row in restored_versions} >= {
-        archived["recovery_id"], restored["recovery_id"]}
+    assert restored["recovery_id"] is None
+    assert archived["recovery_id"] in {row["restore_id"] for row in restored_versions}
 
 
 def test_failed_native_probe_restores_old_generation_and_does_not_report_active(overlay_runtime, monkeypatch):
