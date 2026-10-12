@@ -195,6 +195,8 @@ def test_typed_plan_decision_seals_zero_or_catalog_selected_sources(monkeypatch,
         mission_id=MISSION_ID, revision=1, title="Research", goal="Compare options",
         allowed_source_ids=SOURCE_IDS)
 
+    fixture_state = {"current": True}
+
     class RootCompletionFixture:
         owner_subject_sha256 = "a" * 64
         owner_turn_handle = "b" * 32
@@ -207,13 +209,22 @@ def test_typed_plan_decision_seals_zero_or_catalog_selected_sources(monkeypatch,
         owner_turn_expires_monotonic = time.monotonic() + 600
 
         def is_current_sealed(self, _config, *, custody, now=None):
-            return custody is fixture_custody and (time.monotonic() if now is None else now) < self.expires_monotonic
+            return (fixture_state["current"] and custody is fixture_custody
+                    and (time.monotonic() if now is None else now) < self.expires_monotonic)
 
     fixture_custody = object()
+    completion = RootCompletionFixture()
     monkeypatch.setattr(planning, "_completion_type", lambda: RootCompletionFixture)
     decision = issue_master_plan_decision(
-        completion=RootCompletionFixture(), config=object(), custody=fixture_custody,
+        completion=completion, config=object(), custody=fixture_custody,
         raw_output=raw, mission_id=MISSION_ID, revision=1, title="Research",
         goal="Compare options", allowed_source_ids=SOURCE_IDS)
     assert decision.selected_source_ids == tuple(selected)
     assert decision.is_current_sealed(object(), custody=fixture_custody)
+    fixture_state["current"] = False
+    assert not decision.is_current_sealed(object(), custody=fixture_custody)
+    with pytest.raises(JarvisMasterPlanningDenied, match="current root planning completion"):
+        issue_master_plan_decision(
+            completion=completion, config=object(), custody=fixture_custody,
+            raw_output=raw, mission_id=MISSION_ID, revision=1, title="Research",
+            goal="Compare options", allowed_source_ids=SOURCE_IDS)
