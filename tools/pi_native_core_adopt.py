@@ -608,7 +608,9 @@ def main() -> int:
     expected_adapter_source = Path(
         f"/opt/hermes-installer-core-{args.candidate_sha[:9]}/src")
 
+    phase = "source provenance and adapter validation"
     try:
+        print("Adoption phase: " + phase, flush=True)
         _verify_source_provenance(args.candidate_sha, expected_adapter_source)
         sys.path.insert(0, str(expected_adapter_source))
         from hermes_installer import core_runtime
@@ -621,6 +623,8 @@ def main() -> int:
         from hermes_installer.remote.core_native_observer import CORE_NATIVE_OBSERVER_SOCKET
 
         if args.rollback:
+            phase = "rollback journal and fixed-file validation"
+            print("Adoption phase: " + phase, flush=True)
             value, old_gateway, old_inspector, old_config = _backup_value(args.candidate_sha)
             source = str(expected_adapter_source).encode("ascii")
             current_gateway, _ = _read_fixed(FIXED_UNITS[GATEWAY], uid=0, gid=0,
@@ -642,10 +646,16 @@ def main() -> int:
                 raise RuntimeError("fixed ingress files differ from both saved transaction states")
             if any(not _unit_is_fixed(name) for name in (INSPECTOR, GATEWAY, TUNNEL)):
                 raise RuntimeError("fixed systemd unit ownership changed before Core rollback")
+            phase = "rollback stop public tunnel and gateway"
+            print("Adoption phase: " + phase, flush=True)
             _run("systemctl", "stop", TUNNEL)
             _run("systemctl", "stop", GATEWAY)
+            phase = "rollback Core through journal recovery"
+            print("Adoption phase: " + phase, flush=True)
             if not _restore_legacy_core(core_runtime):
                 raise RuntimeError("journaled Core rollback did not restore the legacy listener")
+            phase = "rollback restore and verify prior ingress cohort"
+            print("Adoption phase: " + phase, flush=True)
             if not _restore_old_ingress(value, old_gateway, old_inspector, old_config):
                 _set_backup_state("recovery-required")
                 raise RuntimeError("old Inspector/Gateway cohort did not recover; ingress remains stopped")
@@ -653,12 +663,16 @@ def main() -> int:
             print("Prior journal-owned Core/plugin and Inspector/Gateway/tunnel cohort restored.")
             return 0
 
+        phase = "apply preflight and active ingress validation"
+        print("Adoption phase: " + phase, flush=True)
         if INGRESS_BACKUP.exists() or INGRESS_BACKUP.is_symlink():
             raise RuntimeError("a prior adoption backup exists; use --rollback or inspect it first")
         config = CoreGatewayConfig.load(expected_owner_uid=0)
         _verify_gateway_tunnel(config, require_active=True)
         if CORE_NATIVE_OBSERVER_SOCKET.exists() or CORE_NATIVE_OBSERVER_SOCKET.is_symlink():
             raise RuntimeError("unexpected preexisting native-observer socket blocks adoption")
+        phase = "build exact source switch and protected recovery backup"
+        print("Adoption phase: " + phase, flush=True)
         saved, old_config, config_info, new_units, new_config = _source_switch(expected_adapter_source)
         _save_ingress_backup(args.candidate_sha, saved, old_config, config_info,
                              new_units, new_config)
@@ -668,15 +682,23 @@ def main() -> int:
             # Stop public ingress before switching the exact fixed import roots.
             # Start the new Inspector on the still-legacy Core first; it must
             # bind the current P-less process before the owner prestart step.
+            phase = "stop ingress and atomically switch fixed Inspector and Gateway"
+            print("Adoption phase: " + phase, flush=True)
             _replace_ingress_units(new_units, new_config, config_info)
             _set_backup_state("units-switched")
+            phase = "start and verify candidate Inspector"
+            print("Adoption phase: " + phase, flush=True)
             _run("systemctl", "start", INSPECTOR)
             if not _unit_is_exact_and_active(INSPECTOR):
                 raise RuntimeError("new fixed Inspector did not become active")
             _verify_inspector_process(new_units[FIXED_UNITS[INSPECTOR]],
                                       str(expected_adapter_source).encode("ascii"))
+            phase = "bind Inspector observer to legacy Core"
+            print("Adoption phase: " + phase, flush=True)
             observer_identity = _wait_observer_socket()
 
+            phase = "prepare existing Chat owner and vault"
+            print("Adoption phase: " + phase, flush=True)
             from hermes_installer.remote.obsidian_owner_lifecycle import (
                 prepare_sole_existing_chat_owner_for_legacy_migration,
             )
@@ -684,18 +706,28 @@ def main() -> int:
 
             # Keep both public ingress units stopped through owner preparation,
             # Core migration and fresh Inspector binding to the new Core PID.
+            phase = "migrate owned Core and verify listener"
+            print("Adoption phase: " + phase, flush=True)
             result = core_runtime.migrate_owned_core_to_adapter_path()
             if not core_runtime._owned_listener():
                 raise RuntimeError("migrated core listener did not verify")
             _set_backup_state("migrated")
 
             # Refresh pidfd-bound Inspector custody after the Core PID changes.
+            phase = "restart Inspector for migrated Core PID"
+            print("Adoption phase: " + phase, flush=True)
             _run("systemctl", "restart", INSPECTOR)
             if not _unit_is_exact_and_active(INSPECTOR):
                 raise RuntimeError("new fixed Inspector did not recover after Core migration")
+            phase = "bind fresh Inspector observer to migrated Core"
+            print("Adoption phase: " + phase, flush=True)
             observer_identity = _wait_observer_socket(previous_inode=observer_identity)
+            phase = "start public Gateway and tunnel"
+            print("Adoption phase: " + phase, flush=True)
             _run("systemctl", "start", GATEWAY)
             _run("systemctl", "start", TUNNEL)
+            phase = "verify complete adopted ingress cohort"
+            print("Adoption phase: " + phase, flush=True)
             config = CoreGatewayConfig.load(expected_owner_uid=0)
             _verify_gateway_tunnel(config, require_active=True)
             print(result)
@@ -706,10 +738,13 @@ def main() -> int:
             print("Exact rollback command: rerun this helper with the same --candidate-sha and --rollback.")
             return 0
         except Exception as error:
+            failed_phase = phase
             recovered = False
             try:
+                print("Recovery phase: stop public tunnel and gateway", flush=True)
                 _run("systemctl", "stop", TUNNEL, check=False)
                 _run("systemctl", "stop", GATEWAY, check=False)
+                print("Recovery phase: restore legacy Core through journal", flush=True)
                 recovered = _restore_legacy_core(core_runtime)
             except Exception:
                 recovered = False
@@ -723,10 +758,12 @@ def main() -> int:
             print("Adoption did not complete; Core rollback was delegated to its journaled recovery API.")
             print("Prior Core verified: " + ("yes" if recovered else "no"))
             print("Prior Inspector/Gateway/tunnel cohort restored: " + ("yes" if restored else "no; ingress remains stopped"))
+            print("Failed phase: " + failed_phase)
             print("Failure type: " + type(error).__name__)
             return 4
     except Exception as error:
-        print("Adoption helper stopped before claiming success: " + type(error).__name__, file=sys.stderr)
+        print("Adoption helper stopped before claiming success during phase: " + phase
+              + "; failure type: " + type(error).__name__, file=sys.stderr)
         return 4
 
 
