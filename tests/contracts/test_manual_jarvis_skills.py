@@ -60,7 +60,8 @@ class ManualJarvisSkillsTests(unittest.TestCase):
         previous_archive = b"exact retained prior Resources archive"
         previous_sha = manual_skills.LEGACY_MATERIALIZED_ARTIFACT_SHA256
         receipt = {"state": "installed", "artifact_sha256": "a" * 64}
-        with patch("sys.stdin", io.BytesIO(previous_archive)), \
+        stdin = io.TextIOWrapper(io.BytesIO(previous_archive))
+        with patch("sys.stdin", stdin), \
              patch.object(manual_skills, "install_bundled_resources",
                            return_value=receipt) as importer:
             result = manual_skills.main([
