@@ -2,8 +2,8 @@
 
 This does not patch the pinned Hermes source. Staging is followed by Hermes'
 official plugin-selection transaction under the fixed admin account; the
-installer verifies the exact config delta and asks the same API to roll back
-if that transaction changes unrelated settings.
+installer verifies the exact config delta and restores only its owned selection
+fields if that transaction changes unrelated settings.
 """
 from __future__ import annotations
 
@@ -262,7 +262,10 @@ plugins["enabled"] = sorted(expected_enabled)
 plugins["disabled"] = sorted(expected_disabled)
 try:
     if not was_enabled:
-        cmd_enable(key, allow_tool_override=False)
+        # This plugin declares no tool overrides. `None` leaves any existing
+        # grant untouched; an explicit False is an authorization change in
+        # Hermes and can add a persisted denial entry to the user's config.
+        cmd_enable(key, allow_tool_override=None)
     after = read()
     if after != expected:
         raise RuntimeError("official enable changed unrelated Hermes config")
@@ -524,6 +527,32 @@ post_digest = hashlib.sha256(json.dumps(post_projection, sort_keys=True,
 current_digest = digest(config)
 if request["expected_current_sha256"] is not None and request["expected_current_sha256"] != post_digest:
     raise RuntimeError("journal plugin selection digest differs from the fixed migration projection")
+def restore_prior_selection(current):
+    # The snapshot owns only plugin enablement and platform toolset selection.
+    # Start from the live config so unrelated current settings and any newer
+    # grant metadata survive the narrow recovery write.
+    restored = copy.deepcopy(current)
+    restored_plugins = restored.get("plugins")
+    if not isinstance(restored_plugins, dict):
+        restored_plugins = {}
+        restored["plugins"] = restored_plugins
+    for name, present, value in (("enabled", prior["enabled_present"], prior["enabled"]),
+                                 ("disabled", prior["disabled_present"], prior["disabled"])):
+        if present:
+            restored_plugins[name] = value
+        else:
+            restored_plugins.pop(name, None)
+    if not prior["plugins_present"] and not restored_plugins:
+        restored.pop("plugins", None)
+    if prior["platform_present"]:
+        restored["platform_toolsets"] = prior["platform_toolsets"]
+    else:
+        restored.pop("platform_toolsets", None)
+    save_config(restored)
+    verified = load_config()
+    if verified != restored or digest(verified) != prior_digest:
+        raise RuntimeError("prior native plugin selection did not restore exactly")
+    return verified
 if current_digest == prior_digest:
     original_plugins = config.get("plugins") or {}
     if (("plugins" in config) != prior["plugins_present"]
@@ -537,7 +566,30 @@ if current_digest == prior_digest:
     print("native-plugin-selection-restored:" + prior_digest)
     sys.exit(0)
 if current_digest != post_digest:
-    raise RuntimeError("current plugin selection changed since migration")
+    # cmd_disable, used by the previous interrupted enable transaction, writes
+    # both selection arrays even when the original config omitted them. Accept
+    # only that exact derived rollback state; unknown selection changes remain
+    # a hard CAS conflict.
+    current_plugins = config.get("plugins")
+    current_enabled = current_plugins.get("enabled") if isinstance(current_plugins, dict) else None
+    current_disabled = current_plugins.get("disabled") if isinstance(current_plugins, dict) else None
+    failed_enable_rollback = (
+        not was_enabled and isinstance(current_plugins, dict)
+        and ("plugins" in config)
+        and "enabled" in current_plugins and "disabled" in current_plugins
+        and isinstance(current_enabled, list) and isinstance(current_disabled, list)
+        and all(isinstance(item, str) for item in (*current_enabled, *current_disabled))
+        and len(set(current_enabled)) == len(current_enabled)
+        and len(set(current_disabled)) == len(current_disabled)
+        and set(current_enabled) == (set(prior["enabled"]) - {key})
+        and set(current_disabled) == (set(prior["disabled"]) | {key})
+        and (("platform_toolsets" in config) == prior["platform_present"])
+        and (config.get("platform_toolsets") or {}) == prior["platform_toolsets"])
+    if not failed_enable_rollback:
+        raise RuntimeError("current plugin selection changed since migration")
+    verified = restore_prior_selection(config)
+    print("native-plugin-selection-restored:" + digest(verified))
+    sys.exit(0)
 plugins = config.get("plugins") or {}
 enabled, disabled = plugins.get("enabled", []), plugins.get("disabled", [])
 platforms = config.get("platform_toolsets") or {}
@@ -550,31 +602,7 @@ if not was_enabled:
 current = load_config()
 if not isinstance(current, dict):
     raise RuntimeError("Hermes config is unavailable after plugin disable")
-restored = copy.deepcopy(current)
-restored_plugins = restored.get("plugins")
-if not isinstance(restored_plugins, dict):
-    restored_plugins = {}
-    restored["plugins"] = restored_plugins
-for name, present, value in (("enabled", prior["enabled_present"], prior["enabled"]),
-                             ("disabled", prior["disabled_present"], prior["disabled"])):
-    if present:
-        restored_plugins[name] = value
-    else:
-        restored_plugins.pop(name, None)
-if not prior["plugins_present"] and not restored_plugins:
-    restored.pop("plugins", None)
-if prior["platform_present"]:
-    restored["platform_toolsets"] = prior["platform_toolsets"]
-else:
-    restored.pop("platform_toolsets", None)
-save_config(restored)
-verified = load_config()
-if verified != restored or digest(verified) != digest({
-        **(verified if isinstance(verified, dict) else {}),
-        "plugins": {**(verified.get("plugins") or {}),
-                    "enabled": prior["enabled"], "disabled": prior["disabled"]},
-        "platform_toolsets": prior["platform_toolsets"]}):
-    raise RuntimeError("prior native plugin selection did not restore exactly")
+verified = restore_prior_selection(current)
 print("native-plugin-selection-restored:" + digest(verified))
 '''
 
