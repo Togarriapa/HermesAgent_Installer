@@ -2322,6 +2322,11 @@ Within R0200..R0205, server identity SHALL derive from verified Access issuer/co
 - **THEN** protected gateway configuration accepts1..32 valid bounded unique normalized addresses, including the approved3-address case, and independently admits each genuine signed Access principal through existing subject ownership/CSRF/currentness gates without mandatory directory enrollment.
 - **AND** malformed/duplicate/over-bound entries, unsigned email claims and cross-owner reads deny; email membership does not confer global Extensions/vault ownership or final-action approval. Future token duration never renews old turns/leases; missing operation-specific owner seams remain pending and existing data is preserved.
 
+#### Scenario: Approved union joins exact source-adoption recovery
+- **WHEN** Root applies an already approved household email addition with candidate ingress source adoption
+- **THEN** finite bounded standard input supplies only a validated union containing every old address before effects. Existing protected adoption journal retains exact original/prospective config bytes bound to their digests; no address argv/log/browser storage or later adhoc config edit is accepted as this transaction.
+- **AND** resume uses the retained same union/new bytes and fresh native/config custody; rollback restores exact old source/units/original allowlist without editing immutable generations or reviving leases. Missing or changed CAS/journal/input denies/pends; actual added-user login and global owner grants remain separate.
+
 #### Scenario: Existing user, namespace migration or account switch
 - **WHEN** an existing valid user has no directory entry, old subject-owned history is namespaced, or a shared tablet switches accounts
 - **THEN** valid access persists, old records remain owned/readable or explicitly preserved pending ambiguous recovery, stale private view state clears and another principal cannot obtain history/private knowledge; no silent empty replacement or email-based reassignment occurs.

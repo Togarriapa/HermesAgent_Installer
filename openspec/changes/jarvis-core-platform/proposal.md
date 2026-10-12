@@ -1,5 +1,7 @@
 # Proposal
 
+Bind the already approved household email union into the existing Root ingress source-adoption transaction instead of editing its configuration afterward. Use finite bounded standard-input intake before effects, retain exact original and prospective protected config bytes/digests, and resume/rollback that same cohort. Preserve original users and leases; extra household admission does not grant global owner capabilities. This is existing R0200..R0208 scope, with acceptance OPEN.
+
 Existing household admission repair within R0200..R0208/RT-T266.3: remove the gateway's accidental one-email configuration limit and accept the bounded normalized explicitly approved household allowlist while preserving the original address. Signed Access principal/subject ownership, optional-directory compatibility, CSRF and original leases remain enforced. Admission does not confer global Extensions/Obsidian ownership or final-effect authority; their operation-specific protected gates remain separate. No new requirement or acceptance closure.
 
 Complete the existing M1 startup producer's real process boundary: Root CLI owns a short-lived fixed lifecycle-only observer/socket captured from its actual held new peer and receives its local registry directly. Preserve the separate old Inspector/socket/public URL; no cross-process global, old-source custody relabeling or generic observer grant. Actual new-peer terminal proof and exact owned cleanup/recovery remain required; no scope or acceptance closure.
