@@ -263,6 +263,7 @@ def test_per_message_isolated_session_registers_project_context_before_submit(tm
 def test_per_message_isolated_session_denies_stale_owner_before_rebind_or_submit(tmp_path, revocation):
     store = JarvisChatStore(tmp_path / f"chat-{revocation}.sqlite3")
     conversation = new_conversation(store, "subject-a")
+    original = store.get_conversation("subject-a", conversation["id"])
     access_jwt, ingress = "accepted-jwt-fixture", object()
     current = [principal("subject-a")]
     registered, submitted, failed_turn_ids = [], [], []
@@ -324,8 +325,11 @@ def test_per_message_isolated_session_denies_stale_owner_before_rebind_or_submit
     assert len(registered) == (1 if revocation == "expired-during-registration" else 0)
     assert submitted == []
     unchanged = store.get_conversation("subject-a", conversation["id"])
-    assert unchanged["backend_id"] == conversation["backend_id"]
-    assert unchanged["session_key"] == conversation["session_key"]
+    assert unchanged["backend_id"] == original["backend_id"]
+    assert unchanged["session_key"] == original["session_key"]
+    with store._connect() as db:
+        assert db.execute("SELECT 1 FROM turn_events WHERE turn_id=? LIMIT 1",
+                          (failed_turn_ids[0],)).fetchone() is None
     assert service.owner_turn_handle_for(principal("subject-a"), failed_turn_ids[0]) is None
 
 
