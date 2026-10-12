@@ -798,12 +798,12 @@ class CoreGatewayProofTests(unittest.TestCase):
             changed = dataclasses.replace(root, peer_uid=1000)
             self.assertIs(changed.verify_current(config, peer_pid=440, peer_uid=1000, peer_gid=981,
                 listener_identity=(1, 2), now=12.0), False)
+            accepted = _accepted_observation(config, now=12.0)
+            self.assertIs(accepted.verify_current(config, now=13.0), True)
             expanded_config = dataclasses.replace(config, allowed_emails=frozenset({
                 "owner@example.test", "member-one@example.test", "member-two@example.test",
             }), config_sha256="9" * 64)
             self.assertIs(accepted.verify_current(expanded_config, now=13.0), False)
-            accepted = _accepted_observation(config, now=12.0)
-            self.assertIs(accepted.verify_current(config, now=13.0), True)
             extended = dataclasses.replace(accepted, expires_monotonic=accepted.issued_monotonic + 30)
             self.assertIs(extended.verify_current(config, now=13.0), False)
 
