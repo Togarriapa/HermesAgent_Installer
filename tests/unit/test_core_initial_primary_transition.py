@@ -70,7 +70,6 @@ def test_interrupted_preparing_stage_is_retained_and_refuses_owner_soul_drift(
         tmp_path, monkeypatch, request):
     _unit, cohort, _journal_raw, _resources_raw = _adapter_cohort_starting_fixture(
         tmp_path, monkeypatch, request)
-    cohort = _refresh_exact_starting_unit_recipe(cohort)
 
     runtime = tmp_path / "primary-runtime"
     owner_home = tmp_path / "admin" / ".hermes"
@@ -88,6 +87,12 @@ def test_interrupted_preparing_stage_is_retained_and_refuses_owner_soul_drift(
     monkeypatch.setattr(primary, "_open_home", lambda _core: os.open(
         owner_home, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
         | getattr(os, "O_NOFOLLOW", 0)))
+
+    # Unit environment and startup guard bytes bind the selected Hermes home.
+    # Rebuild the exact new-source recipe only after the manager fixture paths
+    # are installed, then refresh its dependent journal, Resources, and cohort
+    # hashes together.
+    cohort = _refresh_exact_starting_unit_recipe(cohort)
 
     prefix = b"# Owner context\nPreserve this exact prefix.\n"
     soul = owner_home / "SOUL.md"
