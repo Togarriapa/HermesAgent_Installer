@@ -442,7 +442,7 @@ class ManualJarvisSkillsTests(unittest.TestCase):
             backup = Path(receipt["previous_generation_backup"])
             self.assertEqual(receipt["state"], "staged")
             self.assertEqual(receipt["previous_artifact_sha256"], old_sha)
-            self.assertEqual(backup, base / backup_name)
+            self.assertEqual(backup, home / backup_name)
 
             def assert_generation(path, files, digest):
                 expected_files = set(files) | {manual_skills._OWNER_FILE}

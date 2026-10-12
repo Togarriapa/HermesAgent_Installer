@@ -270,7 +270,8 @@ def overlay_runtime(tmp_path, monkeypatch, request):
     return SimpleNamespace(home=home, base=base, base_sha=base_sha,
         skill_id=member["skill_id"], base_content=content, installed=installed,
         current=current, generation="a" * 64,
-        own_generation=lambda uid=account.pw_uid, gid=account.pw_gid: set_generation_owner(uid, gid))
+        own_generation=lambda uid=account.pw_uid, gid=account.pw_gid: set_generation_owner(uid, gid),
+        set_home_owner=set_home_owner)
 
 
 def test_resources_write_cas_idempotency_archive_restore_and_native_readback(overlay_runtime):
@@ -316,9 +317,10 @@ def test_resources_write_cas_idempotency_archive_restore_and_native_readback(ove
         core_source_generation=fixture.generation)
     assert restored["state"] == "discovered" and restored["effective_readback"] is True
     assert effective.read_bytes() == edited
-    archived_ids = {row["skill_id"]: row["versions"]
-        for row in core.list_archived_resources_skills(fixture.generation)}
-    assert any(row["restore_id"] == restored["recovery_id"] for row in archived_ids[fixture.skill_id])
+    restored_versions = core.list_archived_resources_skill_versions(
+        fixture.skill_id, fixture.generation)
+    assert {row["restore_id"] for row in restored_versions} >= {
+        archived["recovery_id"], restored["recovery_id"]}
 
 
 def test_failed_native_probe_restores_old_generation_and_does_not_report_active(overlay_runtime, monkeypatch):
@@ -366,7 +368,7 @@ def test_interrupted_overlay_journal_recovers_only_exact_old_or_new_generation(
         __import__("json").dumps(pending, sort_keys=True, separators=(",", ":")).encode(),
         0o600, 0, 0)
     if install_new:
-        fixture.own_generation(0, 0)
+        fixture.set_home_owner(0, 0)
         native.install_manual_jarvis_skills(new_archive, hermes_home=fixture.home,
             expected_sha256=archive_member_sha, replace_owned_from_archive=fixture.base,
             replace_owned_from_sha256=fixture.base_sha)
