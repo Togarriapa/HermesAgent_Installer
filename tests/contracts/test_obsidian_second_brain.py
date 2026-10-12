@@ -228,7 +228,7 @@ def test_promotion_retry_recovers_exact_committed_note_without_repeating_cas(tmp
 
     assert atomic_calls == 1
     assert (store._root / "Notes" / "Reviewed.md").read_text(encoding="utf-8") == "# Reviewed\nExact bytes.\n"
-    assert store.read_private_draft(execution_id="mission_789",
+    assert store.read_private_draft(execution_id="mission_run_789",
                                     draft_id=draft.draft_id)["state"] == "private-draft"
 
     with patch("hermes_installer.native_invocations.current_native_tool_dispatch",

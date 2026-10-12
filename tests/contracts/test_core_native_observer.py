@@ -647,7 +647,9 @@ def test_root_observed_expert_draft_origin_resolves_only_for_current_master_prom
         canonical_tool_arguments(read_args))
     native_handler = ObsidianNativeTools(object.__new__(ObsidianVaultStore)).handler(
         "obsidian_read_private_draft")
-    with patch("hermes_installer.native_invocations.current_native_tool_dispatch",
+    # obsidian_native_tools imports this context accessor directly, so patch
+    # the consumer binding used by the native handler itself.
+    with patch("hermes_installer.remote.obsidian_native_tools.current_native_tool_dispatch",
                return_value=native_dispatch):
         with _admit_current_obsidian_call(
                 observed_call=observed_read, scope=scope, binding=binding,

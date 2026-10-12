@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from hermes_installer.native_invocations import NativeToolDispatch
@@ -138,7 +139,10 @@ class JarvisFinalEffectMiddlewareTests(unittest.TestCase):
         client.request_final_effect = lambda **kwargs: events.append("request") or pending
         client.poll_final_effect = lambda **kwargs: events.append("approve") or _permit(
             kwargs["observed_call"], args_sha, digest, pending_id=pending.pending_id)
-        client.bind_obsidian_native_vault = lambda: events.append("binding") or object()
+        # The request binds to the selected vault's immutable startup identity
+        # before ROOT can queue owner approval.
+        client.bind_obsidian_native_vault = lambda: events.append("binding") or SimpleNamespace(
+            binding_id="B" * 43)
 
         def authorize_scope(*, observed_call, binding):
             events.append("scope")
@@ -187,7 +191,9 @@ class JarvisFinalEffectMiddlewareTests(unittest.TestCase):
         events = []
         client.authorize_current_tool_call = lambda *, observed_call: _CallerReceipt(
             observed_call, "master_read")
-        client.bind_obsidian_native_vault = lambda: object()
+        # request_final_effect sends this id even when the owner later changes
+        # the observed call, so the test double must model the binding DTO.
+        client.bind_obsidian_native_vault = lambda: SimpleNamespace(binding_id="B" * 43)
 
         class _Scope:
             tool_name = "obsidian_read_private_draft"
@@ -239,7 +245,7 @@ class JarvisFinalEffectMiddlewareTests(unittest.TestCase):
         client.request_final_effect = lambda **kwargs: pending
         client.poll_final_effect = lambda **kwargs: _permit(
             kwargs["observed_call"], args_sha, digest, pending_id=pending.pending_id)
-        client.bind_obsidian_native_vault = lambda: object()
+        client.bind_obsidian_native_vault = lambda: SimpleNamespace(binding_id="B" * 43)
         client.authorize_obsidian_call_scope = lambda **kwargs: scopes.append(True)
 
         def classify(*, observed_call):
