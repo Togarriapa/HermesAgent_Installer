@@ -149,6 +149,21 @@ def test_mcp_removal_ownership_requires_exact_jarvis_add_readback_fingerprint():
     assert owned["items"][0]["source"] == "useradded"
     assert owned["items"][0]["removable"] is True
     assert changed["items"][0]["source"] == "unknown"
+
+
+def test_malformed_native_owner_fingerprints_never_match_an_empty_ledger():
+    malformed_plugin = {"name": "catalog-helper", "key": "catalog-helper", "version": "1.2.0",
+        "source": "catalog", "catalog_name": "owner/catalog-helper", "status": "disabled",
+        "settings_schema": [], "settings_revision": "a" * 64}
+    malformed_mcp = {"name": "broken-server", "transport": "unsupported", "enabled": True,
+                     "source": "config"}
+    snapshot = build_extension_snapshot(skills=[], plugins=[malformed_plugin], mcps=[malformed_mcp])
+    by_kind = {row["kind"]: row for row in snapshot["items"]}
+
+    assert by_kind["plugins"]["source"] == "unknown"
+    assert by_kind["plugins"]["removable"] is False
+    assert by_kind["mcps"]["source"] == "unknown"
+    assert by_kind["mcps"]["removable"] is False
     assert changed["items"][0]["removable"] is False
 
 

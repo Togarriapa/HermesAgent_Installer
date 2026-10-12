@@ -235,14 +235,18 @@ def build_extension_snapshot(*, skills: Any, plugins: Any, mcps: Any,
             if kind == "plugins":
                 revision = _plugin_config_revision(item)
                 if source == "catalog":
-                    provenance = ("useradded" if owner_plugins.get(name) == revision else "unknown")
+                    provenance = ("useradded" if isinstance(revision, str)
+                                  and re.fullmatch(r"[0-9a-f]{64}", revision) is not None
+                                  and owner_plugins.get(name) == revision else "unknown")
                 for provider_identity in {name, key}:
                     prior = plugin_sources.get(provider_identity)
                     plugin_sources[provider_identity] = provenance if prior in {None, provenance} else "unknown"
             else:
                 revision = _mcp_config_revision(item)
                 if source == "config":
-                    provenance = "useradded" if owner_mcp.get(name) == revision else "unknown"
+                    provenance = ("useradded" if isinstance(revision, str)
+                                  and re.fullmatch(r"[0-9a-f]{64}", revision) is not None
+                                  and owner_mcp.get(name) == revision else "unknown")
                 elif source == "plugin":
                     plugin_name = _safe_label(item.get("plugin"), maximum=96)
                     provider_source = plugin_sources.get(plugin_name or "", "unknown")
