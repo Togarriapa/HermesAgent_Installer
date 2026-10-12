@@ -220,7 +220,8 @@ def test_mission_routes_and_feature_assets_are_literal_and_finite():
     owners = {feature_id: (owner, routes) for feature_id, owner, routes
               in jarvis_feature_registry.FEATURE_ROUTE_OWNERS}
     assert owners["overview"] == (
-        "dashboard", (("GET", "/chat/api/overview"),))
+        "dashboard", (("GET", "/chat/api/overview"),
+                      ("GET", "/chat/api/ecosystem")))
     assert owners["calendar"] == (
         "dashboard", (("GET", "/chat/api/calendar"),
                       ("POST", "/chat/api/calendar/selection")))

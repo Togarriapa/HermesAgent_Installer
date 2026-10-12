@@ -227,7 +227,11 @@ def test_overview_ecosystem_uses_named_root_observations_and_cancels_stale_views
     assert "ecosystemObserver.observe(ecosystemCard)" in js
     assert "clearInterval(ecosystemPollTimer)" in js
     assert '[data-activity-flow="active"]:is([data-ecosystem-state="current"],[data-ecosystem-state="partial"])[data-in-viewport="true"] .handoff-route[data-instance-state="running"] .handoff-edge:after' in css
-    assert "html:not([data-page-visible=\"true\"]) [data-feature-root=\"overview\"] .ecosystem-card" in css
+    edge_stop_rule = next(rule for rule in css.split("}")
+                          if 'html:not([data-page-visible="true"]) [data-feature-root="overview"] .handoff-edge:after' in rule)
+    assert '[data-feature-root="overview"]:not([data-network-online="true"]) .handoff-edge:after' in edge_stop_rule
+    assert '[data-feature-root="overview"] [data-ecosystem-card]:not([data-in-viewport="true"]) .handoff-edge:after' in edge_stop_rule
+    assert "animation:none!important;transform:none!important;opacity:0!important" in edge_stop_rule
     assert "prefers-reduced-motion:reduce" in css and 'data-jarvis-motion="reduce"' in css
 
     helper_start = js.index('  function overviewScopeIsCurrent(')
