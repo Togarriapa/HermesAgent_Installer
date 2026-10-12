@@ -2254,3 +2254,21 @@ The system SHALL provide one fixed obsidian_read_private_draft native read for c
 #### Scenario: Expert request or incomplete content
 - **WHEN** an Expert/foreign caller requests private draft read or content exceeds complete-review bounds/changes digest
 - **THEN** access denies or review remains explicitly incomplete/pending, with no wildcard enumeration, false full review or automatic promotion.
+
+### Requirement: Separate content delivery, proposed disposition and owner approval
+Obsidian promotion SHALL require a complete exact-digest draft read delivered within the same current owner turn and an actual observed Jarvis promotion invocation explicitly proposing review_disposition=approve for exact draft/destination/base. Root SHALL retain that proposal separately from content delivery and owner FinalEffectPermit; no mission SHALL be mandatory and no record SHALL claim to prove mental review.
+
+#### Scenario: Complete read followed by genuine current proposal
+- **WHEN** current Jarvis proposes approval after actual full draft content delivery
+- **THEN** proposal/preview binds that exact content and write consequence, while separate owner authorization, current call scope and CAS remain required before mutation.
+
+#### Scenario: Read only or stale/incomplete proposal
+- **WHEN** only delivery/hash exists, content is incomplete/changed or the proposal/read belongs to another expired owner turn
+- **THEN** approval/promotion cannot claim completed current review and no write repeats automatically.
+
+### Requirement: Explicit completed-origin retirement preserves attribution
+Root SHALL reclaim active origin capacity only after actual successful promotion and independent post-write verification, with durable verified root archive and completed tombstone before active-index retirement. Private promoted-record metadata SHALL NOT alone reconstruct trustworthy native origin.
+
+#### Scenario: Uncertain write, crash or missing archive
+- **WHEN** post-write completion is uncertain, compaction is interrupted or retained root history cannot be verified
+- **THEN** pending/history data and learned notes are preserved, completion is not inferred and no provenance/grant is fabricated from private mirrors or silently evicted.
