@@ -14,6 +14,8 @@ import subprocess
 import sys
 import argparse
 import base64
+import fcntl
+import contextlib
 import hashlib
 import json
 import secrets
@@ -35,6 +37,8 @@ FIXED_UNITS = {
 }
 GATEWAY_CONFIG = Path("/etc/hermes-installer/jarvis-core-gateway.json")
 INGRESS_BACKUP = Path("/var/lib/hermes-installer/core-runtime/native-adoption-ingress-backup.json")
+INGRESS_HISTORY = INGRESS_BACKUP.parent / "native-adoption-ingress-history"
+ADOPTER_LOCK = Path("/run/lock/hermes-native-core-adopt.lock")
 NATIVE_OBSERVER_DIRECTORY = Path("/run/hermes-jarvis-native-observer")
 NATIVE_OBSERVER_PRESTART = (
     "ExecStartPre=/usr/bin/install -d -o root -g 1000 -m 0750 "
@@ -765,11 +769,109 @@ def _snapshots_from_adapter_backup(contents: dict, cohort: dict) -> dict:
     }
 
 
+def _resume_prepared_adapter_refresh(candidate_sha: str, expected_source: Path,
+                                    archive_sha: str, core_runtime,
+                                    observer_socket: Path, value: dict,
+                                    old_gateway: bytes, old_inspector: bytes,
+                                    old_config: bytes) -> None:
+    """Continue a successor after its prepared journal replaced a prior record."""
+    _verify_archived_completed_ingress(value)
+    record, raw, _files, _snapshots, custody = _adapter_refresh_snapshot(
+        core_runtime, expected_source, observer_socket)
+    try:
+        row = value.get("adapter_refresh")
+        if (not _valid_adapter_refresh_row(row)
+                or hashlib.sha256(raw).hexdigest() != row["old_core_journal_sha256"]
+                or record.get("adapter_source") != row["old_core_adapter_source"]
+                or record.get("adapter_generation") != row["old_core_adapter_generation"]
+                or record.get("core_source_generation") != row["old_core_source_generation"]):
+            raise RuntimeError("prepared successor no longer joins its exact prior Core")
+        actual_gateway, gateway_info = _read_fixed(FIXED_UNITS[GATEWAY], uid=0, gid=0,
+                                                   mode=0o644, maximum=64 * 1024)
+        actual_inspector, inspector_info = _read_fixed(FIXED_UNITS[INSPECTOR], uid=0, gid=0,
+                                                      mode=0o644, maximum=64 * 1024)
+        actual_config, config_info = _read_fixed(GATEWAY_CONFIG, uid=0, gid=981,
+                                                 mode=0o440, maximum=16 * 1024)
+        if (actual_gateway != old_gateway or actual_inspector != old_inspector
+                or actual_config != old_config):
+            raise RuntimeError("prepared successor no longer has its exact prior ingress files")
+        from hermes_installer.remote.core_gateway import CoreGatewayConfig
+        _verify_gateway_tunnel(CoreGatewayConfig.load(expected_owner_uid=0), require_active=True)
+
+        old_source = record["adapter_source"].encode("ascii", "strict")
+        new_units = {
+            FIXED_UNITS[INSPECTOR]: _replace_unit_source(
+                old_inspector, old_source, str(expected_source).encode("ascii")),
+            FIXED_UNITS[GATEWAY]: _replace_unit_source(
+                old_gateway, old_source, str(expected_source).encode("ascii")),
+        }
+        if (hashlib.sha256(new_units[FIXED_UNITS[GATEWAY]]).hexdigest()
+                != value["new_gateway_sha256"]
+                or hashlib.sha256(new_units[FIXED_UNITS[INSPECTOR]]).hexdigest()
+                != value["new_inspector_sha256"]):
+            raise RuntimeError("prepared successor fixed unit recipe differs")
+        new_config = _journaled_new_gateway_config(
+            value, old_gateway, old_inspector, old_config, expected_source)
+        repaired = _runtime_repaired_inspector(new_units[FIXED_UNITS[INSPECTOR]])
+        _set_runtime_inspector_digest(
+            candidate_sha, value["new_inspector_sha256"], hashlib.sha256(repaired).hexdigest())
+        new_units[FIXED_UNITS[INSPECTOR]] = repaired
+
+        protected_raw, protected_info = _read_fixed(INGRESS_BACKUP, uid=0, gid=0,
+                                                    mode=0o600, maximum=128 * 1024)
+        protected = json.loads(protected_raw, object_pairs_hook=_unique_pairs)
+        protected_row = protected.get("adapter_refresh")
+        immutable_old_join = ("old_core_journal_sha256", "old_core_adapter_source",
+                              "old_core_adapter_generation", "old_core_source_generation")
+        if (protected.get("candidate_sha") != candidate_sha
+                or protected.get("state") not in {"prepared", "recovery-required"}
+                or protected.get("prior_completed_ingress_sha256")
+                   != value.get("prior_completed_ingress_sha256")
+                or not _valid_adapter_refresh_row(protected_row)
+                or any(protected_row.get(key) != row.get(key)
+                       for key in immutable_old_join)):
+            raise RuntimeError("prepared successor changed before current Inspector rebind")
+        protected["adapter_refresh"] = custody["row"]
+        rebound = (json.dumps(protected, sort_keys=True, separators=(",", ":"))
+                   + "\n").encode("ascii")
+        _atomic_fixed(INGRESS_BACKUP, rebound, uid=0, gid=0,
+                      mode=stat.S_IMODE(protected_info.st_mode))
+        _set_backup_state("recovery-required")
+        saved = {FIXED_UNITS[GATEWAY]: (old_gateway, gateway_info),
+                 FIXED_UNITS[INSPECTOR]: (old_inspector, inspector_info)}
+        _replace_ingress_units_for_adapter_refresh(
+            new_units, new_config, config_info, saved, old_config, custody)
+        _set_backup_state("recovery-required")
+    finally:
+        os.close(custody["pidfd"])
+    _resume_adapter_refresh(candidate_sha, expected_source, archive_sha,
+                             core_runtime, observer_socket)
+
+
 def _resume_adapter_refresh(candidate_sha: str, expected_source: Path,
                             archive_sha: str, core_runtime,
                             observer_socket: Path) -> str | None:
     value, old_gateway, old_inspector, old_config = _backup_value(candidate_sha)
+    _verify_archived_completed_ingress(value)
     row = value.get("adapter_refresh")
+    if (value.get("state") in {"prepared", "recovery-required"}
+            and value.get("prior_completed_ingress_sha256") is not None):
+        try:
+            current_gateway, _ = _read_fixed(FIXED_UNITS[GATEWAY], uid=0, gid=0,
+                                              mode=0o644, maximum=64 * 1024)
+            current_inspector, _ = _read_fixed(FIXED_UNITS[INSPECTOR], uid=0, gid=0,
+                                                mode=0o644, maximum=64 * 1024)
+            current_config, _ = _read_fixed(GATEWAY_CONFIG, uid=0, gid=981,
+                                             mode=0o440, maximum=16 * 1024)
+            still_prior = (current_gateway == old_gateway and current_inspector == old_inspector
+                           and current_config == old_config)
+        except Exception:
+            still_prior = False
+        if still_prior:
+            _resume_prepared_adapter_refresh(
+                candidate_sha, expected_source, archive_sha, core_runtime,
+                observer_socket, value, old_gateway, old_inspector, old_config)
+            return None
     if (not _valid_adapter_refresh_row(row)
             or value["state"] not in {"recovery-required", "migrated"}
             or any(not _unit_is_fixed(name) for name in (INSPECTOR, GATEWAY, TUNNEL))):
@@ -973,8 +1075,9 @@ def _resume_rolling_back_adapter_refresh(candidate_sha: str, expected_source: Pa
 
 
 def _rollback_adapter_refresh(candidate_sha: str, expected_source: Path,
-                              core_runtime, observer_socket: Path) -> None:
+                               core_runtime, observer_socket: Path) -> None:
     value, old_gateway, old_inspector, old_config = _backup_value(candidate_sha)
+    _verify_archived_completed_ingress(value)
     row = value.get("adapter_refresh")
     if (not _valid_adapter_refresh_row(row)
             or any(not _unit_is_fixed(name) for name in (INSPECTOR, GATEWAY, TUNNEL))):
@@ -1030,7 +1133,8 @@ def _retire_current_refresh_inspector(expected_source: Path,
 def _apply_adapter_refresh(candidate_sha: str, expected_source: Path,
                            archive_sha: str, tool: Path, tool_identity: tuple,
                            core_runtime, observer_socket: Path,
-                           *, approved_union: bool) -> int:
+                           *, approved_union: bool,
+                           completed_predecessor: dict | None = None) -> int:
     custody = None
     saved = None
     old_config = None
@@ -1053,10 +1157,26 @@ def _apply_adapter_refresh(candidate_sha: str, expected_source: Path,
                                 "core_gateway_inspector")
                    != core_record["adapter_source"].encode("ascii")):
             raise RuntimeError("captured Inspector changed before staging adapter refresh")
+        if completed_predecessor is not None and (
+                hashlib.sha256(core_raw).hexdigest()
+                    != completed_predecessor["core_journal_sha256"]
+                or core_record.get("adapter_source") != completed_predecessor["core_adapter_source"]
+                or core_record.get("adapter_generation")
+                   != completed_predecessor["core_adapter_generation"]
+                or core_record.get("core_source_generation")
+                   != completed_predecessor["core_source_generation"]
+                or hashlib.sha256(saved[FIXED_UNITS[GATEWAY]][0]).hexdigest()
+                   != completed_predecessor["gateway_unit_sha256"]
+                or hashlib.sha256(saved[FIXED_UNITS[INSPECTOR]][0]).hexdigest()
+                   != completed_predecessor["inspector_unit_sha256"]
+                or hashlib.sha256(old_config).hexdigest()
+                   != completed_predecessor["config_sha256"]):
+            raise RuntimeError("active Core or ingress changed after predecessor qualification")
         row = dict(custody["row"])
         phase = "write adapter refresh rollback snapshot"
         _save_ingress_backup(candidate_sha, saved, old_config, config_info,
-                             new_units, new_config, adapter_refresh=row)
+                             new_units, new_config, adapter_refresh=row,
+                             completed_predecessor=completed_predecessor)
         # From this durable point, a reboot or interruption must resolve this
         # exact transaction before any public ingress is allowed to return.
         _set_backup_state("recovery-required")
@@ -1279,7 +1399,8 @@ def _source_switch(candidate_source: Path, *, read_approved_email_union: bool = 
 
 def _save_ingress_backup(candidate_sha: str, saved, config_raw: bytes,
                          config_info: os.stat_result, new_units, new_config: bytes,
-                         *, adapter_refresh: dict | None = None) -> None:
+                         *, adapter_refresh: dict | None = None,
+                         completed_predecessor: dict | None = None) -> None:
     parent = INGRESS_BACKUP.parent
     parent_info = parent.lstat()
     if (not stat.S_ISDIR(parent_info.st_mode) or parent_info.st_uid != 0
@@ -1301,6 +1422,8 @@ def _save_ingress_backup(candidate_sha: str, saved, config_raw: bytes,
         "old_inspector_sha256": hashlib.sha256(saved[FIXED_UNITS[INSPECTOR]][0]).hexdigest(),
         "old_config_sha256": hashlib.sha256(config_raw).hexdigest(),
         "adapter_refresh": adapter_refresh,
+        "prior_completed_ingress_sha256": (
+            completed_predecessor["sha256"] if completed_predecessor is not None else None),
     }
     raw = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
     temporary = parent / (".native-adoption-backup-" + secrets.token_hex(8))
@@ -1325,16 +1448,301 @@ def _save_ingress_backup(candidate_sha: str, saved, config_raw: bytes,
             os.close(fd)
         except OSError:
             pass
-    try:
-        os.link(temporary, INGRESS_BACKUP, follow_symlinks=False)
-    finally:
-        temporary.unlink(missing_ok=True)
+    if completed_predecessor is None:
+        try:
+            os.link(temporary, INGRESS_BACKUP, follow_symlinks=False)
+        finally:
+            temporary.unlink(missing_ok=True)
+    else:
+        try:
+            _replace_completed_ingress_backup(temporary, completed_predecessor)
+        finally:
+            temporary.unlink(missing_ok=True)
     dfd = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
                   | getattr(os, "O_NOFOLLOW", 0))
     try:
         os.fsync(dfd)
     finally:
         os.close(dfd)
+
+
+def _ingress_backup_identity(info: os.stat_result) -> tuple[int, ...]:
+    return (info.st_dev, info.st_ino, info.st_uid, info.st_gid,
+            stat.S_IMODE(info.st_mode), info.st_nlink, info.st_size,
+            info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _replace_completed_ingress_backup(temporary: Path, predecessor: dict) -> None:
+    """CAS-replace only the exact completed backup retained under the adopter lock."""
+    current, info = _read_fixed(INGRESS_BACKUP, uid=0, gid=0, mode=0o600,
+                                maximum=128 * 1024)
+    if (current != predecessor["raw"]
+            or _ingress_backup_identity(info) != predecessor["identity"]):
+        raise _IngressSnapshotConflict("completed ingress backup changed before successor handoff")
+    os.replace(temporary, INGRESS_BACKUP)
+    parent_fd = os.open(INGRESS_BACKUP.parent, os.O_RDONLY
+                        | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        os.fsync(parent_fd)
+    finally:
+        os.close(parent_fd)
+
+
+def _read_ingress_history_file(path: Path, *, allowed_links: set[int]) -> tuple[bytes, os.stat_result]:
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        before = os.fstat(fd)
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_gid != 0
+                or stat.S_IMODE(before.st_mode) != 0o600
+                or before.st_nlink not in allowed_links or not 1 <= before.st_size <= 128 * 1024):
+            raise RuntimeError("fixed ingress history entry custody differs")
+        raw = bytearray()
+        while len(raw) <= 128 * 1024:
+            chunk = os.read(fd, min(8192, 128 * 1024 + 1 - len(raw)))
+            if not chunk:
+                break
+            raw.extend(chunk)
+        after = os.fstat(fd)
+        named = os.stat(path, follow_symlinks=False)
+        if (len(raw) != before.st_size or len(raw) > 128 * 1024
+                or _ingress_backup_identity(before) != _ingress_backup_identity(after)
+                or (after.st_dev, after.st_ino) != (named.st_dev, named.st_ino)):
+            raise RuntimeError("fixed ingress history entry changed during read")
+        return bytes(raw), before
+    finally:
+        os.close(fd)
+
+
+def _archive_completed_ingress_bytes(raw: bytes) -> tuple[str, tuple[int, ...]]:
+    if not 1 <= len(raw) <= 128 * 1024:
+        raise RuntimeError("completed ingress backup exceeds its retained bound")
+    digest = hashlib.sha256(raw).hexdigest()
+    parent = INGRESS_HISTORY.parent
+    parent_info = parent.lstat()
+    if (not stat.S_ISDIR(parent_info.st_mode) or parent_info.st_uid != 0
+            or parent_info.st_gid != 0 or stat.S_IMODE(parent_info.st_mode) != 0o700):
+        raise RuntimeError("fixed ingress history parent custody differs")
+    try:
+        INGRESS_HISTORY.mkdir(mode=0o700)
+    except FileExistsError:
+        pass
+    dir_info = INGRESS_HISTORY.lstat()
+    if (not stat.S_ISDIR(dir_info.st_mode) or dir_info.st_uid != 0
+            or dir_info.st_gid != 0 or stat.S_IMODE(dir_info.st_mode) != 0o700
+            or dir_info.st_nlink < 2):
+        raise RuntimeError("fixed ingress history directory custody differs")
+    archive = INGRESS_HISTORY / (digest + ".json")
+    temporary = INGRESS_HISTORY / ("." + digest + ".pending")
+    try:
+        existing = archive.lstat()
+    except FileNotFoundError:
+        existing = None
+    except OSError:
+        raise RuntimeError("fixed ingress history path cannot be inspected") from None
+    if existing is not None:
+        archived, archived_info = _read_ingress_history_file(archive, allowed_links={1, 2})
+        if archived != raw or hashlib.sha256(archived).hexdigest() != digest:
+            raise RuntimeError("existing ingress history entry conflicts")
+        if archived_info.st_nlink == 2:
+            staged, staged_info = _read_ingress_history_file(temporary, allowed_links={2})
+            if (staged != raw
+                    or (staged_info.st_dev, staged_info.st_ino)
+                       != (archived_info.st_dev, archived_info.st_ino)):
+                raise RuntimeError("linked ingress history stage conflicts")
+            temporary.unlink()
+            archived, archived_info = _read_ingress_history_file(archive, allowed_links={1})
+    else:
+        try:
+            staged, stage_info = _read_ingress_history_file(temporary, allowed_links={1})
+        except FileNotFoundError:
+            staged = None
+            stage_info = None
+        if staged is None:
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                         | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            try:
+                os.fchown(fd, 0, 0)
+                os.fchmod(fd, 0o600)
+                view = memoryview(raw)
+                while view:
+                    written = os.write(fd, view)
+                    if written <= 0:
+                        raise OSError("short ingress history write")
+                    view = view[written:]
+                os.fsync(fd)
+            except BaseException:
+                os.close(fd)
+                temporary.unlink(missing_ok=True)
+                raise
+            finally:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            staged, stage_info = _read_ingress_history_file(temporary, allowed_links={1})
+        if staged != raw or hashlib.sha256(staged).hexdigest() != digest or stage_info is None:
+            raise RuntimeError("staged ingress history entry changed")
+        try:
+            os.link(temporary, archive, follow_symlinks=False)
+        except FileExistsError:
+            archived, archived_info = _read_ingress_history_file(archive, allowed_links={1})
+            if archived != raw or hashlib.sha256(archived).hexdigest() != digest:
+                raise RuntimeError("existing ingress history entry conflicts") from None
+        else:
+            archived_info = os.stat(archive, follow_symlinks=False)
+        if ((archived_info.st_dev, archived_info.st_ino)
+                != (stage_info.st_dev, stage_info.st_ino)):
+            raise RuntimeError("ingress history exclusive link does not match its stage")
+        temporary.unlink()
+        archived, archived_info = _read_ingress_history_file(archive, allowed_links={1})
+        if archived != raw:
+            raise RuntimeError("durable ingress history bytes differ after linking")
+    history_fd = os.open(INGRESS_HISTORY, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                         | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        os.fsync(history_fd)
+    finally:
+        os.close(history_fd)
+    parent_fd = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                        | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        os.fsync(parent_fd)
+    finally:
+        os.close(parent_fd)
+    return digest, _ingress_backup_identity(archived_info)
+
+
+def _verify_archived_completed_ingress(value: dict) -> None:
+    digest = value.get("prior_completed_ingress_sha256")
+    if digest is None:
+        return
+    if type(digest) is not str or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+        raise RuntimeError("successor ingress predecessor reference is malformed")
+    archived, _info = _read_fixed(INGRESS_HISTORY / (digest + ".json"), uid=0,
+                                  gid=0, mode=0o600, maximum=128 * 1024)
+    if hashlib.sha256(archived).hexdigest() != digest:
+        raise RuntimeError("successor ingress predecessor archive digest differs")
+    try:
+        prior = json.loads(archived, object_pairs_hook=_unique_pairs)
+        candidate = prior.get("candidate_sha") if type(prior) is dict else None
+        if (type(prior) is not dict or prior.get("schema") != 1
+                or prior.get("state") != "migrated"
+                or candidate == value.get("candidate_sha")
+                or type(candidate) is not str
+                or re.fullmatch(r"[0-9a-f]{40}", candidate) is None):
+            raise ValueError
+        gateway = base64.b64decode(prior["gateway_unit"], validate=True)
+        inspector = base64.b64decode(prior["inspector_unit"], validate=True)
+        config = base64.b64decode(prior["gateway_config"], validate=True)
+        if (not gateway or not inspector or not config
+                or hashlib.sha256(gateway).hexdigest() != prior["old_gateway_sha256"]
+                or hashlib.sha256(inspector).hexdigest() != prior["old_inspector_sha256"]
+                or hashlib.sha256(config).hexdigest() != prior["old_config_sha256"]
+                or re.fullmatch(r"[0-9a-f]{64}", prior["new_gateway_sha256"]) is None
+                or re.fullmatch(r"[0-9a-f]{64}", prior["new_inspector_sha256"]) is None
+                or not isinstance(prior.get("post_core_config_sha256"), str)
+                or re.fullmatch(r"[0-9a-f]{64}", prior["post_core_config_sha256"]) is None):
+            raise ValueError
+        refresh = prior.get("adapter_refresh")
+        if refresh is not None and (not _valid_adapter_refresh_row(refresh)
+                                    or any(refresh.get(field) is None for field in (
+                                        "core_update_backup_reference",
+                                        "core_update_cohort_transaction_id",
+                                        "core_update_cohort_sha256"))):
+            raise ValueError
+    except Exception:
+        raise RuntimeError("successor ingress predecessor archive is not a completed record") from None
+
+
+def _retain_completed_ingress_for_refresh(core_runtime, observer_socket: Path,
+                                           next_candidate_sha: str) -> dict:
+    """Prove and durably archive the exact successful ingress predecessor."""
+    raw, info = _read_fixed(INGRESS_BACKUP, uid=0, gid=0, mode=0o600,
+                            maximum=128 * 1024)
+    try:
+        parsed = json.loads(raw, object_pairs_hook=_unique_pairs)
+        previous_candidate = parsed.get("candidate_sha") if type(parsed) is dict else None
+        if (not isinstance(previous_candidate, str)
+                or re.fullmatch(r"[0-9a-f]{40}", previous_candidate) is None
+                or previous_candidate == next_candidate_sha):
+            raise ValueError
+        value, _gateway, _inspector, _config = _backup_value(previous_candidate)
+        rechecked, rechecked_info = _read_fixed(
+            INGRESS_BACKUP, uid=0, gid=0, mode=0o600, maximum=128 * 1024)
+        if (rechecked != raw
+                or _ingress_backup_identity(rechecked_info) != _ingress_backup_identity(info)):
+            raise _IngressSnapshotConflict("completed ingress journal changed during validation")
+    except _IngressSnapshotConflict:
+        raise
+    except Exception:
+        raise RuntimeError("prior ingress transaction is not a valid completed predecessor") from None
+    if (value["state"] != "migrated"
+            or value["candidate_sha"] != previous_candidate
+            or value.get("post_core_config_sha256") is None):
+        raise RuntimeError("prior ingress transaction is not complete")
+
+    core_record, _core_raw, _core_files = core_runtime._read_active_adapter_runtime()
+    gateway, _gateway_info = _read_fixed(FIXED_UNITS[GATEWAY], uid=0, gid=0,
+                                         mode=0o644, maximum=64 * 1024)
+    inspector, _inspector_info = _read_fixed(FIXED_UNITS[INSPECTOR], uid=0, gid=0,
+                                             mode=0o644, maximum=64 * 1024)
+    config_raw, _config_info = _read_fixed(GATEWAY_CONFIG, uid=0, gid=981,
+                                           mode=0o440, maximum=16 * 1024)
+    source = f"/opt/hermes-installer-core-{previous_candidate[:9]}/src".encode("ascii")
+    inspector_digest = hashlib.sha256(inspector).hexdigest()
+    expected_inspector_digests = {value["new_inspector_sha256"],
+                                  value.get("runtime_inspector_sha256")}
+    expected_config = value.get("post_core_config_sha256")
+    if (hashlib.sha256(gateway).hexdigest() != value["new_gateway_sha256"]
+            or inspector_digest not in expected_inspector_digests
+            or hashlib.sha256(config_raw).hexdigest() != expected_config
+            or _unit_source(gateway, "core_gateway") != source
+            or _unit_source(inspector, "core_gateway_inspector") != source
+            or core_record.get("adapter_source") != source.decode("ascii")
+            or core_record.get("adapter_migration_state") != "active"
+            or not all(_unit_is_exact_and_active(name) for name in (INSPECTOR, GATEWAY))):
+        raise RuntimeError("active Core and ingress no longer match the completed predecessor")
+
+    refresh = value.get("adapter_refresh")
+    if refresh is not None:
+        if (not _valid_adapter_refresh_row(refresh)
+                or any(refresh.get(field) is None for field in (
+                    "core_update_backup_reference", "core_update_cohort_transaction_id",
+                    "core_update_cohort_sha256"))):
+            raise RuntimeError("prior adapter-refresh record is malformed")
+        _verify_current_adapter_refresh_join(core_runtime, refresh)
+    elif core_record.get("adapter_source") != source.decode("ascii"):
+        raise RuntimeError("legacy predecessor lacks an exact active Core source join")
+
+    _verify_source_provenance(previous_candidate, Path(source.decode("ascii")))
+    _verify_installed_source(source)
+    from hermes_installer.remote.core_gateway import CoreGatewayConfig
+    config = CoreGatewayConfig.load(expected_owner_uid=0)
+    _verify_gateway_tunnel(config, require_active=True)
+    _verify_inspector_process(inspector, source)
+    inspector_custody = _capture_inspector_custody(inspector, source, observer_socket)
+    try:
+        if (inspector_custody["row"]["old_observer_state"] not in {"verified-owned", "absent"}
+                or inspector_custody["identity"]["source"] != source.decode("ascii")):
+            raise RuntimeError("completed predecessor observer custody is not current")
+    finally:
+        os.close(inspector_custody["pidfd"])
+
+    digest, archive_identity = _archive_completed_ingress_bytes(raw)
+    # Close the read-to-archive window before allowing the successor stage.
+    current, current_info = _read_fixed(INGRESS_BACKUP, uid=0, gid=0, mode=0o600,
+                                        maximum=128 * 1024)
+    if current != raw or _ingress_backup_identity(current_info) != _ingress_backup_identity(info):
+        raise _IngressSnapshotConflict("completed ingress backup changed during retention")
+    return {"raw": raw, "identity": _ingress_backup_identity(info),
+            "sha256": digest, "archive_identity": archive_identity,
+            "core_journal_sha256": hashlib.sha256(_core_raw).hexdigest(),
+            "core_adapter_source": core_record["adapter_source"],
+            "core_adapter_generation": core_record["adapter_generation"],
+            "core_source_generation": core_record["core_source_generation"],
+            "gateway_unit_sha256": hashlib.sha256(gateway).hexdigest(),
+            "inspector_unit_sha256": hashlib.sha256(inspector).hexdigest(),
+            "config_sha256": hashlib.sha256(config_raw).hexdigest()}
 
 
 def _remove_ingress_backup() -> None:
@@ -1548,6 +1956,10 @@ def _backup_value(candidate_sha: str) -> tuple[dict, bytes, bytes, bytes]:
             value["adapter_refresh"] = None
         elif type(value) is dict and set(value) == keys - {"adapter_refresh"}:
             value["adapter_refresh"] = None
+        elif type(value) is dict and set(value) == keys | {"prior_completed_ingress_sha256"}:
+            pass
+        if type(value) is dict and "prior_completed_ingress_sha256" not in value:
+            value["prior_completed_ingress_sha256"] = None
         if (type(value) is not dict or set(value) != keys or type(value["schema"]) is not int
                 or value["schema"] != 1 or value["candidate_sha"] != candidate_sha
                 or value["state"] not in {"prepared", "units-switched", "migrated", "recovery-required"}
@@ -1558,6 +1970,10 @@ def _backup_value(candidate_sha: str) -> tuple[dict, bytes, bytes, bytes]:
                 or (value["runtime_inspector_sha256"] is not None
                     and (not isinstance(value["runtime_inspector_sha256"], str)
                          or re.fullmatch(r"[0-9a-f]{64}", value["runtime_inspector_sha256"]) is None))
+                or (value["prior_completed_ingress_sha256"] is not None
+                    and (not isinstance(value["prior_completed_ingress_sha256"], str)
+                         or re.fullmatch(r"[0-9a-f]{64}",
+                                         value["prior_completed_ingress_sha256"]) is None))
                 or (value["adapter_refresh"] is not None
                     and not _valid_adapter_refresh_row(value["adapter_refresh"]))):
             raise ValueError
@@ -2315,7 +2731,7 @@ def _restore_legacy_core(core_runtime, expected_source: Path | None = None) -> b
     return core_runtime._owned_listener(legacy_launcher=True)
 
 
-def main() -> int:
+def _main_unlocked() -> int:
     if os.geteuid() != 0:
         print("Run as root from the Pi browser terminal.", file=sys.stderr)
         return 2
@@ -2424,8 +2840,7 @@ def main() -> int:
 
         phase = "apply preflight and active ingress validation"
         print("Adoption phase: " + phase, flush=True)
-        if INGRESS_BACKUP.exists() or INGRESS_BACKUP.is_symlink():
-            raise RuntimeError("a prior adoption backup exists; use --rollback or inspect it first")
+        backup_present = INGRESS_BACKUP.exists() or INGRESS_BACKUP.is_symlink()
         active_adapter = None
         try:
             active_adapter = core_runtime._read_active_adapter_runtime()
@@ -2439,10 +2854,17 @@ def main() -> int:
                 args.candidate_sha, expected_adapter_source)
             if refreshed_archive != archive_sha:
                 raise RuntimeError("candidate source receipt changed before adapter refresh")
+            completed_predecessor = (
+                _retain_completed_ingress_for_refresh(
+                    core_runtime, CORE_NATIVE_OBSERVER_SOCKET, args.candidate_sha)
+                if backup_present else None)
             return _apply_adapter_refresh(
                 args.candidate_sha, expected_adapter_source, archive_sha, tool,
                 tool_identity, core_runtime, CORE_NATIVE_OBSERVER_SOCKET,
-                approved_union=args.approved_email_union_stdin)
+                approved_union=args.approved_email_union_stdin,
+                completed_predecessor=completed_predecessor)
+        if backup_present:
+            raise RuntimeError("a prior adoption backup exists; use --rollback or inspect it first")
         config = CoreGatewayConfig.load(expected_owner_uid=0)
         _verify_gateway_tunnel(config, require_active=True)
         if CORE_NATIVE_OBSERVER_SOCKET.exists() or CORE_NATIVE_OBSERVER_SOCKET.is_symlink():
@@ -2576,6 +2998,40 @@ def main() -> int:
     except Exception as error:
         print("Adoption helper stopped before claiming success during phase: " + phase
               + "; failure type: " + type(error).__name__, file=sys.stderr)
+        return 4
+
+
+@contextlib.contextmanager
+def _adopter_lock():
+    parent = ADOPTER_LOCK.parent
+    parent_info = parent.lstat()
+    if (not stat.S_ISDIR(parent_info.st_mode) or parent_info.st_uid != 0
+            or parent_info.st_gid != 0):
+        raise RuntimeError("fixed adopter lock directory custody differs")
+    fd = os.open(ADOPTER_LOCK, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1):
+            raise RuntimeError("fixed adopter lock file custody differs")
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError("another fixed Core adoption transaction is active") from None
+        yield
+    finally:
+        os.close(fd)
+
+
+def main() -> int:
+    if os.geteuid() != 0:
+        return _main_unlocked()
+    try:
+        with _adopter_lock():
+            return _main_unlocked()
+    except Exception as error:
+        print("Adoption helper stopped before claiming success; failure type: "
+              + type(error).__name__, file=sys.stderr)
         return 4
 
 

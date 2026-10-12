@@ -1251,6 +1251,132 @@ def test_core_config_resume_cas_rejects_unrecorded_bytes_before_effects(monkeypa
     assert writes == []
 
 
+def _completed_ingress_handoff_fixture(tmp_path, monkeypatch):
+    runtime = tmp_path / "core-runtime"
+    runtime.mkdir(mode=0o700)
+    runtime.chmod(0o700)
+    active = runtime / "native-adoption-ingress-backup.json"
+    old_raw = b'{"schema":1,"state":"migrated","candidate_sha":"' + b"a" * 40 + b'"}\n'
+    active.write_bytes(old_raw)
+    active.chmod(0o600)
+    info = active.stat()
+    monkeypatch.setattr(adopt, "INGRESS_BACKUP", active)
+    monkeypatch.setattr(adopt, "INGRESS_HISTORY", runtime / "native-adoption-ingress-history")
+    predecessor_sha, _identity = adopt._archive_completed_ingress_bytes(old_raw)
+    predecessor = {"raw": old_raw, "identity": adopt._ingress_backup_identity(info),
+                   "sha256": predecessor_sha}
+    old_gateway = _unit("core_gateway")
+    old_inspector = _unit("core_gateway_inspector")
+    gateway_path, inspector_path = runtime / "gateway.service", runtime / "inspector.service"
+    gateway_path.write_bytes(old_gateway)
+    inspector_path.write_bytes(old_inspector)
+    gateway_path.chmod(0o644)
+    inspector_path.chmod(0o644)
+    monkeypatch.setattr(adopt, "FIXED_UNITS", {
+        adopt.GATEWAY: gateway_path, adopt.INSPECTOR: inspector_path,
+        adopt.TUNNEL: runtime / "tunnel.service"})
+    config_path = runtime / "gateway.json"
+    config_path.write_bytes(b'{"allowed_emails":["owner@example.test"]}\n')
+    config_path.chmod(0o440)
+    adopt.os.chown(config_path, 0, 981)
+    monkeypatch.setattr(adopt, "GATEWAY_CONFIG", config_path)
+    saved = {gateway_path: (old_gateway, gateway_path.stat()),
+             inspector_path: (old_inspector, inspector_path.stat())}
+    return runtime, active, predecessor, saved, config_path
+
+
+def test_completed_ingress_handoff_archives_raw_predecessor_then_replaces_atomically(
+        tmp_path, monkeypatch):
+    runtime, active, predecessor, saved, config_path = _completed_ingress_handoff_fixture(
+        tmp_path, monkeypatch)
+    new_gateway = _unit("core_gateway", NEW_SOURCE)
+    new_inspector = _unit("core_gateway_inspector", NEW_SOURCE)
+    new_config = b'{"allowed_emails":["owner@example.test"],"new":true}\n'
+    config_info = config_path.stat()
+    old_inode = active.stat().st_ino
+
+    adopt._save_ingress_backup(
+        "b" * 40, saved, config_path.read_bytes(), config_info,
+        {adopt.FIXED_UNITS[adopt.GATEWAY]: new_gateway,
+         adopt.FIXED_UNITS[adopt.INSPECTOR]: new_inspector},
+        new_config, adapter_refresh=_adapter_refresh_row(),
+        completed_predecessor=predecessor)
+
+    replacement = json.loads(active.read_bytes())
+    parsed, *_ = adopt._backup_value("b" * 40)
+    archived = adopt.INGRESS_HISTORY / (predecessor["sha256"] + ".json")
+    assert archived.read_bytes() == predecessor["raw"]
+    assert stat.S_IMODE(archived.stat().st_mode) == 0o600
+    assert replacement["prior_completed_ingress_sha256"] == predecessor["sha256"]
+    assert parsed["prior_completed_ingress_sha256"] == predecessor["sha256"]
+    assert replacement["state"] == "prepared"
+    assert active.stat().st_ino != old_inode
+    assert predecessor["raw"] != active.read_bytes()
+
+
+def test_completed_ingress_handoff_refuses_changed_active_bytes_without_replacing(
+        tmp_path, monkeypatch):
+    _runtime, active, predecessor, saved, config_path = _completed_ingress_handoff_fixture(
+        tmp_path, monkeypatch)
+    active.write_bytes(b'{"state":"foreign-drift"}\n')
+    drifted = active.read_bytes()
+    new_gateway = _unit("core_gateway", NEW_SOURCE)
+    new_inspector = _unit("core_gateway_inspector", NEW_SOURCE)
+    with pytest.raises(adopt._IngressSnapshotConflict):
+        adopt._save_ingress_backup(
+            "b" * 40, saved, config_path.read_bytes(), config_path.stat(),
+            {adopt.FIXED_UNITS[adopt.GATEWAY]: new_gateway,
+             adopt.FIXED_UNITS[adopt.INSPECTOR]: new_inspector},
+            b'{"new":true}\n', adapter_refresh=_adapter_refresh_row(),
+            completed_predecessor=predecessor)
+    assert active.read_bytes() == drifted
+
+
+def test_completed_ingress_history_is_immutable_and_digest_addressed(tmp_path, monkeypatch):
+    runtime = tmp_path / "core-runtime"
+    runtime.mkdir(mode=0o700)
+    runtime.chmod(0o700)
+    monkeypatch.setattr(adopt, "INGRESS_HISTORY", runtime / "native-adoption-ingress-history")
+    raw = b'{"schema":1,"state":"migrated","embedded":"retained exact bytes"}\n'
+    digest, first_identity = adopt._archive_completed_ingress_bytes(raw)
+    path = adopt.INGRESS_HISTORY / (digest + ".json")
+    inode = path.stat().st_ino
+    assert path.read_bytes() == raw
+    assert adopt._archive_completed_ingress_bytes(raw)[0] == digest
+    assert path.stat().st_ino == inode
+    path.write_bytes(b"changed archive bytes")
+    with pytest.raises(RuntimeError, match="history entry"):
+        adopt._archive_completed_ingress_bytes(raw)
+    assert path.read_bytes() == b"changed archive bytes"
+    assert first_identity[1] == inode
+
+
+def test_nonterminal_predecessor_is_refused_before_history_or_core_reads(tmp_path, monkeypatch):
+    runtime = tmp_path / "core-runtime"
+    runtime.mkdir(mode=0o700)
+    runtime.chmod(0o700)
+    active = runtime / "native-adoption-ingress-backup.json"
+    raw = b'{"candidate_sha":"' + b"a" * 40 + b'"}\n'
+    active.write_bytes(raw)
+    active.chmod(0o600)
+    monkeypatch.setattr(adopt, "INGRESS_BACKUP", active)
+    history = runtime / "native-adoption-ingress-history"
+    monkeypatch.setattr(adopt, "INGRESS_HISTORY", history)
+    monkeypatch.setattr(adopt, "_backup_value", lambda _candidate: (
+        {"state": "recovery-required", "candidate_sha": "a" * 40,
+         "post_core_config_sha256": "b" * 64}, b"", b"", b""))
+
+    class NoCoreRead:
+        def _read_active_adapter_runtime(self):
+            pytest.fail("nonterminal predecessor must deny before Core/service reads")
+
+    with pytest.raises(RuntimeError, match="not complete"):
+        adopt._retain_completed_ingress_for_refresh(NoCoreRead(), runtime / "observer.sock",
+                                                     "c" * 40)
+    assert active.read_bytes() == raw
+    assert not history.exists()
+
+
 @pytest.mark.parametrize("case", ["duplicate-root", "unowned-root", "unit-root-mismatch",
                                     "config-digest-mismatch"])
 def test_qualification_refusals_happen_before_systemd_effects(monkeypatch, case):
