@@ -449,6 +449,13 @@ class CoreVerifiedJarvisMasterReviewDecision:
     def is_current_sealed(self, config: Any, *, custody: Any, now: float | None = None) -> bool:
         current = time.monotonic() if now is None else now
         try:
+            if not _verify_review_completion(
+                    self._completion, config=config, custody=custody, now=current):
+                return False
+            parsed = parse_master_review_output(
+                self._completion.response_text,
+                expected_result_sha256=self.result_sha256,
+            )
             return bool(self._seal is _DECISION_SEAL and self.schema == 1
                         and _HASH.fullmatch(self.owner_subject_sha256 or "")
                         and _MISSION_ID.fullmatch(self.mission_id or "")
@@ -467,6 +474,7 @@ class CoreVerifiedJarvisMasterReviewDecision:
                         and math.isfinite(self.expires_monotonic)
                         and current < self.expires_monotonic
                         and self.expires_monotonic <= _original_owner_deadline(self._completion)
+                        and self.expires_monotonic <= self._completion.expires_monotonic
                         and self._completion.response_sha256 == self.response_sha256
                         and self._completion.owner_subject_sha256 == self.owner_subject_sha256
                         and self._completion.owner_turn_handle == self.owner_turn_handle
@@ -481,9 +489,7 @@ class CoreVerifiedJarvisMasterReviewDecision:
                         and self._completion.execution_core_source_generation == self.execution_core_source_generation
                         and parsed["decision"] == self.decision
                         and parsed["rationale"] == self.rationale
-                        and parsed["response_sha256"] == self.response_sha256
-                        and _verify_review_completion(self._completion, config=config,
-                                                      custody=custody, now=current))
+                        and parsed["response_sha256"] == self.response_sha256)
         except Exception:
             return False
 

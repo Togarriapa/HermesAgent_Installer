@@ -159,6 +159,10 @@ def test_review_decision_uses_only_a_current_root_review_completion_and_keeps_li
     assert decision.execution_core_generation == "1" * 64
     assert decision.core_generation == "d" * 64
     assert decision.is_current_sealed(object(), custody=object())
+    assert not replace(decision, rationale="A caller-edited rationale").is_current_sealed(
+        object(), custody=object())
+    assert not replace(decision, decision="rejected").is_current_sealed(
+        object(), custody=object())
     with pytest.raises(JarvisMasterPlanningDenied):
         planning.issue_master_review_decision(
             completion=completion, config=object(), custody=object(),
