@@ -173,6 +173,10 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False):
     monkeypatch.setattr(core, "LIBEXEC_DIR", libexec)
     monkeypatch.setattr(core, "TOKEN", etc / "jarvis-core" / "session-token")
     monkeypatch.setattr(core, "JOURNAL", var / "core-runtime" / "ownership.json")
+    monkeypatch.setattr(core, "ADAPTER_UPDATE_COHORT",
+                        var / "core-runtime" / "adapter-update-cohort.json")
+    monkeypatch.setattr(core, "ADAPTER_UPDATE_BACKUPS",
+                        var / "core-runtime" / "adapter-update-backups")
     monkeypatch.setattr(core, "UNIT", unit_dir / core.SERVICE)
     monkeypatch.setattr(core, "LAUNCHER", libexec / "hermes-jarvis-core-launcher")
     monkeypatch.setattr(core, "HOME", home.parent)
@@ -489,10 +493,10 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
         return result
     monkeypatch.setattr(core, "_run", model_restart_on_failure)
 
-    result = core.install_or_resume()
+    result = core.update_owned_core_adapter()
 
     updated = json.loads(core.JOURNAL.read_text())
-    assert "updated to the verified immutable installer adapter generation" in result
+    assert "updated to the verified adapter generation" in result
     assert updated["adapter_source"] == str(core.ADAPTER_SOURCE)
     assert updated["state"] == "installed"
     assert updated["adapter_generation"] == "a" * 64
@@ -661,15 +665,21 @@ def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pr
     assert enabled["value"]
 
 
-def _adapter_cohort_starting_fixture(tmp_path, monkeypatch):
+def _adapter_cohort_starting_fixture(tmp_path, monkeypatch, request):
     """Build the exact on-disk systemd inputs used by the M1 source-start gate."""
     from hermes_installer.remote import obsidian_owner_lifecycle as obsidian
 
     runtime = tmp_path / "runtime"
-    tmp_path.chmod(0o755)
     home = tmp_path / "home" / "admin" / ".hermes"
-    unit_dir = tmp_path / "etc" / "systemd" / "system"
-    libexec = tmp_path / "usr" / "local" / "libexec"
+    # The real guard runs as UID 1000 and reads its generated UNIT/LAUNCHER
+    # paths directly. Pytest's private tmp_path ancestors are root-only, so
+    # keep these two synthetic service files in an isolated traversable /tmp
+    # fixture tree; the journal, backup, and credential sources stay private.
+    service_root = Path(tempfile.mkdtemp(prefix="core-m1-service-", dir="/tmp"))
+    service_root.chmod(0o755)
+    request.addfinalizer(lambda: shutil.rmtree(service_root))
+    unit_dir = service_root / "etc" / "systemd" / "system"
+    libexec = service_root / "usr" / "local" / "libexec"
     token_path = tmp_path / "etc" / "hermes-installer" / "session-token"
     for directory in (runtime, home, unit_dir, libexec, token_path.parent,
                       tmp_path / "backups", tmp_path / "overlays"):
@@ -797,6 +807,7 @@ def _adapter_cohort_starting_fixture(tmp_path, monkeypatch):
         "old_artifact_sha256": artifact_old, "new_artifact_sha256": artifact_new,
         "owner_generation_backup_name": ".jarvis-resources-skills-helper-transition-" + "2" * 32,
         "primary_record_sha256": core._ABSENT_DIGEST,
+        "initial_primary_transition": None,
         "obsidian_registration_state": "absent",
         "obsidian_registration_sha256": core._ABSENT_DIGEST,
         "obsidian_vault_tree_sha256": core._ABSENT_DIGEST,
@@ -809,8 +820,10 @@ def _adapter_cohort_starting_fixture(tmp_path, monkeypatch):
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="ExecStartPre cohort gate requires the enrolled Pi root actor")
-def test_m1_boot_gate_admits_only_the_exact_source_starting_journal_and_resources(tmp_path, monkeypatch):
-    unit, cohort, journal_raw, resources_raw = _adapter_cohort_starting_fixture(tmp_path, monkeypatch)
+def test_m1_boot_gate_admits_only_the_exact_source_starting_journal_and_resources(
+        tmp_path, monkeypatch, request):
+    unit, cohort, journal_raw, resources_raw = _adapter_cohort_starting_fixture(
+        tmp_path, monkeypatch, request)
     assert _exec_start_pre(unit, expect_success=True) == 0
     # A reboot during any incomplete phase must fail closed even when the
     # systemd unit and launcher already contain the new source recipe.
@@ -838,8 +851,10 @@ def test_m1_boot_gate_admits_only_the_exact_source_starting_journal_and_resource
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="ExecStartPre cohort gate requires the enrolled Pi root actor")
-def test_m1_boot_gate_checks_actual_backup_manifest_members_and_admin_execution(tmp_path, monkeypatch):
-    unit, cohort, _journal_raw, _resources_raw = _adapter_cohort_starting_fixture(tmp_path, monkeypatch)
+def test_m1_boot_gate_checks_actual_backup_manifest_members_and_admin_execution(
+        tmp_path, monkeypatch, request):
+    unit, cohort, _journal_raw, _resources_raw = _adapter_cohort_starting_fixture(
+        tmp_path, monkeypatch, request)
     lines = unit.decode().splitlines()
     assert "User=admin" in lines
     assert not any(line.startswith("ExecStartPre=+") for line in lines)
@@ -860,8 +875,10 @@ def test_m1_boot_gate_checks_actual_backup_manifest_members_and_admin_execution(
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="cohort rollback custody requires the enrolled Pi root actor")
-def test_m1_rollback_refuses_owner_resources_edit_before_any_restore_effect(tmp_path, monkeypatch):
-    _unit, cohort, journal_raw, resources_raw = _adapter_cohort_starting_fixture(tmp_path, monkeypatch)
+def test_m1_rollback_refuses_owner_resources_edit_before_any_restore_effect(
+        tmp_path, monkeypatch, request):
+    _unit, cohort, journal_raw, resources_raw = _adapter_cohort_starting_fixture(
+        tmp_path, monkeypatch, request)
     prior = {"adapter_source": cohort["old_source"]}
     contents = {
         "journal.json": b"prior-journal\n",
