@@ -31,8 +31,15 @@ def _exec_start_pre(unit_bytes):
     cred_dir.chmod(0o700)
     admin = pwd.getpwnam("admin")
     try:
-        for name, source in (("core-ownership-journal", core.JOURNAL),
-                             ("hermes-session-token", core.TOKEN)):
+        loads = [row.partition("=")[2] for row in unit_bytes.decode().splitlines()
+                 if row.startswith("LoadCredential=")]
+        credentials = []
+        for item in loads:
+            name, separator, source = item.partition(":")
+            if not separator:
+                raise AssertionError("generated service credential declaration is malformed")
+            credentials.append((name, Path(source)))
+        for name, source in credentials:
             target = cred_dir / name
             target.write_bytes(source.read_bytes())
             target.chmod(0o400)
@@ -559,6 +566,194 @@ def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pr
     assert core.LAUNCHER.read_bytes() == prior_launcher
     assert core.UNIT.read_bytes() == prior_unit
     assert enabled["value"]
+
+
+def _adapter_cohort_starting_fixture(tmp_path, monkeypatch):
+    """Build the exact on-disk systemd inputs used by the M1 source-start gate."""
+    from hermes_installer.remote import obsidian_owner_lifecycle as obsidian
+
+    runtime = tmp_path / "runtime"
+    home = tmp_path / "home" / "admin" / ".hermes"
+    unit_dir = tmp_path / "etc" / "systemd" / "system"
+    libexec = tmp_path / "usr" / "local" / "libexec"
+    token_path = tmp_path / "etc" / "hermes-installer" / "session-token"
+    for directory in (runtime, home, unit_dir, libexec, token_path.parent,
+                      tmp_path / "backups", tmp_path / "overlays"):
+        directory.mkdir(parents=True, exist_ok=True)
+        directory.chmod(0o700 if directory not in {unit_dir, libexec} else 0o755)
+    monkeypatch.setattr(core, "PYTHON", Path(sys.executable))
+    monkeypatch.setattr(core, "JOURNAL", runtime / "ownership.json")
+    monkeypatch.setattr(core, "RESOURCES_RECORD", runtime / "resources.json")
+    monkeypatch.setattr(core, "ADAPTER_UPDATE_COHORT", runtime / "cohort.json")
+    monkeypatch.setattr(core, "ADAPTER_UPDATE_BACKUPS", tmp_path / "backups")
+    monkeypatch.setattr(core, "RESOURCES_SKILL_OVERLAYS", tmp_path / "overlays")
+    monkeypatch.setattr(core, "UNIT", unit_dir / core.SERVICE)
+    monkeypatch.setattr(core, "LAUNCHER", libexec / "launcher")
+    monkeypatch.setattr(core, "TOKEN", token_path)
+    monkeypatch.setattr(obsidian, "OWNER_REGISTRATION", runtime / "obsidian-registration.json")
+    token = b"test-session-token\n"
+    token_path.write_bytes(token)
+
+    old_source = tmp_path / "adapter-old" / "src"
+    new_source = tmp_path / "adapter-new" / "src"
+    old_adapter, new_adapter = "a" * 64, "b" * 64
+    core_generation = "c" * 64
+    artifact_old, artifact_new = "d" * 64, "e" * 64
+    old_launcher = core._launcher(adapter_source=old_source)
+    new_launcher = core._launcher(adapter_source=new_source)
+    old_unit = core._unit(adapter_source=old_source, cohort_gate=True)
+    new_unit = core._unit(adapter_source=new_source, cohort_gate=True)
+    core.LAUNCHER.write_bytes(new_launcher)
+    core.LAUNCHER.chmod(0o755)
+    core.UNIT.write_bytes(new_unit)
+    core.UNIT.chmod(0o644)
+    new_recipe = core._adapter_recipe_sha256(
+        str(new_source), new_adapter, hashlib.sha256(new_unit).hexdigest(),
+        hashlib.sha256(new_launcher).hexdigest())
+    old_recipe = core._adapter_recipe_sha256(
+        str(old_source), old_adapter, hashlib.sha256(old_unit).hexdigest(),
+        hashlib.sha256(old_launcher).hexdigest())
+    token_sha = hashlib.sha256(token).hexdigest()
+    backup = {"path": str(core.ADAPTER_UPDATE_BACKUPS / old_adapter),
+              "source_generation": old_adapter, "files": {}}
+    journal = {
+        "schema": 1, "state": "installed", "service": core.SERVICE,
+        "adapter_migration_state": "active", "adapter_source": str(new_source),
+        "adapter_generation": new_adapter, "core_source_generation": core_generation,
+        "plugin_selection_sha256": "f" * 64, "token_sha256": token_sha,
+        "unit_sha256": hashlib.sha256(new_unit).hexdigest(),
+        "launcher_sha256": hashlib.sha256(new_launcher).hexdigest(),
+        "adapter_update_state": "starting", "adapter_update_backup": backup,
+        "adapter_update_previous_source": str(old_source),
+        "adapter_update_target_source": str(new_source),
+        "adapter_update_target_generation": new_adapter,
+        "adapter_update_staged_plugin_sha256": "1" * 64,
+        "adapter_update_cohort_transaction_id": "2" * 32,
+    }
+    journal_raw = core._canonical_json(journal)
+    core.JOURNAL.write_bytes(journal_raw)
+    core.JOURNAL.chmod(0o600)
+    resources = {"core_source_generation": core_generation,
+                 "core_ownership_sha256": hashlib.sha256(journal_raw).hexdigest(),
+                 "artifact_sha256": artifact_new}
+    resources_raw = core._canonical_json(resources)
+    core.RESOURCES_RECORD.write_bytes(resources_raw)
+    core.RESOURCES_RECORD.chmod(0o600)
+    old_journal_sha = hashlib.sha256(b"prior-journal\n").hexdigest()
+    old_resources_sha = hashlib.sha256(b"prior-resources\n").hexdigest()
+    recon = {
+        "schema": 1, "purpose": "helper-only-base-reconstruction",
+        "cohort_transaction_id": "2" * 32, "owner_uid": 1000,
+        "home_role": "jarvis-primary-home", "phase": "source-starting",
+        "old_base_artifact_sha256": artifact_old,
+        "new_base_artifact_sha256": artifact_new,
+        "old_composed_artifact_sha256": artifact_old,
+        "new_composed_artifact_sha256": artifact_new,
+        "overlay_journal_sha256": core._ABSENT_DIGEST, "overlay_contents": [],
+        "base_non_installer_manifest_sha256": "3" * 64,
+        "composed_non_installer_manifest_sha256": "3" * 64,
+        "materialized_tree_sha256": "4" * 64,
+        "old_installed_journal_sha256": "5" * 64,
+        "new_installed_journal_sha256": "6" * 64,
+        "old_discovery_sha256": old_resources_sha,
+        "new_discovery_sha256": hashlib.sha256(resources_raw).hexdigest(),
+        "old_core_source_generation": core_generation,
+        "new_core_source_generation": core_generation,
+        "old_source_recipe_sha256": old_recipe,
+        "new_source_recipe_sha256": new_recipe,
+    }
+    cohort = {
+        "schema": 1, "purpose": core._ADAPTER_COHORT_PURPOSE,
+        "cohort_transaction_id": "2" * 32, "owner_uid": 1000,
+        "home_role": "jarvis-primary-home", "phase": "source-starting",
+        "old_source": str(old_source), "new_source": str(new_source),
+        "old_adapter_generation": old_adapter, "new_adapter_generation": new_adapter,
+        "old_core_source_generation": core_generation,
+        "new_core_source_generation": core_generation,
+        "old_source_recipe_sha256": old_recipe, "new_source_recipe_sha256": new_recipe,
+        "old_unit_sha256": hashlib.sha256(old_unit).hexdigest(),
+        "old_launcher_sha256": hashlib.sha256(old_launcher).hexdigest(),
+        "new_unit_sha256": hashlib.sha256(new_unit).hexdigest(),
+        "new_launcher_sha256": hashlib.sha256(new_launcher).hexdigest(),
+        "guarded_old_unit_sha256": hashlib.sha256(old_unit).hexdigest(),
+        "guarded_old_recipe_sha256": old_recipe,
+        "old_process_identity_sha256": "7" * 64,
+        "old_journal_sha256": old_journal_sha,
+        "new_journal_sha256": None,
+        "old_resources_record_sha256": old_resources_sha,
+        "pre_switch_resources_record_sha256": old_resources_sha,
+        "starting_journal_sha256": hashlib.sha256(journal_raw).hexdigest(),
+        "starting_resources_record_sha256": hashlib.sha256(resources_raw).hexdigest(),
+        "new_resources_record_sha256": None,
+        "old_artifact_sha256": artifact_old, "new_artifact_sha256": artifact_new,
+        "owner_generation_backup_name": ".jarvis-resources-skills-helper-transition-" + "2" * 32,
+        "primary_record_sha256": core._ABSENT_DIGEST,
+        "obsidian_registration_state": "absent",
+        "obsidian_registration_sha256": core._ABSENT_DIGEST,
+        "obsidian_vault_tree_sha256": core._ABSENT_DIGEST,
+        "reconstruction": recon,
+        "reconstruction_sha256": hashlib.sha256(core._canonical_json(recon)).hexdigest(),
+    }
+    core._write_adapter_update_cohort(cohort, expected_raw=None)
+    assert core._read_adapter_update_cohort()[0] == cohort
+    return new_unit, cohort, journal_raw, resources_raw
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="ExecStartPre cohort gate requires the enrolled Pi root actor")
+def test_m1_boot_gate_admits_only_the_exact_source_starting_journal_and_resources(tmp_path, monkeypatch):
+    unit, cohort, journal_raw, resources_raw = _adapter_cohort_starting_fixture(tmp_path, monkeypatch)
+    assert _exec_start_pre(unit) == 0
+
+    # A reboot during any incomplete phase must fail closed even when the
+    # systemd unit and launcher already contain the new source recipe.
+    for phase in ("prepared", "resources-rebound", "rolling-back"):
+        changed = dict(cohort)
+        changed["phase"] = phase
+        changed_reconstruction = dict(changed["reconstruction"])
+        changed_reconstruction["phase"] = phase
+        changed["reconstruction"] = changed_reconstruction
+        changed["reconstruction_sha256"] = hashlib.sha256(
+            core._canonical_json(changed_reconstruction)).hexdigest()
+        core._atomic_replace(core.ADAPTER_UPDATE_COHORT,
+            core._canonical_json(changed), 0o400, core.ROOT_UID, core.ROOT_UID)
+        assert _exec_start_pre(unit) != 0
+    core._atomic_replace(core.ADAPTER_UPDATE_COHORT,
+        core._canonical_json(cohort), 0o400, core.ROOT_UID, core.ROOT_UID)
+
+    core.JOURNAL.write_bytes(b'{"partial":"journal"}\n')
+    assert _exec_start_pre(unit) != 0
+    core.JOURNAL.write_bytes(journal_raw)
+    core.RESOURCES_RECORD.write_bytes(b'{"partial":"resources"}\n')
+    assert _exec_start_pre(unit) != 0
+    core.RESOURCES_RECORD.write_bytes(resources_raw)
+    assert _exec_start_pre(unit) == 0
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="cohort rollback custody requires the enrolled Pi root actor")
+def test_m1_rollback_refuses_owner_resources_edit_before_any_restore_effect(tmp_path, monkeypatch):
+    _unit, cohort, journal_raw, resources_raw = _adapter_cohort_starting_fixture(tmp_path, monkeypatch)
+    prior = {"adapter_source": cohort["old_source"]}
+    contents = {
+        "journal.json": b"prior-journal\n",
+        "resources-record.json": b"prior-resources\n",
+        "overlay-record.json": b"",
+        "obsidian-registration.json": b"",
+        "unit": core._unit(adapter_source=Path(cohort["old_source"]), cohort_gate=True),
+        "launcher": core._launcher(adapter_source=Path(cohort["old_source"])),
+        "primary-record.json": b"",
+    }
+    core._check_adapter_cohort_rollback_currentness(cohort, prior, contents)
+    original_journal = core.JOURNAL.read_bytes()
+    original_unit = core.UNIT.read_bytes()
+    original_launcher = core.LAUNCHER.read_bytes()
+    core.RESOURCES_RECORD.write_bytes(b"owner edit after source switch\n")
+    with pytest.raises(core.CoreRuntimeError, match="outside the exact source cohort"):
+        core._check_adapter_cohort_rollback_currentness(cohort, prior, contents)
+    assert core.JOURNAL.read_bytes() == original_journal
+    assert core.UNIT.read_bytes() == original_unit
+    assert core.LAUNCHER.read_bytes() == original_launcher
+    assert journal_raw == original_journal
+    assert resources_raw != core.RESOURCES_RECORD.read_bytes()
 
 
 def test_failed_start_is_resumable_without_rotating_session_credential(tmp_path, monkeypatch):
