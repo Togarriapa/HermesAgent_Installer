@@ -48,16 +48,21 @@ class JarvisSecondBrainAssetTests(unittest.TestCase):
         self.assertIn("aria-live=\"polite\"", FEATURE_ASSETS.view_html)
 
 
-    def test_knowledge_map_filters_actual_tags_and_uses_actual_edges(self):
+    def test_knowledge_map_filters_by_saved_tags_and_draws_real_directional_links(self):
         self.assertIn("function tagCategory(node)", FEATURE_ASSETS.mount_js)
         self.assertIn("node.tags", FEATURE_ASSETS.mount_js)
         self.assertIn("selectedTags", FEATURE_ASSETS.mount_js)
         self.assertIn("edge.fromNoteId", FEATURE_ASSETS.mount_js)
         self.assertIn("edge.toNoteId", FEATURE_ASSETS.mount_js)
+        self.assertIn("noteTags(node).some(tag => selectedTags.has(tag))", FEATURE_ASSETS.mount_js)
+        self.assertIn("tags.forEach(tag => categories.add(tag))", FEATURE_ASSETS.mount_js)
+        self.assertIn("ids.has(edge.fromNoteId) && ids.has(edge.toNoteId)", FEATURE_ASSETS.mount_js)
+        self.assertIn("edge.kind === 'markdown' ? 'markdown' : 'wikilink'", FEATURE_ASSETS.mount_js)
         self.assertIn("function graphTagArcs(group, node, point)", FEATURE_ASSETS.mount_js)
         self.assertIn("function setGraphSelection()", FEATURE_ASSETS.mount_js)
         self.assertIn("path.setAttribute('data-link-kind'", FEATURE_ASSETS.mount_js)
         self.assertIn("path.setAttribute('marker-end'", FEATURE_ASSETS.mount_js)
+        self.assertIn("tagColor(tag)", FEATURE_ASSETS.mount_js)
         self.assertNotIn("animateMotion", FEATURE_ASSETS.mount_js)
         self.assertIn("data-zoom-in", FEATURE_ASSETS.view_html)
         self.assertIn("data-zoom-out", FEATURE_ASSETS.view_html)
@@ -66,7 +71,7 @@ class JarvisSecondBrainAssetTests(unittest.TestCase):
         self.assertIn("Node rings show saved vault tags", FEATURE_ASSETS.view_html)
         self.assertIn("Solid arrows are wikilinks; dashed arrows are Markdown links", FEATURE_ASSETS.view_html)
         self.assertIn("source records are available", FEATURE_ASSETS.view_html)
-        self.assertIn("Filters match any selected tag", FEATURE_ASSETS.view_html)
+        self.assertIn("filters match any selected tag", FEATURE_ASSETS.view_html.lower())
 
 
 if __name__ == "__main__":
