@@ -314,7 +314,7 @@ def build_settings(core_projection: dict[str, Any] | None = None) -> dict[str, A
 
 
 def install_jarvis_dashboard_routes(app: Any, service: Any) -> None:
-    """Add three bounded GET endpoints to the already protected core gateway app."""
+    """Add bounded read projections and owner-confirmed Calendar selection routes."""
     from aiohttp import web
     from .jarvis_chat import JarvisChatService
 

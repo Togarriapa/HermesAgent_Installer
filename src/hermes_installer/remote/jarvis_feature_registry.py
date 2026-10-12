@@ -25,6 +25,7 @@ from .jarvis_files_assets import FEATURE_ASSETS as _FILES_ASSETS
 from .jarvis_models_assets import FEATURE_ASSETS as _MODELS_ASSETS
 from .jarvis_settings_admin_assets import FEATURE_ASSETS as _SETTINGS_ADMIN_ASSETS
 from .jarvis_overview_assets import FEATURE_ASSETS as _OVERVIEW_ASSETS
+from .jarvis_calendar_assets import FEATURE_ASSETS as _CALENDAR_ASSETS
 from .jarvis_integrations_assets import FEATURE_ASSETS as _INTEGRATIONS_ASSETS
 from .jarvis_context_assets import FEATURE_ASSETS as _CONTEXT_ASSETS
 from .jarvis_second_brain_assets import FEATURE_ASSETS as _OBSIDIAN_ASSETS
@@ -46,6 +47,7 @@ FEATURE_ASSETS: tuple[JarvisFeatureAssets, ...] = (
     _SETTINGS_ADMIN_ASSETS,
     _OVERVIEW_ASSETS,
     _INTEGRATIONS_ASSETS,
+    _CALENDAR_ASSETS,
     _CONTEXT_ASSETS,
     _OBSIDIAN_ASSETS,
     _EXTENSIONS_ASSETS,
@@ -76,6 +78,7 @@ FEATURE_ROUTE_OWNERS = (
     ("native-controls", "dashboard", _NATIVE_CONTROLS_ASSETS.api_routes),
     ("resources-learning", "dashboard", _LEARNING_ASSETS.api_routes),
     ("overview", "dashboard", _OVERVIEW_ASSETS.api_routes),
+    ("calendar", "dashboard", _CALENDAR_ASSETS.api_routes),
     ("integrations", "dashboard-and-bots-read", _INTEGRATIONS_ASSETS.api_routes),
 )
 
@@ -98,6 +101,7 @@ _OWNER_BY_FEATURE = {
     "native-controls": "dashboard",
     "resources-learning": "dashboard",
     "overview": "dashboard",
+    "calendar": "dashboard",
     "integrations": "dashboard-and-bots-read",
 }
 

@@ -142,6 +142,8 @@ class JarvisChatAssetTests(unittest.TestCase):
         system_menu = primary_nav.split('data-nav-group="system"', 1)[1].split("</details>", 1)[0]
         self.assertIn('data-view="capabilities"', resources_menu)
         self.assertIn('data-view="settings"', system_menu)
+        self.assertEqual(system_menu.count('data-view="calendar"'), 1)
+        self.assertEqual(system_menu.count(">Calendar</button>"), 1)
         self.assertIn('Conversation model · session only', markup)
         self.assertEqual(markup.count('data-view="overview"'), 1)
         self.assertEqual(markup.count('data-view="integrations"'), 1)
