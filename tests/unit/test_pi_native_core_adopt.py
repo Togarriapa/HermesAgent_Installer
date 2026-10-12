@@ -565,7 +565,8 @@ def test_adapter_refresh_switch_stops_exact_old_peer_before_fixed_file_writes(
                         lambda *_args: events.append("last-old-tuple-cas"))
 
     def run(*args, **_kwargs):
-        events.append(("systemctl", *args))
+        # `_run` receives the executable name as argv[0] already.
+        events.append(tuple(args))
         return ""
 
     monkeypatch.setattr(adopt, "_run", run)
@@ -710,7 +711,7 @@ def test_adapter_refresh_pre_effect_failure_preserves_live_ingress(monkeypatch, 
     monkeypatch.setattr(adopt, "_runtime_repaired_inspector", lambda *_args:
                         (_ for _ in ()).throw(RuntimeError("pre-effect fixture failure")))
     monkeypatch.setattr(adopt, "_run", lambda *args, **_kwargs:
-                        events.append(("systemctl", *args)) or "")
+                        events.append(tuple(args)) or "")
     monkeypatch.setattr(adopt, "_restore_adapter_refresh_core", lambda *_args:
                         events.append("Core rollback"))
     monkeypatch.setattr(adopt, "_restore_old_ingress", lambda *_args:
@@ -858,7 +859,7 @@ def test_resume_all_joined_rolling_back_core_finishes_old_ingress_without_replay
         return states[name]
 
     def run(*args, **_kwargs):
-        events.append(("systemctl", *args))
+        events.append(tuple(args))
         if args[1:3] == ("stop", adopt.TUNNEL):
             states[adopt.TUNNEL] = "inactive"
         if args[1:3] == ("stop", adopt.GATEWAY):
