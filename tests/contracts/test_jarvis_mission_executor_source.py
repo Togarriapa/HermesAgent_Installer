@@ -54,6 +54,7 @@ def test_jarvis_review_sink_requires_current_exact_result_then_records_idempoten
 
     from hermes_installer.remote.jarvis_mission_executor import MissionExecutionAdapter
     from hermes_installer.remote.jarvis_master_planning import issue_master_review_decision
+    from hermes_installer.remote.jarvis_activity import JarvisActivityStore
     from hermes_installer.remote.core_native_observer import (
         CoreVerifiedJarvisMasterReviewCompletion, _MASTER_REVIEW_COMPLETION_SEAL,
     )
@@ -74,6 +75,7 @@ def test_jarvis_review_sink_requires_current_exact_result_then_records_idempoten
 
     owner_sha = hashlib.sha256(b"owner-a").hexdigest()
     store = JarvisChatStore(tmp_path / "mission-review.sqlite3")
+    activity_store = JarvisActivityStore(store)
     conversation = store.create_conversation("owner-a", "runtime-session", "stored-session", CORE)
     principal = ChatPrincipal("owner-a", time.monotonic() + 120,
                               time.monotonic() + 120, CORE)
@@ -104,6 +106,9 @@ def test_jarvis_review_sink_requires_current_exact_result_then_records_idempoten
     }, sort_keys=True)
 
     class Service:
+        def __init__(self):
+            self.activity_store = activity_store
+
         def _current(self, *_args, **_kwargs):
             return principal
 
@@ -120,11 +125,14 @@ def test_jarvis_review_sink_requires_current_exact_result_then_records_idempoten
             (decision.run_id, owner_sha, decision.mission_id, decision.revision,
              "1" * 64, "2" * 64, source_binding, "3" * 64, "4" * 64,
              conversation["id"], result_turn_id, "queued", time.time(), time.time()))
-        db.execute("CREATE TABLE activity_events "
-                   "(turn_id TEXT,sequence INTEGER,child_ref TEXT,event_type TEXT,status TEXT)")
-        db.executemany("INSERT INTO activity_events VALUES(?,?,?,?,?)", [
-            (result_turn_id, 1, "5" * 64, "subagent.start", "running"),
-            (result_turn_id, 2, "5" * 64, "subagent.complete", "completed"),
+        db.executemany(
+            "INSERT INTO activity_events "
+            "(turn_id,sequence,dedupe_key,source_event_id,event_type,observed_at,source_at,"
+            "status,duration_ms,usage,child_ref) VALUES(?,?,?,?,?,?,?,?,?,?,?)", [
+            (result_turn_id, 1, "fixture-start", "fixture-start", "subagent.start",
+             time.time(), None, "running", None, None, "5" * 64),
+            (result_turn_id, 2, "fixture-complete", "fixture-complete", "subagent.complete",
+             time.time(), None, "completed", None, None, "5" * 64),
         ])
 
     with pytest.raises(ValueError, match="Jarvis has not approved"):
