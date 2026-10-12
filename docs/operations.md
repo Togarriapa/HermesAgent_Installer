@@ -16,7 +16,9 @@ For diagnosis record exact candidate/version, target/runtime, command, effect, d
 
 ## Trust this device — planned authentication convenience
 
-The direct request is tracked inside jarvis-core-platform/R0200/R0201/R0203 and the existing HI-T266.2/RT-T266.3/VD-T266.5 groups. It is not yet a verified device-trust feature. After successful Cloudflare authentication, the intended unchecked personal-device option should reduce repeat login through a supported native mechanism, with visible expiry and Forget/Sign out behavior. Up to 30 days is a research target, not a guarantee or applied setting. Shared-device/declined opt-in should retain ordinary login. No live Cloudflare or device configuration changed for this plan.
+The direct request is tracked inside jarvis-core-platform/R0200/R0201/R0203 and the existing HI-T266.2/RT-T266.3/VD-T266.5 groups. On2026-10-13, connector readback verified720h for both the exact Jarvis Access application and allow policy, with HttpOnly/binding-cookie protection retained. This applied application-wide browser convenience affects newly issued sessions; already issued tokens keep their original expiry. It is not a per-device trust feature or evidence of month-long physical-device operation.
+
+After successful authentication, the planned unchecked personal-device option must use a supported native mechanism with visible expiry and Forget/Sign out behavior. M5 additionally requires opt-in, individually revocable native Android/tablet pairing and bounded automatic credential renewal, without hourly/daily interactive OTP during normal paired use. Native pairing, renewal and actual restart/revocation behavior remain unimplemented and unqualified. Shared-device behavior and the original request/turn limits remain separate from browser login duration.
 
 Official source checks on 2026-10-12:
 
