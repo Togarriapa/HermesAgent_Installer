@@ -20,7 +20,17 @@ _VIEW_HTML = '''
     </select>
     <button type="button" data-settings-save disabled>Save default</button>
   </div>
+  <div class="settings-admin-row" data-setting-id="display.busy_input_mode">
+    <div><h3>When a native conversation is busy</h3><p>Choose how Hermes handles another message during an active native turn.</p></div>
+    <label for="settings-busy-input">Busy input behavior</label>
+    <select id="settings-busy-input" data-settings-busy disabled>
+      <option value="">Loading…</option><option value="queue">Queue the message</option>
+      <option value="steer">Steer the active turn</option><option value="interrupt">Interrupt the active turn</option>
+    </select>
+    <button type="button" data-settings-save-busy disabled>Save behavior</button>
+  </div>
   <p class="muted settings-admin-note" data-settings-note>The selected value is read from Hermes’ native profile config. Provider and model support can vary; this setting does not prove a later request used that effort.</p>
+  <p class="muted settings-admin-note">Busy input behavior applies to native Hermes conversations. Jarvis handles its own concurrent-message policy separately.</p>
 </section>
 '''
 
@@ -34,11 +44,19 @@ _MOUNT_JS = r'''function mount(root, api) {
   let current = null;
   const select = root.querySelector("[data-settings-reasoning]");
   const save = root.querySelector("[data-settings-save]");
+  const busySelect = root.querySelector("[data-settings-busy]");
+  const saveBusy = root.querySelector("[data-settings-save-busy]");
   const status = root.querySelector("[data-settings-status]");
   const note = root.querySelector("[data-settings-note]");
   const allowed = new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
+  const allowedBusy = new Set(["queue", "steer", "interrupt"]);
+  let busyRevision = null;
+  let busyCurrent = null;
+  let busyLoading = false;
+  let busySaving = false;
   const show = (message) => { if (active) status.textContent = message; };
   const update = () => { save.disabled = loading || saving || !revision || !current || !allowed.has(select.value) || select.value === current; };
+  const updateBusy = () => { saveBusy.disabled = busyLoading || busySaving || !busyRevision || !busyCurrent || !allowedBusy.has(busySelect.value) || busySelect.value === busyCurrent; };
   async function refresh() {
     loading = true; revision = null; current = null; select.disabled = true; update();
     show("Loading native profile settings.");
@@ -77,10 +95,47 @@ _MOUNT_JS = r'''function mount(root, api) {
       show("The native result is unknown. Refresh settings before trying again.");
     } finally { saving = false; update(); }
   }
+  async function refreshBusy() {
+    busyLoading = true; busyRevision = null; busyCurrent = null; busySelect.disabled = true; updateBusy();
+    try {
+      const data = await api.get("/chat/api/settings/busy-input");
+      if (!active) return;
+      if (!data || data.status !== "observed" || !data.setting || data.setting.id !== "display.busy_input_mode"
+          || !allowedBusy.has(data.setting.value) || !Array.isArray(data.allowedValues)
+          || data.allowedValues.length !== allowedBusy.size || data.allowedValues.some((value) => !allowedBusy.has(value))
+          || data.applyScope !== "native-conversation-input" || typeof data.revision !== "string") throw new Error("invalid settings");
+      busyCurrent = data.setting.value; busyRevision = data.revision;
+      busySelect.value = busyCurrent; busySelect.disabled = false;
+      show("Native Hermes busy-input behavior is current.");
+    } catch (_) {
+      if (!active) return;
+      busySelect.disabled = true; busyRevision = null; busyCurrent = null;
+      show("Native Hermes busy-input behavior is unavailable.");
+    } finally { busyLoading = false; updateBusy(); }
+  }
+  async function saveBusyDefault() {
+    if (busySaving || !busyRevision || !busyCurrent || !allowedBusy.has(busySelect.value) || busySelect.value === busyCurrent) return;
+    busySaving = true; updateBusy(); show("Saving native busy-input behavior.");
+    const chosen = busySelect.value;
+    try {
+      const result = await api.post("/chat/api/settings/busy-input", {mode: chosen, revision: busyRevision});
+      if (!active) return;
+      if (!result || result.state !== "saved-for-profile" || result.mode !== chosen
+          || result.applyScope !== "native-conversation-input") throw new Error("unverified result");
+      show(`Hermes saved ${chosen} as its native busy-input behavior.`);
+      await refreshBusy();
+    } catch (_) {
+      if (!active) return;
+      busyRevision = null; updateBusy();
+      show("The native result is unknown. Refresh settings before trying again.");
+    } finally { busySaving = false; updateBusy(); }
+  }
   select.addEventListener("change", update);
+  busySelect.addEventListener("change", updateBusy);
   save.addEventListener("click", saveDefault);
-  void refresh();
-  return () => { active = false; select.removeEventListener("change", update); save.removeEventListener("click", saveDefault); };
+  saveBusy.addEventListener("click", saveBusyDefault);
+  void Promise.all([refresh(), refreshBusy()]);
+  return () => { active = false; select.removeEventListener("change", update); busySelect.removeEventListener("change", updateBusy); save.removeEventListener("click", saveDefault); saveBusy.removeEventListener("click", saveBusyDefault); };
 }'''
 
 FEATURE_ASSETS = JarvisFeatureAssets(
@@ -92,6 +147,8 @@ FEATURE_ASSETS = JarvisFeatureAssets(
     api_routes=(
         ("GET", "/chat/api/settings/reasoning-effort"),
         ("POST", "/chat/api/settings/reasoning-effort"),
+        ("GET", "/chat/api/settings/busy-input"),
+        ("POST", "/chat/api/settings/busy-input"),
     ),
     mount_js=_MOUNT_JS,
     unmount_js="function unmount() {}",

@@ -9,23 +9,31 @@ from hermes_installer.remote.jarvis_feature_registry import FEATURE_ASSETS as RE
 from hermes_installer.remote.jarvis_settings_admin import (
     FEATURE_ROUTES,
     _RevisionLedger,
+    apply_global_busy_mode,
     apply_global_reasoning,
+    decode_native_busy,
     decode_native_reasoning,
 )
 from hermes_installer.remote.jarvis_settings_admin_assets import FEATURE_ASSETS
 
 
 class _Backend:
-    def __init__(self, *, accepted="high", readback="high"):
+    def __init__(self, *, accepted="high", readback="high", busy_mode="interrupt"):
         self.accepted = accepted
         self.readback = readback
+        self.busy_mode = busy_mode
         self.calls = []
 
     async def _rpc(self, method, params):
         self.calls.append((method, params))
         if method == "config.set":
+            if params.get("key") == "busy":
+                self.busy_mode = params["value"]
+                return {"key": "busy", "value": self.busy_mode}
             return {"key": "reasoning", "value": self.accepted}
         if method == "config.get":
+            if params.get("key") == "busy":
+                return {"value": self.busy_mode}
             return {"value": self.readback, "display": "show"}
         raise AssertionError("unexpected native method")
 
@@ -39,9 +47,13 @@ class JarvisSettingsAdminTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(FEATURE_ROUTES, (
             ("GET", "/chat/api/settings/reasoning-effort"),
             ("POST", "/chat/api/settings/reasoning-effort"),
+            ("GET", "/chat/api/settings/busy-input"),
+            ("POST", "/chat/api/settings/busy-input"),
         ))
         self.assertIn("agent.reasoning_effort", FEATURE_ASSETS.view_html)
+        self.assertIn("display.busy_input_mode", FEATURE_ASSETS.view_html)
         self.assertIn("future-conversations", FEATURE_ASSETS.mount_js)
+        self.assertIn("native-conversation-input", FEATURE_ASSETS.mount_js)
         self.assertNotIn("innerHTML", FEATURE_ASSETS.mount_js)
 
     async def test_native_write_uses_fixed_global_setter_then_sanitized_readback(self):
@@ -63,6 +75,19 @@ class JarvisSettingsAdminTests(unittest.IsolatedAsyncioTestCase):
             await apply_global_reasoning(backend, "high")
         self.assertEqual(len(backend.calls), 2)
 
+    async def test_busy_mode_uses_native_allowlisted_choice_and_readback(self):
+        backend = _Backend()
+        self.assertEqual(await apply_global_busy_mode(backend, "queue"), "queue")
+        self.assertEqual(backend.calls, [
+            ("config.set", {"key": "busy", "value": "queue"}),
+            ("config.get", {"key": "busy"}),
+        ])
+        with self.assertRaises(JarvisChatDenied):
+            await apply_global_busy_mode(backend, "shell")
+        self.assertEqual(decode_native_busy({"value": "steer"}), "steer")
+        with self.assertRaises(JarvisChatDenied):
+            decode_native_busy({"value": "interrupt", "config": {"secret": "value"}})
+
     def test_projection_rejects_config_dumps_and_secret_or_unknown_fields(self):
         self.assertEqual(decode_native_reasoning({"value": "medium", "display": "hide"}),
                          {"effort": "medium", "display": "hide"})
@@ -77,23 +102,38 @@ class JarvisSettingsAdminTests(unittest.IsolatedAsyncioTestCase):
     def test_write_grant_is_one_use_and_bound_to_owner_generation_and_config(self):
         ledger = _RevisionLedger()
         token = ledger.issue(subject="owner-a", generation="generation-a",
-                             config_sha256="a" * 64, effort="medium")
+                             config_sha256="a" * 64, setting_id="agent.reasoning_effort",
+                             current_value="medium")
         self.assertFalse(ledger.consume(token, subject="owner-b", generation="generation-a",
-                                        config_sha256="a" * 64, current_effort="medium"))
+                                        config_sha256="a" * 64,
+                                        setting_id="agent.reasoning_effort", current_value="medium"))
         token = ledger.issue(subject="owner-a", generation="generation-a",
-                             config_sha256="a" * 64, effort="medium")
+                             config_sha256="a" * 64, setting_id="agent.reasoning_effort",
+                             current_value="medium")
         self.assertFalse(ledger.consume(token, subject="owner-a", generation="generation-b",
-                                        config_sha256="a" * 64, current_effort="medium"))
+                                        config_sha256="a" * 64,
+                                        setting_id="agent.reasoning_effort", current_value="medium"))
         token = ledger.issue(subject="owner-a", generation="generation-a",
-                             config_sha256="a" * 64, effort="medium")
+                             config_sha256="a" * 64, setting_id="agent.reasoning_effort",
+                             current_value="medium")
         self.assertFalse(ledger.consume(token, subject="owner-a", generation="generation-a",
-                                        config_sha256="b" * 64, current_effort="medium"))
+                                        config_sha256="b" * 64,
+                                        setting_id="agent.reasoning_effort", current_value="medium"))
         token = ledger.issue(subject="owner-a", generation="generation-a",
-                             config_sha256="a" * 64, effort="medium")
+                             config_sha256="a" * 64, setting_id="agent.reasoning_effort",
+                             current_value="medium")
         self.assertTrue(ledger.consume(token, subject="owner-a", generation="generation-a",
-                                       config_sha256="a" * 64, current_effort="medium"))
+                                       config_sha256="a" * 64,
+                                       setting_id="agent.reasoning_effort", current_value="medium"))
         self.assertFalse(ledger.consume(token, subject="owner-a", generation="generation-a",
-                                        config_sha256="a" * 64, current_effort="medium"))
+                                        config_sha256="a" * 64,
+                                        setting_id="agent.reasoning_effort", current_value="medium"))
+        token = ledger.issue(subject="owner-a", generation="generation-a",
+                             config_sha256="a" * 64, setting_id="display.busy_input_mode",
+                             current_value="queue")
+        self.assertFalse(ledger.consume(token, subject="owner-a", generation="generation-a",
+                                        config_sha256="a" * 64,
+                                        setting_id="agent.reasoning_effort", current_value="queue"))
 
 
 if __name__ == "__main__":
