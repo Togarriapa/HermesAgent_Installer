@@ -526,6 +526,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   }
   let mountedFeature = null;
   let mountedFeatureCleanup = null;
+  let mountedFeatureAbortController = null;
   let capabilityDetailsCleanup = null;
   let currentView = null;
 
@@ -662,6 +663,9 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   }
   function unmountFeature() {
     if (!mountedFeature) return;
+    const abortController = mountedFeatureAbortController;
+    mountedFeatureAbortController = null;
+    if (abortController) abortController.abort();
     try { if (typeof mountedFeature.unmount === "function") mountedFeature.unmount(); } catch (_) { /* keep navigation available */ }
     try { if (typeof mountedFeatureCleanup === "function") mountedFeatureCleanup(); } catch (_) { /* keep navigation available */ }
     mountedFeature = null;
@@ -673,15 +677,25 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     const root = byId(`${feature.id}-view`);
     if (!root || typeof feature.mount !== "function") return;
     mountedFeature = feature;
+    const abortController = new AbortController();
+    mountedFeatureAbortController = abortController;
     try {
       const mountContext = feature.id === "models-settings" && context
         && typeof context.initialConversationId === "string"
         ? Object.freeze({initialConversationId: context.initialConversationId})
         : Object.freeze({});
-      const cleanup = feature.mount(root, featureApi(feature, root), mountContext);
+      const mountScope = Object.freeze({
+        signal: abortController.signal,
+        isCurrent: () => mountedFeature === feature
+          && mountedFeatureAbortController === abortController
+          && currentView === feature.id && !abortController.signal.aborted,
+      });
+      const cleanup = feature.mount(root, featureApi(feature, root), mountContext, mountScope);
       mountedFeatureCleanup = typeof cleanup === "function" ? cleanup : null;
     } catch (_) {
+      abortController.abort();
       mountedFeature = null;
+      mountedFeatureAbortController = null;
       const status = root.querySelector('[role="status"]');
       if (status) status.textContent = "This dashboard view could not be loaded.";
     }

@@ -159,6 +159,9 @@ def test_projects_assets_describe_the_verified_turn_context_boundary():
     validate_feature_assets((FEATURE_ASSETS,))
     assert FEATURE_ASSETS.feature_id == "projects"
     assert "sharedMemory" in FEATURE_ASSETS.mount_js
+    assert "scope.signal || lifecycle.signal" in FEATURE_ASSETS.mount_js
+    assert "scope.isCurrent()" in FEATURE_ASSETS.mount_js
+    assert "if (!isCurrent()) return;" in FEATURE_ASSETS.mount_js
     assert "innerHTML" not in FEATURE_ASSETS.mount_js
     assert "data-notes" in FEATURE_ASSETS.view_html
     assert "/chat/api/second-brain/notes?limit=50" in FEATURE_ASSETS.mount_js

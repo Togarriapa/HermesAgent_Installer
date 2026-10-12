@@ -22,10 +22,13 @@
   const nativeFetch = window.fetch;
   let holdNextProjectRead = true;
   let delayedProjectRead = null;
+  let delayedProjectSignal = null;
   let projectCreateCount = 0;
   let projects = [];
   const testChat = {id: "ui-harness-chat", title: "UI harness chat", version: 1};
   const createdProject = {id: "ui-harness-project", title: "Harness project", instructions: "",
+    sharedMemory: "", obsidianNoteIds: [], chats: [], version: 1};
+  const staleProject = {id: "ui-harness-stale-project", title: "Late inactive project", instructions: "",
     sharedMemory: "", obsidianNoteIds: [], chats: [], version: 1};
   const json = (value) => new Response(JSON.stringify(value), {
     status: 200, headers: {"Content-Type": "application/json"}
@@ -42,7 +45,8 @@
     if (method === "GET" && path === "/chat/api/projects") {
       if (holdNextProjectRead) {
         holdNextProjectRead = false;
-        return new Promise(resolve => { delayedProjectRead = () => resolve(json({projects})); });
+        delayedProjectSignal = options.signal || null;
+        return new Promise(resolve => { delayedProjectRead = () => resolve(json({projects: [staleProject]})); });
       }
       return json({projects});
     }
@@ -111,11 +115,28 @@
     const projectRoot = document.querySelector('[data-feature-root="projects"]');
     const projectStatus = projectRoot.querySelector("[data-status]");
     const beforeLateRead = projectStatus.textContent;
+    const projectListBeforeLateRead = projectRoot.querySelector("[data-project-list]").textContent;
     await clickView("chat");
     const afterUnmount = projectStatus.textContent;
+    const projectListAfterUnmount = projectRoot.querySelector("[data-project-list]").textContent;
     delayedProjectRead();
     await new Promise(resolve => setTimeout(resolve, 50));
-    assert(projectStatus.textContent === afterUnmount && afterUnmount === beforeLateRead,
+    const lateProjectObservation = {
+      scopeAborted: delayedProjectSignal?.aborted === true,
+      statusBeforeUnmount: beforeLateRead,
+      statusAfterUnmount: afterUnmount,
+      statusAfterLateResponse: projectStatus.textContent,
+      projectListBeforeUnmount: projectListBeforeLateRead,
+      projectListAfterUnmount: projectListAfterUnmount,
+      projectListAfterLateResponse: projectRoot.querySelector("[data-project-list]").textContent
+    };
+    console.info("Jarvis Projects late-read observation", JSON.stringify(lateProjectObservation));
+    assert(lateProjectObservation.scopeAborted,
+      "Unmount must abort the Projects mount scope while its request is still pending.");
+    assert(lateProjectObservation.statusAfterLateResponse === lateProjectObservation.statusAfterUnmount
+      && lateProjectObservation.statusAfterUnmount === lateProjectObservation.statusBeforeUnmount
+      && lateProjectObservation.projectListAfterLateResponse === lateProjectObservation.projectListAfterUnmount
+      && lateProjectObservation.projectListAfterUnmount === lateProjectObservation.projectListBeforeUnmount,
       "A response arriving after Projects unmount must not update its inactive view.");
 
     await clickView("projects");

@@ -77,6 +77,9 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertNotIn("function renderTurnChart", client)
         self.assertIn("function featurePathMatches(template, path)", client)
         self.assertIn("feature.mount(root, featureApi(feature, root)", client)
+        self.assertIn("mountedFeatureAbortController = abortController", client)
+        self.assertIn("const mountScope = Object.freeze({", client)
+        self.assertIn("feature.mount(root, featureApi(feature, root), mountContext, mountScope)", client)
         self.assertIn('feature.id === "overview" && method === "GET" && path === "/chat/api/overview"', client)
         self.assertIn("unmountFeature();", client)
         navigation = client.split(
