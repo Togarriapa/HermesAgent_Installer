@@ -56,6 +56,18 @@ _VIEW = """<section class="overview-page" aria-labelledby="overview-title">
       <button type="button" data-command-prompt="Review the current status of my configured integrations and report anything unavailable. Do not change their configuration.">Check integrations</button>
     </div>
   </section>
+  <section class="ecosystem-card" data-ecosystem-card data-ecosystem-state="unavailable" data-activity-flow="idle" data-in-viewport="false" aria-labelledby="overview-ecosystem-title">
+    <header class="ecosystem-heading"><div><p class="overview-kicker">NATIVE ACTIVITY</p><h2 id="overview-ecosystem-title">Expert &amp; Team activity</h2></div>
+      <button type="button" data-view="activity">Open Activity</button></header>
+    <p class="ecosystem-status" data-ecosystem-status role="status" aria-live="polite">Loading native handoff observations…</p>
+    <div class="ecosystem-identities">
+      <div><h3>Expert instances</h3><p data-expert-identity>Unavailable in the current activity response.</p></div>
+      <div><h3>Selected Team</h3><p data-selected-team>Unavailable in the current activity response.</p></div>
+    </div>
+    <p class="ecosystem-summary" data-ecosystem-summary>Waiting for current native observations.</p>
+    <ol class="handoff-graph" data-handoff-graph aria-label="Recent owner-turn to native handoff event links" hidden></ol>
+    <p class="ecosystem-provenance">The native activity response includes event type, status and observation time. It does not include Expert names or selected Team records, so those relationships are not inferred here.</p>
+  </section>
   <div class="overview-toolbar"><p data-observation role="status" aria-live="polite">Loading measured data…</p><button type="button" data-refresh>Refresh</button></div>
   <p class="overview-window" data-window></p>
   <details class="overview-details">
@@ -237,6 +249,27 @@ _CSS += """
 [data-feature-root="overview"] .overview-facts div{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;padding:.7rem 0;border-bottom:1px solid rgba(123,197,213,.12)}
 [data-feature-root="overview"] dt{color:#9fb8bc;font-size:.75rem}[data-feature-root="overview"] dd{margin:0;color:#e2f2f3;font-weight:600;font-variant-numeric:tabular-nums}
 [data-feature-root="overview"] .overview-provenance{color:#9db5b8;font-size:.68rem;line-height:1.5}
+[data-feature-root="overview"] .ecosystem-card{margin:1.3rem auto;padding:1rem 0;border-top:1px solid rgba(117,191,199,.22);border-bottom:1px solid rgba(117,191,199,.14)}
+[data-feature-root="overview"] .ecosystem-heading{display:flex;align-items:center;justify-content:space-between;gap:1rem}
+[data-feature-root="overview"] .ecosystem-heading h2{margin:.25rem 0;color:#e7f5f6;font-size:1rem;font-weight:590}
+[data-feature-root="overview"] .ecosystem-heading button{min-height:44px;padding:.55rem .8rem;border:1px solid rgba(88,228,235,.27);border-radius:9px;background:rgba(24,102,111,.16);color:#d8f8fa;font:inherit;font-size:.78rem;cursor:pointer}
+[data-feature-root="overview"] .ecosystem-heading button:focus-visible{outline:2px solid var(--cyan,#58e4eb);outline-offset:2px}
+[data-feature-root="overview"] .ecosystem-status{margin:.45rem 0;color:#c2d9db;font-size:.8rem;line-height:1.5}
+[data-feature-root="overview"] .ecosystem-identities{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;margin:.7rem 0}
+[data-feature-root="overview"] .ecosystem-identities>div{min-width:0;padding:.65rem .75rem;border-left:2px solid rgba(88,228,235,.35);background:rgba(255,255,255,.025)}
+[data-feature-root="overview"] .ecosystem-identities h3{margin:0;color:#bfd3d5;font-size:.7rem;font-weight:650}
+[data-feature-root="overview"] .ecosystem-identities p,[data-feature-root="overview"] .ecosystem-summary{margin:.25rem 0 0;color:#9db5b8;font-size:.72rem;line-height:1.5}
+[data-feature-root="overview"] .handoff-graph{display:grid;gap:.5rem;margin:.8rem 0;padding:0;list-style:none}
+[data-feature-root="overview"] .handoff-route{display:grid;grid-template-columns:minmax(6rem,.8fr) minmax(2.2rem,.4fr) minmax(0,1.4fr);align-items:center;gap:.55rem;min-width:0}
+[data-feature-root="overview"] .handoff-node{min-width:0;padding:.55rem .65rem;border:1px solid rgba(88,228,235,.2);border-radius:9px;background:rgba(11,35,42,.6)}
+[data-feature-root="overview"] .handoff-node strong,[data-feature-root="overview"] .handoff-node small{display:block;overflow-wrap:anywhere}
+[data-feature-root="overview"] .handoff-node strong{color:#d8f2f3;font-size:.72rem;font-weight:620}
+[data-feature-root="overview"] .handoff-node small{margin-top:.18rem;color:#97b1b5;font-size:.64rem;line-height:1.4}
+[data-feature-root="overview"] .handoff-edge{position:relative;height:2px;overflow:hidden;background:rgba(88,228,235,.24)}
+[data-feature-root="overview"] .handoff-edge:after{position:absolute;inset:0 auto 0 0;width:40%;content:"";background:#58e4eb;opacity:0;transform:translateX(-110%)}
+[data-feature-root="overview"] [data-activity-flow="active"][data-ecosystem-state="current"][data-in-viewport="true"] .handoff-edge:after{opacity:.9;animation:handoff-observation-flow 1.6s linear infinite}
+[data-feature-root="overview"] .ecosystem-provenance{margin:.65rem 0 0;color:#829da2;font-size:.66rem;line-height:1.5}
+@keyframes handoff-observation-flow{to{transform:translateX(280%)}}
 @media(max-width:980px){
  [data-feature-root="overview"] .overview-stage{grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:auto auto;gap:0 1.5rem}
  [data-feature-root="overview"] .reactor-presence{grid-column:1/-1;grid-row:1}
@@ -262,6 +295,7 @@ _CSS += """
  [data-feature-root="overview"] .overview-lower-grid{grid-template-columns:1fr}
  [data-feature-root="overview"] .overview-toolbar{align-items:flex-start}
  [data-feature-root="overview"] .overview-toolbar [data-observation]{max-width:32ch}
+ [data-feature-root="overview"] .ecosystem-identities{grid-template-columns:1fr;gap:.45rem}
 }
 @media(max-width:360px){
  [data-feature-root="overview"] .overview-rail:last-child{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -271,6 +305,12 @@ _CSS += """
 }
 @media(hover:hover) and (pointer:fine){[data-feature-root="overview"] .quick-actions button:hover,[data-feature-root="overview"] .overview-toolbar button:hover{border-color:rgba(88,228,235,.52);background:rgba(18,76,85,.45);color:#f2ffff}[data-feature-root="overview"] .command-form button:hover{filter:brightness(1.12)}}
 @media(prefers-reduced-motion:reduce){[data-feature-root="overview"] .reactor-dial,[data-feature-root="overview"] .reactor-orbit-inner,[data-feature-root="overview"] .reactor-orbit-outer{animation:none!important;transform:none!important}[data-feature-root="overview"] *{transition-duration:0s!important;transition-delay:0s!important}}
+[data-feature-root="overview"] .ecosystem-card[data-ecosystem-state="stale"] .ecosystem-status{color:#dbb66f}
+html[data-jarvis-motion="reduce"] [data-feature-root="overview"] .handoff-edge:after{animation:none!important;transform:none!important;opacity:0!important}
+@media(prefers-reduced-motion:reduce){[data-feature-root="overview"] .handoff-edge:after{animation:none!important;transform:none!important;opacity:0!important}}
+html:not([data-page-visible="true"]) [data-feature-root="overview"] .handoff-edge:after,
+[data-feature-root="overview"]:not([data-network-online="true"]) .handoff-edge:after,
+[data-feature-root="overview"] [data-ecosystem-card]:not([data-in-viewport="true"]) .handoff-edge:after{animation:none!important;transform:none!important;opacity:0!important}
 [data-feature-root="overview"][data-stale="true"] .overview-stage .reactor-orbit-outer{stroke:#dbb66f;opacity:.45}
 html[data-jarvis-motion="reduce"] [data-feature-root="overview"] .reactor-dial,html[data-jarvis-motion="reduce"] [data-feature-root="overview"] .reactor-orbit-inner,html[data-jarvis-motion="reduce"] [data-feature-root="overview"] .reactor-orbit-outer{animation:none!important;transform:none!important}
 /* A fresh response is necessary, but it is not sufficient while hidden/offline. */
@@ -282,13 +322,62 @@ html:not([data-page-visible="true"]) [data-feature-root="overview"] .overview-st
 [data-feature-root="overview"] .overview-stage:not([data-in-viewport="true"]) .reactor-orbit{animation:none!important;transform:none!important}
 """
 
-_MOUNT = r"""function mount(container, api) {
+_MOUNT = r"""function overviewScopeIsCurrent(scope, generation, currentGeneration, stopped) {
+  return !stopped && generation === currentGeneration
+    && !(scope && scope.signal && scope.signal.aborted)
+    && (!scope || typeof scope.isCurrent !== 'function' || scope.isCurrent());
+}
+function projectHandoffActivity(page, now, coreVerified) {
+  if (!page || !Array.isArray(page.events) || (page.nextPage !== null && page.nextPage !== undefined
+      && (!Number.isSafeInteger(page.nextPage) || page.nextPage < 1))) {
+    return {state:'unavailable', events:[], groups:[], starts:0, completions:0, active:false};
+  }
+  const allowed = new Set(['subagent.spawn_requested','subagent.start','subagent.progress',
+    'subagent.thinking','subagent.tool','subagent.complete']);
+  const records = page.events.filter(event => event && allowed.has(event.type)
+    && typeof event.turnId === 'string' && event.turnId.length > 0
+    && typeof event.status === 'string' && Number.isFinite(event.observed_at)
+    && event.observed_at >= 0);
+  const latestAt = records.reduce((latest, event) => Math.max(latest, event.observed_at), 0);
+  const age = now - latestAt * 1000;
+  const recent = records.length > 0 && age >= -30000 && age <= 120000;
+  const current = Boolean(coreVerified && recent);
+  const byTurn = new Map();
+  for (const event of records) {
+    const group = byTurn.get(event.turnId) || [];
+    group.push(event);
+    byTurn.set(event.turnId, group);
+  }
+  const groups = [...byTurn.values()].map(events => {
+    events.sort((left, right) => right.observed_at - left.observed_at
+      || (Number(right.sequence) || 0) - (Number(left.sequence) || 0));
+    return {events, latest:events[0]};
+  }).sort((left, right) => right.latest.observed_at - left.latest.observed_at).slice(0,3);
+  const active = current && records.some(event => ['running','generating']
+    .includes(event.status) && ['subagent.start','subagent.progress',
+      'subagent.thinking','subagent.tool'].includes(event.type));
+  return {state:records.length === 0 ? (coreVerified ? 'empty' : 'stale')
+      : current ? 'current' : 'stale',
+    events:records, groups, turnCount:byTurn.size,
+    starts:records.filter(event => event.type === 'subagent.start').length,
+    completions:records.filter(event => event.type === 'subagent.complete').length,
+    active, hasOlderPage:page.nextPage !== null && page.nextPage !== undefined,
+    latestAt:records.length ? latestAt : null};
+}
+
+_MOUNT = r"""function mount(container, api, state, mountScope) {
   const root = container.querySelector('[data-feature-root="overview"]') || container;
   const $ = (selector) => root.querySelector(selector);
   const refreshButton = $('[data-refresh]');
   const stage = $('.overview-stage');
+  const ecosystemCard = $('[data-ecosystem-card]');
+  const handoffGraph = $('[data-handoff-graph]');
   let stopped = false;
   let stageObserver = null;
+  let ecosystemObserver = null;
+  let ecosystemPollTimer = null;
+  let ecosystemGeneration = 0;
+  let ecosystemRefreshing = false;
   let lastObservation = null;
   let coreFreshnessTimer = null;
   let coreFreshUntil = 0;
@@ -301,6 +390,113 @@ _MOUNT = r"""function mount(container, api) {
   function number(value) { return Number.isSafeInteger(value) && value >= 0 ? value : null; }
   function format(value) { return value === null ? 'Unknown' : value.toLocaleString(); }
   function time(value) { const parsed = typeof value === 'string' ? Date.parse(value) : NaN; return Number.isFinite(parsed) ? new Date(parsed).toLocaleString() : 'Unknown'; }
+  function handoffTime(seconds) {
+    const milliseconds = seconds * 1000;
+    return Number.isFinite(milliseconds) ? new Date(milliseconds).toLocaleString() : 'Unknown time';
+  }
+  const handoffLabels = {
+    'subagent.spawn_requested':'Delegation queued', 'subagent.start':'Delegation started',
+    'subagent.progress':'Delegation progress', 'subagent.thinking':'Delegation thinking',
+    'subagent.tool':'Delegated tool activity', 'subagent.complete':'Delegation completed',
+  };
+  function renderHandoffActivity(pageData, coreVerified) {
+    const projection = projectHandoffActivity(pageData, Date.now(), coreVerified);
+    ecosystemCard.dataset.ecosystemState = projection.state;
+    ecosystemCard.dataset.activityFlow = projection.active ? 'active' : 'idle';
+    handoffGraph.replaceChildren();
+    handoffGraph.hidden = projection.groups.length === 0;
+    if (projection.state === 'unavailable') {
+      $('[data-ecosystem-status]').textContent = 'Native handoff activity is unavailable.';
+      $('[data-ecosystem-summary]').textContent = 'No current event summary is available.';
+      return;
+    }
+    if (projection.state === 'empty') {
+      $('[data-ecosystem-status]').textContent = projection.hasOlderPage
+        ? 'No handoff events appear on the latest native activity page.'
+        : 'No native handoff events have been recorded.';
+      $('[data-ecosystem-summary]').textContent = 'No handoff counts are available.';
+      return;
+    }
+    $('[data-ecosystem-status]').textContent = projection.state === 'current'
+      ? projection.active
+        ? 'A recent native event reports a running handoff; individual worker state is not exposed.'
+        : 'Recent native handoff events are observed; individual worker state is not exposed.'
+      : 'Showing historical handoff events; current activity is unverified.';
+    const pageScope = projection.hasOlderPage ? 'in the latest activity page; older events are not included'
+      : 'in the available activity history';
+    $('[data-ecosystem-summary]').textContent =
+      format(projection.events.length) + ' event records ' + pageScope + ' · '
+      + format(projection.starts) + ' start events · '
+      + format(projection.completions) + ' completion events.'
+      + (projection.turnCount > projection.groups.length
+        ? ` Showing ${projection.groups.length} of ${format(projection.turnCount)} observed turns.` : '');
+    for (const group of projection.groups) {
+      const row = document.createElement('li');
+      row.className = 'handoff-route';
+      const source = document.createElement('div');
+      source.className = 'handoff-node';
+      const sourceLabel = document.createElement('strong');
+      sourceLabel.textContent = 'Jarvis turn';
+      const sourceTime = document.createElement('small');
+      sourceTime.textContent = 'Handoff observed ' + handoffTime(group.latest.observed_at);
+      source.append(sourceLabel, sourceTime);
+      const edge = document.createElement('span');
+      edge.className = 'handoff-edge';
+      edge.setAttribute('aria-hidden', 'true');
+      const target = document.createElement('div');
+      target.className = 'handoff-node';
+      const targetLabel = document.createElement('strong');
+      targetLabel.textContent = group.events.length + ' native event' + (group.events.length === 1 ? '' : 's');
+      const targetState = document.createElement('small');
+      const latestLabel = handoffLabels[group.latest.type] || 'Native handoff event';
+      targetState.textContent = latestLabel + ' · ' + group.latest.status;
+      const details = [targetLabel, targetState];
+      if (Number.isSafeInteger(group.latest.duration_ms) && group.latest.duration_ms >= 0) {
+        const duration = document.createElement('small');
+        duration.textContent = 'Native event duration · ' + group.latest.duration_ms + ' ms';
+        details.push(duration);
+      }
+      target.append(...details);
+      row.append(source, edge, target);
+      handoffGraph.append(row);
+    }
+  }
+  function invalidateHandoffs(reason) {
+    ecosystemGeneration += 1;
+    ecosystemRefreshing = false;
+    if (!ecosystemCard) return;
+    ecosystemCard.dataset.ecosystemState = reason === 'hidden' || reason === 'offline' ? 'stale' : 'unavailable';
+    ecosystemCard.dataset.activityFlow = 'idle';
+    $('[data-ecosystem-status]').textContent = reason === 'offline'
+      ? 'Offline · native handoff activity is unverified.'
+      : reason === 'hidden' ? 'Dashboard paused · native handoff activity is unverified.'
+      : 'Current native handoff activity is unverified.';
+  }
+  async function refreshHandoffs() {
+    if (stopped || !ecosystemCard || ecosystemRefreshing) return;
+    if (document.visibilityState !== 'visible' || navigator.onLine === false
+        || root.dataset.coreState !== 'verified' || ecosystemCard.dataset.inViewport !== 'true') {
+      if (document.visibilityState !== 'visible' || navigator.onLine === false
+          || root.dataset.coreState !== 'verified') invalidateHandoffs(
+        navigator.onLine === false ? 'offline' : document.visibilityState !== 'visible' ? 'hidden' : 'stale');
+      return;
+    }
+    const generation = ++ecosystemGeneration;
+    ecosystemRefreshing = true;
+    try {
+      const page = await api.get('/chat/api/activity');
+      if (!overviewScopeIsCurrent(mountScope, generation, ecosystemGeneration, stopped)) return;
+      const coreVerified = root.dataset.coreState === 'verified'
+        && document.visibilityState === 'visible' && navigator.onLine !== false;
+      renderHandoffActivity(page, coreVerified);
+    } catch (_error) {
+      if (overviewScopeIsCurrent(mountScope, generation, ecosystemGeneration, stopped)) {
+        invalidateHandoffs('unavailable');
+      }
+    } finally {
+      if (generation === ecosystemGeneration) ecosystemRefreshing = false;
+    }
+  }
   function renderCounts(counts, coreVerified) {
     for (const key of ['total','completed','active','failed']) {
       const target = $(`[data-metric="${key}"]`);
@@ -354,6 +550,7 @@ _MOUNT = r"""function mount(container, api) {
       : 'Service observation is stale; current activity is unverified.';
     $('[data-reactor-active-label]').textContent = reason === 'offline' ? 'Offline · unverified'
       : reason === 'hidden' ? 'Paused while hidden' : 'Service observation stale';
+    invalidateHandoffs(reason);
   }
   function recheckCoreFreshness() {
     if (coreFreshUntil && Date.now() >= coreFreshUntil) markCoreStale();
@@ -418,6 +615,7 @@ _MOUNT = r"""function mount(container, api) {
     $('[data-resource-profiles]').textContent = format(number(discovery.counts && discovery.counts.internal_profiles));
     const dispatch = data && data.resources && data.resources.dispatch || {};
     $('[data-dispatch]').textContent = `Dispatched identities: ${dispatch.state === 'observed' ? format(number(dispatch.count)) : 'Unavailable'}. ${dispatch.reason || ''}`;
+    refreshHandoffs();
   }
   if (typeof IntersectionObserver === 'function') {
     stageObserver = new IntersectionObserver((entries) => {
@@ -427,6 +625,19 @@ _MOUNT = r"""function mount(container, api) {
       }
     }, {threshold: 0});
     stageObserver.observe(stage);
+    ecosystemObserver = new IntersectionObserver((entries) => {
+      if (stopped) return;
+      for (const entry of entries) {
+        if (entry.target === ecosystemCard) {
+          ecosystemCard.dataset.inViewport = String(entry.isIntersecting && entry.intersectionRatio > 0);
+          if (entry.isIntersecting && entry.intersectionRatio > 0) refreshHandoffs();
+          else invalidateHandoffs('offscreen');
+        }
+      }
+    }, {threshold: 0});
+    ecosystemObserver.observe(ecosystemCard);
+  } else {
+    ecosystemCard.dataset.inViewport = 'true';
   }
   async function refresh() {
     if (stopped) return;
@@ -526,10 +737,11 @@ _MOUNT = r"""function mount(container, api) {
     }
   }
   refreshButton.addEventListener('click',refresh); refresh();
+  ecosystemPollTimer = window.setInterval(refreshHandoffs, 5000);
   document.addEventListener('visibilitychange',onVisibilityChange);
   window.addEventListener('offline',onNetworkChange);
   window.addEventListener('online',onNetworkChange);
-  return function cleanup() { stopped=true; if (coreFreshnessTimer !== null) clearTimeout(coreFreshnessTimer); if (stageObserver) stageObserver.disconnect(); stage.dataset.inViewport='false'; refreshButton.disabled=false; commandForm.querySelector('button[type="submit"]').disabled=false; commandInput.disabled=false; newConversation.disabled=false; refreshButton.removeEventListener('click',refresh); commandForm.removeEventListener('submit',submitCommand); newConversation.removeEventListener('click',startNewConversation); document.removeEventListener('visibilitychange',onVisibilityChange); window.removeEventListener('offline',onNetworkChange); window.removeEventListener('online',onNetworkChange); for (const button of promptButtons) button.removeEventListener('click',promptHandlers.get(button)); };
+  return function cleanup() { stopped=true; ecosystemGeneration += 1; ecosystemRefreshing=false; if (ecosystemPollTimer !== null) clearInterval(ecosystemPollTimer); if (ecosystemObserver) ecosystemObserver.disconnect(); ecosystemCard.dataset.inViewport='false'; ecosystemCard.dataset.activityFlow='idle'; if (coreFreshnessTimer !== null) clearTimeout(coreFreshnessTimer); if (stageObserver) stageObserver.disconnect(); stage.dataset.inViewport='false'; refreshButton.disabled=false; commandForm.querySelector('button[type="submit"]').disabled=false; commandInput.disabled=false; newConversation.disabled=false; refreshButton.removeEventListener('click',refresh); commandForm.removeEventListener('submit',submitCommand); newConversation.removeEventListener('click',startNewConversation); document.removeEventListener('visibilitychange',onVisibilityChange); window.removeEventListener('offline',onNetworkChange); window.removeEventListener('online',onNetworkChange); for (const button of promptButtons) button.removeEventListener('click',promptHandlers.get(button)); };
 }"""
 
 _UNMOUNT = "function unmount() {}"
@@ -540,7 +752,7 @@ FEATURE_ASSETS = JarvisFeatureAssets(
     title="Overview",
     view_html=_VIEW,
     css=_CSS,
-    api_routes=(("GET", "/chat/api/overview"),),
+    api_routes=(("GET", "/chat/api/overview"), ("GET", "/chat/api/activity")),
     mount_js=_MOUNT,
     unmount_js=_UNMOUNT,
 )

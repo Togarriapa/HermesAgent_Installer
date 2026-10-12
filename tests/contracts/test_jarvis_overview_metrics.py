@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
+import subprocess
+import tempfile
 
 from hermes_installer.remote.jarvis_chat import JarvisChatStore
 from hermes_installer.remote.jarvis_dashboard import build_overview
@@ -138,7 +141,7 @@ def test_overview_mission_count_requires_live_current_owner_approval(tmp_path):
 def test_overview_fragment_is_a_fixed_accessible_asset():
     validate_feature_assets((FEATURE_ASSETS,))
     assert FEATURE_ASSETS.feature_id == "overview"
-    assert FEATURE_ASSETS.api_routes == (("GET", "/chat/api/overview"),)
+    assert FEATURE_ASSETS.api_routes == (("GET", "/chat/api/overview"), ("GET", "/chat/api/activity"))
     assert "<table>" in FEATURE_ASSETS.view_html
     assert "data-observation role=\"status\"" in FEATURE_ASSETS.view_html
 
@@ -203,3 +206,54 @@ def test_overview_presence_stops_when_hidden_or_offline_until_fresh_readback():
     assert js.index("const data = await api.get('/chat/api/overview')") < js.index("root.dataset.networkOnline = 'true';", js.index("const data = await api.get('/chat/api/overview')"))
     assert "markCoreStale('hidden')" in js
     assert "markCoreStale('offline')" in js
+
+
+def test_overview_ecosystem_uses_only_current_native_activity_and_cancels_stale_views():
+    html, css, js = FEATURE_ASSETS.view_html, FEATURE_ASSETS.css, FEATURE_ASSETS.mount_js
+    assert 'data-ecosystem-card' in html and 'data-handoff-graph' in html
+    assert 'Unavailable in the current activity response.' in html
+    assert 'selected Team records, so those relationships are not inferred here.' in html
+    assert "await api.get('/chat/api/activity')" in js
+    assert "overviewScopeIsCurrent(mountScope, generation, ecosystemGeneration, stopped)" in js
+    assert "ecosystemObserver.observe(ecosystemCard)" in js
+    assert "clearInterval(ecosystemPollTimer)" in js
+    assert '[data-activity-flow="active"][data-ecosystem-state="current"][data-in-viewport="true"] .handoff-edge:after' in css
+    assert "html:not([data-page-visible=\"true\"]) [data-feature-root=\"overview\"] .ecosystem-card" in css
+    assert "prefers-reduced-motion:reduce" in css and 'data-jarvis-motion="reduce"' in css
+
+    helpers = js[:js.index('function mount(container, api, state, mountScope)')]
+    harness = r'''const assert = require('node:assert/strict');
+const now = 1_800_000_000_000;
+const activeScope = {signal:{aborted:false},isCurrent:()=>true};
+assert.equal(overviewScopeIsCurrent(activeScope, 2, 2, false), true);
+assert.equal(overviewScopeIsCurrent(activeScope, 1, 2, false), false, 'a superseded request cannot render');
+assert.equal(overviewScopeIsCurrent({signal:{aborted:false},isCurrent:()=>false}, 2, 2, false), false,
+  'leaving and remounting the view invalidates the previous source');
+assert.equal(overviewScopeIsCurrent({signal:{aborted:true},isCurrent:()=>true}, 2, 2, false), false);
+assert.equal(overviewScopeIsCurrent(activeScope, 2, 2, true), false);
+const page = {nextPage:null,events:[
+  {turnId:'private-turn-a',type:'subagent.start',status:'running',sequence:1,observed_at:now/1000-10},
+  {turnId:'private-turn-a',type:'subagent.tool',status:'running',sequence:2,observed_at:now/1000-5,duration_ms:17},
+  {turnId:'private-turn-b',type:'subagent.complete',status:'completed',sequence:1,observed_at:now/1000-20},
+  {turnId:'private-turn-c',type:'user.message',status:'completed',sequence:1,observed_at:now/1000-1},
+]};
+const current = projectHandoffActivity(page, now, true);
+assert.equal(current.state, 'current');
+assert.equal(current.active, true);
+assert.equal(current.starts, 1);
+assert.equal(current.completions, 1);
+assert.equal(current.turnCount, 2);
+assert.equal(current.groups[0].latest.type, 'subagent.tool');
+assert.equal(JSON.stringify(current).includes('private-turn-a'), false, 'private turn identifiers stay out of the view model');
+assert.equal(projectHandoffActivity({events:[],nextPage:null}, now, true).state, 'empty');
+const stale = projectHandoffActivity({events:[{turnId:'old',type:'subagent.start',status:'running',observed_at:now/1000-121}],nextPage:null}, now, true);
+assert.equal(stale.state, 'stale');
+assert.equal(stale.active, false, 'historical running statuses never animate');
+assert.equal(projectHandoffActivity(page, now, false).state, 'stale', 'activity cannot be current without the core witness');
+assert.equal(projectHandoffActivity({events:null}, now, true).state, 'unavailable');
+'''
+    with tempfile.TemporaryDirectory() as temporary:
+        path = Path(temporary) / "overview-ecosystem-harness.js"
+        path.write_text("const assert = require('node:assert/strict');\n" + helpers + harness, encoding="utf-8")
+        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
