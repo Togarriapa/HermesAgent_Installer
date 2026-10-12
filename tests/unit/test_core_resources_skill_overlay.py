@@ -9,6 +9,8 @@ import io
 import json
 import os
 import pwd
+import shutil
+import tempfile
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -164,11 +166,22 @@ def test_helper_only_overlay_reconstruction_denies_changed_chain_or_manifest(tam
 
 
 @pytest.fixture
-def overlay_runtime(tmp_path, monkeypatch):
+def overlay_runtime(tmp_path, monkeypatch, request):
     if __import__("os").geteuid() != 0:
         pytest.skip("root-owned overlay journal contract requires the Pi root test role")
-    home = tmp_path / "hermes-home"
+    account = pwd.getpwnam("admin")
+    # The verifier intentionally accepts only the real production layout:
+    # every ancestor is root-owned/non-writable, then `admin/.hermes` is
+    # admin-owned mode 0700. A pytest tmp_path beneath sticky `/tmp` cannot
+    # satisfy that contract, so place only this isolated Hermes fixture under
+    # root-owned `/run`; journals and CAS remain under pytest's private tmp_path.
+    sandbox = Path(tempfile.mkdtemp(prefix="hermes-overlay-fixture-", dir="/run"))
+    sandbox.chmod(0o755)
+    admin_home = sandbox / "admin"
+    admin_home.mkdir(mode=0o700)
+    home = admin_home / ".hermes"
     home.mkdir(mode=0o700)
+    request.addfinalizer(lambda: shutil.rmtree(sandbox, ignore_errors=True))
     (home / "SOUL.md").write_text("# Jarvis\n", encoding="utf-8")
     (home / "SOUL.md").chmod(0o644)
     store = tmp_path / "overlay-journal"
@@ -183,8 +196,6 @@ def overlay_runtime(tmp_path, monkeypatch):
     core._atomic_replace(cas / f"{base_sha}.zip", base, 0o600, 0, 0)
     native.install_manual_jarvis_skills(base, hermes_home=home, expected_sha256=base_sha)
 
-    account = pwd.getpwnam("admin")
-
     def set_generation_owner(uid, gid):
         skills = home / "skills"
         for root, directories, filenames in os.walk(skills, topdown=False, followlinks=False):
@@ -194,8 +205,20 @@ def overlay_runtime(tmp_path, monkeypatch):
                 os.chown(Path(root) / dirname, uid, gid, follow_symlinks=False)
         os.chown(skills, uid, gid)
 
+    def set_home_owner(uid, gid):
+        for root, directories, filenames in os.walk(home, topdown=False, followlinks=False):
+            for filename in filenames:
+                os.chown(Path(root) / filename, uid, gid, follow_symlinks=False)
+            for dirname in directories:
+                os.chown(Path(root) / dirname, uid, gid, follow_symlinks=False)
+        os.chown(home, uid, gid)
+        os.chown(admin_home, uid, gid)
+        os.chmod(home, 0o700)
+        os.chmod(admin_home, 0o700)
+
     def own_generation_as_admin():
         set_generation_owner(account.pw_uid, account.pw_gid)
+        set_home_owner(account.pw_uid, account.pw_gid)
 
     own_generation_as_admin()
 
@@ -218,7 +241,7 @@ def overlay_runtime(tmp_path, monkeypatch):
     def install_owner(next_archive, previous_archive, *, next_sha, previous_sha):
         installed["archive"] = next_archive
         installed["sha256"] = next_sha
-        set_generation_owner(0, 0)
+        set_home_owner(0, 0)
         native.install_and_verify_manual_jarvis_skills(next_archive, hermes_home=home,
             expected_sha256=next_sha, hermes_source="/pinned/hermes", python="/pinned/python",
             replace_owned_from_archive=previous_archive, replace_owned_from_sha256=previous_sha)
