@@ -32,17 +32,19 @@ def _unit(module, source=OLD_SOURCE):
 
 def test_recovery_resolves_preparing_journal_before_accepting_legacy_listener():
     events = []
+
+    def forbidden_native_journal_read():
+        raise AssertionError("legacy path must not read native journal")
+
     core = SimpleNamespace(
-        _journal=lambda: (events.append("read-journal") or {
-            "adapter_migration_state": "preparing",
-        }),
-        _recover_interrupted_adapter_migration=lambda: events.append("recover-preparing"),
+        _journal=forbidden_native_journal_read,
+        _recover_interrupted_adapter_migration=lambda: events.append("recover-if-needed"),
         _owned_listener=lambda **kwargs: (events.append("legacy-listener-check")
                                           or kwargs.get("legacy_launcher", False)),
     )
 
     assert adopt._restore_legacy_core(core)
-    assert events == ["read-journal", "recover-preparing", "legacy-listener-check"]
+    assert events == ["recover-if-needed", "legacy-listener-check"]
 
 
 def _switch_fixture(monkeypatch, *, gateway=None, inspector=None, config=None,

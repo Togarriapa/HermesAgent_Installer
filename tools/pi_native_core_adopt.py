@@ -599,11 +599,11 @@ def _wait_observer_socket(*, previous_inode: tuple[int, int] | None = None) -> t
 
 
 def _restore_legacy_core(core_runtime) -> bool:
-    record = core_runtime._journal()
-    if record.get("adapter_migration_state") == "preparing":
-        core_runtime._recover_interrupted_adapter_migration()
-        if core_runtime._owned_listener(legacy_launcher=True):
-            return True
+    # This guarded API checks the protected migration state and is a no-op
+    # when no interrupted migration exists. Do not query the native journal
+    # directly: its current-adapter validation is intentionally unavailable
+    # while the recovered legacy launcher is active.
+    core_runtime._recover_interrupted_adapter_migration()
     if core_runtime._owned_listener(legacy_launcher=True):
         return True
     if core_runtime._owned_listener():
