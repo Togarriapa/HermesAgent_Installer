@@ -567,6 +567,7 @@ def test_root_observed_expert_draft_origin_resolves_only_for_current_master_prom
     read_call = {"handle": "R" * 43, "tool_name": "obsidian_read_private_draft",
                  "tool_call_id": "read-draft-call",
                  "arguments": observer._canonical(read_args),
+                 "arguments_sha256": hashlib.sha256(observer._canonical(read_args)).hexdigest(),
                  "expiry": time.monotonic() + 20}
     registry._obsidian_scoped_calls.add(read_call["handle"])
     active["classification"] = (read_call, owner, current_master_source, "master_read")
