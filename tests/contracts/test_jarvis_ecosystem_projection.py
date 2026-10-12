@@ -206,6 +206,7 @@ def test_projection_exposes_only_root_joined_team_instances_and_completed_messag
     lambda value: value["team_instances"][0].update(members=["z" * 32]),
     lambda value: value["relations"][0].update(mission_revision=3),
     lambda value: value["relations"][0].update(recipient_execution_key="z" * 32),
+    lambda value: value["instances"][0].update(status="responded"),
 ])
 def test_projection_rejects_team_relations_without_exact_included_mission_join(mutate):
     value = _team_snapshot()

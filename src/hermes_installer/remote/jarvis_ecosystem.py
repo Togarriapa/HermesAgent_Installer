@@ -279,7 +279,7 @@ def project_native_activity_snapshot(value: Any) -> dict[str, Any]:
                     or event_seconds < max(sender["created_at"], recipient["created_at"])
                     or event_seconds > recipient["updated_at"]
                     or relation["state"] in {"current", "historical"}
-                       and (sender["state"] != "completed" or recipient["state"] != "completed")):
+                       and (sender["status"] != "completed" or recipient["status"] != "completed")):
                 raise ValueError("root activity Team relation does not join its instances")
             relation_keys.add(relation["relation_key"])
             relation_team_keys.add(relation["team_execution_key"])
