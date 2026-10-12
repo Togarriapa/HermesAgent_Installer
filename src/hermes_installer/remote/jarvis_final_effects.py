@@ -553,6 +553,7 @@ def install_jarvis_final_effect_middleware(ctx: Any, client: Any, *,
             # lineage, then obtains its own short-lived fixed-vault scope.
             # The scope carries no authority beyond the observed call and is
             # consumed only while dispatching the registered native handler.
+            obsidian_effect = name == "obsidian_promote_reviewed_draft"
             if name.startswith("obsidian_"):
                 from .obsidian_native_tools import _TOOL_NAMES, _admit_current_obsidian_call
                 if name not in _TOOL_NAMES:
@@ -562,17 +563,26 @@ def install_jarvis_final_effect_middleware(ctx: Any, client: Any, *,
                     # Core peer. This also handles the normal startup ordering
                     # where Core registers tools before its root inspector starts.
                     binding = client.bind_obsidian_native_vault()
-                    scope = client.authorize_obsidian_call_scope(
-                        observed_call=observed, binding=binding)
-                    if (scope.tool_name != name or scope.mode != caller_receipt.mode
-                            or scope.source_generation_sha256 != caller_receipt.source_generation_sha256):
-                        return deny("Obsidian tool blocked: root scope differs from the current call.")
-                    if scope.mode in {"master_read", "expert_read"}:
-                        with _admit_current_obsidian_call(
-                                observed_call=observed, scope=scope, binding=binding):
-                            return next_call(args)
-                    if scope.mode != "master_effect":
-                        return deny("Obsidian tool blocked: root did not admit this operation.")
+                    if obsidian_effect:
+                        # Promotion may wait up to twelve seconds for the owner
+                        # permit, while a call scope lasts at most five. Do not
+                        # issue (and consume) that one-use scope until approval
+                        # is valid. The same observed call and startup binding
+                        # are revalidated immediately before native dispatch.
+                        if caller_receipt.mode != "master_effect":
+                            return deny("Obsidian tool blocked: owner promotion requires final-effect authority.")
+                        scope = None
+                    else:
+                        scope = client.authorize_obsidian_call_scope(
+                            observed_call=observed, binding=binding)
+                        if (scope.tool_name != name or scope.mode != caller_receipt.mode
+                                or scope.source_generation_sha256 != caller_receipt.source_generation_sha256):
+                            return deny("Obsidian tool blocked: root scope differs from the current call.")
+                        if scope.mode in {"master_read", "expert_read"}:
+                            with _admit_current_obsidian_call(
+                                    observed_call=observed, scope=scope, binding=binding):
+                                return next_call(args)
+                        return deny("Obsidian tool blocked: only owner-reviewed promotion can request a final effect.")
                 except BaseException:
                     return deny("Obsidian tool blocked: current root vault scope is unavailable.")
             else:
@@ -608,6 +618,29 @@ def install_jarvis_final_effect_middleware(ctx: Any, client: Any, *,
                     try:
                         if name.startswith("obsidian_"):
                             from .obsidian_native_tools import _admit_current_obsidian_call
+                            if obsidian_effect:
+                                # Reclassify the same observed call after the
+                                # wait, then mint the single short scope against
+                                # the original owner, source, registration and
+                                # call deadlines. A stale/replaced caller or
+                                # expired startup binding fails closed here.
+                                current_receipt = client.authorize_current_tool_call(
+                                    observed_call=observed)
+                                if (type(current_receipt) is not RootVerifiedMasterReadCall
+                                        or not current_receipt.matches_call(
+                                            observed, tool_name=name,
+                                            arguments_sha256=args_sha)
+                                        or current_receipt.mode != "master_effect"
+                                        or current_receipt.source_generation_sha256
+                                            != caller_receipt.source_generation_sha256):
+                                    return deny("Obsidian promotion blocked: current owner call changed during review.")
+                                scope = client.authorize_obsidian_call_scope(
+                                    observed_call=observed, binding=binding)
+                                if (scope.tool_name != name or scope.mode != "master_effect"
+                                        or scope.source_generation_sha256
+                                            != current_receipt.source_generation_sha256
+                                        or not scope.matches(observed, binding)):
+                                    return deny("Obsidian promotion blocked: fresh root scope does not match the approved call.")
                             with _admit_current_obsidian_call(
                                     observed_call=observed, scope=scope, binding=binding,
                                     permit=permit):

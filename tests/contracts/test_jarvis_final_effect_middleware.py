@@ -58,6 +58,7 @@ class _CallerReceipt:
     def __init__(self, observed, mode):
         self.observed = observed
         self.mode = mode
+        self.source_generation_sha256 = "2" * 64
 
     def matches_call(self, observed, *, tool_name, arguments_sha256):
         return (observed is self.observed and observed.tool_name == tool_name
@@ -71,15 +72,16 @@ class JarvisFinalEffectMiddlewareTests(unittest.TestCase):
         self.assertIn("tool_execution", ctx.callbacks)
         return ctx.callbacks["tool_execution"]
 
-    def _run(self, client, *, args=None, dispatch_args=None, name="shell", caller_mode="master_effect"):
+    def _run(self, client, *, args=None, dispatch_args=None, name="shell", caller_mode="master_effect",
+             receipt_factory=None):
         default_arguments = {"query": "x"} if name == "web_search" else {"command": "x"}
         arguments = default_arguments
         from hermes_installer.native_invocations import canonical_tool_arguments
         canonical = canonical_tool_arguments(default_arguments)
         dispatch = NativeToolDispatch(object(), "tool-call-1", name, canonical)
         observed = _call(name=name, arguments=canonical)
-        client.authorize_current_tool_call = lambda *, observed_call: _CallerReceipt(
-            observed_call, caller_mode)
+        client.authorize_current_tool_call = receipt_factory or (
+            lambda *, observed_call: _CallerReceipt(observed_call, caller_mode))
         calls = []
         callback = self._install(client)
         with patch("hermes_installer.native_invocations.current_native_tool_dispatch",
@@ -104,6 +106,158 @@ class JarvisFinalEffectMiddlewareTests(unittest.TestCase):
             result, calls, _observed, arguments = self._run(client)
         self.assertEqual(result, {"ok": True})
         self.assertEqual(calls, [arguments])
+
+    def test_obsidian_promotion_scope_is_issued_after_approval_and_call_is_reclassified(self):
+        from contextlib import nullcontext
+
+        args = {
+            "draft_id": "A" * 32,
+            "expected_draft_sha256": "b" * 64,
+            "destination": "Research/approved.md",
+            "expected_base_sha256": None,
+        }
+        from hermes_installer.native_invocations import canonical_tool_arguments
+        canonical = canonical_tool_arguments(args)
+        args_sha = hashlib.sha256(canonical).hexdigest()
+        digest = review_digest("obsidian_promote_reviewed_draft", args_sha)
+        pending = FinalEffectPending("D" * 43, digest, time.monotonic() + 5)
+        client = _client()
+        events = []
+        scopes = []
+
+        class _Scope:
+            tool_name = "obsidian_promote_reviewed_draft"
+            mode = "master_effect"
+            source_generation_sha256 = "2" * 64
+
+            def matches(self, observed_call, binding):
+                return observed_call.tool_name == self.tool_name and binding is not None
+
+        client.request_final_effect = lambda **kwargs: events.append("request") or pending
+        client.poll_final_effect = lambda **kwargs: events.append("approve") or _permit(
+            kwargs["observed_call"], args_sha, digest, pending_id=pending.pending_id)
+        client.bind_obsidian_native_vault = lambda: events.append("binding") or object()
+
+        def authorize_scope(*, observed_call, binding):
+            events.append("scope")
+            scope = _Scope()
+            scopes.append(scope)
+            return scope
+
+        client.authorize_obsidian_call_scope = authorize_scope
+
+        def classify(*, observed_call):
+            events.append("classify")
+            return _CallerReceipt(observed_call, "master_effect")
+
+        callback_context = _Context()
+        install_jarvis_final_effect_middleware(callback_context, client)
+        with patch("hermes_installer.native_invocations.current_native_tool_dispatch",
+                   return_value=NativeToolDispatch(object(), "tool-call-1",
+                       "obsidian_promote_reviewed_draft", canonical)), \
+                patch("hermes_installer.remote.core_native_observer.register_tool_call_from_current_parent",
+                      side_effect=lambda **kwargs: _call(
+                          name=kwargs["tool_name"], arguments=canonical)), \
+                patch("hermes_installer.remote.core_native_observer.RootVerifiedMasterReadCall",
+                      _CallerReceipt, create=True), \
+                patch("hermes_installer.remote.obsidian_native_tools._admit_current_obsidian_call",
+                      return_value=nullcontext()):
+            calls = []
+            result = callback_context.callbacks["tool_execution"](
+                tool_name="obsidian_promote_reviewed_draft", args=args,
+                next_call=lambda value: calls.append(value) or {"saved": True})
+
+        self.assertEqual(result, {"saved": True})
+        self.assertEqual(calls, [args])
+        self.assertEqual(events.count("classify"), 2)
+        self.assertGreater(events.index("scope"), events.index("approve"))
+        self.assertEqual(len(scopes), 1)
+
+    def test_obsidian_promotion_does_not_issue_scope_after_owner_call_changes(self):
+        args = {
+            "draft_id": "A" * 32,
+            "expected_draft_sha256": "b" * 64,
+            "destination": "Research/approved.md",
+            "expected_base_sha256": None,
+        }
+        from hermes_installer.native_invocations import canonical_tool_arguments
+        canonical = canonical_tool_arguments(args)
+        args_sha = hashlib.sha256(canonical).hexdigest()
+        digest = review_digest("obsidian_promote_reviewed_draft", args_sha)
+        pending = FinalEffectPending("D" * 43, digest, time.monotonic() + 5)
+        client = _client()
+        events = []
+        scopes = []
+        client.request_final_effect = lambda **kwargs: pending
+        client.poll_final_effect = lambda **kwargs: _permit(
+            kwargs["observed_call"], args_sha, digest, pending_id=pending.pending_id)
+        client.bind_obsidian_native_vault = lambda: object()
+        client.authorize_obsidian_call_scope = lambda **kwargs: scopes.append(True)
+
+        def classify(*, observed_call):
+            receipt = _CallerReceipt(observed_call, "master_effect")
+            if events:
+                receipt.source_generation_sha256 = "3" * 64
+            events.append("classified")
+            return receipt
+
+        ctx = _Context()
+        install_jarvis_final_effect_middleware(ctx, client)
+        with patch("hermes_installer.native_invocations.current_native_tool_dispatch",
+                   return_value=NativeToolDispatch(object(), "tool-call-1",
+                       "obsidian_promote_reviewed_draft", canonical)), \
+                patch("hermes_installer.remote.core_native_observer.register_tool_call_from_current_parent",
+                      return_value=_call(name="obsidian_promote_reviewed_draft", arguments=canonical)), \
+                patch("hermes_installer.remote.core_native_observer.RootVerifiedMasterReadCall",
+                      _CallerReceipt, create=True):
+            calls = []
+            result = ctx.callbacks["tool_execution"](
+                tool_name="obsidian_promote_reviewed_draft", args=args,
+                next_call=lambda value: calls.append(value))
+
+        self.assertEqual(events, ["classified", "classified"])
+        self.assertFalse(scopes)
+        self.assertFalse(calls)
+        self.assertEqual(result["effect_executed"], "false")
+
+    def test_obsidian_private_draft_keeps_immediate_scoped_dispatch(self):
+        from contextlib import nullcontext
+
+        args = {"title": "Research notes", "markdown": "Private working draft"}
+        from hermes_installer.native_invocations import canonical_tool_arguments
+        canonical = canonical_tool_arguments(args)
+        client = _client()
+        events = []
+
+        class _Scope:
+            tool_name = "obsidian_create_private_draft"
+            mode = "master_read"
+            source_generation_sha256 = "2" * 64
+
+        client.bind_obsidian_native_vault = lambda: object()
+        client.authorize_obsidian_call_scope = lambda **kwargs: events.append("scope") or _Scope()
+        client.request_final_effect = lambda **kwargs: self.fail(
+            "private draft must not request final-effect approval")
+
+        ctx = _Context()
+        install_jarvis_final_effect_middleware(ctx, client)
+        with patch("hermes_installer.native_invocations.current_native_tool_dispatch",
+                   return_value=NativeToolDispatch(object(), "tool-call-1",
+                       "obsidian_create_private_draft", canonical)), \
+                patch("hermes_installer.remote.core_native_observer.register_tool_call_from_current_parent",
+                      return_value=_call(name="obsidian_create_private_draft", arguments=canonical)), \
+                patch("hermes_installer.remote.core_native_observer.RootVerifiedMasterReadCall",
+                      _CallerReceipt, create=True), \
+                patch("hermes_installer.remote.obsidian_native_tools._admit_current_obsidian_call",
+                      return_value=nullcontext()):
+            calls = []
+            result = ctx.callbacks["tool_execution"](
+                tool_name="obsidian_create_private_draft", args=args,
+                next_call=lambda value: events.append("dispatch") or calls.append(value) or {"draft": True})
+
+        self.assertEqual(result, {"draft": True})
+        self.assertEqual(calls, [args])
+        self.assertEqual(events, ["scope", "dispatch"])
 
     def test_root_proved_expert_research_executes_without_owner_final_effect_request(self):
         client = _client()
