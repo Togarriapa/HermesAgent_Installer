@@ -22,6 +22,7 @@ from test_core_runtime import _adapter_cohort_starting_fixture
 def _refresh_exact_starting_unit_recipe(cohort):
     """Rebuild the fixture's current starting tuple from the generated guarded recipe."""
     unit = core._unit(
+        startup_guard=True,
         adapter_source=Path(cohort["new_source"]),
         cohort_gate=True,
         backup_generation=cohort["old_adapter_generation"],
