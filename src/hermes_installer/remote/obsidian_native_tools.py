@@ -314,6 +314,15 @@ class ObsidianNativeTools:
                 observed_call=context.observed_call, binding=context.binding,
                 draft_id=values["draft_id"],
                 expected_content_sha256=values["expected_draft_sha256"])
+            reserver = getattr(context.observer_client,
+                               "reserve_obsidian_draft_completion", None)
+            if not callable(reserver):
+                raise ObsidianNativeToolUnavailable(
+                    "root Obsidian completion capacity reservation is unavailable")
+            reserver(observed_call=context.observed_call, binding=context.binding,
+                     origin=origin, proposal=proposal, permit=permit,
+                     destination=values["destination"],
+                     expected_base_sha256=values["expected_base_sha256"])
             saved = store.promote_reviewed_draft(
                 origin=origin, draft_id=values["draft_id"],
                 expected_draft_sha256=values["expected_draft_sha256"],

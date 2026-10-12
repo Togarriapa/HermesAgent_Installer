@@ -328,6 +328,7 @@ class RootJarvisDraftReviewProposal:
     source_generation_sha256: str
     read_delivery_receipt_id: str
     read_delivery_sha256: str
+    read_delivery_output_sha256: str
     origin_record_sha256: str
     created_monotonic: float
     owner_expires_monotonic: float
@@ -342,7 +343,7 @@ class RootJarvisDraftReviewProposal:
                 or not all(_HASH.fullmatch(value or "") for value in (
                     self.owner_subject_sha256, self.content_sha256, self.arguments_sha256,
                     self.source_generation_sha256, self.read_delivery_sha256,
-                    self.origin_record_sha256))
+                    self.read_delivery_output_sha256, self.origin_record_sha256))
                 or not _OPAQUE.fullmatch(self.owner_turn_handle or "")
                 or not _IDENT.fullmatch(self.draft_id or "")
                 or not isinstance(self.destination, str) or not 1 <= len(self.destination) <= 240
@@ -368,7 +369,8 @@ class RootJarvisDraftReviewProposal:
             "content_sha256", "destination", "expected_base_sha256", "disposition",
             "rationale", "observed_call_handle", "tool_call_id", "arguments_sha256",
             "source_generation_sha256", "read_delivery_receipt_id", "read_delivery_sha256",
-            "origin_record_sha256", "created_monotonic", "owner_expires_monotonic",
+            "read_delivery_output_sha256", "origin_record_sha256", "created_monotonic",
+            "owner_expires_monotonic",
             "call_expires_monotonic", "expires_monotonic")}
         digest = hashlib.sha256(json.dumps(
             unhashed, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
@@ -553,7 +555,8 @@ def _decode_draft_review_proposal(row: Mapping[str, Any]) -> RootJarvisDraftRevi
         "owner_turn_handle", "draft_id", "content_sha256", "destination",
         "expected_base_sha256", "disposition", "rationale", "observed_call_handle",
         "tool_call_id", "arguments_sha256", "source_generation_sha256",
-        "read_delivery_receipt_id", "read_delivery_sha256", "origin_record_sha256",
+        "read_delivery_receipt_id", "read_delivery_sha256", "read_delivery_output_sha256",
+        "origin_record_sha256",
         "created_monotonic", "owner_expires_monotonic", "call_expires_monotonic",
         "expires_monotonic", "proposal_sha256"}
     if (type(row) is not dict or set(row) != expected or type(row["schema"]) is not int
@@ -574,6 +577,7 @@ def _decode_draft_review_proposal(row: Mapping[str, Any]) -> RootJarvisDraftRevi
             source_generation_sha256=row["source_generation_sha256"],
             read_delivery_receipt_id=row["read_delivery_receipt_id"],
             read_delivery_sha256=row["read_delivery_sha256"],
+            read_delivery_output_sha256=row["read_delivery_output_sha256"],
             origin_record_sha256=row["origin_record_sha256"],
             created_monotonic=float(row["created_monotonic"]),
             owner_expires_monotonic=float(row["owner_expires_monotonic"]),

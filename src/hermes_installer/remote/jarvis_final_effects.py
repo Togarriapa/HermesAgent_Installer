@@ -582,7 +582,15 @@ def install_jarvis_final_effect_middleware(ctx: Any, client: Any, *,
                             with _admit_current_obsidian_call(
                                     observed_call=observed, scope=scope, binding=binding,
                                     observer_client=client):
-                                return next_call(args)
+                                result = next_call(args)
+                                if name == "obsidian_read_private_draft":
+                                    confirmer = getattr(
+                                        client, "confirm_obsidian_draft_read_delivery", None)
+                                    if not callable(confirmer):
+                                        return deny("Obsidian draft review result was not root-confirmed.")
+                                    confirmer(observed_call=observed, binding=binding,
+                                              tool_result=result)
+                                return result
                         return deny("Obsidian tool blocked: only owner-reviewed promotion can request a final effect.")
                 except BaseException:
                     return deny("Obsidian tool blocked: current root vault scope is unavailable.")

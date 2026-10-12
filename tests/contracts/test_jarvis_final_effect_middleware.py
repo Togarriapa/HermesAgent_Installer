@@ -175,6 +175,49 @@ class JarvisFinalEffectMiddlewareTests(unittest.TestCase):
         self.assertGreater(events.index("scope"), events.index("approve"))
         self.assertEqual(len(scopes), 1)
 
+    def test_private_draft_delivery_is_confirmed_after_exact_native_result_returns(self):
+        from contextlib import nullcontext
+        from hermes_installer.native_invocations import canonical_tool_arguments
+
+        args = {"draft_id": "A" * 32, "expected_draft_sha256": "b" * 64}
+        canonical = canonical_tool_arguments(args)
+        observed = _call(name="obsidian_read_private_draft", arguments=canonical)
+        client = _client()
+        events = []
+        client.authorize_current_tool_call = lambda *, observed_call: _CallerReceipt(
+            observed_call, "master_read")
+        client.bind_obsidian_native_vault = lambda: object()
+
+        class _Scope:
+            tool_name = "obsidian_read_private_draft"
+            mode = "master_read"
+            source_generation_sha256 = "2" * 64
+
+        client.authorize_obsidian_call_scope = lambda **_kwargs: _Scope()
+        client.confirm_obsidian_draft_read_delivery = lambda **kwargs: events.append(
+            ("confirmed", kwargs["tool_result"]))
+        ctx = _Context()
+        install_jarvis_final_effect_middleware(ctx, client)
+        native_result = {"draft_id": args["draft_id"], "review_complete": True,
+            "byte_length": 4, "read_delivery": {"receipt_id": "R" * 43,
+                "receipt_sha256": "c" * 64, "complete": True, "covered_byte_length": 4}}
+        with patch("hermes_installer.native_invocations.current_native_tool_dispatch",
+                   return_value=NativeToolDispatch(object(), observed.tool_call_id,
+                       observed.tool_name, canonical)), \
+                patch("hermes_installer.remote.core_native_observer.register_tool_call_from_current_parent",
+                      return_value=observed), \
+                patch("hermes_installer.remote.core_native_observer.RootVerifiedMasterReadCall",
+                      _CallerReceipt, create=True), \
+                patch("hermes_installer.remote.obsidian_native_tools._admit_current_obsidian_call",
+                      return_value=nullcontext()):
+            result = ctx.callbacks["tool_execution"](
+                tool_name=observed.tool_name, args=args,
+                next_call=lambda _value: events.append(("returned", native_result)) or native_result)
+
+        self.assertEqual(result, native_result)
+        self.assertEqual([event[0] for event in events], ["returned", "confirmed"])
+        self.assertIs(events[1][1], native_result)
+
     def test_obsidian_promotion_does_not_issue_scope_after_owner_call_changes(self):
         args = {
             "draft_id": "A" * 32,

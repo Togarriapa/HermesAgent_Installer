@@ -533,6 +533,7 @@ class ObsidianVaultStore:
                 or proposal.tool_call_id != observed_call.tool_call_id
                 or proposal.origin_record_sha256 != origin.origin_record_sha256
                 or proposal.read_delivery_sha256 == ""
+                or not _HASH.fullmatch(proposal.read_delivery_output_sha256 or "")
                 or proposal.read_delivery_receipt_id == ""
                 or proposal.expires_monotonic <= time.monotonic()
                 or proposal.source_generation_sha256 != permit.source_generation_sha256
@@ -554,10 +555,25 @@ class ObsidianVaultStore:
                                          source_instance_id=origin.origin_source_id)
         if (record["contentSha256"] != expected_draft_sha256
                 or record["baseSha256"] != expected_base_sha256
-                or origin.state != "private-draft"):
+                or origin.state != "private-draft"
+                or record["state"] not in {"private-draft", "promoted"}):
             raise ObsidianVaultConflict("private draft changed after Jarvis review")
         current = self._read_optional_note(relative)
-        if current is None:
+        current_digest = None if current is None else current[1]
+        already_promoted = record["state"] == "promoted"
+        recovering_public_cas = (not already_promoted
+            and current_digest == expected_draft_sha256
+            and expected_draft_sha256 != expected_base_sha256)
+        if already_promoted or recovering_public_cas:
+            if (current_digest != expected_draft_sha256
+                    or not self._has_exact_promotion_revision(
+                        relative, expected_base_sha256, expected_draft_sha256)):
+                raise ObsidianVaultConflict(
+                    "an earlier promotion outcome cannot be proven from its exact revision journal")
+            if (already_promoted and (record["promotedSha256"] != expected_draft_sha256
+                    or record["destinationId"] != _opaque_id(relative))):
+                raise ObsidianVaultConflict("private promoted state differs from the exact reviewed destination")
+        elif current is None:
             if expected_base_sha256 is not None or record["baseSha256"] is not None:
                 raise ObsidianVaultConflict("draft base no longer matches the absent destination")
             self._atomic_note_write(relative, record["markdown"].encode("utf-8"), expected_sha256=None)
@@ -574,13 +590,44 @@ class ObsidianVaultStore:
         markdown, digest, updated = saved
         if digest != expected_draft_sha256:
             raise ObsidianVaultConflict("promoted note changed during post-write verification")
-        self._write_private(f"drafts/{execution_id}/{draft_id}.json",
-                            _canonical({**record, "state": "promoted",
-                                        "promotedSha256": digest,
-                                        "promotedAt": time.time(),
-                                        "destinationId": _opaque_id(relative)}),
-                            replace=True)
+        if not already_promoted:
+            self._write_private(f"drafts/{execution_id}/{draft_id}.json",
+                                _canonical({**record, "state": "promoted",
+                                            "promotedSha256": digest,
+                                            "promotedAt": time.time(),
+                                            "destinationId": _opaque_id(relative)}),
+                                replace=True)
         return NoteRead(_opaque_id(relative), record["title"], digest, markdown, updated)
+
+    def _has_exact_promotion_revision(self, relative: str, prior_sha256: str | None,
+                                      proposed_sha256: str) -> bool:
+        """Prove an interrupted public CAS from the existing exact-byte revision journal."""
+        rows = self._list_private_json("revisions", limit=MAX_SCAN_ENTRIES)
+        if rows is None:
+            return False
+        for path in rows:
+            try:
+                raw = self._read_private(path.removeprefix(".hermes-private/"),
+                                         MAX_PRIVATE_FILE_BYTES)
+                entry = json.loads(raw.decode("utf-8", "strict"))
+                if (type(entry) is not dict or entry.get("schema") != 1
+                        or entry.get("ownerScopeSha256") != self._config.owner_scope_sha256
+                        or entry.get("relativePath") != relative
+                        or entry.get("priorSha256") != prior_sha256
+                        or entry.get("proposedSha256") != proposed_sha256
+                        or entry.get("state") not in {"prepared", "committed"}):
+                    continue
+                prior = entry.get("priorBase64")
+                if prior_sha256 is None:
+                    if prior is not None:
+                        continue
+                elif (not isinstance(prior, str)
+                        or _sha256(base64.b64decode(prior, validate=True)) != prior_sha256):
+                    continue
+                return True
+            except Exception:
+                continue
+        return False
 
     def dashboard_projection(self) -> dict[str, Any]:
         notes, partial, scanned = self._scan()

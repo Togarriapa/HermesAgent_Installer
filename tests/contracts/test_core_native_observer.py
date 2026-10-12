@@ -576,9 +576,43 @@ def test_root_observed_expert_draft_origin_resolves_only_for_current_master_prom
         "tool_name": "obsidian_promote_reviewed_draft",
         "arguments": observer._canonical(promote_arguments), "expiry": time.monotonic() + 20}
     active["classification"] = (promote_call, owner, current_master_source, "master_effect")
+    with pytest.raises(ValueError, match="complete draft bytes were not delivered"):
+        registry._propose_obsidian_draft_review(
+            call=promote_call, owner=owner, source=current_master_source, peer=peer)
+
+    native_result = {
+        "draft_id": draft_id, "title": draft.title, "markdown": markdown,
+        "content_sha256": content_sha, "byte_length": len(markdown.encode()),
+        "review_complete": True, "next_step": None, "base_note_id": None,
+        "base_sha256": None,
+        "origin": {"source_id": child["profile_id"], "source_revision": source.source_revision,
+            "execution_id": child["session_id"], "mission_sha256": hashlib.sha256(
+                observer._canonical(mission.to_wire())).hexdigest(),
+            "source_generation_sha256": generation},
+        "read_delivery": {"receipt_id": read_result["delivery"]["receipt_id"],
+            "receipt_sha256": read_result["delivery"]["receipt_sha256"], "complete": True,
+            "covered_byte_length": len(markdown.encode())},
+    }
+    active["classification"] = (read_call, owner, current_master_source, "master_read")
+    confirmation_request = {
+        "schema": 1, "op": "confirm-obsidian-draft-read-delivery", "nonce": "confirm",
+        "observed_call_handle": read_call["handle"], "startup_binding_id": "B" * 43,
+        "receipt_id": read_result["delivery"]["receipt_id"],
+        "receipt_sha256": read_result["delivery"]["receipt_sha256"],
+        "tool_result_sha256": hashlib.sha256(observer._canonical(native_result)).hexdigest(),
+        "byte_length": len(markdown.encode()),
+    }
+    with pytest.raises(ValueError, match="native result differs"):
+        registry._handle(peer, {**confirmation_request,
+            "tool_result_sha256": "0" * 64})
+    confirmed = registry._handle(peer, confirmation_request)
+    assert confirmed["confirmed"] is True
+
+    active["classification"] = (promote_call, owner, current_master_source, "master_effect")
     proposal = registry._propose_obsidian_draft_review(
         call=promote_call, owner=owner, source=current_master_source, peer=peer)
     assert proposal["read_delivery_receipt_id"] == read_result["delivery"]["receipt_id"]
+    assert proposal["read_delivery_output_sha256"] == confirmation_request["tool_result_sha256"]
     assert proposal["origin_record_sha256"] == active["persisted"][(owner_sha, draft_id)]["origin_record_sha256"]
     assert proposal["disposition"] == "approve"
 

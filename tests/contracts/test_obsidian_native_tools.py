@@ -98,6 +98,7 @@ def _mission():
 class _OriginObserver:
     def __init__(self, store):
         self.store = store
+        self.reservation_error = None
 
     def record_obsidian_draft_origin(self, *, observed_call, binding, draft_id):
         assert observed_call.tool_name == "obsidian_create_private_draft"
@@ -179,6 +180,7 @@ class _OriginObserver:
             "source_generation_sha256": "f" * 64,
             "read_delivery_receipt_id": "R" * 43,
             "read_delivery_sha256": "1" * 64,
+            "read_delivery_output_sha256": "2" * 64,
             "origin_record_sha256": "e" * 64,
             "created_monotonic": issued, "owner_expires_monotonic": issued + 15,
             "call_expires_monotonic": issued + 15, "expires_monotonic": issued + 15,
@@ -190,7 +192,15 @@ class _OriginObserver:
             "schema": 1, "nonce": "fixture", "ok": True, **payload,
         })
 
+    def reserve_obsidian_draft_completion(self, **_kwargs):
+        if self.reservation_error is not None:
+            raise self.reservation_error
+        return None
+
     def complete_obsidian_draft_origin(self, **_kwargs):
+        return None
+
+    def confirm_obsidian_draft_read_delivery(self, **_kwargs):
         return None
 
 
@@ -383,6 +393,41 @@ def test_private_draft_review_never_claims_complete_for_oversized_content():
     assert review.review_complete is False
     assert review.markdown is None
     assert review.byte_length == 32 * 1024 + 1
+
+
+@pytest.mark.parametrize("reservation_error", [
+    RuntimeError("archive capacity is unavailable"),
+    OSError("archive fsync failed before reservation readback"),
+])
+def test_promotion_reservation_failure_precedes_public_note_write(tmp_path, reservation_error):
+    root = tmp_path / "managed"
+    root.mkdir(mode=0o700)
+    store = prepare_obsidian_vault(ObsidianVaultConfig(root, OWNER, owner_uid=1000))
+    draft = store.create_private_draft(
+        execution_id="D" * 43, source_instance_id="hermes",
+        title="Final", markdown="# Final\nReviewed.\n")
+    args = {"draft_id": draft.draft_id, "expected_draft_sha256": draft.content_sha256,
+            "destination": "Notes/Final.md", "expected_base_sha256": None,
+            "review_disposition": "approve"}
+    observer = _OriginObserver(store)
+    observer.reservation_error = reservation_error
+    tool = ObsidianNativeTools(store).handler("obsidian_promote_reviewed_draft")
+    observed, scope, binding, permit, dispatch, *_ = _binding(
+        store, "obsidian_promote_reviewed_draft", args, mode="master_effect",
+        with_permit=True)
+
+    with patch("hermes_installer.remote.obsidian_native_tools.current_native_tool_dispatch",
+               return_value=dispatch), patch(
+            "hermes_installer.native_invocations.current_native_tool_dispatch",
+            return_value=dispatch), _admit_current_obsidian_call(
+            observed_call=observed, scope=scope, binding=binding, permit=permit,
+            observer_client=observer):
+        with pytest.raises(type(reservation_error), match="archive (capacity|fsync)"):
+            tool(args)
+
+    assert not (store._root / "Notes" / "Final.md").exists()
+    assert store.read_private_draft(execution_id="D" * 43,
+                                    draft_id=draft.draft_id)["state"] == "private-draft"
 
 
 def test_promotion_requires_master_effect_permit_and_expert_cannot_write_owner_note(tmp_path):

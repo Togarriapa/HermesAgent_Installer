@@ -735,14 +735,23 @@ def _obsidian_history_from_bytes(raw: bytes) -> list[dict[str, Any]] | None:
             return None
         seen: set[str] = set()
         for row in value["records"]:
-            if (type(row) is not dict or set(row) != {"record_id", "origin", "proposal",
-                                                       "approval", "result", "completed_at",
-                                                       "record_sha256"}
+            row_fields = {"record_id", "origin", "proposal", "approval", "result",
+                          "completed_at", "record_sha256"}
+            if (type(row) is not dict or set(row) not in (
+                    row_fields, row_fields | {"phase"}, row_fields | {"phase", "attempts"})
                     or not _OPAQUE.fullmatch(row.get("record_id", ""))
                     or row["record_id"] in seen or type(row["origin"]) is not dict
+                    or ("phase" in row and row["phase"] not in {"reserved", "completed"})
                     or set(row["origin"]) != expected_origin
                     or type(row["proposal"]) is not dict or type(row["approval"]) is not dict
                     or type(row["result"]) is not dict
+                    or ("attempts" in row and (type(row["attempts"]) is not list
+                        or not 1 <= len(row["attempts"]) <= 8
+                        or any(type(attempt) is not dict
+                               or set(attempt) != {"proposal", "approval"}
+                               or type(attempt["proposal"]) is not dict
+                               or type(attempt["approval"]) is not dict
+                               for attempt in row["attempts"])))
                     or type(row["completed_at"]) not in (int, float)
                     or not math.isfinite(row["completed_at"])):
                 return None
@@ -764,6 +773,67 @@ def _obsidian_history_from_bytes(raw: bytes) -> list[dict[str, Any]] | None:
         return [dict(row) for row in value["records"]]
     except Exception:
         return None
+
+
+def _reserved_origin_tombstone(row: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Project the exact future tombstone reserved by an Obsidian history row."""
+    if (not isinstance(row, Mapping) or row.get("phase") not in {"reserved", "completed"}
+            or type(row.get("origin")) is not dict or type(row.get("result")) is not dict
+            or not _OPAQUE.fullmatch(row.get("record_id", ""))):
+        return None
+    origin, result = row["origin"], row["result"]
+    if (not all(isinstance(result.get(name), str) for name in (
+            "destination", "note_id", "title", "content_sha256"))
+            or not _HASH.fullmatch(result.get("content_sha256", "") or "")
+            or type(row.get("completed_at")) not in (int, float)
+            or not math.isfinite(row["completed_at"])):
+        return None
+    completed_body = {key: value for key, value in row.items()
+                      if key != "record_sha256"}
+    completed_body["phase"] = "completed"
+    completed_sha = hashlib.sha256(_canonical(completed_body)).hexdigest()
+    tombstone_body = {
+        "owner_subject_sha256": origin["owner_subject_sha256"],
+        "draft_id": origin["draft_id"],
+        "origin_record_sha256": origin["origin_record_sha256"],
+        "history_record_id": row["record_id"],
+        "history_record_sha256": completed_sha,
+        "destination": result["destination"], "note_id": result["note_id"],
+        "content_sha256": result["content_sha256"], "completed_at": row["completed_at"],
+    }
+    return {**tombstone_body,
+            "completed_record_sha256": hashlib.sha256(_canonical(tombstone_body)).hexdigest()}
+
+
+def _obsidian_archive_proposal(proposal: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: proposal[key] for key in (
+        "proposal_id", "proposal_sha256", "owner_subject_sha256", "owner_turn_handle",
+        "draft_id", "content_sha256", "destination", "expected_base_sha256",
+        "disposition", "observed_call_handle", "tool_call_id", "arguments_sha256",
+        "source_generation_sha256", "read_delivery_receipt_id",
+        "read_delivery_sha256", "read_delivery_output_sha256", "origin_record_sha256")}
+
+
+def _obsidian_archive_approval(*, pending_id: str, review_sha256: str,
+                               owner: Any, source_generation_sha256: str,
+                               call: Mapping[str, Any]) -> dict[str, Any]:
+    return {"pending_id": pending_id, "review_sha256": review_sha256,
+        "owner_subject_sha256": owner.owner_subject_sha256,
+        "owner_turn_handle": owner.owner_turn_handle,
+        "source_generation_sha256": source_generation_sha256,
+        "observed_call_handle": call["handle"],
+        "tool_call_id": call["tool_call_id"],
+        "arguments_sha256": call["arguments_sha256"]}
+
+
+def _obsidian_archive_row(*, record_id: str, phase: str, origin: Mapping[str, Any],
+                          proposal: Mapping[str, Any], approval: Mapping[str, Any],
+                          result: Mapping[str, Any], completed_at: float,
+                          attempts: list[dict[str, Any]]) -> dict[str, Any]:
+    body = {"record_id": record_id, "phase": phase, "origin": dict(origin),
+        "proposal": dict(proposal), "approval": dict(approval), "result": dict(result),
+        "completed_at": completed_at, "attempts": [dict(item) for item in attempts]}
+    return {**body, "record_sha256": hashlib.sha256(_canonical(body)).hexdigest()}
 
 
 def _load_root_obsidian_history() -> list[dict[str, Any]]:
@@ -2899,6 +2969,45 @@ class CoreNativeObservationClient:
             raise CoreNativeObservationUnavailable("root Obsidian draft review differs from this exact call")
         return review
 
+    def confirm_obsidian_draft_read_delivery(self, *, observed_call: ObservedNativeToolCall,
+                                             binding: Any,
+                                             tool_result: Mapping[str, Any]) -> None:
+        """Confirm the exact prepared native result only after its handler returned."""
+        from .obsidian_native_scope import RootSelectedObsidianVaultBinding
+        if (type(observed_call) is not ObservedNativeToolCall
+                or type(binding) is not RootSelectedObsidianVaultBinding
+                or binding.core_pid != os.getpid() or binding.selected_owner_uid != os.geteuid()
+                or os.geteuid() != 1000
+                or not isinstance(tool_result, Mapping)
+                or type(tool_result.get("read_delivery")) is not dict
+                or type(tool_result.get("byte_length")) is not int
+                or type(tool_result.get("review_complete")) is not bool):
+            raise CoreNativeObservationUnavailable("native draft-review result is required")
+        receipt = tool_result["read_delivery"]
+        if (set(receipt) != {"receipt_id", "receipt_sha256", "complete", "covered_byte_length"}
+                or receipt.get("complete") is not tool_result["review_complete"]
+                or receipt.get("covered_byte_length") != (
+                    tool_result["byte_length"] if tool_result["review_complete"] else 0)
+                or not _OPAQUE.fullmatch(receipt.get("receipt_id", ""))
+                or not _HASH.fullmatch(receipt.get("receipt_sha256", ""))):
+            raise CoreNativeObservationUnavailable("draft-review result delivery receipt is incomplete")
+        output_sha256 = hashlib.sha256(json.dumps(
+            dict(tool_result), ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            allow_nan=False).encode("utf-8", "strict")).hexdigest()
+        row = self._rpc("confirm-obsidian-draft-read-delivery", {
+            "observed_call_handle": observed_call.handle,
+            "startup_binding_id": binding.binding_id,
+            "receipt_id": receipt["receipt_id"],
+            "receipt_sha256": receipt["receipt_sha256"],
+            "tool_result_sha256": output_sha256,
+            "byte_length": tool_result["byte_length"],
+        })
+        if (set(row) != {"schema", "nonce", "ok", "confirmed", "receipt_sha256"}
+                or type(row.get("schema")) is not int or row["schema"] != 1
+                or row.get("ok") is not True or row.get("confirmed") is not True
+                or row.get("receipt_sha256") != receipt["receipt_sha256"]):
+            raise CoreNativeObservationUnavailable("root did not confirm the exact native draft-review result")
+
     def resolve_obsidian_review_proposal(self, *, observed_call: ObservedNativeToolCall,
                                          binding: Any, draft_id: str,
                                          expected_content_sha256: str):
@@ -2926,6 +3035,51 @@ class CoreNativeObservationClient:
                 or proposal.observed_call_handle != observed_call.handle):
             raise CoreNativeObservationUnavailable("root review proposal differs from this exact call")
         return proposal
+
+    def reserve_obsidian_draft_completion(self, *, observed_call: ObservedNativeToolCall,
+                                         binding: Any, origin: Any, proposal: Any,
+                                         permit: Any, destination: str,
+                                         expected_base_sha256: str | None) -> None:
+        """Durably reserve archive and tombstone capacity before the public-note CAS."""
+        from .jarvis_final_effects import FinalEffectPermit, review_digest
+        from .obsidian_native_scope import (
+            RootJarvisDraftReviewProposal, RootObsidianDraftOrigin,
+            RootSelectedObsidianVaultBinding,
+        )
+        if (type(observed_call) is not ObservedNativeToolCall
+                or type(binding) is not RootSelectedObsidianVaultBinding
+                or type(origin) is not RootObsidianDraftOrigin
+                or type(proposal) is not RootJarvisDraftReviewProposal
+                or type(permit) is not FinalEffectPermit
+                or binding.core_pid != os.getpid() or binding.selected_owner_uid != os.geteuid()
+                or os.geteuid() != 1000
+                or not proposal.matches(observed_call=observed_call, origin=origin,
+                    owner_subject_sha256=binding.owner_subject_sha256,
+                    owner_turn_handle=observed_call.owner_turn_handle)
+                or permit.owner_turn_handle != proposal.owner_turn_handle
+                or permit.owner_subject_sha256 != binding.owner_subject_sha256
+                or not permit.matches_call(observed_call,
+                    tool_name="obsidian_promote_reviewed_draft",
+                    arguments_sha256=observed_call.arguments_sha256,
+                    review_sha256=review_digest("obsidian_promote_reviewed_draft",
+                                                observed_call.arguments_sha256))):
+            raise CoreNativeObservationUnavailable("current approved Jarvis promotion is required for capacity reservation")
+        row = self._rpc("reserve-obsidian-draft-completion", {
+            "observed_call_handle": observed_call.handle,
+            "startup_binding_id": binding.binding_id,
+            "draft_id": origin.draft_id,
+            "origin_record_sha256": origin.origin_record_sha256,
+            "proposal_sha256": proposal.proposal_sha256,
+            "pending_id": permit.pending_id,
+            "review_sha256": permit.review_sha256,
+            "destination": destination,
+            "expected_base_sha256": expected_base_sha256,
+        })
+        if (set(row) != {"schema", "nonce", "ok", "reservation_record_sha256"}
+                or type(row.get("schema")) is not int or row["schema"] != 1
+                or row["ok"] is not True
+                or not _HASH.fullmatch(row.get("reservation_record_sha256", ""))):
+            raise CoreNativeObservationUnavailable("root Obsidian capacity reservation receipt is malformed")
 
     def complete_obsidian_draft_origin(self, *, observed_call: ObservedNativeToolCall,
                                        binding: Any, origin: Any, proposal: Any,
@@ -4088,9 +4242,29 @@ class RootCoreNativeObservationRegistry:
         ordered = [records[key] for key in sorted(records)]
         completed_ordered = [completed[key] for key in sorted(completed)]
         raw = _canonical({"schema": 2, "records": ordered, "completed": completed_ordered})
-        if len(raw) > _OBSIDIAN_ORIGIN_MAX_BYTES:
+        projected = dict(completed)
+        reserved_keys: set[tuple[str, str]] = set()
+        for history_row in self._obsidian_origin_history:
+            tombstone = _reserved_origin_tombstone(history_row)
+            if tombstone is None:
+                continue
+            key = (tombstone["owner_subject_sha256"], tombstone["draft_id"])
+            if key not in records and key not in projected:
+                continue
+            if key in projected and projected[key] != tombstone:
+                self._obsidian_origin_store_ok = False
+                raise ValueError("root Obsidian history reservation conflicts with completion index")
+            projected[key] = tombstone
+            if key in records:
+                reserved_keys.add(key)
+        projected_records = [records[key] for key in sorted(records) if key not in reserved_keys]
+        projected_raw = _canonical({"schema": 2, "records": projected_records,
+                                    "completed": [projected[key] for key in sorted(projected)]})
+        if (len(raw) > _OBSIDIAN_ORIGIN_MAX_BYTES
+                or len(projected_records) + len(projected) > _OBSIDIAN_ORIGIN_MAX_RECORDS
+                or len(projected_raw) > _OBSIDIAN_ORIGIN_MAX_BYTES):
             self._obsidian_origin_store_ok = False
-            raise ValueError("root Obsidian origin journal reached its fixed size bound")
+            raise ValueError("root Obsidian origin journal lacks reserved completion capacity")
         try:
             _publish_root_obsidian_origin_bytes(raw)
             verified = _obsidian_origin_state_from_bytes(_read_root_obsidian_origin_bytes() or b"")
@@ -4179,6 +4353,11 @@ class RootCoreNativeObservationRegistry:
         if not row["complete"]:
             row["covered_byte_length"] = 0
         row["receipt_sha256"] = hashlib.sha256(_canonical(row)).hexdigest()
+        # These two root-only fields are deliberately outside the sealed wire
+        # receipt: one is the exact prepared public tool result, the other is
+        # filled only after the native middleware receives that returned value.
+        row["tool_result_sha256"] = None
+        row["native_returned_sha256"] = None
         if row["receipt_id"] in self._obsidian_draft_read_deliveries:
             raise ValueError("Obsidian read-delivery receipt ID collided")
         self._obsidian_draft_read_deliveries[row["receipt_id"]] = dict(row)
@@ -4240,7 +4419,12 @@ class RootCoreNativeObservationRegistry:
             if (candidate["origin_record_sha256"] != (origin or {}).get("origin_record_sha256")
                     or candidate["startup_binding_id"] != binding_row["binding_id"]
                     or hashlib.sha256(_canonical({key: value for key, value in candidate.items()
-                        if key != "receipt_sha256"})).hexdigest() != candidate["receipt_sha256"]):
+                        if key not in {"receipt_sha256", "tool_result_sha256",
+                                       "native_returned_sha256"})).hexdigest()
+                        != candidate["receipt_sha256"]
+                    or not isinstance(candidate.get("tool_result_sha256"), str)
+                    or candidate.get("native_returned_sha256")
+                        != candidate.get("tool_result_sha256")):
                 continue
             delivery = candidate
             data_root, registered_owner, registration_sha, startup = (
@@ -4262,7 +4446,34 @@ class RootCoreNativeObservationRegistry:
                 raise ValueError
         except Exception:
             raise ValueError("Obsidian promotion destination is not a normalized owner note path") from None
-        reviewed = self._read_obsidian_owner_draft(data_root, registered_owner, draft_id)
+        try:
+            reviewed = self._read_obsidian_owner_draft(data_root, registered_owner, draft_id)
+        except Exception:
+            reservation = next((row for row in self._obsidian_origin_history
+                if row.get("phase") in {"reserved", "completed"}
+                and row["origin"].get("origin_record_sha256") == origin["origin_record_sha256"]
+                and row["result"].get("content_sha256") == content_sha
+                and row["result"].get("destination") == destination), None)
+            if reservation is None:
+                raise ValueError("draft has no exact pending or recoverable promotion record") from None
+            from hermes_installer.remote.obsidian_second_brain import _note_relative_path, _opaque_id, _draft_projection
+            store = self._obsidian_store_for_origin(data_root, registered_owner)
+            private = store.read_private_draft(
+                execution_id=origin["origin_execution_id"], draft_id=draft_id,
+                source_instance_id=origin["origin_source_id"])
+            relative = _note_relative_path(destination)
+            saved = store._read_optional_note(relative)
+            if (private.get("state") != "promoted"
+                    or private.get("contentSha256") != content_sha
+                    or private.get("promotedSha256") != content_sha
+                    or private.get("baseSha256") != base_sha
+                    or private.get("destinationId") != _opaque_id(relative)
+                    or saved is None or saved[1] != content_sha
+                    or saved[0] != private.get("markdown")
+                    or not store._has_exact_promotion_revision(relative, base_sha, content_sha)):
+                raise ValueError("prior public note is not the exact reserved revision outcome") from None
+            reviewed = SimpleNamespace(draft=_draft_projection(draft_id, private),
+                                       markdown=private["markdown"])
         reviewed_bytes = reviewed.markdown.encode("utf-8", "strict")
         if (reviewed.draft.content_sha256 != content_sha
                 or reviewed.draft.base_sha256 != base_sha
@@ -4295,6 +4506,7 @@ class RootCoreNativeObservationRegistry:
             "source_generation_sha256": source.generation_sha256,
             "read_delivery_receipt_id": delivery["receipt_id"],
             "read_delivery_sha256": delivery["receipt_sha256"],
+            "read_delivery_output_sha256": delivery["native_returned_sha256"],
             "origin_record_sha256": origin["origin_record_sha256"],
             "created_monotonic": issued,
             "owner_expires_monotonic": float(owner.expires_monotonic),
@@ -4585,7 +4797,35 @@ class RootCoreNativeObservationRegistry:
                         or record["content_sha256"] != content_sha
                         or record["base_sha256"] != arguments["expected_base_sha256"]):
                     raise ValueError("draft has no current root-retained private origin")
-                reviewed = self._read_obsidian_owner_draft(data_root, registered_owner, draft_id)
+                try:
+                    reviewed = self._read_obsidian_owner_draft(data_root, registered_owner, draft_id)
+                except Exception:
+                    reservation = next((row for row in self._obsidian_origin_history
+                        if row.get("phase") in {"reserved", "completed"}
+                        and row["origin"].get("origin_record_sha256") == record["origin_record_sha256"]
+                        and row["result"].get("content_sha256") == content_sha
+                        and row["result"].get("destination") == arguments["destination"]), None)
+                    if reservation is None:
+                        raise ValueError("origin has no exact recoverable promotion reservation") from None
+                    from hermes_installer.remote.obsidian_second_brain import _note_relative_path, _opaque_id, _draft_projection
+                    store = self._obsidian_store_for_origin(data_root, registered_owner)
+                    private = store.read_private_draft(
+                        execution_id=record["origin_execution_id"], draft_id=draft_id,
+                        source_instance_id=record["origin_source_id"])
+                    relative = _note_relative_path(reservation["result"]["destination"])
+                    saved = store._read_optional_note(relative)
+                    if (private.get("state") != "promoted"
+                            or private.get("contentSha256") != content_sha
+                            or private.get("promotedSha256") != content_sha
+                            or private.get("baseSha256") != record["base_sha256"]
+                            or private.get("destinationId") != _opaque_id(relative)
+                            or saved is None or saved[1] != content_sha
+                            or saved[0] != private.get("markdown")
+                            or not store._has_exact_promotion_revision(
+                                relative, record["base_sha256"], content_sha)):
+                        raise ValueError("promoted bytes do not match the exact durable revision intent") from None
+                    reviewed = SimpleNamespace(
+                        draft=_draft_projection(draft_id, private), markdown=private["markdown"])
                 if (reviewed.draft.execution_id != record["origin_execution_id"]
                         or reviewed.draft.source_instance_id != record["origin_source_id"]
                         or reviewed.draft.content_sha256 != record["content_sha256"]
@@ -4613,6 +4853,180 @@ class RootCoreNativeObservationRegistry:
                     "base_sha256": record["base_sha256"],
                     "origin_record_sha256": origin_record_sha, "state": record["state"],
                     "issued_monotonic": issued, "expires_monotonic": expiry}
+            if op == "reserve-obsidian-draft-completion":
+                required = {"schema", "op", "nonce", "observed_call_handle", "startup_binding_id",
+                    "draft_id", "origin_record_sha256", "proposal_sha256", "pending_id",
+                    "review_sha256", "destination", "expected_base_sha256"}
+                if set(request) != required:
+                    raise ValueError("Obsidian completion reservation schema mismatch")
+                handle, binding_id = request["observed_call_handle"], request["startup_binding_id"]
+                draft_id = request["draft_id"]
+                if (not isinstance(handle, str) or not _OPAQUE.fullmatch(handle)
+                        or not isinstance(binding_id, str) or not _OPAQUE.fullmatch(binding_id)
+                        or not isinstance(draft_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,64}", draft_id)
+                        or not all(_HASH.fullmatch(request[name] or "") for name in (
+                            "origin_record_sha256", "proposal_sha256", "review_sha256"))
+                        or not isinstance(request["pending_id"], str)
+                        or not _OPAQUE.fullmatch(request["pending_id"])
+                        or not isinstance(request["destination"], str)
+                        or (request["expected_base_sha256"] is not None
+                            and not _HASH.fullmatch(request["expected_base_sha256"] or ""))):
+                    raise ValueError("Obsidian completion reservation identity is malformed")
+                call, owner, source, mode = self._classify_current_call(
+                    handle, peer, now=time.monotonic())
+                if call["tool_name"] != "obsidian_promote_reviewed_draft" or mode != "master_effect":
+                    raise ValueError("only current Jarvis promotion can reserve completion capacity")
+                proposal = self._obsidian_draft_review_proposals.get(handle)
+                if (proposal is None or proposal["draft_id"] != draft_id
+                        or proposal["proposal_sha256"] != request["proposal_sha256"]
+                        or proposal["origin_record_sha256"] != request["origin_record_sha256"]
+                        or proposal["arguments_sha256"] != call["arguments_sha256"]
+                        or proposal["expires_monotonic"] <= time.monotonic()):
+                    raise ValueError("completion reservation differs from the exact current Jarvis proposal")
+                arguments = json.loads(call["arguments"].decode("utf-8", "strict"),
+                                       object_pairs_hook=_unique_json_pairs)
+                if (type(arguments) is not dict or _canonical(arguments) != call["arguments"]
+                        or arguments.get("review_disposition") != "approve"
+                        or arguments.get("draft_id") != draft_id
+                        or arguments.get("expected_draft_sha256") != proposal["content_sha256"]
+                        or arguments.get("destination") != request["destination"]
+                        or arguments.get("expected_base_sha256") != request["expected_base_sha256"]):
+                    raise ValueError("completion reservation does not match exact observed owner arguments")
+                data_root, registered_owner, registration_sha, startup = \
+                    self._validate_obsidian_origin_binding(
+                        peer=peer, binding_id=binding_id, owner=owner, now=time.monotonic())
+                origin_key = (owner.owner_subject_sha256, draft_id)
+                origin = self._obsidian_draft_origins.get(origin_key)
+                if (origin is None or origin["origin_record_sha256"] != request["origin_record_sha256"]
+                        or origin["registration_sha256"] != registration_sha
+                        or _obsidian_origin_record_digest(origin) != origin["origin_record_sha256"]
+                        or origin["content_sha256"] != proposal["content_sha256"]
+                        or origin["base_sha256"] != request["expected_base_sha256"]):
+                    raise ValueError("active root draft origin differs from completion reservation")
+                expected_ledger = {
+                    "owner_turn_handle": owner.owner_turn_handle,
+                    "gateway_turn_id": owner.gateway_turn_id,
+                    "owner_subject_sha256": owner.owner_subject_sha256,
+                    "core_generation": owner.core_generation,
+                    "core_source_generation": owner.core_source_generation,
+                    "source_generation_sha256": source.generation_sha256,
+                    "source_profile_id": "hermes", "tool_call_id": call["tool_call_id"],
+                    "tool_name": call["tool_name"], "arguments_sha256": call["arguments_sha256"],
+                    "review_sha256": request["review_sha256"],
+                }
+                if (proposal["_pending_id"] != request["pending_id"]
+                        or proposal["_review_sha256"] != request["review_sha256"]
+                        or self._final_effect_ledger().poll(
+                            request["pending_id"], request["review_sha256"],
+                            expected=expected_ledger) != "spent"):
+                    raise ValueError("exact current owner approval is not spent for the capacity reservation")
+                store = self._obsidian_store_for_origin(data_root, registered_owner)
+                private = store.read_private_draft(
+                    execution_id=origin["origin_execution_id"], draft_id=draft_id,
+                    source_instance_id=origin["origin_source_id"])
+                if (private.get("contentSha256") != proposal["content_sha256"]
+                        or private.get("baseSha256") != origin["base_sha256"]
+                        or private.get("title") is None):
+                    raise ValueError("independent private draft readback differs from the approved reservation")
+                from hermes_installer.remote.obsidian_second_brain import _note_relative_path, _opaque_id
+                relative = _note_relative_path(request["destination"])
+                observed_note = store._read_optional_note(relative)
+                observed_digest = None if observed_note is None else observed_note[1]
+                if observed_digest not in {origin["base_sha256"], proposal["content_sha256"]}:
+                    raise ValueError("destination changed outside the exact retryable promotion intent")
+                note_id = _opaque_id(relative)
+                result = {"destination": relative, "note_id": note_id,
+                    "title": private["title"], "content_sha256": proposal["content_sha256"],
+                    "state": "promoted"}
+                archived_proposal = _obsidian_archive_proposal(proposal)
+                archived_approval = _obsidian_archive_approval(
+                    pending_id=request["pending_id"], review_sha256=request["review_sha256"],
+                    owner=owner, source_generation_sha256=source.generation_sha256, call=call)
+                existing_index = next((index for index, row in enumerate(self._obsidian_origin_history)
+                    if row["origin"]["origin_record_sha256"] == origin["origin_record_sha256"]), None)
+                history = list(self._obsidian_origin_history)
+                if existing_index is not None:
+                    prior_result = history[existing_index]["result"]
+                    if any(prior_result.get(key) != result.get(key) for key in (
+                            "content_sha256", "destination", "note_id", "title")):
+                        raise ValueError(
+                            "Obsidian draft already has a durable reservation for another exact destination")
+                if existing_index is None:
+                    if len(history) >= _OBSIDIAN_ORIGIN_HISTORY_MAX_RECORDS:
+                        raise ValueError("root Obsidian history capacity is full before note write")
+                    record_id = secrets.token_urlsafe(32)
+                    attempts = [{"proposal": archived_proposal, "approval": archived_approval}]
+                    completed_at = time.time()
+                    phase = "reserved"
+                else:
+                    prior = history[existing_index]
+                    if prior.get("phase") not in {"reserved", "completed"}:
+                        raise ValueError("legacy completed archive cannot reserve a new write attempt")
+                    attempts = list(prior.get("attempts", ({
+                        "proposal": prior["proposal"], "approval": prior["approval"]},)))
+                    current_attempt = {"proposal": archived_proposal, "approval": archived_approval}
+                    if not attempts or attempts[-1] != current_attempt:
+                        if len(attempts) >= 8:
+                            raise ValueError("root Obsidian completion retry history is full")
+                        attempts.append(current_attempt)
+                    record_id = prior["record_id"]
+                    completed_at = prior["completed_at"]
+                    phase = prior.get("phase", "completed")
+                reserved = _obsidian_archive_row(record_id=record_id, phase=phase,
+                    origin=origin, proposal=archived_proposal, approval=archived_approval,
+                    result=result, completed_at=completed_at, attempts=attempts)
+                final = _obsidian_archive_row(record_id=record_id, phase="completed",
+                    origin=origin, proposal=archived_proposal, approval=archived_approval,
+                    result=result, completed_at=completed_at, attempts=attempts)
+                candidate = list(history)
+                if existing_index is None:
+                    candidate.append(reserved)
+                else:
+                    candidate[existing_index] = reserved
+                projected_history = list(candidate)
+                projected_history[-1 if existing_index is None else existing_index] = final
+                if (len(projected_history) > _OBSIDIAN_ORIGIN_HISTORY_MAX_RECORDS
+                        or len(_canonical({"schema": 1, "records": projected_history}))
+                            > _OBSIDIAN_ORIGIN_HISTORY_MAX_BYTES):
+                    raise ValueError("root Obsidian archive lacks exact completion capacity before note write")
+                projected_tombstone = _reserved_origin_tombstone(final)
+                if projected_tombstone is None:
+                    raise ValueError("root Obsidian completion tombstone could not be reserved")
+                projected_completed = dict(self._obsidian_completed_drafts)
+                projected_records = dict(self._obsidian_draft_origins)
+                reserved_keys: set[tuple[str, str]] = set()
+                for history_row in candidate:
+                    tombstone = _reserved_origin_tombstone(history_row)
+                    if tombstone is None:
+                        continue
+                    tombstone_key = (tombstone["owner_subject_sha256"], tombstone["draft_id"])
+                    if tombstone_key not in projected_records and tombstone_key not in projected_completed:
+                        continue
+                    existing_tombstone = projected_completed.get(tombstone_key)
+                    if existing_tombstone is not None and existing_tombstone != tombstone:
+                        raise ValueError("root Obsidian draft has a different completed tombstone")
+                    projected_completed[tombstone_key] = tombstone
+                    if tombstone_key in projected_records:
+                        reserved_keys.add(tombstone_key)
+                projected_records.pop((owner.owner_subject_sha256, draft_id), None)
+                projected_record_rows = [projected_records[key]
+                    for key in sorted(projected_records) if key not in reserved_keys]
+                projected_origin_raw = _canonical({"schema": 2,
+                    "records": projected_record_rows,
+                    "completed": [projected_completed[key] for key in sorted(projected_completed)]})
+                if (len(projected_record_rows) + len(projected_completed)
+                        > _OBSIDIAN_ORIGIN_MAX_RECORDS
+                        or len(projected_origin_raw) > _OBSIDIAN_ORIGIN_MAX_BYTES):
+                    raise ValueError("root Obsidian completion tombstone capacity is full before note write")
+                if existing_index is None:
+                    history.append(reserved)
+                else:
+                    history[existing_index] = reserved
+                self._persist_obsidian_history(history)
+                self._obsidian_origin_history = history
+                latest = history[existing_index if existing_index is not None else -1]
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                    "reservation_record_sha256": latest["record_sha256"]}
             if op == "complete-obsidian-draft-origin":
                 required = {"schema", "op", "nonce", "observed_call_handle", "startup_binding_id",
                     "draft_id", "origin_record_sha256", "proposal_sha256", "pending_id",
@@ -4727,57 +5141,34 @@ class RootCoreNativeObservationRegistry:
                         or verified_at >= min(float(call["expiry"]), float(owner.expires_monotonic),
                                               float(startup["expiry"]))):
                     raise ValueError("current owner, source, registration, or original deadline changed during readback")
-                now = time.time()
                 archive_row = next((row for row in self._obsidian_origin_history
                     if row["origin"]["origin_record_sha256"] == origin["origin_record_sha256"]
                     and row["proposal"].get("proposal_sha256") == proposal["proposal_sha256"]), None)
                 if archive_row is None:
-                    if len(self._obsidian_origin_history) >= _OBSIDIAN_ORIGIN_HISTORY_MAX_RECORDS:
-                        raise ValueError("root Obsidian history capacity is full; active draft retained")
-                    archived_proposal = {key: proposal[key] for key in (
-                        "proposal_id", "proposal_sha256", "owner_subject_sha256", "owner_turn_handle",
-                        "draft_id", "content_sha256", "destination", "expected_base_sha256",
-                        "disposition", "observed_call_handle", "tool_call_id", "arguments_sha256",
-                        "source_generation_sha256", "read_delivery_receipt_id",
-                        "read_delivery_sha256", "origin_record_sha256")}
-                    archive_body = {
-                        "record_id": secrets.token_urlsafe(32),
-                        "origin": dict(origin),
-                        "proposal": archived_proposal,
-                        "approval": {"pending_id": request["pending_id"],
-                            "review_sha256": request["review_sha256"],
-                            "owner_subject_sha256": owner.owner_subject_sha256,
-                            "owner_turn_handle": owner.owner_turn_handle,
-                            "source_generation_sha256": source.generation_sha256,
-                            "observed_call_handle": call["handle"],
-                            "tool_call_id": call["tool_call_id"],
-                            "arguments_sha256": call["arguments_sha256"]},
-                        "result": {"destination": relative, "note_id": request["note_id"],
-                            "title": request["title"], "content_sha256": request["content_sha256"],
-                            "state": "promoted"},
-                        "completed_at": now,
-                    }
-                    archive_row = {**archive_body,
-                        "record_sha256": hashlib.sha256(_canonical(archive_body)).hexdigest()}
-                    history = [*self._obsidian_origin_history, archive_row]
-                    self._persist_obsidian_history(history)
-                    self._obsidian_origin_history = history
-                else:
-                    if (archive_row["approval"]["pending_id"] != request["pending_id"]
+                    raise ValueError("root completion reservation is missing; active draft retained")
+                if (archive_row.get("phase") not in {"reserved", "completed"}
+                        or archive_row["approval"]["pending_id"] != request["pending_id"]
                             or archive_row["approval"]["review_sha256"] != request["review_sha256"]
                             or archive_row["result"]["content_sha256"] != request["content_sha256"]
                             or archive_row["result"]["note_id"] != request["note_id"]
                             or archive_row["result"]["destination"] != relative
                             or archive_row["result"]["title"] != request["title"]):
-                        raise ValueError("a different completion already occupies this origin history")
-                tombstone_body = {"owner_subject_sha256": owner.owner_subject_sha256,
-                    "draft_id": draft_id, "origin_record_sha256": origin["origin_record_sha256"],
-                    "history_record_id": archive_row["record_id"],
-                    "history_record_sha256": archive_row["record_sha256"],
-                    "destination": relative, "note_id": request["note_id"],
-                    "content_sha256": request["content_sha256"], "completed_at": now}
-                tombstone = {**tombstone_body,
-                    "completed_record_sha256": hashlib.sha256(_canonical(tombstone_body)).hexdigest()}
+                    raise ValueError("completion differs from the exact durable capacity reservation")
+                if archive_row.get("phase") != "completed":
+                    final_row = _obsidian_archive_row(
+                        record_id=archive_row["record_id"], phase="completed",
+                        origin=archive_row["origin"], proposal=archive_row["proposal"],
+                        approval=archive_row["approval"], result=archive_row["result"],
+                        completed_at=archive_row["completed_at"],
+                        attempts=list(archive_row.get("attempts", ())))
+                    history = list(self._obsidian_origin_history)
+                    history[history.index(archive_row)] = final_row
+                    self._persist_obsidian_history(history)
+                    self._obsidian_origin_history = history
+                    archive_row = final_row
+                tombstone = _reserved_origin_tombstone(archive_row)
+                if tombstone is None:
+                    raise ValueError("verified archive cannot produce its reserved completion tombstone")
                 remaining = dict(self._obsidian_draft_origins)
                 remaining.pop(origin_key)
                 completed = dict(self._obsidian_completed_drafts)
@@ -4842,7 +5233,35 @@ class RootCoreNativeObservationRegistry:
                         or record["origin_record_sha256"] != proposal["origin_record_sha256"]
                         or _obsidian_origin_record_digest(record) != record["origin_record_sha256"]):
                     raise ValueError("proposal origin no longer joins current root provenance")
-                reviewed = self._read_obsidian_owner_draft(data_root, registered_owner, draft_id)
+                try:
+                    reviewed = self._read_obsidian_owner_draft(data_root, registered_owner, draft_id)
+                except Exception:
+                    reservation = next((row for row in self._obsidian_origin_history
+                        if row.get("phase") in {"reserved", "completed"}
+                        and row["origin"].get("origin_record_sha256") == record["origin_record_sha256"]
+                        and row["result"].get("content_sha256") == content_sha
+                        and row["result"].get("destination") == proposal["destination"]), None)
+                    if reservation is None:
+                        raise ValueError("proposal has no exact recoverable promotion reservation") from None
+                    from hermes_installer.remote.obsidian_second_brain import _note_relative_path, _opaque_id, _draft_projection
+                    store = self._obsidian_store_for_origin(data_root, registered_owner)
+                    private = store.read_private_draft(
+                        execution_id=record["origin_execution_id"], draft_id=draft_id,
+                        source_instance_id=record["origin_source_id"])
+                    relative = _note_relative_path(proposal["destination"])
+                    saved = store._read_optional_note(relative)
+                    if (private.get("state") != "promoted"
+                            or private.get("contentSha256") != content_sha
+                            or private.get("promotedSha256") != content_sha
+                            or private.get("baseSha256") != proposal["expected_base_sha256"]
+                            or private.get("destinationId") != _opaque_id(relative)
+                            or saved is None or saved[1] != content_sha
+                            or saved[0] != private.get("markdown")
+                            or not store._has_exact_promotion_revision(
+                                relative, proposal["expected_base_sha256"], content_sha)):
+                        raise ValueError("proposal bytes do not match the exact reserved revision intent") from None
+                    reviewed = SimpleNamespace(
+                        draft=_draft_projection(draft_id, private), markdown=private["markdown"])
                 if (reviewed.draft.content_sha256 != content_sha
                         or reviewed.draft.base_sha256 != proposal["expected_base_sha256"]
                         or hashlib.sha256(reviewed.markdown.encode("utf-8", "strict")).hexdigest()
@@ -4896,7 +5315,39 @@ class RootCoreNativeObservationRegistry:
                         or record["registration_sha256"] != registration_sha
                         or record["content_sha256"] != content_sha):
                     raise ValueError("draft has no retained pending private origin")
-                reviewed = self._read_obsidian_owner_draft(data_root, registered_owner, draft_id)
+                try:
+                    reviewed = self._read_obsidian_owner_draft(data_root, registered_owner, draft_id)
+                except Exception:
+                    # A prior exact promotion may have committed the public CAS
+                    # and private marker but lost the root archive/tombstone
+                    # write. Permit a fresh Jarvis review only when the durable
+                    # reservation and exact revision journal join all bytes.
+                    reservation = next((row for row in self._obsidian_origin_history
+                        if row.get("phase") in {"reserved", "completed"}
+                        and row["origin"].get("origin_record_sha256")
+                            == record["origin_record_sha256"]
+                        and row["result"].get("content_sha256") == content_sha), None)
+                    if reservation is None:
+                        raise ValueError("draft has no pending origin or exact recoverable promotion reservation") from None
+                    from hermes_installer.remote.obsidian_second_brain import _note_relative_path, _opaque_id, _draft_projection
+                    store = self._obsidian_store_for_origin(data_root, registered_owner)
+                    private = store.read_private_draft(
+                        execution_id=record["origin_execution_id"], draft_id=draft_id,
+                        source_instance_id=record["origin_source_id"])
+                    relative = _note_relative_path(reservation["result"]["destination"])
+                    saved = store._read_optional_note(relative)
+                    if (private.get("state") != "promoted"
+                            or private.get("contentSha256") != content_sha
+                            or private.get("promotedSha256") != content_sha
+                            or private.get("baseSha256") != record["base_sha256"]
+                            or private.get("destinationId") != _opaque_id(relative)
+                            or saved is None or saved[1] != content_sha
+                            or saved[0] != private.get("markdown")
+                            or not store._has_exact_promotion_revision(
+                                relative, record["base_sha256"], content_sha)):
+                        raise ValueError("prior promotion does not join its exact reserved revision intent") from None
+                    reviewed = SimpleNamespace(
+                        draft=_draft_projection(draft_id, private), markdown=private["markdown"])
                 draft = reviewed.draft
                 markdown = reviewed.markdown
                 markdown_bytes = markdown.encode("utf-8", "strict")
@@ -4941,6 +5392,42 @@ class RootCoreNativeObservationRegistry:
                         if row["expires_monotonic"] > issued}
                 if len(self._obsidian_draft_read_deliveries) >= _OBSIDIAN_DELIVERY_MAX_RECORDS:
                     raise ValueError("current-turn Obsidian read-delivery receipt capacity is full")
+                delivery = self._record_obsidian_draft_read_delivery(
+                    call=call, owner=owner, master_source=master_source,
+                    startup=startup, startup_binding_id=binding_id,
+                    draft_id=draft_id, content_sha256=content_sha,
+                    origin_record_sha256=record["origin_record_sha256"],
+                    returned_markdown=markdown if complete else None,
+                    complete=complete, delivered_monotonic=issued)
+                delivery_wire = {key: delivery[key] for key in (
+                    "receipt_id", "owner_subject_sha256", "owner_turn_handle", "draft_id",
+                    "content_sha256", "origin_record_sha256", "source_generation_sha256",
+                    "startup_binding_id", "observed_call_handle", "tool_call_id",
+                    "arguments_sha256", "returned_byte_length", "returned_content_sha256",
+                    "complete", "covered_byte_length", "delivered_monotonic",
+                    "expires_monotonic", "receipt_sha256")}
+                tool_result = {
+                    "draft_id": draft_id, "title": draft.title,
+                    "markdown": markdown if complete else None,
+                    "content_sha256": content_sha, "byte_length": len(markdown_bytes),
+                    "review_complete": complete,
+                    "next_step": None if complete else
+                        "Use the owner draft review flow to reduce the draft before Jarvis reviews it.",
+                    "base_note_id": draft.base_note_id, "base_sha256": draft.base_sha256,
+                    "origin": {"source_id": record["origin_source_id"],
+                        "source_revision": record["origin_source_revision"],
+                        "execution_id": record["origin_execution_id"],
+                        "mission_sha256": record["mission_sha256"],
+                        "source_generation_sha256": record["source_generation_sha256"]},
+                    "read_delivery": {"receipt_id": delivery["receipt_id"],
+                        "receipt_sha256": delivery["receipt_sha256"],
+                        "complete": delivery["complete"],
+                        "covered_byte_length": delivery["covered_byte_length"]},
+                }
+                delivery["tool_result_sha256"] = hashlib.sha256(
+                    _canonical(tool_result)).hexdigest()
+                self._obsidian_draft_read_deliveries[
+                    delivery["receipt_id"]]["tool_result_sha256"] = delivery["tool_result_sha256"]
                 return {"schema": 1, "nonce": nonce, "ok": True,
                     "draft_id": draft_id, "title": draft.title,
                     "markdown": markdown if complete else None,
@@ -4955,14 +5442,53 @@ class RootCoreNativeObservationRegistry:
                     "mission_sha256": record["mission_sha256"],
                     "source_generation_sha256": record["source_generation_sha256"],
                     "origin_record_sha256": record["origin_record_sha256"],
-                    "delivery": self._record_obsidian_draft_read_delivery(
-                        call=call, owner=owner, master_source=master_source,
-                        startup=startup, startup_binding_id=binding_id,
-                        draft_id=draft_id, content_sha256=content_sha,
-                        origin_record_sha256=record["origin_record_sha256"],
-                        returned_markdown=markdown if complete else None,
-                        complete=complete, delivered_monotonic=issued),
+                    "delivery": delivery_wire,
                     "issued_monotonic": issued, "expires_monotonic": expiry}
+            if op == "confirm-obsidian-draft-read-delivery":
+                required = {"schema", "op", "nonce", "observed_call_handle", "startup_binding_id",
+                    "receipt_id", "receipt_sha256", "tool_result_sha256", "byte_length"}
+                if set(request) != required:
+                    raise ValueError("Obsidian returned-result confirmation schema mismatch")
+                handle, binding_id = request["observed_call_handle"], request["startup_binding_id"]
+                receipt_id = request["receipt_id"]
+                if (not isinstance(handle, str) or not _OPAQUE.fullmatch(handle)
+                        or not isinstance(binding_id, str) or not _OPAQUE.fullmatch(binding_id)
+                        or not isinstance(receipt_id, str) or not _OPAQUE.fullmatch(receipt_id)
+                        or not _HASH.fullmatch(request["receipt_sha256"] or "")
+                        or not _HASH.fullmatch(request["tool_result_sha256"] or "")
+                        or type(request["byte_length"]) is not int or request["byte_length"] < 0):
+                    raise ValueError("Obsidian returned-result identity is malformed")
+                call, owner, master_source, mode = self._classify_current_call(
+                    handle, peer, now=time.monotonic())
+                if (call["tool_name"] != "obsidian_read_private_draft" or mode != "master_read"):
+                    raise ValueError("only current Jarvis exact-draft result can be confirmed")
+                row = self._obsidian_draft_read_deliveries.get(receipt_id)
+                if (row is None or row["observed_call_handle"] != handle
+                        or row["owner_turn_handle"] != owner.owner_turn_handle
+                        or row["owner_subject_sha256"] != owner.owner_subject_sha256
+                        or row["receipt_sha256"] != request["receipt_sha256"]
+                        or row.get("tool_result_sha256") != request["tool_result_sha256"]
+                        or row["returned_byte_length"] != request["byte_length"]
+                        or row["expires_monotonic"] <= time.monotonic()):
+                    raise ValueError("native result differs from the exact root-prepared draft output")
+                _data_root, _registered_owner, registration_sha, startup = \
+                    self._validate_obsidian_origin_binding(
+                        peer=peer, binding_id=binding_id, owner=owner, now=time.monotonic())
+                current_origin = self._obsidian_draft_origins.get(
+                    (owner.owner_subject_sha256, row["draft_id"]))
+                if (startup["binding_id"] != row["startup_binding_id"]
+                        or current_origin is None
+                        or registration_sha != current_origin["registration_sha256"]
+                        or current_origin["origin_record_sha256"] != row["origin_record_sha256"]
+                        or master_source is None
+                        or master_source.is_current_sealed(self._custody, now=time.monotonic()) is not True
+                        or master_source.generation_sha256 != row["source_generation_sha256"]):
+                    raise ValueError("current Jarvis source or owner registration changed before result confirmation")
+                if row.get("native_returned_sha256") not in (None, request["tool_result_sha256"]):
+                    raise ValueError("a different native draft result was already returned")
+                row["native_returned_sha256"] = request["tool_result_sha256"]
+                return {"schema": 1, "nonce": nonce, "ok": True, "confirmed": True,
+                    "receipt_sha256": row["receipt_sha256"]}
             if op == "planning-turn-context":
                 if set(request) != {"schema", "op", "nonce", "session_id", "turn_id", "prompt_sha256"}:
                     raise ValueError("planning-turn lookup schema mismatch")

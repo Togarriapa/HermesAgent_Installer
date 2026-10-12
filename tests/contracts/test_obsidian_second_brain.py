@@ -154,10 +154,11 @@ def test_stale_external_edit_keeps_owner_bytes_and_reviewed_draft(tmp_path):
     args = {
         "draft_id": draft.draft_id,
         "expected_draft_sha256": draft.content_sha256, "destination": "Notes/Target.md",
-        "expected_base_sha256": base_sha,
+        "expected_base_sha256": base_sha, "review_disposition": "approve",
     }
     observed, permit = _root_effect_proof(args, OWNER)
-    args["origin"] = _origin_proof(draft, OWNER)
+    origin = _origin_proof(draft, OWNER)
+    proposal = _draft_review_proposal(args, observed, origin, OWNER)
     from unittest.mock import patch
     from hermes_installer.native_invocations import NativeToolDispatch, canonical_tool_arguments
 
@@ -168,14 +169,15 @@ def test_stale_external_edit_keeps_owner_bytes_and_reviewed_draft(tmp_path):
     with patch("hermes_installer.native_invocations.current_native_tool_dispatch",
                return_value=dispatch):
         with pytest.raises(ObsidianVaultConflict, match="changed after review"):
-            store.promote_reviewed_draft(**args, observed_call=observed, permit=permit)
+            store.promote_reviewed_draft(**args, origin=origin, proposal=proposal,
+                                         observed_call=observed, permit=permit)
 
     assert "Concurrent Obsidian edit" in target.read_text(encoding="utf-8")
     assert store.read_private_draft(execution_id="mission_run_456",
                                     draft_id=draft.draft_id)["state"] == "private-draft"
 
 
-def test_promotion_requires_exact_typed_root_permit_and_current_dispatch(tmp_path):
+def test_promotion_retry_recovers_exact_committed_note_without_repeating_cas(tmp_path):
     store = _store(tmp_path / "managed")
     draft = store.create_private_draft(
         execution_id="mission_run_789", source_instance_id="jarvis",
@@ -184,10 +186,11 @@ def test_promotion_requires_exact_typed_root_permit_and_current_dispatch(tmp_pat
     args = {
         "draft_id": draft.draft_id,
         "expected_draft_sha256": draft.content_sha256, "destination": "Notes/Reviewed.md",
-        "expected_base_sha256": None,
+        "expected_base_sha256": None, "review_disposition": "approve",
     }
     observed, permit = _root_effect_proof(args, OWNER)
-    args["origin"] = _origin_proof(draft, OWNER)
+    origin = _origin_proof(draft, OWNER)
+    proposal = _draft_review_proposal(args, observed, origin, OWNER)
     from unittest.mock import patch
     from hermes_installer.native_invocations import NativeToolDispatch, canonical_tool_arguments
 
@@ -195,12 +198,42 @@ def test_promotion_requires_exact_typed_root_permit_and_current_dispatch(tmp_pat
                                           if key != "origin"})
     dispatch = NativeToolDispatch(object(), observed.tool_call_id,
                                   "obsidian_promote_reviewed_draft", canonical)
+    original_private = store._write_private
+    original_atomic = store._atomic_note_write
+    atomic_calls = 0
+
+    def fail_promoted_record(relative, content, **kwargs):
+        if relative.startswith("drafts/"):
+            raise OSError("injected private promoted-record failure")
+        return original_private(relative, content, **kwargs)
+
+    def count_atomic(*call_args, **call_kwargs):
+        nonlocal atomic_calls
+        atomic_calls += 1
+        return original_atomic(*call_args, **call_kwargs)
+
     with pytest.raises(ObsidianVaultError, match="exact current root owner permit"):
-        store.promote_reviewed_draft(**args, observed_call={}, permit={})
+        store.promote_reviewed_draft(**args, origin=origin, proposal=proposal,
+                                     observed_call={}, permit={})
+    with patch("hermes_installer.native_invocations.current_native_tool_dispatch",
+               return_value=dispatch), patch.object(store, "_write_private",
+                    side_effect=fail_promoted_record), patch.object(store,
+                    "_atomic_note_write", side_effect=count_atomic):
+        with pytest.raises(OSError, match="private promoted-record failure"):
+            store.promote_reviewed_draft(**args, origin=origin, proposal=proposal,
+                                         observed_call=observed, permit=permit)
+
+    assert atomic_calls == 1
+    assert (store._root / "Notes" / "Reviewed.md").read_text(encoding="utf-8") == "# Reviewed\nExact bytes.\n"
+    assert store.read_private_draft(execution_id="mission_789",
+                                    draft_id=draft.draft_id)["state"] == "private-draft"
+
     with patch("hermes_installer.native_invocations.current_native_tool_dispatch",
                return_value=dispatch):
-        saved = store.promote_reviewed_draft(**args, observed_call=observed, permit=permit)
+        saved = store.promote_reviewed_draft(**args, origin=origin, proposal=proposal,
+                                             observed_call=observed, permit=permit)
 
+    assert atomic_calls == 1
     assert saved.markdown == "# Reviewed\nExact bytes.\n"
     assert (store._root / "Notes" / "Reviewed.md").read_text(encoding="utf-8") == saved.markdown
     assert store.read_private_draft(execution_id="mission_run_789",
@@ -330,3 +363,29 @@ def _origin_proof(draft, owner):
         "origin_record_sha256": "d" * 64, "state": "private-draft",
         "issued_monotonic": issued, "expires_monotonic": issued + 4,
     })
+
+
+def _draft_review_proposal(arguments, observed, origin, owner):
+    from hermes_installer.remote.obsidian_native_scope import _decode_draft_review_proposal
+
+    issued = time.monotonic()
+    payload = {
+        "proposal_id": "Q" * 43, "owner_subject_sha256": owner,
+        "owner_turn_handle": observed.owner_turn_handle,
+        "draft_id": arguments["draft_id"],
+        "content_sha256": arguments["expected_draft_sha256"],
+        "destination": arguments["destination"],
+        "expected_base_sha256": arguments["expected_base_sha256"],
+        "disposition": arguments["review_disposition"], "rationale": None,
+        "observed_call_handle": observed.handle, "tool_call_id": observed.tool_call_id,
+        "arguments_sha256": observed.arguments_sha256, "source_generation_sha256": "2" * 64,
+        "read_delivery_receipt_id": "R" * 43, "read_delivery_sha256": "3" * 64,
+        "read_delivery_output_sha256": "4" * 64,
+        "origin_record_sha256": origin.origin_record_sha256,
+        "created_monotonic": issued, "owner_expires_monotonic": issued + 10,
+        "call_expires_monotonic": issued + 10, "expires_monotonic": issued + 10,
+    }
+    payload["proposal_sha256"] = hashlib.sha256(json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        allow_nan=False).encode("utf-8")).hexdigest()
+    return _decode_draft_review_proposal({"schema": 1, "nonce": "proposal", "ok": True, **payload})
