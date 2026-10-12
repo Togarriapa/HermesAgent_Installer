@@ -877,7 +877,135 @@ def _resume_adoption(candidate_sha: str, expected_source: Path, core_runtime,
         raise
 
 
-def _restore_legacy_core(core_runtime) -> bool:
+def _recover_installed_adapter_to_legacy(core_runtime, expected_source: Path) -> None:
+    """Recover the exact installed adapter transaction whose normal API only accepts active.
+
+    The Core migration API's public recovery path requires an ``active`` service
+    journal. The installer can successfully finish the migration while the
+    service journal remains ``installed``. In that one case, perform the same
+    proof-and-restore sequence here, accepting only the exact helper candidate,
+    journal, listener, plugin selection and immutable backup. No journal state
+    is rewritten to make the normal recovery API accept it.
+    """
+    expected_source = expected_source.resolve(strict=True)
+    if expected_source != Path(core_runtime.ADAPTER_SOURCE).resolve(strict=True):
+        raise RuntimeError("rollback helper and installed Core adapter source differ")
+    record = core_runtime._journal()
+    if (record.get("state") != "installed"
+            or record.get("adapter_migration_state") != "active"
+            or record.get("adapter_source") != str(expected_source)
+            or not re.fullmatch(r"[0-9a-f]{64}", str(record.get("adapter_generation", "")))
+            or not re.fullmatch(r"[0-9a-f]{64}", str(record.get("core_source_generation", "")))
+            or not re.fullmatch(r"[0-9a-f]{64}", str(record.get("plugin_selection_sha256", "")))):
+        raise RuntimeError("installed Core migration journal is not the exact recoverable candidate")
+    if (not core_runtime._owned_unit_loaded() or not core_runtime._owned_listener()
+            or core_runtime._core_source_generation() != record["core_source_generation"]):
+        raise RuntimeError("installed adapter Core identity is not verified")
+
+    from hermes_installer.remote.core_gateway_inspector import (
+        _current_native_adapter_generation,
+        verify_staged_native_resources_plugin,
+    )
+    from hermes_installer.remote.native_plugin_bootstrap import (
+        verify_native_resources_plugin_selection,
+        restore_native_resources_plugin_selection,
+    )
+
+    deadline = time.monotonic() + 35.0
+    selection = verify_native_resources_plugin_selection()
+    if (_current_native_adapter_generation(deadline=deadline) != record["adapter_generation"]
+            or not verify_staged_native_resources_plugin(deadline=deadline)
+            or getattr(selection, "selection_sha256", None) != record["plugin_selection_sha256"]):
+        raise RuntimeError("installed adapter generation or selected plugin changed")
+
+    backup = core_runtime.ADAPTER_MIGRATION_BACKUP
+    directory = backup.lstat()
+    if (not stat.S_ISDIR(directory.st_mode) or directory.st_uid != 0
+            or directory.st_gid != 0 or stat.S_IMODE(directory.st_mode) != 0o700
+            or set(os.listdir(backup)) != {
+                "journal.json", "unit", "launcher", "plugin-selection.json", "manifest.json"}):
+        raise RuntimeError("protected Core migration backup custody differs")
+    manifest_raw = core_runtime._projection_file(
+        backup / "manifest.json", owner=0, group=0, mode=0o600, maximum=4096)
+    try:
+        manifest = json.loads(manifest_raw)
+    except (ValueError, TypeError):
+        raise RuntimeError("protected Core migration manifest is invalid") from None
+    if (type(manifest) is not dict or manifest != record.get("adapter_migration_backup")
+            or set(manifest) != {"journal.json", "unit", "launcher", "plugin-selection.json"}):
+        raise RuntimeError("Core journal does not bind the exact protected backup")
+    backup_journal = core_runtime._projection_file(
+        backup / "journal.json", owner=0, group=0, mode=0o600, maximum=256 * 1024)
+    backup_unit = core_runtime._projection_file(
+        backup / "unit", owner=0, group=0, mode=0o600, maximum=256 * 1024)
+    backup_launcher = core_runtime._projection_file(
+        backup / "launcher", owner=0, group=0, mode=0o600, maximum=256 * 1024)
+    snapshot = core_runtime._projection_file(
+        backup / "plugin-selection.json", owner=0, group=0, mode=0o600, maximum=32 * 1024)
+    for name, data in (("journal.json", backup_journal), ("unit", backup_unit),
+                       ("launcher", backup_launcher),
+                       ("plugin-selection.json", snapshot)):
+        if hashlib.sha256(data).hexdigest() != manifest[name]:
+            raise RuntimeError("protected Core migration backup bytes differ")
+    try:
+        previous = json.loads(backup_journal)
+    except (ValueError, TypeError):
+        raise RuntimeError("protected prior Core journal is invalid") from None
+    if (type(previous) is not dict or previous.get("schema") != 1
+            or previous.get("service") != core_runtime.SERVICE
+            or previous.get("state") not in {"installed", "active"}
+            or backup_unit != core_runtime._unit()
+            or backup_launcher != core_runtime._legacy_launcher()
+            or previous.get("unit_sha256") != hashlib.sha256(backup_unit).hexdigest()
+            or previous.get("launcher_sha256") != hashlib.sha256(backup_launcher).hexdigest()):
+        raise RuntimeError("protected prior Core recipe or journal does not match")
+    token = core_runtime._projection_file(
+        core_runtime.TOKEN, owner=0, group=core_runtime.GATEWAY_GID,
+        mode=0o640, maximum=256)
+    if (len(token) != 65 or not token.endswith(b"\n")
+            or any(char not in b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
+                   for char in token[:-1])
+            or previous.get("token_sha256") != hashlib.sha256(token).hexdigest()):
+        raise RuntimeError("protected prior Core credential does not match its journal")
+    if (not core_runtime._owned_unit_loaded() or not core_runtime._owned_listener()
+            or core_runtime._core_source_generation() != record["core_source_generation"]):
+        raise RuntimeError("installed adapter Core changed during recovery preflight")
+
+    core_runtime._run(["systemctl", "stop", core_runtime.SERVICE])
+    if (core_runtime._run(["systemctl", "is-active", core_runtime.SERVICE], False).stdout.strip()
+            == "active"
+            or core_runtime._run(["systemctl", "show", "--property=MainPID", "--value",
+                                  core_runtime.SERVICE], False).stdout.strip() not in {"", "0"}
+            or core_runtime._owned_listener()):
+        raise RuntimeError("installed adapter Core did not stop cleanly")
+    try:
+        restored_selection = restore_native_resources_plugin_selection(
+            snapshot, expected_current_sha256=record["plugin_selection_sha256"])
+        core_runtime._restore_adapter_migration_backup()
+        core_runtime._run(["systemctl", "daemon-reload"])
+        if not core_runtime._owned_unit_loaded():
+            raise RuntimeError("restored Core service unit is not the exact owned unit")
+        core_runtime._run(["systemctl", "start", core_runtime.SERVICE])
+        restored, restored_raw, restored_files = core_runtime._read_legacy_owned_runtime()
+        if (restored != previous or restored_raw != backup_journal
+                or restored_files[core_runtime.UNIT] != backup_unit
+                or restored_files[core_runtime.LAUNCHER] != backup_launcher):
+            raise RuntimeError("restored Core differs from its protected prior bytes")
+        final_selection = verify_native_resources_plugin_selection()
+        if getattr(final_selection, "selection_sha256", None) != restored_selection:
+            raise RuntimeError("prior Hermes plugin selection did not verify")
+    except Exception:
+        try:
+            if (core_runtime._owned_unit_loaded()
+                    and core_runtime._run(["systemctl", "is-active", core_runtime.SERVICE],
+                                          False).stdout.strip() == "active"):
+                core_runtime._run(["systemctl", "stop", core_runtime.SERVICE])
+        except Exception:
+            pass
+        raise RuntimeError("bounded installed-Core recovery failed; protected backup retained") from None
+
+
+def _restore_legacy_core(core_runtime, expected_source: Path | None = None) -> bool:
     # This guarded API checks the protected migration state and is a no-op
     # when no interrupted migration exists. Do not query the native journal
     # directly: its current-adapter validation is intentionally unavailable
@@ -886,7 +1014,12 @@ def _restore_legacy_core(core_runtime) -> bool:
     if core_runtime._owned_listener(legacy_launcher=True):
         return True
     if core_runtime._owned_listener():
-        core_runtime.recover_owned_core_from_adapter_migration()
+        record = core_runtime._journal()
+        if record.get("state") == "installed":
+            _recover_installed_adapter_to_legacy(
+                core_runtime, expected_source or Path(core_runtime.ADAPTER_SOURCE))
+        else:
+            core_runtime.recover_owned_core_from_adapter_migration()
         return core_runtime._owned_listener(legacy_launcher=True)
     if not core_runtime._owned_unit_loaded():
         return False
@@ -972,7 +1105,7 @@ def main() -> int:
             _run("systemctl", "stop", GATEWAY)
             phase = "rollback Core through journal recovery"
             print("Adoption phase: " + phase, flush=True)
-            if not _restore_legacy_core(core_runtime):
+            if not _restore_legacy_core(core_runtime, expected_adapter_source):
                 raise RuntimeError("journaled Core rollback did not restore the legacy listener")
             phase = "rollback restore and verify prior ingress cohort"
             print("Adoption phase: " + phase, flush=True)
@@ -1075,7 +1208,7 @@ def main() -> int:
                 _run("systemctl", "stop", TUNNEL, check=False)
                 _run("systemctl", "stop", GATEWAY, check=False)
                 print("Recovery phase: restore legacy Core through journal", flush=True)
-                recovered = _restore_legacy_core(core_runtime)
+                recovered = _restore_legacy_core(core_runtime, expected_adapter_source)
             except Exception as failure:
                 recovery_error = failure
                 recovered = False
