@@ -692,9 +692,35 @@ def _refresh_migrated_core_config(candidate_sha: str, expected_source: Path,
     return replacement
 
 
-def _replace_ingress_units(new_units, new_config: bytes, config_info: os.stat_result) -> None:
+def _stat_cas_identity(info: os.stat_result) -> tuple[int, ...]:
+    return (info.st_dev, info.st_ino, info.st_uid, info.st_gid,
+            stat.S_IMODE(info.st_mode), info.st_size, info.st_mtime_ns)
+
+
+def _recheck_ingress_snapshot(saved, old_config: bytes,
+                              config_info: os.stat_result) -> None:
+    expected = {
+        FIXED_UNITS[INSPECTOR]: (*saved[FIXED_UNITS[INSPECTOR]], 0, 0, 0o644, 64 * 1024),
+        FIXED_UNITS[GATEWAY]: (*saved[FIXED_UNITS[GATEWAY]], 0, 0, 0o644, 64 * 1024),
+        GATEWAY_CONFIG: (old_config, config_info, 0, 981, 0o440, 16 * 1024),
+    }
+    for path, (expected_raw, expected_info, uid, gid, mode, maximum) in expected.items():
+        current_raw, current_info = _read_fixed(
+            path, uid=uid, gid=gid, mode=mode, maximum=maximum)
+        if (current_raw != expected_raw
+                or _stat_cas_identity(current_info) != _stat_cas_identity(expected_info)):
+            raise RuntimeError("fixed ingress files changed after the adoption snapshot")
+
+
+def _replace_ingress_units(new_units, new_config: bytes, config_info: os.stat_result,
+                           saved, old_config: bytes) -> None:
     if any(not _unit_is_fixed(name) for name in (INSPECTOR, GATEWAY, TUNNEL)):
         raise RuntimeError("fixed systemd unit ownership changed before source switch")
+    # The approved union arrives on stdin and the protected backup is written
+    # before this point. Recheck the exact captured inode/metadata/bytes at the
+    # last boundary before the first service stop, so delayed intake or backup
+    # creation cannot apply a candidate to a drifted ingress tuple.
+    _recheck_ingress_snapshot(saved, old_config, config_info)
     _run("systemctl", "stop", TUNNEL)
     _run("systemctl", "stop", GATEWAY)
     _run("systemctl", "stop", INSPECTOR)
@@ -1328,6 +1354,7 @@ def main() -> int:
         saved, old_config, config_info, new_units, new_config = _source_switch(
             expected_adapter_source,
             read_approved_email_union=args.approved_email_union_stdin)
+        _recheck_ingress_snapshot(saved, old_config, config_info)
         _save_ingress_backup(args.candidate_sha, saved, old_config, config_info,
                              new_units, new_config)
         base_inspector_sha = hashlib.sha256(new_units[FIXED_UNITS[INSPECTOR]]).hexdigest()
@@ -1345,7 +1372,7 @@ def main() -> int:
             # socket until the owner preparation and Core migration complete.
             phase = "stop ingress and atomically switch fixed Inspector and Gateway"
             print("Adoption phase: " + phase, flush=True)
-            _replace_ingress_units(new_units, new_config, config_info)
+            _replace_ingress_units(new_units, new_config, config_info, saved, old_config)
             _set_backup_state("units-switched")
             phase = "start and verify candidate Inspector"
             print("Adoption phase: " + phase, flush=True)

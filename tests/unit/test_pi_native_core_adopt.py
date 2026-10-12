@@ -300,15 +300,78 @@ def _switch_fixture(monkeypatch, *, gateway=None, inspector=None, config=None,
                         lambda _source: None if installed else
                         (_ for _ in ()).throw(RuntimeError("unowned source")))
     monkeypatch.setattr(adopt, "_unit_state", lambda _name: "active")
+    def file_info(raw, *, gid, mode, inode):
+        return SimpleNamespace(st_mode=stat.S_IFREG | mode, st_uid=0, st_gid=gid,
+                               st_dev=1, st_ino=inode, st_size=len(raw), st_mtime_ns=1)
+
     fixed = {
-        adopt.FIXED_UNITS[adopt.GATEWAY]: (gateway, SimpleNamespace(st_mode=stat.S_IFREG | 0o644, st_gid=0)),
-        adopt.FIXED_UNITS[adopt.INSPECTOR]: (inspector, SimpleNamespace(st_mode=stat.S_IFREG | 0o644, st_gid=0)),
-        adopt.GATEWAY_CONFIG: (config, SimpleNamespace(st_mode=stat.S_IFREG | 0o440, st_gid=981)),
+        adopt.FIXED_UNITS[adopt.GATEWAY]: (gateway, file_info(gateway, gid=0, mode=0o644, inode=1)),
+        adopt.FIXED_UNITS[adopt.INSPECTOR]: (inspector, file_info(inspector, gid=0, mode=0o644, inode=2)),
+        adopt.GATEWAY_CONFIG: (config, file_info(config, gid=981, mode=0o440, inode=3)),
     }
     monkeypatch.setattr(adopt, "_read_fixed", lambda path, **_kwargs: fixed[path])
     effects = []
     monkeypatch.setattr(adopt, "_run", lambda *args, **_kwargs: effects.append(args) or "")
     return fixed, effects, gateway, inspector, config
+
+
+@pytest.mark.parametrize("drift", ["gateway-bytes", "config-inode"])
+def test_ingress_drift_after_intake_refuses_before_any_stop_or_write(monkeypatch, drift):
+    fixed, effects, gateway, inspector, old_config = _switch_fixture(monkeypatch)
+    saved, config_raw, config_info, new_units, new_config = adopt._source_switch(
+        Path(NEW_SOURCE.decode()))
+    writes = []
+    monkeypatch.setattr(adopt, "_atomic_fixed", lambda *args, **kwargs: writes.append(args))
+    monkeypatch.setattr(adopt, "_unit_is_fixed", lambda _name: True)
+
+    if drift == "gateway-bytes":
+        path = adopt.FIXED_UNITS[adopt.GATEWAY]
+        raw, info = fixed[path]
+        changed = raw + b"# external replacement\n"
+        fixed[path] = (changed, SimpleNamespace(**{
+            **vars(info), "st_size": len(changed), "st_ino": info.st_ino + 10}))
+    else:
+        path = adopt.GATEWAY_CONFIG
+        raw, info = fixed[path]
+        fixed[path] = (raw, SimpleNamespace(**{**vars(info), "st_ino": info.st_ino + 10}))
+
+    with pytest.raises(RuntimeError, match="changed after the adoption snapshot"):
+        adopt._replace_ingress_units(new_units, new_config, config_info, saved, config_raw)
+
+    assert effects == []
+    assert writes == []
+    assert fixed[adopt.FIXED_UNITS[adopt.INSPECTOR]][0] == inspector
+
+
+def test_ingress_drift_after_union_intake_refuses_before_backup_effect(monkeypatch):
+    gateway = _unit("core_gateway")
+    old_config = json.dumps({
+        "gateway_unit_sha256": hashlib.sha256(gateway).hexdigest(),
+        "provider": "codex", "credential_ref": "keyring:codex-primary",
+        "selected_data_root": "/home/admin/.hermes", "port": 8766,
+        "allowed_emails": ["old@example.com"],
+    }, sort_keys=True).encode() + b"\n"
+    fixed, effects, _gateway, inspector, _old_config = _switch_fixture(
+        monkeypatch, gateway=gateway, config=old_config)
+    monkeypatch.setattr(adopt.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(adopt, "_read_approved_email_union",
+                        lambda: ("old@example.com", "new@example.com"))
+    saved, config_raw, config_info, _new_units, _new_config = adopt._source_switch(
+        Path(NEW_SOURCE.decode()), read_approved_email_union=True)
+    writes = []
+    path = adopt.FIXED_UNITS[adopt.INSPECTOR]
+    raw, info = fixed[path]
+    fixed[path] = (raw + b"# changed after intake\n", SimpleNamespace(
+        **{**vars(info), "st_size": len(raw) + len(b"# changed after intake\n"),
+           "st_ino": info.st_ino + 1}))
+    monkeypatch.setattr(adopt, "_save_ingress_backup", lambda *_args: writes.append("backup"))
+
+    with pytest.raises(RuntimeError, match="changed after the adoption snapshot"):
+        adopt._recheck_ingress_snapshot(saved, config_raw, config_info)
+
+    assert writes == []
+    assert effects == []
+    assert fixed[adopt.FIXED_UNITS[INSPECTOR]][0] != inspector
 
 
 def test_switch_changes_only_two_import_roots_and_gateway_digest(monkeypatch):
@@ -946,8 +1009,9 @@ def test_cli_rollback_recovers_core_before_restoring_old_ingress(monkeypatch, tm
     assert events[0] == ("source", candidate, source)
 
 
-@pytest.mark.parametrize("failure", [None, "owner", "migration", "migration-unclassified",
-                                     "inspector-restart", "fresh-observer"])
+@pytest.mark.parametrize("failure", [None, "ingress-drift", "owner", "migration",
+                                     "migration-unclassified", "inspector-restart",
+                                     "fresh-observer"])
 def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fresh(
         monkeypatch, tmp_path, failure, capsys):
     candidate = "c" * 40
@@ -1055,12 +1119,18 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
         return (1, 3)
 
     monkeypatch.setattr(adopt, "_wait_observer_socket", wait_socket)
-    monkeypatch.setattr(adopt, "_source_switch", lambda _source: (
+    monkeypatch.setattr(adopt, "_source_switch", lambda _source, **_kwargs: (
         {adopt.FIXED_UNITS[adopt.GATEWAY]: (old_gateway, None),
          adopt.FIXED_UNITS[adopt.INSPECTOR]: (old_inspector, None)},
         old_config, config_info,
         {adopt.FIXED_UNITS[adopt.GATEWAY]: new_gateway,
          adopt.FIXED_UNITS[adopt.INSPECTOR]: new_inspector}, new_config))
+    def recheck_snapshot(*_args):
+        events.append("recheck-ingress-snapshot")
+        if failure == "ingress-drift":
+            raise RuntimeError("fixed ingress files changed after the adoption snapshot")
+
+    monkeypatch.setattr(adopt, "_recheck_ingress_snapshot", recheck_snapshot)
     def save_backup(*_args):
         events.append("save-backup")
         backup_state["present"] = True
@@ -1132,6 +1202,14 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
         assert events.index(("restart", adopt.INSPECTOR)) < fresh_at
         assert backup_state["present"]
         assert "save-backup" in events and "remove-backup" not in events
+        assert events.index("recheck-ingress-snapshot") < events.index("save-backup")
+    elif failure == "ingress-drift":
+        assert result == 4
+        assert "recheck-ingress-snapshot" in events
+        assert "save-backup" not in events
+        assert not any(isinstance(event, tuple) and event[0] in {"stop", "start", "restart"}
+                       for event in events)
+        assert not backup_state["present"]
     else:
         assert result == 4
         assert not gateway_tunnel_starts
