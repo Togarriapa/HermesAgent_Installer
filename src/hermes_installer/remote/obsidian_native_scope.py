@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 import math
 import re
 import time
@@ -16,6 +18,10 @@ _VAULT_ROOT = "/home/admin/.hermes/jarvis-second-brain"
 _BINDING_SEAL = object()
 _SCOPE_SEAL = object()
 _DRAFT_ORIGIN_SEAL = object()
+_DRAFT_REVIEW_SEAL = object()
+_DRAFT_DELIVERY_SEAL = object()
+_DRAFT_PROPOSAL_SEAL = object()
+_MAX_REVIEW_MARKDOWN_BYTES = 32 * 1024
 
 
 class ObsidianRootScopeUnavailable(PermissionError):
@@ -191,6 +197,202 @@ class RootObsidianDraftOrigin:
             and self.base_sha256 == base_sha256 and self.state == "private-draft")
 
 
+@dataclass(frozen=True, slots=True)
+class RootObsidianDraftReview:
+    """Exact current pending-draft bytes and retained, sanitized origin for Jarvis review."""
+
+    draft_id: str
+    title: str
+    markdown: str | None
+    content_sha256: str
+    byte_length: int
+    review_complete: bool
+    next_step: str | None
+    base_note_id: str | None
+    base_sha256: str | None
+    origin_source_id: str
+    origin_source_revision: str
+    origin_execution_id: str
+    mission_sha256: str | None
+    source_generation_sha256: str
+    origin_record_sha256: str
+    delivery: "RootObsidianDraftReadDelivery"
+    issued_monotonic: float
+    expires_monotonic: float
+    _seal: object
+
+    def __post_init__(self) -> None:
+        now = time.monotonic()
+        if (not _IDENT.fullmatch(self.draft_id or "")
+                or not isinstance(self.title, str) or not 1 <= len(self.title) <= 160
+                or not _HASH.fullmatch(self.content_sha256 or "")
+                or type(self.byte_length) is not int or not 0 <= self.byte_length <= 262_144
+                or type(self.review_complete) is not bool
+                or (self.review_complete and self.next_step is not None)
+                or (not self.review_complete and self.next_step !=
+                    "Use the owner draft review flow to reduce the draft before Jarvis reviews it.")
+                or (self.review_complete and (not isinstance(self.markdown, str)
+                    or len(self.markdown.encode("utf-8", "strict")) != self.byte_length
+                    or self.byte_length > _MAX_REVIEW_MARKDOWN_BYTES
+                    or hashlib.sha256(self.markdown.encode("utf-8", "strict")).hexdigest()
+                        != self.content_sha256))
+                or (not self.review_complete and self.markdown is not None
+                    or not self.review_complete and self.byte_length <= _MAX_REVIEW_MARKDOWN_BYTES)
+                or (self.base_note_id is not None and not _IDENT.fullmatch(self.base_note_id or ""))
+                or (self.base_sha256 is not None and not _HASH.fullmatch(self.base_sha256 or ""))
+                or not _IDENT.fullmatch(self.origin_source_id or "")
+                or not isinstance(self.origin_source_revision, str)
+                or not 1 <= len(self.origin_source_revision) <= 128
+                or any(ord(char) < 0x20 for char in self.origin_source_revision)
+                or not _IDENT.fullmatch(self.origin_execution_id or "")
+                or (self.mission_sha256 is not None and not _HASH.fullmatch(self.mission_sha256 or ""))
+                or not all(_HASH.fullmatch(value or "") for value in (
+                    self.source_generation_sha256, self.origin_record_sha256))
+                or type(self.delivery) is not RootObsidianDraftReadDelivery
+                or self.delivery.draft_id != self.draft_id
+                or self.delivery.content_sha256 != self.content_sha256
+                or self.delivery.origin_record_sha256 != self.origin_record_sha256
+                or self.delivery.complete != self.review_complete
+                or any(type(value) not in (int, float) or not math.isfinite(value)
+                       for value in (self.issued_monotonic, self.expires_monotonic))
+                or not now < self.expires_monotonic <= min(self.issued_monotonic + 5.0, now + 5.0)
+                or self.issued_monotonic > now or self._seal is not _DRAFT_REVIEW_SEAL):
+            raise ObsidianRootScopeUnavailable("root Obsidian draft review is malformed or stale")
+
+
+@dataclass(frozen=True, slots=True)
+class RootObsidianDraftReadDelivery:
+    """Root-retained data receipt for a bounded exact-content delivery to the master turn."""
+
+    receipt_id: str
+    owner_subject_sha256: str
+    owner_turn_handle: str
+    draft_id: str
+    content_sha256: str
+    origin_record_sha256: str
+    source_generation_sha256: str
+    startup_binding_id: str
+    observed_call_handle: str
+    tool_call_id: str
+    arguments_sha256: str
+    returned_byte_length: int
+    returned_content_sha256: str
+    complete: bool
+    covered_byte_length: int
+    delivered_monotonic: float
+    expires_monotonic: float
+    receipt_sha256: str
+    _seal: object
+
+    def __post_init__(self) -> None:
+        now = time.monotonic()
+        if (not _OPAQUE.fullmatch(self.receipt_id or "")
+                or not all(_HASH.fullmatch(value or "") for value in (
+                    self.owner_subject_sha256, self.content_sha256, self.origin_record_sha256,
+                    self.source_generation_sha256, self.arguments_sha256,
+                    self.returned_content_sha256, self.receipt_sha256))
+                or not _OPAQUE.fullmatch(self.owner_turn_handle or "")
+                or not _IDENT.fullmatch(self.draft_id or "")
+                or not _OPAQUE.fullmatch(self.startup_binding_id or "")
+                or not _OPAQUE.fullmatch(self.observed_call_handle or "")
+                or not _IDENT.fullmatch(self.tool_call_id or "")
+                or type(self.returned_byte_length) is not int
+                or not 0 <= self.returned_byte_length <= 262_144
+                or type(self.complete) is not bool
+                or type(self.covered_byte_length) is not int
+                or self.covered_byte_length != (self.returned_byte_length if self.complete else 0)
+                or self.complete != (self.returned_content_sha256 == self.content_sha256)
+                or any(type(value) not in (int, float) or not math.isfinite(value)
+                       for value in (self.delivered_monotonic, self.expires_monotonic))
+                or not now < self.expires_monotonic <= now + 600.0
+                or self.delivered_monotonic > now or self._seal is not _DRAFT_DELIVERY_SEAL):
+            raise ObsidianRootScopeUnavailable("root Obsidian read-delivery receipt is malformed")
+
+
+@dataclass(frozen=True, slots=True)
+class RootJarvisDraftReviewProposal:
+    """Root-sealed record that Jarvis proposed approval after exact current-turn delivery."""
+
+    proposal_id: str
+    owner_subject_sha256: str
+    owner_turn_handle: str
+    draft_id: str
+    content_sha256: str
+    destination: str
+    expected_base_sha256: str | None
+    disposition: str
+    rationale: str | None
+    observed_call_handle: str
+    tool_call_id: str
+    arguments_sha256: str
+    source_generation_sha256: str
+    read_delivery_receipt_id: str
+    read_delivery_sha256: str
+    origin_record_sha256: str
+    created_monotonic: float
+    owner_expires_monotonic: float
+    call_expires_monotonic: float
+    expires_monotonic: float
+    proposal_sha256: str
+    _seal: object
+
+    def __post_init__(self) -> None:
+        now = time.monotonic()
+        if (not _OPAQUE.fullmatch(self.proposal_id or "")
+                or not all(_HASH.fullmatch(value or "") for value in (
+                    self.owner_subject_sha256, self.content_sha256, self.arguments_sha256,
+                    self.source_generation_sha256, self.read_delivery_sha256,
+                    self.origin_record_sha256))
+                or not _OPAQUE.fullmatch(self.owner_turn_handle or "")
+                or not _IDENT.fullmatch(self.draft_id or "")
+                or not isinstance(self.destination, str) or not 1 <= len(self.destination) <= 240
+                or (self.expected_base_sha256 is not None
+                    and not _HASH.fullmatch(self.expected_base_sha256 or ""))
+                or self.disposition != "approve"
+                or (self.rationale is not None and
+                    (not isinstance(self.rationale, str) or len(self.rationale) > 512
+                     or any(ord(char) < 0x20 and char not in "\n\t" for char in self.rationale)))
+                or not _OPAQUE.fullmatch(self.observed_call_handle or "")
+                or not _IDENT.fullmatch(self.tool_call_id or "")
+                or not _OPAQUE.fullmatch(self.read_delivery_receipt_id or "")
+                or not _HASH.fullmatch(self.proposal_sha256 or "")
+                or any(type(value) not in (int, float) or not math.isfinite(value)
+                       for value in (self.created_monotonic, self.owner_expires_monotonic,
+                                     self.call_expires_monotonic, self.expires_monotonic))
+                or not now < self.expires_monotonic <= min(now + 600.0,
+                    self.owner_expires_monotonic, self.call_expires_monotonic)
+                or self.created_monotonic > now or self._seal is not _DRAFT_PROPOSAL_SEAL):
+            raise ObsidianRootScopeUnavailable("root Jarvis draft-review proposal is malformed")
+        unhashed = {key: getattr(self, key) for key in (
+            "proposal_id", "owner_subject_sha256", "owner_turn_handle", "draft_id",
+            "content_sha256", "destination", "expected_base_sha256", "disposition",
+            "rationale", "observed_call_handle", "tool_call_id", "arguments_sha256",
+            "source_generation_sha256", "read_delivery_receipt_id", "read_delivery_sha256",
+            "origin_record_sha256", "created_monotonic", "owner_expires_monotonic",
+            "call_expires_monotonic", "expires_monotonic")}
+        digest = hashlib.sha256(json.dumps(
+            unhashed, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            allow_nan=False).encode("utf-8", "strict")).hexdigest()
+        if digest != self.proposal_sha256:
+            raise ObsidianRootScopeUnavailable("root Jarvis draft-review proposal digest differs")
+
+    def matches(self, *, observed_call: Any, origin: RootObsidianDraftOrigin,
+                owner_subject_sha256: str, owner_turn_handle: str,
+                expected_now: float | None = None) -> bool:
+        now = time.monotonic() if expected_now is None else expected_now
+        return bool(self._seal is _DRAFT_PROPOSAL_SEAL and now < self.expires_monotonic
+            and self.owner_subject_sha256 == owner_subject_sha256
+            and self.owner_turn_handle == owner_turn_handle
+            and getattr(observed_call, "handle", None) == self.observed_call_handle
+            and getattr(observed_call, "tool_call_id", None) == self.tool_call_id
+            and getattr(observed_call, "arguments_sha256", None) == self.arguments_sha256
+            and type(origin) is RootObsidianDraftOrigin
+            and origin._seal is _DRAFT_ORIGIN_SEAL
+            and origin.draft_id == self.draft_id
+            and origin.content_sha256 == self.content_sha256
+            and origin.origin_record_sha256 == self.origin_record_sha256)
+
+
 def _decode_startup_binding(row: Mapping[str, Any]) -> RootSelectedObsidianVaultBinding:
     expected = {"schema", "nonce", "ok", "binding_id", "registration_sha256",
         "owner_subject_sha256", "core_generation", "core_source_generation", "core_pid",
@@ -280,5 +482,109 @@ def _decode_draft_origin(row: Mapping[str, Any]) -> RootObsidianDraftOrigin:
         raise ObsidianRootScopeUnavailable("root Obsidian draft origin is invalid or stale") from None
 
 
+def _decode_draft_review(row: Mapping[str, Any]) -> RootObsidianDraftReview:
+    expected = {"schema", "nonce", "ok", "draft_id", "title", "markdown",
+        "content_sha256", "byte_length", "review_complete", "next_step",
+        "base_note_id", "base_sha256", "origin_source_id", "origin_source_revision",
+        "origin_execution_id", "mission_sha256", "source_generation_sha256",
+        "origin_record_sha256", "delivery", "issued_monotonic", "expires_monotonic"}
+    if (type(row) is not dict or set(row) != expected or type(row["schema"]) is not int
+            or row["schema"] != 1 or row["ok"] is not True
+            or not isinstance(row.get("nonce"), str)
+            or any(type(row[key]) not in (int, float) or isinstance(row[key], bool)
+                   for key in ("issued_monotonic", "expires_monotonic"))):
+        raise ObsidianRootScopeUnavailable("root Obsidian draft-review response schema differs")
+    try:
+        delivery = _decode_draft_delivery(row["delivery"])
+        return RootObsidianDraftReview(
+            draft_id=row["draft_id"], title=row["title"], markdown=row["markdown"],
+            content_sha256=row["content_sha256"], byte_length=row["byte_length"],
+            review_complete=row["review_complete"], next_step=row["next_step"],
+            base_note_id=row["base_note_id"], base_sha256=row["base_sha256"],
+            origin_source_id=row["origin_source_id"],
+            origin_source_revision=row["origin_source_revision"],
+            origin_execution_id=row["origin_execution_id"], mission_sha256=row["mission_sha256"],
+            source_generation_sha256=row["source_generation_sha256"],
+            origin_record_sha256=row["origin_record_sha256"],
+            delivery=delivery,
+            issued_monotonic=float(row["issued_monotonic"]),
+            expires_monotonic=float(row["expires_monotonic"]), _seal=_DRAFT_REVIEW_SEAL)
+    except Exception:
+        raise ObsidianRootScopeUnavailable("root Obsidian draft review is invalid or stale") from None
+
+
+def _decode_draft_delivery(row: Mapping[str, Any]) -> RootObsidianDraftReadDelivery:
+    expected = {"receipt_id", "owner_subject_sha256", "owner_turn_handle", "draft_id",
+        "content_sha256", "origin_record_sha256", "source_generation_sha256",
+        "startup_binding_id", "observed_call_handle", "tool_call_id", "arguments_sha256",
+        "returned_byte_length", "returned_content_sha256", "complete", "covered_byte_length",
+        "delivered_monotonic", "expires_monotonic", "receipt_sha256"}
+    if (type(row) is not dict or set(row) != expected
+            or any(type(row[key]) not in (int, float) or isinstance(row[key], bool)
+                   for key in ("delivered_monotonic", "expires_monotonic"))):
+        raise ObsidianRootScopeUnavailable("root Obsidian read-delivery schema differs")
+    try:
+        unhashed = {key: value for key, value in row.items() if key != "receipt_sha256"}
+        expected_digest = hashlib.sha256(json.dumps(
+            unhashed, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            allow_nan=False).encode("utf-8", "strict")).hexdigest()
+        if row["receipt_sha256"] != expected_digest:
+            raise ValueError
+        return RootObsidianDraftReadDelivery(
+            receipt_id=row["receipt_id"], owner_subject_sha256=row["owner_subject_sha256"],
+            owner_turn_handle=row["owner_turn_handle"], draft_id=row["draft_id"],
+            content_sha256=row["content_sha256"], origin_record_sha256=row["origin_record_sha256"],
+            source_generation_sha256=row["source_generation_sha256"],
+            startup_binding_id=row["startup_binding_id"],
+            observed_call_handle=row["observed_call_handle"], tool_call_id=row["tool_call_id"],
+            arguments_sha256=row["arguments_sha256"],
+            returned_byte_length=row["returned_byte_length"],
+            returned_content_sha256=row["returned_content_sha256"], complete=row["complete"],
+            covered_byte_length=row["covered_byte_length"],
+            delivered_monotonic=float(row["delivered_monotonic"]),
+            expires_monotonic=float(row["expires_monotonic"]),
+            receipt_sha256=row["receipt_sha256"], _seal=_DRAFT_DELIVERY_SEAL)
+    except Exception:
+        raise ObsidianRootScopeUnavailable("root Obsidian read-delivery receipt is invalid") from None
+
+
+def _decode_draft_review_proposal(row: Mapping[str, Any]) -> RootJarvisDraftReviewProposal:
+    expected = {"schema", "nonce", "ok", "proposal_id", "owner_subject_sha256",
+        "owner_turn_handle", "draft_id", "content_sha256", "destination",
+        "expected_base_sha256", "disposition", "rationale", "observed_call_handle",
+        "tool_call_id", "arguments_sha256", "source_generation_sha256",
+        "read_delivery_receipt_id", "read_delivery_sha256", "origin_record_sha256",
+        "created_monotonic", "owner_expires_monotonic", "call_expires_monotonic",
+        "expires_monotonic", "proposal_sha256"}
+    if (type(row) is not dict or set(row) != expected or type(row["schema"]) is not int
+            or row["schema"] != 1 or row["ok"] is not True
+            or not isinstance(row.get("nonce"), str)
+            or any(type(row[key]) not in (int, float) or isinstance(row[key], bool)
+                   for key in ("created_monotonic", "owner_expires_monotonic",
+                               "call_expires_monotonic", "expires_monotonic"))):
+        raise ObsidianRootScopeUnavailable("root Jarvis draft-review proposal schema differs")
+    try:
+        return RootJarvisDraftReviewProposal(
+            proposal_id=row["proposal_id"], owner_subject_sha256=row["owner_subject_sha256"],
+            owner_turn_handle=row["owner_turn_handle"], draft_id=row["draft_id"],
+            content_sha256=row["content_sha256"], destination=row["destination"],
+            expected_base_sha256=row["expected_base_sha256"], disposition=row["disposition"],
+            rationale=row["rationale"], observed_call_handle=row["observed_call_handle"],
+            tool_call_id=row["tool_call_id"], arguments_sha256=row["arguments_sha256"],
+            source_generation_sha256=row["source_generation_sha256"],
+            read_delivery_receipt_id=row["read_delivery_receipt_id"],
+            read_delivery_sha256=row["read_delivery_sha256"],
+            origin_record_sha256=row["origin_record_sha256"],
+            created_monotonic=float(row["created_monotonic"]),
+            owner_expires_monotonic=float(row["owner_expires_monotonic"]),
+            call_expires_monotonic=float(row["call_expires_monotonic"]),
+            expires_monotonic=float(row["expires_monotonic"]),
+            proposal_sha256=row["proposal_sha256"], _seal=_DRAFT_PROPOSAL_SEAL)
+    except Exception:
+        raise ObsidianRootScopeUnavailable("root Jarvis draft-review proposal is invalid") from None
+
+
 __all__ = ["ObsidianRootScopeUnavailable", "RootObsidianCallScope",
-           "RootObsidianDraftOrigin", "RootSelectedObsidianVaultBinding"]
+           "RootObsidianDraftOrigin", "RootObsidianDraftReadDelivery",
+           "RootObsidianDraftReview", "RootJarvisDraftReviewProposal",
+           "RootSelectedObsidianVaultBinding"]

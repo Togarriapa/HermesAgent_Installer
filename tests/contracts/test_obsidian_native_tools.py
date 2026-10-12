@@ -6,6 +6,7 @@ not prove ROOT's middleware issuance, per-call vault binding, or Pi acceptance.
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 from unittest.mock import patch
 
@@ -20,7 +21,8 @@ from hermes_installer.remote.obsidian_native_tools import (
 )
 from hermes_installer.remote.obsidian_native_scope import (
     RootObsidianCallScope, RootObsidianDraftOrigin, RootSelectedObsidianVaultBinding,
-    _BINDING_SEAL, _SCOPE_SEAL, _decode_draft_origin,
+    _BINDING_SEAL, _SCOPE_SEAL, _decode_draft_origin, _decode_draft_review,
+    _decode_draft_review_proposal,
 )
 from hermes_installer.remote.obsidian_second_brain import (
     ObsidianVaultConfig, prepare_obsidian_vault,
@@ -119,6 +121,77 @@ class _OriginObserver:
             "origin_record_sha256": "e" * 64, "state": "private-draft",
             "issued_monotonic": issued, "expires_monotonic": issued + 4,
         })
+
+    def read_obsidian_private_draft(self, *, observed_call, binding, draft_id,
+                                    expected_content_sha256):
+        assert observed_call.tool_name == "obsidian_read_private_draft"
+        assert binding.owner_subject_sha256 == OWNER
+        reviewed = self.store.read_owner_draft(draft_id=draft_id)
+        draft = reviewed.draft
+        issued = time.monotonic()
+        byte_length = len(reviewed.markdown.encode("utf-8"))
+        delivery = {
+            "receipt_id": "R" * 43, "owner_subject_sha256": OWNER,
+            "owner_turn_handle": observed_call.owner_turn_handle,
+            "draft_id": draft_id, "content_sha256": expected_content_sha256,
+            "origin_record_sha256": "e" * 64, "source_generation_sha256": "f" * 64,
+            "startup_binding_id": binding.binding_id,
+            "observed_call_handle": observed_call.handle,
+            "tool_call_id": observed_call.tool_call_id,
+            "arguments_sha256": observed_call.arguments_sha256,
+            "returned_byte_length": byte_length,
+            "returned_content_sha256": expected_content_sha256,
+            "complete": True, "covered_byte_length": byte_length,
+            "delivered_monotonic": issued, "expires_monotonic": issued + 4,
+        }
+        delivery["receipt_sha256"] = hashlib.sha256(json.dumps(
+            delivery, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            allow_nan=False).encode("utf-8")).hexdigest()
+        return _decode_draft_review({
+            "schema": 1, "nonce": "fixture", "ok": True,
+            "draft_id": draft_id, "title": draft.title, "markdown": reviewed.markdown,
+            "content_sha256": expected_content_sha256,
+            "byte_length": len(reviewed.markdown.encode("utf-8")),
+            "review_complete": True, "next_step": None,
+            "base_note_id": draft.base_note_id, "base_sha256": draft.base_sha256,
+            "origin_source_id": draft.source_instance_id,
+            "origin_source_revision": "source-revision",
+            "origin_execution_id": draft.execution_id, "mission_sha256": None,
+            "source_generation_sha256": "f" * 64,
+            "origin_record_sha256": "e" * 64,
+            "delivery": delivery,
+            "issued_monotonic": issued, "expires_monotonic": issued + 4,
+        })
+
+    def resolve_obsidian_review_proposal(self, *, observed_call, binding, draft_id,
+                                        expected_content_sha256):
+        draft = self.store.read_owner_draft(draft_id=draft_id).draft
+        issued = time.monotonic()
+        payload = {
+            "proposal_id": "Q" * 43, "owner_subject_sha256": OWNER,
+            "owner_turn_handle": observed_call.owner_turn_handle,
+            "draft_id": draft_id, "content_sha256": expected_content_sha256,
+            "destination": "Notes/Final.md", "expected_base_sha256": None,
+            "disposition": "approve", "rationale": None,
+            "observed_call_handle": observed_call.handle,
+            "tool_call_id": observed_call.tool_call_id,
+            "arguments_sha256": observed_call.arguments_sha256,
+            "source_generation_sha256": "f" * 64,
+            "read_delivery_receipt_id": "R" * 43,
+            "read_delivery_sha256": "1" * 64,
+            "origin_record_sha256": "e" * 64,
+            "created_monotonic": issued, "owner_expires_monotonic": issued + 15,
+            "call_expires_monotonic": issued + 15, "expires_monotonic": issued + 15,
+        }
+        payload["proposal_sha256"] = hashlib.sha256(json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            allow_nan=False).encode("utf-8")).hexdigest()
+        return _decode_draft_review_proposal({
+            "schema": 1, "nonce": "fixture", "ok": True, **payload,
+        })
+
+    def complete_obsidian_draft_origin(self, **_kwargs):
+        return None
 
 
 def test_registers_finite_tools_without_identity_or_path_arguments(tmp_path):
@@ -226,6 +299,92 @@ def test_private_draft_identity_comes_from_root_context_and_not_arguments(tmp_pa
                                     draft_id=result["draftId"])["markdown"] == args["markdown"]
 
 
+def test_current_master_reviews_exact_stored_expert_draft_bytes_and_origin(tmp_path):
+    root = tmp_path / "managed"
+    root.mkdir(mode=0o700)
+    store = prepare_obsidian_vault(ObsidianVaultConfig(root, OWNER, owner_uid=1000))
+    source_markdown = "# Expert proposal\nExact stored bytes.\n"
+    draft = store.create_private_draft(
+        execution_id="expert_session_123", source_instance_id="expert_alpha",
+        title="Expert proposal", markdown=source_markdown)
+    args = {"draft_id": draft.draft_id, "expected_draft_sha256": draft.content_sha256}
+    observed, scope, binding, _permit, dispatch, *_ = _binding(
+        store, "obsidian_read_private_draft", args)
+    tool = ObsidianNativeTools(store).handler("obsidian_read_private_draft")
+
+    with patch("hermes_installer.remote.obsidian_native_tools.current_native_tool_dispatch",
+               return_value=dispatch), _admit_current_obsidian_call(
+            observed_call=observed, scope=scope, binding=binding,
+            observer_client=_OriginObserver(store)):
+        result = tool(args)
+
+    assert result["markdown"] == source_markdown
+    assert result["content_sha256"] == draft.content_sha256
+    assert result["review_complete"] is True
+    assert result["origin"] == {
+        "source_id": "expert_alpha", "source_revision": "source-revision",
+        "execution_id": "expert_session_123", "mission_sha256": None,
+        "source_generation_sha256": "f" * 64,
+    }
+    assert "vault_path" not in result and "executionId" not in result
+
+
+def test_expert_cannot_use_master_private_draft_review_tool(tmp_path):
+    root = tmp_path / "managed"
+    root.mkdir(mode=0o700)
+    store = prepare_obsidian_vault(ObsidianVaultConfig(root, OWNER, owner_uid=1000))
+    args = {"draft_id": "D" * 43, "expected_draft_sha256": "e" * 64}
+    observed, scope, binding, _permit, dispatch, *_ = _binding(
+        store, "obsidian_read_private_draft", args, mode="expert_read",
+        execution_id="mission_123", source="expert_alpha", mission=_mission(),
+        selected=frozenset())
+    with patch("hermes_installer.remote.obsidian_native_tools.current_native_tool_dispatch",
+               return_value=dispatch), pytest.raises(
+                   ObsidianNativeToolUnavailable, match="does not admit"):
+        with _admit_current_obsidian_call(
+                observed_call=observed, scope=scope, binding=binding):
+            pytest.fail("Expert draft review scope must not be admitted")
+
+
+def test_private_draft_review_never_claims_complete_for_oversized_content():
+    from hermes_installer.remote.obsidian_native_scope import _decode_draft_review
+
+    markdown = "x" * (32 * 1024 + 1)
+    issued = time.monotonic()
+    delivery = {
+        "receipt_id": "R" * 43, "owner_subject_sha256": OWNER,
+        "owner_turn_handle": "T" * 43, "draft_id": "D" * 43,
+        "content_sha256": hashlib.sha256(markdown.encode()).hexdigest(),
+        "origin_record_sha256": "e" * 64, "source_generation_sha256": "f" * 64,
+        "startup_binding_id": "G" * 43, "observed_call_handle": "H" * 43,
+        "tool_call_id": "read-private-draft", "arguments_sha256": "a" * 64,
+        "returned_byte_length": 0,
+        "returned_content_sha256": hashlib.sha256(b"").hexdigest(),
+        "complete": False, "covered_byte_length": 0,
+        "delivered_monotonic": issued, "expires_monotonic": issued + 4,
+    }
+    delivery["receipt_sha256"] = hashlib.sha256(json.dumps(
+        delivery, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        allow_nan=False).encode("utf-8")).hexdigest()
+    review = _decode_draft_review({
+        "schema": 1, "nonce": "fixture", "ok": True,
+        "draft_id": "D" * 43, "title": "Large draft", "markdown": None,
+        "content_sha256": hashlib.sha256(markdown.encode()).hexdigest(),
+        "byte_length": len(markdown.encode()), "review_complete": False,
+        "next_step": "Use the owner draft review flow to reduce the draft before Jarvis reviews it.",
+        "base_note_id": None, "base_sha256": None,
+        "origin_source_id": "expert_alpha", "origin_source_revision": "r17",
+        "origin_execution_id": "expert_session_123", "mission_sha256": None,
+        "source_generation_sha256": "f" * 64, "origin_record_sha256": "e" * 64,
+        "delivery": delivery,
+        "issued_monotonic": issued, "expires_monotonic": issued + 4,
+    })
+
+    assert review.review_complete is False
+    assert review.markdown is None
+    assert review.byte_length == 32 * 1024 + 1
+
+
 def test_promotion_requires_master_effect_permit_and_expert_cannot_write_owner_note(tmp_path):
     root = tmp_path / "managed"
     root.mkdir(mode=0o700)
@@ -234,7 +393,8 @@ def test_promotion_requires_master_effect_permit_and_expert_cannot_write_owner_n
         execution_id="D" * 43, source_instance_id="hermes",
         title="Final", markdown="# Final\nReviewed.\n")
     args = {"draft_id": draft.draft_id, "expected_draft_sha256": draft.content_sha256,
-            "destination": "Notes/Final.md", "expected_base_sha256": None}
+            "destination": "Notes/Final.md", "expected_base_sha256": None,
+            "review_disposition": "approve"}
     tool = ObsidianNativeTools(store).handler("obsidian_promote_reviewed_draft")
     observed, scope, binding, permit, dispatch, execution, source, mission, selected = _binding(
         store, "obsidian_promote_reviewed_draft", args, mode="master_effect",

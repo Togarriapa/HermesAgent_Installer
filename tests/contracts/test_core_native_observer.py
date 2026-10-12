@@ -351,6 +351,17 @@ def test_obsidian_origin_journal_binds_owner_draft_bytes_and_rejects_replay_or_t
         observer._canonical({"schema": 1, "records": [record, record]})) is None
 
 
+def test_exact_private_draft_markdown_reader_is_master_only_not_in_expert_child_closure():
+    import hermes_installer.remote.core_native_observer as observer
+    from hermes_installer.remote.obsidian_native_tools import _EXPERT_TOOLS, _TOOL_NAMES
+
+    assert observer._OBSIDIAN_READ_TOOL_NAMES == _EXPERT_TOOLS
+    assert "obsidian_read_private_draft" not in observer._OBSIDIAN_READ_TOOL_NAMES
+    assert "obsidian_read_private_draft" in observer._OBSIDIAN_MASTER_READ_TOOL_NAMES
+    assert set(_TOOL_NAMES) == set(observer._OBSIDIAN_TOOL_NAMES)
+    assert "obsidian_promote_reviewed_draft" not in observer._OBSIDIAN_READ_TOOL_NAMES
+
+
 def test_obsidian_origin_sidecar_atomic_readback_and_restart_load(tmp_path, monkeypatch):
     import os
     import hermes_installer.remote.core_native_observer as observer
@@ -379,6 +390,53 @@ def test_obsidian_origin_sidecar_atomic_readback_and_restart_load(tmp_path, monk
     assert observer._load_root_obsidian_origin_snapshot()[("a" * 64, "R" * 43)] == record
     assert set(path.name for path in directory.iterdir()) == {observer._OBSIDIAN_ORIGIN_STORE_NAME}
     assert b"private markdown" not in raw
+
+
+def test_obsidian_completion_history_and_tombstone_join_without_retaining_markdown():
+    import hermes_installer.remote.core_native_observer as observer
+
+    origin = {
+        "draft_id": "D" * 43, "owner_subject_sha256": "a" * 64,
+        "registration_sha256": "b" * 64, "origin_execution_id": "child_session_123456",
+        "origin_source_id": "expert_alpha", "origin_source_revision": "source-r17",
+        "source_generation_sha256": "c" * 64, "mission_sha256": "d" * 64,
+        "content_sha256": "e" * 64, "base_sha256": None, "state": "private-draft",
+    }
+    origin["origin_record_sha256"] = observer._obsidian_origin_record_digest(origin)
+    history_body = {
+        "record_id": "H" * 43, "origin": origin,
+        "proposal": {"proposal_sha256": "f" * 64},
+        "approval": {"pending_id": "P" * 43, "review_sha256": "1" * 64},
+        "result": {"destination": "Notes/Expert.md", "note_id": "N" * 43,
+                   "title": "Expert", "content_sha256": "e" * 64, "state": "promoted"},
+        "completed_at": 12.5,
+    }
+    history_record = {**history_body,
+        "record_sha256": hashlib.sha256(observer._canonical(history_body)).hexdigest()}
+    history = observer._canonical({"schema": 1, "records": [history_record]})
+
+    assert observer._obsidian_history_from_bytes(history) == [history_record]
+    tampered = dict(history_record, result={**history_record["result"], "markdown": "private"})
+    tampered_body = {key: value for key, value in tampered.items() if key != "record_sha256"}
+    tampered["record_sha256"] = hashlib.sha256(observer._canonical(tampered_body)).hexdigest()
+    assert observer._obsidian_history_from_bytes(
+        observer._canonical({"schema": 1, "records": [tampered]})) is None
+
+    tombstone = {
+        "owner_subject_sha256": "a" * 64, "draft_id": "D" * 43,
+        "origin_record_sha256": origin["origin_record_sha256"],
+        "history_record_id": history_record["record_id"],
+        "history_record_sha256": history_record["record_sha256"],
+        "destination": "Notes/Expert.md", "note_id": "N" * 43,
+        "content_sha256": "e" * 64, "completed_at": 12.5,
+    }
+    tombstone["completed_record_sha256"] = hashlib.sha256(
+        observer._canonical(tombstone)).hexdigest()
+    state = observer._canonical({"schema": 2, "records": [], "completed": [tombstone]})
+    assert observer._obsidian_origin_state_from_bytes(state) == (
+        {}, {("a" * 64, "D" * 43): tombstone})
+    assert observer._obsidian_origin_state_from_bytes(observer._canonical({
+        "schema": 2, "records": [origin], "completed": [tombstone]})) is None
 
 
 def test_typed_obsidian_origin_is_short_lived_and_exact_owner_registration_digest():
@@ -439,7 +497,7 @@ def test_root_observed_expert_draft_origin_resolves_only_for_current_master_prom
     child = {"session_id": "expert_session_123", "profile_id": "expert_alpha",
              "source_generation_sha256": generation, "source": source}
     current_master_source = SimpleNamespace(
-        source_revision="master-current-r18", generation_sha256="9" * 64,
+        profile_id="hermes", source_revision="master-current-r18", generation_sha256="9" * 64,
     )
     current_master_source.is_current_sealed = lambda *_args, **_kwargs: True
     draft = SimpleNamespace(
@@ -460,13 +518,18 @@ def test_root_observed_expert_draft_origin_resolves_only_for_current_master_prom
     registry._config = SimpleNamespace(core_uid=1000, core_gid=1000)
     registry._obsidian_origin_store_ok = True
     registry._obsidian_draft_origins = {}
+    registry._obsidian_completed_drafts = {}
     registry._obsidian_resolved_origin_calls = set()
+    registry._obsidian_scoped_calls = set()
+    registry._obsidian_draft_read_deliveries = {}
+    registry._obsidian_draft_review_proposals = {}
     registry._ensure_open = lambda: None
     registry._prune = lambda _now: None
     registry._classify_current_call = lambda _handle, _peer, **_kwargs: active["classification"]
+    startup_binding = {"binding_id": "B" * 43, "expiry": time.monotonic() + 20}
     registry._validate_obsidian_origin_binding = lambda **_kwargs: (
         Path("/home/admin/.hermes/jarvis-second-brain"), owner_sha,
-        registration_sha, {"expiry": time.monotonic() + 20},
+        registration_sha, startup_binding,
     )
     registry._read_obsidian_owner_draft = lambda *_args, **_kwargs: review
     registry._persist_obsidian_origin = lambda records: active.update(persisted=records)
@@ -485,8 +548,73 @@ def test_root_observed_expert_draft_origin_resolves_only_for_current_master_prom
     assert created["ok"] is True
     assert active["persisted"][(owner_sha, draft_id)]["origin_execution_id"] == child["session_id"]
 
+    read_args = {"draft_id": draft_id, "expected_draft_sha256": content_sha}
+    read_call = {"handle": "R" * 43, "tool_name": "obsidian_read_private_draft",
+                 "tool_call_id": "read-draft-call",
+                 "arguments": observer._canonical(read_args),
+                 "expiry": time.monotonic() + 20}
+    registry._obsidian_scoped_calls.add(read_call["handle"])
+    active["classification"] = (read_call, owner, current_master_source, "master_read")
+    read_result = registry._handle(peer, {
+        "schema": 1, "op": "read-obsidian-private-draft", "nonce": "read",
+        "observed_call_handle": read_call["handle"],
+        "startup_binding_id": "B" * 43, "draft_id": draft_id,
+        "expected_content_sha256": content_sha,
+    })
+    assert read_result["review_complete"] is True
+    assert read_result["markdown"] == markdown
+    assert read_result["content_sha256"] == content_sha
+    assert read_result["origin_execution_id"] == child["session_id"]
+    assert read_result["origin_source_id"] == child["profile_id"]
+    assert read_result["delivery"]["complete"] is True
+    assert read_result["delivery"]["returned_content_sha256"] == content_sha
+
+    promote_arguments = {"draft_id": draft_id, "expected_draft_sha256": content_sha,
+        "destination": "Notes/Expert.md", "expected_base_sha256": None,
+        "review_disposition": "approve"}
+    promote_call = {"handle": "P" * 43, "tool_call_id": "promote-draft-call",
+        "tool_name": "obsidian_promote_reviewed_draft",
+        "arguments": observer._canonical(promote_arguments), "expiry": time.monotonic() + 20}
+    active["classification"] = (promote_call, owner, current_master_source, "master_effect")
+    proposal = registry._propose_obsidian_draft_review(
+        call=promote_call, owner=owner, source=current_master_source, peer=peer)
+    assert proposal["read_delivery_receipt_id"] == read_result["delivery"]["receipt_id"]
+    assert proposal["origin_record_sha256"] == active["persisted"][(owner_sha, draft_id)]["origin_record_sha256"]
+    assert proposal["disposition"] == "approve"
+
+    registry._obsidian_draft_read_deliveries[read_result["delivery"]["receipt_id"]]["complete"] = False
+    registry._obsidian_draft_read_deliveries[read_result["delivery"]["receipt_id"]]["covered_byte_length"] = 0
+    changed_promote = dict(promote_call, handle="Q" * 43)
+    active["classification"] = (changed_promote, owner, current_master_source, "master_effect")
+    with pytest.raises(ValueError, match="complete draft bytes were not delivered"):
+        registry._propose_obsidian_draft_review(
+            call=changed_promote, owner=owner, source=current_master_source, peer=peer)
+
+    changed_args = {**read_args, "expected_draft_sha256": "9" * 64}
+    changed_call = {**read_call, "handle": "Z" * 43,
+                    "arguments": observer._canonical(changed_args)}
+    active["classification"] = (changed_call, owner, current_master_source, "master_read")
+    with pytest.raises(ValueError, match="retained pending private origin"):
+        registry._handle(peer, {
+            "schema": 1, "op": "read-obsidian-private-draft", "nonce": "digest-denied",
+            "observed_call_handle": changed_call["handle"],
+            "startup_binding_id": "B" * 43, "draft_id": draft_id,
+            "expected_content_sha256": "9" * 64,
+        })
+
+    expert_read = dict(read_call, handle="X" * 43)
+    active["classification"] = (expert_read, owner, child, "expert_read")
+    with pytest.raises(ValueError, match="only the current Jarvis master read"):
+        registry._handle(peer, {
+            "schema": 1, "op": "read-obsidian-private-draft", "nonce": "expert-read-denied",
+            "observed_call_handle": expert_read["handle"],
+            "startup_binding_id": "B" * 43, "draft_id": draft_id,
+            "expected_content_sha256": content_sha,
+        })
+
     promote_args = {"draft_id": draft_id, "expected_draft_sha256": content_sha,
-                    "destination": "Notes/Expert.md", "expected_base_sha256": None}
+                    "destination": "Notes/Expert.md", "expected_base_sha256": None,
+                    "review_disposition": "approve"}
     promote_call = {"handle": "P" * 43, "tool_name": "obsidian_promote_reviewed_draft",
                     "arguments": observer._canonical(promote_args),
                     "expiry": time.monotonic() + 20}

@@ -470,6 +470,8 @@ class ObsidianVaultStore:
     def promote_reviewed_draft(self, *, origin: object, draft_id: str,
                                expected_draft_sha256: str, destination: str,
                                expected_base_sha256: str | None,
+                               review_disposition: str, review_rationale: str | None,
+                               proposal: object,
                                observed_call: object, permit: object) -> NoteRead:
         """Promote exact bytes after ROOT's existing final-effect review middleware.
 
@@ -486,7 +488,9 @@ class ObsidianVaultStore:
         from hermes_installer.remote.core_native_observer import ObservedNativeToolCall
         from hermes_installer.remote.jarvis_final_effects import FinalEffectPermit, review_digest
 
-        from hermes_installer.remote.obsidian_native_scope import RootObsidianDraftOrigin
+        from hermes_installer.remote.obsidian_native_scope import (
+            RootJarvisDraftReviewProposal, RootObsidianDraftOrigin,
+        )
         if (type(origin) is not RootObsidianDraftOrigin
                 or not origin.matches(
                     draft_id=draft_id,
@@ -505,13 +509,33 @@ class ObsidianVaultStore:
             "expected_draft_sha256": expected_draft_sha256,
             "destination": destination,
             "expected_base_sha256": expected_base_sha256,
+            "review_disposition": review_disposition,
         }
+        if review_rationale is not None:
+            exact_arguments["review_rationale"] = review_rationale
         canonical = canonical_tool_arguments(exact_arguments)
         arguments_sha256 = _sha256(canonical)
         if (type(observed_call) is not ObservedNativeToolCall
                 or type(permit) is not FinalEffectPermit
                 or observed_call.tool_name != "obsidian_promote_reviewed_draft"
                 or observed_call.arguments_sha256 != arguments_sha256
+                or type(proposal) is not RootJarvisDraftReviewProposal
+                or proposal.disposition != "approve"
+                or proposal.draft_id != draft_id
+                or proposal.content_sha256 != expected_draft_sha256
+                or proposal.destination != destination
+                or proposal.expected_base_sha256 != expected_base_sha256
+                or proposal.rationale != review_rationale
+                or proposal.arguments_sha256 != arguments_sha256
+                or proposal.owner_subject_sha256 != permit.owner_subject_sha256
+                or proposal.owner_turn_handle != permit.owner_turn_handle
+                or proposal.observed_call_handle != observed_call.handle
+                or proposal.tool_call_id != observed_call.tool_call_id
+                or proposal.origin_record_sha256 != origin.origin_record_sha256
+                or proposal.read_delivery_sha256 == ""
+                or proposal.read_delivery_receipt_id == ""
+                or proposal.expires_monotonic <= time.monotonic()
+                or proposal.source_generation_sha256 != permit.source_generation_sha256
                 or permit.owner_subject_sha256 != self._config.owner_scope_sha256
                 or permit.source_profile_id != "hermes"
                 or not permit.matches_call(

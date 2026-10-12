@@ -52,6 +52,11 @@ _NATIVE_ACTIVITY_MAX_EVENTS_PER_READ = 200
 _OBSIDIAN_ORIGIN_STORE_NAME = "obsidian-draft-origins.json"
 _OBSIDIAN_ORIGIN_MAX_RECORDS = 4096
 _OBSIDIAN_ORIGIN_MAX_BYTES = 512 * 1024
+_OBSIDIAN_ORIGIN_HISTORY_NAME = "obsidian-draft-origin-history.json"
+_OBSIDIAN_ORIGIN_HISTORY_MAX_RECORDS = 4096
+_OBSIDIAN_ORIGIN_HISTORY_MAX_BYTES = 4 * 1024 * 1024
+_OBSIDIAN_DELIVERY_MAX_RECORDS = 4096
+_OBSIDIAN_PROPOSAL_MAX_RECORDS = 4096
 _NATIVE_INHERITANCE_POLICY_SEAL = object()
 _MASTER_PLAN_RECORD_SEAL = object()
 
@@ -544,6 +549,90 @@ def _publish_root_obsidian_origin_bytes(raw: bytes) -> None:
         os.close(directory_fd)
 
 
+def _read_root_obsidian_history_bytes() -> bytes | None:
+    directory_fd = _open_root_master_plan_store()
+    try:
+        try:
+            fd = os.open(_OBSIDIAN_ORIGIN_HISTORY_NAME,
+                         os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+        except FileNotFoundError:
+            return None
+        try:
+            before = os.fstat(fd)
+            if (not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_gid != 0
+                    or stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1
+                    or not 1 <= before.st_size <= _OBSIDIAN_ORIGIN_HISTORY_MAX_BYTES):
+                raise PermissionError("Obsidian origin history custody changed")
+            chunks: list[bytes] = []
+            remaining = _OBSIDIAN_ORIGIN_HISTORY_MAX_BYTES + 1
+            while remaining:
+                chunk = os.read(fd, min(8192, remaining))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            raw = b"".join(chunks)
+            after = os.fstat(fd)
+            named = os.stat(_OBSIDIAN_ORIGIN_HISTORY_NAME, dir_fd=directory_fd,
+                            follow_symlinks=False)
+            if (len(raw) != before.st_size or len(raw) > _OBSIDIAN_ORIGIN_HISTORY_MAX_BYTES
+                    or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+                        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+                    or (after.st_dev, after.st_ino) != (named.st_dev, named.st_ino)):
+                raise PermissionError("Obsidian origin history changed during read")
+            return raw
+        finally:
+            os.close(fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _publish_root_obsidian_history_bytes(raw: bytes) -> None:
+    if not isinstance(raw, bytes) or not 1 <= len(raw) <= _OBSIDIAN_ORIGIN_HISTORY_MAX_BYTES:
+        raise ValueError("Obsidian origin history exceeds its fixed bound")
+    directory_fd = _open_root_master_plan_store()
+    temp = ".obsidian-origin-history-" + secrets.token_hex(16) + ".tmp"
+    created = False
+    try:
+        try:
+            existing = os.stat(_OBSIDIAN_ORIGIN_HISTORY_NAME, dir_fd=directory_fd,
+                               follow_symlinks=False)
+        except FileNotFoundError:
+            existing = None
+        if existing is not None and (not stat.S_ISREG(existing.st_mode) or existing.st_uid != 0
+                or existing.st_gid != 0 or stat.S_IMODE(existing.st_mode) != 0o600
+                or existing.st_nlink != 1):
+            raise PermissionError("Obsidian origin history custody changed")
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                     | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=directory_fd)
+        created = True
+        try:
+            os.fchown(fd, 0, 0)
+            os.fchmod(fd, 0o600)
+            offset = 0
+            while offset < len(raw):
+                written = os.write(fd, raw[offset:])
+                if written <= 0:
+                    raise OSError("short Obsidian origin history write")
+                offset += written
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(temp, _OBSIDIAN_ORIGIN_HISTORY_NAME,
+                   src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+        created = False
+        os.fsync(directory_fd)
+        if _read_root_obsidian_history_bytes() != raw:
+            raise OSError("published Obsidian origin history failed readback")
+    finally:
+        if created:
+            try:
+                os.unlink(temp, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass
+        os.close(directory_fd)
+
+
 def _obsidian_origin_record_digest(row: Mapping[str, Any]) -> str:
     fields = {key: row[key] for key in (
         "draft_id", "owner_subject_sha256", "registration_sha256", "origin_execution_id",
@@ -552,7 +641,8 @@ def _obsidian_origin_record_digest(row: Mapping[str, Any]) -> str:
     return hashlib.sha256(_canonical(fields)).hexdigest()
 
 
-def _obsidian_origin_snapshot_from_bytes(raw: bytes) -> dict[tuple[str, str], dict[str, Any]] | None:
+def _obsidian_origin_state_from_bytes(raw: bytes) -> tuple[
+        dict[tuple[str, str], dict[str, Any]], dict[tuple[str, str], dict[str, Any]]] | None:
     if not isinstance(raw, bytes) or not 1 <= len(raw) <= _OBSIDIAN_ORIGIN_MAX_BYTES:
         return None
     fields = {"draft_id", "owner_subject_sha256", "registration_sha256", "origin_execution_id",
@@ -560,10 +650,14 @@ def _obsidian_origin_snapshot_from_bytes(raw: bytes) -> dict[tuple[str, str], di
         "mission_sha256", "content_sha256", "base_sha256", "origin_record_sha256", "state"}
     try:
         value = json.loads(raw.decode("utf-8", errors="strict"), object_pairs_hook=_unique_json_pairs)
-        if (type(value) is not dict or set(value) != {"schema", "records"}
-                or type(value["schema"]) is not int or value["schema"] != 1
+        if (type(value) is not dict or value.get("schema") not in (1, 2)
+                or type(value.get("schema")) is not int
+                or set(value) != ({"schema", "records"} if value["schema"] == 1
+                                  else {"schema", "records", "completed"})
                 or type(value["records"]) is not list
                 or len(value["records"]) > _OBSIDIAN_ORIGIN_MAX_RECORDS
+                or (value["schema"] == 2 and (type(value["completed"]) is not list
+                    or len(value["completed"]) > _OBSIDIAN_ORIGIN_MAX_RECORDS))
                 or _canonical(value) != raw):
             return None
         result: dict[tuple[str, str], dict[str, Any]] = {}
@@ -589,9 +683,97 @@ def _obsidian_origin_snapshot_from_bytes(raw: bytes) -> dict[tuple[str, str], di
             if key in result:
                 return None
             result[key] = dict(row)
-        return result
+        completed: dict[tuple[str, str], dict[str, Any]] = {}
+        for row in value.get("completed", ()):
+            fields_completed = {"owner_subject_sha256", "draft_id", "origin_record_sha256",
+                "history_record_id", "history_record_sha256", "destination", "note_id",
+                "content_sha256", "completed_at", "completed_record_sha256"}
+            if (type(row) is not dict or set(row) != fields_completed
+                    or not all(_HASH.fullmatch(row.get(key, "") or "") for key in (
+                        "owner_subject_sha256", "origin_record_sha256",
+                        "history_record_sha256", "content_sha256", "completed_record_sha256"))
+                    or not _ID.fullmatch(row.get("draft_id", ""))
+                    or not _OPAQUE.fullmatch(row.get("history_record_id", ""))
+                    or not isinstance(row.get("destination"), str)
+                    or not 1 <= len(row["destination"]) <= 240
+                    or not _ID.fullmatch(row.get("note_id", ""))
+                    or type(row.get("completed_at")) not in (int, float)
+                    or not math.isfinite(row["completed_at"])):
+                return None
+            tombstone_body = {key: item for key, item in row.items()
+                              if key != "completed_record_sha256"}
+            if hashlib.sha256(_canonical(tombstone_body)).hexdigest() != row["completed_record_sha256"]:
+                return None
+            key = (row["owner_subject_sha256"], row["draft_id"])
+            if key in completed or key in result:
+                return None
+            completed[key] = dict(row)
+        return result, completed
     except Exception:
         return None
+
+
+def _obsidian_origin_snapshot_from_bytes(raw: bytes) -> dict[tuple[str, str], dict[str, Any]] | None:
+    state = _obsidian_origin_state_from_bytes(raw)
+    return None if state is None else state[0]
+
+
+def _obsidian_history_from_bytes(raw: bytes) -> list[dict[str, Any]] | None:
+    if not isinstance(raw, bytes) or not 1 <= len(raw) <= _OBSIDIAN_ORIGIN_HISTORY_MAX_BYTES:
+        return None
+    expected_origin = {"draft_id", "owner_subject_sha256", "registration_sha256",
+        "origin_execution_id", "origin_source_id", "origin_source_revision",
+        "source_generation_sha256", "mission_sha256", "content_sha256", "base_sha256",
+        "origin_record_sha256", "state"}
+    try:
+        value = json.loads(raw.decode("utf-8", errors="strict"), object_pairs_hook=_unique_json_pairs)
+        if (type(value) is not dict or set(value) != {"schema", "records"}
+                or type(value["schema"]) is not int or value["schema"] != 1
+                or type(value["records"]) is not list
+                or len(value["records"]) > _OBSIDIAN_ORIGIN_HISTORY_MAX_RECORDS
+                or _canonical(value) != raw):
+            return None
+        seen: set[str] = set()
+        for row in value["records"]:
+            if (type(row) is not dict or set(row) != {"record_id", "origin", "proposal",
+                                                       "approval", "result", "completed_at",
+                                                       "record_sha256"}
+                    or not _OPAQUE.fullmatch(row.get("record_id", ""))
+                    or row["record_id"] in seen or type(row["origin"]) is not dict
+                    or set(row["origin"]) != expected_origin
+                    or type(row["proposal"]) is not dict or type(row["approval"]) is not dict
+                    or type(row["result"]) is not dict
+                    or type(row["completed_at"]) not in (int, float)
+                    or not math.isfinite(row["completed_at"])):
+                return None
+            seen.add(row["record_id"])
+            if any(key.casefold() in {"markdown", "private_text", "body"}
+                   for section in (row["origin"], row["proposal"], row["approval"], row["result"])
+                   for key in section):
+                return None
+            body = {key: item for key, item in row.items() if key != "record_sha256"}
+            if hashlib.sha256(_canonical(body)).hexdigest() != row["record_sha256"]:
+                return None
+            origin = row["origin"]
+            if (origin["state"] != "private-draft"
+                    or origin["origin_record_sha256"] != _obsidian_origin_record_digest(origin)
+                    or not all(_HASH.fullmatch(origin.get(key, "") or "") for key in (
+                        "owner_subject_sha256", "registration_sha256", "source_generation_sha256",
+                        "content_sha256", "origin_record_sha256"))):
+                return None
+        return [dict(row) for row in value["records"]]
+    except Exception:
+        return None
+
+
+def _load_root_obsidian_history() -> list[dict[str, Any]]:
+    raw = _read_root_obsidian_history_bytes()
+    if raw is None:
+        return []
+    records = _obsidian_history_from_bytes(raw)
+    if records is None:
+        raise ValueError("root Obsidian origin history is malformed")
+    return records
 
 
 def _load_root_obsidian_origin_snapshot() -> dict[tuple[str, str], dict[str, Any]]:
@@ -603,6 +785,17 @@ def _load_root_obsidian_origin_snapshot() -> dict[tuple[str, str], dict[str, Any
     if origins is None:
         raise ValueError("root Obsidian origin journal is malformed")
     return origins
+
+
+def _load_root_obsidian_origin_state() -> tuple[
+        dict[tuple[str, str], dict[str, Any]], dict[tuple[str, str], dict[str, Any]]]:
+    raw = _read_root_obsidian_origin_bytes()
+    if raw is None:
+        return {}, {}
+    state = _obsidian_origin_state_from_bytes(raw)
+    if state is None:
+        raise ValueError("root Obsidian origin journal is malformed")
+    return state
 
 
 def _native_activity_snapshot_from_bytes(raw: bytes) -> list[dict[str, Any]] | None:
@@ -1049,10 +1242,11 @@ _OBSIDIAN_READ_TOOL_NAMES = frozenset({
     "obsidian_list_notes", "obsidian_search_notes", "obsidian_read_note",
     "obsidian_note_links", "obsidian_graph_snapshot", "obsidian_create_private_draft",
 })
-_OBSIDIAN_TOOL_NAMES = _OBSIDIAN_READ_TOOL_NAMES | {"obsidian_promote_reviewed_draft"}
+_OBSIDIAN_MASTER_READ_TOOL_NAMES = _OBSIDIAN_READ_TOOL_NAMES | {"obsidian_read_private_draft"}
+_OBSIDIAN_TOOL_NAMES = _OBSIDIAN_MASTER_READ_TOOL_NAMES | {"obsidian_promote_reviewed_draft"}
 _MASTER_READ_TOOL_NAMES = frozenset({
     "web_search", "web_extract", "skills_list", "skill_view",
-}) | _OBSIDIAN_READ_TOOL_NAMES
+}) | _OBSIDIAN_MASTER_READ_TOOL_NAMES
 
 
 @dataclass(frozen=True, slots=True)
@@ -1557,7 +1751,9 @@ class CoreNativeObservationClient:
             "complete-selected-expert-child", "prepare-team-message",
             "planning-turn-context", "bind-obsidian-native-vault",
             "authorize-obsidian-call-scope", "record-obsidian-draft-origin",
-            "resolve-obsidian-draft-origin",
+            "resolve-obsidian-draft-origin", "read-obsidian-private-draft",
+            "resolve-obsidian-review-proposal",
+            "complete-obsidian-draft-origin",
             "current-project-context",
         }:
             raise CoreNativeObservationUnavailable("observer operation is not supported")
@@ -2677,6 +2873,115 @@ class CoreNativeObservationClient:
             raise CoreNativeObservationUnavailable("root Obsidian draft origin differs from the reviewed call")
         return origin
 
+    def read_obsidian_private_draft(self, *, observed_call: ObservedNativeToolCall,
+                                    binding: Any, draft_id: str,
+                                    expected_content_sha256: str):
+        """Read exact retained private-draft bytes for this current Jarvis turn only."""
+        from .obsidian_native_scope import (
+            RootObsidianDraftReview, RootSelectedObsidianVaultBinding,
+            _decode_draft_review,
+        )
+        if (type(observed_call) is not ObservedNativeToolCall
+                or type(binding) is not RootSelectedObsidianVaultBinding
+                or binding.core_pid != os.getpid() or binding.selected_owner_uid != os.geteuid()
+                or os.geteuid() != 1000
+                or not isinstance(draft_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,64}", draft_id)
+                or not _HASH.fullmatch(expected_content_sha256 or "")):
+            raise CoreNativeObservationUnavailable("current Jarvis draft-review call and binding are required")
+        row = self._rpc("read-obsidian-private-draft", {
+            "observed_call_handle": observed_call.handle,
+            "startup_binding_id": binding.binding_id, "draft_id": draft_id,
+            "expected_content_sha256": expected_content_sha256,
+        })
+        review = _decode_draft_review(row)
+        if (type(review) is not RootObsidianDraftReview or review.draft_id != draft_id
+                or review.content_sha256 != expected_content_sha256):
+            raise CoreNativeObservationUnavailable("root Obsidian draft review differs from this exact call")
+        return review
+
+    def resolve_obsidian_review_proposal(self, *, observed_call: ObservedNativeToolCall,
+                                         binding: Any, draft_id: str,
+                                         expected_content_sha256: str):
+        """Resolve the one root proposal created before owner approval for this exact call."""
+        from .obsidian_native_scope import (
+            RootJarvisDraftReviewProposal, RootSelectedObsidianVaultBinding,
+            _decode_draft_review_proposal,
+        )
+        if (type(observed_call) is not ObservedNativeToolCall
+                or type(binding) is not RootSelectedObsidianVaultBinding
+                or binding.core_pid != os.getpid() or binding.selected_owner_uid != os.geteuid()
+                or os.geteuid() != 1000
+                or not isinstance(draft_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,64}", draft_id)
+                or not _HASH.fullmatch(expected_content_sha256 or "")):
+            raise CoreNativeObservationUnavailable("current Core promotion and binding are required")
+        row = self._rpc("resolve-obsidian-review-proposal", {
+            "observed_call_handle": observed_call.handle,
+            "startup_binding_id": binding.binding_id, "draft_id": draft_id,
+            "expected_content_sha256": expected_content_sha256,
+        })
+        proposal = _decode_draft_review_proposal(row)
+        if (type(proposal) is not RootJarvisDraftReviewProposal
+                or proposal.draft_id != draft_id
+                or proposal.content_sha256 != expected_content_sha256
+                or proposal.observed_call_handle != observed_call.handle):
+            raise CoreNativeObservationUnavailable("root review proposal differs from this exact call")
+        return proposal
+
+    def complete_obsidian_draft_origin(self, *, observed_call: ObservedNativeToolCall,
+                                       binding: Any, origin: Any, proposal: Any,
+                                       permit: Any, destination: str,
+                                       expected_base_sha256: str | None,
+                                       saved_projection: Mapping[str, Any]) -> None:
+        """Retire provenance only after ROOT independently verifies the committed result."""
+        from .jarvis_final_effects import FinalEffectPermit, review_digest
+        from .obsidian_native_scope import (
+            RootJarvisDraftReviewProposal, RootObsidianDraftOrigin,
+            RootSelectedObsidianVaultBinding,
+        )
+        if (type(observed_call) is not ObservedNativeToolCall
+                or type(binding) is not RootSelectedObsidianVaultBinding
+                or type(origin) is not RootObsidianDraftOrigin
+                or type(proposal) is not RootJarvisDraftReviewProposal
+                or type(permit) is not FinalEffectPermit
+                or not isinstance(saved_projection, Mapping)
+                or binding.core_pid != os.getpid() or binding.selected_owner_uid != os.geteuid()
+                or os.geteuid() != 1000):
+            raise CoreNativeObservationUnavailable("typed current promotion completion evidence is required")
+        if (not proposal.matches(observed_call=observed_call, origin=origin,
+                owner_subject_sha256=binding.owner_subject_sha256,
+                owner_turn_handle=observed_call.owner_turn_handle)
+                or permit.owner_turn_handle != proposal.owner_turn_handle
+                or permit.owner_subject_sha256 != binding.owner_subject_sha256
+                or not permit.matches_call(observed_call,
+                    tool_name="obsidian_promote_reviewed_draft",
+                    arguments_sha256=observed_call.arguments_sha256,
+                    review_sha256=review_digest("obsidian_promote_reviewed_draft",
+                                                observed_call.arguments_sha256))):
+            raise CoreNativeObservationUnavailable("promotion completion differs from the approved Jarvis proposal")
+        note_id = saved_projection.get("noteId")
+        content_sha = saved_projection.get("contentSha256")
+        title = saved_projection.get("title")
+        if (not isinstance(note_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,96}", note_id)
+                or not _HASH.fullmatch(content_sha or "") or not isinstance(title, str)
+                or not 1 <= len(title) <= 160):
+            raise CoreNativeObservationUnavailable("promoted note verification summary is malformed")
+        row = self._rpc("complete-obsidian-draft-origin", {
+            "observed_call_handle": observed_call.handle,
+            "startup_binding_id": binding.binding_id,
+            "draft_id": origin.draft_id,
+            "origin_record_sha256": origin.origin_record_sha256,
+            "proposal_sha256": proposal.proposal_sha256,
+            "pending_id": permit.pending_id,
+            "review_sha256": permit.review_sha256,
+            "destination": destination,
+            "expected_base_sha256": expected_base_sha256,
+            "note_id": note_id, "content_sha256": content_sha, "title": title,
+        })
+        if (set(row) != {"schema", "nonce", "ok", "completed_record_sha256"}
+                or type(row.get("schema")) is not int or row["schema"] != 1
+                or row["ok"] is not True or not _HASH.fullmatch(row.get("completed_record_sha256", ""))):
+            raise CoreNativeObservationUnavailable("root Obsidian completion receipt is malformed")
+
 
 class RootCoreNativeObservationRegistry:
     """Root-memory issuer joining real owner turns to protected native observations.
@@ -2736,10 +3041,30 @@ class RootCoreNativeObservationRegistry:
         self._obsidian_bindings: dict[str, dict[str, Any]] = {}
         self._obsidian_scoped_calls: set[str] = set()
         self._obsidian_draft_origins: dict[tuple[str, str], dict[str, Any]] = {}
+        self._obsidian_completed_drafts: dict[tuple[str, str], dict[str, Any]] = {}
         self._obsidian_resolved_origin_calls: set[str] = set()
+        self._obsidian_draft_read_deliveries: dict[str, dict[str, Any]] = {}
+        self._obsidian_draft_review_proposals: dict[str, dict[str, Any]] = {}
+        self._obsidian_origin_history: list[dict[str, Any]] = []
         self._obsidian_origin_store_ok = True
         try:
-            self._obsidian_draft_origins = _load_root_obsidian_origin_snapshot()
+            (self._obsidian_draft_origins,
+             self._obsidian_completed_drafts) = _load_root_obsidian_origin_state()
+            self._obsidian_origin_history = _load_root_obsidian_history()
+            history_by_id = {row["record_id"]: row for row in self._obsidian_origin_history}
+            if any((tomb["history_record_id"] not in history_by_id
+                    or history_by_id[tomb["history_record_id"]]["record_sha256"]
+                        != tomb["history_record_sha256"]
+                    or history_by_id[tomb["history_record_id"]]["origin"]["origin_record_sha256"]
+                        != tomb["origin_record_sha256"]
+                    or history_by_id[tomb["history_record_id"]]["result"]["destination"]
+                        != tomb["destination"]
+                    or history_by_id[tomb["history_record_id"]]["result"]["note_id"]
+                        != tomb["note_id"]
+                    or history_by_id[tomb["history_record_id"]]["result"]["content_sha256"]
+                        != tomb["content_sha256"])
+                   for tomb in self._obsidian_completed_drafts.values()):
+                raise ValueError("root Obsidian origin tombstone does not join archive")
         except Exception:
             self._obsidian_origin_store_ok = False
         self._master_source: Any = None
@@ -3379,6 +3704,12 @@ class RootCoreNativeObservationRegistry:
                 self._obsidian_bindings.pop(handle, None)
         self._obsidian_scoped_calls = {handle for handle in self._obsidian_scoped_calls
                                        if handle in self._calls and self._calls[handle]["expiry"] > now}
+        self._obsidian_draft_read_deliveries = {
+            receipt_id: row for receipt_id, row in self._obsidian_draft_read_deliveries.items()
+            if row["expires_monotonic"] > now}
+        self._obsidian_draft_review_proposals = {
+            handle: row for handle, row in self._obsidian_draft_review_proposals.items()
+            if row["expires_monotonic"] > now}
         for handle, row in list(self._policies.items()):
             policy = row.get("policy")
             if not isinstance(policy, RootSelectedOrchestratorDelegationPolicy) or policy.expires_monotonic <= now:
@@ -3747,22 +4078,43 @@ class RootCoreNativeObservationRegistry:
                 return False
             return True
 
-    def _persist_obsidian_origin(self, records: dict[tuple[str, str], dict[str, Any]]) -> None:
-        if not self._obsidian_origin_store_ok or len(records) > _OBSIDIAN_ORIGIN_MAX_RECORDS:
+    def _persist_obsidian_origin(self, records: dict[tuple[str, str], dict[str, Any]],
+                                 completed: dict[tuple[str, str], dict[str, Any]] | None = None) -> None:
+        completed = self._obsidian_completed_drafts if completed is None else completed
+        if (not self._obsidian_origin_store_ok
+                or len(records) > _OBSIDIAN_ORIGIN_MAX_RECORDS
+                or len(completed) > _OBSIDIAN_ORIGIN_MAX_RECORDS):
             raise ValueError("root Obsidian origin journal is unavailable or full")
         ordered = [records[key] for key in sorted(records)]
-        raw = _canonical({"schema": 1, "records": ordered})
+        completed_ordered = [completed[key] for key in sorted(completed)]
+        raw = _canonical({"schema": 2, "records": ordered, "completed": completed_ordered})
         if len(raw) > _OBSIDIAN_ORIGIN_MAX_BYTES:
             self._obsidian_origin_store_ok = False
             raise ValueError("root Obsidian origin journal reached its fixed size bound")
         try:
             _publish_root_obsidian_origin_bytes(raw)
-            verified = _obsidian_origin_snapshot_from_bytes(_read_root_obsidian_origin_bytes() or b"")
-            if verified != records:
+            verified = _obsidian_origin_state_from_bytes(_read_root_obsidian_origin_bytes() or b"")
+            if verified != (records, completed):
                 raise OSError("root Obsidian origin journal readback differs")
         except Exception:
             self._obsidian_origin_store_ok = False
             raise ValueError("root Obsidian origin journal could not be persisted") from None
+
+    def _persist_obsidian_history(self, records: list[dict[str, Any]]) -> None:
+        if (not self._obsidian_origin_store_ok
+                or len(records) > _OBSIDIAN_ORIGIN_HISTORY_MAX_RECORDS):
+            raise ValueError("root Obsidian origin history is full or unavailable")
+        raw = _canonical({"schema": 1, "records": records})
+        if len(raw) > _OBSIDIAN_ORIGIN_HISTORY_MAX_BYTES:
+            raise ValueError("root Obsidian origin history reached its fixed size bound")
+        try:
+            _publish_root_obsidian_history_bytes(raw)
+            verified = _obsidian_history_from_bytes(_read_root_obsidian_history_bytes() or b"")
+            if verified != records:
+                raise OSError("root Obsidian origin history readback differs")
+        except Exception:
+            self._obsidian_origin_store_ok = False
+            raise ValueError("root Obsidian origin history could not be persisted") from None
 
     def _obsidian_store_for_origin(self, data_root: Path, owner_sha: str) -> Any:
         from .obsidian_second_brain import ObsidianVaultConfig, ObsidianVaultStore
@@ -3792,6 +4144,171 @@ class RootCoreNativeObservationRegistry:
 
     def _read_obsidian_owner_draft(self, data_root: Path, owner_sha: str, draft_id: str) -> Any:
         return self._obsidian_store_for_origin(data_root, owner_sha).read_owner_draft(draft_id=draft_id)
+
+    def _record_obsidian_draft_read_delivery(self, *, call: dict[str, Any], owner: Any,
+                                            master_source: Any, startup: dict[str, Any],
+                                            startup_binding_id: str,
+                                            draft_id: str, content_sha256: str,
+                                            origin_record_sha256: str,
+                                            returned_markdown: str | None,
+                                            complete: bool, delivered_monotonic: float) -> dict[str, Any]:
+        """Retain bounded same-turn data proving exactly what the pinned master read returned."""
+        if (len(self._obsidian_draft_read_deliveries) >= _OBSIDIAN_DELIVERY_MAX_RECORDS
+                or type(complete) is not bool or (complete != (returned_markdown is not None))):
+            raise ValueError("Obsidian read-delivery state is unavailable")
+        returned_bytes = (returned_markdown.encode("utf-8", "strict")
+                          if returned_markdown is not None else b"")
+        row = {
+            "receipt_id": secrets.token_urlsafe(32),
+            "owner_subject_sha256": owner.owner_subject_sha256,
+            "owner_turn_handle": owner.owner_turn_handle,
+            "draft_id": draft_id, "content_sha256": content_sha256,
+            "origin_record_sha256": origin_record_sha256,
+            "source_generation_sha256": master_source.generation_sha256,
+            "startup_binding_id": startup_binding_id,
+            "observed_call_handle": call["handle"],
+            "tool_call_id": call["tool_call_id"],
+            "arguments_sha256": call["arguments_sha256"],
+            "returned_byte_length": len(returned_bytes),
+            "returned_content_sha256": hashlib.sha256(returned_bytes).hexdigest(),
+            "complete": complete, "covered_byte_length": len(returned_bytes),
+            "delivered_monotonic": delivered_monotonic,
+            "expires_monotonic": min(float(owner.expires_monotonic),
+                                      delivered_monotonic + 600.0),
+        }
+        if not row["complete"]:
+            row["covered_byte_length"] = 0
+        row["receipt_sha256"] = hashlib.sha256(_canonical(row)).hexdigest()
+        if row["receipt_id"] in self._obsidian_draft_read_deliveries:
+            raise ValueError("Obsidian read-delivery receipt ID collided")
+        self._obsidian_draft_read_deliveries[row["receipt_id"]] = dict(row)
+        return row
+
+    def _propose_obsidian_draft_review(self, *, call: dict[str, Any], owner: Any,
+                                       source: Any, peer: tuple[int, int, int]) -> dict[str, Any]:
+        """Bind Jarvis's exact promote invocation to a full same-turn draft delivery."""
+        if call["handle"] in self._obsidian_draft_review_proposals:
+            raise ValueError("Obsidian promotion review proposal was already recorded")
+        try:
+            arguments = json.loads(call["arguments"].decode("utf-8", "strict"),
+                                   object_pairs_hook=_unique_json_pairs)
+        except Exception:
+            raise ValueError("observed Obsidian promotion arguments are malformed") from None
+        expected_fields = {"draft_id", "expected_draft_sha256", "destination",
+                           "expected_base_sha256", "review_disposition"}
+        if type(arguments) is not dict or set(arguments) not in (
+                expected_fields, expected_fields | {"review_rationale"}) or _canonical(arguments) != call["arguments"]:
+            raise ValueError("observed Obsidian promotion schema differs")
+        draft_id = arguments["draft_id"]
+        content_sha = arguments["expected_draft_sha256"]
+        destination = arguments["destination"]
+        base_sha = arguments["expected_base_sha256"]
+        rationale = arguments.get("review_rationale")
+        if (arguments["review_disposition"] != "approve"
+                or not isinstance(draft_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,64}", draft_id)
+                or not _HASH.fullmatch(content_sha or "")
+                or (base_sha is not None and not _HASH.fullmatch(base_sha or ""))
+                or not isinstance(destination, str) or not 1 <= len(destination) <= 240
+                or (rationale is not None and (not isinstance(rationale, str)
+                    or len(rationale) > 512
+                    or any(ord(char) < 0x20 and char not in "\n\t" for char in rationale)))):
+            raise ValueError("Jarvis did not explicitly propose approval for a valid draft promotion")
+        if not self._obsidian_origin_store_ok:
+            raise ValueError("root Obsidian origin journal is unavailable")
+        key = (owner.owner_subject_sha256, draft_id)
+        origin = self._obsidian_draft_origins.get(key)
+        delivery = None
+        data_root = registered_owner = registration_sha = startup = None
+        for candidate in self._obsidian_draft_read_deliveries.values():
+            if (candidate["owner_subject_sha256"] != owner.owner_subject_sha256
+                    or candidate["owner_turn_handle"] != owner.owner_turn_handle
+                    or candidate["draft_id"] != draft_id
+                    or candidate["content_sha256"] != content_sha
+                    or candidate["complete"] is not True
+                    or candidate["covered_byte_length"] != candidate["returned_byte_length"]
+                    or candidate["expires_monotonic"] <= time.monotonic()
+                    or candidate["source_generation_sha256"] != source.generation_sha256
+                    or candidate["observed_call_handle"] == call["handle"]):
+                continue
+            try:
+                candidate_binding = self._validate_obsidian_origin_binding(
+                    peer=peer, binding_id=candidate["startup_binding_id"],
+                    owner=owner, now=time.monotonic())
+            except Exception:
+                continue
+            root, owner_identity, registration, binding_row = candidate_binding
+            if (candidate["origin_record_sha256"] != (origin or {}).get("origin_record_sha256")
+                    or candidate["startup_binding_id"] != binding_row["binding_id"]
+                    or hashlib.sha256(_canonical({key: value for key, value in candidate.items()
+                        if key != "receipt_sha256"})).hexdigest() != candidate["receipt_sha256"]):
+                continue
+            delivery = candidate
+            data_root, registered_owner, registration_sha, startup = (
+                root, owner_identity, registration, binding_row)
+            break
+        if (origin is None or origin["state"] != "private-draft"
+                or origin["registration_sha256"] != registration_sha
+                or origin["content_sha256"] != content_sha
+                or origin["base_sha256"] != base_sha
+                or origin["origin_record_sha256"] != _obsidian_origin_record_digest(origin)
+                or delivery is None
+                or delivery["origin_record_sha256"] != origin["origin_record_sha256"]
+                or delivery["startup_binding_id"] != startup["binding_id"]
+                or registered_owner != owner.owner_subject_sha256):
+            raise ValueError("exact complete draft bytes were not delivered in this Jarvis owner turn")
+        try:
+            from hermes_installer.remote.obsidian_second_brain import _note_relative_path
+            if _note_relative_path(destination) != destination:
+                raise ValueError
+        except Exception:
+            raise ValueError("Obsidian promotion destination is not a normalized owner note path") from None
+        reviewed = self._read_obsidian_owner_draft(data_root, registered_owner, draft_id)
+        reviewed_bytes = reviewed.markdown.encode("utf-8", "strict")
+        if (reviewed.draft.content_sha256 != content_sha
+                or reviewed.draft.base_sha256 != base_sha
+                or hashlib.sha256(reviewed_bytes).hexdigest() != content_sha
+                or delivery["returned_byte_length"] != len(reviewed_bytes)
+                or delivery["returned_content_sha256"] != content_sha):
+            raise ValueError("pending draft bytes changed after Jarvis received the complete review content")
+        after_call, after_owner, after_source, after_mode = self._classify_current_call(
+            call["handle"], peer, now=time.monotonic())
+        now = time.monotonic()
+        data_root2, registered_owner2, registration_sha2, startup2 = self._validate_obsidian_origin_binding(
+            peer=peer, binding_id=startup["binding_id"], owner=owner, now=now)
+        if (after_call is not call or after_owner is not owner or after_mode != "master_effect"
+                or after_source is None or after_source.profile_id != "hermes"
+                or after_source.generation_sha256 != source.generation_sha256
+                or data_root2 != data_root or registered_owner2 != registered_owner
+                or registration_sha2 != registration_sha or startup2 is not startup
+                or now >= min(call["expiry"], owner.expires_monotonic, startup["expiry"])):
+            raise ValueError("current owner call, source, or registration changed during proposal verification")
+        issued = time.monotonic()
+        proposal = {
+            "proposal_id": secrets.token_urlsafe(32),
+            "owner_subject_sha256": owner.owner_subject_sha256,
+            "owner_turn_handle": owner.owner_turn_handle,
+            "draft_id": draft_id, "content_sha256": content_sha,
+            "destination": destination, "expected_base_sha256": base_sha,
+            "disposition": "approve", "rationale": rationale,
+            "observed_call_handle": call["handle"], "tool_call_id": call["tool_call_id"],
+            "arguments_sha256": call["arguments_sha256"],
+            "source_generation_sha256": source.generation_sha256,
+            "read_delivery_receipt_id": delivery["receipt_id"],
+            "read_delivery_sha256": delivery["receipt_sha256"],
+            "origin_record_sha256": origin["origin_record_sha256"],
+            "created_monotonic": issued,
+            "owner_expires_monotonic": float(owner.expires_monotonic),
+            "call_expires_monotonic": float(call["expiry"]),
+            "expires_monotonic": min(float(owner.expires_monotonic), float(call["expiry"]), issued + 600.0),
+        }
+        proposal["proposal_sha256"] = hashlib.sha256(_canonical(proposal)).hexdigest()
+        if len(self._obsidian_draft_review_proposals) >= _OBSIDIAN_PROPOSAL_MAX_RECORDS:
+            self._obsidian_draft_review_proposals = {
+                handle: row for handle, row in self._obsidian_draft_review_proposals.items()
+                if row["expires_monotonic"] > issued}
+        if len(self._obsidian_draft_review_proposals) >= _OBSIDIAN_PROPOSAL_MAX_RECORDS:
+            raise ValueError("root Jarvis review proposal capacity is full")
+        return proposal
 
     def _handle(self, peer: tuple[int, int, int], request: dict[str, Any]) -> dict[str, Any]:
         op = request.get("op")
@@ -3888,7 +4405,7 @@ class RootCoreNativeObservationRegistry:
                 else:
                     if mode == "master_effect" and call["tool_name"] != "obsidian_promote_reviewed_draft":
                         raise ValueError("only exact owner promotion is an Obsidian final effect")
-                    if mode == "master_read" and call["tool_name"] not in _OBSIDIAN_READ_TOOL_NAMES:
+                    if mode == "master_read" and call["tool_name"] not in _OBSIDIAN_MASTER_READ_TOOL_NAMES:
                         raise ValueError("Obsidian call mode differs from its fixed read/draft tool")
                     execution_id, source_instance_id = owner.owner_turn_handle, "hermes"
                     source_generation = source.generation_sha256
@@ -3998,8 +4515,8 @@ class RootCoreNativeObservationRegistry:
                         or not source_revision or len(source_revision) > 128):
                     raise ValueError("private draft identity differs from the root-observed creator")
                 key = (owner.owner_subject_sha256, draft_id)
-                if key in self._obsidian_draft_origins:
-                    raise ValueError("private draft origin was already recorded")
+                if key in self._obsidian_draft_origins or key in self._obsidian_completed_drafts:
+                    raise ValueError("private draft origin was already recorded or completed")
                 record = {
                     "draft_id": draft_id, "owner_subject_sha256": owner.owner_subject_sha256,
                     "registration_sha256": registration_sha, "origin_execution_id": execution_id,
@@ -4047,11 +4564,15 @@ class RootCoreNativeObservationRegistry:
                 except Exception:
                     raise ValueError("observed promotion arguments are malformed") from None
                 if (type(arguments) is not dict
-                        or set(arguments) != {"draft_id", "expected_draft_sha256", "destination",
-                                              "expected_base_sha256"}
+                        or set(arguments) not in (
+                            {"draft_id", "expected_draft_sha256", "destination",
+                             "expected_base_sha256", "review_disposition"},
+                            {"draft_id", "expected_draft_sha256", "destination",
+                             "expected_base_sha256", "review_disposition", "review_rationale"})
                         or _canonical(arguments) != call["arguments"]
                         or arguments["draft_id"] != draft_id
-                        or arguments["expected_draft_sha256"] != content_sha):
+                        or arguments["expected_draft_sha256"] != content_sha
+                        or arguments["review_disposition"] != "approve"):
                     raise ValueError("draft lookup differs from the exact observed owner review call")
                 now = time.monotonic()
                 data_root, registered_owner, registration_sha, startup = \
@@ -4091,6 +4612,356 @@ class RootCoreNativeObservationRegistry:
                     "content_sha256": record["content_sha256"],
                     "base_sha256": record["base_sha256"],
                     "origin_record_sha256": origin_record_sha, "state": record["state"],
+                    "issued_monotonic": issued, "expires_monotonic": expiry}
+            if op == "complete-obsidian-draft-origin":
+                required = {"schema", "op", "nonce", "observed_call_handle", "startup_binding_id",
+                    "draft_id", "origin_record_sha256", "proposal_sha256", "pending_id",
+                    "review_sha256", "destination", "expected_base_sha256", "note_id",
+                    "content_sha256", "title"}
+                if set(request) != required:
+                    raise ValueError("Obsidian promotion completion schema mismatch")
+                handle, binding_id = request["observed_call_handle"], request["startup_binding_id"]
+                draft_id = request["draft_id"]
+                if (not isinstance(handle, str) or not _OPAQUE.fullmatch(handle)
+                        or not isinstance(binding_id, str) or not _OPAQUE.fullmatch(binding_id)
+                        or not isinstance(draft_id, str)
+                        or not re.fullmatch(r"[A-Za-z0-9_-]{32,64}", draft_id)
+                        or not all(_HASH.fullmatch(request[name] or "") for name in (
+                            "origin_record_sha256", "proposal_sha256", "review_sha256",
+                            "content_sha256"))
+                        or not isinstance(request["pending_id"], str)
+                        or not _OPAQUE.fullmatch(request["pending_id"])
+                        or not isinstance(request["destination"], str)
+                        or not isinstance(request["title"], str)
+                        or not 1 <= len(request["title"]) <= 160
+                        or (request["expected_base_sha256"] is not None
+                            and not _HASH.fullmatch(request["expected_base_sha256"] or ""))
+                        or not _ID.fullmatch(request["note_id"])):
+                    raise ValueError("Obsidian promotion completion identity is malformed")
+                call, owner, source, mode = self._classify_current_call(
+                    handle, peer, now=time.monotonic())
+                if call["tool_name"] != "obsidian_promote_reviewed_draft" or mode != "master_effect":
+                    raise ValueError("only current Jarvis promotion can complete a retained draft")
+                proposal = self._obsidian_draft_review_proposals.get(handle)
+                if (proposal is None or proposal["draft_id"] != draft_id
+                        or proposal["proposal_sha256"] != request["proposal_sha256"]
+                        or proposal["origin_record_sha256"] != request["origin_record_sha256"]
+                        or proposal["content_sha256"] != request["content_sha256"]
+                        or proposal["destination"] != request["destination"]
+                        or proposal["expected_base_sha256"] != request["expected_base_sha256"]
+                        or proposal["arguments_sha256"] != call["arguments_sha256"]
+                        or proposal["expires_monotonic"] <= time.monotonic()):
+                    raise ValueError("completed write differs from the retained Jarvis proposal")
+                arguments = json.loads(call["arguments"].decode("utf-8", "strict"),
+                                       object_pairs_hook=_unique_json_pairs)
+                if (type(arguments) is not dict or _canonical(arguments) != call["arguments"]
+                        or arguments.get("review_disposition") != "approve"
+                        or arguments.get("draft_id") != draft_id
+                        or arguments.get("expected_draft_sha256") != request["content_sha256"]
+                        or arguments.get("destination") != request["destination"]
+                        or arguments.get("expected_base_sha256") != request["expected_base_sha256"]):
+                    raise ValueError("promotion completion does not match exact observed owner arguments")
+                data_root, registered_owner, registration_sha, startup = \
+                    self._validate_obsidian_origin_binding(
+                        peer=peer, binding_id=binding_id, owner=owner, now=time.monotonic())
+                origin_key = (owner.owner_subject_sha256, draft_id)
+                origin = self._obsidian_draft_origins.get(origin_key)
+                if (origin is None or origin["origin_record_sha256"] != request["origin_record_sha256"]
+                        or origin["registration_sha256"] != registration_sha
+                        or _obsidian_origin_record_digest(origin) != origin["origin_record_sha256"]
+                        or origin["state"] != "private-draft"):
+                    raise ValueError("active root origin changed before verified completion")
+                expected_ledger = {
+                    "owner_turn_handle": owner.owner_turn_handle,
+                    "gateway_turn_id": owner.gateway_turn_id,
+                    "owner_subject_sha256": owner.owner_subject_sha256,
+                    "core_generation": owner.core_generation,
+                    "core_source_generation": owner.core_source_generation,
+                    "source_generation_sha256": source.generation_sha256,
+                    "source_profile_id": "hermes", "tool_call_id": call["tool_call_id"],
+                    "tool_name": call["tool_name"], "arguments_sha256": call["arguments_sha256"],
+                    "review_sha256": request["review_sha256"],
+                }
+                if (proposal["_pending_id"] != request["pending_id"]
+                        or proposal["_review_sha256"] != request["review_sha256"]
+                        or self._final_effect_ledger().poll(
+                            request["pending_id"], request["review_sha256"],
+                            expected=expected_ledger) != "spent"):
+                    raise ValueError("the exact owner approval was not spent for this completed promotion")
+                store = self._obsidian_store_for_origin(data_root, registered_owner)
+                private = store.read_private_draft(
+                    execution_id=origin["origin_execution_id"], draft_id=draft_id,
+                    source_instance_id=origin["origin_source_id"])
+                if (private.get("state") != "promoted"
+                        or private.get("contentSha256") != request["content_sha256"]
+                        or private.get("promotedSha256") != request["content_sha256"]
+                        or private.get("baseSha256") != request["expected_base_sha256"]
+                        or private.get("destinationId") != request["note_id"]
+                        or private.get("title") != request["title"]
+                        or hashlib.sha256(private.get("markdown", "").encode("utf-8", "strict")).hexdigest()
+                            != request["content_sha256"]):
+                    raise ValueError("independent private promoted-record readback differs")
+                try:
+                    from hermes_installer.remote.obsidian_second_brain import _note_relative_path, _opaque_id
+                    relative = _note_relative_path(request["destination"])
+                except Exception:
+                    raise ValueError("verified promotion destination is not a valid owner note path") from None
+                saved_note = store._read_optional_note(relative)
+                if (saved_note is None or _opaque_id(relative) != request["note_id"]
+                        or saved_note[1] != request["content_sha256"]
+                        or saved_note[0] != private["markdown"]):
+                    raise ValueError("independent public note readback differs from the promoted private record")
+                after_call, after_owner, after_source, after_mode = self._classify_current_call(
+                    handle, peer, now=time.monotonic())
+                after_root, after_registered_owner, after_registration, after_startup = \
+                    self._validate_obsidian_origin_binding(
+                        peer=peer, binding_id=binding_id, owner=owner, now=time.monotonic())
+                verified_at = time.monotonic()
+                if (after_call is not call or after_owner is not owner or after_mode != "master_effect"
+                        or after_source is None or after_source.profile_id != "hermes"
+                        or after_source.generation_sha256 != source.generation_sha256
+                        or after_source.is_current_sealed(self._custody, now=verified_at) is not True
+                        or after_root != data_root or after_registered_owner != registered_owner
+                        or after_registration != registration_sha or after_startup is not startup
+                        or proposal["expires_monotonic"] <= verified_at
+                        or verified_at >= min(float(call["expiry"]), float(owner.expires_monotonic),
+                                              float(startup["expiry"]))):
+                    raise ValueError("current owner, source, registration, or original deadline changed during readback")
+                now = time.time()
+                archive_row = next((row for row in self._obsidian_origin_history
+                    if row["origin"]["origin_record_sha256"] == origin["origin_record_sha256"]
+                    and row["proposal"].get("proposal_sha256") == proposal["proposal_sha256"]), None)
+                if archive_row is None:
+                    if len(self._obsidian_origin_history) >= _OBSIDIAN_ORIGIN_HISTORY_MAX_RECORDS:
+                        raise ValueError("root Obsidian history capacity is full; active draft retained")
+                    archived_proposal = {key: proposal[key] for key in (
+                        "proposal_id", "proposal_sha256", "owner_subject_sha256", "owner_turn_handle",
+                        "draft_id", "content_sha256", "destination", "expected_base_sha256",
+                        "disposition", "observed_call_handle", "tool_call_id", "arguments_sha256",
+                        "source_generation_sha256", "read_delivery_receipt_id",
+                        "read_delivery_sha256", "origin_record_sha256")}
+                    archive_body = {
+                        "record_id": secrets.token_urlsafe(32),
+                        "origin": dict(origin),
+                        "proposal": archived_proposal,
+                        "approval": {"pending_id": request["pending_id"],
+                            "review_sha256": request["review_sha256"],
+                            "owner_subject_sha256": owner.owner_subject_sha256,
+                            "owner_turn_handle": owner.owner_turn_handle,
+                            "source_generation_sha256": source.generation_sha256,
+                            "observed_call_handle": call["handle"],
+                            "tool_call_id": call["tool_call_id"],
+                            "arguments_sha256": call["arguments_sha256"]},
+                        "result": {"destination": relative, "note_id": request["note_id"],
+                            "title": request["title"], "content_sha256": request["content_sha256"],
+                            "state": "promoted"},
+                        "completed_at": now,
+                    }
+                    archive_row = {**archive_body,
+                        "record_sha256": hashlib.sha256(_canonical(archive_body)).hexdigest()}
+                    history = [*self._obsidian_origin_history, archive_row]
+                    self._persist_obsidian_history(history)
+                    self._obsidian_origin_history = history
+                else:
+                    if (archive_row["approval"]["pending_id"] != request["pending_id"]
+                            or archive_row["approval"]["review_sha256"] != request["review_sha256"]
+                            or archive_row["result"]["content_sha256"] != request["content_sha256"]
+                            or archive_row["result"]["note_id"] != request["note_id"]
+                            or archive_row["result"]["destination"] != relative
+                            or archive_row["result"]["title"] != request["title"]):
+                        raise ValueError("a different completion already occupies this origin history")
+                tombstone_body = {"owner_subject_sha256": owner.owner_subject_sha256,
+                    "draft_id": draft_id, "origin_record_sha256": origin["origin_record_sha256"],
+                    "history_record_id": archive_row["record_id"],
+                    "history_record_sha256": archive_row["record_sha256"],
+                    "destination": relative, "note_id": request["note_id"],
+                    "content_sha256": request["content_sha256"], "completed_at": now}
+                tombstone = {**tombstone_body,
+                    "completed_record_sha256": hashlib.sha256(_canonical(tombstone_body)).hexdigest()}
+                remaining = dict(self._obsidian_draft_origins)
+                remaining.pop(origin_key)
+                completed = dict(self._obsidian_completed_drafts)
+                existing = completed.get(origin_key)
+                if existing is not None and existing != tombstone:
+                    raise ValueError("draft already completed with a different verified result")
+                completed[origin_key] = tombstone
+                self._persist_obsidian_origin(remaining, completed)
+                self._obsidian_draft_origins = remaining
+                self._obsidian_completed_drafts = completed
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                    "completed_record_sha256": tombstone["completed_record_sha256"]}
+            if op == "resolve-obsidian-review-proposal":
+                if set(request) != {"schema", "op", "nonce", "observed_call_handle",
+                                    "startup_binding_id", "draft_id", "expected_content_sha256"}:
+                    raise ValueError("Obsidian review proposal schema mismatch")
+                handle, binding_id = request["observed_call_handle"], request["startup_binding_id"]
+                draft_id, content_sha = request["draft_id"], request["expected_content_sha256"]
+                if (not isinstance(handle, str) or not _OPAQUE.fullmatch(handle)
+                        or not isinstance(binding_id, str) or not _OPAQUE.fullmatch(binding_id)
+                        or not isinstance(draft_id, str)
+                        or not re.fullmatch(r"[A-Za-z0-9_-]{32,64}", draft_id)
+                        or not _HASH.fullmatch(content_sha or "")):
+                    raise ValueError("Obsidian review proposal identity is malformed")
+                call, owner, source, mode = self._classify_current_call(
+                    handle, peer, now=time.monotonic())
+                if call["tool_name"] != "obsidian_promote_reviewed_draft" or mode != "master_effect":
+                    raise ValueError("only current Jarvis promotion can resolve its proposal")
+                proposal = self._obsidian_draft_review_proposals.get(handle)
+                if (proposal is None or proposal["draft_id"] != draft_id
+                        or proposal["content_sha256"] != content_sha
+                        or proposal["owner_turn_handle"] != owner.owner_turn_handle
+                        or proposal["owner_subject_sha256"] != owner.owner_subject_sha256
+                        or proposal["arguments_sha256"] != call["arguments_sha256"]
+                        or proposal["expires_monotonic"] <= time.monotonic()):
+                    raise ValueError("current promotion has no matching Jarvis proposal")
+                data_root, registered_owner, registration_sha, startup = \
+                    self._validate_obsidian_origin_binding(
+                        peer=peer, binding_id=binding_id, owner=owner, now=time.monotonic())
+                if (startup["binding_id"] != binding_id
+                        or proposal["source_generation_sha256"] != source.generation_sha256):
+                    raise ValueError("Jarvis proposal belongs to another current source or binding")
+                ledger_expected = {
+                    "owner_turn_handle": owner.owner_turn_handle,
+                    "gateway_turn_id": owner.gateway_turn_id,
+                    "owner_subject_sha256": owner.owner_subject_sha256,
+                    "core_generation": owner.core_generation,
+                    "core_source_generation": owner.core_source_generation,
+                    "source_generation_sha256": source.generation_sha256,
+                    "source_profile_id": "hermes", "tool_call_id": call["tool_call_id"],
+                    "tool_name": call["tool_name"],
+                    "arguments_sha256": call["arguments_sha256"],
+                    "review_sha256": proposal["_review_sha256"],
+                }
+                if self._final_effect_ledger().poll(
+                        proposal["_pending_id"], proposal["_review_sha256"],
+                        expected=ledger_expected) != "spent":
+                    raise ValueError("owner approval has not been consumed for this exact proposal")
+                record = self._obsidian_draft_origins.get(
+                    (owner.owner_subject_sha256, draft_id))
+                if (record is None or record["registration_sha256"] != registration_sha
+                        or record["origin_record_sha256"] != proposal["origin_record_sha256"]
+                        or _obsidian_origin_record_digest(record) != record["origin_record_sha256"]):
+                    raise ValueError("proposal origin no longer joins current root provenance")
+                reviewed = self._read_obsidian_owner_draft(data_root, registered_owner, draft_id)
+                if (reviewed.draft.content_sha256 != content_sha
+                        or reviewed.draft.base_sha256 != proposal["expected_base_sha256"]
+                        or hashlib.sha256(reviewed.markdown.encode("utf-8", "strict")).hexdigest()
+                            != content_sha):
+                    raise ValueError("proposal draft bytes changed before permitted promotion")
+                issued = time.monotonic()
+                if issued >= min(float(call["expiry"]), float(owner.expires_monotonic),
+                                 float(startup["expiry"])):
+                    raise ValueError("Jarvis proposal's original authority deadlines expired")
+                response = {key: value for key, value in proposal.items() if not key.startswith("_")}
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                    **response}
+            if op == "read-obsidian-private-draft":
+                if set(request) != {"schema", "op", "nonce", "observed_call_handle",
+                                    "startup_binding_id", "draft_id", "expected_content_sha256"}:
+                    raise ValueError("Obsidian draft review schema mismatch")
+                handle, binding_id = request["observed_call_handle"], request["startup_binding_id"]
+                draft_id, content_sha = request["draft_id"], request["expected_content_sha256"]
+                if (not isinstance(handle, str) or not _OPAQUE.fullmatch(handle)
+                        or not isinstance(draft_id, str)
+                        or not re.fullmatch(r"[A-Za-z0-9_-]{32,64}", draft_id)
+                        or not _HASH.fullmatch(content_sha or "")
+                        or not self._obsidian_origin_store_ok):
+                    raise ValueError("Obsidian draft review identity or journal is unavailable")
+                call, owner, master_source, mode = self._classify_current_call(
+                    handle, peer, now=time.monotonic())
+                if (call["tool_name"] != "obsidian_read_private_draft" or mode != "master_read"
+                        or handle not in self._obsidian_scoped_calls):
+                    raise ValueError("only the current Jarvis master read can inspect a private draft")
+                try:
+                    arguments = json.loads(call["arguments"].decode("utf-8", "strict"),
+                                           object_pairs_hook=_unique_json_pairs)
+                except Exception:
+                    raise ValueError("observed draft review arguments are malformed") from None
+                if (type(arguments) is not dict
+                        or set(arguments) != {"draft_id", "expected_draft_sha256"}
+                        or _canonical(arguments) != call["arguments"]
+                        or arguments["draft_id"] != draft_id
+                        or arguments["expected_draft_sha256"] != content_sha):
+                    raise ValueError("draft review differs from the exact observed master call")
+                now = time.monotonic()
+                data_root, registered_owner, registration_sha, startup = \
+                    self._validate_obsidian_origin_binding(
+                        peer=peer, binding_id=binding_id, owner=owner, now=now)
+                if (master_source is None or master_source.is_current_sealed(
+                        self._custody, now=now) is not True):
+                    raise ValueError("current master source changed before draft review")
+                key = (owner.owner_subject_sha256, draft_id)
+                record = self._obsidian_draft_origins.get(key)
+                if (record is None or record["state"] != "private-draft"
+                        or record["registration_sha256"] != registration_sha
+                        or record["content_sha256"] != content_sha):
+                    raise ValueError("draft has no retained pending private origin")
+                reviewed = self._read_obsidian_owner_draft(data_root, registered_owner, draft_id)
+                draft = reviewed.draft
+                markdown = reviewed.markdown
+                markdown_bytes = markdown.encode("utf-8", "strict")
+                if (draft.execution_id != record["origin_execution_id"]
+                        or draft.source_instance_id != record["origin_source_id"]
+                        or draft.content_sha256 != content_sha
+                        or hashlib.sha256(markdown_bytes).hexdigest() != content_sha
+                        or draft.base_sha256 != record["base_sha256"]
+                        or _obsidian_origin_record_digest(record) != record["origin_record_sha256"]):
+                    raise ValueError("retained origin does not match the independently read pending draft")
+                # The source call, owner, binding and original expiry remain the
+                # same across the owner-byte read. A slow read cannot refresh or
+                # extend this observed call's authority.
+                after_call, after_owner, after_source, after_mode = self._classify_current_call(
+                    handle, peer, now=time.monotonic())
+                after_root, after_registered_owner, after_registration, after_startup = \
+                    self._validate_obsidian_origin_binding(
+                        peer=peer, binding_id=binding_id, owner=owner, now=time.monotonic())
+                completed = time.monotonic()
+                if (after_call is not call or after_owner is not owner
+                        or after_source is None or master_source is None
+                        or after_source.profile_id != master_source.profile_id
+                        or after_source.source_revision != master_source.source_revision
+                        or after_source.generation_sha256 != master_source.generation_sha256
+                        or after_mode != "master_read"
+                        or after_root != data_root or after_registered_owner != registered_owner
+                        or after_registration != registration_sha or after_startup is not startup
+                        or handle not in self._obsidian_scoped_calls
+                        or completed >= min(float(call["expiry"]), float(owner.expires_monotonic),
+                                            float(startup["expiry"]))):
+                    raise ValueError("current Jarvis draft-review call expired during readback")
+                complete = len(markdown_bytes) <= 32 * 1024
+                issued = completed
+                expiry = min(float(call["expiry"]), float(owner.expires_monotonic),
+                             float(startup["expiry"]), issued + 5.0)
+                if not issued < expiry <= issued + 5.0:
+                    raise ValueError("current Jarvis draft-review lease is unavailable")
+                if len(self._obsidian_draft_read_deliveries) >= _OBSIDIAN_DELIVERY_MAX_RECORDS:
+                    self._obsidian_draft_read_deliveries = {
+                        receipt_id: row for receipt_id, row
+                        in self._obsidian_draft_read_deliveries.items()
+                        if row["expires_monotonic"] > issued}
+                if len(self._obsidian_draft_read_deliveries) >= _OBSIDIAN_DELIVERY_MAX_RECORDS:
+                    raise ValueError("current-turn Obsidian read-delivery receipt capacity is full")
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                    "draft_id": draft_id, "title": draft.title,
+                    "markdown": markdown if complete else None,
+                    "content_sha256": content_sha, "byte_length": len(markdown_bytes),
+                    "review_complete": complete,
+                    "next_step": None if complete else
+                        "Use the owner draft review flow to reduce the draft before Jarvis reviews it.",
+                    "base_note_id": draft.base_note_id, "base_sha256": draft.base_sha256,
+                    "origin_source_id": record["origin_source_id"],
+                    "origin_source_revision": record["origin_source_revision"],
+                    "origin_execution_id": record["origin_execution_id"],
+                    "mission_sha256": record["mission_sha256"],
+                    "source_generation_sha256": record["source_generation_sha256"],
+                    "origin_record_sha256": record["origin_record_sha256"],
+                    "delivery": self._record_obsidian_draft_read_delivery(
+                        call=call, owner=owner, master_source=master_source,
+                        startup=startup, startup_binding_id=binding_id,
+                        draft_id=draft_id, content_sha256=content_sha,
+                        origin_record_sha256=record["origin_record_sha256"],
+                        returned_markdown=markdown if complete else None,
+                        complete=complete, delivered_monotonic=issued),
                     "issued_monotonic": issued, "expires_monotonic": expiry}
             if op == "planning-turn-context":
                 if set(request) != {"schema", "op", "nonce", "session_id", "turn_id", "prompt_sha256"}:
@@ -4207,6 +5078,10 @@ class RootCoreNativeObservationRegistry:
                         or review_digest(call["tool_name"], call["arguments_sha256"])
                             != request["review_sha256"]):
                     raise ValueError("only a current Jarvis master effect can request approval")
+                proposal_row = None
+                if call["tool_name"] == "obsidian_promote_reviewed_draft":
+                    proposal_row = self._propose_obsidian_draft_review(
+                        call=call, owner=owner, source=source, peer=peer)
                 pending = self._final_effect_ledger().issue_pending(
                     owner_subject_sha256=owner.owner_subject_sha256,
                     gateway_turn_id=owner.gateway_turn_id,
@@ -4220,6 +5095,10 @@ class RootCoreNativeObservationRegistry:
                     expires_monotonic=min(call["expiry"], owner.expires_monotonic,
                                           time.monotonic() + 30.0),
                     canonical_arguments=call["arguments"])
+                if proposal_row is not None:
+                    proposal_row["_pending_id"] = pending.pending_id
+                    proposal_row["_review_sha256"] = pending.review_sha256
+                    self._obsidian_draft_review_proposals[call["handle"]] = proposal_row
                 return {"schema": 1, "nonce": nonce, "ok": True,
                     "pending_id": pending.pending_id,
                     "review_sha256": pending.review_sha256,
