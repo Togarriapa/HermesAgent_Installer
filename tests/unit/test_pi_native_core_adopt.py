@@ -122,10 +122,12 @@ def _installed_recovery_fixture(monkeypatch, tmp_path, *, foreign_backup=False,
                  backup / "plugin-selection.json": snapshot,
                  tmp_path / "token": token}
     events = []
-    state = {"adapter_running": core_running, "selection": "c" * 64,
-             "selection_prior": selection_already_prior,
-             "files": {"unit": b"adapter unit", "launcher": b"adapter launcher"}}
     old_files = {"unit": unit, "launcher": launcher}
+    adapter_files = {"unit": b"adapter unit", "launcher": b"adapter launcher"}
+    state = {"adapter_running": core_running,
+             "selection": "d" * 64 if selection_already_prior else "c" * 64,
+             "selection_prior": selection_already_prior,
+             "files": adapter_files.copy(), "loaded_files": adapter_files.copy()}
     monkeypatch.setattr(adopt.Path, "resolve", lambda path, strict=False: path)
     real_listdir = adopt.os.listdir
     monkeypatch.setattr(adopt.os, "listdir", lambda path: [
@@ -150,6 +152,8 @@ def _installed_recovery_fixture(monkeypatch, tmp_path, *, foreign_backup=False,
         events.append(tuple(args))
         if args[1:] == ["stop", "hermes-jarvis-core.service"]:
             state["adapter_running"] = False
+        elif args[1:] == ["daemon-reload"]:
+            state["loaded_files"] = state["files"].copy()
         elif args[1:] == ["start", "hermes-jarvis-core.service"]:
             state["adapter_running"] = True
         if args[1:3] == ["is-active", "hermes-jarvis-core.service"]:
@@ -160,19 +164,33 @@ def _installed_recovery_fixture(monkeypatch, tmp_path, *, foreign_backup=False,
 
     def read_legacy():
         events.append("readback-legacy")
+        assert state["adapter_running"]
+        assert state["files"] == state["loaded_files"] == old_files
         return previous, backup_journal, state["files"].copy()
+
+    def owned_listener(*, legacy_launcher=False):
+        kind = "legacy" if legacy_launcher else "adapter"
+        events.append(("listener", kind))
+        expected_files = old_files if legacy_launcher else adapter_files
+        return (state["adapter_running"]
+                and state["loaded_files"] == expected_files)
+
+    def restore_backup():
+        events.append("restore-backup")
+        state["files"].update(old_files)
+        state["adapter_running"] = False
 
     core = SimpleNamespace(
         ADAPTER_SOURCE=source, ADAPTER_MIGRATION_BACKUP=backup, TOKEN=tmp_path / "token",
         GATEWAY_GID=981, SERVICE="hermes-jarvis-core.service", UNIT="unit", LAUNCHER="launcher",
         _journal=lambda: current,
-        _owned_unit_loaded=lambda: (events.append("unit-loaded") or True),
-        _owned_listener=lambda: (events.append("listener") or state["adapter_running"]),
+        _owned_unit_loaded=lambda: (events.append(("unit-loaded", state["loaded_files"].copy()))
+                                    or state["loaded_files"] == state["files"]),
+        _owned_listener=owned_listener,
         _core_source_generation=lambda: "b" * 64,
         _projection_file=projection, _unit=lambda: unit, _legacy_launcher=lambda: launcher,
         _run=run,
-        _restore_adapter_migration_backup=lambda: (events.append("restore-backup"),
-            state["files"].update(old_files), state.update(adapter_running=False)),
+        _restore_adapter_migration_backup=restore_backup,
         _read_legacy_owned_runtime=read_legacy,
     )
     inspector = ModuleType("hermes_installer.remote.core_gateway_inspector")
@@ -192,7 +210,7 @@ def _installed_recovery_fixture(monkeypatch, tmp_path, *, foreign_backup=False,
         events.append("capture-selection")
         return SimpleNamespace(
             snapshot_json=snapshot if state["selection_prior"] else b'{"selected":"migrated"}\n',
-            prior_selection_sha256="d" * 64 if state["selection_prior"] else "c" * 64,
+            prior_selection_sha256=state["selection"],
             migrated_selection_sha256="c" * 64,
         )
 
@@ -239,7 +257,7 @@ def test_interrupted_stopped_recovery_accepts_exact_prior_selection_without_reen
     assert events.index("capture-selection") < events.index("restore-backup")
     assert events.index("restore-backup") < events.index(("systemctl", "start", core.SERVICE))
     assert state["adapter_running"]
-    assert state["selection"] == "c" * 64
+    assert state["selection"] == "d" * 64
 
 
 def test_recovery_accepts_restore_cli_noise_only_after_exact_snapshot_readback(
