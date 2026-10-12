@@ -116,6 +116,7 @@ def test_extension_snapshot_keeps_provenance_and_prefixes_builtins():
     assert result["availableActions"]["skills"]["remove"] is True
     assert "Hermes stock skills remain read-only" in result["availableActions"]["skills"]["reason"]
     assert result["availableActions"]["plugins"]["remove"] is True
+    assert result["availableActions"]["plugins"]["update"] is False
     assert result["availableActions"]["mcps"]["edit"] is False
 
 

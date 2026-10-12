@@ -63,7 +63,7 @@ _MOUNT = r'''function mount(container, api) {
     const detail = item.kind === 'plugins' ? `${item.state || 'status unknown'} · ${item.version || 'version unknown'}`
       : item.kind === 'mcps' ? `${item.transport} · ${item.enabled ? 'enabled' : 'disabled'} · ${item.originLabel || 'source unverified'}` : `${item.category} · ${item.actionState || (item.loaded ? 'loaded' : 'source present, not loaded')}`;
     text(box,'p',detail);
-    if (item.updateAvailable === true) text(box,'p','A catalog update is available; review remains required.');
+    if (item.updateAvailable === true) text(box,'p','A catalog update is available. Jarvis cannot apply it because the pinned native settings API has no reviewed update action.');
     const actions = document.createElement('div'); actions.className='extension-actions';
     if (item.kind === 'skills' && ['useradded','bundledResources'].includes(item.source) && item.editable) {
       const edit=text(actions,'button','Edit skill'); edit.type='button'; edit.addEventListener('click',async()=>{

@@ -240,9 +240,11 @@ def build_extension_snapshot(*, skills: Any, plugins: Any, mcps: Any,
             "availableActions": {
                 "skills": {"add": True, "edit": True, "remove": True,
                            "reason": "Resources skills use owner overlays; Hermes-home owner-added files use the root journal. Hermes stock skills remain read-only."},
-                "plugins": {"add": True, "edit": True, "remove": True,
+                "plugins": {"add": True, "edit": True, "enable": True,
+                            "disable": True, "update": False, "remove": True,
                             "reason": ("Removal permanently deletes the plugin package and Hermes "
-                                       "registration; the owner must explicitly confirm it.")},
+                                       "registration; the owner must explicitly confirm it. The pinned "
+                                       "native settings RPC has no reviewed update action.")},
                 "mcps": {"add": True, "edit": False, "remove": True,
                          "reason": ("Pinned Hermes MCP setup supports catalog add/remove; "
                                     "connection edits have no atomic RPC. Existing config servers "
