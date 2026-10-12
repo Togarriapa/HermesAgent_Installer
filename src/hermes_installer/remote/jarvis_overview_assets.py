@@ -366,7 +366,9 @@ function projectNativeEcosystem(snapshot, now, coreVerified) {
     hasVerifiedTeamJoin};
 }
 
-_MOUNT = r"""function mount(container, api, state, mountScope) {
+"""
+
+_MOUNT += r"""function mount(container, api, state, mountScope) {
   const root = container.querySelector('[data-feature-root="overview"]') || container;
   const $ = (selector) => root.querySelector(selector);
   const refreshButton = $('[data-refresh]');
