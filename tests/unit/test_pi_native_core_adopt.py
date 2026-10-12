@@ -723,7 +723,11 @@ def test_adapter_refresh_pre_effect_failure_preserves_live_ingress(monkeypatch, 
         approved_union=False)
 
     assert result == 4
-    assert events == ["backup", "journal-state", "runtime-journal"]
+    # The runtime-repaired unit digest is written only after the exact
+    # replacement Inspector recipe has been constructed successfully.
+    assert events == ["backup", "journal-state"]
+    assert not any(isinstance(event, tuple) and event[0] in {"systemctl", "write"}
+                   for event in events)
 
 
 def test_adapter_refresh_resume_recovers_partial_core_before_qualification(monkeypatch):
@@ -1537,11 +1541,32 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
     class CoreRuntimeError(RuntimeError):
         pass
 
+    def read_active_adapter():
+        events.append("read-active-adapter-runtime")
+        raise CoreRuntimeError(
+            "no complete journaled native adapter runtime is eligible for update")
+
+    def read_legacy_runtime():
+        # Exercise the current selector contract: native-adapter denial is
+        # followed by the full legacy-owned reader, whose process and fixed
+        # ingress evidence are still current in this fixture.
+        events.append("read-legacy-owned-runtime")
+        if (not all(adopt._unit_is_fixed(name)
+                    for name in (adopt.INSPECTOR, adopt.GATEWAY, adopt.TUNNEL))
+                or any(states[name] != "active"
+                       for name in (adopt.INSPECTOR, adopt.GATEWAY, adopt.TUNNEL))
+                or not owned_listener(legacy_launcher=True)):
+            raise CoreRuntimeError("legacy owned runtime fixture is not current")
+        return ({"state": "active", "source": OLD_SOURCE.decode()},
+                b"legacy journal snapshot", {"source": OLD_SOURCE})
+
     core = SimpleNamespace(
         SERVICE="hermes-jarvis-core.service",
         CoreRuntimeError=CoreRuntimeError,
         _validate_adapter_source_path=lambda: events.append("validate-source"),
         _owned_listener=owned_listener,
+        _read_active_adapter_runtime=read_active_adapter,
+        _read_legacy_owned_runtime=read_legacy_runtime,
         migrate_owned_core_to_adapter_path=migrate,
     )
     core.__file__ = str(source / "hermes_installer" / "core_runtime.py")
@@ -1696,6 +1721,8 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
     monkeypatch.setattr(adopt, "_refresh_migrated_core_config", bind_migrated_core)
 
     result = adopt.main()
+    assert events.index("read-active-adapter-runtime") < events.index("read-legacy-owned-runtime")
+    assert events.index("read-legacy-owned-runtime") < events.index("load-gateway-config")
     gateway_tunnel_starts = [index for index, event in enumerate(events)
                              if isinstance(event, tuple) and event[0] == "start"
                              and event[1] in {adopt.GATEWAY, adopt.TUNNEL}]
