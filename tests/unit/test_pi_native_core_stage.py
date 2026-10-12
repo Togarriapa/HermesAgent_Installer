@@ -43,6 +43,20 @@ def test_download_hash_mismatch_removes_bytes_before_any_extraction(monkeypatch,
     assert not path.exists()
 
 
+def test_root_interpreter_requires_supported_version_and_platform_modules(monkeypatch):
+    monkeypatch.setattr(stage.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(stage.sys, "executable", "/usr/bin/python3")
+    monkeypatch.setattr(stage.sys, "flags", type("Flags", (), {"isolated": 1})())
+    monkeypatch.setattr(stage.sys, "version_info", (3, 9, 18))
+    with pytest.raises(RuntimeError, match="3.10 or newer"):
+        stage._require_root_python()
+
+    monkeypatch.setattr(stage.sys, "version_info", (3, 11, 0))
+    monkeypatch.setattr(stage.importlib.util, "find_spec", lambda _name: None)
+    with pytest.raises(RuntimeError, match="sqlite3"):
+        stage._require_root_python()
+
+
 def test_existing_candidate_generation_refuses_before_network_or_write(monkeypatch, tmp_path):
     commit = "a" * 40
     target = tmp_path / f"hermes-installer-core-{commit[:9]}"

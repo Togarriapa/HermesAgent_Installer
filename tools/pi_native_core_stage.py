@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -36,6 +37,11 @@ FILE_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
 def _require_root_python() -> None:
     if os.geteuid() != 0 or sys.executable != "/usr/bin/python3" or not sys.flags.isolated:
         raise RuntimeError("run as root with /usr/bin/python3 -I")
+    if sys.version_info < (3, 10):
+        raise RuntimeError("system Python 3.10 or newer is required")
+    for module in ("sqlite3", "fcntl", "pwd", "grp", "ctypes"):
+        if importlib.util.find_spec(module) is None:
+            raise RuntimeError(f"system Python lacks required built-in module: {module}")
     executable = os.stat(sys.executable, follow_symlinks=True)
     if (not stat.S_ISREG(executable.st_mode) or executable.st_uid != 0
             or executable.st_gid != 0 or stat.S_IMODE(executable.st_mode) & 0o022):
