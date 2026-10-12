@@ -324,6 +324,7 @@ class ManualJarvisSkillsTests(unittest.TestCase):
             base = Path(directory)
             os.chown(base, account.pw_uid, account.pw_gid)
             home = self.make_home(base)
+            backup_name = ".jarvis-resources-skills-helper-transition-" + "e" * 32
             manual_skills.install_manual_jarvis_skills(
                 old_archive, hermes_home=home, expected_sha256=old_sha)
             for root, directories, filenames in os.walk(home, topdown=False, followlinks=False):
@@ -342,6 +343,7 @@ class ManualJarvisSkillsTests(unittest.TestCase):
                 "--shared-manifest-sha256", shared_manifest,
                 "--shared-materialization-sha256", shared_tree,
                 "--shared-member-count", str(shared_count),
+                "--backup-name", backup_name,
             ]
             env = {
                 "HOME": str(home.parent), "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
@@ -378,6 +380,7 @@ class ManualJarvisSkillsTests(unittest.TestCase):
             backup = Path(receipt["previous_generation_backup"])
             self.assertEqual(receipt["state"], "staged")
             self.assertEqual(receipt["previous_artifact_sha256"], old_sha)
+            self.assertEqual(backup, base / backup_name)
 
             def assert_generation(path, files, digest):
                 expected_files = set(files) | {manual_skills._OWNER_FILE}
