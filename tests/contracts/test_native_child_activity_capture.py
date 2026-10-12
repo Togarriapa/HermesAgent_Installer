@@ -41,6 +41,8 @@ def _registry(rows: list[dict], *, owner: str = "a" * 64):
     registry._activity_store_ok = True
     registry._activity_records = {row["execution_key"]: row for row in rows}
     registry._activity_started_at = time.time()
+    registry._lifecycle_startup_probes = {}
+    registry._lifecycle_startup_attempts = {}
     registry._custody = SimpleNamespace(core_generation="d" * 64,
                                         core_source_generation="f" * 64)
     source = SimpleNamespace(artifact_sha256="b" * 64,
@@ -121,6 +123,8 @@ def test_real_observed_callback_event_is_owner_source_bound_and_replay_deduped(m
     registry = object.__new__(observer.RootCoreNativeObservationRegistry)
     registry._activity_store_ok = True
     registry._activity_records = {}
+    registry._lifecycle_startup_probes = {}
+    registry._lifecycle_startup_attempts = {}
     owner = SimpleNamespace(owner_subject_sha256="a" * 64,
         mission_binding=None, planning_context=None,
         gateway_turn_id="turn_12345678901234567890", core_generation="d" * 64,
@@ -165,6 +169,12 @@ def test_actual_team_admission_binds_activity_only_from_retained_root_objects(mo
     registry = object.__new__(observer.RootCoreNativeObservationRegistry)
     registry._activity_store_ok = True
     registry._activity_records = {}
+    # Keep this fixture aligned with state owned by the production constructor.
+    # Admission invokes the normal retention/pruning path, which also prunes
+    # bounded lifecycle probes on every activity write.
+    registry._lifecycle_startup_probes = {}
+    registry._lifecycle_startup_attempts = {}
+    registry._lock = threading.RLock()
     now = time.monotonic()
     mission_id = "mission_2_12345678901234567890"
     mission = MissionBinding(schema=1, mission_id=mission_id, revision=3,
