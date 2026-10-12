@@ -1,5 +1,7 @@
 # Proposal
 
+Complete the existing M1 startup producer's real process boundary: Root CLI owns a short-lived fixed lifecycle-only observer/socket captured from its actual held new peer and receives its local registry directly. Preserve the separate old Inspector/socket/public URL; no cross-process global, old-source custody relabeling or generic observer grant. Actual new-peer terminal proof and exact owned cleanup/recovery remain required; no scope or acceptance closure.
+
 Clarify only the M1 interrupted initial-adoption recovery boundary: a separate Root-issued offline rollback-only custody verifies stopped owned service and exact retained/current files, allowing safe prior-SOUL/journal restoration without the live peer that the boot guard correctly denies. Live adoption and genuine startup proof remain mandatory on the positive path; no new grants or acceptance closure.
 
 Close the existing M1 absent-primary-record deadlock with genuine fixed Root initial adoption under exact new starting custody before its chat probe. Reuse the real append/backup/native-readback transaction and refresh starting Resources/cohort joins from actual resulting HOME SOUL; bundled profile identity is not adopted identity. Previously adopted rebase stays byte-identical. Preserve owner prefix/auth/overlay/vault and exact interruption recovery; pending adoption cannot commit as functional. No new scope or acceptance closure.

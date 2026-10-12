@@ -2399,6 +2399,11 @@ Helper-only transition SHALL preserve protected overlay-journal bytes and histor
 - **AND** an ephemeral official agent has empty tools/history, memory/context capture/persistence/background learning disabled, no provider fallback and a bounded fixed nonce prompt. The existing native provider observer joins actual request and successful provider/native terminal to exact source/process/account/identity/cohort custody; no fake owner turn, synthetic response, caller boolean or planning receipt qualifies.
 - **AND** only the private current single-use Root completion permits bindings-verified; changed peer/account/source, missing seam/login, extra context/tool call, timeout/replay or incomplete completion deny/pending. Recovery invalidates handles/proof and preserves the compatible old cohort without healthy-only commit or revived grants.
 
+#### Scenario: Actual lifecycle observer owned by the Root CLI
+- **WHEN** the updater runs in a separate Root CLI while the existing Inspector owns its normal observer
+- **THEN** the CLI captures actual held-new-peer custody and starts its own fixed lifecycle-only socket/registry, receiving that process-local handle directly. Only native lifecycle claim/attempt/response use this socket; ordinary owner/tool/review admission stays unchanged.
+- **AND** actual peer credentials/current tuple and exact socket/server inode ownership govern proof and cleanup. Existing old Inspector/socket/public URL are preserved; foreign/live conflicts, stale changed inodes or absent producers keep M1 pending. Crash loses live registry authority and requires genuine fresh capture, never cross-process globals or old-source relabeling.
+
 #### Scenario: Exact guarded old read and coherent new startup
 - **WHEN** a helper-only adapter update replaces O with N while actual Hermes Core generation remains H
 - **THEN** the sole home role is `jarvis-primary-home`; primary/reconstruction Core bindings remain H/H, with adapter generations separate. Root preserves original J0/U0/L0 and installs exact gated-old Ugo while the captured old process remains live.
