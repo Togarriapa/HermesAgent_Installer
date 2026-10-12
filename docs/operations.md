@@ -13,3 +13,18 @@ Desktop/Xpra cleanup waits for working independent core and replacement protecte
 Public ingress validates Access JWT before bytes and binds server-derived ownership. Expired original JWT/run bounds, missing/refused/stale heartbeat or witness stop bytes and cancel the exact run. Renewing a browser credential does not extend original turn deadlines. Reject raw RPC/shell/backend management, arbitrary files/URLs and cross-user conversation/approval/artifact access.
 
 For diagnosis record exact candidate/version, target/runtime, command, effect, denial/recovery, sanitized error and concrete resume action. Keep secrets out of reports. Record configured/authenticated/functionally-tested/enabled/actual-target states independently. [Current scope](../requirements/current-scope.json) defines obligations; factual [evidence](evidence/) does not by itself qualify a release.
+
+## Trust this device — planned authentication convenience
+
+The direct request is tracked inside jarvis-core-platform/R0200/R0201/R0203 and the existing HI-T266.2/RT-T266.3/VD-T266.5 groups. It is not yet a verified device-trust feature. After successful Cloudflare authentication, the intended unchecked personal-device option should reduce repeat login through a supported native mechanism, with visible expiry and Forget/Sign out behavior. Up to 30 days is a research target, not a guarantee or applied setting. Shared-device/declined opt-in should retain ordinary login. No live Cloudflare or device configuration changed for this plan.
+
+Official source checks on 2026-10-12:
+
+- [Session management](https://developers.cloudflare.com/cloudflare-one/access-controls/access-settings/session-management/) documents global timeout 15 minutes–one month (default 24 hours), while policy/application controls include immediate timeout–one month. Valid global identity can obtain a new application token after policy checking; Cloudflare One Client authentication, when enabled, takes precedence. These controls do not establish a Jarvis per-device opt-in API.
+- [Authorization cookies](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/) documents Cloudflare-managed cookies and HttpOnly protection. Application cookie settings must be verified for this browser use case. Its 30-day CF_Device anti-abuse cookie is not evidence of remembered-login consent.
+
+Before enabling the control, qualify the exact native device/session scope, authenticated opt-in/readback, expiry/revocation, browser reopen and forget/logout. Do not change a global/application/policy TTL and call that per-device trust. Do not promise eternal login, copy credentials into browser storage or create a local bypass cookie. Android/tablet WARP is optional research, not enrolled by this task.
+
+If supported per-device behavior is unavailable, show that limitation and leave the option pending; a non-secret saved preference is only a preference. Logout/forget must use verified native controls with truthful scope. A broader user/application revocation must be labeled as such. Never claim JavaScript cleared HttpOnly or team-domain cookies. Manual cookie clearing or expiration may require sign-in again.
+
+Every request/byte still needs valid Access authorization and fresh revocation evidence. New authentication does not extend original 600s/stricter run deadlines or revive expired turns, repeat uncertain effects, or run pending work automatically. Before deploying auth/UI changes, provide the existing mandatory exact-candidate phone/tablet/desktop affected-flow review and actual native session evidence; fixture-only coverage leaves live acceptance OPEN.
