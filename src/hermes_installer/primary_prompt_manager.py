@@ -13,6 +13,7 @@ from typing import Any
 
 from .registry.primary_prompt import (
     MAX_SOUL_BYTES,
+    PrimaryPromptBlockError,
     append_managed_block,
     render_managed_block,
     split_managed_block,
@@ -604,10 +605,18 @@ def _adopt_primary_prompt_for_starting_cohort_locked(core, custody) -> dict[str,
 
 
 def rollback_primary_prompt_for_starting_cohort(custody) -> None:
-    """Restore only the exact initial append while CoreRuntime retains its stage."""
+    """Restore the exact initial append under stopped-service rollback custody."""
     from . import core_runtime as core
 
-    _require_initial_custody(core, custody)
+    custody_type = getattr(core, "InitialPrimaryRollbackCustody", None)
+    validator = getattr(core, "verify_initial_primary_rollback_custody", None)
+    if (custody_type is None or type(custody) is not custody_type
+            or not callable(validator)):
+        raise PrimaryPromptAdoptionError("sealed starting-cohort rollback custody is unavailable")
+    try:
+        validator(custody)
+    except Exception as exc:
+        raise PrimaryPromptAdoptionError("sealed starting-cohort rollback custody is stale") from exc
     if os.geteuid() != core.ROOT_UID:
         raise PrimaryPromptAdoptionError("requires the fixed Linux root actor")
     lock_path = core.PRIMARY_PROMPT_BACKUPS / "owner-prefix.lock"
@@ -618,39 +627,66 @@ def rollback_primary_prompt_for_starting_cohort(custody) -> None:
                 or info.st_gid != core.ROOT_UID or stat.S_IMODE(info.st_mode) != 0o600):
             raise PrimaryPromptAdoptionError("owner SOUL edit lock custody differs")
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        _require_initial_custody(core, custody)
-        with _initial_scope(core, custody):
-            _require_initial_custody(core, custody)
-            record = _read_record(core)
+        try:
+            validator(custody)
+        except Exception as exc:
+            raise PrimaryPromptAdoptionError("sealed starting-cohort rollback custody is stale") from exc
+        raw = core._projection_file(core.PRIMARY_PROMPT_JOURNAL, owner=core.ROOT_UID,
+                                    group=core.ROOT_UID, mode=0o600, maximum=64 * 1024)
+        if _sha(raw) != custody.primary_stage_sha256:
+            raise PrimaryPromptAdoptionError("retained primary manager stage differs")
+        record = _read_record(core)
         if record is None or record.get("state") not in {"preparing", "writing", "rolling_back"}:
             raise PrimaryPromptAdoptionError("owned initial primary rollback stage is unavailable")
-        with _initial_scope(core, custody):
-            _require_initial_custody(core, custody)
-            backup = _backup_read(core, record)
-            current, signature = _read_soul(core)
+        if (record["prior_soul_sha256"] != custody.prior_soul_sha256
+                or tuple(record["prior_soul_signature"]) != tuple(custody.prior_soul_signature)
+                or record["core_source_generation"] != custody.core_source_generation
+                or record["artifact_sha256"] != custody.artifact_a1_sha256
+                or record["source_prompt_sha256"] != custody.source_prompt_sha256
+                or record["managed_block_sha256"] != custody.managed_block_sha256
+                or record["result_soul_sha256"] != custody.desired_soul_sha256
+                or record["owner_backup_name"] != custody.owner_backup_name
+                or record["owner_backup_name"] != custody.owner_backup_sha256):
+            raise PrimaryPromptAdoptionError("retained primary manager stage fields differ")
+        backup = _backup_read(core, record)
+        if _sha(backup) != custody.owner_backup_sha256:
+            raise PrimaryPromptAdoptionError("immutable primary owner backup differs")
+        current, signature = _read_soul(core)
         if current == backup:
             return
-        with _initial_scope(core, custody):
-            _require_initial_custody(core, custody)
-            _source_generation, _discovery, _artifact, _manifest, files, _prompt = _fixed_bundle(
-                core, recovery_record=record, current_prompt_sha256=_sha(current)
+        try:
+            prefix, separator, block = split_managed_block(
+                current, owner_prefix_length=record["owner_prefix_length"],
+                separator=bytes.fromhex(record["owner_separator_hex"]),
             )
-            desired = backup + bytes.fromhex(record["owner_separator_hex"]) + _record_managed_block(
-                record, files
-            )
-            if (current != desired or _sha(current) != record.get("result_soul_sha256")):
-                raise PrimaryPromptAdoptionError("owner SOUL changed; initial rollback is refused")
-            current, signature = _read_soul(core)
-            if current != desired or _sha(current) != record.get("result_soul_sha256"):
-                raise PrimaryPromptAdoptionError("owner SOUL changed before initial rollback")
-            _atomic_admin_replace(
-                core, backup, expected_signature=signature,
-                uid=signature[3], gid=signature[4], mode=stat.S_IMODE(signature[2]),
-                stage_name=record["stage_name"],
-            )
-            restored, _restored_signature = _read_soul(core)
-            if restored != backup:
-                raise PrimaryPromptAdoptionError("initial rollback did not restore exact owner SOUL bytes")
+        except PrimaryPromptBlockError as exc:
+            raise PrimaryPromptAdoptionError("owned initial primary block cannot be verified") from exc
+        desired = backup + bytes.fromhex(record["owner_separator_hex"]) + block
+        if (prefix != backup or _sha(prefix) != record["owner_prefix_sha256"]
+                or separator.hex() not in {"", "0a", "0a0a"}
+                or separator.hex() != record["owner_separator_hex"]
+                or _sha(block) != custody.managed_block_sha256
+                or current != desired or _sha(current) != custody.desired_soul_sha256):
+            raise PrimaryPromptAdoptionError("owner SOUL changed; initial rollback is refused")
+        try:
+            validator(custody)
+        except Exception as exc:
+            raise PrimaryPromptAdoptionError("sealed starting-cohort rollback custody is stale") from exc
+        current, signature = _read_soul(core)
+        if current != desired or _sha(current) != custody.desired_soul_sha256:
+            raise PrimaryPromptAdoptionError("owner SOUL changed before initial rollback")
+        _atomic_admin_replace(
+            core, backup, expected_signature=signature,
+            uid=signature[3], gid=signature[4], mode=stat.S_IMODE(signature[2]),
+            stage_name=record["stage_name"],
+        )
+        restored, restored_signature = _read_soul(core)
+        if (restored != backup or _sha(restored) != custody.prior_soul_sha256
+                or restored_signature[3] != custody.prior_soul_signature[3]
+                or restored_signature[4] != custody.prior_soul_signature[4]
+                or stat.S_IMODE(restored_signature[2]) != stat.S_IMODE(custody.prior_soul_signature[2])
+                or restored_signature[6] != custody.prior_soul_signature[6]):
+            raise PrimaryPromptAdoptionError("initial rollback did not restore exact owner SOUL bytes")
     finally:
         os.close(lock_fd)
 

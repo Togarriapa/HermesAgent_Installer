@@ -58,7 +58,7 @@ def test_starting_cohort_adoption_and_rollback_reject_unissued_custody_before_ef
 
     with pytest.raises(manager.PrimaryPromptAdoptionError, match="sealed starting-cohort"):
         manager.adopt_primary_prompt_for_starting_cohort(custody)
-    with pytest.raises(manager.PrimaryPromptAdoptionError, match="sealed starting-cohort"):
+    with pytest.raises(manager.PrimaryPromptAdoptionError, match="sealed starting-cohort rollback"):
         manager.rollback_primary_prompt_for_starting_cohort(custody)
 
     assert effects == []
