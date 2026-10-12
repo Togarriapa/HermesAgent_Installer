@@ -37,8 +37,8 @@ _VIEW = """<section class=\"second-brain-page\" aria-labelledby=\"second-brain-t
     <div class=\"brain-graph-heading\"><div><p class=\"second-brain-kicker\">DERIVED FROM VAULT LINKS</p><h2 id=\"brain-graph-title\">Knowledge map</h2></div>
       <button type=\"button\" data-graph-refresh>Refresh map</button></div>
     <p class=\"brain-graph-note\" data-graph-status>Connections represent indexed Obsidian links only; they do not imply communication or execution.</p>
-    <p class=\"brain-graph-note\">Node color uses the first listed vault tag. Filters match any selected tag.</p>
-    <p class=\"brain-graph-note\">Moving dots are visual guides along those saved note links; they do not show live data transfer.</p>
+    <p class=\"brain-graph-note\">Node rings show saved vault tags; filters match any selected tag. Solid arrows are wikilinks; dashed arrows are Markdown links.</p>
+    <p class=\"brain-graph-note\">The map contains note links only. Expert, team, review, and activity relationships appear only when their source records are available.</p>
     <p class=\"brain-graph-note\">Notes remain in your private vault when a chat or project is removed.</p>
     <div class=\"brain-graph-tools\"><div data-graph-legend aria-label=\"Filter notes by their actual Obsidian tags\"></div>
       <div class=\"brain-graph-zoom\" aria-label=\"Knowledge map controls\"><button type=\"button\" data-zoom-out aria-label=\"Zoom out\">−</button><button type=\"button\" data-zoom-in aria-label=\"Zoom in\">+</button><button type=\"button\" data-zoom-reset>Reset map</button></div></div>
@@ -100,9 +100,12 @@ _CSS = """
 [data-feature-root=\"second-brain\"] .brain-graph-zoom button{min-width:44px}
 [data-feature-root=\"second-brain\"] [data-graph]{display:block;width:100%;height:auto;aspect-ratio:1000/620;min-height:300px;border:1px solid rgba(91,199,211,.17);border-radius:10px;background:radial-gradient(ellipse at center,rgba(20,88,99,.18),transparent 72%);touch-action:none;cursor:grab}
 [data-feature-root=\"second-brain\"] [data-graph]:active{cursor:grabbing}
-[data-feature-root=\"second-brain\"] [data-graph] .brain-edge{stroke-width:1.4;opacity:.56}
+[data-feature-root=\"second-brain\"] [data-graph] .brain-edge{stroke-width:1.6;opacity:.68}
+[data-feature-root=\"second-brain\"] [data-graph] .brain-edge[data-link-kind=\"markdown\"]{stroke-dasharray:5 4}
 [data-feature-root=\"second-brain\"] [data-graph] .brain-node circle{fill:#0b1d24;stroke-width:2;filter:drop-shadow(0 0 5px color-mix(in srgb,var(--tag-color),transparent 45%))}
+[data-feature-root=\"second-brain\"] [data-graph] .brain-node .brain-tag-arc{fill:none;stroke-width:4;stroke-linecap:round}
 [data-feature-root=\"second-brain\"] [data-graph] .brain-node:hover circle,[data-feature-root=\"second-brain\"] [data-graph] .brain-node:focus circle{stroke-width:4;filter:drop-shadow(0 0 9px var(--tag-color))}
+[data-feature-root=\"second-brain\"] [data-graph] .brain-node[aria-current=\"true\"] circle{stroke-width:4;filter:drop-shadow(0 0 9px var(--tag-color))}
 [data-feature-root=\"second-brain\"] [data-graph] .brain-node text{fill:#daf7f8;font:11px ui-sans-serif,system-ui,sans-serif;text-anchor:middle}
 [data-feature-root=\"second-brain\"] [data-graph] .brain-node{cursor:pointer}
 [data-feature-root=\"second-brain\"] [data-graph-list]{max-height:340px;overflow:auto;margin:.2rem 0;padding-left:1.25rem;color:#a9c6ca;font-size:.78rem;line-height:1.7}
@@ -141,10 +144,8 @@ _MOUNT = r"""function mount(container, api, state) {
   const noteLimit = 20;
   let stopped = false, busy = false, cursor = null, mode = 'recent', currentNoteId = null;
   let notes = [];
-  let graphData = null, selectedTags = null, graphVisible = true;
+  let graphData = null, selectedTags = null;
   let graphScale = 1, graphPanX = 0, graphPanY = 0, drag = null;
-  const motionPreference = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
-  let reducedMotion = Boolean(motionPreference && motionPreference.matches);
   const apiRoot = '/chat/api/second-brain';
   const SVG = 'http://www.w3.org/2000/svg';
 
@@ -247,6 +248,7 @@ _MOUNT = r"""function mount(container, api, state) {
     if (stopped || busy) return;
     busy = true;
     currentNoteId = noteId;
+    setGraphSelection();
     renderNoteRows(notes);
     $('[data-reader-title]').textContent = 'Loading note…';
     body.textContent = '';
@@ -353,6 +355,69 @@ _MOUNT = r"""function mount(container, api, state) {
     const button = document.createElement('button'); button.type = 'button';
     button.textContent = label; button.addEventListener('click', () => openNote(node.noteId)); parent.append(button); return button;
   }
+  function graphLayout(nodes, edges) {
+    const positions = new Map(), forces = new Map();
+    nodes.forEach((node, index) => {
+      const angle = index * 2.399963229728653;
+      const radius = nodes.length < 2 ? 0 : 210 * Math.sqrt((index + .5) / nodes.length);
+      positions.set(node.noteId, {x: 500 + Math.cos(angle) * radius, y: 310 + Math.sin(angle) * radius});
+    });
+    const links = edges.filter(edge => positions.has(edge.fromNoteId) && positions.has(edge.toNoteId)
+      && edge.fromNoteId !== edge.toNoteId);
+    const spacing = Math.min(108, Math.max(48, 720 / Math.sqrt(Math.max(nodes.length, 1))));
+    for (let iteration = 0; iteration < 52; iteration++) {
+      forces.clear();
+      for (const node of nodes) forces.set(node.noteId, {x: 0, y: 0});
+      for (let left = 0; left < nodes.length; left++) {
+        const a = positions.get(nodes[left].noteId), fa = forces.get(nodes[left].noteId);
+        for (let right = left + 1; right < nodes.length; right++) {
+          const b = positions.get(nodes[right].noteId), fb = forces.get(nodes[right].noteId);
+          let dx = a.x - b.x, dy = a.y - b.y;
+          const distance = Math.max(1, Math.hypot(dx, dy));
+          const push = Math.min(3.4, 560 / (distance * distance));
+          dx = dx / distance * push; dy = dy / distance * push;
+          fa.x += dx; fa.y += dy; fb.x -= dx; fb.y -= dy;
+        }
+      }
+      for (const edge of links) {
+        const a = positions.get(edge.fromNoteId), b = positions.get(edge.toNoteId);
+        const fa = forces.get(edge.fromNoteId), fb = forces.get(edge.toNoteId);
+        let dx = b.x - a.x, dy = b.y - a.y;
+        const distance = Math.max(1, Math.hypot(dx, dy));
+        const pull = Math.min(2.4, (distance - spacing) * .012);
+        dx = dx / distance * pull; dy = dy / distance * pull;
+        fa.x += dx; fa.y += dy; fb.x -= dx; fb.y -= dy;
+      }
+      const cooling = 1 - iteration / 58;
+      for (const node of nodes) {
+        const point = positions.get(node.noteId), force = forces.get(node.noteId);
+        point.x = Math.max(45, Math.min(955, point.x + force.x * cooling));
+        point.y = Math.max(45, Math.min(575, point.y + force.y * cooling));
+      }
+    }
+    return positions;
+  }
+  function graphTagArcs(group, node, point) {
+    const tags = noteTags(node).slice(0, 6);
+    if (tags.length < 2) return;
+    const step = 360 / tags.length, gap = Math.min(8, step / 4);
+    tags.forEach((tag, index) => {
+      const start = (-90 + index * step + gap / 2) * Math.PI / 180;
+      const end = (-90 + (index + 1) * step - gap / 2) * Math.PI / 180;
+      const x1 = point.x + 24 * Math.cos(start), y1 = point.y + 24 * Math.sin(start);
+      const x2 = point.x + 24 * Math.cos(end), y2 = point.y + 24 * Math.sin(end);
+      const arc = document.createElementNS(SVG, 'path');
+      arc.setAttribute('class', 'brain-tag-arc');
+      arc.setAttribute('d', `M ${x1} ${y1} A 24 24 0 0 1 ${x2} ${y2}`);
+      arc.setAttribute('stroke', tagColor(tag)); arc.setAttribute('aria-hidden', 'true'); group.append(arc);
+    });
+  }
+  function setGraphSelection() {
+    graphScene.querySelectorAll('.brain-node').forEach(node => {
+      const selected = node.getAttribute('data-note-id') === currentNoteId;
+      node.setAttribute('aria-current', selected ? 'true' : 'false');
+    });
+  }
   function renderGraph(data) {
     if (!data || !Array.isArray(data.nodes) || !Array.isArray(data.edges) || !Array.isArray(data.unresolved)) throw new Error('The vault graph returned an invalid snapshot.');
     graphData = data;
@@ -368,29 +433,38 @@ _MOUNT = r"""function mount(container, api, state) {
       ? `${nodes.length} of ${allNodes.length} indexed notes shown · ${edges.length} actual note links · ${data.unresolved.length} unresolved references${data.partial ? ' · partial coverage' : ''}. Colors and filters use note tags; only resolved vault links are drawn.`
       : 'No notes are present in this vault snapshot yet.';
     if (!nodes.length) { addText(graphList, 'li', 'No notes match these tag filters.'); return; }
-    const positions = new Map(), centerX = 500, centerY = 310;
-    nodes.forEach((node, index) => {
-      const angle = index * 2.399963229728653;
-      const radius = nodes.length < 2 ? 0 : 255 * Math.sqrt((index + .5) / nodes.length);
-      positions.set(node.noteId, {x: centerX + Math.cos(angle) * radius * 1.72, y: centerY + Math.sin(angle) * radius});
-    });
-    let edgeIndex = 0;
+    const positions = graphLayout(nodes, edges);
+    const markerIds = new Map(), defs = document.createElementNS(SVG, 'defs');
+    function markerFor(color) {
+      if (markerIds.has(color)) return markerIds.get(color);
+      const id = `brain-arrow-${markerIds.size}`;
+      const marker = document.createElementNS(SVG, 'marker');
+      marker.setAttribute('id', id); marker.setAttribute('viewBox', '0 0 8 8');
+      marker.setAttribute('markerWidth', '8'); marker.setAttribute('markerHeight', '8');
+      marker.setAttribute('markerUnits', 'userSpaceOnUse'); marker.setAttribute('refX', '7');
+      marker.setAttribute('refY', '4'); marker.setAttribute('orient', 'auto');
+      const head = document.createElementNS(SVG, 'path');
+      head.setAttribute('d', 'M 0 0 L 8 4 L 0 8 z'); head.setAttribute('fill', color);
+      marker.append(head); defs.append(marker); markerIds.set(color, id); return id;
+    }
+    graphScene.append(defs);
     for (const edge of edges) {
       const from = positions.get(edge.fromNoteId), to = positions.get(edge.toNoteId);
       const fromNode = nodes.find(node => node.noteId === edge.fromNoteId), toNode = nodes.find(node => node.noteId === edge.toNoteId);
       if (!from || !to || !fromNode || !toNode) continue;
-      const pathId = `brain-edge-${edgeIndex++}`;
+      const dx = to.x - from.x, dy = to.y - from.y;
+      const distance = Math.max(1, Math.hypot(dx, dy));
+      const ux = dx / distance, uy = dy / distance;
+      const sourceOffset = Math.min(22, distance * .32), targetOffset = Math.min(28, distance * .42);
       const path = document.createElementNS(SVG, 'path');
-      path.setAttribute('id', pathId); path.setAttribute('d', `M ${from.x} ${from.y} L ${to.x} ${to.y}`);
+      path.setAttribute('d', `M ${from.x + ux * sourceOffset} ${from.y + uy * sourceOffset} L ${to.x - ux * targetOffset} ${to.y - uy * targetOffset}`);
+      const color = tagColor(tagCategory(fromNode));
       path.setAttribute('class', 'brain-edge'); path.setAttribute('fill', 'none');
-      path.setAttribute('stroke', tagColor(tagCategory(fromNode))); graphScene.append(path);
-      if (!reducedMotion && edgeIndex <= 80) {
-        const particle = document.createElementNS(SVG, 'circle'); particle.setAttribute('r', '3.2');
-        particle.setAttribute('fill', tagColor(tagCategory(fromNode))); particle.setAttribute('aria-hidden', 'true');
-        const motion = document.createElementNS(SVG, 'animateMotion'); motion.setAttribute('dur', `${5 + (edgeIndex % 5)}s`);
-        motion.setAttribute('begin', `${-(edgeIndex % 7)}s`); motion.setAttribute('repeatCount', 'indefinite');
-        const mpath = document.createElementNS(SVG, 'mpath'); mpath.setAttribute('href', `#${pathId}`); motion.append(mpath); particle.append(motion); graphScene.append(particle);
-      }
+      path.setAttribute('data-link-kind', edge.kind === 'markdown' ? 'markdown' : 'wikilink');
+      path.setAttribute('stroke', color); path.setAttribute('marker-end', `url(#${markerFor(color)})`);
+      const description = document.createElementNS(SVG, 'title');
+      description.textContent = `${fromNode.title} links to ${toNode.title} (${edge.kind === 'markdown' ? 'Markdown link' : 'Obsidian wikilink'})`;
+      path.append(description); graphScene.append(path);
       const item = document.createElement('li');
       graphNoteButton(item, fromNode, fromNode.title);
       addText(item, 'span', ` links to · ${typeof edge.kind === 'string' ? edge.kind : 'vault link'} · `);
@@ -400,9 +474,13 @@ _MOUNT = r"""function mount(container, api, state) {
     for (const node of nodes) {
       const point = positions.get(node.noteId), category = tagCategory(node), group = document.createElementNS(SVG, 'g');
       group.setAttribute('class', 'brain-node'); group.setAttribute('tabindex', '0'); group.setAttribute('role', 'button');
-      group.setAttribute('aria-label', `Open note ${node.title}; tags ${noteTags(node).join(', ') || 'Uncategorized'}`);
+      const tags = noteTags(node);
+      const tagLabel = tags.length ? tags.slice(0, 6).join(', ') + (tags.length > 6 ? `, and ${tags.length - 6} more` : '') : 'Uncategorized';
+      group.setAttribute('aria-label', `Open note ${node.title}; tags ${tagLabel}`);
+      group.setAttribute('data-note-id', node.noteId); group.setAttribute('aria-current', 'false');
       group.style.setProperty('--tag-color', tagColor(category));
       const circle = document.createElementNS(SVG, 'circle'); circle.setAttribute('cx', String(point.x)); circle.setAttribute('cy', String(point.y)); circle.setAttribute('r', '19'); circle.setAttribute('stroke', tagColor(category)); group.append(circle);
+      graphTagArcs(group, node, point);
       const label = document.createElementNS(SVG, 'text'); label.setAttribute('x', String(point.x)); label.setAttribute('y', String(point.y + 32));
       label.textContent = node.title.length > 24 ? node.title.slice(0, 23) + '…' : node.title; group.append(label);
       const activate = () => openNote(node.noteId);
@@ -410,6 +488,7 @@ _MOUNT = r"""function mount(container, api, state) {
       group.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); activate(); } });
       graphScene.append(group);
     }
+    setGraphSelection();
     graphTransform();
   }
   async function refreshGraph() {
@@ -421,11 +500,6 @@ _MOUNT = r"""function mount(container, api, state) {
     } catch (_) {
       if (!stopped) $('[data-graph-status]').textContent = 'The vault graph is temporarily unavailable.';
     } finally { if (!stopped) graphRefreshButton.disabled = false; }
-  }
-  function syncGraphMotion() {
-    if (typeof graph.pauseAnimations !== 'function') return;
-    if (reducedMotion || !graphVisible || document.hidden) graph.pauseAnimations();
-    else graph.unpauseAnimations();
   }
   function setGraphZoom(nextScale) {
     graphScale = Math.max(.55, Math.min(3.5, nextScale)); graphTransform();
@@ -465,16 +539,6 @@ _MOUNT = r"""function mount(container, api, state) {
       graphTransform();
     }
   }
-  function onVisibilityChange() { syncGraphMotion(); }
-  function onMotionPreferenceChange(event) {
-    reducedMotion = event.matches;
-    if (graphData) renderGraph(graphData);
-    syncGraphMotion();
-  }
-  const graphObserver = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => {
-    graphVisible = Boolean(entries[0] && entries[0].isIntersecting); syncGraphMotion();
-  }, {threshold: .05}) : null;
-  if (graphObserver) graphObserver.observe(graph);
   graph.addEventListener('pointerdown', onGraphPointerDown);
   graph.addEventListener('pointermove', onGraphPointerMove);
   graph.addEventListener('pointerup', onGraphPointerUp);
@@ -484,8 +548,6 @@ _MOUNT = r"""function mount(container, api, state) {
   zoomInButton.addEventListener('click', onZoomIn);
   zoomOutButton.addEventListener('click', onZoomOut);
   zoomResetButton.addEventListener('click', onZoomReset);
-  document.addEventListener('visibilitychange', onVisibilityChange);
-  if (motionPreference && motionPreference.addEventListener) motionPreference.addEventListener('change', onMotionPreferenceChange);
   function onSearch(event) {
     event.preventDefault();
     if (!queryInput.value.trim()) { mode = 'recent'; cursor = null; refreshNotes(); return; }
@@ -513,9 +575,6 @@ _MOUNT = r"""function mount(container, api, state) {
     zoomInButton.removeEventListener('click', onZoomIn);
     zoomOutButton.removeEventListener('click', onZoomOut);
     zoomResetButton.removeEventListener('click', onZoomReset);
-    document.removeEventListener('visibilitychange', onVisibilityChange);
-    if (motionPreference && motionPreference.removeEventListener) motionPreference.removeEventListener('change', onMotionPreferenceChange);
-    if (graphObserver) graphObserver.disconnect();
   };
 }"""
 
