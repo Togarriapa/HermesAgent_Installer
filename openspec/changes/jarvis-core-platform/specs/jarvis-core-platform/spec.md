@@ -1976,6 +1976,11 @@ Original restrained dark/cyan layered visuals and responsive phone/tablet/wide l
 - **WHEN** supplied video coverage contains only some verified frames, metadata or unavailable transcripts
 - **THEN** the research record states that exact coverage and does not claim a full review, Hermes functionality or live qualification from those references.
 
+#### Scenario: Complete image intake without invented activity
+- **WHEN** the supplied all14-image full-display intake informs the existing Jarvis UI
+- **THEN** the current ledger records all14 reviewed images while retaining separate incomplete video/TikTok evidence and candidate-rendered UX gates.
+- **AND** requested restrained orbital idle motion indicates only a current running service while Overview is visible; stale/hidden/offscreen/reduced-motion uses static labeled presence. Task/audio/Expert/Team signals require their own genuine states/events, never image-derived fake work.
+
 ### Requirement: Provenance-backed secondary workflow inspection
 Any dashboard workflow graph SHALL remain a secondary inspectable view derived from registered Resources provenance or authentic correlated activity, with configured/discovered and functional/active states distinguished and an accessible list alternative.
 
