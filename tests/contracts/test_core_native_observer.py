@@ -231,6 +231,48 @@ def test_observer_forwards_exact_child_output_only_for_root_admitted_capture(
             output.encode()).hexdigest()
 
 
+def test_team_completion_excerpt_survives_child_lease_expiry_only_until_owner_bound():
+    """Sequential Team work keeps observed output DATA, never a completed child lease."""
+    import hermes_installer.remote.core_native_observer as observer
+
+    registry = object.__new__(observer.RootCoreNativeObservationRegistry)
+    for name in (
+        "_obsidian_bindings", "_policies", "_owner_policy_handles", "_attempts",
+        "_calls", "_claims", "_mission_pending", "_consumed_dispatches",
+        "_child_sessions", "_planning_completions", "_expert_completions",
+        "_team_completion_evidence",
+        "_team_messages", "_team_bindings", "_team_completion_counts",
+        "_master_selections", "_selected_source_deliveries", "_master_source_deliveries",
+    ):
+        setattr(registry, name, {})
+    registry._obsidian_scoped_calls = set()
+    registry._team_edge_issued = set()
+    registry._child_sessions["completed-child"] = {
+        "expiry": 130.0, "mode": "expert-read-research", "complete": True,
+    }
+    registry._expert_completions["root-completion"] = {
+        "expiry": 130.0, "team_binding_id": "team-binding",
+    }
+    registry._team_completion_evidence["root-completion"] = {
+        "completion_handle": "root-completion", "owner": object(),
+        "team_binding_id": "team-binding", "profile_id": "researcher",
+        "team_message_handle": None, "response_text": "exact root-observed excerpt",
+        "response_text_sha256": "a" * 64, "peer": (1, 1, 1),
+        "data_expires_monotonic": 600.0,
+    }
+
+    registry._prune(140.0)
+    assert "completed-child" not in registry._child_sessions
+    assert "root-completion" not in registry._expert_completions
+    evidence = registry._team_completion_evidence["root-completion"]
+    assert evidence["response_text"] == (
+        "exact root-observed excerpt")
+    assert not {"child", "admission_handle", "source", "final_attempt"}.intersection(evidence)
+
+    registry._prune(600.0)
+    assert "root-completion" not in registry._team_completion_evidence
+
+
 def test_master_plan_readback_uses_canonical_root_durable_completion_record(monkeypatch):
     """Only canonical root-published zero-tool records survive a registry restart."""
     import threading

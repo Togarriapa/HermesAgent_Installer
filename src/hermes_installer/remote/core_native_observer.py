@@ -2722,6 +2722,7 @@ class RootCoreNativeObservationRegistry:
         self._child_sessions: dict[str, dict[str, Any]] = {}
         self._planning_completions: dict[str, dict[str, Any]] = {}
         self._expert_completions: dict[str, dict[str, Any]] = {}
+        self._team_completion_evidence: dict[str, dict[str, Any]] = {}
         self._team_bindings: dict[str, RootSelectedTeamBinding] = {}
         self._team_messages: dict[str, dict[str, Any]] = {}
         self._team_completion_counts: dict[str, int] = {}
@@ -3411,6 +3412,12 @@ class RootCoreNativeObservationRegistry:
         for handle, row in list(self._expert_completions.items()):
             if row["expiry"] <= now:
                 self._expert_completions.pop(handle, None)
+        # Team output is a separate DATA record. It carries no child admission,
+        # final native attempt or source lease and expires at the original
+        # Team/owner bound rather than the shorter child completion receipt.
+        for handle, row in list(self._team_completion_evidence.items()):
+            if row["data_expires_monotonic"] <= now:
+                self._team_completion_evidence.pop(handle, None)
         for handle, row in list(self._team_messages.items()):
             if row["expiry"] <= now:
                 self._team_messages.pop(handle, None)
@@ -4321,12 +4328,12 @@ class RootCoreNativeObservationRegistry:
                 claim = self._consumed_dispatches.get(request["claim_handle"])
                 owner = claim.get("owner") if claim is not None else None
                 binding = self._team_bindings.get(request["team_binding_id"])
-                sender = self._expert_completions.get(request["sender_completion_handle"])
+                sender = self._team_completion_evidence.get(request["sender_completion_handle"])
                 recipient = self._selected_source_deliveries.get(request["recipient_source_handle"])
                 now = time.monotonic()
                 completed_round_zero_profiles = {
-                    row.get("child", {}).get("profile_id")
-                    for row in self._expert_completions.values()
+                    row.get("profile_id")
+                    for row in self._team_completion_evidence.values()
                     if row.get("team_binding_id") == request["team_binding_id"]
                     and row.get("team_message_handle") is None
                 }
@@ -4337,13 +4344,16 @@ class RootCoreNativeObservationRegistry:
                         or recipient["peer"] != peer or recipient["claim"] is not claim
                         or recipient["owner"] is not owner
                         or recipient["selection"].get("team_binding") is not binding
-                        or sender["expiry"] <= now or sender["peer"] != peer or sender["consumed"]
+                        or recipient["source"].is_current_sealed(self._custody, now=now) is not True
+                        or sender["data_expires_monotonic"] <= now
+                        or sender["peer"] != peer
                         or sender.get("team_binding_id") != binding.binding_id
-                        or sender["child"].get("owner") is not owner
-                        or sender["child"].get("profile_id") not in binding.selected_expert_ids
+                        or sender.get("owner") is not owner
+                        or sender.get("completion_handle") != request["sender_completion_handle"]
+                        or sender.get("profile_id") not in binding.selected_expert_ids
                         or completed_round_zero_profiles != set(binding.selected_expert_ids)
                         or recipient["source"].profile_id not in binding.selected_expert_ids
-                        or sender["child"].get("profile_id") == recipient["source"].profile_id
+                        or sender["profile_id"] == recipient["source"].profile_id
                         or not _HASH.fullmatch(request["original_goal_sha256"] or "")
                         or request["original_goal_sha256"] != binding.goal_sha256
                         or not isinstance(request["original_goal"], str)
@@ -4361,20 +4371,21 @@ class RootCoreNativeObservationRegistry:
                     raise ValueError("Team binding already has its one permitted discussion edge")
                 excerpt = request["excerpt"]
                 recipient_goal = (request["original_goal"] + "\n\nExact excerpt from Team member "
-                    + sender["child"]["profile_id"] + " (root-observed completion "
+                    + sender["profile_id"] + " (root-observed completion "
                     + request["sender_completion_handle"] + "):\n" + excerpt)
                 if (len(recipient_goal) > 1200
                         or len(recipient_goal.encode("utf-8", "strict")) > 32 * 1024):
                     raise ValueError("Team recipient request exceeds its bound")
                 message_handle = secrets.token_urlsafe(32)
                 self._team_edge_issued.add(binding.binding_id)
-                expiry = min(binding.expires_monotonic, sender["expiry"], recipient["expiry"],
+                expiry = min(binding.expires_monotonic,
+                    sender["data_expires_monotonic"], recipient["expiry"],
                     claim["expiry"], owner.expires_monotonic, now + 30.0)
                 self._team_messages[message_handle] = {
                     "binding_id": binding.binding_id, "binding": binding, "owner": owner,
                     "claim": claim, "sender": sender,
                     "sender_completion_handle": request["sender_completion_handle"],
-                    "sender_profile_id": sender["child"]["profile_id"],
+                    "sender_profile_id": sender["profile_id"],
                     "recipient_source": recipient["source"],
                     "recipient_source_handle": request["recipient_source_handle"],
                     "recipient_profile_id": recipient["source"].profile_id,
@@ -4439,8 +4450,8 @@ class RootCoreNativeObservationRegistry:
                         raise ValueError("individual child cannot claim Team message lineage")
                 elif message is None:
                     prior_round_zero_profiles = {
-                        row.get("child", {}).get("profile_id")
-                        for row in self._expert_completions.values()
+                        row.get("profile_id")
+                        for row in self._team_completion_evidence.values()
                         if row.get("team_binding_id") == team_binding.binding_id
                         and row.get("team_message_handle") is None
                     }
@@ -4833,13 +4844,13 @@ class RootCoreNativeObservationRegistry:
                             or team_message.get("recipient_profile_id") != child["profile_id"]
                             or team_message.get("recipient_goal_sha256") != child["goal_sha256"]
                             or team_message.get("consumed") is not True
-                            or team_message.get("sender_completion_handle") not in self._expert_completions
+                            or team_message.get("sender_completion_handle") not in self._team_completion_evidence
                             or team_message.get("expiry", 0) <= now):
                         raise ValueError("Team recipient is detached from its sender message")
                     if team_message is None and any(
                             prior.get("team_binding_id") == team_binding_id
                             and prior.get("team_message_handle") is not None
-                            for prior in self._expert_completions.values()):
+                            for prior in self._team_completion_evidence.values()):
                         raise ValueError("Team discussion result lacks its admitted recipient message")
                 child["complete"] = True
                 child["response_text_sha256"] = response[2]
@@ -4847,6 +4858,11 @@ class RootCoreNativeObservationRegistry:
                     event_id=hashlib.sha256(("completed\0" + child["admission_handle"]).encode()).hexdigest())
                 completion_handle = secrets.token_urlsafe(32)
                 completion_expiry = min(child["expiry"], owner.expires_monotonic, now + 30.0)
+                completion_data_expiry = completion_expiry
+                if team_binding_id is not None:
+                    completion_data_expiry = min(binding.expires_monotonic, owner.expires_monotonic)
+                    if completion_data_expiry <= now:
+                        raise ValueError("Team completion retention exceeds its owner or Team deadline")
                 if team_binding_id is not None:
                     self._team_completion_counts[team_binding_id] = prior_team_completions + 1
                 if team_message is not None:
@@ -4868,6 +4884,18 @@ class RootCoreNativeObservationRegistry:
                     "team_binding_id": team_binding_id,
                     "team_message_handle": child.get("team_message_handle"),
                 }
+                if team_binding_id is not None:
+                    self._team_completion_evidence[completion_handle] = {
+                        "completion_handle": completion_handle,
+                        "owner": owner,
+                        "team_binding_id": team_binding_id,
+                        "profile_id": child["profile_id"],
+                        "response_text": raw_text,
+                        "response_text_sha256": response[2],
+                        "peer": peer,
+                        "team_message_handle": child.get("team_message_handle"),
+                        "data_expires_monotonic": completion_data_expiry,
+                    }
                 if team_message is not None:
                     team_message["recipient_completion_handle"] = completion_handle
                 return {"schema": 1, "nonce": nonce, "ok": True,
@@ -5313,6 +5341,7 @@ class RootCoreNativeObservationRegistry:
             self._child_sessions.clear()
             self._planning_completions.clear()
             self._expert_completions.clear()
+            self._team_completion_evidence.clear()
             self._team_messages.clear()
             self._team_bindings.clear()
             self._team_completion_counts.clear()
