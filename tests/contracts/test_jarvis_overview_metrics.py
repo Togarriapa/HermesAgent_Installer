@@ -244,8 +244,7 @@ def test_overview_ecosystem_uses_named_root_observations_and_cancels_stale_views
         + "\nreturn {overviewScopeIsCurrent, projectNativeEcosystem};\n}\n"
         + "const {overviewScopeIsCurrent, projectNativeEcosystem} = productionOverviewHelpers();\n"
     )
-    harness = r'''const assert = require('node:assert/strict');
-const now = 1_800_000_000_000;
+    harness = r'''const now = 1_800_000_000_000;
 const activeScope = {signal:{aborted:false},isCurrent:()=>true};
 assert.equal(overviewScopeIsCurrent(activeScope, 2, 2, false), true);
 assert.equal(overviewScopeIsCurrent(activeScope, 1, 2, false), false, 'a superseded request cannot render');
