@@ -22,6 +22,7 @@ import time
 import os
 import sqlite3
 import contextvars
+import fcntl
 from types import SimpleNamespace
 from contextlib import contextmanager
 from collections import OrderedDict
@@ -34,6 +35,12 @@ from hermes_installer.remote.jarvis_mission_executor import MissionBinding
 
 
 CORE_NATIVE_OBSERVER_SOCKET = Path("/run/hermes-jarvis-native-observer/native-observer.sock")
+LIFECYCLE_NATIVE_OBSERVER_SOCKET = Path(
+    "/run/hermes-jarvis-lifecycle-observer/lifecycle-observer.sock")
+_LIFECYCLE_NATIVE_OBSERVER_OWNER = Path(
+    "/run/hermes-jarvis-lifecycle-observer/lifecycle-observer.owner.json")
+_LIFECYCLE_NATIVE_OBSERVER_LOCK = Path(
+    "/run/hermes-jarvis-lifecycle-observer/lifecycle-observer.lock")
 _CORE_NATIVE_OBSERVER_GROUP = 1000
 MAX_FRAME = 256 * 1024
 _HASH = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
@@ -1072,6 +1079,7 @@ _MASTER_REVIEW_COMPLETION_SEAL = object()
 _LIFECYCLE_STARTUP_COHORT_SEAL = object()
 _LIFECYCLE_STARTUP_CONTEXT_SEAL = object()
 _LIFECYCLE_STARTUP_COMPLETION_SEAL = object()
+_ROOT_LIFECYCLE_REGISTRY_SEAL = object()
 _LIFECYCLE_STARTUP_PROMPT_PREFIX = "Reply with exactly JARVIS-STARTUP-"
 _LIFECYCLE_STARTUP_PROMPT_SUFFIX = ". Do not use tools."
 
@@ -2246,6 +2254,15 @@ class CoreNativeObservationClient:
         self._socket_path = socket_path
         self._timeout = float(timeout)
 
+    def _socket_for_operation(self, operation: str) -> Path:
+        if operation in {
+            "claim-lifecycle-startup-probe",
+            "register-lifecycle-startup-attempt",
+            "register-lifecycle-startup-response",
+        }:
+            return LIFECYCLE_NATIVE_OBSERVER_SOCKET
+        return self._socket_path
+
     def _rpc(self, operation: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         if operation not in {
             "claim-lifecycle-startup-probe", "register-lifecycle-startup-attempt",
@@ -2278,8 +2295,9 @@ class CoreNativeObservationClient:
         if len(raw) > MAX_FRAME:
             raise CoreNativeObservationUnavailable("observer request exceeded its bound")
         try:
-            parent_info = self._socket_path.parent.lstat()
-            info = self._socket_path.lstat()
+            socket_path = self._socket_for_operation(operation)
+            parent_info = socket_path.parent.lstat()
+            info = socket_path.lstat()
             if (not stat.S_ISDIR(parent_info.st_mode) or parent_info.st_uid != 0
                     or parent_info.st_gid != _CORE_NATIVE_OBSERVER_GROUP
                     or stat.S_IMODE(parent_info.st_mode) != 0o750
@@ -2290,7 +2308,7 @@ class CoreNativeObservationClient:
                 raise ValueError("root observer socket custody differs")
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
                 conn.settimeout(self._timeout)
-                conn.connect(str(self._socket_path))
+                conn.connect(str(socket_path))
                 if not hasattr(socket, "SO_PEERCRED"):
                     raise ValueError("observer peer credentials are unavailable")
                 peer_pid, peer_uid, _peer_gid = struct.unpack(
@@ -4074,6 +4092,74 @@ class RootCoreNativeObservationRegistry:
         if owner is None or not self._activity_store_ok:
             return
         self._prune_activity_window()
+        row = child.get("activity")
+        if row is None:
+            binding = owner.mission_binding
+            mission_id = revision = None
+            if type(binding) is MissionBinding:
+                mission_id, revision = binding.mission_id, binding.revision
+            elif owner.planning_context is not None:
+                mission_id, revision = (owner.planning_context.mission_id,
+                                        owner.planning_context.revision)
+            source = child.get("source")
+            if source is None:
+                return
+            execution_key = secrets.token_urlsafe(24)
+            alias = self._new_activity_alias(owner.owner_subject_sha256,
+                                             child["profile_id"], execution_key)
+            row = {
+                "execution_key": execution_key, "display_alias": alias,
+                "owner_subject_sha256": owner.owner_subject_sha256,
+                "mission_id": mission_id, "mission_revision": revision,
+                "gateway_turn_id": owner.gateway_turn_id,
+                "profile_id": child["profile_id"],
+                "source_revision": source.source_revision,
+                "source_generation_sha256": child["source_generation_sha256"],
+                "source_manifest_sha256": child["source_manifest_sha256"],
+                "core_generation": owner.core_generation,
+                "core_source_generation": owner.core_source_generation,
+                "child_lineage_sha256": hashlib.sha256(
+                    b"jarvis-native-child-lineage-v1\0" + child["session_id"].encode("utf-8")).hexdigest(),
+                "parent_lineage_sha256": hashlib.sha256(
+                    b"jarvis-native-parent-lineage-v1\0" + child["parent_session_id"].encode("utf-8")
+                    + b"\0" + child["parent_turn_id"].encode("utf-8")).hexdigest(),
+                "created_at": time.time(), "updated_at": time.time(),
+                "tool_count_total": 0, "seen_event_ids": [],
+                "status": "admitted", "events": [],
+                "team_lineage": None, "team_relation": None, "history_partial": False,
+            }
+            child["activity"] = row
+            self._activity_records[execution_key] = row
+            if len(self._activity_records) > _NATIVE_ACTIVITY_MAX_INSTANCES:
+                oldest = min(self._activity_records.values(), key=lambda item: item["created_at"])
+                if oldest is not row:
+                    self._activity_records.pop(oldest["execution_key"], None)
+                    for retained in self._activity_records.values():
+                        retained["history_partial"] = True
+            kind, status = "admitted", "accepted"
+            event_id = hashlib.sha256(
+                b"jarvis-native-activity-admitted-v1\0" + execution_key.encode("ascii")).hexdigest()
+            if child.get("team_binding_id") is not None:
+                self._bind_team_activity(child, row)
+        events = row["events"]
+        if kind == "tool_call" and (type(tool_count) is not int or not 0 <= tool_count <= 128):
+            return
+        if event_id in row["seen_event_ids"]:
+            return
+        row["seen_event_ids"].append(event_id)
+        del row["seen_event_ids"][:-_NATIVE_ACTIVITY_MAX_DEDUP_IDS_PER_INSTANCE]
+        events.append({"event_id": event_id, "kind": kind, "status": status,
+                       "at": time.time(), "duration_ms": duration_ms,
+                       "tool_count": tool_count})
+        if kind == "tool_call":
+            row["tool_count_total"] = min(1_000_000, row["tool_count_total"] + tool_count)
+        del events[:-_NATIVE_ACTIVITY_MAX_EVENTS_PER_INSTANCE]
+        row["updated_at"] = time.time()
+        row["status"] = ("completed" if kind == "completed" and status == "completed" else
+                         "responded" if kind == "response" and status == "completed" else
+                         "unknown" if kind == "response" and status == "incomplete" else
+                         "running" if kind == "attempt" else row["status"])
+        self._persist_activity()
 
     def enroll_lifecycle_startup_probe(self, *, cohort: RootLifecycleStartupCohort) -> str:
         """Enroll one exact guarded-new process for one fixed startup chat attempt."""
@@ -4226,74 +4312,6 @@ class RootCoreNativeObservationRegistry:
                 and self._lifecycle_startup_peer_current(row, cohort))
         except Exception:
             return False
-        row = child.get("activity")
-        if row is None:
-            binding = owner.mission_binding
-            mission_id = revision = None
-            if type(binding) is MissionBinding:
-                mission_id, revision = binding.mission_id, binding.revision
-            elif owner.planning_context is not None:
-                mission_id, revision = (owner.planning_context.mission_id,
-                                        owner.planning_context.revision)
-            source = child.get("source")
-            if source is None:
-                return
-            execution_key = secrets.token_urlsafe(24)
-            alias = self._new_activity_alias(owner.owner_subject_sha256,
-                                             child["profile_id"], execution_key)
-            row = {
-                "execution_key": execution_key, "display_alias": alias,
-                "owner_subject_sha256": owner.owner_subject_sha256,
-                "mission_id": mission_id, "mission_revision": revision,
-                "gateway_turn_id": owner.gateway_turn_id,
-                "profile_id": child["profile_id"],
-                "source_revision": source.source_revision,
-                "source_generation_sha256": child["source_generation_sha256"],
-                "source_manifest_sha256": child["source_manifest_sha256"],
-                "core_generation": owner.core_generation,
-                "core_source_generation": owner.core_source_generation,
-                "child_lineage_sha256": hashlib.sha256(
-                    b"jarvis-native-child-lineage-v1\0" + child["session_id"].encode("utf-8")).hexdigest(),
-                "parent_lineage_sha256": hashlib.sha256(
-                    b"jarvis-native-parent-lineage-v1\0" + child["parent_session_id"].encode("utf-8")
-                    + b"\0" + child["parent_turn_id"].encode("utf-8")).hexdigest(),
-                "created_at": time.time(), "updated_at": time.time(),
-                "tool_count_total": 0, "seen_event_ids": [],
-                "status": "admitted", "events": [],
-                "team_lineage": None, "team_relation": None, "history_partial": False,
-            }
-            child["activity"] = row
-            self._activity_records[execution_key] = row
-            if len(self._activity_records) > _NATIVE_ACTIVITY_MAX_INSTANCES:
-                oldest = min(self._activity_records.values(), key=lambda item: item["created_at"])
-                if oldest is not row:
-                    self._activity_records.pop(oldest["execution_key"], None)
-                    for retained in self._activity_records.values():
-                        retained["history_partial"] = True
-            kind, status = "admitted", "accepted"
-            event_id = hashlib.sha256(
-                b"jarvis-native-activity-admitted-v1\0" + execution_key.encode("ascii")).hexdigest()
-            if child.get("team_binding_id") is not None:
-                self._bind_team_activity(child, row)
-        events = row["events"]
-        if kind == "tool_call" and (type(tool_count) is not int or not 0 <= tool_count <= 128):
-            return
-        if event_id in row["seen_event_ids"]:
-            return
-        row["seen_event_ids"].append(event_id)
-        del row["seen_event_ids"][:-_NATIVE_ACTIVITY_MAX_DEDUP_IDS_PER_INSTANCE]
-        events.append({"event_id": event_id, "kind": kind, "status": status,
-                       "at": time.time(), "duration_ms": duration_ms,
-                       "tool_count": tool_count})
-        if kind == "tool_call":
-            row["tool_count_total"] = min(1_000_000, row["tool_count_total"] + tool_count)
-        del events[:-_NATIVE_ACTIVITY_MAX_EVENTS_PER_INSTANCE]
-        row["updated_at"] = time.time()
-        row["status"] = ("completed" if kind == "completed" and status == "completed" else
-                         "responded" if kind == "response" and status == "completed" else
-                         "unknown" if kind == "response" and status == "incomplete" else
-                         "running" if kind == "attempt" else row["status"])
-        self._persist_activity()
 
     def read_native_activity(self, *, owner_subject_sha256: str,
                              core_generation: str, core_source_generation: str,
@@ -8233,6 +8251,565 @@ class RootCoreNativeObservationRegistry:
             self._selected_source_deliveries.clear()
             self._obsidian_bindings.clear()
             self._obsidian_scoped_calls.clear()
+
+
+class RootLifecycleNativeObservationRegistry:
+    """Root CLI-local issuer for only the guarded startup-chat wire protocol.
+
+    This registry is deliberately separate from the long-lived Inspector
+    registry. Its custody is issued by CoreRuntime while the new source is in
+    ``source-starting`` and remains valid only inside that exact updater scope.
+    """
+
+    _OPERATIONS = frozenset({
+        "claim-lifecycle-startup-probe",
+        "register-lifecycle-startup-attempt",
+        "register-lifecycle-startup-response",
+    })
+
+    @classmethod
+    def from_starting_custody(cls, custody: Any) -> "RootLifecycleNativeObservationRegistry":
+        try:
+            from hermes_installer.core_runtime import (
+                StartingLifecycleObserverCustody,
+                verify_starting_lifecycle_observer_custody,
+            )
+            if (type(custody) is not StartingLifecycleObserverCustody
+                    or verify_starting_lifecycle_observer_custody(custody) is not True):
+                raise ValueError
+            cohort = custody.cohort
+            if (type(cohort) is not RootLifecycleStartupCohort
+                    or not cohort.is_root_selected()
+                    or (cohort.peer_pid, cohort.peer_uid, cohort.peer_gid,
+                        cohort.peer_start_ticks, cohort.boot_id, cohort.invocation_id)
+                       != (custody.peer_pid, custody.peer_uid, custody.peer_gid,
+                           custody.peer_start_ticks, custody.boot_id, custody.invocation_id)):
+                raise ValueError
+            pidfd = os.dup(custody.pidfd)
+            poller = select.poll()
+            poller.register(pidfd, select.POLLIN | select.POLLHUP | select.POLLERR | select.POLLNVAL)
+            if poller.poll(0):
+                os.close(pidfd)
+                raise ValueError
+            return cls(custody, pidfd, _seal=_ROOT_LIFECYCLE_REGISTRY_SEAL)
+        except Exception:
+            raise CoreNativeObservationUnavailable(
+                "Root starting lifecycle custody is unavailable") from None
+
+    def __init__(self, custody: Any, pidfd: int, *, _seal: object):
+        if _seal is not _ROOT_LIFECYCLE_REGISTRY_SEAL:
+            raise CoreNativeObservationUnavailable("Root lifecycle registry issuer is required")
+        self._custody = custody
+        self._cohort = custody.cohort
+        self._pidfd = pidfd
+        self._lock = threading.RLock()
+        self._closed = False
+        self._lifecycle_startup_probes: dict[str, dict[str, Any]] = {}
+        self._lifecycle_startup_attempts: dict[str, dict[str, Any]] = {}
+
+    def _custody_current(self) -> bool:
+        try:
+            from hermes_installer.core_runtime import verify_starting_lifecycle_observer_custody
+            cohort = self._cohort
+            poller = select.poll()
+            poller.register(self._pidfd,
+                            select.POLLIN | select.POLLHUP | select.POLLERR | select.POLLNVAL)
+            return bool(not self._closed and os.geteuid() == 0
+                and type(cohort) is RootLifecycleStartupCohort and cohort.is_root_selected()
+                and time.monotonic() < min(cohort.deadline_monotonic,
+                                           self._custody.expires_monotonic)
+                and verify_starting_lifecycle_observer_custody(self._custody) is True
+                and not poller.poll(0))
+        except Exception:
+            return False
+
+    def _lifecycle_startup_peer_current(self, row: Mapping[str, Any],
+                                        cohort: RootLifecycleStartupCohort) -> bool:
+        return bool(cohort is self._cohort and row.get("pidfd") == self._pidfd
+                    and self._custody_current()
+                    and row.get("expiry", 0) > time.monotonic())
+
+    def enroll_lifecycle_startup_probe(self, *, cohort: RootLifecycleStartupCohort) -> str:
+        """Enroll exactly the cohort already issued by the active CoreRuntime."""
+        if (cohort is not self._cohort or not self._custody_current()
+                or os.geteuid() != 0):
+            raise CoreNativeObservationUnavailable("guarded new-source cohort is not current")
+        try:
+            handle = secrets.token_urlsafe(32)
+            probe_id = secrets.token_urlsafe(24)
+            session_id = secrets.token_urlsafe(24)
+            nonce = secrets.token_hex(16)
+            expected_text_sha256 = hashlib.sha256(
+                (_LIFECYCLE_STARTUP_PROMPT_PREFIX + nonce).encode("ascii")).hexdigest()
+            row = {
+                "cohort": cohort, "pidfd": self._pidfd, "probe_id": probe_id,
+                "session_id": session_id, "nonce": nonce,
+                "expected_text_sha256": expected_text_sha256,
+                "expiry": min(cohort.deadline_monotonic, self._custody.expires_monotonic),
+                "claimed_peer": None, "attempt_handle": None,
+                "completion_handle": None, "consumed": False,
+            }
+            with self._lock:
+                if len(self._lifecycle_startup_probes) >= 1 or not self._custody_current():
+                    raise ValueError
+                self._lifecycle_startup_probes[handle] = row
+            return handle
+        except Exception:
+            raise CoreNativeObservationUnavailable("guarded startup probe enrollment failed") from None
+
+    def consume_lifecycle_startup_completion(
+        self, *, probe_handle: str, completion_handle: str,
+        native_response_sha256: str,
+    ) -> CoreVerifiedLifecycleStartupCompletion:
+        """Seal and consume the exact no-tool provider response after native terminal."""
+        if (not _OPAQUE.fullmatch(probe_handle or "")
+                or not _OPAQUE.fullmatch(completion_handle or "")
+                or not _HASH.fullmatch(native_response_sha256 or "")):
+            raise CoreNativeObservationUnavailable("startup completion reference is malformed")
+        try:
+            with self._lock:
+                row = self._lifecycle_startup_probes.get(probe_handle)
+                provider = row.get("provider_terminal") if isinstance(row, dict) else None
+                cohort = row.get("cohort") if isinstance(row, dict) else None
+                if (not isinstance(row, dict) or row.get("consumed") is True
+                        or row.get("completion_handle") != completion_handle
+                        or row.get("expiry", 0) <= time.monotonic()
+                        or not isinstance(provider, dict)
+                        or cohort is not self._cohort
+                        or native_response_sha256 != provider.get("response_text_sha256")
+                        or not self._lifecycle_startup_peer_current(row, cohort)):
+                    raise ValueError
+                proof = CoreVerifiedLifecycleStartupCompletion(
+                    schema=1, purpose="lifecycle-startup", probe_handle=probe_handle,
+                    completion_handle=completion_handle, transaction_id=cohort.transaction_id,
+                    starting_journal_sha256=cohort.starting_journal_sha256,
+                    cohort_sha256=cohort.cohort_sha256, core_generation=cohort.core_generation,
+                    old_adapter_generation=cohort.old_adapter_generation,
+                    new_adapter_generation=cohort.new_adapter_generation,
+                    core_source_generation=cohort.core_source_generation,
+                    generation_a1_sha256=cohort.generation_a1_sha256,
+                    js_sha256=cohort.js_sha256, rs_sha256=cohort.rs_sha256,
+                    u1_sha256=cohort.u1_sha256, l1_sha256=cohort.l1_sha256,
+                    primary_source_sha256=cohort.primary_source_sha256,
+                    active_soul_sha256=cohort.active_soul_sha256,
+                    native_inventory_sha256=cohort.native_inventory_sha256,
+                    peer_pid=cohort.peer_pid, peer_uid=cohort.peer_uid,
+                    peer_gid=cohort.peer_gid, peer_start_ticks=cohort.peer_start_ticks,
+                    boot_id=cohort.boot_id, invocation_id=cohort.invocation_id,
+                    probe_id=row["probe_id"], session_id=row["session_id"],
+                    turn_id=provider["turn_id"], api_request_id=provider["api_request_id"],
+                    provider_request_sha256=provider["request_sha256"],
+                    provider_response_sha256=provider["response_sha256"],
+                    provider_response_text_sha256=provider["response_text_sha256"],
+                    native_response_sha256=native_response_sha256,
+                    prompt_sha256=provider["prompt_sha256"], provider=cohort.provider,
+                    api_mode=cohort.api_mode, base_url=cohort.base_url, model=cohort.model,
+                    account_fingerprint=cohort.account_fingerprint,
+                    tools_sha256=hashlib.sha256(b"[]").hexdigest(),
+                    deadline_monotonic=row["expiry"], _seal=_LIFECYCLE_STARTUP_COMPLETION_SEAL,
+                )
+                if not proof.is_root_verified() or not self._lifecycle_startup_peer_current(row, cohort):
+                    raise ValueError
+                row["consumed"] = True
+                return proof
+        except Exception:
+            raise CoreNativeObservationUnavailable(
+                "startup completion is stale, mismatched or replayed") from None
+
+    def _handle_lifecycle(self, peer: tuple[int, int, int], request: dict[str, Any]) -> dict[str, Any]:
+        if (type(request) is not dict or type(request.get("schema")) is not int
+                or request.get("schema") != 1 or not isinstance(request.get("nonce"), str)
+                or request.get("op") not in self._OPERATIONS):
+            raise ValueError("unsupported lifecycle observer operation")
+        op, nonce = request["op"], request["nonce"]
+        with self._lock:
+            if not self._custody_current():
+                raise PermissionError("starting Core custody is no longer current")
+            if op == "claim-lifecycle-startup-probe":
+                if set(request) != {"schema", "op", "nonce", "probe_handle"}:
+                    raise ValueError("lifecycle startup claim schema mismatch")
+                handle = request["probe_handle"]
+                row = self._lifecycle_startup_probes.get(handle)
+                cohort = row.get("cohort") if isinstance(row, dict) else None
+                if (not isinstance(handle, str) or not _OPAQUE.fullmatch(handle)
+                        or row is None or row.get("claimed_peer") is not None
+                        or not self._lifecycle_startup_peer_current(row, cohort)
+                        or peer != (cohort.peer_pid, cohort.peer_uid, cohort.peer_gid)):
+                    raise ValueError("lifecycle probe is unavailable to this native peer")
+                row["claimed_peer"] = peer
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                    "probe_handle": handle, "probe_id": row["probe_id"],
+                    "session_id": row["session_id"], "startup_nonce": row["nonce"],
+                    "deadline_monotonic": row["expiry"],
+                    "cohort_sha256": cohort.cohort_sha256,
+                    "core_generation": cohort.core_generation,
+                    "core_source_generation": cohort.core_source_generation,
+                    "generation_a1_sha256": cohort.generation_a1_sha256,
+                    "js_sha256": cohort.js_sha256, "rs_sha256": cohort.rs_sha256,
+                    "u1_sha256": cohort.u1_sha256, "l1_sha256": cohort.l1_sha256,
+                    "primary_source_sha256": cohort.primary_source_sha256,
+                    "active_soul_sha256": cohort.active_soul_sha256,
+                    "native_inventory_sha256": cohort.native_inventory_sha256,
+                    "provider": cohort.provider, "api_mode": cohort.api_mode,
+                    "base_url": cohort.base_url, "model": cohort.model,
+                    "account_fingerprint": cohort.account_fingerprint}
+            if op == "register-lifecycle-startup-attempt":
+                required = {"schema", "op", "nonce", "probe_handle", "probe_id", "session_id",
+                    "turn_id", "api_request_id", "provider", "api_mode", "base_url", "model",
+                    "account_fingerprint", "request_sha256", "prompt_sha256", "tool_names",
+                    "retry_count"}
+                if set(request) != required:
+                    raise ValueError("lifecycle attempt schema mismatch")
+                row = self._lifecycle_startup_probes.get(request["probe_handle"])
+                cohort = row.get("cohort") if isinstance(row, dict) else None
+                expected_prompt = (hashlib.sha256((_LIFECYCLE_STARTUP_PROMPT_PREFIX + row["nonce"]
+                    + _LIFECYCLE_STARTUP_PROMPT_SUFFIX).encode("ascii")).hexdigest()
+                    if isinstance(row, dict) else None)
+                if (row is None or cohort is not self._cohort
+                        or row.get("claimed_peer") != peer or row.get("attempt_handle") is not None
+                        or request["probe_id"] != row["probe_id"]
+                        or request["session_id"] != row["session_id"]
+                        or request["provider"] != cohort.provider
+                        or request["api_mode"] != cohort.api_mode
+                        or request["base_url"] != cohort.base_url
+                        or request["model"] != cohort.model
+                        or request["account_fingerprint"] != cohort.account_fingerprint
+                        or request["prompt_sha256"] != expected_prompt
+                        or request["tool_names"] != []
+                        or type(request["retry_count"]) is not int or request["retry_count"] != 0
+                        or not _HASH.fullmatch(request.get("request_sha256", ""))
+                        or not _ID.fullmatch(request.get("turn_id", ""))
+                        or not _ID.fullmatch(request.get("api_request_id", ""))
+                        or not self._lifecycle_startup_peer_current(row, cohort)):
+                    raise ValueError("lifecycle provider attempt differs from enrolled cohort")
+                attempt_handle = secrets.token_urlsafe(32)
+                row["attempt_handle"] = attempt_handle
+                self._lifecycle_startup_attempts[attempt_handle] = {
+                    "probe_handle": request["probe_handle"], "peer": peer,
+                    "turn_id": request["turn_id"], "api_request_id": request["api_request_id"],
+                    "request_sha256": request["request_sha256"],
+                    "prompt_sha256": request["prompt_sha256"],
+                    "expiry": min(row["expiry"], time.monotonic() + 120.0),
+                }
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                        "attempt_handle": attempt_handle}
+            required = {"schema", "op", "nonce", "probe_handle", "attempt_handle",
+                "turn_id", "api_request_id", "request_sha256", "response_sha256",
+                "response_text", "response_text_sha256", "completed", "tool_call_count"}
+            if set(request) != required:
+                raise ValueError("lifecycle response schema mismatch")
+            row = self._lifecycle_startup_probes.get(request["probe_handle"])
+            attempt = self._lifecycle_startup_attempts.get(request["attempt_handle"])
+            cohort = row.get("cohort") if isinstance(row, dict) else None
+            text = request.get("response_text")
+            if (row is None or attempt is None or cohort is not self._cohort
+                    or row.get("claimed_peer") != peer or row.get("completion_handle") is not None
+                    or attempt.get("probe_handle") != request["probe_handle"]
+                    or attempt.get("peer") != peer or attempt.get("expiry", 0) <= time.monotonic()
+                    or attempt.get("turn_id") != request["turn_id"]
+                    or attempt.get("api_request_id") != request["api_request_id"]
+                    or attempt.get("request_sha256") != request["request_sha256"]
+                    or request.get("completed") is not True
+                    or type(request.get("tool_call_count")) is not int
+                    or request.get("tool_call_count") != 0
+                    or not isinstance(text, str) or not 1 <= len(text) <= 1024
+                    or hashlib.sha256(text.encode("utf-8", "strict")).hexdigest()
+                       != request.get("response_text_sha256")
+                    or text != _LIFECYCLE_STARTUP_PROMPT_PREFIX + row["nonce"]
+                    or not _HASH.fullmatch(request.get("response_sha256", ""))
+                    or not self._lifecycle_startup_peer_current(row, cohort)):
+                raise ValueError("lifecycle terminal differs from exact startup challenge")
+            completion_handle = secrets.token_urlsafe(32)
+            row["completion_handle"] = completion_handle
+            row["provider_terminal"] = {
+                "turn_id": attempt["turn_id"], "api_request_id": attempt["api_request_id"],
+                "request_sha256": attempt["request_sha256"],
+                "prompt_sha256": attempt["prompt_sha256"],
+                "response_sha256": request["response_sha256"],
+                "response_text_sha256": request["response_text_sha256"],
+            }
+            self._lifecycle_startup_attempts.pop(request["attempt_handle"], None)
+            return {"schema": 1, "nonce": nonce, "ok": True,
+                    "completion_handle": completion_handle}
+
+    def serve_connection(self, connection: socket.socket) -> None:
+        peer = struct.unpack("3i", connection.getsockopt(socket.SOL_SOCKET,
+                                                          socket.SO_PEERCRED, 12))
+        request = _read_frame(connection)
+        nonce = request.get("nonce") if isinstance(request, dict) else None
+        try:
+            if (peer != (self._cohort.peer_pid, self._cohort.peer_uid, self._cohort.peer_gid)
+                    or not self._custody_current()):
+                raise PermissionError("new Core peer custody did not verify")
+            result = self._handle_lifecycle(peer, request)
+            if not self._custody_current():
+                raise PermissionError("new Core custody changed during lifecycle operation")
+        except Exception:
+            result = {"schema": 1, "nonce": nonce, "ok": False}
+        raw = _canonical(result)
+        connection.sendall(struct.pack("!I", len(raw)) + raw)
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._lifecycle_startup_probes.clear()
+            self._lifecycle_startup_attempts.clear()
+            try:
+                os.close(self._pidfd)
+            except OSError:
+                pass
+
+
+class RootLifecycleNativeObservationServer:
+    """Short-lived fixed Root CLI listener isolated from the Inspector socket."""
+
+    def __init__(self, registry: RootLifecycleNativeObservationRegistry):
+        if type(registry) is not RootLifecycleNativeObservationRegistry:
+            raise CoreNativeObservationUnavailable("fixed Root lifecycle registry is required")
+        self._registry = registry
+        self._ready = threading.Event()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._listener: socket.socket | None = None
+        self._error: BaseException | None = None
+        self._socket_identity: tuple[int, int] | None = None
+        self._owner_identity: tuple[int, int] | None = None
+        self._owner_record: dict[str, Any] | None = None
+        self._lock_fd: int | None = None
+
+    @staticmethod
+    def _process_identity(pid: int) -> tuple[str, str]:
+        from hermes_installer.remote.core_gateway_inspector import _boot_id, _proc_start_ticks
+        return _boot_id(), _proc_start_ticks(pid)
+
+    @staticmethod
+    def _read_owner_record() -> tuple[dict[str, Any] | None, tuple[int, int] | None]:
+        fd = -1
+        try:
+            fd = os.open(_LIFECYCLE_NATIVE_OBSERVER_OWNER,
+                         os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1):
+                raise CoreNativeObservationUnavailable("lifecycle owner record custody differs")
+            raw = os.read(fd, 4097)
+            if len(raw) > 4096:
+                raise CoreNativeObservationUnavailable("lifecycle owner record exceeded its bound")
+            value = json.loads(raw)
+            expected = {"schema", "pid", "boot_id", "start_ticks", "socket_dev", "socket_ino"}
+            if (type(value) is not dict or set(value) != expected
+                    or type(value.get("schema")) is not int or value["schema"] != 1
+                    or type(value.get("pid")) is not int or value["pid"] <= 1
+                    or not isinstance(value.get("boot_id"), str)
+                    or not isinstance(value.get("start_ticks"), str)
+                    or not value["start_ticks"].isdecimal()
+                    or type(value.get("socket_dev")) is not int
+                    or type(value.get("socket_ino")) is not int):
+                raise CoreNativeObservationUnavailable("lifecycle owner record is malformed")
+            return value, (info.st_dev, info.st_ino)
+        except FileNotFoundError:
+            return None, None
+        finally:
+            if fd >= 0:
+                os.close(fd)
+
+    def start(self) -> None:
+        if self._thread is not None:
+            raise CoreNativeObservationUnavailable("Root lifecycle observer server already started")
+        context = contextvars.copy_context()
+        self._thread = threading.Thread(target=lambda: context.run(self._serve),
+                                        name="root-lifecycle-observer", daemon=True)
+        self._thread.start()
+
+    def wait_ready(self, timeout: float = 3.0) -> bool:
+        if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not 0.1 <= timeout <= 10.0):
+            return False
+        if not self._ready.wait(timeout):
+            return False
+        return self._error is None
+
+    def _serve(self) -> None:
+        parent = LIFECYCLE_NATIVE_OBSERVER_SOCKET.parent
+        try:
+            try:
+                os.mkdir(parent, 0o750)
+            except FileExistsError:
+                pass
+            else:
+                os.chown(parent, 0, _CORE_NATIVE_OBSERVER_GROUP)
+                os.chmod(parent, 0o750)
+            info = parent.lstat()
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0
+                    or info.st_gid != _CORE_NATIVE_OBSERVER_GROUP
+                    or stat.S_IMODE(info.st_mode) != 0o750):
+                raise CoreNativeObservationUnavailable("Root lifecycle runtime directory custody differs")
+            flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+            lock_fd = os.open(_LIFECYCLE_NATIVE_OBSERVER_LOCK, flags, 0o600)
+            lock_info = os.fstat(lock_fd)
+            if (not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != 0
+                    or lock_info.st_gid != 0 or stat.S_IMODE(lock_info.st_mode) != 0o600
+                    or lock_info.st_nlink != 1):
+                os.close(lock_fd)
+                raise CoreNativeObservationUnavailable("lifecycle observer lock custody differs")
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                os.close(lock_fd)
+                raise CoreNativeObservationUnavailable("another lifecycle observer owns the listener") from None
+            self._lock_fd = lock_fd
+            old_owner, old_owner_identity = self._read_owner_record()
+            try:
+                old_socket = LIFECYCLE_NATIVE_OBSERVER_SOCKET.lstat()
+            except FileNotFoundError:
+                old_socket = None
+            if old_socket is not None:
+                if (not stat.S_ISSOCK(old_socket.st_mode) or old_owner is None
+                        or old_socket.st_uid != 0
+                        or old_socket.st_gid != _CORE_NATIVE_OBSERVER_GROUP
+                        or stat.S_IMODE(old_socket.st_mode) != 0o660
+                        or old_owner_identity is None
+                        or (old_socket.st_dev, old_socket.st_ino)
+                           != (old_owner.get("socket_dev"), old_owner.get("socket_ino"))):
+                    raise CoreNativeObservationUnavailable("existing lifecycle socket is not owned by its exact record")
+                old_alive = False
+                try:
+                    boot, started = self._process_identity(old_owner["pid"])
+                    old_alive = boot == old_owner["boot_id"] and started == old_owner["start_ticks"]
+                except Exception:
+                    old_alive = False
+                if old_alive:
+                    raise CoreNativeObservationUnavailable("prior Root lifecycle observer is still alive")
+                LIFECYCLE_NATIVE_OBSERVER_SOCKET.unlink()
+                owner_info = _LIFECYCLE_NATIVE_OBSERVER_OWNER.lstat()
+                if (owner_info.st_dev, owner_info.st_ino) != old_owner_identity:
+                    raise CoreNativeObservationUnavailable("lifecycle owner record changed during recovery")
+                _LIFECYCLE_NATIVE_OBSERVER_OWNER.unlink()
+            elif old_owner is not None:
+                try:
+                    boot, started = self._process_identity(old_owner["pid"])
+                    old_alive = boot == old_owner["boot_id"] and started == old_owner["start_ticks"]
+                except Exception:
+                    old_alive = False
+                if old_alive:
+                    raise CoreNativeObservationUnavailable("prior Root lifecycle observer is still alive")
+                owner_info = _LIFECYCLE_NATIVE_OBSERVER_OWNER.lstat()
+                if (old_owner_identity != (owner_info.st_dev, owner_info.st_ino)):
+                    raise CoreNativeObservationUnavailable("lifecycle owner record changed during recovery")
+                _LIFECYCLE_NATIVE_OBSERVER_OWNER.unlink()
+
+            boot_id, start_ticks = self._process_identity(os.getpid())
+            listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self._listener = listener
+            listener.bind(str(LIFECYCLE_NATIVE_OBSERVER_SOCKET))
+            os.chown(LIFECYCLE_NATIVE_OBSERVER_SOCKET, 0, _CORE_NATIVE_OBSERVER_GROUP)
+            os.chmod(LIFECYCLE_NATIVE_OBSERVER_SOCKET, 0o660)
+            bound = LIFECYCLE_NATIVE_OBSERVER_SOCKET.lstat()
+            if (not stat.S_ISSOCK(bound.st_mode) or bound.st_uid != 0
+                    or bound.st_gid != _CORE_NATIVE_OBSERVER_GROUP
+                    or stat.S_IMODE(bound.st_mode) != 0o660):
+                raise CoreNativeObservationUnavailable("new lifecycle socket custody differs")
+            self._socket_identity = (bound.st_dev, bound.st_ino)
+            listener.listen(8)
+            listener.settimeout(0.25)
+            owner_record = {"schema": 1, "pid": os.getpid(), "boot_id": boot_id,
+                "start_ticks": start_ticks, "socket_dev": bound.st_dev, "socket_ino": bound.st_ino}
+            owner_fd = os.open(_LIFECYCLE_NATIVE_OBSERVER_OWNER,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            try:
+                owner_info = os.fstat(owner_fd)
+                if (not stat.S_ISREG(owner_info.st_mode) or owner_info.st_uid != 0
+                        or owner_info.st_gid != 0 or stat.S_IMODE(owner_info.st_mode) != 0o600
+                        or owner_info.st_nlink != 1):
+                    raise CoreNativeObservationUnavailable("new lifecycle owner record custody differs")
+                raw = _canonical(owner_record)
+                self._owner_identity = (owner_info.st_dev, owner_info.st_ino)
+                self._owner_record = owner_record
+                view = memoryview(raw)
+                while view:
+                    written = os.write(owner_fd, view)
+                    if written <= 0:
+                        raise OSError("short lifecycle owner-record write")
+                    view = view[written:]
+                os.fsync(owner_fd)
+            finally:
+                os.close(owner_fd)
+            self._ready.set()
+            while not self._stop.is_set():
+                try:
+                    connection, _ = listener.accept()
+                except TimeoutError:
+                    continue
+                except OSError:
+                    if self._stop.is_set():
+                        break
+                    raise
+                with connection:
+                    connection.settimeout(2.0)
+                    try:
+                        self._registry.serve_connection(connection)
+                    except Exception:
+                        continue
+        except BaseException as exc:
+            self._error = exc
+            self._ready.set()
+        finally:
+            listener = self._listener
+            self._listener = None
+            if listener is not None:
+                try:
+                    listener.close()
+                except OSError:
+                    pass
+            self._remove_own_paths()
+            if self._lock_fd is not None:
+                try:
+                    fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
+                    os.close(self._lock_fd)
+                except OSError:
+                    pass
+                self._lock_fd = None
+
+    def _remove_own_paths(self) -> None:
+        try:
+            if self._socket_identity is not None:
+                info = LIFECYCLE_NATIVE_OBSERVER_SOCKET.lstat()
+                if (stat.S_ISSOCK(info.st_mode)
+                        and (info.st_dev, info.st_ino) == self._socket_identity):
+                    LIFECYCLE_NATIVE_OBSERVER_SOCKET.unlink()
+        except FileNotFoundError:
+            pass
+        try:
+            if self._owner_identity is not None and self._owner_record is not None:
+                record, identity = self._read_owner_record()
+                if identity == self._owner_identity and record == self._owner_record:
+                    _LIFECYCLE_NATIVE_OBSERVER_OWNER.unlink()
+        except FileNotFoundError:
+            pass
+        except Exception:
+            if self._owner_identity is not None:
+                try:
+                    info = _LIFECYCLE_NATIVE_OBSERVER_OWNER.lstat()
+                    if (info.st_dev, info.st_ino) == self._owner_identity:
+                        _LIFECYCLE_NATIVE_OBSERVER_OWNER.unlink()
+                except OSError:
+                    pass
+
+    def close(self) -> None:
+        self._stop.set()
+        if self._listener is not None:
+            try:
+                self._listener.close()
+            except OSError:
+                pass
+        if self._thread is not None:
+            self._thread.join(timeout=3.0)
+            if self._thread.is_alive():
+                raise CoreNativeObservationUnavailable("Root lifecycle observer did not stop")
+            self._thread = None
+        self._registry.close()
 
 
 def serve_core_native_observer(registry: RootCoreNativeObservationRegistry, *,

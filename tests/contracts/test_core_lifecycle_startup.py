@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import threading
 import time
 from pathlib import Path
@@ -60,6 +61,22 @@ def _registry_for_probe(cohort, monkeypatch):
     monkeypatch.setattr(registry, "_ensure_open", lambda: None)
     monkeypatch.setattr(registry, "_lifecycle_startup_peer_current",
                         lambda row, _cohort: row.get("current") is True)
+    return registry
+
+
+def _root_cli_registry_for_probe(cohort, monkeypatch):
+    from types import SimpleNamespace
+
+    registry = object.__new__(observer.RootLifecycleNativeObservationRegistry)
+    registry._custody = SimpleNamespace(cohort=cohort,
+                                        expires_monotonic=cohort.deadline_monotonic)
+    registry._cohort = cohort
+    registry._pidfd = -1
+    registry._lock = threading.RLock()
+    registry._closed = False
+    registry._lifecycle_startup_probes = {}
+    registry._lifecycle_startup_attempts = {}
+    monkeypatch.setattr(registry, "_custody_current", lambda: True)
     return registry
 
 
@@ -123,6 +140,135 @@ def test_root_probe_claim_is_current_peer_only_and_single_use(monkeypatch):
             "schema": 1, "op": "claim-lifecycle-startup-probe", "nonce": "n2",
             "probe_handle": handle,
         })
+
+
+def test_root_cli_lifecycle_registry_is_separate_fixed_three_op_surface(monkeypatch):
+    cohort = _cohort()
+    registry = _root_cli_registry_for_probe(cohort, monkeypatch)
+    handle = registry.enroll_lifecycle_startup_probe(cohort=cohort)
+    peer = (cohort.peer_pid, cohort.peer_uid, cohort.peer_gid)
+
+    with pytest.raises(ValueError, match="unsupported lifecycle observer operation"):
+        registry._handle_lifecycle(peer, {
+            "schema": 1, "op": "register-tool-call", "nonce": "n",
+        })
+    with pytest.raises(ValueError, match="unavailable to this native peer"):
+        registry._handle_lifecycle((cohort.peer_pid + 1, cohort.peer_uid, cohort.peer_gid), {
+            "schema": 1, "op": "claim-lifecycle-startup-probe", "nonce": "n",
+            "probe_handle": handle,
+        })
+    assert registry._lifecycle_startup_probes[handle]["claimed_peer"] is None
+
+    claimed = registry._handle_lifecycle(peer, {
+        "schema": 1, "op": "claim-lifecycle-startup-probe", "nonce": "n",
+        "probe_handle": handle,
+    })
+    assert claimed["ok"] is True
+    with pytest.raises(ValueError, match="unavailable to this native peer"):
+        registry._handle_lifecycle(peer, {
+            "schema": 1, "op": "claim-lifecycle-startup-probe", "nonce": "replay",
+            "probe_handle": handle,
+        })
+
+    row = registry._lifecycle_startup_probes[handle]
+    prompt_sha = hashlib.sha256((observer._LIFECYCLE_STARTUP_PROMPT_PREFIX + row["nonce"]
+        + observer._LIFECYCLE_STARTUP_PROMPT_SUFFIX).encode("ascii")).hexdigest()
+    attempt_request = {
+        "schema": 1, "op": "register-lifecycle-startup-attempt", "nonce": "attempt",
+        "probe_handle": handle, "probe_id": row["probe_id"], "session_id": row["session_id"],
+        "turn_id": "turn-1", "api_request_id": "api-1", "provider": cohort.provider,
+        "api_mode": cohort.api_mode, "base_url": cohort.base_url, "model": cohort.model,
+        "account_fingerprint": cohort.account_fingerprint, "request_sha256": "a" * 64,
+        "prompt_sha256": prompt_sha, "tool_names": [], "retry_count": 0,
+    }
+    with pytest.raises(ValueError, match="provider attempt differs"):
+        registry._handle_lifecycle(peer, dict(attempt_request, tool_names=["terminal"]))
+    attempt = registry._handle_lifecycle(peer, attempt_request)
+    text = observer._LIFECYCLE_STARTUP_PROMPT_PREFIX + row["nonce"]
+    text_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    completed = registry._handle_lifecycle(peer, {
+        "schema": 1, "op": "register-lifecycle-startup-response", "nonce": "response",
+        "probe_handle": handle, "attempt_handle": attempt["attempt_handle"],
+        "turn_id": "turn-1", "api_request_id": "api-1", "request_sha256": "a" * 64,
+        "response_sha256": "b" * 64, "response_text": text,
+        "response_text_sha256": text_sha, "completed": True, "tool_call_count": 0,
+    })
+    proof = registry.consume_lifecycle_startup_completion(
+        probe_handle=handle, completion_handle=completed["completion_handle"],
+        native_response_sha256=text_sha)
+    assert type(proof) is observer.CoreVerifiedLifecycleStartupCompletion
+    assert proof.is_root_verified()
+    assert (proof.new_adapter_generation, proof.core_source_generation, proof.generation_a1_sha256,
+            proof.js_sha256, proof.rs_sha256, proof.u1_sha256, proof.l1_sha256) == (
+                cohort.new_adapter_generation, cohort.core_source_generation,
+                cohort.generation_a1_sha256, cohort.js_sha256, cohort.rs_sha256,
+                cohort.u1_sha256, cohort.l1_sha256)
+    with pytest.raises(observer.CoreNativeObservationUnavailable, match="replayed"):
+        registry.consume_lifecycle_startup_completion(
+            probe_handle=handle, completion_handle=completed["completion_handle"],
+            native_response_sha256=text_sha)
+    monkeypatch.setattr(registry, "_custody_current", lambda: False)
+    with pytest.raises(PermissionError, match="no longer current"):
+        registry._handle_lifecycle(peer, {
+            "schema": 1, "op": "claim-lifecycle-startup-probe", "nonce": "stale",
+            "probe_handle": handle,
+        })
+
+
+def test_native_client_selects_lifecycle_socket_only_for_three_fixed_ops(tmp_path):
+    client = observer.CoreNativeObservationClient(socket_path=tmp_path / "ordinary.sock")
+    lifecycle = observer.LIFECYCLE_NATIVE_OBSERVER_SOCKET
+    assert client._socket_for_operation("claim-lifecycle-startup-probe") == lifecycle
+    assert client._socket_for_operation("register-lifecycle-startup-attempt") == lifecycle
+    assert client._socket_for_operation("register-lifecycle-startup-response") == lifecycle
+    assert client._socket_for_operation("register-attempt") == tmp_path / "ordinary.sock"
+    assert client._socket_for_operation("register-tool-call") == tmp_path / "ordinary.sock"
+
+
+def test_root_cli_lifecycle_server_preserves_foreign_socket_and_cleans_its_inode(
+        tmp_path, monkeypatch):
+    if os.geteuid() != 0:
+        pytest.skip("Root-owned lifecycle socket fixture requires the Pi root test runner")
+    runtime = tmp_path / "lifecycle-runtime"
+    runtime.mkdir()
+    os.chown(runtime, 0, 1000)
+    os.chmod(runtime, 0o750)
+    lifecycle_socket = runtime / "lifecycle-observer.sock"
+    owner_record = runtime / "lifecycle-observer.owner.json"
+    lock_file = runtime / "lifecycle-observer.lock"
+    ordinary_socket = tmp_path / "ordinary-observer.sock"
+    ordinary_socket.write_bytes(b"preserve")
+    monkeypatch.setattr(observer, "LIFECYCLE_NATIVE_OBSERVER_SOCKET", lifecycle_socket)
+    monkeypatch.setattr(observer, "_LIFECYCLE_NATIVE_OBSERVER_OWNER", owner_record)
+    monkeypatch.setattr(observer, "_LIFECYCLE_NATIVE_OBSERVER_LOCK", lock_file)
+    monkeypatch.setattr(observer, "_CORE_NATIVE_OBSERVER_GROUP", 1000)
+
+    registry = object.__new__(observer.RootLifecycleNativeObservationRegistry)
+    registry.close = lambda: None
+    foreign = lifecycle_socket
+    foreign.write_bytes(b"foreign path")
+    denied = observer.RootLifecycleNativeObservationServer(registry)
+    denied.start()
+    assert denied.wait_ready(timeout=3.0) is False
+    denied.close()
+    assert foreign.read_bytes() == b"foreign path"
+    assert ordinary_socket.read_bytes() == b"preserve"
+
+    foreign.unlink()
+    server = observer.RootLifecycleNativeObservationServer(registry)
+    server.start()
+    assert server.wait_ready(timeout=3.0) is True
+    owned = lifecycle_socket.lstat()
+    assert owned.st_uid == 0 and owned.st_gid == 1000
+    assert (owned.st_mode & 0o777) == 0o660
+    record, identity = observer.RootLifecycleNativeObservationServer._read_owner_record()
+    assert record["socket_dev"] == owned.st_dev and record["socket_ino"] == owned.st_ino
+    owner_before_close = owner_record.lstat()
+    server.close()
+    assert not lifecycle_socket.exists()
+    assert not owner_record.exists()
+    assert (owner_before_close.st_dev, owner_before_close.st_ino) == identity
+    assert ordinary_socket.read_bytes() == b"preserve"
 
 
 def test_root_completion_seals_actual_codex_terminal_and_rejects_tool_use_replay(monkeypatch):
