@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import secrets
+import subprocess
+import tempfile
 import time
+from pathlib import Path
 
 import pytest
 
@@ -193,6 +196,54 @@ def test_projects_assets_describe_the_verified_turn_context_boundary():
     assert "projectData.projects" in js and "conversationData.conversations" in js
     assert "call('/chat/api/conversations/' + encodeURIComponent(conversationId) + '/project'" in js
     assert "body:JSON.stringify({projectId:null})" in js
+
+
+def test_projects_refresh_completes_after_render_for_nonempty_and_empty_results():
+    source = FEATURE_ASSETS.mount_js
+    refresh = "async function refresh() {" + source.split(
+        "async function refresh() {", 1
+    )[1].split("\n  async function loadVaultNotes()", 1)[0]
+    harness = r'''
+function node() { return {hidden:true, disabled:false, textContent:'', value:'',
+  setAttribute(){}, replaceChildren(){}, add(){}}; }
+async function exercise(projectRows) {
+  const projectLoading=node(), trashLoading=node(), trashEmpty=node(), empty=node();
+  const projectError=node(), projectsSection=node(), refreshButton=node(), trash=node();
+  const conversationSelect=node(), addChat=node();
+  let projects=[], chats=[], selected=null, projectsLoaded=false, rendered=0;
+  const isCurrent=()=>true;
+  const render=()=>{ rendered++; };
+  const text=(target,value)=>{ target.textContent=value; };
+  const call=async path => {
+    if (path === '/chat/api/projects') return {projects:projectRows};
+    if (path === '/chat/api/conversations') return {conversations:[]};
+    if (path === '/chat/api/projects/trash') return {projects:[]};
+    throw new Error('Unexpected read: '+path);
+  };
+''' + refresh + r'''
+  const result = await refresh();
+  assert.equal(result, true, 'a successful response must not be reclassified as a refresh failure');
+  assert.equal(projectsLoaded, true);
+  assert.equal(rendered, 1);
+  assert.equal(projectError.hidden, true);
+  assert.equal(projectsSection.attributes['aria-busy'], 'false');
+  assert.equal(empty.hidden, projectRows.length > 0,
+    'the empty-state visibility must match the response after render');
+}
+const assert = require('node:assert/strict');
+global.Option = function(label, value){ this.text=label; this.value=value; };
+// Add the attribute recorder used by the production refresh effect.
+const originalNode = node;
+node = function(){ const value=originalNode(); value.attributes={};
+  value.setAttribute=(key,entry)=>{value.attributes[key]=entry;}; return value; };
+(async()=>{ await exercise([{id:'p1',title:'One',chats:[]}]); await exercise([]); })()
+  .catch(error=>{ console.error(error); process.exitCode=1; });
+'''
+    with tempfile.TemporaryDirectory() as temporary:
+        path = Path(temporary) / "projects-refresh-harness.js"
+        path.write_text(harness, encoding="utf-8")
+        result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
 
 
 def test_trashing_chat_conflicts_with_active_turn_and_versions_survive_restore(tmp_path):
