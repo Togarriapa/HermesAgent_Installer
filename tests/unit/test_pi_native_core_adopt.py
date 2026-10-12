@@ -1256,15 +1256,6 @@ def _completed_ingress_handoff_fixture(tmp_path, monkeypatch):
     runtime.mkdir(mode=0o700)
     runtime.chmod(0o700)
     active = runtime / "native-adoption-ingress-backup.json"
-    old_raw = b'{"schema":1,"state":"migrated","candidate_sha":"' + b"a" * 40 + b'"}\n'
-    active.write_bytes(old_raw)
-    active.chmod(0o600)
-    info = active.stat()
-    monkeypatch.setattr(adopt, "INGRESS_BACKUP", active)
-    monkeypatch.setattr(adopt, "INGRESS_HISTORY", runtime / "native-adoption-ingress-history")
-    predecessor_sha, _identity = adopt._archive_completed_ingress_bytes(old_raw)
-    predecessor = {"raw": old_raw, "identity": adopt._ingress_backup_identity(info),
-                   "sha256": predecessor_sha}
     old_gateway = _unit("core_gateway")
     old_inspector = _unit("core_gateway_inspector")
     gateway_path, inspector_path = runtime / "gateway.service", runtime / "inspector.service"
@@ -1279,6 +1270,38 @@ def _completed_ingress_handoff_fixture(tmp_path, monkeypatch):
     config_path.write_bytes(b'{"allowed_emails":["owner@example.test"]}\n')
     config_path.chmod(0o440)
     adopt.os.chown(config_path, 0, 981)
+    old_config = config_path.read_bytes()
+    prospective_config = (json.dumps({
+        "allowed_emails": ["owner@example.test"],
+        "gateway_unit_sha256": hashlib.sha256(old_gateway).hexdigest(),
+    }, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    old_values = {
+        "schema": 1, "state": "migrated", "candidate_sha": "a" * 40,
+        "gateway_unit": base64.b64encode(old_gateway).decode("ascii"),
+        "inspector_unit": base64.b64encode(old_inspector).decode("ascii"),
+        "gateway_config": base64.b64encode(old_config).decode("ascii"),
+        "gateway_mode": 0o440, "gateway_gid": 981,
+        "new_gateway_sha256": hashlib.sha256(old_gateway).hexdigest(),
+        "new_inspector_sha256": hashlib.sha256(old_inspector).hexdigest(),
+        "new_config_sha256": hashlib.sha256(prospective_config).hexdigest(),
+        "post_core_config_sha256": "b" * 64,
+        "old_gateway_sha256": hashlib.sha256(old_gateway).hexdigest(),
+        "old_inspector_sha256": hashlib.sha256(old_inspector).hexdigest(),
+        "old_config_sha256": hashlib.sha256(old_config).hexdigest(),
+        "runtime_inspector_sha256": None,
+        "new_gateway_config": base64.b64encode(prospective_config).decode("ascii"),
+        "adapter_refresh": None,
+    }
+    old_raw = (json.dumps(old_values, sort_keys=True, separators=(",", ":"))
+               + "\n").encode("ascii")
+    active.write_bytes(old_raw)
+    active.chmod(0o600)
+    info = active.stat()
+    monkeypatch.setattr(adopt, "INGRESS_BACKUP", active)
+    monkeypatch.setattr(adopt, "INGRESS_HISTORY", runtime / "native-adoption-ingress-history")
+    predecessor_sha, _identity = adopt._archive_completed_ingress_bytes(old_raw)
+    predecessor = {"raw": old_raw, "identity": adopt._ingress_backup_identity(info),
+                   "sha256": predecessor_sha}
     monkeypatch.setattr(adopt, "GATEWAY_CONFIG", config_path)
     saved = {gateway_path: (old_gateway, gateway_path.stat()),
              inspector_path: (old_inspector, inspector_path.stat())}
@@ -1304,6 +1327,7 @@ def test_completed_ingress_handoff_archives_raw_predecessor_then_replaces_atomic
 
     replacement = json.loads(active.read_bytes())
     parsed, *_ = adopt._backup_value("b" * 40)
+    adopt._verify_archived_completed_ingress(parsed)
     archived = adopt.INGRESS_HISTORY / (predecessor["sha256"] + ".json")
     assert archived.read_bytes() == predecessor["raw"]
     assert stat.S_IMODE(archived.stat().st_mode) == 0o600
