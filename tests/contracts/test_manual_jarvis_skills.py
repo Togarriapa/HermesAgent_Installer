@@ -38,6 +38,25 @@ from hermes_installer.registry.jarvis_master_semantics import (
 )
 
 
+def _archive_with_helper(archive_bytes, helper_bytes):
+    with zipfile.ZipFile(io.BytesIO(archive_bytes), "r") as archive:
+        members = {info.filename: archive.read(info.filename) for info in archive.infolist()}
+    manifest = json.loads(members["manifest.json"])
+    manifest["installer"] = {
+        "archive_path": manual_skills._HELPER_ARCHIVE_PATH,
+        "size_bytes": len(helper_bytes),
+        "sha256": hashlib.sha256(helper_bytes).hexdigest(),
+    }
+    members["manifest.json"] = manual_skills._canonical_json(manifest)
+    members[manual_skills._HELPER_ARCHIVE_PATH] = helper_bytes
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
+        manual_skills._zip_write(archive, "manifest.json", members.pop("manifest.json"))
+        for name, content in sorted(members.items()):
+            manual_skills._zip_write(archive, name, content)
+    return output.getvalue()
+
+
 class ManualJarvisSkillsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -55,6 +74,92 @@ class ManualJarvisSkillsTests(unittest.TestCase):
         (home / "skills" / "user-owned").mkdir()
         (home / "skills" / "user-owned" / "SKILL.md").write_text("user bytes\n", encoding="utf-8")
         return home
+
+    def test_helper_only_transition_preserves_full_generation_and_retains_old_backup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = self.make_home(Path(directory))
+            old_archive = _archive_with_helper(self.bundle, b"old helper bytes; never execute")
+            old_sha = hashlib.sha256(old_archive).hexdigest()
+            next_sha = self.digest
+            old_manifest, old_files, _old_helper = manual_skills._read_transition_archive(
+                old_archive, old_sha)
+            new_manifest, new_files, next_helper = manual_skills._read_transition_archive(
+                self.bundle, next_sha)
+            self.assertEqual(next_helper, Path(manual_skills.__file__).read_bytes())
+            self.assertTrue(manual_skills.verify_same_materialization_transition(
+                old_manifest, old_files, new_manifest, new_files))
+            install_manual_jarvis_skills(old_archive, hermes_home=home,
+                                         expected_sha256=old_sha)
+
+            result = manual_skills.install_same_materialization_transition(
+                self.bundle, old_archive, hermes_home=home,
+                next_sha256=next_sha, previous_sha256=old_sha,
+                shared_manifest_sha256=manual_skills._same_materialization_digests(
+                    new_manifest, new_files)[0],
+                shared_materialization_sha256=manual_skills._same_materialization_digests(
+                    new_manifest, new_files)[1],
+                shared_member_count=manual_skills._same_materialization_digests(
+                    new_manifest, new_files)[2])
+
+            target = home / "skills" / manual_skills._GENERATION
+            backup = Path(result["previous_generation_backup"])
+            self.assertEqual(result["state"], "staged")
+            self.assertEqual(result["artifact_sha256"], next_sha)
+            self.assertEqual((home / "SOUL.md").read_bytes(), b"# Jarvis\n")
+            manual_skills._verify_owned_generation(target, new_files, next_sha)
+            manual_skills._verify_owned_generation(backup, old_files, old_sha)
+            self.assertEqual(
+                {name: (target / name).read_bytes() for name in new_files}, new_files)
+            self.assertEqual(
+                {name: (backup / name).read_bytes() for name in old_files}, old_files)
+
+    def test_helper_only_classifier_rejects_materialized_or_manifest_drift(self):
+        old_archive = _archive_with_helper(self.bundle, b"old helper bytes")
+        old_sha = hashlib.sha256(old_archive).hexdigest()
+        old_manifest, old_files, _ = manual_skills._read_transition_archive(old_archive, old_sha)
+        new_manifest, new_files, _ = manual_skills._read_transition_archive(self.bundle, self.digest)
+
+        semantic_change = json.loads(json.dumps(new_manifest))
+        semantic_change["readiness"]["enabled"] = True
+        self.assertFalse(manual_skills.verify_same_materialization_transition(
+            old_manifest, old_files, semantic_change, new_files))
+
+        changed_files = dict(new_files)
+        member = next(iter(changed_files))
+        changed_files[member] += b" changed"
+        self.assertFalse(manual_skills.verify_same_materialization_transition(
+            old_manifest, old_files, new_manifest, changed_files))
+
+        unknown_installer_field = json.loads(json.dumps(new_manifest))
+        unknown_installer_field["installer"]["ignored"] = True
+        self.assertFalse(manual_skills.verify_same_materialization_transition(
+            old_manifest, old_files, unknown_installer_field, new_files))
+
+    def test_helper_only_transition_rejects_wrong_root_bound_shared_digest_before_exchange(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = self.make_home(Path(directory))
+            old_archive = _archive_with_helper(self.bundle, b"old helper bytes")
+            old_sha = hashlib.sha256(old_archive).hexdigest()
+            old_manifest, old_files, _ = manual_skills._read_transition_archive(old_archive, old_sha)
+            new_manifest, new_files, _ = manual_skills._read_transition_archive(self.bundle, self.digest)
+            install_manual_jarvis_skills(old_archive, hermes_home=home, expected_sha256=old_sha)
+            target = home / "skills" / manual_skills._GENERATION
+            before = {name: (target / name).read_bytes() for name in old_files}
+            shared_manifest, shared_tree, shared_count = manual_skills._same_materialization_digests(
+                new_manifest, new_files)
+
+            with self.assertRaisesRegex(manual_skills.ManualJarvisSkillsError,
+                                        "proof digest differs"):
+                manual_skills.install_same_materialization_transition(
+                    self.bundle, old_archive, hermes_home=home,
+                    next_sha256=self.digest, previous_sha256=old_sha,
+                    shared_manifest_sha256=shared_manifest,
+                    shared_materialization_sha256="0" * 64,
+                    shared_member_count=shared_count)
+
+            self.assertEqual({name: (target / name).read_bytes() for name in old_files}, before)
+            self.assertFalse(any(path.name.startswith(".jarvis-resources-skills-")
+                                 for path in home.iterdir()))
 
     def test_import_bundled_migration_main_reads_retained_archive_from_stdin(self):
         previous_archive = b"exact retained prior Resources archive"

@@ -476,6 +476,155 @@ def adopt_primary_prompt() -> dict[str, Any]:
     return _commit_adoption(core, record, manifest, files, current, signature, desired)
 
 
+def rebase_identical_primary_binding(prepared_transition) -> dict[str, Any]:
+    """Rebind an already-adopted, byte-identical Jarvis block to a new source.
+
+    This is deliberately metadata-only: it never writes SOUL.md or the immutable
+    pre-adoption backup, and it cannot create an initial adoption record.
+    CoreRuntime's short-lived in-process transition is the authority for the
+    cross-generation snapshot; every owner file is independently re-read here.
+    """
+    from . import core_runtime as core
+    from .registry.primary_prompt import render_managed_block
+
+    if os.geteuid() != core.ROOT_UID:
+        raise PrimaryPromptAdoptionError("requires the fixed Linux root actor")
+    validator = getattr(core, "verify_prepared_same_materialization_transition", None)
+    claimer = getattr(core, "claim_prepared_same_materialization_step", None)
+    if (not callable(validator) or not callable(claimer)
+            or not validator(prepared_transition, purpose="helper-only")):
+        raise PrimaryPromptAdoptionError("prepared helper-only transition is unavailable")
+    _check_root_context(core)
+    _ensure_dirs(core)
+
+    # Serialize with owner-prefix edits, then repeat all mutable joins while
+    # holding the same root-only lock used by those edits.
+    lock_path = core.PRIMARY_PROMPT_BACKUPS / "owner-prefix.lock"
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        info = os.fstat(lock_fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != core.ROOT_UID
+                or info.st_gid != core.ROOT_UID or stat.S_IMODE(info.st_mode) != 0o600):
+            raise PrimaryPromptAdoptionError("owner SOUL edit lock custody differs")
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        return _rebase_identical_primary_binding_locked(core, prepared_transition, claimer)
+    finally:
+        os.close(lock_fd)
+
+
+def _rebase_identical_primary_binding_locked(core, prepared_transition, claimer):
+    from .registry.primary_prompt import render_managed_block
+    if not core.verify_prepared_same_materialization_transition(
+            prepared_transition, purpose="helper-only"):
+        raise PrimaryPromptAdoptionError("prepared helper-only transition is stale")
+    record_raw = core._projection_file(core.PRIMARY_PROMPT_JOURNAL, owner=core.ROOT_UID,
+        group=core.ROOT_UID, mode=0o600, maximum=64 * 1024)
+    record = _read_record(core)
+    if record is None or record.get("state") != "adopted":
+        raise PrimaryPromptAdoptionError("a genuinely adopted primary prompt is required")
+    transition = prepared_transition
+    if (record.get("core_source_generation") != transition.old_source_generation
+            or record.get("artifact_sha256") != transition.old_artifact_sha256
+            or _sha(record_raw) != transition.primary_record_sha256):
+        raise PrimaryPromptAdoptionError("adopted primary record differs from prepared transition")
+
+    current, signature = _read_soul(core)
+    if (_sha(current) != transition.soul_sha256
+            or tuple(signature) != tuple(transition.soul_signature)
+            or signature != record.get("result_soul_signature")):
+        raise PrimaryPromptAdoptionError("current SOUL custody differs from prepared transition")
+    prefix, separator, block = split_managed_block(current,
+        owner_prefix_length=record["owner_prefix_length"],
+        separator=bytes.fromhex(record["owner_separator_hex"]))
+    if (len(prefix) != transition.owner_prefix_length
+            or _sha(prefix) != transition.owner_prefix_sha256
+            or record["owner_prefix_sha256"] != transition.owner_prefix_sha256
+            or record["owner_separator_hex"] != transition.owner_separator_hex
+            or _sha(block) != transition.managed_block_sha256
+            or record["managed_block_sha256"] != transition.managed_block_sha256
+            or _sha(current) != record.get("result_soul_sha256")):
+        raise PrimaryPromptAdoptionError("adopted owner bytes differ from prepared transition")
+    prior = _backup_read(core, record)
+    if (_sha(prior) != transition.prior_backup_sha256
+            or _sha(prior) != record.get("owner_backup_name")):
+        raise PrimaryPromptAdoptionError("immutable prior SOUL backup differs")
+
+    generation, discovery, artifact_sha, manifest, files, source_prompt = _fixed_bundle(core)
+    from .registry import manual_jarvis_skills as native
+    new_archive = core._projection_file(core.RESOURCES_CAS / f"{artifact_sha}.zip",
+        owner=core.ROOT_UID, group=core.ROOT_UID, mode=0o600, maximum=16 * 1024 * 1024)
+    new_manifest, new_files, new_helper = native._read_transition_archive(new_archive, artifact_sha)
+    if (generation != transition.new_source_generation
+            or artifact_sha != transition.new_artifact_sha256
+            or hashlib.sha256(native._canonical_json(new_manifest)).hexdigest()
+                != transition.new_manifest_sha256):
+        raise PrimaryPromptAdoptionError("new Resources source differs from prepared transition")
+    old_archive = core._projection_file(core.RESOURCES_CAS / f"{transition.old_artifact_sha256}.zip",
+        owner=core.ROOT_UID, group=core.ROOT_UID, mode=0o600, maximum=16 * 1024 * 1024)
+    if hashlib.sha256(old_archive).hexdigest() != transition.old_artifact_sha256:
+        raise PrimaryPromptAdoptionError("retained old Resources artifact differs")
+    old_manifest, old_files, _old_helper = native._read_transition_archive(
+        old_archive, transition.old_artifact_sha256)
+    shared_digests = native._same_materialization_digests(new_manifest, new_files)
+    if (not native.verify_same_materialization_transition(
+            old_manifest, old_files, new_manifest, new_files)
+            or new_helper != Path(native.__file__).read_bytes()
+            or shared_digests != (transition.shared_manifest_sha256,
+                                  transition.shared_materialization_sha256,
+                                  transition.shared_member_count)
+            or hashlib.sha256(native._canonical_json(old_manifest)).hexdigest()
+                != transition.old_manifest_sha256):
+        raise PrimaryPromptAdoptionError("Resources helper-only transition proof differs")
+    next_block = render_managed_block(source_prompt)
+    if (source_prompt != files.get("registry/profiles/hermes/SOUL.md")
+            or next_block != block or _sha(next_block) != transition.managed_block_sha256
+            or _sha(source_prompt) != record.get("source_prompt_sha256")):
+        raise PrimaryPromptAdoptionError("new primary block is not byte-identical to the adopted block")
+    # Check the old source archive against the historic record, without trying
+    # to execute its helper or to treat old source as current authority.
+    if (record.get("resources_revision") != old_manifest.get("source", {}).get("revision")
+            or record.get("resources_tree") != old_manifest.get("source", {}).get("git_tree")):
+        raise PrimaryPromptAdoptionError("adopted record does not match its retained source artifact")
+    old_prompt = old_files.get("registry/profiles/hermes/SOUL.md")
+    if (old_prompt != source_prompt
+            or _sha(old_prompt) != record.get("source_prompt_sha256")
+            or render_managed_block(old_prompt) != block):
+        raise PrimaryPromptAdoptionError("retained and current primary prompt bytes differ")
+
+    receipt = _verify_native(core, manifest, files, current, record["managed_block_sha256"])
+    if (receipt.get("active_primary_prompt_sha256") != _sha(current)
+            or receipt.get("effective_prompt_contains_managed_block") is not True
+            or receipt.get("effective_prompt_truncated") is not False
+            or core._core_source_generation() != generation):
+        raise PrimaryPromptAdoptionError("new native effective primary readback did not verify")
+
+    updated = dict(record)
+    updated.update({
+        "core_source_generation": generation,
+        "resources_revision": manifest["source"]["revision"],
+        "resources_tree": manifest["source"]["git_tree"],
+        "artifact_sha256": artifact_sha,
+        "native_effective_prompt_sha256": receipt["native_effective_prompt_sha256"],
+        "native_effective_prompt_chars": receipt["native_effective_prompt_chars"],
+        "observed_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+    })
+    # Close the race after native readback and immediately before the durable
+    # metadata effect. The sealed producer allows one claim per cohort step.
+    if (not core.verify_prepared_same_materialization_transition(
+            prepared_transition, purpose="helper-only")
+            or core._projection_file(core.PRIMARY_PROMPT_JOURNAL, owner=core.ROOT_UID,
+                group=core.ROOT_UID, mode=0o600, maximum=64 * 1024) != record_raw
+            or _read_soul(core) != (current, signature)):
+        raise PrimaryPromptAdoptionError("primary prompt changed during reviewed rebase")
+    if not claimer(prepared_transition, step="primary-rebase"):
+        raise PrimaryPromptAdoptionError("primary rebase step was already consumed")
+    _write_record(core, updated)
+    readback = _read_record(core)
+    if readback != updated:
+        raise PrimaryPromptAdoptionError("primary rebase journal readback differs")
+    return _status_record(updated, receipt)
+
+
 def _commit_adoption(core, record, manifest, files, prior, prior_signature, desired):
     if record.get("state") == "preparing":
         record["state"] = "writing"
