@@ -2179,3 +2179,14 @@ Device convenience SHALL preserve protected Cloudflare cookie custody and full J
 #### Scenario: Candidate trust-control revision
 - **WHEN** session/device controls or their behavior changes
 - **THEN** the mandatory affected-flow UI/UX gate records exact-candidate rendered post-login/expiry/error/forget/logout consequences across phone/tablet/desktop, with live native evidence and unsupported limits distinguished.
+
+### Requirement: Distinct draft origin and current promotion admission
+Expert private drafts SHALL retain their actual admitted child execution/source identity separately from mission grouping and current promoting Jarvis turn. Root SHALL resolve the exact owned draft origin from retained records and SHALL issue a single short promotion call scope only after current exact final-effect approval is available within original call deadlines.
+
+#### Scenario: Expert draft reviewed in a later Jarvis turn
+- **WHEN** Jarvis reviews an actual owned Expert or prior-turn private draft
+- **THEN** original owner/execution/source/content provenance stays intact, current master approval/CAS binds exact promotion and caller text cannot select another draft origin or confer permission.
+
+#### Scenario: Approval wait exceeds short scope duration
+- **WHEN** owner approval takes more than 5s but the original observed call/permit remains current
+- **THEN** the short scope is first issued at execution after approval, not extended/replayed from before the wait; original-expired admission still denies without losing the draft or repeating an uncertain effect.
