@@ -68,7 +68,7 @@ CORE_SOURCE_FILES = {
 CORE_NATIVE_TOOL_SOURCE_FILES = {
     "tui_gateway/methods_tools.py": "afedca2ea72e8f8751cf7736283ae8d786305a1b1e309bdf05ea52ec4bd89c11",
 }
-# The core imports the fixed native observer and Resources handler from the
+# The core imports fixed native observer and owner-operation handlers from the
 # active, root-owned installer generation. Keep these pins separate from the
 # official Hermes source-generation receipt above.
 CORE_NATIVE_ADAPTER_SOURCE = Path(__file__).resolve(strict=True).parents[2]
@@ -99,6 +99,8 @@ CORE_NATIVE_ADAPTER_SOURCE_FILES = {
     "hermes_installer/remote/obsidian_native_scope.py": "97813b07605d6de6ae93ab416812e119ddc7416c0f88be508646f741e201212d",
     "hermes_installer/remote/obsidian_owner_lifecycle.py": "a35bba1ec02051401904d78255510edef65442275e69a60ac51cfe5d470888c5",
     "hermes_installer/remote/obsidian_second_brain.py": "4e0fcc73349943a96dfc748e7a029e2f1d9e6ee5fb400045e8a365ad0094eb05",
+    "hermes_installer/remote/owner_calendar_native.py": "b6e310892c292200fa279919bed436009633d461c98bba672d2a331ee156e5b8",
+    "hermes_installer/remote/jarvis_calendar.py": "51379eb687c2b77a3b7c653916da0b708fc57f6545dab6dde9ca85cea7fd354b",
 }
 CORE_NATIVE_PLUGIN_STAGED_FILES = {
     "plugin.yaml": "a3310f4d5645680ef10b62a99894a251cecde21ba04bdab113335463a3fad852",
