@@ -766,14 +766,34 @@ def _snapshots_from_adapter_backup(contents: dict, cohort: dict) -> dict:
 
 
 def _resume_adapter_refresh(candidate_sha: str, expected_source: Path,
-                            archive_sha: str, tool: Path, tool_identity: tuple,
-                            core_runtime, observer_socket: Path) -> None:
+                            archive_sha: str, core_runtime,
+                            observer_socket: Path) -> str | None:
     value, old_gateway, old_inspector, old_config = _backup_value(candidate_sha)
     row = value.get("adapter_refresh")
     if (not _valid_adapter_refresh_row(row)
             or value["state"] not in {"recovery-required", "migrated"}
             or any(not _unit_is_fixed(name) for name in (INSPECTOR, GATEWAY, TUNNEL))):
         raise RuntimeError("saved adapter refresh is not eligible for exact resume")
+    join_values = tuple(row[key] for key in (
+        "core_update_backup_reference", "core_update_cohort_transaction_id",
+        "core_update_cohort_sha256"))
+    joined = all(item is not None for item in join_values)
+    if not joined and any(item is not None for item in join_values):
+        raise RuntimeError("adapter refresh Core recovery join is incomplete")
+    if joined:
+        try:
+            current_cohort, _current_cohort_raw = core_runtime._read_adapter_update_cohort()
+        except Exception:
+            raise RuntimeError("joined adapter refresh has no readable current Core cohort") from None
+        if type(current_cohort) is not dict:
+            raise RuntimeError("joined adapter refresh current Core cohort is malformed")
+        if current_cohort.get("phase") == "rolling-back":
+            _resume_rolling_back_adapter_refresh(
+                candidate_sha, expected_source, row, value, old_gateway, old_inspector, old_config,
+                core_runtime, observer_socket, current_cohort)
+            return "rolled-back"
+        if current_cohort.get("phase") != "committed":
+            raise RuntimeError("joined adapter refresh is in an unexpected Core recovery phase")
     gateway, _ = _read_fixed(FIXED_UNITS[GATEWAY], uid=0, gid=0, mode=0o644,
                              maximum=64 * 1024)
     inspector, _ = _read_fixed(FIXED_UNITS[INSPECTOR], uid=0, gid=0, mode=0o644,
@@ -795,11 +815,11 @@ def _resume_adapter_refresh(candidate_sha: str, expected_source: Path,
     # public ingress before touching the native process or Core recovery.
     for name in (TUNNEL, GATEWAY):
         state = _unit_state(name)
-        if state == "active":
-            _run("systemctl", "stop", name)
-        elif state not in {"inactive", "failed"}:
+        if state in {"active", "failed"}:
+            _run("systemctl", "stop", name, check=False)
+        elif state != "inactive":
             raise RuntimeError("public ingress state is not stable for refresh resume")
-    if any(_unit_state(name) not in {"inactive", "failed"} for name in (GATEWAY, TUNNEL)):
+    if any(_unit_state(name) != "inactive" for name in (GATEWAY, TUNNEL)):
         raise RuntimeError("public ingress did not close for refresh resume")
 
     if _unit_state(INSPECTOR) == "active":
@@ -814,6 +834,10 @@ def _resume_adapter_refresh(candidate_sha: str, expected_source: Path,
     if committed is None:
         old_record, old_raw, old_files, snapshots = _recover_adapter_refresh_core_for_resume(
             core_runtime, candidate_sha, row)
+        resumed_archive, tool, tool_identity = _read_candidate_qualification_inputs(
+            candidate_sha, expected_source)
+        if resumed_archive != archive_sha:
+            raise RuntimeError("candidate source receipt changed before adapter refresh resume")
         _run_core_refresh_qualification(candidate_sha, archive_sha, tool, tool_identity)
         cohort, reference, cohort_sha = _verify_adapter_refresh_commit(
             core_runtime, expected_source, old_record, old_raw, old_files, snapshots)
@@ -833,6 +857,120 @@ def _resume_adapter_refresh(candidate_sha: str, expected_source: Path,
                     if row["old_observer_state"] == "verified-owned" else None)
     _finish_adapter_refresh_ingress(candidate_sha, expected_source, core_runtime,
                                     observer_socket, old_identity)
+
+
+def _resume_rolling_back_adapter_refresh(candidate_sha: str, expected_source: Path,
+                                         row: dict, value: dict,
+                                         old_gateway: bytes, old_inspector: bytes,
+                                         old_config: bytes, core_runtime,
+                                         observer_socket: Path, rolling_cohort: dict) -> None:
+    """Finish a retained Core rollback without replaying adapter qualification."""
+    if value.get("state") != "recovery-required":
+        raise RuntimeError("rolling-back Core recovery requires a retained recovery transaction")
+    for path, allowed in (
+            (FIXED_UNITS[GATEWAY], {value["old_gateway_sha256"], value["new_gateway_sha256"]}),
+            (FIXED_UNITS[INSPECTOR], {value["old_inspector_sha256"],
+                                      value["new_inspector_sha256"],
+                                      value.get("runtime_inspector_sha256")})):
+        raw, _ = _read_fixed(path, uid=0, gid=0, mode=0o644, maximum=64 * 1024)
+        if hashlib.sha256(raw).hexdigest() not in allowed:
+            raise RuntimeError("rolling-back ingress unit differs from the retained old/new snapshots")
+    current_config, _ = _read_fixed(GATEWAY_CONFIG, uid=0, gid=981,
+                                     mode=0o440, maximum=16 * 1024)
+    if hashlib.sha256(current_config).hexdigest() not in {
+            value["old_config_sha256"], value["new_config_sha256"],
+            value.get("post_core_config_sha256")}:
+        raise RuntimeError("rolling-back Gateway config differs from retained snapshots")
+    if (row["core_update_backup_reference"] is None
+            or row["core_update_cohort_transaction_id"]
+               != rolling_cohort.get("cohort_transaction_id")
+            or rolling_cohort.get("old_source") != row["old_core_adapter_source"]
+            or rolling_cohort.get("old_adapter_generation")
+               != row["old_core_adapter_generation"]
+            or rolling_cohort.get("old_core_source_generation")
+               != row["old_core_source_generation"]
+            or rolling_cohort.get("old_journal_sha256") != row["old_core_journal_sha256"]
+            or rolling_cohort.get("new_source") != str(expected_source)):
+        raise RuntimeError("rolling-back Core cohort does not match the retained update join")
+
+    try:
+        reference = core_runtime._adapter_update_backup_reference(rolling_cohort)
+        prior_record, contents = core_runtime._read_adapter_update_backup(reference)
+    except Exception:
+        raise RuntimeError("rolling-back Core backup is not available from its protected cohort") from None
+    if (reference != row["core_update_backup_reference"]
+            or hashlib.sha256(contents.get("journal.json", b"")).hexdigest()
+               != row["old_core_journal_sha256"]
+            or prior_record.get("adapter_source") != row["old_core_adapter_source"]
+            or prior_record.get("adapter_generation") != row["old_core_adapter_generation"]
+            or prior_record.get("core_source_generation") != row["old_core_source_generation"]):
+        raise RuntimeError("rolling-back Core backup differs from the retained old tuple")
+
+    # Ingress first stays closed. If part of a previous restore already ran,
+    # only exact transaction-owned recipes/configuration can be stopped.
+    _set_backup_state("recovery-required")
+    for name in (TUNNEL, GATEWAY):
+        state = _unit_state(name)
+        if state in {"active", "failed"}:
+            _run("systemctl", "stop", name, check=False)
+        elif state != "inactive":
+            raise RuntimeError("public ingress state is unstable during rollback resume")
+    if any(_unit_state(name) != "inactive" for name in (GATEWAY, TUNNEL)):
+        raise RuntimeError("public ingress did not close for rolling-back Core recovery")
+    if _unit_state(INSPECTOR) == "active":
+        current_inspector, _ = _read_fixed(FIXED_UNITS[INSPECTOR], uid=0, gid=0,
+                                           mode=0o644, maximum=64 * 1024)
+        inspector_source = Path(_unit_source(current_inspector,
+                                              "core_gateway_inspector").decode("ascii"))
+        if str(inspector_source) not in {str(expected) for expected in (
+                Path(row["old_core_adapter_source"]), expected_source)}:
+            raise RuntimeError("running Inspector is outside the retained rollback sources")
+        _retire_current_refresh_inspector(inspector_source, observer_socket)
+    elif _unit_state(INSPECTOR) not in {"inactive", "failed"}:
+        raise RuntimeError("Inspector state is unstable during rollback resume")
+    else:
+        try:
+            observer_socket.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            raise RuntimeError("stale observer socket blocks rollback resume")
+
+    restore = getattr(core_runtime, "restore_owned_core_adapter_update", None)
+    if not callable(restore):
+        raise RuntimeError("fixed Core rollback recovery is unavailable")
+    try:
+        restore()
+    except Exception:
+        raise RuntimeError("exact old Core could not be verified during rollback resume") from None
+    restored_record, restored_raw, restored_files = core_runtime._read_active_adapter_runtime()
+    if (hashlib.sha256(restored_raw).hexdigest() != row["old_core_journal_sha256"]
+            or restored_record.get("adapter_source") != row["old_core_adapter_source"]
+            or restored_record.get("adapter_generation") != row["old_core_adapter_generation"]
+            or restored_record.get("core_source_generation") != row["old_core_source_generation"]
+            or restored_files.get(core_runtime.UNIT) != contents.get("unit")
+            or restored_files.get(core_runtime.LAUNCHER) != contents.get("launcher")):
+        raise RuntimeError("restored Core does not match the retained old source and service recipe")
+    current_bindings = core_runtime._snapshot_adapter_update_bindings(
+        core_source_generation=row["old_core_source_generation"])
+    previous_cohort = json.loads(contents["cohort.json"], object_pairs_hook=_unique_pairs)
+    if (current_bindings.get("resources_record") != contents.get("resources-record.json")
+            or current_bindings.get("overlay_record") != contents.get("overlay-record.json")
+            or current_bindings.get("primary_record") != contents.get("primary-record.json")
+            or current_bindings.get("prior_cohort") != contents.get("cohort.json")
+            or current_bindings.get("obsidian_registration")
+               != contents.get("obsidian-registration.json")
+            or current_bindings.get("obsidian_registration_state")
+               != ("registered" if contents.get("obsidian-registration.json") else "absent")
+            or current_bindings.get("obsidian_vault_tree_sha256")
+               != previous_cohort.get("obsidian_vault_tree_sha256")):
+        raise RuntimeError("restored Core bindings differ from the retained old owner snapshot")
+    if not _restore_old_ingress(value, old_gateway, old_inspector, old_config,
+                                observer_socket=observer_socket,
+                                expected_observer_source=Path(row["old_core_adapter_source"])):
+        _set_backup_state("recovery-required")
+        raise RuntimeError("old ingress did not recover; public ingress remains stopped")
+    _remove_ingress_backup()
 
 
 def _rollback_adapter_refresh(candidate_sha: str, expected_source: Path,
@@ -863,10 +1001,12 @@ def _rollback_adapter_refresh(candidate_sha: str, expected_source: Path,
     if not _restore_adapter_refresh_core(core_runtime, candidate_sha):
         raise RuntimeError("exact prior Core could not be verified; ingress remains stopped")
     _retire_current_refresh_inspector(expected_source, observer_socket)
-    if not _restore_old_ingress(value, old_gateway, old_inspector, old_config):
+    if not _restore_old_ingress(value, old_gateway, old_inspector, old_config,
+                                observer_socket=observer_socket,
+                                expected_observer_source=Path(row["old_core_adapter_source"])):
         _set_backup_state("recovery-required")
         raise RuntimeError("exact prior ingress could not be restored; public ingress remains stopped")
-    INGRESS_BACKUP.unlink()
+    _remove_ingress_backup()
 
 
 def _retire_current_refresh_inspector(expected_source: Path,
@@ -972,7 +1112,10 @@ def _apply_adapter_refresh(candidate_sha: str, expected_source: Path,
                 if restored:
                     _retire_current_refresh_inspector(expected_source, observer_socket)
                     value, old_gateway, old_inspector, old_cfg = _backup_value(candidate_sha)
-                    restored = _restore_old_ingress(value, old_gateway, old_inspector, old_cfg)
+                    restored = _restore_old_ingress(
+                        value, old_gateway, old_inspector, old_cfg,
+                        observer_socket=observer_socket,
+                        expected_observer_source=Path(custody["source"].decode("ascii")))
                 if restored:
                     INGRESS_BACKUP.unlink(missing_ok=True)
             except Exception:
@@ -1193,6 +1336,20 @@ def _save_ingress_backup(candidate_sha: str, saved, config_raw: bytes,
         os.fsync(dfd)
     finally:
         os.close(dfd)
+
+
+def _remove_ingress_backup() -> None:
+    try:
+        INGRESS_BACKUP.unlink()
+    except FileNotFoundError:
+        return
+    directory_fd = os.open(INGRESS_BACKUP.parent, os.O_RDONLY
+                           | getattr(os, "O_DIRECTORY", 0)
+                           | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
 
 
 _ADAPTER_REFRESH_FIELDS = {
@@ -1628,7 +1785,8 @@ def _replace_ingress_units(new_units, new_config: bytes, config_info: os.stat_re
 
 
 def _restore_old_ingress(value: dict, old_gateway: bytes, old_inspector: bytes,
-                         old_config: bytes) -> bool:
+                         old_config: bytes, *, observer_socket: Path | None = None,
+                         expected_observer_source: Path | None = None) -> bool:
     from hashlib import sha256
 
     try:
@@ -1661,15 +1819,27 @@ def _restore_old_ingress(value: dict, old_gateway: bytes, old_inspector: bytes,
         if (_unit_state(INSPECTOR) != "active"
                 or not _unit_is_exact_and_active(INSPECTOR)):
             raise RuntimeError("old Inspector did not recover")
-        _verify_inspector_process(old_inspector,
-                                  _unit_source(old_inspector, "core_gateway_inspector"))
+        old_source = _unit_source(old_inspector, "core_gateway_inspector")
+        if (expected_observer_source is not None
+                and old_source != str(expected_observer_source).encode("ascii")):
+            raise RuntimeError("restored Inspector source differs from the retained old adapter")
+        _verify_inspector_process(old_inspector, old_source)
+        if observer_socket is not None:
+            parent = observer_socket.parent.lstat()
+            if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0
+                    or parent.st_gid != 1000 or stat.S_IMODE(parent.st_mode) != 0o750):
+                raise RuntimeError("restored normal observer directory custody differs")
+            phase_identity = _wait_observer_socket()
+            inspector_pid = int(_run("systemctl", "show", "--property=MainPID",
+                                     "--value", INSPECTOR))
+            if phase_identity != _verify_observer_peer(observer_socket, inspector_pid):
+                raise RuntimeError("restored normal observer socket is not the old Inspector peer")
         _run("systemctl", "start", GATEWAY)
         if _unit_state(GATEWAY) != "active":
             raise RuntimeError("old Gateway did not recover")
         _run("systemctl", "start", TUNNEL)
         config = __import__("hermes_installer.remote.core_gateway", fromlist=["CoreGatewayConfig"]).CoreGatewayConfig.load(expected_owner_uid=0)
-        _verify_inspector_process(old_inspector,
-                                  _unit_source(old_inspector, "core_gateway_inspector"))
+        _verify_inspector_process(old_inspector, old_source)
         if not _verify_gateway_tunnel(config, require_active=True):
             raise RuntimeError("old Gateway/tunnel verification failed")
         if not all(_unit_state(name) == "active" for name in (INSPECTOR, GATEWAY, TUNNEL)):
@@ -2189,15 +2359,15 @@ def main() -> int:
             print("Adoption phase: " + phase, flush=True)
             saved, _og, _oi, _oc = _backup_value(args.candidate_sha)
             if saved.get("adapter_refresh") is not None:
-                refreshed_archive, tool, tool_identity = _read_candidate_qualification_inputs(
-                    args.candidate_sha, expected_adapter_source)
-                if refreshed_archive != archive_sha:
-                    raise RuntimeError("candidate source receipt changed before refresh resume")
-                _resume_adapter_refresh(args.candidate_sha, expected_adapter_source,
-                                        archive_sha, tool, tool_identity, core_runtime,
-                                        CORE_NATIVE_OBSERVER_SOCKET)
-                print("Saved adapter Core and Jarvis ingress cohort resumed and verified.")
-                print("Protected transaction backup retained for exact rollback.")
+                outcome = _resume_adapter_refresh(
+                    args.candidate_sha, expected_adapter_source, archive_sha,
+                    core_runtime, CORE_NATIVE_OBSERVER_SOCKET)
+                if outcome == "rolled-back":
+                    print("Interrupted adapter rollback completed; exact prior Core and ingress were restored.")
+                    print("The retained transaction was removed after old Core and observer readback.")
+                else:
+                    print("Saved adapter Core and Jarvis ingress cohort resumed and verified.")
+                    print("Protected transaction backup retained for exact rollback.")
                 return 0
             _resume_adoption(args.candidate_sha, expected_adapter_source, core_runtime,
                              CoreGatewayConfig, CORE_NATIVE_OBSERVER_SOCKET)

@@ -34,8 +34,8 @@ def _adapter_refresh_row(*, committed=False):
     transaction = cohort_sha = None
     if committed:
         reference = {
-            "path": "/var/lib/hermes-installer/core-runtime/adapter-update-backups/" + "a" * 64,
-            "source_generation": "a" * 64,
+            "path": "/var/lib/hermes-installer/core-runtime/adapter-update-backups/" + "f" * 64,
+            "source_generation": "f" * 64,
             "files": {name: "b" * 64 for name in names},
         }
         transaction, cohort_sha = "c" * 32, "d" * 64
@@ -778,6 +778,193 @@ def test_adapter_refresh_resume_recovers_partial_core_before_qualification(monke
     assert events == [("journal", "recovery-required"),
                       "fixed-root-locked-Core-recovery", ("read-Core", "old"),
                       ("read-Core", "old"), "snapshot-old-bindings"]
+
+
+def test_resume_all_joined_rolling_back_core_finishes_old_ingress_without_replay(
+        monkeypatch, tmp_path, capsys):
+    row = _adapter_refresh_row(committed=True)
+    original_join = (row["core_update_backup_reference"],
+                     row["core_update_cohort_transaction_id"],
+                     row["core_update_cohort_sha256"])
+    old_gateway = _unit("core_gateway", OLD_SOURCE)
+    old_inspector = _unit("core_gateway_inspector", OLD_SOURCE)
+    new_gateway = _unit("core_gateway", NEW_SOURCE)
+    new_inspector = _unit("core_gateway_inspector", NEW_SOURCE)
+    old_config = b'{"allowed_emails":["owner@example.test"]}\n'
+    new_config = b'{"allowed_emails":["owner@example.test","next@example.test"]}\n'
+    prior_raw = b"exact old Core journal\n"
+    row["old_core_journal_sha256"] = hashlib.sha256(prior_raw).hexdigest()
+    prior_record = {
+        "adapter_source": row["old_core_adapter_source"],
+        "adapter_generation": row["old_core_adapter_generation"],
+        "core_source_generation": row["old_core_source_generation"],
+    }
+    contents = {
+        "journal.json": prior_raw, "unit": b"old Core unit", "launcher": b"old launcher",
+        "resources-record.json": b"old Resources", "overlay-record.json": b"old overlay",
+        "primary-record.json": b"old primary",
+        "cohort.json": b'{"obsidian_vault_tree_sha256":"absent","schema":1}\n',
+        "obsidian-registration.json": b"",
+    }
+    rolling_cohort = {"phase": "rolling-back",
+                      "cohort_transaction_id": row["core_update_cohort_transaction_id"],
+                      "old_source": row["old_core_adapter_source"],
+                      "old_adapter_generation": row["old_core_adapter_generation"],
+                      "old_core_source_generation": row["old_core_source_generation"],
+                      "old_journal_sha256": row["old_core_journal_sha256"],
+                      "new_source": "/opt/hermes-installer-core-bbbbbbbbb/src"}
+    value = {
+        "state": "recovery-required",
+        "old_gateway_sha256": hashlib.sha256(old_gateway).hexdigest(),
+        "old_inspector_sha256": hashlib.sha256(old_inspector).hexdigest(),
+        "old_config_sha256": hashlib.sha256(old_config).hexdigest(),
+        "new_gateway_sha256": hashlib.sha256(new_gateway).hexdigest(),
+        "new_inspector_sha256": hashlib.sha256(new_inspector).hexdigest(),
+        "runtime_inspector_sha256": None,
+        "new_config_sha256": hashlib.sha256(new_config).hexdigest(),
+        "post_core_config_sha256": None,
+        "gateway_gid": 981, "gateway_mode": 0o440,
+        "adapter_refresh": row,
+    }
+    paths = {adopt.GATEWAY: tmp_path / "gateway.service",
+             adopt.INSPECTOR: tmp_path / "inspector.service",
+             adopt.TUNNEL: tmp_path / "tunnel.service"}
+    config_path = tmp_path / "gateway.json"
+    backup_path = tmp_path / "ingress-backup.json"
+    backup_path.write_bytes(b"retained transaction")
+    monkeypatch.setattr(adopt, "FIXED_UNITS", paths)
+    monkeypatch.setattr(adopt, "GATEWAY_CONFIG", config_path)
+    monkeypatch.setattr(adopt, "INGRESS_BACKUP", backup_path)
+    monkeypatch.setattr(adopt, "_backup_value", lambda _sha: (
+        value, old_gateway, old_inspector, old_config))
+    monkeypatch.setattr(adopt, "_unit_is_fixed", lambda _name: True)
+    monkeypatch.setattr(adopt, "_unit_source", lambda _raw, _module: OLD_SOURCE)
+    monkeypatch.setattr(adopt, "_set_adapter_refresh_core_join", lambda *_args:
+                        pytest.fail("resume must preserve the already recorded join"))
+    monkeypatch.setattr(adopt, "_run_core_refresh_qualification", lambda *_args:
+                        pytest.fail("rolling-back recovery must not replay qualification"))
+    monkeypatch.setattr(adopt, "_read_candidate_qualification_inputs", lambda *_args:
+                        pytest.fail("rollback recovery must not depend on the candidate runner"))
+    monkeypatch.setattr(adopt, "_remove_ingress_backup", lambda:
+                        events.append("remove-retained-ingress-transaction"))
+    events = []
+    states = {adopt.GATEWAY: "active", adopt.TUNNEL: "active", adopt.INSPECTOR: "inactive"}
+
+    def unit_state(name):
+        return states[name]
+
+    def run(*args, **_kwargs):
+        events.append(("systemctl", *args))
+        if args[1:3] == ("stop", adopt.TUNNEL):
+            states[adopt.TUNNEL] = "inactive"
+        if args[1:3] == ("stop", adopt.GATEWAY):
+            states[adopt.GATEWAY] = "inactive"
+        return ""
+
+    monkeypatch.setattr(adopt, "_unit_state", unit_state)
+    monkeypatch.setattr(adopt, "_run", run)
+    monkeypatch.setattr(adopt, "_set_backup_state", lambda phase:
+                        events.append(("ingress-state", phase)))
+    monkeypatch.setattr(adopt, "_read_fixed", lambda path, **_kwargs: (
+        old_gateway if path == paths[adopt.GATEWAY] else
+        old_inspector if path == paths[adopt.INSPECTOR] else old_config,
+        SimpleNamespace(st_mode=stat.S_IFREG | 0o440, st_gid=981)))
+
+    class Core:
+        UNIT = "unit"
+        LAUNCHER = "launcher"
+
+        def __init__(self):
+            self.old = False
+
+        def _read_adapter_update_cohort(self):
+            return rolling_cohort, b"rolling-back cohort"
+
+        def _adapter_update_backup_reference(self, cohort):
+            assert cohort is rolling_cohort
+            return row["core_update_backup_reference"]
+
+        def _read_adapter_update_backup(self, reference):
+            assert reference == row["core_update_backup_reference"]
+            return prior_record, contents
+
+        def _read_active_adapter_runtime(self):
+            events.append(("Core-read", self.old))
+            if not self.old:
+                raise RuntimeError("Core is still in retained rolling-back phase")
+            return prior_record, prior_raw, {"unit": contents["unit"],
+                                             "launcher": contents["launcher"]}
+
+        def _snapshot_adapter_update_bindings(self, *, core_source_generation):
+            assert self.old
+            assert core_source_generation == row["old_core_source_generation"]
+            return {
+                "resources_record": contents["resources-record.json"],
+                "overlay_record": contents["overlay-record.json"],
+                "primary_record": contents["primary-record.json"],
+                "prior_cohort": contents["cohort.json"],
+                "obsidian_registration": b"",
+                "obsidian_registration_state": "absent",
+                "obsidian_vault_tree_sha256": "absent",
+            }
+
+        def restore_owned_core_adapter_update(self):
+            events.append("fixed-Core-rollback"); self.old = True
+
+    core = Core()
+
+    def restore_ingress(_value, gateway, inspector, config, **kwargs):
+        assert gateway == old_gateway and inspector == old_inspector and config == old_config
+        assert kwargs["observer_socket"] == observer_socket
+        assert kwargs["expected_observer_source"] == Path(row["old_core_adapter_source"])
+        events.append("restore-exact-old-ingress-and-peer")
+        states.update({adopt.INSPECTOR: "active", adopt.GATEWAY: "active",
+                       adopt.TUNNEL: "active"})
+        return True
+
+    observer_socket = tmp_path / "old-observer.sock"
+    monkeypatch.setattr(adopt, "_restore_old_ingress", restore_ingress)
+
+    source = Path("/opt/hermes-installer-core-bbbbbbbbb/src")
+    core.__file__ = str(source / "hermes_installer" / "core_runtime.py")
+    core._validate_adapter_source_path = lambda: None
+    package = ModuleType("hermes_installer")
+    package.__path__ = []
+    package.core_runtime = core
+    remote = ModuleType("hermes_installer.remote")
+    remote.__path__ = []
+    gateway_module = ModuleType("hermes_installer.remote.core_gateway")
+    gateway_module.CoreGatewayConfig = SimpleNamespace(load=lambda **_kwargs: object())
+    observer_module = ModuleType("hermes_installer.remote.core_native_observer")
+    observer_module.CORE_NATIVE_OBSERVER_SOCKET = observer_socket
+    remote.core_gateway = gateway_module
+    remote.core_native_observer = observer_module
+    monkeypatch.setitem(sys.modules, "hermes_installer", package)
+    monkeypatch.setitem(sys.modules, "hermes_installer.remote", remote)
+    monkeypatch.setitem(sys.modules, "hermes_installer.remote.core_gateway", gateway_module)
+    monkeypatch.setitem(sys.modules, "hermes_installer.remote.core_native_observer", observer_module)
+    monkeypatch.setattr(adopt.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(sys, "argv", [str(HELPER_PATH), "--candidate-sha", "b" * 40,
+                                      "--resume"])
+    monkeypatch.setattr(sys, "path", [])
+    monkeypatch.setattr(adopt.Path, "resolve", lambda path, strict=False: path)
+    monkeypatch.setattr(adopt, "_verify_source_provenance",
+                        lambda _sha, _path: "c" * 64)
+
+    result = adopt.main()
+
+    assert result == 0
+    assert core.old is True
+    assert states == {adopt.GATEWAY: "active", adopt.TUNNEL: "active",
+                      adopt.INSPECTOR: "active"}
+    assert "fixed-Core-rollback" in events
+    assert "restore-exact-old-ingress-and-peer" in events
+    assert "remove-retained-ingress-transaction" in events
+    assert not any(event == "remove-retained-ingress-transaction" for event in events[:-1])
+    assert "Interrupted adapter rollback completed" in capsys.readouterr().out
+    assert (row["core_update_backup_reference"],
+            row["core_update_cohort_transaction_id"],
+            row["core_update_cohort_sha256"]) == original_join
 
 
 def test_legacy_backup_resume_derives_only_the_original_email_recipe():
