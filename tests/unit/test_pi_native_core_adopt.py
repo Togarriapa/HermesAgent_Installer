@@ -26,6 +26,34 @@ OLD_SOURCE = b"/opt/hermes-installer-core-aaaaaaaaa/src"
 NEW_SOURCE = b"/opt/hermes-installer-core-bbbbbbbbb/src"
 
 
+def _adapter_refresh_row(*, committed=False):
+    names = {"journal.json", "unit", "launcher", "plugin-selection.json",
+             "resources-record.json", "overlay-record.json", "primary-record.json",
+             "obsidian-registration.json", "cohort.json"}
+    reference = None
+    transaction = cohort_sha = None
+    if committed:
+        reference = {
+            "path": "/var/lib/hermes-installer/core-runtime/adapter-update-backups/" + "a" * 64,
+            "source_generation": "a" * 64,
+            "files": {name: "b" * 64 for name in names},
+        }
+        transaction, cohort_sha = "c" * 32, "d" * 64
+    return {
+        "schema": 1, "purpose": "adapter-refresh",
+        "old_core_journal_sha256": "e" * 64,
+        "old_core_adapter_source": OLD_SOURCE.decode(),
+        "old_core_adapter_generation": "f" * 64,
+        "old_core_source_generation": "1" * 64,
+        "old_inspector_process_identity_sha256": "2" * 64,
+        "old_observer_state": "verified-owned", "old_observer_device": 10,
+        "old_observer_inode": 11,
+        "core_update_backup_reference": reference,
+        "core_update_cohort_transaction_id": transaction,
+        "core_update_cohort_sha256": cohort_sha,
+    }
+
+
 def _unit(module, source=OLD_SOURCE):
     return (b"[Service]\nEnvironment=PYTHONPATH=" + source + b"\n"
             b"ExecStart=/opt/hermes-jarvis-mvp-gateway-venv/bin/python -m hermes_installer.remote."
@@ -488,12 +516,77 @@ def test_backup_persists_exact_prospective_config_and_original_config(tmp_path, 
              adopt.FIXED_UNITS[adopt.INSPECTOR]: inspector + b"candidate\n"}
     info = SimpleNamespace(st_mode=stat.S_IFREG | 0o440, st_gid=981)
 
-    adopt._save_ingress_backup("a" * 40, saved, config, info, units, new_config)
+    row = _adapter_refresh_row()
+    adopt._save_ingress_backup("a" * 40, saved, config, info, units, new_config,
+                               adapter_refresh=row)
     value = json.loads((parent / "backup.json").read_bytes())
 
     assert base64.b64decode(value["gateway_config"]) == config
     assert base64.b64decode(value["new_gateway_config"]) == new_config
     assert value["new_config_sha256"] == hashlib.sha256(new_config).hexdigest()
+    assert value["adapter_refresh"] == row
+
+
+def test_adapter_refresh_row_is_closed_and_core_join_is_all_or_none():
+    row = _adapter_refresh_row()
+    assert adopt._valid_adapter_refresh_row(row)
+    row["core_update_cohort_sha256"] = "d" * 64
+    assert not adopt._valid_adapter_refresh_row(row)
+    row = _adapter_refresh_row(committed=True)
+    assert adopt._valid_adapter_refresh_row(row)
+    row["old_observer_inode"] = True
+    assert not adopt._valid_adapter_refresh_row(row)
+
+
+def test_adapter_refresh_switch_stops_exact_old_peer_before_fixed_file_writes(
+        monkeypatch, tmp_path):
+    old_gateway = _unit("core_gateway")
+    old_inspector = _unit("core_gateway_inspector")
+    new_gateway = old_gateway.replace(OLD_SOURCE, NEW_SOURCE)
+    new_inspector = old_inspector.replace(OLD_SOURCE, NEW_SOURCE)
+    config = b'{"allowed_emails":["owner@example.test"]}\n'
+    new_config = b'{"allowed_emails":["owner@example.test"],"new":true}\n'
+    gateway_path = tmp_path / "gateway.service"
+    inspector_path = tmp_path / "inspector.service"
+    tunnel_path = tmp_path / "tunnel.service"
+    config_path = tmp_path / "config.json"
+    for path, raw, mode in (
+            (gateway_path, old_gateway, 0o644), (inspector_path, old_inspector, 0o644),
+            (tunnel_path, b"tunnel\n", 0o644), (config_path, config, 0o440)):
+        path.write_bytes(raw)
+        path.chmod(mode)
+    paths = {adopt.GATEWAY: gateway_path, adopt.INSPECTOR: inspector_path,
+             adopt.TUNNEL: tunnel_path}
+    monkeypatch.setattr(adopt, "FIXED_UNITS", paths)
+    monkeypatch.setattr(adopt, "GATEWAY_CONFIG", config_path)
+    monkeypatch.setattr(adopt, "_unit_is_fixed", lambda _name: True)
+    events = []
+    monkeypatch.setattr(adopt, "_recheck_ingress_snapshot",
+                        lambda *_args: events.append("last-old-tuple-cas"))
+
+    def run(*args, **_kwargs):
+        events.append(("systemctl", *args))
+        return ""
+
+    monkeypatch.setattr(adopt, "_run", run)
+    monkeypatch.setattr(adopt, "_stop_captured_inspector",
+                        lambda _custody: events.append("stop-held-inspector-and-retire-socket"))
+    saved = {gateway_path: (old_gateway, None), inspector_path: (old_inspector, None)}
+    custody = {"pidfd": -1}
+    new_units = {gateway_path: new_gateway, inspector_path: new_inspector}
+    adopt._replace_ingress_units_for_adapter_refresh(
+        new_units, new_config, config_path.stat(), saved, config, custody)
+
+    assert gateway_path.read_bytes() == new_gateway
+    assert inspector_path.read_bytes() == new_inspector
+    assert config_path.read_bytes() == new_config
+    cas_index = events.index("last-old-tuple-cas")
+    stop_tunnel_index = events.index(("systemctl", "stop", adopt.TUNNEL))
+    stop_gateway_index = events.index(("systemctl", "stop", adopt.GATEWAY))
+    stop_inspector_index = events.index("stop-held-inspector-and-retire-socket")
+    reload_index = events.index(("systemctl", "daemon-reload"))
+    assert cas_index < stop_tunnel_index < stop_gateway_index < stop_inspector_index < reload_index
+    assert not any(event[1] == "start" for event in events if isinstance(event, tuple))
 
 
 def test_legacy_backup_resume_derives_only_the_original_email_recipe():

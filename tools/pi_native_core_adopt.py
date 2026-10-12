@@ -18,6 +18,9 @@ import hashlib
 import json
 import secrets
 import shlex
+import select
+import socket
+import struct
 import time
 import unicodedata
 from pathlib import Path
@@ -235,6 +238,739 @@ def _verify_inspector_process(raw: bytes, source: bytes) -> None:
         raise RuntimeError("fixed Inspector process is not bound to its exact unit/source") from None
 
 
+def _proc_start_ticks(pid: int) -> int:
+    raw = (Path("/proc") / str(pid) / "stat").read_text(encoding="ascii")
+    close = raw.rfind(")")
+    fields = raw[close + 2:].split()
+    if close < 0 or len(fields) <= 19:
+        raise RuntimeError("fixed Inspector process identity is unavailable")
+    return int(fields[19])
+
+
+def _capture_inspector_custody(raw: bytes, source: bytes, observer_socket: Path) -> dict:
+    """Hold the exact old Inspector peer and its existing normal socket."""
+    _verify_inspector_process(raw, source)
+    pid = int(_run("systemctl", "show", "--property=MainPID", "--value", INSPECTOR))
+    invocation = _run("systemctl", "show", "--property=InvocationID", "--value", INSPECTOR)
+    boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii").strip()
+    proc = Path("/proc") / str(pid)
+    status = (proc / "status").read_text(encoding="ascii").splitlines()
+    vectors = {line.partition(":")[0]: line.partition(":")[2].split()
+               for line in status if line.partition(":")[0] in {"Uid", "Gid"}}
+    if (not re.fullmatch(r"[0-9a-f]{32}", invocation)
+            or not re.fullmatch(r"[0-9a-f-]{36}", boot_id)
+            or len(vectors.get("Uid", [])) != 4 or any(v != "0" for v in vectors["Uid"])
+            or len(vectors.get("Gid", [])) != 4 or vectors["Gid"][1] != "981"):
+        raise RuntimeError("fixed Inspector process credentials or invocation differ")
+    start_ticks = _proc_start_ticks(pid)
+    executable = os.readlink(proc / "exe")
+    cgroup = (proc / "cgroup").read_text(encoding="ascii").splitlines()
+    parent = observer_socket.parent.lstat()
+    if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0 or parent.st_gid != 1000
+            or stat.S_IMODE(parent.st_mode) != 0o750):
+        raise RuntimeError("fixed normal observer directory custody differs")
+    observer_state = "absent"
+    device = inode = None
+    try:
+        socket_info = observer_socket.lstat()
+    except FileNotFoundError:
+        socket_info = None
+    if socket_info is not None:
+        if (not stat.S_ISSOCK(socket_info.st_mode) or socket_info.st_uid != 0
+                or socket_info.st_gid != 1000 or stat.S_IMODE(socket_info.st_mode) != 0o660
+                or socket_info.st_nlink != 1):
+            raise RuntimeError("preexisting normal observer socket is not owned")
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            probe.settimeout(2.0)
+            probe.connect(str(observer_socket))
+            peer = struct.unpack("3i", probe.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
+                                                         struct.calcsize("3i")))
+            current_info = observer_socket.lstat()
+            if ((current_info.st_dev, current_info.st_ino) != (socket_info.st_dev, socket_info.st_ino)
+                    or peer != (pid, 0, 981)):
+                raise RuntimeError("normal observer socket peer is not the captured Inspector")
+        except OSError:
+            raise RuntimeError("normal observer socket peer could not be verified") from None
+        finally:
+            probe.close()
+        observer_state = "verified-owned"
+        device, inode = socket_info.st_dev, socket_info.st_ino
+    parent_identity = (parent.st_dev, parent.st_ino)
+    identity = {
+        "pid": pid, "start_ticks": start_ticks, "boot_id": boot_id,
+        "invocation_id": invocation, "source": source.decode("ascii"),
+        "unit_sha256": hashlib.sha256(raw).hexdigest(), "executable": executable,
+        "cgroup": cgroup,
+    }
+    pidfd = os.pidfd_open(pid, 0)
+    poller = select.poll()
+    poller.register(pidfd, select.POLLIN | select.POLLHUP | select.POLLERR | select.POLLNVAL)
+    try:
+        if (poller.poll(0) or _proc_start_ticks(pid) != start_ticks
+                or _run("systemctl", "show", "--property=MainPID", "--value", INSPECTOR) != str(pid)
+                or _run("systemctl", "show", "--property=InvocationID", "--value", INSPECTOR) != invocation):
+            raise RuntimeError("fixed Inspector changed during custody capture")
+    except BaseException:
+        os.close(pidfd)
+        raise
+    row = {
+        "schema": 1, "purpose": "adapter-refresh",
+        "old_core_journal_sha256": "", "old_core_adapter_source": "",
+        "old_core_adapter_generation": "", "old_core_source_generation": "",
+        "old_inspector_process_identity_sha256": hashlib.sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("ascii")).hexdigest(),
+        "old_observer_state": observer_state, "old_observer_device": device,
+        "old_observer_inode": inode, "core_update_backup_reference": None,
+        "core_update_cohort_transaction_id": None, "core_update_cohort_sha256": None,
+    }
+    return {"pidfd": pidfd, "pid": pid, "start_ticks": start_ticks,
+            "boot_id": boot_id, "invocation_id": invocation, "identity": identity,
+            "observer_socket": observer_socket, "observer_state": observer_state,
+            "observer_device": device, "observer_inode": inode,
+            "observer_parent_identity": parent_identity, "unit_raw": raw,
+            "source": source, "row": row}
+
+
+def _stop_captured_inspector(custody: dict) -> None:
+    pidfd = custody["pidfd"]
+    pid = custody["pid"]
+    poller = select.poll()
+    poller.register(pidfd, select.POLLIN | select.POLLHUP | select.POLLERR | select.POLLNVAL)
+    _verify_inspector_process(custody["unit_raw"], custody["source"])
+    boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii").strip()
+    proc = Path("/proc") / str(pid)
+    current_identity = {
+        "pid": pid, "start_ticks": _proc_start_ticks(pid), "boot_id": boot_id,
+        "invocation_id": _run("systemctl", "show", "--property=InvocationID", "--value", INSPECTOR),
+        "source": custody["source"].decode("ascii"),
+        "unit_sha256": hashlib.sha256(custody["unit_raw"]).hexdigest(),
+        "executable": os.readlink(proc / "exe"),
+        "cgroup": (proc / "cgroup").read_text(encoding="ascii").splitlines(),
+    }
+    if (current_identity != custody["identity"]
+            or poller.poll(0) or _proc_start_ticks(pid) != custody["start_ticks"]
+            or _run("systemctl", "show", "--property=MainPID", "--value", INSPECTOR) != str(pid)
+            or _run("systemctl", "show", "--property=InvocationID", "--value", INSPECTOR)
+               != custody["invocation_id"]):
+        raise RuntimeError("captured old Inspector changed before stop")
+    _run("systemctl", "stop", INSPECTOR)
+    poller.poll(30_000)
+    if (not poller.poll(0) or _unit_state(INSPECTOR) not in {"inactive", "failed"}
+            or _run("systemctl", "show", "--property=MainPID", "--value", INSPECTOR, check=False)
+               not in {"", "0"}):
+        raise RuntimeError("captured old Inspector did not stop cleanly")
+    path = custody["observer_socket"]
+    try:
+        current = path.lstat()
+    except FileNotFoundError:
+        current = None
+    if custody["observer_state"] == "absent":
+        if current is not None:
+            raise RuntimeError("an unowned normal observer socket appeared during stop")
+        return
+    if (current is None or not stat.S_ISSOCK(current.st_mode)
+            or current.st_uid != 0 or current.st_gid != 1000
+            or stat.S_IMODE(current.st_mode) != 0o660 or current.st_nlink != 1
+            or (current.st_dev, current.st_ino) !=
+               (custody["observer_device"], custody["observer_inode"])):
+        raise RuntimeError("captured normal observer socket changed during Inspector stop")
+    parent = path.parent.lstat()
+    if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0 or parent.st_gid != 1000
+            or stat.S_IMODE(parent.st_mode) != 0o750
+            or (parent.st_dev, parent.st_ino) != custody["observer_parent_identity"]):
+        raise RuntimeError("captured normal observer parent changed during Inspector stop")
+    path.unlink()
+    directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                           | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _adapter_refresh_row(core_record: dict, core_raw: bytes, inspector: dict) -> dict:
+    row = dict(inspector["row"])
+    row.update({
+        "old_core_journal_sha256": hashlib.sha256(core_raw).hexdigest(),
+        "old_core_adapter_source": core_record["adapter_source"],
+        "old_core_adapter_generation": core_record["adapter_generation"],
+        "old_core_source_generation": core_record["core_source_generation"],
+    })
+    if not _valid_adapter_refresh_row(row):
+        raise RuntimeError("current adapter refresh custody is incomplete")
+    return row
+
+
+def _adapter_refresh_snapshot(core_runtime, candidate_source: Path, observer_socket: Path):
+    record, raw, files = core_runtime._read_active_adapter_runtime()
+    if record.get("adapter_source") == str(candidate_source):
+        raise RuntimeError("current native Core is not an older adapter generation")
+    old_source = record["adapter_source"].encode("ascii", "strict")
+    snapshots = core_runtime._snapshot_adapter_update_bindings(
+        core_source_generation=record["core_source_generation"])
+    ingress_source = _unit_source(
+        _read_fixed(FIXED_UNITS[INSPECTOR], uid=0, gid=0, mode=0o644,
+                    maximum=64 * 1024)[0], "core_gateway_inspector")
+    if ingress_source != old_source:
+        raise RuntimeError("active ingress and journal-owned Core use different generations")
+    inspector_raw, _ = _read_fixed(FIXED_UNITS[INSPECTOR], uid=0, gid=0,
+                                   mode=0o644, maximum=64 * 1024)
+    custody = _capture_inspector_custody(inspector_raw, old_source, observer_socket)
+    custody["row"] = _adapter_refresh_row(record, raw, custody)
+    return record, raw, files, snapshots, custody
+
+
+def _read_candidate_qualification_inputs(candidate_sha: str, source: Path) -> tuple[str, Path, tuple]:
+    archive_sha = _verify_source_provenance(candidate_sha, source)
+    generation = source.parent
+    tool = generation / "tools" / "pi_core_lifecycle_qualification.py"
+    # The source receipt authenticates the staged generation as data; hold and
+    # recheck the exact fixed root-owned runner inode around the subprocess.
+    for directory in (generation, source, generation / "tools"):
+        info = directory.lstat()
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+                or stat.S_IMODE(info.st_mode) & 0o022):
+            raise RuntimeError("fixed Core qualification source custody differs")
+    info = tool.lstat()
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != 0
+            or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) & 0o022
+            or not 1 <= info.st_size <= 2 * 1024 * 1024):
+        raise RuntimeError("fixed Core qualification runner custody differs")
+    fd = os.open(tool, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        held = os.fstat(fd)
+        if (held.st_dev, held.st_ino, held.st_size, held.st_mtime_ns) != (
+                info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns):
+            raise RuntimeError("fixed Core qualification runner changed before execution")
+        before = (held.st_dev, held.st_ino, held.st_size, held.st_mtime_ns, held.st_ctime_ns)
+    finally:
+        os.close(fd)
+    return archive_sha, tool, before
+
+
+def _run_core_refresh_qualification(candidate_sha: str, archive_sha: str,
+                                    tool: Path, tool_identity: tuple) -> dict:
+    argv = ("/usr/bin/python3", "-I", str(tool), "--candidate-sha", candidate_sha,
+            "--archive-sha256", archive_sha)
+    try:
+        result = subprocess.run(
+            argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=300, env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C",
+                              "HOME": "/root"}, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        raise RuntimeError("fixed Core qualification subprocess did not complete") from None
+    current = tool.lstat()
+    if (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns,
+            current.st_ctime_ns) != tool_identity:
+        raise RuntimeError("fixed Core qualification runner changed during execution")
+    if (result.returncode != 0 or len(result.stdout) > 64 * 1024
+            or len(result.stderr) > 16 * 1024):
+        raise RuntimeError("fixed Core adapter qualification did not verify")
+    try:
+        report = json.loads(result.stdout.decode("utf-8", "strict"),
+                            object_pairs_hook=_unique_pairs)
+        expected = {"schema", "action", "candidate_commit", "candidate_archive_sha256",
+                    "source_receipt_is_operator_paired_not_signature",
+                    "ancestor_and_verifier_custody_checked_before_execution", "cli_exit_code",
+                    "cli_output", "before", "after", "after_readback_error_type",
+                    "cohort_phase", "checks", "outcome", "rollback_qualification",
+                    "interruption_recovery_qualification", "acceptance"}
+        checks = report["checks"]
+        if (type(report) is not dict or set(report) != expected or report["schema"] != 1
+                or report["action"] != "core-service adapter-update"
+                or report["candidate_commit"] != candidate_sha
+                or report["candidate_archive_sha256"] != archive_sha
+                or report["source_receipt_is_operator_paired_not_signature"] is not True
+                or report["ancestor_and_verifier_custody_checked_before_execution"] is not True
+                or report["cli_exit_code"] != 0 or report["outcome"] != "verified_adapter_update"
+                or report["cohort_phase"] != "committed" or type(checks) is not dict
+                or not checks or any(value is not True for value in checks.values())
+                or report["acceptance"] != "not_claimed"):
+            raise ValueError
+    except (ValueError, TypeError, KeyError, UnicodeError):
+        raise RuntimeError("fixed Core adapter qualification report is not verified") from None
+    return report
+
+
+def _verify_adapter_refresh_commit(core_runtime, candidate_source: Path,
+                                   old_record: dict, old_raw: bytes,
+                                   old_files: dict, snapshots: dict) -> tuple[dict, dict, str]:
+    record, raw, current_files = core_runtime._read_active_adapter_runtime()
+    cohort, cohort_raw = core_runtime._read_adapter_update_cohort()
+    cohort_sha = hashlib.sha256(cohort_raw).hexdigest()
+    if (record.get("adapter_source") != str(candidate_source)
+            or record.get("adapter_migration_state") != "active"
+            or record.get("adapter_update_state") != "active"
+            or record.get("adapter_update_previous_source") != old_record.get("adapter_source")
+            or record.get("adapter_update_cohort_transaction_id")
+               != cohort.get("cohort_transaction_id")
+            or cohort.get("phase") != "committed"
+            or cohort.get("old_source") != old_record.get("adapter_source")
+            or cohort.get("old_adapter_generation") != old_record.get("adapter_generation")
+            or cohort.get("old_core_source_generation") != old_record.get("core_source_generation")
+            or cohort.get("new_source") != str(candidate_source)
+            or cohort.get("new_adapter_generation") != record.get("adapter_generation")
+            or record.get("core_source_generation") != old_record.get("core_source_generation")
+            or raw == old_raw):
+        raise RuntimeError("current committed Core cohort differs from the adapter refresh")
+    reference = core_runtime._adapter_update_backup_reference(cohort)
+    previous, contents = core_runtime._read_adapter_update_backup(reference)
+    if (contents.get("journal.json") != old_raw
+            or previous != old_record
+            or contents.get("unit") != old_files.get(core_runtime.UNIT)
+            or contents.get("launcher") != old_files.get(core_runtime.LAUNCHER)
+            or contents.get("resources-record.json") != snapshots["resources_record"]
+            or contents.get("overlay-record.json") != snapshots["overlay_record"]
+            or contents.get("primary-record.json") != snapshots["primary_record"]
+            or contents.get("cohort.json") != snapshots["prior_cohort"]
+            or contents.get("obsidian-registration.json") != snapshots["obsidian_registration"]):
+        raise RuntimeError("Core adapter-update backup does not preserve the captured old cohort")
+    if (hashlib.sha256(current_files[core_runtime.UNIT]).hexdigest()
+            != record.get("unit_sha256")
+            or hashlib.sha256(current_files[core_runtime.LAUNCHER]).hexdigest()
+               != record.get("launcher_sha256")):
+        raise RuntimeError("updated Core fixed service recipe is not journal-current")
+    current_snapshots = core_runtime._snapshot_adapter_update_bindings(
+        core_source_generation=old_record["core_source_generation"])
+    if (current_snapshots["overlay_record"] != snapshots["overlay_record"]
+            or current_snapshots["obsidian_registration"] != snapshots["obsidian_registration"]
+            or current_snapshots["obsidian_registration_state"]
+               != snapshots["obsidian_registration_state"]
+            or current_snapshots["obsidian_vault_tree_sha256"]
+               != snapshots["obsidian_vault_tree_sha256"]):
+        raise RuntimeError("Core update changed retained overlay or Obsidian owner custody")
+    return cohort, reference, cohort_sha
+
+
+def _replace_ingress_units_for_adapter_refresh(new_units, new_config: bytes,
+                                               config_info: os.stat_result,
+                                               saved, old_config: bytes,
+                                               inspector_custody: dict) -> None:
+    """Last-CAS, stop the captured old peer, retire only its socket, then switch."""
+    try:
+        if any(not _unit_is_fixed(name) for name in (INSPECTOR, GATEWAY, TUNNEL)):
+            raise _IngressSnapshotConflict("fixed ingress unit ownership changed before refresh")
+        _recheck_ingress_snapshot(saved, old_config, config_info)
+    except _IngressSnapshotConflict:
+        raise
+    except Exception:
+        raise _IngressSnapshotConflict(
+            "fixed ingress custody could not be reverified before refresh") from None
+    _run("systemctl", "stop", TUNNEL)
+    _run("systemctl", "stop", GATEWAY)
+    _stop_captured_inspector(inspector_custody)
+    _atomic_fixed(FIXED_UNITS[INSPECTOR], new_units[FIXED_UNITS[INSPECTOR]],
+                  uid=0, gid=0, mode=0o644)
+    _atomic_fixed(FIXED_UNITS[GATEWAY], new_units[FIXED_UNITS[GATEWAY]],
+                  uid=0, gid=0, mode=0o644)
+    _atomic_fixed(GATEWAY_CONFIG, new_config, uid=0, gid=config_info.st_gid,
+                  mode=stat.S_IMODE(config_info.st_mode))
+    _run("systemctl", "daemon-reload")
+
+
+def _verify_observer_peer(observer_socket: Path, expected_pid: int) -> tuple[int, int]:
+    info = observer_socket.lstat()
+    if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != 0 or info.st_gid != 1000
+            or stat.S_IMODE(info.st_mode) != 0o660 or info.st_nlink != 1):
+        raise RuntimeError("new normal observer socket custody differs")
+    peer = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        peer.settimeout(2.0)
+        peer.connect(str(observer_socket))
+        credentials = struct.unpack("3i", peer.getsockopt(
+            socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")))
+        current = observer_socket.lstat()
+        if ((current.st_dev, current.st_ino) != (info.st_dev, info.st_ino)
+                or credentials != (expected_pid, 0, 981)):
+            raise RuntimeError("new normal observer socket is not the verified Inspector peer")
+    except OSError:
+        raise RuntimeError("new normal observer peer could not be verified") from None
+    finally:
+        peer.close()
+    return info.st_dev, info.st_ino
+
+
+def _verify_adapter_refresh_bindings(core_runtime, snapshots: dict,
+                                     old_record: dict) -> None:
+    current = core_runtime._snapshot_adapter_update_bindings(
+        core_source_generation=old_record["core_source_generation"])
+    if (current["overlay_record"] != snapshots["overlay_record"]
+            or current["obsidian_registration"] != snapshots["obsidian_registration"]
+            or current["obsidian_registration_state"] != snapshots["obsidian_registration_state"]
+            or current["obsidian_vault_tree_sha256"] != snapshots["obsidian_vault_tree_sha256"]):
+        raise RuntimeError("adapter refresh changed preserved overlay or owner data")
+    record, raw, _files = core_runtime._read_active_adapter_runtime()
+    discovery_raw = current["resources_record"]
+    discovery = json.loads(discovery_raw, object_pairs_hook=_unique_pairs)
+    if (discovery.get("core_ownership_sha256") != hashlib.sha256(raw).hexdigest()
+            or discovery.get("core_source_generation") != old_record["core_source_generation"]
+            or discovery.get("state") != "discovered"):
+        raise RuntimeError("current adapter Resources discovery does not bind the new Core")
+    artifact = discovery.get("artifact_sha256")
+    if not isinstance(artifact, str) or re.fullmatch(r"[0-9a-f]{64}", artifact) is None:
+        raise RuntimeError("current Resources artifact identity is invalid")
+    archive = core_runtime._projection_file(
+        core_runtime.RESOURCES_CAS / (artifact + ".zip"), owner=0, group=0,
+        mode=0o600, maximum=16 * 1024 * 1024)
+    if hashlib.sha256(archive).hexdigest() != artifact:
+        raise RuntimeError("current adapter Resources immutable CAS is not exact")
+    from hermes_installer import primary_prompt_manager as primary
+    primary_raw = core_runtime._projection_file(
+        core_runtime.PRIMARY_PROMPT_JOURNAL, owner=0, group=0, mode=0o600, maximum=64 * 1024)
+    primary_record = primary._read_record(core_runtime)
+    soul, _signature = primary._read_soul(core_runtime)
+    if (type(primary_record) is not dict or primary_record.get("state") != "adopted"
+            or primary_record.get("core_source_generation") != old_record["core_source_generation"]
+            or primary_record.get("artifact_sha256") != artifact
+            or hashlib.sha256(soul).hexdigest() != primary_record.get("result_soul_sha256")
+            or discovery.get("active_primary_prompt_sha256") != hashlib.sha256(soul).hexdigest()
+            or not primary_raw):
+        raise RuntimeError("current primary prompt binding is not preserved and adopted")
+    if not core_runtime.read_current_resources_discovery(
+            core_source_generation=old_record["core_source_generation"]).get("resources_state") == "discovered":
+        raise RuntimeError("current updated Core Resources readback is not discovered")
+
+
+def _adapter_refresh_current_is_old(core_runtime, row: dict) -> bool:
+    try:
+        record, raw, _files = core_runtime._read_active_adapter_runtime()
+        return (hashlib.sha256(raw).hexdigest() == row["old_core_journal_sha256"]
+                and record.get("adapter_source") == row["old_core_adapter_source"]
+                and record.get("adapter_generation") == row["old_core_adapter_generation"]
+                and record.get("core_source_generation") == row["old_core_source_generation"])
+    except Exception:
+        return False
+
+
+def _restore_adapter_refresh_core(core_runtime, candidate_sha: str) -> bool:
+    value, _gateway, _inspector, _config = _backup_value(candidate_sha)
+    row = value.get("adapter_refresh")
+    if not _valid_adapter_refresh_row(row):
+        return False
+    if _adapter_refresh_current_is_old(core_runtime, row):
+        return True
+    value["state"] = "recovery-required"
+    _set_backup_state("recovery-required")
+    restore = getattr(core_runtime, "restore_owned_core_adapter_update", None)
+    if not callable(restore):
+        return False
+    try:
+        restore()
+        record, raw, _files = core_runtime._read_active_adapter_runtime()
+        return (hashlib.sha256(raw).hexdigest() == row["old_core_journal_sha256"]
+                and record.get("adapter_source") == row["old_core_adapter_source"]
+                and record.get("adapter_generation") == row["old_core_adapter_generation"]
+                and record.get("core_source_generation") == row["old_core_source_generation"])
+    except Exception:
+        return False
+
+
+def _finish_adapter_refresh_ingress(candidate_sha: str, expected_source: Path,
+                                    core_runtime, observer_socket: Path,
+                                    old_observer_identity: tuple[int, int] | None) -> None:
+    _refresh_migrated_core_config(candidate_sha, expected_source, core_runtime)
+    from hermes_installer.remote.core_gateway import CoreGatewayConfig
+    config = CoreGatewayConfig.load(expected_owner_uid=0)
+    _verify_gateway_tunnel(config, require_active=False)
+    if _unit_state(INSPECTOR) in {"inactive", "failed"}:
+        _run("systemctl", "start", INSPECTOR)
+    if not _unit_is_exact_and_active(INSPECTOR):
+        raise RuntimeError("new fixed Inspector did not become active")
+    unit_raw, _ = _read_fixed(FIXED_UNITS[INSPECTOR], uid=0, gid=0,
+                              mode=0o644, maximum=64 * 1024)
+    _verify_inspector_process(unit_raw, str(expected_source).encode("ascii"))
+    phase_identity = _wait_observer_socket(previous_inode=old_observer_identity)
+    inspector_pid = int(_run("systemctl", "show", "--property=MainPID", "--value", INSPECTOR))
+    if phase_identity != _verify_observer_peer(observer_socket, inspector_pid):
+        raise RuntimeError("fresh normal observer socket changed after peer verification")
+    _run("systemctl", "start", GATEWAY)
+    _run("systemctl", "start", TUNNEL)
+    config = CoreGatewayConfig.load(expected_owner_uid=0)
+    _verify_gateway_tunnel(config, require_active=True)
+    if not all(_unit_is_exact_and_active(name) for name in (INSPECTOR, GATEWAY, TUNNEL)):
+        raise RuntimeError("updated ingress cohort did not verify")
+
+
+def _verify_current_adapter_refresh_join(core_runtime, row: dict) -> tuple[dict, bytes, dict, dict, str]:
+    record, raw, files = core_runtime._read_active_adapter_runtime()
+    cohort, cohort_raw = core_runtime._read_adapter_update_cohort()
+    reference = core_runtime._adapter_update_backup_reference(cohort)
+    prior, contents = core_runtime._read_adapter_update_backup(reference)
+    digest = hashlib.sha256(cohort_raw).hexdigest()
+    if (record.get("adapter_update_state") != "active"
+            or cohort.get("phase") != "committed"
+            or cohort.get("old_source") != row["old_core_adapter_source"]
+            or cohort.get("old_adapter_generation") != row["old_core_adapter_generation"]
+            or cohort.get("old_core_source_generation") != row["old_core_source_generation"]
+            or hashlib.sha256(contents["journal.json"]).hexdigest()
+               != row["old_core_journal_sha256"]
+            or prior.get("adapter_source") != row["old_core_adapter_source"]
+            or prior.get("adapter_generation") != row["old_core_adapter_generation"]
+            or prior.get("core_source_generation") != row["old_core_source_generation"]
+            or (row["core_update_backup_reference"] is not None
+                and row["core_update_backup_reference"] != reference)
+            or (row["core_update_cohort_transaction_id"] is not None
+                and row["core_update_cohort_transaction_id"] != cohort.get("cohort_transaction_id"))
+            or (row["core_update_cohort_sha256"] is not None
+                and row["core_update_cohort_sha256"] != digest)):
+        raise RuntimeError("current committed adapter update does not join the retained old Core")
+    return cohort, cohort_raw, reference, contents, digest
+
+
+def _snapshots_from_adapter_backup(contents: dict, cohort: dict) -> dict:
+    registration = contents["obsidian-registration.json"]
+    return {
+        "resources_record": contents["resources-record.json"],
+        "overlay_record": contents["overlay-record.json"],
+        "primary_record": contents["primary-record.json"],
+        "prior_cohort": contents["cohort.json"],
+        "obsidian_registration": registration,
+        "obsidian_registration_state": "registered" if registration else "absent",
+        "obsidian_registration_sha256": hashlib.sha256(registration).hexdigest()
+        if registration else "0" * 64,
+        "obsidian_vault_tree_sha256": cohort.get("obsidian_vault_tree_sha256"),
+    }
+
+
+def _resume_adapter_refresh(candidate_sha: str, expected_source: Path,
+                            archive_sha: str, tool: Path, tool_identity: tuple,
+                            core_runtime, observer_socket: Path) -> None:
+    value, old_gateway, old_inspector, old_config = _backup_value(candidate_sha)
+    row = value.get("adapter_refresh")
+    if (not _valid_adapter_refresh_row(row)
+            or value["state"] not in {"recovery-required", "migrated"}
+            or any(not _unit_is_fixed(name) for name in (INSPECTOR, GATEWAY, TUNNEL))):
+        raise RuntimeError("saved adapter refresh is not eligible for exact resume")
+    gateway, _ = _read_fixed(FIXED_UNITS[GATEWAY], uid=0, gid=0, mode=0o644,
+                             maximum=64 * 1024)
+    inspector, _ = _read_fixed(FIXED_UNITS[INSPECTOR], uid=0, gid=0, mode=0o644,
+                               maximum=64 * 1024)
+    if (hashlib.sha256(gateway).hexdigest() != value["new_gateway_sha256"]
+            or hashlib.sha256(inspector).hexdigest() not in {
+                value["new_inspector_sha256"], value.get("runtime_inspector_sha256")}
+            or _unit_source(gateway, "core_gateway") != str(expected_source).encode("ascii")
+            or _unit_source(inspector, "core_gateway_inspector")
+               != str(expected_source).encode("ascii")):
+        raise RuntimeError("fixed adapter refresh units do not match the saved candidate")
+    current_raw, _ = _read_fixed(GATEWAY_CONFIG, uid=0, gid=981, mode=0o440, maximum=16 * 1024)
+    if hashlib.sha256(current_raw).hexdigest() not in {
+            value["new_config_sha256"], value["post_core_config_sha256"]}:
+        raise RuntimeError("adapter refresh Gateway config is outside the saved transaction")
+
+    # A crash can occur after Gateway starts but before Tunnel does. Once the
+    # fixed recipe/config CAS above is current, close any partially resumed
+    # public ingress before touching the native process or Core recovery.
+    for name in (TUNNEL, GATEWAY):
+        state = _unit_state(name)
+        if state == "active":
+            _run("systemctl", "stop", name)
+        elif state not in {"inactive", "failed"}:
+            raise RuntimeError("public ingress state is not stable for refresh resume")
+    if any(_unit_state(name) not in {"inactive", "failed"} for name in (GATEWAY, TUNNEL)):
+        raise RuntimeError("public ingress did not close for refresh resume")
+
+    if _unit_state(INSPECTOR) == "active":
+        _retire_current_refresh_inspector(expected_source, observer_socket)
+    elif _unit_state(INSPECTOR) not in {"inactive", "failed"}:
+        raise RuntimeError("Inspector state is not stable for refresh resume")
+    committed = None
+    try:
+        committed = _verify_current_adapter_refresh_join(core_runtime, row)
+    except Exception:
+        committed = None
+    if committed is None:
+        old_record = old_raw = old_files = snapshots = None
+        if _adapter_refresh_current_is_old(core_runtime, row):
+            old_record, old_raw, old_files = core_runtime._read_active_adapter_runtime()
+            snapshots = core_runtime._snapshot_adapter_update_bindings(
+                core_source_generation=row["old_core_source_generation"])
+        _run_core_refresh_qualification(candidate_sha, archive_sha, tool, tool_identity)
+        if old_record is not None:
+            cohort, reference, cohort_sha = _verify_adapter_refresh_commit(
+                core_runtime, expected_source, old_record, old_raw, old_files, snapshots)
+            _verify_adapter_refresh_bindings(core_runtime, snapshots, old_record)
+        else:
+            cohort, _raw, reference, contents, cohort_sha = _verify_current_adapter_refresh_join(
+                core_runtime, row)
+            snapshots = _snapshots_from_adapter_backup(contents, cohort)
+            old_record = json.loads(contents["journal.json"], object_pairs_hook=_unique_pairs)
+            _verify_adapter_refresh_bindings(core_runtime, snapshots, old_record)
+        _set_adapter_refresh_core_join(candidate_sha, reference,
+                                       cohort["cohort_transaction_id"], cohort_sha)
+    else:
+        cohort, _raw, reference, contents, cohort_sha = committed
+        snapshots = _snapshots_from_adapter_backup(contents, cohort)
+        old_record = json.loads(contents["journal.json"], object_pairs_hook=_unique_pairs)
+        _verify_adapter_refresh_bindings(core_runtime, snapshots, old_record)
+        if row["core_update_backup_reference"] is None:
+            _set_adapter_refresh_core_join(candidate_sha, reference,
+                                           cohort["cohort_transaction_id"], cohort_sha)
+    _set_backup_state("migrated")
+    old_identity = ((row["old_observer_device"], row["old_observer_inode"])
+                    if row["old_observer_state"] == "verified-owned" else None)
+    _finish_adapter_refresh_ingress(candidate_sha, expected_source, core_runtime,
+                                    observer_socket, old_identity)
+
+
+def _rollback_adapter_refresh(candidate_sha: str, expected_source: Path,
+                              core_runtime, observer_socket: Path) -> None:
+    value, old_gateway, old_inspector, old_config = _backup_value(candidate_sha)
+    row = value.get("adapter_refresh")
+    if (not _valid_adapter_refresh_row(row)
+            or any(not _unit_is_fixed(name) for name in (INSPECTOR, GATEWAY, TUNNEL))):
+        raise RuntimeError("saved adapter refresh is not eligible for rollback")
+    current_gateway, _ = _read_fixed(FIXED_UNITS[GATEWAY], uid=0, gid=0,
+                                      mode=0o644, maximum=64 * 1024)
+    current_inspector, _ = _read_fixed(FIXED_UNITS[INSPECTOR], uid=0, gid=0,
+                                        mode=0o644, maximum=64 * 1024)
+    current_config, _ = _read_fixed(GATEWAY_CONFIG, uid=0, gid=981,
+                                     mode=0o440, maximum=16 * 1024)
+    if (hashlib.sha256(current_gateway).hexdigest() not in
+            {value["new_gateway_sha256"], value["old_gateway_sha256"]}
+            or hashlib.sha256(current_inspector).hexdigest() not in
+            {value["new_inspector_sha256"], value.get("runtime_inspector_sha256"),
+             value["old_inspector_sha256"]}
+            or hashlib.sha256(current_config).hexdigest() not in
+            {value["new_config_sha256"], value["old_config_sha256"],
+             value.get("post_core_config_sha256")}):
+        raise RuntimeError("fixed adapter refresh ingress differs from retained snapshots")
+    _set_backup_state("recovery-required")
+    for name in (TUNNEL, GATEWAY):
+        _run("systemctl", "stop", name, check=False)
+    if not _restore_adapter_refresh_core(core_runtime, candidate_sha):
+        raise RuntimeError("exact prior Core could not be verified; ingress remains stopped")
+    _retire_current_refresh_inspector(expected_source, observer_socket)
+    if not _restore_old_ingress(value, old_gateway, old_inspector, old_config):
+        _set_backup_state("recovery-required")
+        raise RuntimeError("exact prior ingress could not be restored; public ingress remains stopped")
+    INGRESS_BACKUP.unlink()
+
+
+def _retire_current_refresh_inspector(expected_source: Path,
+                                      observer_socket: Path) -> None:
+    if _unit_state(INSPECTOR) == "active":
+        unit_raw, _ = _read_fixed(FIXED_UNITS[INSPECTOR], uid=0, gid=0,
+                                  mode=0o644, maximum=64 * 1024)
+        custody = _capture_inspector_custody(
+            unit_raw, str(expected_source).encode("ascii"), observer_socket)
+        try:
+            _stop_captured_inspector(custody)
+        finally:
+            os.close(custody["pidfd"])
+    else:
+        try:
+            observer_socket.lstat()
+        except FileNotFoundError:
+            return
+        raise RuntimeError("unowned stale normal observer socket blocks recovery")
+
+
+def _apply_adapter_refresh(candidate_sha: str, expected_source: Path,
+                           archive_sha: str, tool: Path, tool_identity: tuple,
+                           core_runtime, observer_socket: Path,
+                           *, approved_union: bool) -> int:
+    custody = None
+    saved = None
+    old_config = None
+    config_info = None
+    core_record = core_raw = core_files = snapshots = None
+    phase = "capture active adapter and old Inspector custody"
+    try:
+        core_record, core_raw, core_files, snapshots, custody = _adapter_refresh_snapshot(
+            core_runtime, expected_source, observer_socket)
+        phase = "validate active Gateway and tunnel"
+        from hermes_installer.remote.core_gateway import CoreGatewayConfig
+        config = CoreGatewayConfig.load(expected_owner_uid=0)
+        _verify_gateway_tunnel(config, require_active=True)
+        phase = "build exact ingress source switch and protected refresh record"
+        saved, old_config, config_info, new_units, new_config = _source_switch(
+            expected_source, read_approved_email_union=approved_union)
+        if (hashlib.sha256(saved[FIXED_UNITS[INSPECTOR]][0]).hexdigest()
+                   != custody["identity"]["unit_sha256"]
+                or _unit_source(saved[FIXED_UNITS[INSPECTOR]][0],
+                                "core_gateway_inspector")
+                   != core_record["adapter_source"].encode("ascii")):
+            raise RuntimeError("captured Inspector changed before staging adapter refresh")
+        row = dict(custody["row"])
+        phase = "write adapter refresh rollback snapshot"
+        _save_ingress_backup(candidate_sha, saved, old_config, config_info,
+                             new_units, new_config, adapter_refresh=row)
+        # From this durable point, a reboot or interruption must resolve this
+        # exact transaction before any public ingress is allowed to return.
+        _set_backup_state("recovery-required")
+        base_inspector_sha = hashlib.sha256(new_units[FIXED_UNITS[INSPECTOR]]).hexdigest()
+        repaired_inspector = _runtime_repaired_inspector(new_units[FIXED_UNITS[INSPECTOR]])
+        _set_runtime_inspector_digest(candidate_sha, base_inspector_sha,
+                                      hashlib.sha256(repaired_inspector).hexdigest())
+        new_units[FIXED_UNITS[INSPECTOR]] = repaired_inspector
+        phase = "close ingress and retire only the captured old Inspector socket"
+        _replace_ingress_units_for_adapter_refresh(new_units, new_config, config_info,
+                                                   saved, old_config, custody)
+        _set_backup_state("units-switched")
+        phase = "run fixed Root Core adapter qualification subprocess"
+        _run_core_refresh_qualification(candidate_sha, archive_sha, tool, tool_identity)
+        phase = "independently verify committed Core backup and preserved bindings"
+        cohort, reference, cohort_sha = _verify_adapter_refresh_commit(
+            core_runtime, expected_source, core_record, core_raw, core_files, snapshots)
+        _verify_adapter_refresh_bindings(core_runtime, snapshots, core_record)
+        _set_adapter_refresh_core_join(candidate_sha, reference,
+                                       cohort["cohort_transaction_id"], cohort_sha)
+        _set_backup_state("migrated")
+        phase = "bind config to current journaled Core"
+        _finish_adapter_refresh_ingress(candidate_sha, expected_source, core_runtime,
+                                        observer_socket,
+                                        (custody["observer_device"], custody["observer_inode"])
+                                        if custody["observer_state"] == "verified-owned" else None)
+        print("Existing native Core adapter and Jarvis ingress refreshed and independently read back.")
+        print("Existing owner registration/vault bytes were preserved; global owner operations remain pending their current gate.")
+        print("Added-account logins and full M1 acceptance remain separate target witnesses.")
+        print("Exact rollback command: rerun this helper with the same --candidate-sha and --rollback.")
+        return 0
+    except _IngressSnapshotConflict as error:
+        print("Adapter refresh stopped before service effects; protected transaction retained.")
+        print("Failure type: " + type(error).__name__)
+        return 4
+    except Exception as error:
+        failed_phase = phase
+        restored = False
+        if saved is not None:
+            try:
+                _set_backup_state("recovery-required")
+                for name in (TUNNEL, GATEWAY):
+                    _run("systemctl", "stop", name, check=False)
+                if _adapter_refresh_current_is_old(core_runtime, custody["row"]):
+                    restored = True
+                else:
+                    # The committed-only Core API consumes the journaled row;
+                    # it never accepts caller paths or an arbitrary rollback target.
+                    restored = _restore_adapter_refresh_core(core_runtime, candidate_sha)
+                if restored:
+                    _retire_current_refresh_inspector(expected_source, observer_socket)
+                    value, old_gateway, old_inspector, old_cfg = _backup_value(candidate_sha)
+                    restored = _restore_old_ingress(value, old_gateway, old_inspector, old_cfg)
+                if restored:
+                    INGRESS_BACKUP.unlink(missing_ok=True)
+            except Exception:
+                restored = False
+            if not restored:
+                try:
+                    _set_backup_state("recovery-required")
+                except Exception:
+                    pass
+        print("Adapter refresh did not complete; automatic recovery was attempted from the retained journal.")
+        print("Prior Core and ingress verified: " + ("yes" if restored else "no; public ingress remains stopped"))
+        print("Failed phase: " + failed_phase)
+        print("Failure type: " + type(error).__name__)
+        return 4
+    finally:
+        if custody is not None:
+            try:
+                os.close(custody["pidfd"])
+            except OSError:
+                pass
+
+
 def _replace_unit_source(raw: bytes, old: bytes, new: bytes) -> bytes:
     before = b"Environment=PYTHONPATH=" + old
     after = b"Environment=PYTHONPATH=" + new
@@ -372,7 +1108,8 @@ def _source_switch(candidate_source: Path, *, read_approved_email_union: bool = 
 
 
 def _save_ingress_backup(candidate_sha: str, saved, config_raw: bytes,
-                         config_info: os.stat_result, new_units, new_config: bytes) -> None:
+                         config_info: os.stat_result, new_units, new_config: bytes,
+                         *, adapter_refresh: dict | None = None) -> None:
     parent = INGRESS_BACKUP.parent
     parent_info = parent.lstat()
     if (not stat.S_ISDIR(parent_info.st_mode) or parent_info.st_uid != 0
@@ -393,6 +1130,7 @@ def _save_ingress_backup(candidate_sha: str, saved, config_raw: bytes,
         "old_gateway_sha256": hashlib.sha256(saved[FIXED_UNITS[GATEWAY]][0]).hexdigest(),
         "old_inspector_sha256": hashlib.sha256(saved[FIXED_UNITS[INSPECTOR]][0]).hexdigest(),
         "old_config_sha256": hashlib.sha256(config_raw).hexdigest(),
+        "adapter_refresh": adapter_refresh,
     }
     raw = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
     temporary = parent / (".native-adoption-backup-" + secrets.token_hex(8))
@@ -427,6 +1165,89 @@ def _save_ingress_backup(candidate_sha: str, saved, config_raw: bytes,
         os.fsync(dfd)
     finally:
         os.close(dfd)
+
+
+_ADAPTER_REFRESH_FIELDS = {
+    "schema", "purpose", "old_core_journal_sha256", "old_core_adapter_source",
+    "old_core_adapter_generation", "old_core_source_generation",
+    "old_inspector_process_identity_sha256", "old_observer_state",
+    "old_observer_device", "old_observer_inode", "core_update_backup_reference",
+    "core_update_cohort_transaction_id", "core_update_cohort_sha256",
+}
+
+
+def _valid_adapter_refresh_row(row) -> bool:
+    if type(row) is not dict or set(row) != _ADAPTER_REFRESH_FIELDS:
+        return False
+    digests = ("old_core_journal_sha256", "old_core_adapter_generation",
+               "old_core_source_generation", "old_inspector_process_identity_sha256")
+    if (type(row.get("schema")) is not int or row["schema"] != 1
+            or row.get("purpose") != "adapter-refresh"
+            or any(type(row.get(key)) is not str
+                   or re.fullmatch(r"[0-9a-f]{64}", row[key]) is None for key in digests)
+            or type(row.get("old_core_adapter_source")) is not str
+            or not _SOURCE_PATH.fullmatch(row["old_core_adapter_source"].encode("ascii", "strict"))):
+        return False
+    if row.get("old_observer_state") == "absent":
+        if row.get("old_observer_device") is not None or row.get("old_observer_inode") is not None:
+            return False
+    elif row.get("old_observer_state") == "verified-owned":
+        if (type(row.get("old_observer_device")) is not int
+                or row["old_observer_device"] < 0
+                or type(row.get("old_observer_inode")) is not int
+                or row["old_observer_inode"] <= 0):
+            return False
+    else:
+        return False
+    reference = row.get("core_update_backup_reference")
+    txid = row.get("core_update_cohort_transaction_id")
+    cohort_sha = row.get("core_update_cohort_sha256")
+    if reference is None and txid is None and cohort_sha is None:
+        return True
+    if (type(reference) is not dict or set(reference) != {"path", "source_generation", "files"}
+            or type(reference.get("path")) is not str
+            or type(reference.get("source_generation")) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", reference["source_generation"]) is None
+            or reference["path"] != "/var/lib/hermes-installer/core-runtime/adapter-update-backups/"
+                                    + reference["source_generation"]
+            or type(reference.get("files")) is not dict
+            or set(reference["files"]) != {"journal.json", "unit", "launcher",
+                                           "plugin-selection.json", "resources-record.json",
+                                           "overlay-record.json", "primary-record.json",
+                                           "obsidian-registration.json", "cohort.json"}
+            or any(type(v) is not str or re.fullmatch(r"[0-9a-f]{64}", v) is None
+                   for v in reference["files"].values())
+            or type(txid) is not str or re.fullmatch(r"[0-9a-f]{32}", txid) is None
+            or type(cohort_sha) is not str or re.fullmatch(r"[0-9a-f]{64}", cohort_sha) is None):
+        return False
+    return True
+
+
+def _set_adapter_refresh_core_join(candidate_sha: str, reference: dict,
+                                   transaction_id: str, cohort_sha256: str) -> dict:
+    """Persist only independently read-back committed Core recovery joins."""
+    raw, info = _read_fixed(INGRESS_BACKUP, uid=0, gid=0, mode=0o600, maximum=128 * 1024)
+    try:
+        value = json.loads(raw, object_pairs_hook=_unique_pairs)
+        row = value["adapter_refresh"]
+        if (type(value) is not dict or value.get("candidate_sha") != candidate_sha
+                or value.get("state") not in {"units-switched", "migrated", "recovery-required"}
+                or not _valid_adapter_refresh_row(row)
+                or row["core_update_backup_reference"] is not None
+                or row["core_update_cohort_transaction_id"] is not None
+                or row["core_update_cohort_sha256"] is not None):
+            raise ValueError
+        row["core_update_backup_reference"] = reference
+        row["core_update_cohort_transaction_id"] = transaction_id
+        row["core_update_cohort_sha256"] = cohort_sha256
+        if not _valid_adapter_refresh_row(row):
+            raise ValueError
+    except Exception:
+        raise RuntimeError("protected adapter refresh join is not current") from None
+    replacement = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
+    _atomic_fixed(INGRESS_BACKUP, replacement, uid=0, gid=0,
+                  mode=stat.S_IMODE(info.st_mode))
+    return row
 
 
 def _prepare_existing_owner_before_migration(new_gateway_config: bytes,
@@ -522,21 +1343,27 @@ def _backup_value(candidate_sha: str) -> tuple[dict, bytes, bytes, bytes]:
                 "gateway_config", "gateway_mode", "gateway_gid", "old_gateway_sha256",
                 "old_inspector_sha256", "old_config_sha256", "new_gateway_sha256",
                 "new_inspector_sha256", "new_config_sha256", "post_core_config_sha256",
-                "runtime_inspector_sha256", "new_gateway_config"}
+                "runtime_inspector_sha256", "new_gateway_config", "adapter_refresh"}
         legacy_keys = keys - {"post_core_config_sha256", "runtime_inspector_sha256",
-                              "new_gateway_config"}
+                              "new_gateway_config", "adapter_refresh"}
         if type(value) is dict and set(value) == legacy_keys:
             value["post_core_config_sha256"] = None
             value["runtime_inspector_sha256"] = None
             value["new_gateway_config"] = None
+            value["adapter_refresh"] = None
         elif (type(value) is dict and set(value) ==
-              keys - {"runtime_inspector_sha256", "new_gateway_config"}):
+              keys - {"runtime_inspector_sha256", "new_gateway_config", "adapter_refresh"}):
             value["runtime_inspector_sha256"] = None
             value["new_gateway_config"] = None
-        elif type(value) is dict and set(value) == keys - {"runtime_inspector_sha256"}:
+            value["adapter_refresh"] = None
+        elif type(value) is dict and set(value) == keys - {"runtime_inspector_sha256", "adapter_refresh"}:
             value["runtime_inspector_sha256"] = None
-        elif type(value) is dict and set(value) == keys - {"new_gateway_config"}:
+            value["adapter_refresh"] = None
+        elif type(value) is dict and set(value) == keys - {"new_gateway_config", "adapter_refresh"}:
             value["new_gateway_config"] = None
+            value["adapter_refresh"] = None
+        elif type(value) is dict and set(value) == keys - {"adapter_refresh"}:
+            value["adapter_refresh"] = None
         if (type(value) is not dict or set(value) != keys or type(value["schema"]) is not int
                 or value["schema"] != 1 or value["candidate_sha"] != candidate_sha
                 or value["state"] not in {"prepared", "units-switched", "migrated", "recovery-required"}
@@ -546,7 +1373,9 @@ def _backup_value(candidate_sha: str) -> tuple[dict, bytes, bytes, bytes]:
                          or re.fullmatch(r"[0-9a-f]{64}", value["post_core_config_sha256"]) is None))
                 or (value["runtime_inspector_sha256"] is not None
                     and (not isinstance(value["runtime_inspector_sha256"], str)
-                         or re.fullmatch(r"[0-9a-f]{64}", value["runtime_inspector_sha256"]) is None))):
+                         or re.fullmatch(r"[0-9a-f]{64}", value["runtime_inspector_sha256"]) is None))
+                or (value["adapter_refresh"] is not None
+                    and not _valid_adapter_refresh_row(value["adapter_refresh"]))):
             raise ValueError
         if prospective_field_present and value["new_gateway_config"] is None:
             raise ValueError
@@ -659,6 +1488,29 @@ def _refresh_migrated_core_config(candidate_sha: str, expected_source: Path,
     unit_sha, launcher_sha = hashlib.sha256(unit_raw).hexdigest(), hashlib.sha256(launcher_raw).hexdigest()
     if record.get("unit_sha256") != unit_sha or record.get("launcher_sha256") != launcher_sha:
         raise RuntimeError("fixed Core files differ from their current journal digests")
+    if value.get("adapter_refresh") is not None:
+        row = value["adapter_refresh"]
+        if (not _valid_adapter_refresh_row(row)
+                or row["core_update_backup_reference"] is None
+                or row["core_update_cohort_transaction_id"] is None
+                or row["core_update_cohort_sha256"] is None
+                or record.get("adapter_update_state") != "active"
+                or record.get("core_source_generation") != row["old_core_source_generation"]):
+            raise RuntimeError("adapter refresh Core recovery join is incomplete")
+        cohort, cohort_raw = core_runtime._read_adapter_update_cohort()
+        reference = core_runtime._adapter_update_backup_reference(cohort)
+        previous, contents = core_runtime._read_adapter_update_backup(reference)
+        if (hashlib.sha256(cohort_raw).hexdigest() != row["core_update_cohort_sha256"]
+                or cohort.get("cohort_transaction_id")
+                   != row["core_update_cohort_transaction_id"]
+                or reference != row["core_update_backup_reference"]
+                or cohort.get("phase") != "committed"
+                or hashlib.sha256(contents["journal.json"]).hexdigest()
+                   != row["old_core_journal_sha256"]
+                or previous.get("adapter_source") != row["old_core_adapter_source"]
+                or previous.get("adapter_generation") != row["old_core_adapter_generation"]
+                or previous.get("core_source_generation") != row["old_core_source_generation"]):
+            raise RuntimeError("committed adapter refresh Core join changed")
 
     switched_config = _journaled_new_gateway_config(
         value, old_gateway, old_inspector, old_config, expected_source)
@@ -805,7 +1657,7 @@ def _restore_old_ingress(value: dict, old_gateway: bytes, old_inspector: bytes,
         return False
 
 
-def _verify_source_provenance(candidate_sha: str, source_root: Path) -> None:
+def _verify_source_provenance(candidate_sha: str, source_root: Path) -> str:
     """Match the supplied full SHA to the root-stager's no-follow receipt."""
     generation = source_root.parent
     if (source_root != Path(f"/opt/hermes-installer-core-{candidate_sha[:9]}/src")
@@ -888,6 +1740,7 @@ def _verify_source_provenance(candidate_sha: str, source_root: Path) -> None:
                 or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) & 0o022
                 or info.st_size > 2 * 1024 * 1024):
             raise RuntimeError("candidate native source file custody differs")
+    return value["archive_sha256"]
 
 
 def _verify_gateway_tunnel(config, *, require_active: bool) -> dict[str, bool]:
@@ -1292,7 +2145,7 @@ def main() -> int:
     phase = "source provenance and adapter validation"
     try:
         print("Adoption phase: " + phase, flush=True)
-        _verify_source_provenance(args.candidate_sha, expected_adapter_source)
+        archive_sha = _verify_source_provenance(args.candidate_sha, expected_adapter_source)
         sys.path.insert(0, str(expected_adapter_source))
         from hermes_installer import core_runtime
         actual_adapter = Path(core_runtime.__file__).resolve(strict=True).parents[1]
@@ -1306,6 +2159,18 @@ def main() -> int:
         if args.resume:
             phase = "resume saved candidate adoption transaction"
             print("Adoption phase: " + phase, flush=True)
+            saved, _og, _oi, _oc = _backup_value(args.candidate_sha)
+            if saved.get("adapter_refresh") is not None:
+                refreshed_archive, tool, tool_identity = _read_candidate_qualification_inputs(
+                    args.candidate_sha, expected_adapter_source)
+                if refreshed_archive != archive_sha:
+                    raise RuntimeError("candidate source receipt changed before refresh resume")
+                _resume_adapter_refresh(args.candidate_sha, expected_adapter_source,
+                                        archive_sha, tool, tool_identity, core_runtime,
+                                        CORE_NATIVE_OBSERVER_SOCKET)
+                print("Saved adapter Core and Jarvis ingress cohort resumed and verified.")
+                print("Protected transaction backup retained for exact rollback.")
+                return 0
             _resume_adoption(args.candidate_sha, expected_adapter_source, core_runtime,
                              CoreGatewayConfig, CORE_NATIVE_OBSERVER_SOCKET)
             return 0
@@ -1314,6 +2179,11 @@ def main() -> int:
             phase = "rollback journal and fixed-file validation"
             print("Adoption phase: " + phase, flush=True)
             value, old_gateway, old_inspector, old_config = _backup_value(args.candidate_sha)
+            if value.get("adapter_refresh") is not None:
+                _rollback_adapter_refresh(args.candidate_sha, expected_adapter_source,
+                                          core_runtime, CORE_NATIVE_OBSERVER_SOCKET)
+                print("Exact prior adapter Core and Inspector/Gateway/tunnel cohort restored.")
+                return 0
             source = str(expected_adapter_source).encode("ascii")
             current_gateway, _ = _read_fixed(FIXED_UNITS[GATEWAY], uid=0, gid=0,
                                               mode=0o644, maximum=64 * 1024)
@@ -1359,6 +2229,23 @@ def main() -> int:
         print("Adoption phase: " + phase, flush=True)
         if INGRESS_BACKUP.exists() or INGRESS_BACKUP.is_symlink():
             raise RuntimeError("a prior adoption backup exists; use --rollback or inspect it first")
+        active_adapter = None
+        try:
+            active_adapter = core_runtime._read_active_adapter_runtime()
+        except core_runtime.CoreRuntimeError:
+            # Preserve the original migration lane only when its own complete
+            # fixed-runtime proof succeeds. A malformed/foreign Core state is
+            # not interpreted as legacy by the adapter refresh selector.
+            core_runtime._read_legacy_owned_runtime()
+        if active_adapter is not None:
+            refreshed_archive, tool, tool_identity = _read_candidate_qualification_inputs(
+                args.candidate_sha, expected_adapter_source)
+            if refreshed_archive != archive_sha:
+                raise RuntimeError("candidate source receipt changed before adapter refresh")
+            return _apply_adapter_refresh(
+                args.candidate_sha, expected_adapter_source, archive_sha, tool,
+                tool_identity, core_runtime, CORE_NATIVE_OBSERVER_SOCKET,
+                approved_union=args.approved_email_union_stdin)
         config = CoreGatewayConfig.load(expected_owner_uid=0)
         _verify_gateway_tunnel(config, require_active=True)
         if CORE_NATIVE_OBSERVER_SOCKET.exists() or CORE_NATIVE_OBSERVER_SOCKET.is_symlink():
