@@ -1,5 +1,7 @@
 # Proposal
 
+Clarify only the M1 interrupted initial-adoption recovery boundary: a separate Root-issued offline rollback-only custody verifies stopped owned service and exact retained/current files, allowing safe prior-SOUL/journal restoration without the live peer that the boot guard correctly denies. Live adoption and genuine startup proof remain mandatory on the positive path; no new grants or acceptance closure.
+
 Close the existing M1 absent-primary-record deadlock with genuine fixed Root initial adoption under exact new starting custody before its chat probe. Reuse the real append/backup/native-readback transaction and refresh starting Resources/cohort joins from actual resulting HOME SOUL; bundled profile identity is not adopted identity. Previously adopted rebase stays byte-identical. Preserve owner prefix/auth/overlay/vault and exact interruption recovery; pending adoption cannot commit as functional. No new scope or acceptance closure.
 
 Reference-ledger correction within R0203/RT-T266.3/VD-T266.5: the portable all14-image intake now records full-display visual review, replacing the obsolete six-of14 roadmap count. Preserve requested running-service orbital idle motion separately from genuine task/audio/Team signals. Image intake is not candidate-rendered UX or runtime proof; video/TikTok/Murphmaxxing limits and all existing Android/voice/household obligations remain. M1 stays first; no scope/acceptance change.

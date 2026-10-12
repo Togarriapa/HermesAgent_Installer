@@ -2388,6 +2388,11 @@ Helper-only transition SHALL preserve protected overlay-journal bytes and histor
 - **AND** exact retained prior/stage journals and native full-block/full-inventory proof govern Resources/cohort starting-tuple CAS refresh and fresh guarded-new custody; normal/boot admission denies adopting partial tuples. No ordinary committed-binding recursion or broad hash bypass is accepted.
 - **AND** only the genuinely adopted resulting identity and refreshed tuple enter the actual Codex startup probe before final commit. Prior adopted rebase stays separate; interrupted/foreign/edited states require exact resume/recovery with original data preserved, never pending-as-functional acceptance.
 
+#### Scenario: Offline rollback after denied interrupted boot
+- **WHEN** reboot interrupts initial adoption and the preparing/writing boot guard denies a new peer
+- **THEN** a distinct sealed UID0 rollback-only custody under the root lock verifies stopped owned service and exact retained/current cohort/source/CAS/full members/manager stage/SOUL/immutable backup before restoring only exact prior owner bytes and retaining owned journal history.
+- **AND** no live PID/read scope, adoption/provider/native status or startup proof is fabricated; foreign/edited/missing evidence stays pending. Root restores the compatible old cohort and original unit last without weakening boot denial or reviving grants.
+
 #### Scenario: Genuine fixed new-peer startup chat proof
 - **WHEN** Root qualifies the exact coherent starting cohort before final commit
 - **THEN** one fixed Root-enrolled lifecycle operation on the actual new native gateway peer uses its current Jarvis primary identity, independently verified H/A1 Resources inventory and existing authenticated Codex route with zero added metered spend.
