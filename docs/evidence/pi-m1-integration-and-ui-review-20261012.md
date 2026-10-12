@@ -33,11 +33,23 @@ units active. Process health does not prove usable chat.
 | `6d4bd9be7d63bc73ce6ac6d7953279b4aa696f9e`, v55 | Compilation, strict specs/plan and all 43 gateway/JWT/Mission-route checks passed in 1.40s. Includes bounded household admission and the exact shared-route repair. Archive SHA-256 `ebf183238ab9e488acc03de7ee1abcc26621b1ee62d31e995ff4eed855b0dad0`. |
 | `bf5bbf83c7969096b8167e5cf6fdcb2d2abf8030`, v56 | Compilation and strict specs/plan passed; adoption/gateway suite 6 failed, 86 passed. Existing effect fixtures needed the new source-switch keyword; static review separately found a missing final original-file CAS and pre-effect rollback classification. Staging only. |
 | `9429c2b2ec152dc6edae1be35c30ab703feb3b18`, v59 | Compilation, strict specs/plan and all 99 adoption/gateway/JWT/Mission-route checks passed in 1.77s. Source review concurs on exact pre-backup/pre-stop CAS and no service effects for pre-stop byte, ownership or protected-read conflicts; post-effect rollback remains unchanged. Archive SHA-256 `683eb63424338d62f198a1dc3780ed07454769bda8780f19647e06bc160b501c`. Staging only. |
+| `5bf3eda11fb66ea12f2b7567f0723465a88b000e`, v61 | Compilation and strict specs/plan passed. First effect group: 12 failed, 93 passed. Independent recovery retry: 1 failed, 11 passed. An earlier recovery selection matched no tests (exit5); it proves no recovery behavior. Failures identified obsolete reader/argv/partial-phase fixtures; source review separately found an absent prior-cohort and historical-vault-digest rollback edge. No live deployment. |
+| `6e6e035d81e5b67525c4bc0fdc88ae2f36ebc7ea`, v62 | Compilation and strict specs/plan passed. Actual Pi effect group: 107 passed in12.44s; independent committed/interrupted recovery group: 12 passed in0.07s. The narrow fixes preserve actual argv/reader boundaries, all-null joins before Core return, no qualification replay during rollback, exact optional prior-cohort bytes and latest captured vault state. Archive SHA-256 `4ecaf5214ba3693328cc320f1e16dded71eb80bf993589ceec64ee70bac93833`. Production acceptance remains separate. |
 
 Logs and status JSON are under
 `/var/tmp/hermes-jarvis-core-checks-20261011/` on the identified Pi. OpenSpec
 reported `spec-driven`, `ready`, eight total/zero complete/eight remaining;
 no archive or canonical runtime acceptance was performed.
+
+On2026-10-13, fresh Cloudflare connector GETs verified the exact Jarvis hostname,
+both application and allow-policy durations720h, three approved email entries,
+and retained HttpOnly/binding-cookie protection. Existing issued tokens retain
+their original expiry. This global browser convenience is distinct from native
+individually revocable Android/tablet pairing and automatic refresh, which the
+current Sol refinement explicitly retains as pending M5 work. A source audit
+found no one-hour Access-JWT lifetime cap; the3600-second JWKS cache and bounded
+request/turn leases do not define login duration. No physical-device restart,
+month-long continuity or native pairing witness is claimed.
 
 The v45 archive retained directory mode0775 and file mode0664. The genuine
 immutable-source custody checks correctly refused that group-writable fixture.
