@@ -85,6 +85,14 @@ def test_helper_only_overlay_reconstruction_preserves_two_exact_overlay_steps():
     old_base = _replace_helper(native.build_manual_jarvis_skills_artifact(), b"retained old helper")
     new_base = native.build_manual_jarvis_skills_artifact()
     old_composed, journal, contents = _two_overlay_history(old_base)
+    old_composed_manifest, old_composed_files = native._read_artifact(
+        old_composed, hashlib.sha256(old_composed).hexdigest())
+    new_base_manifest, new_base_files = native._read_artifact(
+        new_base, hashlib.sha256(new_base).hexdigest())
+    # The base classifier must continue to reject A0→B1 because A0 contains
+    # owner edits. Reconstruction proves B0→B1 and A0→A1 separately.
+    assert not native.verify_same_materialization_transition(
+        old_composed_manifest, old_composed_files, new_base_manifest, new_base_files)
 
     result = overlay.reconstruct_helper_only_overlay_transition(
         old_base, new_base, old_composed, journal, contents)

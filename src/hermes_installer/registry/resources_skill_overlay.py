@@ -116,7 +116,10 @@ def _require_helper_only_pair(old_manifest, old_files, new_manifest, new_files):
 def _derive_helper_replacement(old_composed: bytes, new_base: bytes,
                                old_manifest: dict[str, Any], old_files: dict[str, bytes],
                                new_manifest: dict[str, Any], new_files: dict[str, bytes]) -> bytes:
-    _require_helper_only_pair(old_manifest, old_files, new_manifest, new_files)
+    # This pair is intentionally not sent through the base classifier: A0
+    # contains owner-edited skill bytes while B1 is pristine. B0→B1 and the
+    # derived A0→A1 pair are independently checked by the caller. Here A0 is
+    # copied byte-for-byte except for B1's verified installer row/helper.
     new_helper = _helper_bytes(new_base, new_manifest)
     changed_manifest = dict(old_manifest)
     changed_manifest["installer"] = dict(new_manifest["installer"])
