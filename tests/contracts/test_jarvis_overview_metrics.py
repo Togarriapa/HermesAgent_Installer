@@ -189,7 +189,8 @@ def test_overview_presence_is_gated_by_fresh_core_witness():
                          if '@media(prefers-reduced-motion:reduce)' in rule and ".reactor-orbit-inner" in rule)
     assert all(selector in os_reduce_rule for selector in (".reactor-dial", ".reactor-orbit-inner", ".reactor-orbit-outer"))
     assert "animation:none!important;transform:none!important" in os_reduce_rule
-    app_reduce_rule = next(rule for rule in css.split("}") if 'html[data-jarvis-motion="reduce"]' in rule)
+    app_reduce_rule = next(rule for rule in css.split("}")
+                           if 'html[data-jarvis-motion="reduce"]' in rule and ".reactor-dial" in rule)
     assert all(selector in app_reduce_rule for selector in (".reactor-dial", ".reactor-orbit-inner", ".reactor-orbit-outer"))
     assert "animation:none!important;transform:none!important" in app_reduce_rule
     assert '[data-feature-root="overview"][data-stale="true"] .overview-stage .reactor-dial' in css
