@@ -312,7 +312,6 @@ def _install_legacy_service_fixture(tmp_path, monkeypatch, *, journal_state="act
     monkeypatch.setattr(core, "_launcher", _REAL_CORE_LAUNCHER)
     monkeypatch.setattr(core, "ADAPTER_MIGRATION_BACKUP",
                         core.JOURNAL.parent / "adapter-migration-backup")
-    monkeypatch.setattr(core, "_validate_adapter_source_path", lambda: None)
     monkeypatch.setattr(core, "_core_source_generation", lambda: "c" * 64)
     monkeypatch.setattr(core, "_identity", lambda: {
         "commit": core.COMMIT, "lock_sha256": core.LOCK_SHA256,
@@ -346,6 +345,44 @@ def _install_legacy_service_fixture(tmp_path, monkeypatch, *, journal_state="act
 
 
 _REAL_CORE_LAUNCHER = core._launcher
+
+
+def _fixture_prior_adapter_source():
+    """Return the historical source alias only inside Root's private /opt view."""
+    if os.environ.get("HERMES_PI_FIXTURE_PRIVATE_OPT") != "1":
+        raise AssertionError("adapter-generation fixture requires Root's private /opt namespace")
+    mount_types = set()
+    for row in Path("/proc/self/mountinfo").read_text().splitlines():
+        fields = row.split()
+        if len(fields) > 6 and fields[4] == "/opt" and "-" in fields:
+            separator = fields.index("-")
+            if separator + 1 < len(fields):
+                mount_types.add(fields[separator + 1])
+    if mount_types != {"tmpfs"}:
+        raise AssertionError("fixture /opt must be a private tmpfs mount")
+    source = Path("/opt/hermes-installer-core-fffffffff/src")
+    core._validate_adapter_generation_path(source)
+    return source
+
+
+def _rebind_migrated_fixture_to_prior_generation():
+    """Give migration tests a distinct, custody-valid historical generation."""
+    source = _fixture_prior_adapter_source()
+    record, raw, _files = core._read_active_adapter_runtime()
+    generation = "9" * 64
+    launcher = _REAL_CORE_LAUNCHER(adapter_source=source)
+    unit = core._unit(adapter_source=source)
+    core._atomic_replace(core.UNIT, unit, 0o644, core.ROOT_UID, core.ROOT_UID)
+    core._atomic_replace(core.LAUNCHER, launcher, 0o755, core.ROOT_UID, core.ROOT_UID)
+    updated = dict(record)
+    updated.update({
+        "adapter_source": str(source),
+        "adapter_generation": generation,
+        "unit_sha256": hashlib.sha256(unit).hexdigest(),
+        "launcher_sha256": hashlib.sha256(launcher).hexdigest(),
+    })
+    core._replace_journal(updated, expected_raw=raw)
+    return source
 
 
 def _fixed_service_path_identity():
@@ -451,16 +488,13 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
     memory.parent.mkdir(parents=True)
     memory.write_text("existing owner memory")
     core.migrate_owned_core_to_adapter_path()
+    old_source = _rebind_migrated_fixture_to_prior_generation()
     prior = json.loads(core.JOURNAL.read_text())
     assert prior["state"] == "installed"
     prior_launcher = core.LAUNCHER.read_bytes()
     prior_unit = core.UNIT.read_bytes()
     token = core.TOKEN.read_bytes()
-    old_source = core.ADAPTER_SOURCE
-    monkeypatch.setattr(core, "ADAPTER_SOURCE", old_source.parent.parent / "hermes-installer-core-bbbbbbbbb" / "src")
     monkeypatch.setattr(core, "ADAPTER_UPDATE_BACKUPS", core.JOURNAL.parent / "adapter-update-backups")
-    monkeypatch.setattr(core, "_validate_adapter_source_path", lambda: None)
-    monkeypatch.setattr(core, "_validate_adapter_generation_path", lambda _path: None)
     monkeypatch.setattr(core, "_owned_listener", lambda **_kwargs: enabled["value"])
     monkeypatch.setattr(core, "_owned_listener_pidfd", lambda **_kwargs: enabled["value"])
     _fake_update_pidfd(monkeypatch, enabled)
@@ -522,9 +556,10 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(t
     _calls, enabled, _old_launcher, _selection = _install_legacy_service_fixture(
         tmp_path, monkeypatch, journal_state="installed")
     core.migrate_owned_core_to_adapter_path()
+    old_source = _rebind_migrated_fixture_to_prior_generation()
     migrated_raw = core.JOURNAL.read_bytes()
     migrated_record = json.loads(migrated_raw)
-    prior_unguarded_unit = core._unit(startup_guard=False)
+    prior_unguarded_unit = core._unit(startup_guard=False, adapter_source=old_source)
     core._atomic_replace(core.UNIT, prior_unguarded_unit, 0o644, core.ROOT_UID, core.ROOT_UID)
     migrated_record["unit_sha256"] = hashlib.sha256(prior_unguarded_unit).hexdigest()
     core._replace_journal(migrated_record, expected_raw=migrated_raw)
@@ -532,11 +567,7 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(t
     launcher = core.LAUNCHER.read_bytes()
     unit = core.UNIT.read_bytes()
     token = core.TOKEN.read_bytes()
-    old_source = core.ADAPTER_SOURCE
-    monkeypatch.setattr(core, "ADAPTER_SOURCE", old_source.parent.parent / "hermes-installer-core-ccccccccc" / "src")
     monkeypatch.setattr(core, "ADAPTER_UPDATE_BACKUPS", core.JOURNAL.parent / "adapter-update-backups")
-    monkeypatch.setattr(core, "_validate_adapter_source_path", lambda: None)
-    monkeypatch.setattr(core, "_validate_adapter_generation_path", lambda _path: None)
     monkeypatch.setattr(core, "_owned_listener", lambda **_kwargs: enabled["value"])
     monkeypatch.setattr(core, "_owned_listener_pidfd", lambda **_kwargs: enabled["value"])
     _fake_update_pidfd(monkeypatch, enabled)
@@ -563,20 +594,17 @@ def test_interrupted_adapter_update_recovers_from_journaled_generation_backup(tm
     _calls, enabled, _old_launcher, _selection = _install_legacy_service_fixture(
         tmp_path, monkeypatch, journal_state="installed")
     core.migrate_owned_core_to_adapter_path()
+    old_source = _rebind_migrated_fixture_to_prior_generation()
     migrated_raw = core.JOURNAL.read_bytes()
     migrated_record = json.loads(migrated_raw)
-    prior_unguarded_unit = core._unit(startup_guard=False)
+    prior_unguarded_unit = core._unit(startup_guard=False, adapter_source=old_source)
     core._atomic_replace(core.UNIT, prior_unguarded_unit, 0o644, core.ROOT_UID, core.ROOT_UID)
     migrated_record["unit_sha256"] = hashlib.sha256(prior_unguarded_unit).hexdigest()
     core._replace_journal(migrated_record, expected_raw=migrated_raw)
     prior = core.JOURNAL.read_bytes()
     launcher = core.LAUNCHER.read_bytes()
     unit = core.UNIT.read_bytes()
-    old_source = core.ADAPTER_SOURCE
-    monkeypatch.setattr(core, "ADAPTER_SOURCE", old_source.parent.parent / "hermes-installer-core-ddddddddd" / "src")
     monkeypatch.setattr(core, "ADAPTER_UPDATE_BACKUPS", core.JOURNAL.parent / "adapter-update-backups")
-    monkeypatch.setattr(core, "_validate_adapter_source_path", lambda: None)
-    monkeypatch.setattr(core, "_validate_adapter_generation_path", lambda _path: None)
     monkeypatch.setattr(core, "_owned_listener", lambda **_kwargs: enabled["value"])
     monkeypatch.setattr(core, "_owned_listener_pidfd", lambda **_kwargs: enabled["value"])
     _fake_update_pidfd(monkeypatch, enabled)
@@ -615,19 +643,16 @@ def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pr
     _calls, enabled, _old_launcher, _selection = _install_legacy_service_fixture(
         tmp_path, monkeypatch, journal_state="installed")
     core.migrate_owned_core_to_adapter_path()
+    old_source = _rebind_migrated_fixture_to_prior_generation()
     migrated_raw = core.JOURNAL.read_bytes()
     migrated = json.loads(migrated_raw)
-    prior_unit = core._unit(startup_guard=False)
+    prior_unit = core._unit(startup_guard=False, adapter_source=old_source)
     core._atomic_replace(core.UNIT, prior_unit, 0o644, core.ROOT_UID, core.ROOT_UID)
     migrated["unit_sha256"] = hashlib.sha256(prior_unit).hexdigest()
     core._replace_journal(migrated, expected_raw=migrated_raw)
     prior = core.JOURNAL.read_bytes()
     prior_launcher = core.LAUNCHER.read_bytes()
-    old_source = core.ADAPTER_SOURCE
-    monkeypatch.setattr(core, "ADAPTER_SOURCE", old_source.parent.parent / "hermes-installer-core-eeeeeeeee" / "src")
     monkeypatch.setattr(core, "ADAPTER_UPDATE_BACKUPS", core.JOURNAL.parent / "adapter-update-backups")
-    monkeypatch.setattr(core, "_validate_adapter_source_path", lambda: None)
-    monkeypatch.setattr(core, "_validate_adapter_generation_path", lambda _path: None)
     monkeypatch.setattr(core, "_owned_listener", lambda **_kwargs: enabled["value"])
     monkeypatch.setattr(core, "_owned_listener_pidfd", lambda **_kwargs: enabled["value"])
     _fake_update_pidfd(monkeypatch, enabled)
@@ -1205,7 +1230,8 @@ def test_owned_journal_detects_mutated_service_file(tmp_path, monkeypatch):
         pw_gid = 1000
     monkeypatch.setattr(core.pwd, "getpwnam", lambda _: Account())
     monkeypatch.setattr(core, "_unit", lambda: contents[unit])
-    monkeypatch.setattr(core, "_launcher", lambda: contents[launcher])
+    monkeypatch.setattr(core, "_launcher",
+                        lambda adapter_source=None: contents[launcher])
     assert core._journal()["service"] == core.SERVICE
     launcher.write_bytes(b"changed")
     with pytest.raises(core.CoreRuntimeError, match="changed"):
