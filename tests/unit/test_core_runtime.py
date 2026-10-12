@@ -1229,7 +1229,7 @@ def test_owned_journal_detects_mutated_service_file(tmp_path, monkeypatch):
         pw_dir = "/home/admin"
         pw_gid = 1000
     monkeypatch.setattr(core.pwd, "getpwnam", lambda _: Account())
-    monkeypatch.setattr(core, "_unit", lambda: contents[unit])
+    monkeypatch.setattr(core, "_unit", lambda adapter_source=None: contents[unit])
     monkeypatch.setattr(core, "_launcher",
                         lambda adapter_source=None: contents[launcher])
     assert core._journal()["service"] == core.SERVICE
