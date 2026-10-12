@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import secrets
+import time
 
 import pytest
 
-from hermes_installer.remote.jarvis_chat import JarvisChatStore, JarvisChatDenied
+from hermes_installer.remote.jarvis_chat import ChatPrincipal, JarvisChatStore, JarvisChatDenied
 from hermes_installer.remote.jarvis_feature_contract import validate_feature_assets
 from hermes_installer.remote.jarvis_projects import JarvisProjectConflict, JarvisProjectsStore
 from hermes_installer.remote.jarvis_projects_assets import FEATURE_ASSETS
@@ -126,12 +127,26 @@ def test_conversation_trash_is_recoverable_and_preserves_chat_and_project_links(
     assert projects.visible_conversations("owner-a") == []
     assert projects.conversation_trash("owner-b") == []
     assert projects.get("owner-a", project["id"])["chats"] == []
-    assert chats.messages("owner-a", conversation_id)[0]["content"] == "keep this history"
+    assert chats.list_conversations("owner-a") == []
+    with pytest.raises(JarvisChatDenied):
+        chats.get_conversation("owner-a", conversation_id)
+    with pytest.raises(JarvisChatDenied):
+        chats.messages("owner-a", conversation_id)
+    with pytest.raises(JarvisChatDenied):
+        chats.begin_turn("owner-a", conversation_id, "should stay blocked", idem(),
+                         ChatPrincipal("owner-a", time.monotonic() + 30,
+                                       time.monotonic() + 5, "generation-a"))
+    # Hiding a chat is a reversible tombstone; its transcript and selected Obsidian
+    # note references remain retained for restoration.
+    with chats._connect() as db:
+        assert db.execute("SELECT content FROM messages WHERE conversation_id=?",
+                          (conversation_id,)).fetchone()[0] == "keep this history"
     assert projects.get("owner-a", project["id"])["obsidianNoteIds"] == ["note-id-1"]
     restored, replay = projects.restore_conversation("owner-a", conversation_id, idem(), 1)
     assert not replay and restored["deleted"] is False and restored["version"] == 2
     assert projects.conversation_is_live("owner-a", conversation_id)
     assert projects.conversation_version("owner-a", conversation_id) == 2
+    assert chats.messages("owner-a", conversation_id)[0]["content"] == "keep this history"
     assert projects.get("owner-a", project["id"])["chats"][0]["id"] == conversation_id
     reloaded = JarvisProjectsStore(JarvisChatStore(path))
     assert reloaded.conversation_is_live("owner-a", conversation_id)
@@ -140,13 +155,16 @@ def test_conversation_trash_is_recoverable_and_preserves_chat_and_project_links(
     assert reloaded.conversation_trash("owner-a")[0]["version"] == 3
 
 
-def test_projects_assets_are_bounded_static_and_describe_pending_note_content():
+def test_projects_assets_describe_the_verified_turn_context_boundary():
     validate_feature_assets((FEATURE_ASSETS,))
     assert FEATURE_ASSETS.feature_id == "projects"
     assert "sharedMemory" in FEATURE_ASSETS.mount_js
     assert "innerHTML" not in FEATURE_ASSETS.mount_js
     assert "data-notes" in FEATURE_ASSETS.view_html
     assert "/chat/api/second-brain/notes?limit=50" in FEATURE_ASSETS.mount_js
+    assert "verified Codex Responses turn" in FEATURE_ASSETS.mount_js
+    assert "current root-observed context" in FEATURE_ASSETS.view_html
+    assert "stale or unavailable context receive no project block" in FEATURE_ASSETS.view_html
 
 
 def test_trashing_chat_conflicts_with_active_turn_and_versions_survive_restore(tmp_path):

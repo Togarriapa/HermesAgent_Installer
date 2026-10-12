@@ -253,7 +253,14 @@ class JarvisChatStore:
     def list_conversations(self, subject: str) -> list[dict]:
         owner = self._owner(subject)
         with self._connect() as db:
-            rows = db.execute("SELECT id,title,updated FROM conversations WHERE owner=? ORDER BY updated DESC LIMIT 100",
+            has_trash = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                                   "AND name='jarvis_conversation_trash'").fetchone() is not None
+            query = ("SELECT c.id,c.title,c.updated FROM conversations c WHERE c.owner=? "
+                     + ("AND NOT EXISTS (SELECT 1 FROM jarvis_conversation_trash t "
+                        "WHERE t.conversation_id=c.id AND t.owner=c.owner AND t.deleted=1) "
+                        if has_trash else "")
+                     + "ORDER BY c.updated DESC LIMIT 100")
+            rows = db.execute(query,
                               (owner,)).fetchall()
         return [{"id": r["id"], "title": r["title"], "updatedAt": r["updated"]} for r in rows]
 
@@ -349,6 +356,12 @@ class JarvisChatStore:
         with self._connect() as db:
             row = db.execute("SELECT * FROM conversations WHERE id=? AND owner=?",
                               (conversation_id, self._owner(subject))).fetchone()
+            has_trash = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                                   "AND name='jarvis_conversation_trash'").fetchone() is not None
+            if (row is not None and has_trash and db.execute(
+                    "SELECT 1 FROM jarvis_conversation_trash WHERE conversation_id=? "
+                    "AND owner=? AND deleted=1", (conversation_id, self._owner(subject))).fetchone()):
+                row = None
         if row is None:
             raise JarvisChatDenied("conversation is unavailable")
         return row
@@ -398,6 +411,12 @@ class JarvisChatStore:
                     if existing["request_hash"] != request_hash:
                         raise JarvisChatDenied("idempotency key was already used")
                     raise JarvisChatDenied("turn request replay was denied")
+                has_trash = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                                       "AND name='jarvis_conversation_trash'").fetchone() is not None
+                if (has_trash and db.execute(
+                        "SELECT 1 FROM jarvis_conversation_trash WHERE conversation_id=? "
+                        "AND owner=? AND deleted=1", (conversation_id, owner)).fetchone()):
+                    raise JarvisChatDenied("conversation is unavailable")
                 active = db.execute("SELECT COUNT(*) FROM turns WHERE status IN ('queued','running')").fetchone()[0]
                 active_conversation = db.execute(
                     "SELECT COUNT(*) FROM turns WHERE conversation_id=? AND status IN ('queued','running')",
@@ -995,6 +1014,9 @@ class JarvisChatService:
                 if (principal.subject != target_subject
                         or principal.core_generation != target_generation):
                     raise JarvisChatDenied("core generation changed during resume")
+                # A chat may be moved to Trash while the native history request is in
+                # flight. Rejoin its live owner mapping before exposing the transcript.
+                current = self.store.get_conversation(principal.subject, conversation_id)
                 if (current["core_generation"] != target_generation
                         or current["backend_id"] != runtime_id):
                     phase = "runtime_mapping"
@@ -1287,6 +1309,39 @@ class JarvisChatService:
                         activity_principal, conversation_id, turn_id, session_id,
                         actual_session_id, stored_session_id=actual_stored_session_id)
                     session_id = actual_session_id
+                    # Per-message model turns run in a branched stored session. Register
+                    # that exact session with root before prompt.submit so the native
+                    # llm_request middleware can attach current project context there too.
+                    if self._owner_turn_register is not None and owner_turn_context is not None:
+                        access_jwt, accepted_ingress, mission_binding = owner_turn_context
+                        try:
+                            registration = {
+                                "access_jwt": access_jwt,
+                                "accepted_ingress": accepted_ingress,
+                                "session_id": actual_session_id,
+                                "conversation_id": conversation_id,
+                                "gateway_turn_id": turn_id,
+                                "prompt_sha256": hashlib.sha256(
+                                    text.encode("utf-8", errors="strict")).hexdigest(),
+                            }
+                            if mission_binding is not None:
+                                registration["mission_binding"] = mission_binding
+                            if planning_context is not None:
+                                registration["planning_context"] = planning_context
+                            owner_handle = await asyncio.wait_for(asyncio.to_thread(
+                                self._owner_turn_register, **registration), timeout=5.0)
+                            valid_handle = (isinstance(owner_handle, str)
+                                            and re.fullmatch(r"[0-9a-f]{32}", owner_handle))
+                            if (mission_binding is not None or planning_context is not None) and not valid_handle:
+                                raise JarvisChatDenied("mission owner-turn verification was not confirmed")
+                            if valid_handle:
+                                if len(self._owner_turn_handles) >= MAX_OWNER_TURN_HANDLES:
+                                    self._owner_turn_handles.popitem(last=False)
+                                self._owner_turn_handles[turn_id] = owner_handle
+                        except Exception:
+                            if mission_binding is not None or planning_context is not None:
+                                raise JarvisChatDenied(
+                                    "mission owner-turn verification is unavailable") from None
                     return True
 
                 if turn_configuration is not None:

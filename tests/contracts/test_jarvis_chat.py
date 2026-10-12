@@ -192,7 +192,71 @@ def test_per_message_model_effort_is_bound_into_turn_idempotency(tmp_path):
     with pytest.raises(JarvisChatDenied, match="idempotency"):
         store.begin_turn("subject-a", conversation["id"], "same prompt", "per-message-key-000000000001",
                          principal("subject-a"), turn_configuration={
-                             "model_id": "gpt-6-sol", "reasoning_effort": "low"})
+                         "model_id": "gpt-6-sol", "reasoning_effort": "low"})
+
+
+def test_per_message_isolated_session_registers_project_context_before_submit(tmp_path):
+    store = JarvisChatStore(tmp_path / "chat.sqlite3")
+    conversation = new_conversation(store, "subject-a")
+    access_jwt, ingress = "accepted-jwt-fixture", object()
+    registered, submitted = [], []
+
+    class Headers:
+        def getall(self, name, default=()):
+            return [access_jwt] if name == "Cf-Access-Jwt-Assertion" else list(default)
+
+    class Request:
+        headers = Headers()
+
+        def get(self, key):
+            return ingress if key == "core_ingress" else None
+
+    class Backend:
+        def stream_owned_turn(self, stored_session_id, text, *, isolated_model_id,
+                              isolated_reasoning_effort, on_isolated_session):
+            async def events():
+                assert stored_session_id == "private-stored-session-subject-a-1"
+                assert isolated_model_id == "gpt-6-sol"
+                assert isolated_reasoning_effort == "high"
+                await on_isolated_session("runtime-isolated", "stored-isolated")
+                submitted.append(text)
+                yield SimpleNamespace(kind="configuration", configuration={
+                    "provider": "openai-codex", "modelId": "gpt-6-sol",
+                    "reasoningEffort": "high", "reasoningEffortWire": "high"})
+                yield SimpleNamespace(kind="complete")
+            return events()
+
+        async def stop(self, _session_id):
+            pass
+
+    def register_owner_turn(**kwargs):
+        registered.append(kwargs)
+        return "a" * 32
+
+    service = JarvisChatService(
+        store, Backend(), principal_from_request=lambda _request: principal("subject-a"),
+        owner_turn_register=register_owner_turn)
+
+    async def exercise():
+        queued = await service.start_server_turn(
+            Request(), conversation_id=conversation["id"], text="Use the project context.",
+            idempotency_key="per-message-context-request-0001",
+            turn_configuration={"model_id": "gpt-6-sol", "reasoning_effort": "high"})
+        for _ in range(100):
+            if store.owned_turn("subject-a", queued["turn_id"])["status"] == "completed":
+                break
+            await asyncio.sleep(0.01)
+        assert store.owned_turn("subject-a", queued["turn_id"])["status"] == "completed"
+
+    asyncio.run(exercise())
+
+    assert submitted == ["Use the project context."]
+    assert len(registered) == 1
+    assert registered[0]["session_id"] == "runtime-isolated"
+    assert registered[0]["conversation_id"] == conversation["id"]
+    assert registered[0]["prompt_sha256"] == hashlib.sha256(
+        b"Use the project context.").hexdigest()
+    assert store.get_conversation("subject-a", conversation["id"])["session_key"] == "stored-isolated"
 
 
 def test_server_turn_mapping_runs_before_worker_and_failure_compensates_without_submit(tmp_path):

@@ -5,7 +5,7 @@ from .jarvis_feature_contract import JarvisFeatureAssets
 
 _VIEW = """<section class=\"projects-page\" aria-labelledby=\"projects-title\">
   <header class=\"projects-heading\"><p class=\"eyebrow\">YOUR WORKSPACES</p><h1 id=\"projects-title\">Projects</h1>
-    <p>Group chats around a shared goal. Instructions, saved context, and selected owner-vault notes are stored here; automatic native-chat context application is pending an official supported Hermes session interface.</p></header>
+    <p>Group chats around a shared goal. On verified Codex Responses turns, Jarvis adds this project’s instructions, saved context, recent project-chat excerpts, and selected owner-vault notes through the current root-observed context. Other transports and stale or unavailable context receive no project block; project data never grants permissions.</p></header>
   <div class=\"projects-layout\"><section class=\"projects-list\" aria-labelledby=\"projects-list-title\">
     <div class=\"projects-list-heading\"><h2 id=\"projects-list-title\">Projects</h2><button type=\"button\" data-new>New project</button></div>
     <ul data-project-list aria-label=\"Your projects\"></ul><p data-project-empty hidden>No projects yet. Create one to group chats.</p>
@@ -94,7 +94,7 @@ _MOUNT = r"""function mount(container, api, state) {
       control.add(option);
     }
     $('[data-notes-status]').textContent = vaultNotes.length
-      ? 'Choose notes from the current owner vault list. Their contents are read through the owner vault interface; applying them to native chats is pending supported Hermes context injection.'
+      ? 'Choose notes from the current owner vault list. Their current content is added only to a verified Codex Responses turn for this project; other transports and unavailable or stale vault context omit it.'
       : 'The owner vault note list is unavailable; existing links remain saved.';
   }
   function renderChats(items) {
