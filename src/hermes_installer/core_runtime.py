@@ -1,6 +1,7 @@
 """Fixed, journaled adoption of the pinned Hermes core service."""
 from __future__ import annotations
-import fcntl, grp, hashlib, json, os, pwd, re, secrets, shlex, stat, struct, subprocess, sys, tempfile, time
+import contextvars, fcntl, grp, hashlib, json, os, pwd, re, secrets, select, shlex, stat, struct, subprocess, sys, tempfile, threading, time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -23,6 +24,8 @@ PRIMARY_PROMPT_JOURNAL=Path("/var/lib/hermes-installer/core-runtime/primary-prom
 PRIMARY_PROMPT_BACKUPS=Path("/var/lib/hermes-installer/core-runtime/primary-prompt-backups")
 RESOURCES_SKILL_OVERLAYS=Path("/var/lib/hermes-installer/core-runtime/resources-skill-overlays")
 ADAPTER_MIGRATION_BACKUP=Path("/var/lib/hermes-installer/core-runtime/adapter-migration-backup")
+ADAPTER_UPDATE_BACKUPS=Path("/var/lib/hermes-installer/core-runtime/adapter-update-backups")
+ADAPTER_UPDATE_COHORT=Path("/var/lib/hermes-installer/core-runtime/adapter-update-cohort.json")
 # This exact older package was materialized before the importer helper was
 # hardened. Its only difference from the current package is that helper member;
 # the helper itself is not installed into the owner's Hermes tree.
@@ -63,7 +66,485 @@ FILE_CONTRACT=((UNIT,"unit_sha256",ROOT_UID,ROOT_UID,0o644),(LAUNCHER,"launcher_
                (TOKEN,"token_sha256",ROOT_UID,GATEWAY_GID,0o640))
 class CoreRuntimeError(RuntimeError): pass
 
+def _canonical_json(value):
+ """Canonical ASCII JSON bytes shared with the fixed Resources importer."""
+ return (json.dumps(value,sort_keys=True,separators=(",",":"),
+                    ensure_ascii=True,allow_nan=False)+"\n").encode("ascii")
+
+def _adapter_recipe_sha256(source,generation,unit_sha256,launcher_sha256):
+ """Digest the closed source/unit/launcher tuple used by update and boot gates."""
+ if (not isinstance(source,str) or not Path(source).is_absolute()
+     or not isinstance(generation,str) or re.fullmatch(r"[0-9a-f]{64}",generation) is None
+     or any(not isinstance(value,str) or re.fullmatch(r"[0-9a-f]{64}",value) is None
+            for value in (unit_sha256,launcher_sha256))):
+  raise CoreRuntimeError("adapter source recipe tuple is malformed")
+ return hashlib.sha256(_canonical_json({"schema":1,"source":source,
+  "generation":generation,"unit_sha256":unit_sha256,
+  "launcher_sha256":launcher_sha256})).hexdigest()
+
 _RESOURCES_PROFILE_SOURCE_SEAL = object()
+
+# A helper-only generation rebind is prepared and consumed inside one root
+# process.  The journal below is the recovery record; this short-lived object
+# is only an in-process capability to consume that exact journaled cohort.
+_SAME_MATERIALIZATION_SEAL = object()
+_PREPARED_SAME_MATERIALIZATION = {}
+_PREPARED_SAME_MATERIALIZATION_LOCK = threading.Lock()
+_GUARDED_OLD_READ_SEAL=object()
+_GUARDED_OLD_READ_ACTIVE={}
+_GUARDED_OLD_READ_CONTEXT=contextvars.ContextVar("core_guarded_old_read",default=None)
+_GUARDED_NEW_READ_CONTEXT=contextvars.ContextVar("core_guarded_new_read",default=None)
+_ADAPTER_UPDATE_LOCK_HELD=contextvars.ContextVar("adapter_update_lock_held",default=False)
+_ADAPTER_STARTUP_COHORT_CONTEXT=contextvars.ContextVar("adapter_startup_cohort_context",default=None)
+_ABSENT_DIGEST = "absent"
+_ADAPTER_COHORT_PURPOSE="adapter-source-binding-cohort"
+_ADAPTER_COHORT_PHASES={"prepared","resources-rebound","source-starting",
+                        "bindings-verified","committed","rolling-back"}
+_ADAPTER_COHORT_FIELDS={
+ "schema","purpose","cohort_transaction_id","owner_uid","home_role","phase",
+ "old_source","new_source","old_adapter_generation","new_adapter_generation",
+ "old_core_source_generation","new_core_source_generation",
+ "old_source_recipe_sha256","new_source_recipe_sha256","old_unit_sha256",
+ "old_launcher_sha256","new_unit_sha256","new_launcher_sha256",
+ "guarded_old_unit_sha256","guarded_old_recipe_sha256","old_process_identity_sha256",
+ "old_journal_sha256","new_journal_sha256","old_resources_record_sha256",
+ "pre_switch_resources_record_sha256","starting_journal_sha256",
+ "starting_resources_record_sha256","new_resources_record_sha256",
+ "old_artifact_sha256","new_artifact_sha256","owner_generation_backup_name",
+ "primary_record_sha256","obsidian_registration_state","obsidian_registration_sha256",
+ "obsidian_vault_tree_sha256","reconstruction","reconstruction_sha256",
+}
+_OVERLAY_RECONSTRUCTION_FIELDS={
+ "schema","purpose","cohort_transaction_id","owner_uid","home_role","phase",
+ "old_base_artifact_sha256","new_base_artifact_sha256",
+ "old_composed_artifact_sha256","new_composed_artifact_sha256",
+ "overlay_journal_sha256","overlay_contents",
+ "base_non_installer_manifest_sha256","composed_non_installer_manifest_sha256",
+ "materialized_tree_sha256","old_installed_journal_sha256",
+ "new_installed_journal_sha256","old_discovery_sha256","new_discovery_sha256",
+ "old_core_source_generation","new_core_source_generation",
+ "old_source_recipe_sha256","new_source_recipe_sha256",
+}
+
+@dataclass(frozen=True, slots=True)
+class GuardedOldReadCustody:
+ purpose:str
+ cohort_transaction_id:str
+ cohort_sha256:str
+ phase:str
+ owner_uid:int
+ home_role:str
+ old_journal_sha256:str
+ old_source:str
+ old_adapter_generation:str
+ old_core_source_generation:str
+ old_unit_sha256:str
+ old_launcher_sha256:str
+ old_source_recipe_sha256:str
+ guarded_old_unit_sha256:str
+ guarded_old_recipe_sha256:str
+ old_process_identity_sha256:str
+ pid:int
+ start_ticks:str
+ boot_id:str
+ expires_monotonic:float
+ pidfd:int=field(repr=False,compare=False)
+ _seal:object=field(repr=False,compare=False)
+
+@dataclass(frozen=True, slots=True)
+class GuardedNewReadCustody:
+ purpose:str
+ cohort_transaction_id:str
+ cohort_sha256:str
+ phase:str
+ owner_uid:int
+ home_role:str
+ starting_journal_sha256:str
+ starting_resources_record_sha256:str
+ new_source:str
+ new_adapter_generation:str
+ new_core_source_generation:str
+ new_unit_sha256:str
+ new_launcher_sha256:str
+ new_source_recipe_sha256:str
+ process_identity_sha256:str
+ pid:int
+ start_ticks:str
+ boot_id:str
+ expires_monotonic:float
+ pidfd:int=field(repr=False,compare=False)
+ _seal:object=field(repr=False,compare=False)
+
+_GUARDED_NEW_READ_SEAL=object()
+_GUARDED_NEW_READ_ACTIVE={}
+
+@dataclass(frozen=True, slots=True)
+class _BaseOnlyReconstruction:
+ new_composed_archive:bytes
+ old_base_artifact_sha256:str
+ new_base_artifact_sha256:str
+ old_composed_artifact_sha256:str
+ new_composed_artifact_sha256:str
+ overlay_journal_sha256:str
+ overlay_contents:tuple
+ base_non_installer_manifest_sha256:str
+ composed_non_installer_manifest_sha256:str
+ materialized_tree_sha256:str
+ shared_member_count:int
+
+@contextmanager
+def _adapter_update_lock():
+ """Serialize source, owner-overlay and primary edits in one fixed lock order."""
+ if os.geteuid()!=ROOT_UID:
+  raise CoreRuntimeError("adapter source cohort requires the root actor")
+ _ensure_dir(ADAPTER_UPDATE_BACKUPS,ROOT_UID,ROOT_UID,0o700)
+ _ensure_dir(RESOURCES_SKILL_OVERLAYS,ROOT_UID,ROOT_UID,0o700)
+ _ensure_dir(PRIMARY_PROMPT_BACKUPS,ROOT_UID,ROOT_UID,0o700)
+ paths=sorted((ADAPTER_UPDATE_BACKUPS/"cohort.lock",
+               RESOURCES_SKILL_OVERLAYS/"lock"),key=str)
+ fds=[]; token=None
+ try:
+  for path in paths:
+   fd=os.open(path,os.O_CREAT|os.O_RDWR|getattr(os,"O_NOFOLLOW",0),0o600)
+   info=os.fstat(fd)
+   if (not stat.S_ISREG(info.st_mode) or info.st_uid!=ROOT_UID or info.st_gid!=ROOT_UID
+       or stat.S_IMODE(info.st_mode)!=0o600 or info.st_nlink!=1):
+    os.close(fd); raise CoreRuntimeError("adapter update lock custody differs")
+   fcntl.flock(fd,fcntl.LOCK_EX); fds.append(fd)
+  token=_ADAPTER_UPDATE_LOCK_HELD.set(True)
+  yield
+ finally:
+  if token is not None: _ADAPTER_UPDATE_LOCK_HELD.reset(token)
+  for fd in reversed(fds):
+   try: fcntl.flock(fd,fcntl.LOCK_UN)
+   finally: os.close(fd)
+
+@dataclass(frozen=True, slots=True)
+class PreparedSameMaterializationTransition:
+ schema:int
+ purpose:str
+ cohort_transaction_id:str
+ owner_uid:int
+ owner_home:str
+ home_role:str
+ old_source_generation:str
+ new_source_generation:str
+ old_adapter_generation:str
+ new_adapter_generation:str
+ old_source_recipe_sha256:str
+ new_source_recipe_sha256:str
+ old_artifact_sha256:str
+ new_artifact_sha256:str
+ old_manifest_sha256:str
+ new_manifest_sha256:str
+ shared_manifest_sha256:str
+ shared_materialization_sha256:str
+ shared_member_count:int
+ old_base_artifact_sha256:str
+ new_base_artifact_sha256:str
+ old_composed_artifact_sha256:str
+ new_composed_artifact_sha256:str
+ overlay_journal_sha256:str
+ overlay_contents:tuple[tuple[str,str],...]
+ base_non_installer_manifest_sha256:str
+ composed_non_installer_manifest_sha256:str
+ materialized_tree_sha256:str
+ installed_generation_journal_sha256:str
+ installed_generation_custody_sha256:str
+ old_installed_journal_sha256:str
+ resources_record_sha256:str
+ discovery_record_sha256:str
+ old_discovery_sha256:str
+ overlay_record_sha256:str
+ primary_record_sha256:str
+ soul_sha256:str
+ soul_signature:tuple[int,...]
+ owner_prefix_sha256:str
+ owner_prefix_length:int
+ owner_separator_hex:str
+ managed_block_sha256:str
+ prior_backup_sha256:str
+ obsidian_registration_state:str
+ obsidian_registration_sha256:str
+ expires_monotonic:float
+ _seal:object=field(repr=False,compare=False)
+
+ @property
+ def cohort_id(self):
+  return self.cohort_transaction_id
+
+def _seal_prepared_same_materialization_transition(*,current_check=None,**values):
+ """Create the sole short-lived transition capability for the fixed updater."""
+ if os.geteuid()!=ROOT_UID or current_check is None or not callable(current_check):
+  raise CoreRuntimeError("same-materialization transition requires the root cohort producer")
+ values={**values,"schema":1,"purpose":"helper-only",
+         "owner_uid":1000,"owner_home":str(HERMES_HOME),
+         "expires_monotonic":time.monotonic()+360.0,
+         "_seal":_SAME_MATERIALIZATION_SEAL}
+ try:
+  prepared=PreparedSameMaterializationTransition(**values)
+ except (TypeError,ValueError):
+  raise CoreRuntimeError("same-materialization transition evidence is incomplete") from None
+ if not _prepared_same_materialization_shape(prepared):
+  raise CoreRuntimeError("same-materialization transition evidence is malformed")
+ with _PREPARED_SAME_MATERIALIZATION_LOCK:
+  expired=[key for key,state in _PREPARED_SAME_MATERIALIZATION.items()
+           if time.monotonic()>=state["object"].expires_monotonic]
+  for key in expired: _PREPARED_SAME_MATERIALIZATION.pop(key,None)
+  _PREPARED_SAME_MATERIALIZATION[id(prepared)]={
+   "object":prepared,"current_check":current_check,"claims":set(),
+  }
+ return prepared
+
+def _prepared_same_materialization_shape(value):
+ hashes=("old_source_generation","new_source_generation","old_source_recipe_sha256",
+  "new_source_recipe_sha256","old_adapter_generation","new_adapter_generation",
+  "old_artifact_sha256","new_artifact_sha256",
+  "old_manifest_sha256","new_manifest_sha256","shared_manifest_sha256",
+  "shared_materialization_sha256","installed_generation_journal_sha256",
+  "installed_generation_custody_sha256","old_installed_journal_sha256",
+  "resources_record_sha256","discovery_record_sha256","old_discovery_sha256",
+  "old_base_artifact_sha256","new_base_artifact_sha256",
+  "old_composed_artifact_sha256","new_composed_artifact_sha256",
+  "base_non_installer_manifest_sha256","composed_non_installer_manifest_sha256",
+  "materialized_tree_sha256")
+ try:
+  if (value.shared_member_count<1 or value.shared_member_count>20000
+      or any(not isinstance(getattr(value,key),str)
+             or re.fullmatch(r"[0-9a-f]{64}",getattr(value,key)) is None for key in hashes)
+      or not isinstance(value.cohort_transaction_id,str)
+      or re.fullmatch(r"[0-9a-f]{32}",value.cohort_transaction_id) is None
+      or value.home_role!="jarvis-primary-home"
+      or type(value.overlay_contents) is not tuple
+      or len(value.overlay_contents)>396
+      or tuple(sorted(value.overlay_contents))!=value.overlay_contents
+      or any(type(row) is not tuple or len(row)!=2
+             or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}",row[0]) is None
+             or re.fullmatch(r"[0-9a-f]{64}",row[1]) is None for row in value.overlay_contents)):
+   return False
+  for key in ("overlay_journal_sha256","overlay_record_sha256","primary_record_sha256",
+              "obsidian_registration_sha256"):
+   item=getattr(value,key)
+   if item!=_ABSENT_DIGEST and re.fullmatch(r"[0-9a-f]{64}",str(item)) is None:
+    return False
+  if ((value.overlay_journal_sha256==_ABSENT_DIGEST)!=(not value.overlay_contents)
+      or value.obsidian_registration_state not in {"absent","registered"}
+      or (value.obsidian_registration_state=="absent")
+          !=(value.obsidian_registration_sha256==_ABSENT_DIGEST)):
+   return False
+  if value.primary_record_sha256==_ABSENT_DIGEST:
+   if (value.soul_sha256!=_ABSENT_DIGEST or value.owner_prefix_sha256!=_ABSENT_DIGEST
+       or value.managed_block_sha256!=_ABSENT_DIGEST or value.prior_backup_sha256!=_ABSENT_DIGEST
+       or value.owner_prefix_length!=0 or value.owner_separator_hex!=""
+       or value.soul_signature!=()):
+    return False
+  elif (any(re.fullmatch(r"[0-9a-f]{64}",str(item)) is None for item in (
+        value.soul_sha256,value.owner_prefix_sha256,value.managed_block_sha256,
+        value.prior_backup_sha256))
+        or type(value.owner_prefix_length) is not int or value.owner_prefix_length<0
+        or type(value.soul_signature) is not tuple or len(value.soul_signature)!=9
+        or any(type(part) is not int or part<0 for part in value.soul_signature)
+        or not isinstance(value.owner_separator_hex,str)
+        or len(value.owner_separator_hex)>16 or len(value.owner_separator_hex)%2):
+   return False
+  return True
+ except (AttributeError,TypeError,ValueError):
+  return False
+
+def verify_prepared_same_materialization_transition(value,*,purpose="helper-only"):
+ """Check exact in-process seal, purpose, deadline and producer currentness."""
+ try:
+  if (type(value) is not PreparedSameMaterializationTransition
+      or value._seal is not _SAME_MATERIALIZATION_SEAL
+      or value.purpose!=purpose or value.schema!=1
+      or value.owner_uid!=1000 or value.owner_home!=str(HERMES_HOME)
+      or not _prepared_same_materialization_shape(value)
+      or time.monotonic()>=value.expires_monotonic):
+   return False
+  state=_PREPARED_SAME_MATERIALIZATION.get(id(value))
+  if state is None or state.get("object") is not value:
+   return False
+  return bool(state["current_check"](value,purpose))
+ except Exception:
+  return False
+
+def claim_prepared_same_materialization_step(value,*,step):
+ """One-shot claim immediately before a fixed cohort side effect."""
+ if step not in {"resources-import","primary-rebase"}:
+  return False
+ with _PREPARED_SAME_MATERIALIZATION_LOCK:
+  if not verify_prepared_same_materialization_transition(value):
+   return False
+  state=_PREPARED_SAME_MATERIALIZATION.get(id(value))
+  if state is None or step in state["claims"]:
+   return False
+  state["claims"].add(step)
+  return True
+
+def _read_adapter_update_cohort(*,allow_absent=False):
+ try:
+  raw=_projection_file(ADAPTER_UPDATE_COHORT,owner=ROOT_UID,group=ROOT_UID,
+                       mode=0o400,maximum=128*1024)
+ except FileNotFoundError:
+  if allow_absent: return None,None
+  raise CoreRuntimeError("adapter update cohort journal is missing") from None
+ try:
+  def unique(pairs):
+   value={}
+   for key,item in pairs:
+    if key in value: raise ValueError
+    value[key]=item
+   return value
+  row=json.loads(raw,object_pairs_hook=unique)
+  if (type(row) is not dict or set(row)!=_ADAPTER_COHORT_FIELDS
+      or type(row.get("schema")) is not int or row["schema"]!=1
+      or row.get("purpose")!=_ADAPTER_COHORT_PURPOSE
+      or type(row.get("owner_uid")) is not int or row["owner_uid"]!=1000
+      or row.get("home_role")!="jarvis-primary-home"
+      or row.get("phase") not in _ADAPTER_COHORT_PHASES
+      or not isinstance(row.get("cohort_transaction_id"),str)
+      or re.fullmatch(r"[0-9a-f]{32}",row["cohort_transaction_id"]) is None):
+   raise ValueError
+  for key in ("old_adapter_generation","new_adapter_generation",
+      "old_core_source_generation","new_core_source_generation",
+      "old_source_recipe_sha256","new_source_recipe_sha256","old_unit_sha256",
+      "old_launcher_sha256","new_unit_sha256","new_launcher_sha256",
+      "guarded_old_unit_sha256","guarded_old_recipe_sha256","old_process_identity_sha256",
+      "old_journal_sha256","pre_switch_resources_record_sha256","starting_journal_sha256",
+      "starting_resources_record_sha256","new_journal_sha256","old_resources_record_sha256",
+      "new_resources_record_sha256","old_artifact_sha256","new_artifact_sha256",
+      "primary_record_sha256","obsidian_registration_sha256","obsidian_vault_tree_sha256"):
+   if row[key] is not None and row[key]!=_ABSENT_DIGEST and re.fullmatch(r"[0-9a-f]{64}",str(row[key])) is None:
+    raise ValueError
+  future_hashes={"pre_switch_resources_record_sha256","starting_journal_sha256",
+   "starting_resources_record_sha256","new_journal_sha256","new_resources_record_sha256"}
+  phase=row["phase"]
+  if any(row[key] is None for key in {
+      "guarded_old_unit_sha256","guarded_old_recipe_sha256","old_process_identity_sha256",
+      "old_journal_sha256","old_resources_record_sha256","old_unit_sha256","old_launcher_sha256",
+      "old_source_recipe_sha256","old_adapter_generation","old_core_source_generation",
+      "new_adapter_generation","new_core_source_generation","new_unit_sha256","new_launcher_sha256",
+      "new_source_recipe_sha256","old_artifact_sha256","new_artifact_sha256"}):
+   raise ValueError
+  backup_name=row["owner_generation_backup_name"]
+  if (not isinstance(backup_name,str)
+      or backup_name!=".jarvis-resources-skills-helper-transition-"+row["cohort_transaction_id"]):
+   raise ValueError
+  if (phase=="prepared"
+      and any(row[key] is not None for key in future_hashes)):
+   raise ValueError
+  if (phase=="resources-rebound"
+      and (row["pre_switch_resources_record_sha256"] is None
+       or any(row[key] is not None for key in ("starting_journal_sha256","starting_resources_record_sha256","new_journal_sha256","new_resources_record_sha256")))):
+   raise ValueError
+  if (phase in {"source-starting","bindings-verified"}
+      and any(row[key] is None for key in ("pre_switch_resources_record_sha256","starting_journal_sha256","starting_resources_record_sha256"))):
+   raise ValueError
+  if phase=="committed" and any(row[key] is None for key in future_hashes): raise ValueError
+  if phase=="rolling-back" and any(not (row[key] is None or isinstance(row[key],str)) for key in future_hashes):
+   raise ValueError
+  for key in ("old_source","new_source"):
+   if not isinstance(row[key],str) or not Path(row[key]).is_absolute(): raise ValueError
+  reconstruction=row["reconstruction"]
+  base_only=(isinstance(reconstruction,dict)
+             and reconstruction.get("purpose")=="helper-only-base-reconstruction")
+  if (row["obsidian_registration_state"] not in {"absent","registered"}
+      or (row["obsidian_registration_state"]=="absent")
+          !=(row["obsidian_registration_sha256"]==_ABSENT_DIGEST)
+      or type(reconstruction) is not dict
+      or set(reconstruction)!=_OVERLAY_RECONSTRUCTION_FIELDS
+      or type(reconstruction.get("schema")) is not int or reconstruction["schema"]!=1
+      or reconstruction.get("purpose") not in {
+       "helper-only-overlay-reconstruction","helper-only-base-reconstruction"}
+      or reconstruction.get("cohort_transaction_id")!=row["cohort_transaction_id"]
+      or reconstruction.get("owner_uid")!=1000
+      or reconstruction.get("home_role")!="jarvis-primary-home"
+      or reconstruction.get("phase")!=row["phase"]
+      or reconstruction.get("new_core_source_generation")!=row["new_core_source_generation"]
+      or reconstruction.get("old_core_source_generation")!=row["old_core_source_generation"]
+      or reconstruction.get("new_source_recipe_sha256")!=row["new_source_recipe_sha256"]
+      or reconstruction.get("old_source_recipe_sha256")!=row["old_source_recipe_sha256"]
+      or reconstruction.get("old_composed_artifact_sha256")!=row["old_artifact_sha256"]
+      or reconstruction.get("new_composed_artifact_sha256")!=row["new_artifact_sha256"]):
+   raise ValueError
+  for key in _OVERLAY_RECONSTRUCTION_FIELDS-{
+      "schema","purpose","cohort_transaction_id","owner_uid","home_role","phase","overlay_contents"}:
+   if base_only and key=="overlay_journal_sha256" and reconstruction[key]==_ABSENT_DIGEST:
+    continue
+   if reconstruction[key] is None and phase in {"prepared","rolling-back"} and key in {
+       "new_installed_journal_sha256","new_discovery_sha256"}: continue
+   if not isinstance(reconstruction[key],str) or re.fullmatch(r"[0-9a-f]{64}",reconstruction[key]) is None:
+    raise ValueError
+  contents=reconstruction["overlay_contents"]
+  if (type(contents) is not list or len(contents)>396
+      or any(type(item) is not dict or set(item)!={"skill_id","content_sha256"}
+          or not isinstance(item.get("skill_id"),str)
+          or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}",item["skill_id"]) is None
+          or not isinstance(item.get("content_sha256"),str)
+          or re.fullmatch(r"[0-9a-f]{64}",item["content_sha256"]) is None for item in contents)
+      or [item["skill_id"] for item in contents]!=sorted({item["skill_id"] for item in contents})):
+   raise ValueError
+  if base_only and (reconstruction["overlay_journal_sha256"]!=_ABSENT_DIGEST
+      or contents
+      or reconstruction["old_base_artifact_sha256"]!=reconstruction["old_composed_artifact_sha256"]
+      or reconstruction["new_base_artifact_sha256"]!=reconstruction["new_composed_artifact_sha256"]
+      or reconstruction["base_non_installer_manifest_sha256"]
+          !=reconstruction["composed_non_installer_manifest_sha256"]):
+   raise ValueError
+  if hashlib.sha256((json.dumps(reconstruction,sort_keys=True,separators=(",",":"),ensure_ascii=True)+"\n").encode("ascii")).hexdigest()!=row["reconstruction_sha256"]:
+   raise ValueError
+  canonical=(json.dumps(row,sort_keys=True,separators=(",",":"),ensure_ascii=True)+"\n").encode("ascii")
+  if raw!=canonical: raise ValueError
+  return row,raw
+ except Exception:
+  raise CoreRuntimeError("adapter update cohort journal is malformed or foreign") from None
+
+def _write_adapter_update_cohort(row,*,expected_raw):
+ if os.geteuid()!=ROOT_UID or type(row) is not dict or set(row)!=_ADAPTER_COHORT_FIELDS:
+  raise CoreRuntimeError("adapter update cohort write is not root-selected")
+ current=None
+ try: current=_projection_file(ADAPTER_UPDATE_COHORT,owner=ROOT_UID,group=ROOT_UID,mode=0o400,maximum=128*1024)
+ except FileNotFoundError: pass
+ if current!=expected_raw: raise CoreRuntimeError("adapter update cohort changed before journal commit")
+ raw=(json.dumps(row,sort_keys=True,separators=(",",":"),ensure_ascii=True)+"\n").encode("ascii")
+ _atomic_replace(ADAPTER_UPDATE_COHORT,raw,0o400,ROOT_UID,ROOT_UID)
+ _sync_directory(ADAPTER_UPDATE_COHORT.parent)
+ if _projection_file(ADAPTER_UPDATE_COHORT,owner=ROOT_UID,group=ROOT_UID,mode=0o400,maximum=128*1024)!=raw:
+  raise CoreRuntimeError("adapter update cohort journal readback differs")
+ return raw
+
+def _validate_adapter_update_cohort_journal(record,raw_journal):
+ """Default `_journal` admission is final-commit only; scopes handle staged reads."""
+ unit=_projection_file(UNIT,owner=ROOT_UID,group=ROOT_UID,mode=0o644,maximum=256*1024)
+ if b"LoadCredential=adapter-update-cohort:" not in unit:
+  return None
+ cohort,_raw=_read_adapter_update_cohort()
+ if cohort["phase"]!="committed":
+  raise CoreRuntimeError("adapter source binding cohort is not committed")
+ journal_sha=hashlib.sha256(raw_journal).hexdigest()
+ unit_sha=hashlib.sha256(unit).hexdigest()
+ resources_raw=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024)
+ launcher=_projection_file(LAUNCHER,owner=ROOT_UID,group=ROOT_UID,mode=0o755,maximum=256*1024)
+ if (record.get("adapter_update_cohort_transaction_id")!=cohort["cohort_transaction_id"]
+     or record.get("adapter_source")!=cohort["new_source"]
+     or record.get("adapter_generation")!=cohort["new_adapter_generation"]
+     or record.get("core_source_generation")!=cohort["new_core_source_generation"]
+     or record.get("adapter_update_state")!="active"
+     or journal_sha!=cohort["new_journal_sha256"]
+     or hashlib.sha256(resources_raw).hexdigest()!=cohort["new_resources_record_sha256"]
+     or unit_sha!=cohort["new_unit_sha256"]
+     or hashlib.sha256(launcher).hexdigest()!=cohort["new_launcher_sha256"]
+     or record.get("unit_sha256")!=cohort["new_unit_sha256"]
+     or record.get("launcher_sha256")!=cohort["new_launcher_sha256"]):
+  raise CoreRuntimeError("committed adapter cohort tuple differs from final source custody")
+ if (cohort["new_source"]!=str(ADAPTER_SOURCE)
+     or _core_source_generation()!=cohort["new_core_source_generation"]
+     or cohort["new_source_recipe_sha256"]!=_adapter_recipe_sha256(
+       cohort["new_source"],cohort["new_adapter_generation"],
+       cohort["new_unit_sha256"],cohort["new_launcher_sha256"])):
+  raise CoreRuntimeError("committed adapter source recipe differs from current reviewed source")
+ _validate_adapter_generation_path(Path(cohort["old_source"]))
+ return cohort
 
 @dataclass(frozen=True, slots=True)
 class VerifiedResourcesProfileSource:
@@ -780,49 +1261,27 @@ def _verified_legacy_materialization(native,current_manifest,current_files,*,rep
    repair_umask_dirs=True)
  return archive,old_manifest,old_files,artifact_sha,manifest_sha
 
-def _verified_resources_payload(_admin_receipt=None,*,repair_umask_dirs=False):
+def _verified_resources_payload(_admin_receipt=None,*,repair_umask_dirs=False,
+                                _prepared_transition=None):
  """Build a root-derived receipt and initiate a fresh pinned native-loader query."""
  from .registry import manual_jarvis_skills as native
  archive=native.build_manual_jarvis_skills_artifact()
  base_archive=archive
- artifact_sha=hashlib.sha256(archive).hexdigest()
- manifest,files=native._read_artifact(archive,artifact_sha)
  # Owner edits are root-journaled overlays over exact pinned member IDs. The
  # source artifact remains byte-for-byte immutable and is rebuilt above.
- overlay_record_path=RESOURCES_SKILL_OVERLAYS/"active.json"
- try:
-  overlay_record_bytes=_projection_file(overlay_record_path,owner=ROOT_UID,group=ROOT_UID,
-    mode=0o600,maximum=256*1024)
- except FileNotFoundError:
-  overlay_record_bytes=None
- if overlay_record_bytes is not None:
-  try:
-   from .registry import resources_skill_overlay as skill_overlay
-   overlay_record=json.loads(overlay_record_bytes)
-   if (type(overlay_record) is not dict or set(overlay_record)!={"schema","base_artifact_sha256","skills"}
-       or overlay_record.get("schema")!=1 or overlay_record.get("base_artifact_sha256")!=artifact_sha
-       or type(overlay_record.get("skills")) is not dict or len(overlay_record["skills"])>396):
-    raise ValueError
-   pinned={row["skill_id"]:row for row in manifest["skill_members"]}
-   overlay_contents={}
-   for skill_id,row in sorted(overlay_record["skills"].items()):
-    if (skill_id not in pinned or type(row) is not dict
-        or set(row)!={"content_sha256","archive_sha256"}
-        or re.fullmatch(r"[0-9a-f]{64}",row["content_sha256"]) is None
-        or re.fullmatch(r"[0-9a-f]{64}",row["archive_sha256"]) is None):
-     raise ValueError
-    content=_projection_file(RESOURCES_SKILL_OVERLAYS/(row["content_sha256"]+".bin"),
-      owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=256*1024)
-    if hashlib.sha256(content).hexdigest()!=row["content_sha256"]:
-     raise ValueError
-    overlay_contents[skill_id]=content
-   archive,archive_digests=skill_overlay.compose_overlays(base_archive,overlay_contents)
-   for skill_id,row in overlay_record["skills"].items():
-    if archive_digests.get(skill_id)!=row["archive_sha256"]: raise ValueError
-   artifact_sha=hashlib.sha256(archive).hexdigest()
-   manifest,files=native._read_artifact(archive,artifact_sha)
-  except Exception:
-   raise CoreRuntimeError("root Resources skill overlay journal is malformed or unverifiable") from None
+ if _prepared_transition is None:
+  overlay_record,overlay_contents,overlay_raw=_resources_skill_overlay_read()
+  archive,artifact_sha=_current_resources_overlay_artifact(
+   base_archive,overlay_record,overlay_contents,overlay_raw)
+ else:
+  overlay_record,overlay_contents,overlay_raw,reconstruction=_prepared_transition
+  if hashlib.sha256(base_archive).hexdigest()!=reconstruction.new_base_artifact_sha256:
+   raise CoreRuntimeError("prepared helper-only new base differs from the reviewed source")
+  archive=reconstruction.new_composed_archive
+  artifact_sha=reconstruction.new_composed_artifact_sha256
+  if overlay_raw is None and (archive!=base_archive or overlay_contents):
+   raise CoreRuntimeError("absent overlay cannot be represented as a reconstructed chain")
+ manifest,files=native._read_artifact(archive,artifact_sha)
  expected_other=len(manifest["bundled_resource_inventory"])-len(manifest["skill_members"])-len(manifest["profile_members"])
  if len(manifest["skill_members"])!=396 or len(manifest["profile_members"])!=208 or expected_other!=88:
   raise CoreRuntimeError("pinned offline Resources inventory differs")
@@ -918,7 +1377,8 @@ def _resources_skill_overlay_read():
  try:
   record=json.loads(raw)
   if (type(record) is not dict or set(record)!={"schema","base_artifact_sha256","skills"}
-      or record.get("schema")!=1 or record.get("base_artifact_sha256")!=base_sha
+      or record.get("schema")!=1
+      or re.fullmatch(r"[0-9a-f]{64}",str(record.get("base_artifact_sha256",""))) is None
       or type(record.get("skills")) is not dict or len(record["skills"])>396): raise ValueError
   contents={}
   for name,row in record["skills"].items():
@@ -930,12 +1390,140 @@ def _resources_skill_overlay_read():
      owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=256*1024)
    if hashlib.sha256(content).hexdigest()!=row["content_sha256"]: raise ValueError
    contents[name]=content
-  from .registry import resources_skill_overlay as transform
-  _,digests=transform.compose_overlays(base_archive,contents)
-  if any(digests.get(name)!=row["archive_sha256"] for name,row in record["skills"].items()): raise ValueError
+  _current_resources_overlay_artifact(base_archive,record,contents,raw)
   return record,contents,raw
  except Exception:
   raise CoreRuntimeError("root Resources skill overlay journal is malformed or unverifiable") from None
+
+def _current_resources_overlay_artifact(base_archive,record,contents,raw):
+ """Derive the one current effective artifact, including exact committed rebinds."""
+ from .registry import manual_jarvis_skills as native
+ from .registry import resources_skill_overlay as transform
+ base_sha=hashlib.sha256(base_archive).hexdigest()
+ if raw is None:
+  if record!={"schema":1,"base_artifact_sha256":base_sha,"skills":{}} or contents:
+   raise CoreRuntimeError("absent Resources overlay differs from the current exact base")
+  return base_archive,base_sha
+ if record.get("base_artifact_sha256")==base_sha:
+  archive,digests=transform.compose_overlays(base_archive,contents)
+  if any(digests.get(name)!=row["archive_sha256"] for name,row in record["skills"].items()):
+   raise CoreRuntimeError("Resources overlay chain differs from its exact current base")
+  return archive,hashlib.sha256(archive).hexdigest()
+ cohort,_raw=_read_adapter_update_cohort()
+ old_scope=_GUARDED_OLD_READ_CONTEXT.get()
+ if old_scope is not None and _validate_guarded_old_read(old_scope):
+  if cohort["phase"]!="resources-rebound" or cohort.get("reconstruction") is None:
+   raise CoreRuntimeError("staged Resources reconstruction is not ready for fixed root readback")
+  return _resolve_staged_resources_reconstruction(
+   native,transform,base_archive,record,contents,raw,cohort,starting=False)
+ new_scope=_GUARDED_NEW_READ_CONTEXT.get()
+ if new_scope is not None and _validate_guarded_new_read(new_scope):
+  if cohort["phase"]!="source-starting" or cohort.get("reconstruction") is None:
+   raise CoreRuntimeError("starting Resources reconstruction is not ready for fixed root readback")
+  return _resolve_staged_resources_reconstruction(
+   native,transform,base_archive,record,contents,raw,cohort,starting=True)
+ if cohort["phase"]!="committed" or cohort.get("reconstruction") is None:
+  raise CoreRuntimeError("Resources helper-only reconstruction is not committed")
+ row=cohort["reconstruction"]
+ root_journal=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+ discovery_raw=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024)
+ installed_journal=_projection_file(HERMES_HOME/"skills"/native._GENERATION/native._OWNER_FILE,
+  owner=1000,group=1000,mode=0o600,maximum=2*1024*1024)
+ unit=_projection_file(UNIT,owner=ROOT_UID,group=ROOT_UID,mode=0o644,maximum=256*1024)
+ launcher=_projection_file(LAUNCHER,owner=ROOT_UID,group=ROOT_UID,mode=0o755,maximum=256*1024)
+ current=_journal()
+ try:
+  from hermes_installer.remote.core_gateway_inspector import _current_native_adapter_generation
+  live_generation=_current_native_adapter_generation(deadline=time.monotonic()+35.0)
+ except Exception:
+  raise CoreRuntimeError("current native adapter source proof is unavailable") from None
+ if (cohort.get("new_source")!=str(ADAPTER_SOURCE)
+     or live_generation!=cohort.get("new_adapter_generation")
+     or current.get("adapter_source")!=str(ADAPTER_SOURCE)
+     or current.get("adapter_generation")!=cohort.get("new_adapter_generation")
+     or current.get("core_source_generation")!=cohort.get("new_core_source_generation")
+     or hashlib.sha256(root_journal).hexdigest()!=cohort.get("new_journal_sha256")
+     or hashlib.sha256(discovery_raw).hexdigest()!=cohort.get("new_resources_record_sha256")
+     or hashlib.sha256(installed_journal).hexdigest()!=row.get("new_installed_journal_sha256")
+     or _adapter_recipe_sha256(str(ADAPTER_SOURCE),live_generation,
+          hashlib.sha256(unit).hexdigest(),hashlib.sha256(launcher).hexdigest())
+          !=cohort.get("new_source_recipe_sha256")
+     or not _owned_unit_loaded()
+     or not _owned_listener_pidfd(adapter_source=ADAPTER_SOURCE)):
+  raise CoreRuntimeError("committed Resources source or installed generation custody is stale")
+ old_base=_projection_file(RESOURCES_CAS/(row["old_base_artifact_sha256"]+".zip"),
+  owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
+ old_composed=_projection_file(RESOURCES_CAS/(row["old_composed_artifact_sha256"]+".zip"),
+  owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
+ if (hashlib.sha256(old_base).hexdigest()!=row["old_base_artifact_sha256"]
+     or hashlib.sha256(old_composed).hexdigest()!=row["old_composed_artifact_sha256"]
+     or base_sha!=row["new_base_artifact_sha256"]):
+  raise CoreRuntimeError("committed Resources helper-only CAS bytes differ")
+ context={key:row[key] for key in (
+  "cohort_transaction_id","owner_uid","home_role","old_installed_journal_sha256",
+  "new_installed_journal_sha256","old_discovery_sha256","new_discovery_sha256",
+  "old_core_source_generation","new_core_source_generation",
+  "old_source_recipe_sha256","new_source_recipe_sha256","phase")}
+ result=transform.resolve_committed_helper_only_overlay_reconstruction(
+  old_base,base_archive,old_composed,raw,contents,row,current_context=context)
+ new_sha=result.new_composed_artifact_sha256
+ if new_sha!=cohort["new_artifact_sha256"]:
+  raise CoreRuntimeError("committed Resources reconstruction differs from the source cohort")
+ return result.new_composed_archive,new_sha
+
+def _resolve_staged_resources_reconstruction(native,transform,base_archive,
+                                             record,contents,raw,cohort,*,starting):
+ """Resolve A1 only inside the sealed root read scope before source stop."""
+ old_row=cohort["reconstruction"]
+ journal_raw=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+ resources_raw=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024)
+ installed=_projection_file(HERMES_HOME/"skills"/native._GENERATION/native._OWNER_FILE,
+  owner=1000,group=1000,mode=0o600,maximum=2*1024*1024)
+ expected_journal=(cohort["starting_journal_sha256"] if starting else cohort["old_journal_sha256"])
+ expected_resources=(cohort["starting_resources_record_sha256"] if starting
+                     else cohort["pre_switch_resources_record_sha256"])
+ if (hashlib.sha256(journal_raw).hexdigest()!=expected_journal
+     or hashlib.sha256(resources_raw).hexdigest()!=expected_resources
+     or hashlib.sha256(installed).hexdigest()!=old_row.get("new_installed_journal_sha256")
+     or hashlib.sha256(raw).hexdigest()!=old_row.get("overlay_journal_sha256")):
+  raise CoreRuntimeError("staged Resources root readback custody differs")
+ old_base=_projection_file(RESOURCES_CAS/(old_row["old_base_artifact_sha256"]+".zip"),
+  owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
+ old_composed=_projection_file(RESOURCES_CAS/(old_row["old_composed_artifact_sha256"]+".zip"),
+  owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
+ if (hashlib.sha256(old_base).hexdigest()!=old_row["old_base_artifact_sha256"]
+     or hashlib.sha256(old_composed).hexdigest()!=old_row["old_composed_artifact_sha256"]):
+  raise CoreRuntimeError("staged Resources retained CAS bytes differ")
+ if old_row.get("purpose")=="helper-only-base-reconstruction":
+  result=_make_adapter_update_reconstruction(old_base,base_archive,old_composed,
+   None,{},None,installed,resources_raw)
+ else:
+  result=transform.reconstruct_helper_only_overlay_transition(
+   old_base,base_archive,old_composed,raw,contents)
+ expected={"old_base_artifact_sha256":result.old_base_artifact_sha256,
+  "new_base_artifact_sha256":result.new_base_artifact_sha256,
+  "old_composed_artifact_sha256":result.old_composed_artifact_sha256,
+  "new_composed_artifact_sha256":result.new_composed_artifact_sha256,
+  "overlay_journal_sha256":result.overlay_journal_sha256,
+  "overlay_contents":[{"skill_id":key,"content_sha256":sha} for key,sha in result.overlay_contents],
+  "base_non_installer_manifest_sha256":result.base_non_installer_manifest_sha256,
+  "composed_non_installer_manifest_sha256":result.composed_non_installer_manifest_sha256,
+  "materialized_tree_sha256":result.materialized_tree_sha256,
+  "new_installed_journal_sha256":hashlib.sha256(installed).hexdigest(),
+  "old_discovery_sha256":cohort["old_resources_record_sha256"],
+  "new_discovery_sha256":expected_resources,
+  "old_core_source_generation":cohort["old_core_source_generation"],
+  "new_core_source_generation":cohort["new_core_source_generation"],
+  "old_source_recipe_sha256":cohort["old_source_recipe_sha256"],
+  "new_source_recipe_sha256":cohort["new_source_recipe_sha256"]}
+ if any(old_row.get(key)!=value for key,value in expected.items()):
+  raise CoreRuntimeError("staged helper-only overlay reconstruction differs from the committed cohort")
+ manifest,files=native._read_artifact(result.new_composed_archive,result.new_composed_artifact_sha256)
+ if (hashlib.sha256(resources_raw).hexdigest()!=expected_resources
+     or json.loads(resources_raw).get("artifact_sha256")!=result.new_composed_artifact_sha256):
+  raise CoreRuntimeError("staged discovery record names a different composed artifact")
+ _hash_generation_tree(HERMES_HOME,manifest,files,result.new_composed_artifact_sha256)
+ return result.new_composed_archive,result.new_composed_artifact_sha256
 
 def list_archived_resources_skill_versions(skill_id,core_source_generation):
  """List restorable owner versions after revalidating source, root files and hashes."""
@@ -1252,6 +1840,11 @@ def read_current_resources_discovery(*,core_source_generation):
   if hashlib.sha256(archive).hexdigest()!=artifact_sha: return {**pending,"resources_state":"stale"}
   from .registry import manual_jarvis_skills as native
   manifest,files=native._read_artifact(archive,artifact_sha)
+  overlay_record,overlay_contents,overlay_raw=_resources_skill_overlay_read()
+  effective_archive,effective_sha=_current_resources_overlay_artifact(
+   native.build_manual_jarvis_skills_artifact(),overlay_record,overlay_contents,overlay_raw)
+  if effective_sha!=artifact_sha or effective_archive!=archive:
+   return {**pending,"resources_state":"stale"}
   overlay=manifest.get("effective_overlay")
   if not isinstance(overlay,dict): return {**pending,"resources_state":"stale"}
   expected_overlay={key:overlay.get(key) for key in (
@@ -1566,8 +2159,11 @@ def _repair_verified_pm_directory_fds(opened,parents,contract):
   os.fchmod(fd,0o755)
   if stat.S_IMODE(os.fstat(fd).st_mode)!=0o755:
    raise CoreRuntimeError("PM directory metadata repair failed")
-def _launcher():
- pythonpath=shlex.quote(f"{SOURCE}:{ADAPTER_SOURCE}")
+def _launcher(adapter_source=None):
+ # The fixed new recipe uses this checkout; recovery recipes may only name
+ # the exact source already present in the root-owned update backup.
+ source=Path(adapter_source) if adapter_source is not None else ADAPTER_SOURCE
+ pythonpath=shlex.quote(f"{SOURCE}:{source}")
  return f"""#!/bin/sh
 set -eu
 cred="$CREDENTIALS_DIRECTORY/hermes-session-token"
@@ -1584,10 +2180,10 @@ export PYTHONPATH={pythonpath}
 cd /home/admin/.hermes/workspaces/jarvis-core
 exec /home/admin/HermesInstaller/data/installs/dbd62d2bc9a23cac/environments/2be4b41371094d1c9745c2cfbd0f3fe0/venv/bin/python -P -m hermes_cli.main serve --isolated --host 127.0.0.1 --port 8766
 """.encode("ascii")
-def _core_start_guard_code(adapter_source=None):
+def _core_start_guard_code(adapter_source=None,cohort_gate=False):
  """Validate systemd's journal snapshot and the exact fixed service recipe."""
  expected_source=str(adapter_source or ADAPTER_SOURCE)
- return ("import hashlib,json,os,stat; "
+ base_code=("import hashlib,json,os,stat; "
          f"service={SERVICE!r}; source={expected_source!r}; "
          "base=os.environ.get('CREDENTIALS_DIRECTORY',''); "
          "jp=os.path.join(base,'core-ownership-journal'); tp=os.path.join(base,'hermes-session-token'); "
@@ -1606,15 +2202,35 @@ def _core_start_guard_code(adapter_source=None):
          "active_update_ok=(backup_ok and d.get('adapter_update_previous_source')!=source); "
          "phase_ok=(native_ok and (state is None or (state=='starting' and starting_ok) or (state=='active' and active_update_ok))); "
          "files=(("+repr(str(UNIT))+",0,0,0o644,d.get('unit_sha256')),("+repr(str(LAUNCHER))+",0,0,0o755,d.get('launcher_sha256'))); "
-         "ok=(ok and len(raw)==js.st_size and token and hashlib.sha256(token).hexdigest()==d.get('token_sha256') and d.get('schema')==1 and d.get('service')==service and d.get('state') in ('installed','active') and d.get('adapter_migration_state') in (None,'active') and phase_ok and all(valid(p,u,g,m,h) for p,u,g,m,h in files)); "
-         "raise SystemExit(0 if ok else 1)")
-def _unit(*,startup_guard=True,adapter_source=None):
+         "ok=(ok and len(raw)==js.st_size and token and hashlib.sha256(token).hexdigest()==d.get('token_sha256') and d.get('schema')==1 and d.get('service')==service and d.get('state') in ('installed','active') and d.get('adapter_migration_state') in (None,'active') and phase_ok and all(valid(p,u,g,m,h) for p,u,g,m,h in files)); ")
+ if cohort_gate:
+  gate_code=("import hashlib,json,os,stat; "
+    "cp=os.path.join(base,'adapter-update-cohort'); rp=os.path.join(base,'resources-discovery'); "
+    "cs=os.stat(cp,follow_symlinks=False); rs=os.stat(rp,follow_symlinks=False); "
+    "cr=open(cp,'rb').read(131073); rr=open(rp,'rb').read(16385); "
+    "c=json.loads(cr); r=json.loads(rr); "
+    "keys={'schema','purpose','cohort_transaction_id','owner_uid','home_role','phase','old_source','new_source','old_adapter_generation','new_adapter_generation','old_core_source_generation','new_core_source_generation','old_source_recipe_sha256','new_source_recipe_sha256','old_unit_sha256','old_launcher_sha256','new_unit_sha256','new_launcher_sha256','guarded_old_unit_sha256','guarded_old_recipe_sha256','old_process_identity_sha256','old_journal_sha256','new_journal_sha256','old_resources_record_sha256','pre_switch_resources_record_sha256','starting_journal_sha256','starting_resources_record_sha256','new_resources_record_sha256','old_artifact_sha256','new_artifact_sha256','owner_generation_backup_name','primary_record_sha256','obsidian_registration_state','obsidian_registration_sha256','obsidian_vault_tree_sha256','reconstruction','reconstruction_sha256'}; "
+    "canonical=lambda v:(json.dumps(v,sort_keys=True,separators=(',',':'),ensure_ascii=True,allow_nan=False)+'\\n').encode('ascii'); "
+    "recipe=lambda s,g,u,l:hashlib.sha256(canonical({'schema':1,'source':s,'generation':g,'unit_sha256':u,'launcher_sha256':l})).hexdigest(); "
+    "cp_ok=(stat.S_ISREG(cs.st_mode) and stat.S_IMODE(cs.st_mode)==0o400 and cs.st_nlink==1 and 0<len(cr)==cs.st_size<=131072); "
+    "rp_ok=(stat.S_ISREG(rs.st_mode) and stat.S_IMODE(rs.st_mode)==0o400 and rs.st_nlink==1 and 0<len(rr)==rs.st_size<=16384); "
+    "phase=c.get('phase'); starting=phase in ('source-starting','bindings-verified'); expected_j=c.get('starting_journal_sha256') if starting else c.get('new_journal_sha256'); expected_r=c.get('starting_resources_record_sha256') if starting else c.get('new_resources_record_sha256'); "
+    "reconstruction=c.get('reconstruction'); reconstruction_ok=(isinstance(reconstruction,dict) and hashlib.sha256(canonical(reconstruction)).hexdigest()==c.get('reconstruction_sha256') and reconstruction.get('cohort_transaction_id')==c.get('cohort_transaction_id') and reconstruction.get('phase')==phase and reconstruction.get('old_core_source_generation')==c.get('old_core_source_generation') and reconstruction.get('new_core_source_generation')==c.get('new_core_source_generation') and reconstruction.get('old_source_recipe_sha256')==c.get('old_source_recipe_sha256') and reconstruction.get('new_source_recipe_sha256')==c.get('new_source_recipe_sha256')); "
+    "cohort_ok=(cp_ok and rp_ok and canonical(c)==cr and set(c)==keys and c.get('schema')==1 and c.get('purpose')=='adapter-source-binding-cohort' and c.get('owner_uid')==1000 and c.get('home_role')=='jarvis-primary-home' and c.get('owner_generation_backup_name')=='.jarvis-resources-skills-helper-transition-'+c.get('cohort_transaction_id') and phase in ('source-starting','bindings-verified','committed') and reconstruction_ok and c.get('new_source')==source and c.get('new_adapter_generation')==d.get('adapter_generation') and c.get('new_core_source_generation')==d.get('core_source_generation') and c.get('new_source_recipe_sha256')==recipe(source,d.get('adapter_generation'),d.get('unit_sha256'),d.get('launcher_sha256')) and expected_j==hashlib.sha256(raw).hexdigest() and expected_r==hashlib.sha256(rr).hexdigest() and r.get('core_ownership_sha256')==hashlib.sha256(raw).hexdigest() and r.get('core_source_generation')==c.get('new_core_source_generation') and r.get('artifact_sha256')==c.get('new_artifact_sha256') and d.get('adapter_update_cohort_transaction_id')==c.get('cohort_transaction_id') and d.get('adapter_update_target_source')==source and d.get('adapter_update_target_generation')==d.get('adapter_generation') and ((starting and d.get('adapter_update_state')=='starting') or (phase=='committed' and d.get('adapter_update_state')=='active')) and hashlib.sha256(open('/etc/systemd/system/hermes-jarvis-core.service','rb').read()).hexdigest()==c.get('new_unit_sha256') and hashlib.sha256(open('/usr/local/libexec/hermes-jarvis-core-launcher','rb').read()).hexdigest()==c.get('new_launcher_sha256')); "
+    "ok=ok and cohort_ok; ")
+ else:
+  gate_code=""
+ return base_code+gate_code+"raise SystemExit(0 if ok else 1)"
+def _unit(*,startup_guard=True,adapter_source=None,cohort_gate=False):
  a=pwd.getpwnam("admin")
  if a.pw_uid!=1000 or a.pw_gid!=1000 or a.pw_dir!="/home/admin": raise CoreRuntimeError("admin identity mismatch")
  guard=""
  if startup_guard:
-  guard=(f'ExecStartPre={PYTHON} -I -S -c "{_core_start_guard_code(adapter_source)}"\n'
+  guard=(f'ExecStartPre={PYTHON} -I -S -c "{_core_start_guard_code(adapter_source,cohort_gate)}"\n'
          f'LoadCredential=core-ownership-journal:{JOURNAL}\n')
+  if cohort_gate:
+   guard+=(f'LoadCredential=adapter-update-cohort:{ADAPTER_UPDATE_COHORT}\n'
+           f'LoadCredential=resources-discovery:{RESOURCES_RECORD}\n')
  return f"""[Unit]
 Description=Jarvis isolated Hermes core
 After=network-online.target
@@ -1645,9 +2261,13 @@ WantedBy=multi-user.target
 """.encode()
 def _journal():
  if not JOURNAL.is_file() or JOURNAL.is_symlink(): raise CoreRuntimeError("core ownership journal missing")
- st=JOURNAL.stat()
- if st.st_uid!=ROOT_UID or stat.S_IMODE(st.st_mode)!=0o600: raise CoreRuntimeError("core journal permissions unsafe")
- try: d=json.loads(JOURNAL.read_text())
+ raw_journal=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+ old_scope=_GUARDED_OLD_READ_CONTEXT.get(); new_scope=_GUARDED_NEW_READ_CONTEXT.get()
+ guarded_old=old_scope is not None and _validate_guarded_old_read(old_scope)
+ guarded_new=new_scope is not None and _validate_guarded_new_read(new_scope)
+ if (old_scope is not None and not guarded_old) or (new_scope is not None and not guarded_new):
+  raise CoreRuntimeError("fixed source readback custody is stale")
+ try: d=json.loads(raw_journal)
  except (OSError,ValueError) as e: raise CoreRuntimeError("core journal invalid") from e
  if d.get("schema")!=1 or d.get("service")!=SERVICE or d.get("state") not in {"preparing","installed","active","retiring"}: raise CoreRuntimeError("core journal identity unsupported")
  if d["state"] in {"installed","active","retiring"}:
@@ -1656,11 +2276,15 @@ def _journal():
    if not p.is_file() or p.is_symlink(): raise CoreRuntimeError("owned service file changed")
    ps=p.stat()
    if (ps.st_uid,ps.st_gid,stat.S_IMODE(ps.st_mode),ps.st_nlink)!=(uid,gid,mode,1): raise CoreRuntimeError("owned service file metadata changed")
-   if not (d["state"]=="retiring" and d.get("cleanup_allow_partial")) and _digest(p)!=d.get(k):
+   if p==UNIT and guarded_old:
+    if _projection_file(UNIT,owner=ROOT_UID,group=ROOT_UID,mode=0o644,maximum=256*1024)!=_unit(
+        adapter_source=old_scope.old_source,cohort_gate=True):
+     raise CoreRuntimeError("physical guarded old unit differs")
+   elif not (d["state"]=="retiring" and d.get("cleanup_allow_partial")) and _digest(p)!=d.get(k):
     raise CoreRuntimeError("owned service file changed")
   if d.get("adapter_migration_state") == "preparing":
    raise CoreRuntimeError("adapter source migration recovery is required")
-  if d.get("adapter_update_state") in {"preparing", "starting"}:
+  if d.get("adapter_update_state") in {"preparing", "starting"} and not guarded_new:
    raise CoreRuntimeError("adapter source update recovery is required")
   if d.get("adapter_migration_state") == "active":
    adapter_source=d.get("adapter_source")
@@ -1672,11 +2296,21 @@ def _journal():
    _validate_adapter_generation_path(Path(adapter_source))
    if d.get("adapter_update_state")=="active":
     _validate_adapter_update_history(d)
+   unit_bytes=_projection_file(UNIT,owner=ROOT_UID,group=ROOT_UID,mode=0o644,maximum=256*1024)
+   if b"LoadCredential=adapter-update-cohort:" in unit_bytes:
+    if guarded_old:
+     pass
+    elif guarded_new:
+     _validate_guarded_new_read(new_scope)
+    else:
+     _validate_adapter_update_cohort_journal(d,raw_journal)
   else:
    adapter_source=None
-  if d["state"]!="retiring" and (d["unit_sha256"] not in {
-      hashlib.sha256(_unit(adapter_source=adapter_source)).hexdigest(),
-      hashlib.sha256(_unit(startup_guard=False,adapter_source=adapter_source)).hexdigest()} or
+  expected_units={hashlib.sha256(_unit(adapter_source=adapter_source)).hexdigest(),
+      hashlib.sha256(_unit(startup_guard=False,adapter_source=adapter_source)).hexdigest()}
+  if d.get("adapter_migration_state")=="active" and d.get("adapter_update_cohort_transaction_id") and not guarded_old:
+   expected_units.add(hashlib.sha256(_unit(adapter_source=adapter_source,cohort_gate=True)).hexdigest())
+  if d["state"]!="retiring" and not guarded_old and (d["unit_sha256"] not in expected_units or
       hashlib.sha256(_launcher(adapter_source=adapter_source)).hexdigest()!=d["launcher_sha256"]):
    raise CoreRuntimeError("owned service recipe differs from the reviewed source")
  return d
@@ -1688,7 +2322,7 @@ def status():
   return f"pending: owned unit is {active or 'unknown'} or its process-bound loopback listener is unproven"
  return f"owned isolated service and process-bound loopback listener verified at 127.0.0.1:8766; authenticated chat and restart proof pending; source {d['source_commit']}"
 
-def _owned_listener(*,legacy_launcher=False):
+def _owned_listener(*,adapter_source=ADAPTER_SOURCE,legacy_launcher=False):
  """Require systemd MainPID, expected argv/cgroup/UID, and its bound socket inode."""
  try:
   pid_text=_run(["systemctl","show","--property=MainPID","--value",SERVICE]).stdout.strip()
@@ -1708,7 +2342,7 @@ def _owned_listener(*,legacy_launcher=False):
   if argv!=expected: return False
   environment=(proc/"environ").read_bytes().split(b"\0")
   pythonpaths=[item[len(b"PYTHONPATH="):] for item in environment if item.startswith(b"PYTHONPATH=")]
-  expected_path=str(SOURCE if legacy_launcher else Path(f"{SOURCE}:{ADAPTER_SOURCE}")).encode("ascii")
+  expected_path=str(SOURCE if legacy_launcher else Path(f"{SOURCE}:{adapter_source}")).encode("ascii")
   if pythonpaths!=[expected_path]: return False
   if not any(SERVICE in line for line in (proc/"cgroup").read_text().splitlines()): return False
   socket_inodes=set()
@@ -1727,6 +2361,213 @@ def _owned_listener(*,legacy_launcher=False):
  except (OSError,ValueError,UnicodeError):
   return False
  return False
+
+def _owned_listener_pidfd(*,adapter_source=ADAPTER_SOURCE):
+ """Recheck one live systemd PID and its listener through a stable PIDFD."""
+ pidfd=None
+ try:
+  if not hasattr(os,"pidfd_open"): return False
+  pid_text=_run(["systemctl","show","--property=MainPID","--value",SERVICE]).stdout.strip()
+  pid=int(pid_text)
+  if pid<=1: return False
+  pidfd=os.pidfd_open(pid,0)
+  poller=select.poll(); poller.register(pidfd,select.POLLIN|select.POLLHUP|select.POLLERR|select.POLLNVAL)
+  if (poller.poll(0) or not _owned_listener(adapter_source=adapter_source)
+      or _run(["systemctl","show","--property=MainPID","--value",SERVICE]).stdout.strip()!=str(pid)
+      or poller.poll(0)):
+   return False
+  return True
+ except (OSError,ValueError,CoreRuntimeError):
+  return False
+ finally:
+  if pidfd is not None: os.close(pidfd)
+
+def _adapter_process_identity(adapter_source,adapter_generation,core_generation,pid):
+ """Hash current kernel/systemd process identity; content is private recovery data."""
+ proc=Path("/proc")/str(pid)
+ info=proc.stat()
+ if info.st_uid!=1000: raise CoreRuntimeError("captured adapter process owner differs")
+ stat_text=(proc/"stat").read_text(); close=stat_text.rfind(")")
+ fields=stat_text[close+1:].split() if close>=0 else []
+ if len(fields)<20: raise CoreRuntimeError("captured adapter process start identity is unavailable")
+ start_ticks=fields[19]
+ boot_id=Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+ cgroup=(proc/"cgroup").read_bytes()
+ argv=(proc/"cmdline").read_bytes()
+ invocation=_run(["systemctl","show","--property=InvocationID","--value",SERVICE],False).stdout.strip()
+ if re.fullmatch(r"[0-9a-f]{32}",invocation or "") is None:
+  raise CoreRuntimeError("captured service invocation identity is unavailable")
+ evidence={"boot_id":boot_id,"pid":pid,"start_ticks":start_ticks,
+  "adapter_source":str(adapter_source),"adapter_generation":adapter_generation,
+  "core_source_generation":core_generation,"invocation_id":invocation,
+  "cgroup_sha256":hashlib.sha256(cgroup).hexdigest(),
+  "argv_sha256":hashlib.sha256(argv).hexdigest()}
+ if not _owned_listener(adapter_source=adapter_source):
+  raise CoreRuntimeError("captured adapter process does not own the verified listener")
+ return evidence,hashlib.sha256(_canonical_json(evidence)).hexdigest()
+
+def _issue_guarded_old_read(*,cohort,cohort_raw,record,journal_raw,old_unit,
+                            old_launcher,pidfd,pid,process_identity_sha256,
+                            purpose="resources-readback"):
+ if (os.geteuid()!=ROOT_UID or not _ADAPTER_UPDATE_LOCK_HELD.get()
+     or purpose not in {"resources-readback","primary-rebase-readback"}
+     or cohort.get("phase") not in {"prepared","resources-rebound"}
+     or hashlib.sha256(journal_raw).hexdigest()!=cohort.get("old_journal_sha256")
+     or hashlib.sha256(old_unit).hexdigest()!=cohort.get("old_unit_sha256")
+     or hashlib.sha256(old_launcher).hexdigest()!=cohort.get("old_launcher_sha256")
+     or hashlib.sha256(_unit(adapter_source=cohort["old_source"],cohort_gate=True)).hexdigest()
+        !=cohort.get("guarded_old_unit_sha256")
+     or hashlib.sha256(old_launcher).hexdigest()!=record.get("launcher_sha256")
+     or record.get("adapter_source")!=cohort.get("old_source")
+     or record.get("adapter_generation")!=cohort.get("old_adapter_generation")
+     or record.get("core_source_generation")!=cohort.get("old_core_source_generation")
+     or not _owned_listener_pidfd(adapter_source=Path(cohort["old_source"]))):
+  raise CoreRuntimeError("exact guarded old-read custody cannot be issued")
+ evidence,actual_identity=_adapter_process_identity(
+  Path(cohort["old_source"]),cohort["old_adapter_generation"],
+  cohort["old_core_source_generation"],pid)
+ poller=select.poll(); poller.register(pidfd,select.POLLIN|select.POLLHUP|select.POLLERR|select.POLLNVAL)
+ if (actual_identity!=process_identity_sha256
+     or actual_identity!=cohort.get("old_process_identity_sha256")
+     or poller.poll(0)):
+  raise CoreRuntimeError("captured old adapter process changed before guarded read")
+ value=GuardedOldReadCustody(purpose,cohort["cohort_transaction_id"],
+  hashlib.sha256(cohort_raw).hexdigest(),cohort["phase"],ROOT_UID,
+  "jarvis-primary-home",cohort["old_journal_sha256"],cohort["old_source"],
+  cohort["old_adapter_generation"],cohort["old_core_source_generation"],
+  cohort["old_unit_sha256"],cohort["old_launcher_sha256"],
+  cohort["old_source_recipe_sha256"],cohort["guarded_old_unit_sha256"],
+  cohort["guarded_old_recipe_sha256"],cohort["old_process_identity_sha256"],
+  pid,evidence["start_ticks"],evidence["boot_id"],time.monotonic()+360.0,
+  pidfd,_GUARDED_OLD_READ_SEAL)
+ _GUARDED_OLD_READ_ACTIVE[id(value)]=value
+ return value
+
+def _validate_guarded_old_read(value):
+ try:
+  if (type(value) is not GuardedOldReadCustody
+      or value._seal is not _GUARDED_OLD_READ_SEAL
+      or _GUARDED_OLD_READ_ACTIVE.get(id(value)) is not value
+      or os.geteuid()!=ROOT_UID or not _ADAPTER_UPDATE_LOCK_HELD.get()
+      or value.owner_uid!=ROOT_UID or value.home_role!="jarvis-primary-home"
+      or value.purpose not in {"resources-readback","primary-rebase-readback"}
+      or time.monotonic()>=value.expires_monotonic):
+   return False
+  cohort,raw=_read_adapter_update_cohort()
+  journal_raw=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+  unit=_projection_file(UNIT,owner=ROOT_UID,group=ROOT_UID,mode=0o644,maximum=256*1024)
+  launcher=_projection_file(LAUNCHER,owner=ROOT_UID,group=ROOT_UID,mode=0o755,maximum=256*1024)
+  row=json.loads(journal_raw)
+  evidence,identity=_adapter_process_identity(Path(value.old_source),
+   value.old_adapter_generation,value.old_core_source_generation,value.pid)
+  poller=select.poll(); poller.register(value.pidfd,select.POLLIN|select.POLLHUP|select.POLLERR|select.POLLNVAL)
+  return bool(cohort["phase"] in {"prepared","resources-rebound"}
+   and cohort["phase"]==value.phase
+   and cohort["cohort_transaction_id"]==value.cohort_transaction_id
+   and hashlib.sha256(raw).hexdigest()==value.cohort_sha256
+   and hashlib.sha256(journal_raw).hexdigest()==value.old_journal_sha256
+   and row.get("adapter_source")==value.old_source
+   and row.get("adapter_generation")==value.old_adapter_generation
+   and row.get("core_source_generation")==value.old_core_source_generation
+   and unit==_unit(adapter_source=value.old_source,cohort_gate=True)
+   and hashlib.sha256(unit).hexdigest()==value.guarded_old_unit_sha256
+   and hashlib.sha256(launcher).hexdigest()==value.old_launcher_sha256
+   and _adapter_recipe_sha256(value.old_source,value.old_adapter_generation,
+       value.guarded_old_unit_sha256,value.old_launcher_sha256)==value.guarded_old_recipe_sha256
+   and cohort.get("old_process_identity_sha256")==identity==value.old_process_identity_sha256
+   and evidence["start_ticks"]==value.start_ticks and evidence["boot_id"]==value.boot_id
+   and not poller.poll(0)
+   and _owned_listener_pidfd(adapter_source=Path(value.old_source)))
+ except Exception:
+  return False
+
+@contextmanager
+def _guarded_old_read_scope(value,*,purpose):
+ if purpose not in {"resources-readback","primary-rebase-readback"} or not _validate_guarded_old_read(value):
+  raise CoreRuntimeError("guarded old-source read scope is stale")
+ token=_GUARDED_OLD_READ_CONTEXT.set(value)
+ try:
+  yield
+ finally:
+  _GUARDED_OLD_READ_CONTEXT.reset(token)
+
+def _issue_guarded_new_read(*,cohort,cohort_raw,record,journal_raw,resources_raw,unit,
+                            launcher,pidfd,pid,process_identity_sha256,purpose):
+ if (os.geteuid()!=ROOT_UID or not _ADAPTER_UPDATE_LOCK_HELD.get()
+     or purpose not in {"resources-readback","primary-rebase-readback"}
+     or cohort.get("phase") not in {"source-starting","bindings-verified"}
+     or hashlib.sha256(journal_raw).hexdigest()!=cohort.get("starting_journal_sha256")
+     or hashlib.sha256(resources_raw).hexdigest()!=cohort.get("starting_resources_record_sha256")
+     or hashlib.sha256(unit).hexdigest()!=cohort.get("new_unit_sha256")
+     or hashlib.sha256(launcher).hexdigest()!=cohort.get("new_launcher_sha256")
+     or record.get("adapter_source")!=cohort.get("new_source")
+     or record.get("adapter_generation")!=cohort.get("new_adapter_generation")
+     or record.get("core_source_generation")!=cohort.get("new_core_source_generation")
+     or not _owned_listener_pidfd(adapter_source=Path(cohort["new_source"]))):
+  raise CoreRuntimeError("exact guarded new-read custody cannot be issued")
+ evidence,identity=_adapter_process_identity(Path(cohort["new_source"]),
+  cohort["new_adapter_generation"],cohort["new_core_source_generation"],pid)
+ poller=select.poll(); poller.register(pidfd,select.POLLIN|select.POLLHUP|select.POLLERR|select.POLLNVAL)
+ if identity!=process_identity_sha256 or poller.poll(0):
+  raise CoreRuntimeError("new adapter process changed before guarded read")
+ value=GuardedNewReadCustody(purpose,cohort["cohort_transaction_id"],
+  hashlib.sha256(cohort_raw).hexdigest(),cohort["phase"],ROOT_UID,
+  "jarvis-primary-home",cohort["starting_journal_sha256"],
+  cohort["starting_resources_record_sha256"],cohort["new_source"],
+  cohort["new_adapter_generation"],cohort["new_core_source_generation"],
+  cohort["new_unit_sha256"],cohort["new_launcher_sha256"],
+  cohort["new_source_recipe_sha256"],identity,pid,evidence["start_ticks"],
+  evidence["boot_id"],time.monotonic()+360.0,pidfd,_GUARDED_NEW_READ_SEAL)
+ _GUARDED_NEW_READ_ACTIVE[id(value)]=value
+ return value
+
+def _validate_guarded_new_read(value):
+ try:
+  if (type(value) is not GuardedNewReadCustody
+      or value._seal is not _GUARDED_NEW_READ_SEAL
+      or _GUARDED_NEW_READ_ACTIVE.get(id(value)) is not value
+      or os.geteuid()!=ROOT_UID or not _ADAPTER_UPDATE_LOCK_HELD.get()
+      or value.owner_uid!=ROOT_UID or value.home_role!="jarvis-primary-home"
+      or value.purpose not in {"resources-readback","primary-rebase-readback"}
+      or time.monotonic()>=value.expires_monotonic):
+   return False
+  cohort,raw=_read_adapter_update_cohort()
+  journal_raw=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+  resources_raw=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024)
+  unit=_projection_file(UNIT,owner=ROOT_UID,group=ROOT_UID,mode=0o644,maximum=256*1024)
+  launcher=_projection_file(LAUNCHER,owner=ROOT_UID,group=ROOT_UID,mode=0o755,maximum=256*1024)
+  record=json.loads(journal_raw)
+  evidence,identity=_adapter_process_identity(Path(value.new_source),
+   value.new_adapter_generation,value.new_core_source_generation,value.pid)
+  poller=select.poll(); poller.register(value.pidfd,select.POLLIN|select.POLLHUP|select.POLLERR|select.POLLNVAL)
+  return bool(cohort["phase"] in {"source-starting","bindings-verified"}
+   and cohort["phase"]==value.phase and cohort["cohort_transaction_id"]==value.cohort_transaction_id
+   and hashlib.sha256(raw).hexdigest()==value.cohort_sha256
+   and hashlib.sha256(journal_raw).hexdigest()==value.starting_journal_sha256
+   and hashlib.sha256(resources_raw).hexdigest()==value.starting_resources_record_sha256
+   and hashlib.sha256(unit).hexdigest()==value.new_unit_sha256
+   and hashlib.sha256(launcher).hexdigest()==value.new_launcher_sha256
+   and record.get("adapter_source")==value.new_source
+   and record.get("adapter_generation")==value.new_adapter_generation
+   and record.get("core_source_generation")==value.new_core_source_generation
+   and record.get("adapter_update_state")=="starting"
+   and _adapter_recipe_sha256(value.new_source,value.new_adapter_generation,
+     value.new_unit_sha256,value.new_launcher_sha256)==value.new_source_recipe_sha256
+   and identity==value.process_identity_sha256
+   and evidence["start_ticks"]==value.start_ticks and evidence["boot_id"]==value.boot_id
+   and not poller.poll(0) and _owned_listener_pidfd(adapter_source=Path(value.new_source)))
+ except Exception:
+  return False
+
+@contextmanager
+def _guarded_new_read_scope(value,*,purpose):
+ if (purpose!=value.purpose or not _validate_guarded_new_read(value)):
+  raise CoreRuntimeError("guarded new-source read scope is stale")
+ token=_GUARDED_NEW_READ_CONTEXT.set(value)
+ try:
+  yield
+ finally:
+  _GUARDED_NEW_READ_CONTEXT.reset(token)
 
 def _legacy_launcher():
  """Exact pre-adapter launcher eligible for the one-time journaled migration."""
@@ -1770,7 +2611,7 @@ def _read_legacy_owned_runtime():
   if record.get(key)!=hashlib.sha256(content).hexdigest():
    raise CoreRuntimeError("legacy journal-owned file or credential changed")
   files[path]=content
- if files[UNIT]!=_unit():
+ if files[UNIT] not in {_unit(),_unit(cohort_gate=False)}:
   raise CoreRuntimeError("legacy service unit differs from the fixed owned unit")
  if files[LAUNCHER]!=_legacy_launcher():
   raise CoreRuntimeError("legacy launcher differs from the fixed prior recipe")
@@ -1968,7 +2809,7 @@ def migrate_owned_core_to_adapter_path():
  _replace_journal(marker)
  restart_attempted=False
  try:
-  new_launcher,new_unit=_launcher(),_unit()
+  new_launcher,new_unit=_launcher(),_unit(cohort_gate=False)
   _atomic_replace(LAUNCHER,new_launcher,0o755,ROOT_UID,ROOT_UID)
   _atomic_replace(UNIT,new_unit,0o644,ROOT_UID,ROOT_UID)
   updated={**record,"unit_sha256":hashlib.sha256(new_unit).hexdigest(),
@@ -2171,13 +3012,21 @@ def _read_active_adapter_runtime():
   if record.get(key)!=hashlib.sha256(content).hexdigest():
    raise CoreRuntimeError("journal-owned core file or credential changed")
   files[path]=content
- if files[UNIT] not in {_unit(adapter_source=old_source),_unit(startup_guard=False,adapter_source=old_source)} or files[LAUNCHER]!=_launcher(adapter_source=old_source):
+ allowed_units={_unit(adapter_source=old_source),
+                _unit(startup_guard=False,adapter_source=old_source)}
+ if record.get("adapter_update_cohort_transaction_id"):
+  allowed_units.add(_unit(adapter_source=old_source,cohort_gate=True))
+ if files[UNIT] not in allowed_units or files[LAUNCHER]!=_launcher(adapter_source=old_source):
   raise CoreRuntimeError("journal-owned native core recipe differs")
+ if b"LoadCredential=adapter-update-cohort:" in files[UNIT]:
+  _validate_adapter_update_cohort_journal(record,raw)
  if not _owned_unit_loaded() or not _owned_listener_pidfd(adapter_source=old_source):
   raise CoreRuntimeError("journal-owned native core process or listener is not current")
  return record,raw,files
 
-def _save_adapter_update_backup(record,raw_journal,files,selection_digest):
+def _save_adapter_update_backup(record,raw_journal,files,selection_digest,
+                                *,resources_record,overlay_record,primary_record,
+                                obsidian_registration,prior_cohort):
  """Persist a root-only, immutable per-source recovery cohort before switching."""
  old_generation=record["adapter_generation"]
  _ensure_dir(ADAPTER_UPDATE_BACKUPS,ROOT_UID,ROOT_UID,0o700)
@@ -2188,7 +3037,9 @@ def _save_adapter_update_backup(record,raw_journal,files,selection_digest):
  selection_json=(json.dumps({"schema":1,"selection_sha256":selection_digest},
                             sort_keys=True,separators=(",",":"))+"\n").encode("ascii")
  names={"journal.json":raw_journal,"unit":files[UNIT],"launcher":files[LAUNCHER],
-        "plugin-selection.json":selection_json}
+        "plugin-selection.json":selection_json,"resources-record.json":resources_record,
+        "overlay-record.json":overlay_record,"primary-record.json":primary_record,
+        "obsidian-registration.json":obsidian_registration,"cohort.json":prior_cohort}
  manifest={name:hashlib.sha256(content).hexdigest() for name,content in names.items()}
  manifest_bytes=(json.dumps(manifest,sort_keys=True,separators=(",",":"))+"\n").encode("ascii")
  allowed=set(names)|{"manifest.json"}
@@ -2215,13 +3066,16 @@ def _read_adapter_update_backup(reference):
  backup=Path(reference["path"]); info=backup.lstat()
  if (not stat.S_ISDIR(info.st_mode) or info.st_uid!=ROOT_UID or info.st_gid!=ROOT_UID
      or stat.S_IMODE(info.st_mode)!=0o700
-     or set(os.listdir(backup))!={"journal.json","unit","launcher","plugin-selection.json","manifest.json"}):
+     or set(os.listdir(backup))!={"journal.json","unit","launcher","plugin-selection.json",
+       "resources-record.json","overlay-record.json","primary-record.json",
+       "obsidian-registration.json","cohort.json","manifest.json"}):
   raise CoreRuntimeError("journaled adapter update backup custody differs")
  manifest_raw=_projection_file(backup/"manifest.json",owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=4096)
  try: manifest=json.loads(manifest_raw)
  except (ValueError,TypeError): raise CoreRuntimeError("adapter update backup manifest is invalid") from None
  if type(manifest) is not dict or manifest!=reference["files"] or set(manifest)!={
-     "journal.json","unit","launcher","plugin-selection.json"}:
+     "journal.json","unit","launcher","plugin-selection.json","resources-record.json",
+     "overlay-record.json","primary-record.json","obsidian-registration.json","cohort.json"}:
   raise CoreRuntimeError("adapter update backup manifest is not journal-bound")
  contents={}
  for name,digest in manifest.items():
@@ -2240,7 +3094,10 @@ def _read_adapter_update_backup(reference):
   raise CoreRuntimeError("adapter update backup does not bind the prior plugin selection")
  old_source=Path(prior.get("adapter_source",""))
  _validate_adapter_generation_path(old_source)
- if contents["unit"] not in {_unit(adapter_source=old_source),_unit(startup_guard=False,adapter_source=old_source)} or contents["launcher"]!=_launcher(adapter_source=old_source):
+ allowed_prior_units={_unit(adapter_source=old_source),
+                      _unit(startup_guard=False,adapter_source=old_source),
+                      _unit(adapter_source=old_source,cohort_gate=True)}
+ if contents["unit"] not in allowed_prior_units or contents["launcher"]!=_launcher(adapter_source=old_source):
   raise CoreRuntimeError("prior adapter update backup is not the fixed service recipe")
  return prior,contents
 
@@ -2254,6 +3111,345 @@ def _validate_adapter_update_history(record):
      or record.get("adapter_update_previous_source")!=prior.get("adapter_source")
      or record.get("plugin_selection_sha256")!=prior.get("plugin_selection_sha256")):
   raise CoreRuntimeError("active adapter update history does not bind its prior generation and selection")
+
+def _snapshot_adapter_update_bindings(*,core_source_generation):
+ """Capture the exact old Resources, overlay, primary and optional vault custody."""
+ resources=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024)
+ try: discovery=json.loads(resources)
+ except (ValueError,TypeError): raise CoreRuntimeError("current Resources discovery record is malformed") from None
+ if (discovery.get("core_source_generation")!=core_source_generation
+     or discovery.get("state")!="discovered" or discovery.get("functional") is not False
+     or discovery.get("enabled") is not False or discovery.get("target_verified") is not False):
+  raise CoreRuntimeError("current Resources discovery is not eligible for a source cohort")
+ try: overlay=_projection_file(RESOURCES_SKILL_OVERLAYS/"active.json",owner=ROOT_UID,
+                               group=ROOT_UID,mode=0o600,maximum=256*1024)
+ except FileNotFoundError: overlay=b""
+ try: primary=_projection_file(PRIMARY_PROMPT_JOURNAL,owner=ROOT_UID,
+                               group=ROOT_UID,mode=0o600,maximum=64*1024)
+ except FileNotFoundError: primary=b""
+ try:
+  prior_cohort=_projection_file(ADAPTER_UPDATE_COHORT,owner=ROOT_UID,
+                                group=ROOT_UID,mode=0o400,maximum=128*1024)
+ except FileNotFoundError:
+  prior_cohort=b""
+ from .remote import obsidian_owner_lifecycle as obsidian
+ try:
+  owner_root,owner_subject,registration_sha=obsidian.read_registration()
+ except FileNotFoundError:
+  registration=b""; registration_state="absent"; registration_sha=_ABSENT_DIGEST
+  vault_sha=_ABSENT_DIGEST
+ except Exception:
+  raise CoreRuntimeError("current Obsidian registration custody is unavailable") from None
+ else:
+  if owner_root!=obsidian.OWNER_DATA_ROOT or not re.fullmatch(r"[0-9a-f]{64}",owner_subject):
+   raise CoreRuntimeError("current Obsidian owner registration differs")
+  registration=_projection_file(obsidian.OWNER_REGISTRATION,owner=ROOT_UID,group=ROOT_UID,
+                                 mode=0o600,maximum=2048)
+  if hashlib.sha256(registration).hexdigest()!=registration_sha:
+   raise CoreRuntimeError("Obsidian registration changed during source preparation")
+  vault_sha=_obsidian_vault_tree_sha256(obsidian.OWNER_DATA_ROOT/"obsidian-vault")
+  registration_state="registered"
+ return {"resources_record":resources,"overlay_record":overlay,
+  "primary_record":primary,"prior_cohort":prior_cohort,
+  "obsidian_registration":registration,"obsidian_registration_state":registration_state,
+  "obsidian_registration_sha256":registration_sha,"obsidian_vault_tree_sha256":vault_sha,
+  "resources_record_sha256":hashlib.sha256(resources).hexdigest(),
+  "overlay_record_sha256":hashlib.sha256(overlay).hexdigest() if overlay else _ABSENT_DIGEST,
+  "primary_record_sha256":hashlib.sha256(primary).hexdigest() if primary else _ABSENT_DIGEST}
+
+def _read_adapter_overlay_snapshot():
+ """Read exact overlay bytes/content without requiring the future base to match."""
+ path=RESOURCES_SKILL_OVERLAYS/"active.json"
+ try: raw=_projection_file(path,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=256*1024)
+ except FileNotFoundError: return None,{},None
+ try:
+  def unique(pairs):
+   row={}
+   for key,value in pairs:
+    if key in row: raise ValueError
+    row[key]=value
+   return row
+  record=json.loads(raw,object_pairs_hook=unique)
+  if (type(record) is not dict or set(record)!={"schema","base_artifact_sha256","skills"}
+      or type(record["schema"]) is not int or record["schema"]!=1
+      or re.fullmatch(r"[0-9a-f]{64}",str(record["base_artifact_sha256"])) is None
+      or type(record["skills"]) is not dict or len(record["skills"])>396): raise ValueError
+  contents={}
+  for skill_id,item in record["skills"].items():
+   if (not isinstance(skill_id,str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}",skill_id) is None
+       or type(item) is not dict or set(item)!={"content_sha256","archive_sha256"}
+       or any(not isinstance(item[key],str) or re.fullmatch(r"[0-9a-f]{64}",item[key]) is None
+              for key in item)): raise ValueError
+   content=_projection_file(RESOURCES_SKILL_OVERLAYS/(item["content_sha256"]+".bin"),
+    owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=256*1024)
+   if hashlib.sha256(content).hexdigest()!=item["content_sha256"]: raise ValueError
+   contents[skill_id]=content
+  return record,contents,raw
+ except Exception:
+  raise CoreRuntimeError("protected Resources overlay snapshot is malformed") from None
+
+def _obsidian_vault_tree_sha256(root):
+ """Hash only regular, selected-owner vault bytes without following links."""
+ root=Path(root)
+ try: root_info=root.lstat()
+ except FileNotFoundError: raise CoreRuntimeError("registered Obsidian vault is missing") from None
+ if (not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid!=1000 or
+     stat.S_IMODE(root_info.st_mode)&0o077):
+  raise CoreRuntimeError("registered Obsidian vault root custody differs")
+ rows=[]; total=0
+ for base,dirs,names in os.walk(root,topdown=True,followlinks=False):
+  base_path=Path(base)
+  dirs.sort(); names.sort()
+  for name in tuple(dirs):
+   path=base_path/name; info=path.lstat()
+   if (not stat.S_ISDIR(info.st_mode) or info.st_uid!=1000 or
+       stat.S_IMODE(info.st_mode)&0o022 or path.is_symlink()):
+    raise CoreRuntimeError("Obsidian vault directory custody differs")
+   rows.append({"path":path.relative_to(root).as_posix()+"/","mode":stat.S_IMODE(info.st_mode)})
+  for name in names:
+   path=base_path/name; info=path.lstat()
+   if (not stat.S_ISREG(info.st_mode) or info.st_uid!=1000 or info.st_nlink!=1
+       or path.is_symlink() or info.st_size>8*1024*1024):
+    raise CoreRuntimeError("Obsidian vault member custody differs")
+   data=_projection_file(path,owner=1000,group=info.st_gid,mode=stat.S_IMODE(info.st_mode),
+                         maximum=8*1024*1024)
+   total+=len(data)
+   if total>64*1024*1024 or len(rows)>=20000:
+    raise CoreRuntimeError("Obsidian vault snapshot exceeds its fixed bound")
+   rows.append({"path":path.relative_to(root).as_posix(),"mode":stat.S_IMODE(info.st_mode),
+                "size_bytes":len(data),"sha256":hashlib.sha256(data).hexdigest()})
+ return hashlib.sha256(_canonical_json(rows)).hexdigest()
+
+def _run_same_materialization_import(prepared,next_archive,old_archive,backup_name):
+ """Consume the root seal at the fixed root→runuser importer boundary."""
+ if (os.geteuid()!=ROOT_UID or not verify_prepared_same_materialization_transition(prepared)
+     or not isinstance(backup_name,str)
+     or re.fullmatch(r"\.jarvis-resources-skills-helper-transition-[0-9a-f]{32}",backup_name) is None
+     or hashlib.sha256(next_archive).hexdigest()!=prepared.new_artifact_sha256
+     or hashlib.sha256(old_archive).hexdigest()!=prepared.old_artifact_sha256
+     or len(next_archive)>16*1024*1024 or len(old_archive)>16*1024*1024):
+  raise CoreRuntimeError("prepared helper-only importer inputs are stale or unbounded")
+ _validate_adapter_source_path()
+ if (_validated_executable(RUNUSER,{ROOT_UID})!=RUNUSER
+     or not _validated_executable(PYTHON,{1000}).is_absolute()):
+  raise CoreRuntimeError("fixed helper-only importer executables differ")
+ from .registry import manual_jarvis_skills as native
+ new_manifest,new_files,new_helper=native._read_transition_archive(
+  next_archive,prepared.new_artifact_sha256)
+ old_manifest,old_files,_old_helper=native._read_transition_archive(
+  old_archive,prepared.old_artifact_sha256)
+ if (not native.verify_same_materialization_transition(
+      old_manifest,old_files,new_manifest,new_files)
+     or new_helper!=Path(native.__file__).read_bytes()
+     or native._same_materialization_digests(new_manifest,new_files)!=(
+      prepared.shared_manifest_sha256,prepared.shared_materialization_sha256,
+      prepared.shared_member_count)):
+  raise CoreRuntimeError("fixed importer archives differ from the sealed classifier")
+ argv=[str(RUNUSER),"-u","admin","--",str(PYTHON),"-P","-m",
+  "hermes_installer.registry.manual_jarvis_skills","import-helper-transition",
+  "--home",str(HERMES_HOME),"--next-sha256",prepared.new_artifact_sha256,
+  "--previous-sha256",prepared.old_artifact_sha256,
+  "--backup-name",backup_name,
+  "--shared-manifest-sha256",prepared.shared_manifest_sha256,
+  "--shared-materialization-sha256",prepared.shared_materialization_sha256,
+  "--shared-member-count",str(prepared.shared_member_count)]
+ frame=struct.pack(">QQ",len(next_archive),len(old_archive))+next_archive+old_archive
+ env={"PATH":"/usr/sbin:/usr/bin:/sbin:/bin","HOME":str(HOME),
+  "HERMES_HOME":str(HERMES_HOME),"LANG":"C.UTF-8",
+  "PYTHONPATH":str(Path(__file__).resolve().parents[1]),
+  "PYTHONNOUSERSITE":"1","PYTHONDONTWRITEBYTECODE":"1"}
+ read_fd,write_fd=os.pipe()
+ try:
+  if not claim_prepared_same_materialization_step(prepared,step="resources-import"):
+   raise CoreRuntimeError("prepared helper-only import claim is stale or replayed")
+  process=subprocess.Popen(argv,stdin=read_fd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+   cwd="/",env=env,close_fds=True,pass_fds=(read_fd,))
+  os.close(read_fd); read_fd=-1
+  write_error=[]
+  def send_frame():
+   try:
+    view=memoryview(frame)
+    while view:
+     written=os.write(write_fd,view)
+     if written<=0: raise OSError("helper-only importer pipe closed")
+     view=view[written:]
+   except Exception as exc: write_error.append(exc)
+   finally:
+    try: os.close(write_fd)
+    except OSError: pass
+  writer=threading.Thread(target=send_frame,name="core-resources-transition-pipe",daemon=True)
+  writer.start()
+  try: stdout,stderr=process.communicate(timeout=300)
+  except subprocess.TimeoutExpired:
+   process.kill(); process.communicate(); writer.join(timeout=1)
+   raise CoreRuntimeError("helper-only importer exceeded its fixed deadline") from None
+  writer.join(timeout=1)
+  if writer.is_alive() or write_error:
+   raise CoreRuntimeError("helper-only importer input pipe did not complete exactly")
+  if process.returncode!=0 or len(stdout)>16*1024 or len(stderr)>16*1024:
+   raise CoreRuntimeError("helper-only importer refused the root-selected transition")
+  try:
+   def unique_result(pairs):
+    value={}
+    for key,item in pairs:
+     if key in value: raise ValueError
+     value[key]=item
+    return value
+   result=json.loads(stdout,object_pairs_hook=unique_result)
+   generation=HERMES_HOME/"skills"/native._GENERATION
+   backup_value=result.get("previous_generation_backup") if type(result) is dict else None
+   backup=Path(backup_value) if isinstance(backup_value,str) else Path("/")
+   expected_skills=sorted(row["skill_id"] for row in new_manifest["skill_members"])
+   expected_profiles=sorted(row["source_id"] for row in new_manifest["profile_members"])
+   if (type(result) is not dict or result.get("state")!="staged"
+       or result.get("materialized") is not True or result.get("discovered") is not False
+       or result.get("artifact_sha256")!=prepared.new_artifact_sha256
+       or result.get("generation_path")!=str(generation)
+       or result.get("skills")!=expected_skills
+       or result.get("profiles_preserved_internal")!=expected_profiles
+       or result.get("previous_artifact_sha256")!=prepared.old_artifact_sha256
+       or set(result)!={"state","materialized","discovered","artifact_sha256",
+        "generation_path","skills","profiles_preserved_internal","next_step",
+        "previous_generation_backup","previous_artifact_sha256"}
+       or backup.parent!=generation.parent or backup==generation or backup.is_symlink()
+       or backup.name!=backup_name):
+    raise ValueError
+   native._verify_owned_generation(generation,new_files,prepared.new_artifact_sha256)
+   native._verify_owned_generation(backup,old_files,prepared.old_artifact_sha256)
+  except (TypeError,ValueError,UnicodeDecodeError):
+   raise CoreRuntimeError("helper-only importer result is malformed") from None
+  return result
+ finally:
+  if read_fd>=0: os.close(read_fd)
+  try: os.close(write_fd)
+  except OSError: pass
+
+def _capture_adapter_service_process(source,adapter_generation,core_generation):
+ """Hold the current systemd MainPID across the complete source handoff."""
+ pid_text=_run(["systemctl","show","--property=MainPID","--value",SERVICE]).stdout.strip()
+ try: pid=int(pid_text)
+ except ValueError: raise CoreRuntimeError("owned adapter MainPID is unavailable") from None
+ if pid<=1 or not hasattr(os,"pidfd_open"):
+  raise CoreRuntimeError("owned adapter process PIDFD is unavailable")
+ pidfd=os.pidfd_open(pid,0)
+ try:
+  poller=select.poll(); poller.register(pidfd,select.POLLIN|select.POLLHUP|select.POLLERR|select.POLLNVAL)
+  evidence,identity=_adapter_process_identity(source,adapter_generation,core_generation,pid)
+  if (poller.poll(0) or not _owned_listener_pidfd(adapter_source=source)
+      or _run(["systemctl","show","--property=MainPID","--value",SERVICE]).stdout.strip()!=str(pid)):
+   raise CoreRuntimeError("journal-owned adapter process changed during PIDFD capture")
+  return pidfd,pid,evidence,identity
+ except BaseException:
+  os.close(pidfd)
+  raise
+
+def _stop_captured_adapter_process(pidfd,pid,source,adapter_generation,core_generation,identity):
+ """Stop only the exact process held from old-source readback preparation."""
+ poller=select.poll(); poller.register(pidfd,select.POLLIN|select.POLLHUP|select.POLLERR|select.POLLNVAL)
+ evidence,current=_adapter_process_identity(source,adapter_generation,core_generation,pid)
+ if (current!=identity or poller.poll(0)
+     or _run(["systemctl","show","--property=MainPID","--value",SERVICE]).stdout.strip()!=str(pid)
+     or not _owned_listener_pidfd(adapter_source=source)):
+  raise CoreRuntimeError("captured old adapter process changed before stop")
+ _run(["systemctl","stop",SERVICE])
+ poller.poll(30_000)
+ if (not poller.poll(0)
+     or _run(["systemctl","is-active",SERVICE],False).stdout.strip()=="active"
+     or _run(["systemctl","show","--property=MainPID","--value",SERVICE],False).stdout.strip() not in {"","0"}
+     or _owned_listener(adapter_source=source)):
+  raise CoreRuntimeError("captured old adapter process did not stop")
+
+def _make_adapter_update_reconstruction(old_base,new_base,old_archive,overlay,contents,
+                                        overlay_raw,old_marker,old_discovery):
+ """Derive one active-overlay chain or the exact ordinary no-overlay base pair."""
+ from .registry import manual_jarvis_skills as native
+ from .registry import resources_skill_overlay as transform
+ old_manifest,old_files=native._read_artifact(old_archive,hashlib.sha256(old_archive).hexdigest())
+ new_manifest,new_files,new_helper=native._read_transition_archive(new_base,
+  hashlib.sha256(new_base).hexdigest())
+ if (not native.verify_same_materialization_transition(old_manifest,old_files,new_manifest,new_files)
+     or new_helper!=Path(native.__file__).read_bytes()):
+  raise CoreRuntimeError("candidate Resources artifacts are not the exact helper-only pair")
+ if overlay_raw is None:
+  if overlay is not None or contents or old_base!=old_archive:
+   raise CoreRuntimeError("absent owner overlay does not match the exact old base")
+  shared_manifest,shared_tree,count=native._same_materialization_digests(new_manifest,new_files)
+  old_non=dict(old_manifest); old_non.pop("installer",None)
+  new_non=dict(new_manifest); new_non.pop("installer",None)
+  return _BaseOnlyReconstruction(new_base,hashlib.sha256(old_base).hexdigest(),
+   hashlib.sha256(new_base).hexdigest(),hashlib.sha256(old_archive).hexdigest(),
+   hashlib.sha256(new_base).hexdigest(),_ABSENT_DIGEST,(),
+   hashlib.sha256(native._canonical_json(new_non)).hexdigest(),
+   hashlib.sha256(native._canonical_json(new_non)).hexdigest(),shared_tree,count)
+ result=transform.reconstruct_helper_only_overlay_transition(
+  old_base,new_base,old_archive,overlay_raw,contents)
+ if (result.old_installed_journal_sha256 if hasattr(result,"old_installed_journal_sha256") else None) is not None:
+  raise CoreRuntimeError("overlay reconstruction unexpectedly supplied authority")
+ return result
+
+def _adapter_update_reconstruction_row(result,*,cohort_id,phase,old_core,new_core,
+                                       old_recipe,new_recipe,old_marker,new_marker=None,
+                                       old_discovery,new_discovery=None):
+ row={"schema":1,
+  "purpose":"helper-only-base-reconstruction" if result.overlay_journal_sha256==_ABSENT_DIGEST
+    else "helper-only-overlay-reconstruction",
+  "cohort_transaction_id":cohort_id,"owner_uid":1000,"home_role":"jarvis-primary-home",
+  "phase":phase,"old_base_artifact_sha256":result.old_base_artifact_sha256,
+  "new_base_artifact_sha256":result.new_base_artifact_sha256,
+  "old_composed_artifact_sha256":result.old_composed_artifact_sha256,
+  "new_composed_artifact_sha256":result.new_composed_artifact_sha256,
+  "overlay_journal_sha256":result.overlay_journal_sha256,
+  "overlay_contents":[{"skill_id":name,"content_sha256":digest}
+   for name,digest in result.overlay_contents],
+  "base_non_installer_manifest_sha256":result.base_non_installer_manifest_sha256,
+  "composed_non_installer_manifest_sha256":result.composed_non_installer_manifest_sha256,
+  "materialized_tree_sha256":result.materialized_tree_sha256,
+  "old_installed_journal_sha256":old_marker,
+  "new_installed_journal_sha256":new_marker,
+  "old_discovery_sha256":old_discovery,"new_discovery_sha256":new_discovery,
+  "old_core_source_generation":old_core,"new_core_source_generation":new_core,
+  "old_source_recipe_sha256":old_recipe,"new_source_recipe_sha256":new_recipe}
+ return row
+
+def _write_resources_cas_artifact(archive,artifact_sha):
+ if hashlib.sha256(archive).hexdigest()!=artifact_sha:
+  raise CoreRuntimeError("prepared Resources CAS artifact digest differs")
+ _ensure_dir(RESOURCES_CAS,ROOT_UID,ROOT_UID,0o700)
+ path=RESOURCES_CAS/(artifact_sha+".zip")
+ try:
+  existing=_projection_file(path,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
+ except FileNotFoundError:
+  _atomic(path,archive,0o600,ROOT_UID,ROOT_UID)
+ else:
+  if existing!=archive: raise CoreRuntimeError("Resources immutable CAS digest collision")
+
+def _current_old_update_check(*,journal_raw,resources_raw,overlay_raw,primary_raw,
+                              registration_raw,source,adapter_generation,core_generation,
+                              process_identity,pid):
+ if (_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)!=journal_raw
+     or _projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024)!=resources_raw):
+  return False
+ try: current_overlay=_projection_file(RESOURCES_SKILL_OVERLAYS/"active.json",owner=ROOT_UID,
+  group=ROOT_UID,mode=0o600,maximum=256*1024)
+ except FileNotFoundError: current_overlay=None
+ if current_overlay!=(overlay_raw or None): return False
+ try: current_primary=_projection_file(PRIMARY_PROMPT_JOURNAL,owner=ROOT_UID,
+  group=ROOT_UID,mode=0o600,maximum=64*1024)
+ except FileNotFoundError: current_primary=None
+ if current_primary!=(primary_raw or None): return False
+ from .remote import obsidian_owner_lifecycle as obsidian
+ try:
+  current_registration=_projection_file(obsidian.OWNER_REGISTRATION,owner=ROOT_UID,
+   group=ROOT_UID,mode=0o600,maximum=2048)
+ except FileNotFoundError: current_registration=None
+ if current_registration!=(registration_raw or None): return False
+ try:
+  _evidence,current_identity=_adapter_process_identity(source,adapter_generation,core_generation,pid)
+  from hermes_installer.remote.core_gateway_inspector import _current_native_adapter_generation
+  return bool(current_identity==process_identity
+   and _current_native_adapter_generation(deadline=time.monotonic()+35.0)==adapter_generation
+   and _core_source_generation()==core_generation)
+ except Exception: return False
 
 def _stop_owned_core_for_adapter_update(allowed_sources):
  active=_run(["systemctl","is-active",SERVICE],False).stdout.strip()
@@ -2283,11 +3479,217 @@ def _stop_owned_core_for_adapter_update(allowed_sources):
  finally:
   if pidfd is not None: os.close(pidfd)
 
+def _restore_adapter_update_owner_generation(cohort):
+ """Use the fixed root→runuser restore operation for an interrupted owner CAS."""
+ from .registry import manual_jarvis_skills as native
+ target=HERMES_HOME/"skills"/native._GENERATION
+ old_sha=cohort["old_artifact_sha256"]; new_sha=cohort["new_artifact_sha256"]
+ old_archive=_projection_file(RESOURCES_CAS/(old_sha+".zip"),owner=ROOT_UID,
+  group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
+ new_archive=_projection_file(RESOURCES_CAS/(new_sha+".zip"),owner=ROOT_UID,
+  group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
+ old_manifest,old_files=native._read_transition_archive(old_archive,old_sha)
+ new_manifest,new_files=native._read_transition_archive(new_archive,new_sha)
+ target_ok=False
+ try:
+  native._verify_owned_generation(target,old_files,old_sha); target_ok=True
+ except Exception: pass
+ if target_ok:
+  return
+ native._verify_owned_generation(target,new_files,new_sha)
+ name=cohort["owner_generation_backup_name"]
+ argv=[str(RUNUSER),"-u","admin","--",str(PYTHON),"-P","-m",
+  "hermes_installer.registry.manual_jarvis_skills","restore-helper-transition",
+  "--home",str(HERMES_HOME),"--current-sha256",new_sha,"--restore-sha256",old_sha,
+  "--backup-name",name,"--shared-manifest-sha256",
+  _same_materialization_digests(native,new_manifest,new_files)[0],
+  "--shared-materialization-sha256",
+  _same_materialization_digests(native,new_manifest,new_files)[1],
+  "--shared-member-count",str(_same_materialization_digests(native,new_manifest,new_files)[2])]
+ frame=struct.pack(">QQ",len(new_archive),len(old_archive))+new_archive+old_archive
+ env={"PATH":"/usr/sbin:/usr/bin:/sbin:/bin","HOME":str(HOME),
+  "HERMES_HOME":str(HERMES_HOME),"LANG":"C.UTF-8",
+  "PYTHONPATH":str(Path(__file__).resolve().parents[1]),
+  "PYTHONNOUSERSITE":"1","PYTHONDONTWRITEBYTECODE":"1"}
+ if (_validated_executable(RUNUSER,{ROOT_UID})!=RUNUSER
+     or _validated_executable(PYTHON,{1000})!=PYTHON):
+  raise CoreRuntimeError("fixed owner-generation rollback executables differ")
+ rfd,wfd=os.pipe()
+ try:
+  process=subprocess.Popen(argv,stdin=rfd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+   cwd="/",env=env,close_fds=True,pass_fds=(rfd,))
+  os.close(rfd); rfd=-1
+  def write_frame():
+   view=memoryview(frame)
+   while view:
+    sent=os.write(wfd,view)
+    if sent<=0: raise OSError("owner generation rollback pipe closed")
+    view=view[sent:]
+   os.close(wfd)
+  writer=threading.Thread(target=write_frame,name="core-resources-rollback-pipe",daemon=True)
+  writer.start()
+  try: stdout,stderr=process.communicate(timeout=180)
+  except subprocess.TimeoutExpired:
+   process.kill(); process.communicate(); writer.join(timeout=1)
+   raise CoreRuntimeError("owner generation rollback exceeded its fixed deadline") from None
+  writer.join(timeout=1)
+  if writer.is_alive() or process.returncode or len(stdout)>8192 or len(stderr)>8192:
+   raise CoreRuntimeError("owner generation rollback operation failed")
+  try: result=json.loads(stdout)
+  except (ValueError,TypeError): raise CoreRuntimeError("owner generation rollback result is malformed") from None
+  if (type(result) is not dict or result.get("state")!="restored"
+      or result.get("artifact_sha256")!=old_sha
+      or result.get("generation_path")!=str(target)
+      or result.get("retained_artifact_sha256")!=new_sha
+      or result.get("retained_generation_backup")!=str(target.parent/name)
+      or set(result)!={"state","artifact_sha256","generation_path",
+       "retained_generation_backup","retained_artifact_sha256"}):
+   raise CoreRuntimeError("owner generation rollback receipt does not bind the prior bytes")
+  native._verify_owned_generation(target,old_files,old_sha)
+  return result
+ finally:
+  if rfd>=0: os.close(rfd)
+  try: os.close(wfd)
+  except OSError: pass
+
+def _same_materialization_digests(native,manifest,files):
+ return native._same_materialization_digests(manifest,files)
+
+def _check_adapter_cohort_rollback_currentness(cohort,prior,contents):
+ """Refuse recovery if a binding changed outside this exact cohort's writes."""
+ old_journal=contents["journal.json"]
+ journal_raw=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+ journal_hash=hashlib.sha256(journal_raw).hexdigest()
+ allowed_journals={hashlib.sha256(old_journal).hexdigest()}
+ for key in ("starting_journal_sha256","new_journal_sha256"):
+  if cohort.get(key): allowed_journals.add(cohort[key])
+ if journal_hash not in allowed_journals:
+  raise CoreRuntimeError("current Core journal is outside the exact source cohort recovery states")
+ resources_raw=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,
+  mode=0o600,maximum=16*1024)
+ allowed_resources={hashlib.sha256(contents["resources-record.json"]).hexdigest()}
+ for key in ("pre_switch_resources_record_sha256","starting_resources_record_sha256",
+             "new_resources_record_sha256"):
+  if cohort.get(key): allowed_resources.add(cohort[key])
+ if hashlib.sha256(resources_raw).hexdigest() not in allowed_resources:
+  raise CoreRuntimeError("current Resources receipt is outside the exact source cohort recovery states")
+ try: overlay_now=_projection_file(RESOURCES_SKILL_OVERLAYS/"active.json",owner=ROOT_UID,
+  group=ROOT_UID,mode=0o600,maximum=256*1024)
+ except FileNotFoundError: overlay_now=b""
+ if overlay_now!=contents["overlay-record.json"]:
+  raise CoreRuntimeError("owner Resources overlay changed during source cohort recovery")
+ from .remote import obsidian_owner_lifecycle as obsidian
+ try: registration_now=_projection_file(obsidian.OWNER_REGISTRATION,owner=ROOT_UID,
+  group=ROOT_UID,mode=0o600,maximum=2048)
+ except FileNotFoundError: registration_now=b""
+ if (registration_now!=contents["obsidian-registration.json"]
+     or (registration_now and _obsidian_vault_tree_sha256(obsidian.OWNER_DATA_ROOT/"obsidian-vault")
+         !=cohort["obsidian_vault_tree_sha256"])):
+  raise CoreRuntimeError("Obsidian registration or vault changed during source cohort recovery")
+ unit=_projection_file(UNIT,owner=ROOT_UID,group=ROOT_UID,mode=0o644,maximum=256*1024)
+ old_source=Path(prior["adapter_source"])
+ allowed_units={contents["unit"],_unit(adapter_source=old_source,cohort_gate=True),
+                _unit(adapter_source=Path(cohort["new_source"]),cohort_gate=True)}
+ if unit not in allowed_units:
+  raise CoreRuntimeError("current unit is outside the exact guarded source recipes")
+ launcher=_projection_file(LAUNCHER,owner=ROOT_UID,group=ROOT_UID,mode=0o755,maximum=256*1024)
+ if launcher not in {contents["launcher"],_launcher(adapter_source=Path(cohort["new_source"]))}:
+  raise CoreRuntimeError("current launcher is outside the exact source recipes")
+ old_primary=contents["primary-record.json"]
+ try: current_primary=_projection_file(PRIMARY_PROMPT_JOURNAL,owner=ROOT_UID,
+  group=ROOT_UID,mode=0o600,maximum=64*1024)
+ except FileNotFoundError: current_primary=None
+ if not old_primary:
+  if current_primary is not None:
+   raise CoreRuntimeError("primary adoption appeared during an unadopted source cohort")
+ elif current_primary!=old_primary:
+  try:
+   old_record=json.loads(old_primary); current_record=json.loads(current_primary)
+   if (type(old_record) is not dict or type(current_record) is not dict
+       or set(old_record)!=set(current_record)
+       or old_record.get("state")!="adopted" or current_record.get("state")!="adopted"):
+    raise ValueError
+   expected=dict(old_record); expected["artifact_sha256"]=cohort["new_artifact_sha256"]
+   timestamp=current_record.get("observed_at_utc")
+   if not isinstance(timestamp,str): raise ValueError
+   datetime.fromisoformat(timestamp.replace("Z","+00:00"))
+   expected["observed_at_utc"]=timestamp
+   if current_record!=expected: raise ValueError
+  except (ValueError,TypeError):
+   raise CoreRuntimeError("primary journal changed beyond the exact metadata-only cohort rebind") from None
+
 def _restore_adapter_update_backup(reference,*,allowed_sources):
  prior,contents=_read_adapter_update_backup(reference)
+ try: cohort,cohort_raw=_read_adapter_update_cohort(allow_absent=True)
+ except CoreRuntimeError: raise
+ if cohort is not None:
+  if (cohort.get("cohort_transaction_id") not in str(cohort.get("owner_generation_backup_name"))
+      or cohort.get("old_adapter_generation")!=reference.get("source_generation")):
+   raise CoreRuntimeError("adapter recovery backup reference does not match the active cohort")
+  _check_adapter_cohort_rollback_currentness(cohort,prior,contents)
+ if cohort is not None and cohort["phase"]!="rolling-back":
+  rolling=dict(cohort); rolling["phase"]="rolling-back"
+  reconstruction=dict(rolling["reconstruction"]); reconstruction["phase"]="rolling-back"
+  rolling["reconstruction"]=reconstruction
+  rolling["reconstruction_sha256"]=hashlib.sha256(_canonical_json(reconstruction)).hexdigest()
+  _write_adapter_update_cohort(rolling,expected_raw=cohort_raw)
  _stop_owned_core_for_adapter_update(allowed_sources)
+ # Keep the deny-by-default cohort guard in place while restoring the old
+ # launcher and journal. Restore the exact former unit last, so reboot can
+ # never combine a guardless launcher with the new/preparing journal.
+ guarded=_unit(adapter_source=Path(prior["adapter_source"]),cohort_gate=True)
+ _atomic_replace(UNIT,guarded,0o644,ROOT_UID,ROOT_UID)
+ _run(["systemctl","daemon-reload"])
+ if (_projection_file(UNIT,owner=ROOT_UID,group=ROOT_UID,mode=0o644,maximum=256*1024)!=guarded
+     or _owned_unit_loaded() is not True):
+  raise CoreRuntimeError("rollback deny-by-default unit did not load")
+ if cohort is not None:
+  _restore_adapter_update_owner_generation(cohort)
+  # Restore only the exact saved binding bytes. The current primary must still
+  # carry the adopted SOUL bytes; a later owner edit is a conflict, never a
+  # reason to overwrite their prompt.
+  old_primary=contents["primary-record.json"]
+  try: current_primary=_projection_file(PRIMARY_PROMPT_JOURNAL,owner=ROOT_UID,
+   group=ROOT_UID,mode=0o600,maximum=64*1024)
+  except FileNotFoundError: current_primary=None
+  if old_primary:
+   from . import primary_prompt_manager as primary
+   prior_primary=primary._read_record(sys.modules[__name__])
+   try: old_primary_record=json.loads(old_primary)
+   except (ValueError,TypeError): raise CoreRuntimeError("saved primary binding is malformed") from None
+   if (prior_primary is None or prior_primary.get("state")!="adopted"
+       or old_primary_record.get("state")!="adopted"):
+    raise CoreRuntimeError("saved adopted primary binding cannot be restored")
+   soul,_signature=primary._read_soul(sys.modules[__name__])
+   if hashlib.sha256(soul).hexdigest()!=old_primary_record.get("result_soul_sha256"):
+    raise CoreRuntimeError("owner SOUL changed after helper-only rebind; recovery preserves the conflict")
+   backup=primary._backup_read(sys.modules[__name__],old_primary_record)
+   if hashlib.sha256(backup).hexdigest()!=old_primary_record.get("owner_backup_name"):
+    raise CoreRuntimeError("immutable prior SOUL backup changed during rollback")
+   if current_primary!=old_primary:
+    _atomic_replace(PRIMARY_PROMPT_JOURNAL,old_primary,0o600,ROOT_UID,ROOT_UID)
+  elif current_primary is not None:
+   raise CoreRuntimeError("primary adoption appeared during an originally unadopted source cohort")
+  _atomic_replace(RESOURCES_RECORD,contents["resources-record.json"],0o600,ROOT_UID,ROOT_UID)
+  old_resource=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,
+   mode=0o600,maximum=16*1024)
+  if old_resource!=contents["resources-record.json"]:
+   raise CoreRuntimeError("prior Resources discovery receipt did not restore exactly")
  _atomic_replace(LAUNCHER,contents["launcher"],0o755,ROOT_UID,ROOT_UID)
  _atomic_replace(JOURNAL,contents["journal.json"],0o600,ROOT_UID,ROOT_UID)
+ prior_cohort=contents["cohort.json"]
+ if prior_cohort:
+  _atomic_replace(ADAPTER_UPDATE_COHORT,prior_cohort,0o400,ROOT_UID,ROOT_UID)
+ else:
+  try:
+   current_cohort=_projection_file(ADAPTER_UPDATE_COHORT,owner=ROOT_UID,group=ROOT_UID,
+                                   mode=0o400,maximum=128*1024)
+  except FileNotFoundError: current_cohort=None
+  if current_cohort is not None:
+   ADAPTER_UPDATE_COHORT.unlink()
+   _sync_directory(ADAPTER_UPDATE_COHORT.parent)
+ _run(["systemctl","daemon-reload"])
+ # Exact old unit is the final file restoration; its recipe again matches J0.
  _atomic_replace(UNIT,contents["unit"],0o644,ROOT_UID,ROOT_UID)
  _run(["systemctl","daemon-reload"])
  if not _owned_unit_loaded(): raise CoreRuntimeError("restored prior adapter unit is not journal-owned")
@@ -2299,7 +3701,184 @@ def _restore_adapter_update_backup(reference,*,allowed_sources):
   raise CoreRuntimeError("native plugin selection changed during adapter update recovery")
  return prior
 
+def _write_resources_record_bytes(archive,record):
+ """Retain an actual verified CAS archive and its closed root receipt."""
+ artifact=record.get("artifact_sha256") if type(record) is dict else None
+ if (not isinstance(artifact,str) or re.fullmatch(r"[0-9a-f]{64}",artifact) is None
+     or hashlib.sha256(archive).hexdigest()!=artifact):
+  raise CoreRuntimeError("Resources receipt does not bind the selected immutable archive")
+ _write_resources_cas_artifact(archive,artifact)
+ raw=(json.dumps(record,sort_keys=True,separators=(",",":"),ensure_ascii=True)+"\n").encode("ascii")
+ _atomic_replace(RESOURCES_RECORD,raw,0o600,ROOT_UID,ROOT_UID)
+ if _projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,
+      mode=0o600,maximum=16*1024)!=raw:
+  raise CoreRuntimeError("Resources discovery record readback differs")
+ return raw
+
+def _bind_resources_record_to_starting_journal(record,journal_raw):
+ """Join a complete pre-stop native readback to its exact planned J_s bytes."""
+ if (type(record) is not dict or type(journal_raw) is not bytes
+     or not journal_raw.endswith(b"\n") or len(journal_raw)>64*1024):
+  raise CoreRuntimeError("starting Resources/source join is malformed")
+ try: journal=json.loads(journal_raw)
+ except (ValueError,TypeError): raise CoreRuntimeError("starting source journal is malformed") from None
+ if (type(journal) is not dict or journal.get("adapter_update_state")!="starting"
+     or journal.get("adapter_update_cohort_transaction_id") is None
+     or journal.get("core_source_generation")!=record.get("core_source_generation")
+     or journal.get("adapter_source")!=str(ADAPTER_SOURCE)):
+  raise CoreRuntimeError("starting source journal differs from the native Resources readback")
+ result=dict(record)
+ result["core_ownership_sha256"]=hashlib.sha256(journal_raw).hexdigest()
+ return result
+
+def _adapter_update_current_resource_payload(*,overlay_snapshot,reconstruction):
+ """Run the fixed native loader and prove A1 while the old process is still held."""
+ overlay_record,contents,overlay_raw=overlay_snapshot
+ archive,record=_verified_resources_payload(
+  _prepared_transition=(overlay_record,contents,overlay_raw,reconstruction))
+ if (archive!=reconstruction.new_composed_archive
+     or record.get("artifact_sha256")!=reconstruction.new_composed_artifact_sha256
+     or record.get("core_source_generation")!=_core_source_generation()
+     or record.get("state")!="discovered" or record.get("functional") is not False
+     or record.get("enabled") is not False or record.get("target_verified") is not False):
+  raise CoreRuntimeError("A1 source/discovery/native loader readback differs")
+ return archive,record
+
+def _run_root_coro(coroutine):
+ """Run the fixed synchronous updater's bounded native coroutine without nesting loops."""
+ import asyncio
+ try: asyncio.get_running_loop()
+ except RuntimeError: return asyncio.run(coroutine)
+ result=[]; failure=[]
+ def runner():
+  try: result.append(asyncio.run(coroutine))
+  except BaseException as exc: failure.append(exc)
+ thread=threading.Thread(target=runner,name="core-adapter-startup-proof",daemon=True)
+ thread.start(); thread.join(125.0)
+ if thread.is_alive(): raise CoreRuntimeError("native startup chat proof exceeded its fixed deadline")
+ if failure: raise CoreRuntimeError("native startup chat proof failed") from None
+ if len(result)!=1: raise CoreRuntimeError("native startup chat proof returned no bounded result")
+ return result[0]
+
+def _prove_new_cohort_startup_chat():
+ """Require one real native, no-tools Codex completion for the guarded new peer."""
+ context=_ADAPTER_STARTUP_COHORT_CONTEXT.get()
+ if (os.geteuid()!=ROOT_UID or not _ADAPTER_UPDATE_LOCK_HELD.get()
+     or type(context) is not dict or context.get("cohort",{}).get("phase")!="source-starting"):
+  raise CoreRuntimeError("guarded new-source startup proof context is unavailable")
+ import select
+ poller=select.poll(); poller.register(context["pidfd"],select.POLLIN|select.POLLHUP|select.POLLERR|select.POLLNVAL)
+ if (poller.poll(0) or not _validate_guarded_new_read(context.get("new_read"))
+     or _adapter_process_identity(ADAPTER_SOURCE,context["adapter"],context["core"],context["pid"])[1]
+        !=context["identity"]):
+  raise CoreRuntimeError("guarded startup peer changed before lifecycle chat enrollment")
+ from .remote import core_gateway_inspector as inspector
+ from .remote.core_native_observer import (
+  CoreVerifiedLifecycleStartupCompletion, make_root_lifecycle_startup_cohort,
+ )
+ registry=inspector._CORE_NATIVE_REGISTRY
+ if (registry is None or inspector._CORE_NATIVE_REGISTRY_TYPE is None
+     or type(registry) is not inspector._CORE_NATIVE_REGISTRY_TYPE
+     or registry is not inspector._CORE_NATIVE_REGISTRY
+     or not hasattr(registry,"enroll_lifecycle_startup_probe")):
+  raise CoreRuntimeError("new Core native startup observer is not current")
+ custody=getattr(registry,"_custody",None)
+ if (custody is None or getattr(custody,"core_pid",None)!=context["pid"]
+     or getattr(custody,"core_start_ticks",None)!=context["evidence"]["start_ticks"]
+     or getattr(custody,"core_invocation_id",None)!=context["evidence"]["invocation_id"]
+     or getattr(custody,"core_source_generation",None)!=context["core"]):
+  raise CoreRuntimeError("native observer custody does not bind the held new Core process")
+ client=__import__("hermes_installer.remote.core_client",fromlist=["CoreRpcClient"]).CoreRpcClient
+ rpc=client()
+ status=_run_root_coro(rpc.get_model_provider_status())
+ if (type(status) is not dict or status.get("provider_hint")!="openai-codex"
+     or status.get("codex_credential_configured") is not True
+     or not isinstance(status.get("model"),str)):
+  raise CoreRuntimeError("new Core does not expose the selected Codex subscription route")
+ from hermes_cli.auth_codex import resolve_codex_runtime_credentials
+ from .remote.core_native_observer import _codex_account_fingerprint
+ account=_codex_account_fingerprint(
+  lambda: resolve_codex_runtime_credentials(read_only=True))
+ if not re.fullmatch(r"[0-9a-f]{64}",account):
+  raise CoreRuntimeError("current Codex account fingerprint is unavailable")
+ manifest,files=__import__("hermes_installer.registry.manual_jarvis_skills",
+  fromlist=["_read_transition_archive"])._read_transition_archive(
+   _projection_file(RESOURCES_CAS/(context["artifact"]+".zip"),owner=ROOT_UID,
+    group=ROOT_UID,mode=0o600,maximum=16*1024*1024),context["artifact"])
+ now=time.monotonic(); deadline=now+110.0
+ cohort=make_root_lifecycle_startup_cohort(
+  transaction_id=context["cohort"]["cohort_transaction_id"],
+  starting_journal_sha256=hashlib.sha256(context["journal_raw"]).hexdigest(),
+  cohort_sha256=hashlib.sha256(context["cohort_raw"]).hexdigest(),
+  core_generation=custody.core_generation,
+  old_adapter_generation=context["cohort"]["old_adapter_generation"],
+  new_adapter_generation=context["adapter"],core_source_generation=context["core"],
+  generation_a1_sha256=context["artifact"],
+  js_sha256=hashlib.sha256(context["journal_raw"]).hexdigest(),
+  rs_sha256=hashlib.sha256(context["resources_raw"]).hexdigest(),
+  u1_sha256=hashlib.sha256(context["unit"]).hexdigest(),
+  l1_sha256=hashlib.sha256(context["launcher"]).hexdigest(),
+  primary_source_sha256=hashlib.sha256(files["registry/profiles/hermes/SOUL.md"]).hexdigest(),
+  active_soul_sha256=context["soul"],
+  native_inventory_sha256=context["resources"]["loaded_skill_inventory_sha256"],
+  peer_pid=context["pid"],peer_uid=1000,peer_gid=1000,
+  peer_start_ticks=context["evidence"]["start_ticks"],boot_id=context["evidence"]["boot_id"],
+  invocation_id=context["evidence"]["invocation_id"],provider="openai-codex",
+  api_mode="codex_responses",base_url="https://chatgpt.com/backend-api/codex",
+  model=status["model"],account_fingerprint=account,issued_monotonic=now,
+  deadline_monotonic=deadline)
+ handle=registry.enroll_lifecycle_startup_probe(cohort=cohort)
+ wire=_run_root_coro(rpc.lifecycle_startup_probe(handle))
+ if (type(wire) is not dict or set(wire)!={"schema","probe_handle","completion_handle","status","response_sha256"}
+     or wire.get("schema")!=1 or wire.get("probe_handle")!=handle
+     or wire.get("status")!="completed"):
+  raise CoreRuntimeError("new Core lifecycle startup response is not the exact completed proof")
+ proof=registry.consume_lifecycle_startup_completion(
+  probe_handle=wire["probe_handle"],completion_handle=wire["completion_handle"],
+  native_response_sha256=wire["response_sha256"])
+ expected={"transaction_id":context["cohort"]["cohort_transaction_id"],
+  "starting_journal_sha256":hashlib.sha256(context["journal_raw"]).hexdigest(),
+  "cohort_sha256":hashlib.sha256(context["cohort_raw"]).hexdigest(),
+  "core_generation":custody.core_generation,"old_adapter_generation":context["cohort"]["old_adapter_generation"],
+  "new_adapter_generation":context["adapter"],"core_source_generation":context["core"],
+  "generation_a1_sha256":context["artifact"],"js_sha256":hashlib.sha256(context["journal_raw"]).hexdigest(),
+  "rs_sha256":hashlib.sha256(context["resources_raw"]).hexdigest(),
+  "u1_sha256":hashlib.sha256(context["unit"]).hexdigest(),"l1_sha256":hashlib.sha256(context["launcher"]).hexdigest(),
+  "primary_source_sha256":hashlib.sha256(files["registry/profiles/hermes/SOUL.md"]).hexdigest(),
+  "active_soul_sha256":context["soul"],
+  "native_inventory_sha256":context["resources"]["loaded_skill_inventory_sha256"],
+  "peer_pid":context["pid"],"peer_uid":1000,"peer_gid":1000,
+  "peer_start_ticks":context["evidence"]["start_ticks"],"boot_id":context["evidence"]["boot_id"],
+  "invocation_id":context["evidence"]["invocation_id"],"provider":"openai-codex",
+  "api_mode":"codex_responses","base_url":"https://chatgpt.com/backend-api/codex",
+  "model":status["model"],"account_fingerprint":account}
+ if (type(proof) is not CoreVerifiedLifecycleStartupCompletion
+     or proof.is_root_verified() is not True
+     or any(getattr(proof,key,None)!=value for key,value in expected.items())):
+  raise CoreRuntimeError("new Core lifecycle completion does not join its selected source cohort")
+ if (poller.poll(0) or not _validate_guarded_new_read(context.get("new_read"))
+     or _adapter_process_identity(ADAPTER_SOURCE,context["adapter"],context["core"],context["pid"])[1]
+       !=context["identity"]):
+  raise CoreRuntimeError("new Core lifecycle completion is stale against the held process")
+ return proof
+
 def _recover_interrupted_adapter_update():
+ # The cohesive M1 cohort keeps the original ownership journal byte-identical
+ # until all owner bindings are rebound. Therefore its phase, not a synthetic
+ # `preparing` value in that journal, is the recovery authority.
+ try:
+  cohort,cohort_raw=_read_adapter_update_cohort(allow_absent=True)
+ except CoreRuntimeError:
+  raise
+ if cohort is not None and cohort["phase"]!="committed":
+  reference=_adapter_update_backup_reference(cohort)
+  prior_source=Path(cohort["old_source"]); target=Path(cohort["new_source"])
+  _validate_adapter_generation_path(prior_source); _validate_adapter_generation_path(target)
+  try:
+   _restore_adapter_update_backup(reference,allowed_sources=(prior_source,target))
+  except Exception:
+   raise CoreRuntimeError("interrupted adapter cohort retained its protected recovery backup") from None
+  return
  if not JOURNAL.is_file() or JOURNAL.is_symlink(): return
  raw=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
  try: record=json.loads(raw)
@@ -2314,127 +3893,476 @@ def _recover_interrupted_adapter_update():
  except Exception:
   raise CoreRuntimeError("interrupted adapter update retained its protected recovery backup") from None
 
+def _adapter_update_backup_reference(cohort):
+ """Resolve only the fixed old-generation backup named by the protected cohort."""
+ if type(cohort) is not dict:
+  raise CoreRuntimeError("adapter update recovery cohort is unavailable")
+ generation=cohort.get("old_adapter_generation")
+ if not isinstance(generation,str) or re.fullmatch(r"[0-9a-f]{64}",generation) is None:
+  raise CoreRuntimeError("adapter update recovery generation is invalid")
+ backup=ADAPTER_UPDATE_BACKUPS/generation
+ raw=_projection_file(backup/"manifest.json",owner=ROOT_UID,group=ROOT_UID,
+                      mode=0o600,maximum=4096)
+ try:
+  manifest=json.loads(raw)
+ except (ValueError,TypeError):
+  raise CoreRuntimeError("adapter update recovery manifest is malformed") from None
+ expected={"journal.json":cohort["old_journal_sha256"],
+  "unit":cohort["old_unit_sha256"],"launcher":cohort["old_launcher_sha256"],
+  "resources-record.json":cohort["old_resources_record_sha256"]}
+ if type(manifest) is not dict or any(manifest.get(name)!=digest for name,digest in expected.items()):
+  raise CoreRuntimeError("adapter update recovery backup differs from its cohort")
+ return {"path":str(backup),"source_generation":generation,"files":manifest}
+
 def update_owned_core_adapter():
  with _adapter_update_lock():
   return _update_owned_core_adapter_locked()
 
 def _update_owned_core_adapter_locked():
- """Switch one verified journal-owned native core to this immutable adapter release."""
+ """Rebind one helper-only adapter generation as a single recoverable cohort."""
  if os.geteuid()!=ROOT_UID or not Path("/proc").is_dir():
   raise CoreRuntimeError("requires installed Linux root actor")
  _validate_adapter_source_path(); _recover_interrupted_adapter_update()
- record,raw_journal,files=_read_active_adapter_runtime()
- old_source=Path(record["adapter_source"])
+ record,raw_journal,old_files=_read_active_adapter_runtime()
+ old_source=Path(record["adapter_source"]); old_adapter=record["adapter_generation"]
+ old_core=record["core_source_generation"]
  if old_source==ADAPTER_SOURCE:
   raise CoreRuntimeError("current native adapter source is already installed")
- try:
-  from hermes_installer.remote.core_gateway_inspector import (
-   _current_native_adapter_generation,verify_staged_native_resources_plugin,
-  )
-  from hermes_installer.remote.native_plugin_bootstrap import (
-   verify_native_resources_plugin_selection,
-  )
-  deadline=time.monotonic()+35.0
-  incoming_generation=_current_native_adapter_generation(deadline=deadline)
-  staged_digest=verify_staged_native_resources_plugin(deadline=deadline)
-  selection=verify_native_resources_plugin_selection()
-  selection_digest=getattr(selection,"selection_sha256",None)
-  if (not re.fullmatch(r"[0-9a-f]{64}",str(incoming_generation or ""))
-      or not re.fullmatch(r"[0-9a-f]{64}",str(staged_digest or ""))
-      or getattr(selection,"plugin_key",None)!="hermes-installer-resources-delegation"
-      or selection_digest!=record["plugin_selection_sha256"]):
-   raise CoreRuntimeError("incoming immutable adapter or current native plugin selection is not verified")
-  backup_reference=_save_adapter_update_backup(record,raw_journal,files,selection_digest)
- except CoreRuntimeError:
-  raise
- except Exception:
-  raise CoreRuntimeError("incoming native adapter proof or recovery snapshot is unavailable") from None
- marker={**record,"adapter_update_state":"preparing",
-         "adapter_update_backup":backup_reference,
-         "adapter_update_previous_source":str(old_source),
-         "adapter_update_target_source":str(ADAPTER_SOURCE),
-         "adapter_update_target_generation":incoming_generation,
-         "adapter_update_staged_plugin_sha256":staged_digest}
- marker_raw=(json.dumps(marker,sort_keys=True)+"\n").encode()
- _replace_journal(marker,expected_raw=raw_journal)
- try:
-  # Recheck the complete prior cohort immediately before the fixed-file CAS.
-  check_record,check_raw,check_files=_read_active_adapter_runtime()
-  if check_record!=marker or check_raw!=marker_raw or check_files!=files:
-   raise CoreRuntimeError("journal-owned core changed before adapter update")
-  deadline=time.monotonic()+35.0
-  if (_current_native_adapter_generation(deadline=deadline)!=incoming_generation
-      or verify_staged_native_resources_plugin(deadline=deadline)!=staged_digest
-      or getattr(verify_native_resources_plugin_selection(),"selection_sha256",None)!=selection_digest):
-   raise CoreRuntimeError("incoming adapter or selected plugin changed before update")
-  # Stop the verified old PID before replacing anything ExecStart can use.
-  # Otherwise a failing old process could be relaunched by Restart=on-failure
-  # against the new launcher while the journal still names the prior cohort.
-  _stop_owned_core_for_adapter_update((old_source,ADAPTER_SOURCE))
-  new_launcher=_launcher()
-  new_unit=_unit()
-  # Install and load the unprivileged journal gate before changing ExecStart's
-  # launcher bytes. A reboot or process failure cannot start a mixed cohort.
-  _atomic_replace(UNIT,new_unit,0o644,ROOT_UID,ROOT_UID)
-  _run(["systemctl","daemon-reload"])
-  if (not _owned_unit_loaded()
-      or _projection_file(UNIT,owner=ROOT_UID,group=ROOT_UID,mode=0o644,maximum=256*1024)!=new_unit):
-   raise CoreRuntimeError("updated startup guard unit readback differs")
-  _atomic_replace(LAUNCHER,new_launcher,0o755,ROOT_UID,ROOT_UID)
-  if _projection_file(LAUNCHER,owner=ROOT_UID,group=ROOT_UID,mode=0o755,maximum=256*1024)!=new_launcher:
-   raise CoreRuntimeError("updated launcher readback differs")
-  deadline=time.monotonic()+35.0
-  if (_current_native_adapter_generation(deadline=deadline)!=incoming_generation
-      or verify_staged_native_resources_plugin(deadline=deadline)!=staged_digest
-      or getattr(verify_native_resources_plugin_selection(),"selection_sha256",None)!=selection_digest
-      or _core_source_generation()!=record["core_source_generation"]):
-   raise CoreRuntimeError("incoming adapter source or selection changed before activation")
-  if (_run(["systemctl","is-active",SERVICE],False).stdout.strip()=="active"
-      or _run(["systemctl","show","--property=MainPID","--value",SERVICE],False).stdout.strip() not in {"","0"}
-      or any(_owned_listener(adapter_source=source) for source in (old_source,ADAPTER_SOURCE))):
-   raise CoreRuntimeError("owned core restarted while adapter files were switching")
-  updated={key:value for key,value in record.items() if not key.startswith("adapter_update_")}
-  updated.update({"adapter_source":str(ADAPTER_SOURCE),"adapter_generation":incoming_generation,
-                  "unit_sha256":hashlib.sha256(new_unit).hexdigest(),
-                  "launcher_sha256":hashlib.sha256(new_launcher).hexdigest(),
-                  "adapter_update_state":"starting",
-                  "adapter_update_backup":backup_reference,
-                  "adapter_update_previous_source":str(old_source),
-                  "adapter_update_target_source":str(ADAPTER_SOURCE),
-                  "adapter_update_target_generation":incoming_generation,
-                  "adapter_update_staged_plugin_sha256":staged_digest})
-  updated_raw=(json.dumps(updated,sort_keys=True)+"\n").encode()
-  _replace_journal(updated,expected_raw=marker_raw)
-  _run(["systemctl","start",SERVICE]); _wait_for_listener()
-  deadline=time.monotonic()+35.0
-  if (not _owned_listener_pidfd(adapter_source=ADAPTER_SOURCE)
-      or _current_native_adapter_generation(deadline=deadline)!=incoming_generation
-      or verify_staged_native_resources_plugin(deadline=deadline)!=staged_digest
-      or getattr(verify_native_resources_plugin_selection(),"selection_sha256",None)!=selection_digest
-      or _core_source_generation()!=record["core_source_generation"]):
-   raise CoreRuntimeError("updated native adapter process or source receipt is not current")
-  committed={key:value for key,value in updated.items() if key not in {
-   "adapter_update_state","adapter_update_target_source","adapter_update_target_generation",
-   "adapter_update_staged_plugin_sha256"}}
-  committed["adapter_update_state"]="active"
-  _replace_journal(committed,expected_raw=updated_raw)
-  final=_journal()
-  if (final.get("adapter_source")!=str(ADAPTER_SOURCE)
-      or final.get("adapter_generation")!=incoming_generation
-      or final.get("plugin_selection_sha256")!=selection_digest):
-   raise CoreRuntimeError("updated adapter journal readback differs")
-  return "journal-owned Hermes core updated to the verified immutable installer adapter generation"
- except Exception as exc:
+ from .registry import manual_jarvis_skills as native
+ from .remote.core_gateway_inspector import (
+  _current_native_adapter_generation,verify_staged_native_resources_plugin,
+ )
+ from .remote.native_plugin_bootstrap import verify_native_resources_plugin_selection
+ deadline=time.monotonic()+35.0
+ new_adapter=_current_native_adapter_generation(deadline=deadline)
+ staged_digest=verify_staged_native_resources_plugin(deadline=deadline)
+ selection=verify_native_resources_plugin_selection()
+ selection_digest=getattr(selection,"selection_sha256",None)
+ if (not re.fullmatch(r"[0-9a-f]{64}",str(new_adapter or ""))
+     or not re.fullmatch(r"[0-9a-f]{64}",str(staged_digest or ""))
+     or getattr(selection,"plugin_key",None)!="hermes-installer-resources-delegation"
+     or selection_digest!=record["plugin_selection_sha256"]
+     or _core_source_generation()!=old_core):
+  raise CoreRuntimeError("incoming adapter, pinned Core source, or native selection is not verified")
+ snapshots=_snapshot_adapter_update_bindings(core_source_generation=old_core)
+ resources_raw=snapshots["resources_record"]
+ try: old_discovery=json.loads(resources_raw)
+ except (ValueError,TypeError): raise CoreRuntimeError("current Resources receipt is malformed") from None
+ if (old_discovery.get("core_ownership_sha256")!=hashlib.sha256(raw_journal).hexdigest()
+     or old_discovery.get("artifact_sha256") is None
+     or read_current_resources_discovery(core_source_generation=old_core).get("resources_state")!="discovered"):
+  raise CoreRuntimeError("current Resources generation is not fully discovered")
+ old_artifact=old_discovery["artifact_sha256"]
+ old_archive=_projection_file(RESOURCES_CAS/(old_artifact+".zip"),owner=ROOT_UID,
+  group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
+ if hashlib.sha256(old_archive).hexdigest()!=old_artifact:
+  raise CoreRuntimeError("current Resources immutable CAS bytes differ")
+ overlay_record,overlay_contents,overlay_raw=_read_adapter_overlay_snapshot()
+ if overlay_raw is None:
+  old_base=old_archive
+ else:
+  old_base_sha=overlay_record["base_artifact_sha256"]
+  old_base=_projection_file(RESOURCES_CAS/(old_base_sha+".zip"),owner=ROOT_UID,
+   group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
+  if hashlib.sha256(old_base).hexdigest()!=old_base_sha:
+   raise CoreRuntimeError("original owner-overlay base CAS is unavailable")
+ new_base=native.build_manual_jarvis_skills_artifact()
+ reconstruction=_make_adapter_update_reconstruction(old_base,new_base,old_archive,
+  overlay_record,overlay_contents,overlay_raw,
+  _projection_file(HERMES_HOME/"skills"/native._GENERATION/native._OWNER_FILE,
+   owner=1000,group=1000,mode=0o600,maximum=2*1024*1024),resources_raw)
+ new_archive=reconstruction.new_composed_archive
+ old_manifest,old_generation_files=native._read_transition_archive(old_archive,old_artifact)
+ new_artifact=reconstruction.new_composed_artifact_sha256
+ new_manifest,new_generation_files=native._read_transition_archive(new_archive,new_artifact)
+ shared_manifest,shared_tree,shared_count=native._same_materialization_digests(
+  new_manifest,new_generation_files)
+ if (shared_manifest!=native._same_materialization_digests(old_manifest,old_generation_files)[0]
+     or shared_tree!=reconstruction.materialized_tree_sha256
+     or not native.verify_same_materialization_transition(old_manifest,old_generation_files,
+       new_manifest,new_generation_files)):
+  raise CoreRuntimeError("composed A0→A1 pair is not an exact helper-only transition")
+ new_unit=_unit(adapter_source=ADAPTER_SOURCE,cohort_gate=True)
+ new_launcher=_launcher(adapter_source=ADAPTER_SOURCE)
+ old_unit=old_files[UNIT]; old_launcher=old_files[LAUNCHER]
+ new_unit_sha=hashlib.sha256(new_unit).hexdigest(); new_launcher_sha=hashlib.sha256(new_launcher).hexdigest()
+ old_unit_sha=hashlib.sha256(old_unit).hexdigest(); old_launcher_sha=hashlib.sha256(old_launcher).hexdigest()
+ old_recipe=_adapter_recipe_sha256(str(old_source),old_adapter,old_unit_sha,old_launcher_sha)
+ new_recipe=_adapter_recipe_sha256(str(ADAPTER_SOURCE),new_adapter,new_unit_sha,new_launcher_sha)
+ guarded_old_unit=_unit(adapter_source=old_source,cohort_gate=True)
+ guarded_old_unit_sha=hashlib.sha256(guarded_old_unit).hexdigest()
+ guarded_old_recipe=_adapter_recipe_sha256(str(old_source),old_adapter,
+  guarded_old_unit_sha,old_launcher_sha)
+ old_installed_journal=_projection_file(HERMES_HOME/"skills"/native._GENERATION/native._OWNER_FILE,
+  owner=1000,group=1000,mode=0o600,maximum=2*1024*1024)
+ old_custody=_hash_generation_tree(HERMES_HOME,old_manifest,old_generation_files,old_artifact)
+ primary_raw=snapshots["primary_record"]
+ if primary_raw:
+  from . import primary_prompt_manager as primary
   try:
-   active=_run(["systemctl","is-active",SERVICE],False).stdout.strip()
-   if active=="active" and not any(_owned_listener_pidfd(adapter_source=source)
-                                    for source in (old_source,ADAPTER_SOURCE)):
-    raise CoreRuntimeError("active process is not either journaled update generation")
-   _restore_adapter_update_backup(backup_reference,allowed_sources=(old_source,ADAPTER_SOURCE))
+   parsed=primary._read_record(sys.modules[__name__])
+   if parsed is None or parsed.get("state")!="adopted": raise ValueError
+   soul,soul_signature=primary._read_soul(sys.modules[__name__])
+   prefix,separator,block=primary.split_managed_block(soul,
+    owner_prefix_length=parsed["owner_prefix_length"],
+    separator=bytes.fromhex(parsed["owner_separator_hex"]))
+   prior_backup=primary._backup_read(sys.modules[__name__],parsed)
+   if (parsed.get("core_source_generation")!=old_core or parsed.get("artifact_sha256")!=old_artifact
+       or hashlib.sha256(soul).hexdigest()!=parsed.get("result_soul_sha256")
+       or hashlib.sha256(prior_backup).hexdigest()!=parsed.get("owner_backup_name")):
+    raise ValueError
+   primary_values={"primary_record_sha256":hashlib.sha256(primary_raw).hexdigest(),
+    "soul_sha256":hashlib.sha256(soul).hexdigest(),"soul_signature":tuple(soul_signature),
+    "owner_prefix_sha256":hashlib.sha256(prefix).hexdigest(),"owner_prefix_length":len(prefix),
+    "owner_separator_hex":separator.hex(),"managed_block_sha256":hashlib.sha256(block).hexdigest(),
+    "prior_backup_sha256":hashlib.sha256(prior_backup).hexdigest()}
   except Exception:
-   raise CoreRuntimeError("adapter update failed; protected recovery backup retained") from None
+   raise CoreRuntimeError("existing primary adoption or its exact owner bytes are not eligible") from None
+ else:
+  primary_values={"primary_record_sha256":_ABSENT_DIGEST,"soul_sha256":_ABSENT_DIGEST,
+   "soul_signature":(),"owner_prefix_sha256":_ABSENT_DIGEST,"owner_prefix_length":0,
+   "owner_separator_hex":"","managed_block_sha256":_ABSENT_DIGEST,"prior_backup_sha256":_ABSENT_DIGEST}
+ if snapshots["obsidian_registration_state"]=="registered":
+  obsidian_state="registered"; obsidian_sha=snapshots["obsidian_registration_sha256"]
+ else: obsidian_state="absent"; obsidian_sha=_ABSENT_DIGEST
+ old_pidfd,old_pid,old_process,old_process_sha=_capture_adapter_service_process(
+  old_source,old_adapter,old_core)
+ cohort_id=secrets.token_hex(16)
+ backup_reference=None; prepared=None; new_pidfd=None
+ state={"phase":"prepared","journal_raw":raw_journal,"resources_raw":resources_raw,
+  "primary_raw":primary_raw or None,"process_identity":old_process_sha,"pid":old_pid,
+  "old_pidfd":old_pidfd,"source":str(old_source),"adapter":old_adapter,"core":old_core,
+  "soul_sha256":primary_values["soul_sha256"] if primary_values["soul_sha256"]!=_ABSENT_DIGEST
+    else old_discovery.get("active_primary_prompt_sha256"),
+  "soul_signature":primary_values["soul_signature"],
+  "overlay_raw":overlay_raw,"registration_raw":snapshots["obsidian_registration"] or None}
+ try:
+  backup_reference=_save_adapter_update_backup(record,raw_journal,old_files,selection_digest,
+   resources_record=resources_raw,overlay_record=overlay_raw or b"",
+   primary_record=primary_raw or b"",obsidian_registration=snapshots["obsidian_registration"],
+   prior_cohort=snapshots["prior_cohort"])
+  cohort={"schema":1,"purpose":_ADAPTER_COHORT_PURPOSE,"cohort_transaction_id":cohort_id,
+   "owner_uid":1000,"home_role":"jarvis-primary-home","phase":"prepared",
+   "old_source":str(old_source),"new_source":str(ADAPTER_SOURCE),
+   "old_adapter_generation":old_adapter,"new_adapter_generation":new_adapter,
+   "old_core_source_generation":old_core,"new_core_source_generation":old_core,
+   "old_source_recipe_sha256":old_recipe,"new_source_recipe_sha256":new_recipe,
+   "old_unit_sha256":old_unit_sha,"old_launcher_sha256":old_launcher_sha,
+   "new_unit_sha256":new_unit_sha,"new_launcher_sha256":new_launcher_sha,
+   "guarded_old_unit_sha256":guarded_old_unit_sha,"guarded_old_recipe_sha256":guarded_old_recipe,
+   "old_process_identity_sha256":old_process_sha,"old_journal_sha256":hashlib.sha256(raw_journal).hexdigest(),
+   "new_journal_sha256":None,"old_resources_record_sha256":hashlib.sha256(resources_raw).hexdigest(),
+   "pre_switch_resources_record_sha256":None,"starting_journal_sha256":None,
+   "starting_resources_record_sha256":None,"new_resources_record_sha256":None,
+   "old_artifact_sha256":old_artifact,"new_artifact_sha256":new_artifact,
+   "owner_generation_backup_name":".jarvis-resources-skills-helper-transition-"+cohort_id,
+   **primary_values,"obsidian_registration_state":obsidian_state,
+   "obsidian_registration_sha256":obsidian_sha,
+   "obsidian_vault_tree_sha256":snapshots["obsidian_vault_tree_sha256"],
+   "reconstruction":None,"reconstruction_sha256":None}
+  reconstruction_row=_adapter_update_reconstruction_row(reconstruction,
+   cohort_id=cohort_id,phase="prepared",old_core=old_core,new_core=old_core,
+   old_recipe=old_recipe,new_recipe=new_recipe,
+   old_marker=hashlib.sha256(old_installed_journal).hexdigest(),old_discovery=hashlib.sha256(resources_raw).hexdigest())
+  cohort["reconstruction"]=reconstruction_row
+  cohort["reconstruction_sha256"]=hashlib.sha256(_canonical_json(reconstruction_row)).hexdigest()
+  cohort_raw=_write_adapter_update_cohort(cohort,expected_raw=snapshots["prior_cohort"] or None)
+  _atomic_replace(UNIT,guarded_old_unit,0o644,ROOT_UID,ROOT_UID)
+  _run(["systemctl","daemon-reload"])
+  if (_projection_file(UNIT,owner=ROOT_UID,group=ROOT_UID,mode=0o644,maximum=256*1024)!=guarded_old_unit
+      or not _owned_unit_loaded()
+      or _projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)!=raw_journal):
+   raise CoreRuntimeError("deny-by-default old-source gate did not preserve J0")
+  state["cohort"]=cohort; state["cohort_raw"]=cohort_raw
+  def current_check(value,purpose):
+   try:
+    if (not _ADAPTER_UPDATE_LOCK_HELD.get() or time.monotonic()>=value.expires_monotonic
+        or state.get("phase") not in {"prepared","resources-rebound"}): return False
+    current,current_raw=_read_adapter_update_cohort()
+    unit_raw=_projection_file(UNIT,owner=ROOT_UID,group=ROOT_UID,mode=0o644,maximum=256*1024)
+    journal_now=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+    resources_now=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024)
+    primary_now=_projection_file(PRIMARY_PROMPT_JOURNAL,owner=ROOT_UID,group=ROOT_UID,
+     mode=0o600,maximum=64*1024) if PRIMARY_PROMPT_JOURNAL.exists() else None
+    if (current["cohort_transaction_id"]!=cohort_id or current["phase"]!=state["phase"]
+        or hashlib.sha256(current_raw).hexdigest()!=hashlib.sha256(state["cohort_raw"]).hexdigest()
+        or journal_now!=state["journal_raw"] or resources_now!=state["resources_raw"]
+        or primary_now!=state["primary_raw"] or unit_raw!=guarded_old_unit
+        or not _validate_guarded_old_read(state.get("old_read"))): return False
+    _overlay_record,_overlay_contents,overlay_now=_read_adapter_overlay_snapshot()
+    if overlay_now!=state["overlay_raw"]: return False
+    from . import primary_prompt_manager as primary
+    soul_now,soul_signature_now=primary._read_soul(sys.modules[__name__])
+    if (hashlib.sha256(soul_now).hexdigest()!=state["soul_sha256"]
+        or (state["soul_signature"] and tuple(soul_signature_now)!=state["soul_signature"])):
+     return False
+    from .remote.core_gateway_inspector import _current_native_adapter_generation,verify_staged_native_resources_plugin
+    if (_current_native_adapter_generation(deadline=time.monotonic()+35.0)!=new_adapter
+        or verify_staged_native_resources_plugin(deadline=time.monotonic()+35.0)!=staged_digest
+        or _core_source_generation()!=old_core): return False
+    if current["phase"]=="resources-rebound" and state["phase"]!="resources-rebound": return False
+    return True
+   except Exception: return False
+  old_read=_issue_guarded_old_read(cohort=cohort,cohort_raw=cohort_raw,record=record,
+   journal_raw=raw_journal,old_unit=old_unit,old_launcher=old_launcher,pidfd=old_pidfd,
+   pid=old_pid,process_identity_sha256=old_process_sha)
+  state["old_read"]=old_read
+  old_base_sha=reconstruction.old_base_artifact_sha256
+  new_base_sha=reconstruction.new_base_artifact_sha256
+  if (new_base_sha!=hashlib.sha256(new_base).hexdigest()
+      or old_base_sha!=hashlib.sha256(old_base).hexdigest()):
+   raise CoreRuntimeError("source overlay base digest changed during preparation")
+  self_manifest_sha=hashlib.sha256(_canonical_json(old_manifest)).hexdigest()
+  next_manifest_sha=hashlib.sha256(_canonical_json(new_manifest)).hexdigest()
+  prepared_values={"purpose":"helper-only","cohort_transaction_id":cohort_id,
+   "old_source_generation":old_core,"new_source_generation":old_core,
+   "old_adapter_generation":old_adapter,"new_adapter_generation":new_adapter,
+   "old_source_recipe_sha256":old_recipe,"new_source_recipe_sha256":new_recipe,
+   "old_artifact_sha256":old_artifact,"new_artifact_sha256":new_artifact,
+   "old_manifest_sha256":self_manifest_sha,"new_manifest_sha256":next_manifest_sha,
+   "shared_manifest_sha256":shared_manifest,"shared_materialization_sha256":shared_tree,
+   "shared_member_count":shared_count,"old_base_artifact_sha256":old_base_sha,
+   "new_base_artifact_sha256":new_base_sha,
+   "old_composed_artifact_sha256":old_artifact,"new_composed_artifact_sha256":new_artifact,
+   "overlay_journal_sha256":reconstruction.overlay_journal_sha256,
+   "overlay_contents":tuple(reconstruction.overlay_contents),
+   "base_non_installer_manifest_sha256":reconstruction.base_non_installer_manifest_sha256,
+   "composed_non_installer_manifest_sha256":reconstruction.composed_non_installer_manifest_sha256,
+   "materialized_tree_sha256":reconstruction.materialized_tree_sha256,
+   "installed_generation_journal_sha256":hashlib.sha256(old_installed_journal).hexdigest(),
+   "installed_generation_custody_sha256":old_custody,
+   "old_installed_journal_sha256":hashlib.sha256(old_installed_journal).hexdigest(),
+   "resources_record_sha256":hashlib.sha256(resources_raw).hexdigest(),
+   "discovery_record_sha256":hashlib.sha256(resources_raw).hexdigest(),
+   "old_discovery_sha256":hashlib.sha256(resources_raw).hexdigest(),
+   "overlay_record_sha256":hashlib.sha256(overlay_raw).hexdigest() if overlay_raw else _ABSENT_DIGEST,
+   "obsidian_registration_state":obsidian_state,"obsidian_registration_sha256":obsidian_sha,
+   **primary_values}
+  prepared=_seal_prepared_same_materialization_transition(current_check=current_check,**prepared_values)
+  state["prepared"]=prepared
+  old_proof=_current_resources_overlay_artifact(old_base,
+   overlay_record or {"schema":1,"base_artifact_sha256":old_base_sha,"skills":{}},
+   overlay_contents,overlay_raw)
+  if old_proof!=(old_archive,old_artifact):
+   raise CoreRuntimeError("current owner overlay does not reproduce its exact installed A0")
+  _write_resources_cas_artifact(new_base,new_base_sha)
+  import_result=_run_same_materialization_import(prepared,new_archive,old_archive,
+   cohort["owner_generation_backup_name"])
+  installed_path=HERMES_HOME/"skills"/native._GENERATION
+  new_installed_journal=_projection_file(installed_path/native._OWNER_FILE,owner=1000,
+   group=1000,mode=0o600,maximum=2*1024*1024)
+  native._verify_owned_generation(installed_path,new_generation_files,new_artifact)
+  if import_result.get("artifact_sha256")!=new_artifact:
+   raise CoreRuntimeError("native helper-only importer returned a different generation")
+  with _guarded_old_read_scope(old_read,purpose="resources-readback"):
+   verified_archive,rpre_record=_adapter_update_current_resource_payload(
+    overlay_snapshot=(overlay_record,overlay_contents,overlay_raw),reconstruction=reconstruction)
+  _write_resources_cas_artifact(verified_archive,rpre_record["artifact_sha256"])
+  rpre_raw=(json.dumps(rpre_record,sort_keys=True,separators=(",",":"),ensure_ascii=True)+"\n").encode("ascii")
+  cohort["phase"]="resources-rebound"
+  cohort["pre_switch_resources_record_sha256"]=hashlib.sha256(rpre_raw).hexdigest()
+  recon=_adapter_update_reconstruction_row(reconstruction,cohort_id=cohort_id,
+   phase="resources-rebound",old_core=old_core,new_core=old_core,
+   old_recipe=old_recipe,new_recipe=new_recipe,
+   old_marker=hashlib.sha256(old_installed_journal).hexdigest(),
+   new_marker=hashlib.sha256(new_installed_journal).hexdigest(),
+   old_discovery=hashlib.sha256(resources_raw).hexdigest(),
+   new_discovery=hashlib.sha256(rpre_raw).hexdigest())
+  cohort["reconstruction"]=recon
+  cohort["reconstruction_sha256"]=hashlib.sha256(_canonical_json(recon)).hexdigest()
+  cohort_raw=_write_adapter_update_cohort(cohort,expected_raw=cohort_raw)
+  _atomic_replace(RESOURCES_RECORD,rpre_raw,0o600,ROOT_UID,ROOT_UID)
+  if _projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,
+      mode=0o600,maximum=16*1024)!=rpre_raw:
+   raise CoreRuntimeError("rebound Resources receipt did not persist exactly")
+  state.update({"phase":"resources-rebound","cohort":cohort,"cohort_raw":cohort_raw,
+   "resources_raw":rpre_raw})
+  old_read=_issue_guarded_old_read(cohort=cohort,cohort_raw=cohort_raw,record=record,
+   journal_raw=raw_journal,old_unit=old_unit,old_launcher=old_launcher,pidfd=old_pidfd,
+   pid=old_pid,process_identity_sha256=old_process_sha,purpose="primary-rebase-readback")
+  state["old_read"]=old_read
+  if primary_values["primary_record_sha256"]!=_ABSENT_DIGEST:
+   from .primary_prompt_manager import rebase_identical_primary_binding
+   with _guarded_old_read_scope(old_read,purpose="primary-rebase-readback"):
+    rebase_identical_primary_binding(prepared)
+   state["primary_raw"]=_projection_file(PRIMARY_PROMPT_JOURNAL,owner=ROOT_UID,
+    group=ROOT_UID,mode=0o600,maximum=64*1024)
+  with _guarded_old_read_scope(old_read,purpose="resources-readback"):
+   if read_current_resources_discovery(core_source_generation=old_core).get("resources_state")!="discovered":
+    raise CoreRuntimeError("rebound A1 discovery/current installed tree did not verify")
+  from .remote import obsidian_owner_lifecycle as obsidian
+  if (snapshots["obsidian_registration_state"]=="registered"
+      and (obsidian.read_registration()[2]!=snapshots["obsidian_registration_sha256"]
+       or _obsidian_vault_tree_sha256(obsidian.OWNER_DATA_ROOT/"obsidian-vault")
+          !=snapshots["obsidian_vault_tree_sha256"])):
+   raise CoreRuntimeError("Obsidian owner registration or vault changed during source preparation")
+  if not verify_prepared_same_materialization_transition(prepared):
+   raise CoreRuntimeError("prepared source/binding tuple changed before service stop")
+  # No source or launcher byte is switched until all old-native and binding
+  # readbacks above are complete and the captured old PIDFD is still held.
+  _stop_captured_adapter_process(old_pidfd,old_pid,old_source,old_adapter,old_core,old_process_sha)
+  if (_run(["systemctl","is-active",SERVICE],False).stdout.strip()=="active"
+      or _run(["systemctl","show","--property=MainPID","--value",SERVICE],False).stdout.strip() not in {"","0"}):
+   raise CoreRuntimeError("old Core service returned during its guarded stop")
+  _atomic_replace(UNIT,new_unit,0o644,ROOT_UID,ROOT_UID)
+  _atomic_replace(LAUNCHER,new_launcher,0o755,ROOT_UID,ROOT_UID)
+  _run(["systemctl","daemon-reload"])
+  if (_projection_file(UNIT,owner=ROOT_UID,group=ROOT_UID,mode=0o644,maximum=256*1024)!=new_unit
+      or _projection_file(LAUNCHER,owner=ROOT_UID,group=ROOT_UID,mode=0o755,maximum=256*1024)!=new_launcher
+      or not _owned_unit_loaded()):
+   raise CoreRuntimeError("new source guarded unit/launcher readback differs")
+  starting={key:value for key,value in record.items() if not key.startswith("adapter_update_")}
+  starting.update({"adapter_source":str(ADAPTER_SOURCE),"adapter_generation":new_adapter,
+   "core_source_generation":old_core,"unit_sha256":new_unit_sha,"launcher_sha256":new_launcher_sha,
+   "adapter_update_state":"starting","adapter_update_backup":backup_reference,
+   "adapter_update_previous_source":str(old_source),"adapter_update_target_source":str(ADAPTER_SOURCE),
+   "adapter_update_target_generation":new_adapter,"adapter_update_staged_plugin_sha256":staged_digest,
+   "adapter_update_cohort_transaction_id":cohort_id})
+  starting_raw=(json.dumps(starting,sort_keys=True,separators=(",",":"),ensure_ascii=True)+"\n").encode("ascii")
+  starting_record=_bind_resources_record_to_starting_journal(rpre_record,starting_raw)
+  starting_resources_raw=(json.dumps(starting_record,sort_keys=True,separators=(",",":"),ensure_ascii=True)+"\n").encode("ascii")
+  cohort["phase"]="source-starting"
+  cohort["starting_journal_sha256"]=hashlib.sha256(starting_raw).hexdigest()
+  cohort["starting_resources_record_sha256"]=hashlib.sha256(starting_resources_raw).hexdigest()
+  recon=_adapter_update_reconstruction_row(reconstruction,cohort_id=cohort_id,
+   phase="source-starting",old_core=old_core,new_core=old_core,
+   old_recipe=old_recipe,new_recipe=new_recipe,
+   old_marker=hashlib.sha256(old_installed_journal).hexdigest(),
+   new_marker=hashlib.sha256(new_installed_journal).hexdigest(),
+   old_discovery=hashlib.sha256(resources_raw).hexdigest(),
+   new_discovery=hashlib.sha256(starting_resources_raw).hexdigest())
+  cohort["reconstruction"]=recon; cohort["reconstruction_sha256"]=hashlib.sha256(_canonical_json(recon)).hexdigest()
+  cohort_raw=_write_adapter_update_cohort(cohort,expected_raw=cohort_raw)
+  _atomic_replace(RESOURCES_RECORD,starting_resources_raw,0o600,ROOT_UID,ROOT_UID)
+  _atomic_replace(JOURNAL,starting_raw,0o600,ROOT_UID,ROOT_UID)
+  if (_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,
+       mode=0o600,maximum=16*1024)!=starting_resources_raw
+      or _projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,
+       mode=0o600,maximum=64*1024)!=starting_raw):
+   raise CoreRuntimeError("starting source/Resources tuple did not persist exactly")
+  state.update({"phase":"source-starting","cohort":cohort,"cohort_raw":cohort_raw,
+   "journal_raw":starting_raw,"resources_raw":starting_resources_raw})
+  _run(["systemctl","start",SERVICE]); _wait_for_listener()
+  new_pidfd,new_pid,new_evidence,new_process_sha=_capture_adapter_service_process(
+   ADAPTER_SOURCE,new_adapter,old_core)
+  new_read=_issue_guarded_new_read(cohort=cohort,cohort_raw=cohort_raw,record=starting,
+   journal_raw=starting_raw,resources_raw=starting_resources_raw,unit=new_unit,
+   launcher=new_launcher,pidfd=new_pidfd,pid=new_pid,
+   process_identity_sha256=new_process_sha,purpose="resources-readback")
+  state["new_read"]=new_read
+  with _guarded_new_read_scope(new_read,purpose="resources-readback"):
+   if read_current_resources_discovery(core_source_generation=old_core).get("resources_state")!="discovered":
+    raise CoreRuntimeError("new-source current Resources A1 readback failed")
+   actual_archive,actual_resources=_verified_resources_payload()
+  if (actual_archive!=new_archive or actual_resources.get("artifact_sha256")!=new_artifact
+      or actual_resources.get("loaded_skill_inventory_sha256")!=starting_record.get("loaded_skill_inventory_sha256")
+      or actual_resources.get("active_primary_prompt_sha256")!=starting_record.get("active_primary_prompt_sha256")):
+   raise CoreRuntimeError("new Core startup Resources readback differs from its starting receipt")
+  startup_context={"cohort":cohort,"cohort_raw":cohort_raw,"record":starting,
+   "journal_raw":starting_raw,"resources_raw":starting_resources_raw,"unit":new_unit,
+   "launcher":new_launcher,"pidfd":new_pidfd,"pid":new_pid,"identity":new_process_sha,
+   "evidence":new_evidence,"adapter":new_adapter,"core":old_core,"artifact":new_artifact,
+   "primary":state["primary_raw"],"soul":primary_values["soul_sha256"],
+   "resources":actual_resources,"obsidian_state":obsidian_state,"obsidian_sha":obsidian_sha,
+   "obsidian_vault":snapshots["obsidian_vault_tree_sha256"]}
+  startup_token=_ADAPTER_STARTUP_COHORT_CONTEXT.set(startup_context)
+  try: _prove_new_cohort_startup_chat()
+  finally: _ADAPTER_STARTUP_COHORT_CONTEXT.reset(startup_token)
+  if (not _validate_guarded_new_read(new_read)
+      or _adapter_process_identity(ADAPTER_SOURCE,new_adapter,old_core,new_pid)[1]!=new_process_sha):
+   raise CoreRuntimeError("new Core startup proof lost its held source/process tuple")
+  with _guarded_new_read_scope(new_read,purpose="resources-readback"):
+   fresh_archive,fresh_resources=_verified_resources_payload()
+   if (fresh_archive!=new_archive
+       or any(fresh_resources.get(key)!=actual_resources.get(key)
+              for key in set(actual_resources)-{"observed_at_utc"})):
+    raise CoreRuntimeError("new Core Resources bindings changed during lifecycle proof")
+  current_selection=verify_native_resources_plugin_selection()
+  from . import primary_prompt_manager as primary
+  if primary_values["primary_record_sha256"]!=_ABSENT_DIGEST:
+   current_soul,current_signature=primary._read_soul(sys.modules[__name__])
+   current_primary=_projection_file(PRIMARY_PROMPT_JOURNAL,owner=ROOT_UID,
+    group=ROOT_UID,mode=0o600,maximum=64*1024)
+   if (hashlib.sha256(current_soul).hexdigest()!=primary_values["soul_sha256"]
+       or tuple(current_signature)!=primary_values["soul_signature"]
+       or hashlib.sha256(current_primary).hexdigest()!=hashlib.sha256(state["primary_raw"]).hexdigest()):
+    raise CoreRuntimeError("adopted primary binding changed during new-source lifecycle proof")
+  else:
+   try: primary_now=_projection_file(PRIMARY_PROMPT_JOURNAL,owner=ROOT_UID,
+    group=ROOT_UID,mode=0o600,maximum=64*1024)
+   except FileNotFoundError: primary_now=None
+   if primary_now is not None:
+    raise CoreRuntimeError("primary adoption appeared during an unadopted source cohort")
+  _overlay_now,_overlay_contents_now,overlay_raw_now=_read_adapter_overlay_snapshot()
+  if overlay_raw_now!=overlay_raw:
+   raise CoreRuntimeError("owner Resources overlay changed during new-source lifecycle proof")
+  from .remote import obsidian_owner_lifecycle as obsidian
+  if (getattr(current_selection,"selection_sha256",None)!=selection_digest
+      or _core_source_generation()!=old_core
+      or _current_native_adapter_generation(deadline=time.monotonic()+35.0)!=new_adapter
+      or (obsidian_state=="registered" and
+          (obsidian.read_registration()[2]!=obsidian_sha
+           or _obsidian_vault_tree_sha256(obsidian.OWNER_DATA_ROOT/"obsidian-vault")
+              !=snapshots["obsidian_vault_tree_sha256"]))):
+   raise CoreRuntimeError("source, selection or Obsidian custody changed during lifecycle proof")
+  cohort["phase"]="bindings-verified"
+  recon=dict(cohort["reconstruction"]); recon["phase"]="bindings-verified"
+  cohort["reconstruction"]=recon; cohort["reconstruction_sha256"]=hashlib.sha256(_canonical_json(recon)).hexdigest()
+  cohort_raw=_write_adapter_update_cohort(cohort,expected_raw=cohort_raw)
+  final={key:value for key,value in starting.items()}
+  final["adapter_update_state"]="active"
+  final_raw=(json.dumps(final,sort_keys=True,separators=(",",":"),ensure_ascii=True)+"\n").encode("ascii")
+  final_resources=_bind_resources_record_to_starting_journal(actual_resources,final_raw)
+  final_resources_raw=(json.dumps(final_resources,sort_keys=True,separators=(",",":"),ensure_ascii=True)+"\n").encode("ascii")
+  # Record both exact final bytes before replacing either file. The startup
+  # gate still admits only J_s/R_s until C reaches committed.
+  cohort["new_journal_sha256"]=hashlib.sha256(final_raw).hexdigest()
+  cohort["new_resources_record_sha256"]=hashlib.sha256(final_resources_raw).hexdigest()
+  recon=dict(cohort["reconstruction"])
+  recon["new_discovery_sha256"]=cohort["new_resources_record_sha256"]
+  cohort["reconstruction"]=recon
+  cohort["reconstruction_sha256"]=hashlib.sha256(_canonical_json(recon)).hexdigest()
+  cohort_raw=_write_adapter_update_cohort(cohort,expected_raw=cohort_raw)
+  _atomic_replace(RESOURCES_RECORD,final_resources_raw,0o600,ROOT_UID,ROOT_UID)
+  _atomic_replace(JOURNAL,final_raw,0o600,ROOT_UID,ROOT_UID)
+  recon=dict(cohort["reconstruction"]); recon["phase"]="committed"
+  recon["new_discovery_sha256"]=hashlib.sha256(final_resources_raw).hexdigest()
+  cohort["reconstruction"]=recon; cohort["reconstruction_sha256"]=hashlib.sha256(_canonical_json(recon)).hexdigest()
+  cohort["phase"]="committed"
+  cohort_raw=_write_adapter_update_cohort(cohort,expected_raw=cohort_raw)
+  final_record=_journal()
+  if (final_record.get("adapter_source")!=str(ADAPTER_SOURCE)
+      or final_record.get("adapter_generation")!=new_adapter
+      or read_current_resources_discovery(core_source_generation=old_core).get("resources_state")!="discovered"):
+   raise CoreRuntimeError("committed source/Resources/discovery cohort failed final readback")
+  return "journal-owned Hermes core and preserved Resources bindings updated to the verified adapter generation"
+ except Exception as exc:
+  recovery_cohort=None
+  if backup_reference is not None:
+   try: recovery_cohort,_=_read_adapter_update_cohort(allow_absent=True)
+   except Exception: recovery_cohort=None
+  if (backup_reference is not None and type(recovery_cohort) is dict
+      and recovery_cohort.get("cohort_transaction_id")==cohort_id):
+   try:
+    active=_run(["systemctl","is-active",SERVICE],False).stdout.strip()
+    if active=="active" and not any(_owned_listener_pidfd(adapter_source=source)
+      for source in (old_source,ADAPTER_SOURCE)):
+     raise CoreRuntimeError("running Core process is outside both journaled source generations")
+    _restore_adapter_update_backup(backup_reference,allowed_sources=(old_source,ADAPTER_SOURCE))
+   except Exception:
+    raise CoreRuntimeError("adapter cohort failed; exact protected recovery backup retained") from None
   if isinstance(exc,CoreRuntimeError): raise
-  raise CoreRuntimeError("adapter update failed; prior owned core generation restored") from None
+  raise CoreRuntimeError("adapter cohort failed; prior source and binding recovery was attempted") from None
+ finally:
+  _ADAPTER_STARTUP_COHORT_CONTEXT.set(None)
+  if new_pidfd is not None:
+   _GUARDED_NEW_READ_ACTIVE.clear()
+   os.close(new_pidfd)
+  if prepared is not None:
+   with _PREPARED_SAME_MATERIALIZATION_LOCK:
+    _PREPARED_SAME_MATERIALIZATION.pop(id(prepared),None)
+  _GUARDED_OLD_READ_ACTIVE.clear()
+  os.close(old_pidfd)
 
 def install_or_resume():
  if os.geteuid()!=0 or not Path("/proc").is_dir(): raise CoreRuntimeError("requires installed Linux root actor")
@@ -2448,7 +4376,8 @@ def install_or_resume():
  _ensure_dir(SYSTEMD_UNIT_DIR,ROOT_UID,ROOT_UID,0o755)
  _ensure_dir(VAR_LIB_INSTALLER,ROOT_UID,ROOT_UID,0o700)
  _ensure_dir(JOURNAL.parent,ROOT_UID,ROOT_UID,0o700)
- launcher,unit=_launcher(),_unit()
+ _recover_interrupted_adapter_update()
+ launcher,unit=_launcher(),_unit(cohort_gate=False)
  if JOURNAL.exists() or JOURNAL.is_symlink():
   try:
    record=_journal()
