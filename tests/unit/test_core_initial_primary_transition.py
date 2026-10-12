@@ -33,7 +33,7 @@ def _refresh_exact_starting_unit_recipe(cohort):
         maximum=64 * 1024)
     journal = json.loads(journal_raw)
     journal["unit_sha256"] = hashlib.sha256(unit).hexdigest()
-    core._replace_journal(journal, expected_raw=journal_raw)
+    core._replace_journal(journal)
     journal_raw = core._projection_file(
         core.JOURNAL, owner=core.ROOT_UID, group=core.ROOT_UID, mode=0o600,
         maximum=64 * 1024)

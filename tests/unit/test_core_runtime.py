@@ -381,7 +381,7 @@ def _rebind_migrated_fixture_to_prior_generation():
         "unit_sha256": hashlib.sha256(unit).hexdigest(),
         "launcher_sha256": hashlib.sha256(launcher).hexdigest(),
     })
-    core._replace_journal(updated, expected_raw=raw)
+    core._replace_journal(updated)
     return source
 
 
@@ -562,7 +562,7 @@ def test_native_adapter_update_restart_failure_restores_exact_prior_generation(t
     prior_unguarded_unit = core._unit(startup_guard=False, adapter_source=old_source)
     core._atomic_replace(core.UNIT, prior_unguarded_unit, 0o644, core.ROOT_UID, core.ROOT_UID)
     migrated_record["unit_sha256"] = hashlib.sha256(prior_unguarded_unit).hexdigest()
-    core._replace_journal(migrated_record, expected_raw=migrated_raw)
+    core._replace_journal(migrated_record)
     prior = core.JOURNAL.read_bytes()
     launcher = core.LAUNCHER.read_bytes()
     unit = core.UNIT.read_bytes()
@@ -600,7 +600,7 @@ def test_interrupted_adapter_update_recovers_from_journaled_generation_backup(tm
     prior_unguarded_unit = core._unit(startup_guard=False, adapter_source=old_source)
     core._atomic_replace(core.UNIT, prior_unguarded_unit, 0o644, core.ROOT_UID, core.ROOT_UID)
     migrated_record["unit_sha256"] = hashlib.sha256(prior_unguarded_unit).hexdigest()
-    core._replace_journal(migrated_record, expected_raw=migrated_raw)
+    core._replace_journal(migrated_record)
     prior = core.JOURNAL.read_bytes()
     launcher = core.LAUNCHER.read_bytes()
     unit = core.UNIT.read_bytes()
@@ -610,13 +610,13 @@ def test_interrupted_adapter_update_recovers_from_journaled_generation_backup(tm
     _fake_update_pidfd(monkeypatch, enabled)
     replace_journal = core._replace_journal
     interrupted = {"done": False}
-    def interrupt_before_new_journal(record, *, expected_raw=None):
+    def interrupt_before_new_journal(record):
         if (record.get("adapter_source")==str(core.ADAPTER_SOURCE)
                 and record.get("adapter_update_state")=="preparing"
                 and not interrupted["done"]):
             interrupted["done"] = True
             raise KeyboardInterrupt()
-        return replace_journal(record, expected_raw=expected_raw)
+        return replace_journal(record)
     monkeypatch.setattr(core, "_replace_journal", interrupt_before_new_journal)
 
     with pytest.raises(KeyboardInterrupt):
@@ -649,7 +649,7 @@ def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pr
     prior_unit = core._unit(startup_guard=False, adapter_source=old_source)
     core._atomic_replace(core.UNIT, prior_unit, 0o644, core.ROOT_UID, core.ROOT_UID)
     migrated["unit_sha256"] = hashlib.sha256(prior_unit).hexdigest()
-    core._replace_journal(migrated, expected_raw=migrated_raw)
+    core._replace_journal(migrated)
     prior = core.JOURNAL.read_bytes()
     prior_launcher = core.LAUNCHER.read_bytes()
     monkeypatch.setattr(core, "ADAPTER_UPDATE_BACKUPS", core.JOURNAL.parent / "adapter-update-backups")

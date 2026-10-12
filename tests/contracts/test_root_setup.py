@@ -348,7 +348,8 @@ class RootSetupBoundaryTests(unittest.TestCase):
             module = sys.modules.get(module_name)
             self.assertIsNotNone(module)
             self.assertEqual(Path(module.__spec__.origin).resolve(),
-                             (Path(__file__).parents[2] / "src/hermes_installer/authority/bootstrap_runtime_factory.py").resolve())
+                             (Path(root_setup.__file__).resolve().parent
+                              / "authority/bootstrap_runtime_factory.py").resolve())
             self.assertTrue(callable(module.RootBootstrapRuntimeFactory))
             observed.append(module)
             raise BootstrapEnrollmentPending("stop after ordering assertion")
