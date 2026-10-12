@@ -1,5 +1,7 @@
 # Proposal
 
+M1 phase handoff clarification: preserve original J0 while Root performs exact private old-process Resources/primary readback under a sealed CoreRuntime scope after installing the gated-old unit. Boot/public admission deny partial cohorts. Separate adapter O/N from actual Core H/H, fix the sole home role to `jarvis-primary-home`, and bind starting versus final journal/Resources tuples explicitly. Start new source only with coherent bindings; retain original-unit recovery and require genuine native usability before final commit. This is the existing lifecycle scope, with all eight acceptance groups OPEN.
+
 ## M1 exact owner-overlay reconstruction clarification
 
 Clarify the existing helper-only transition: an unchanged protected owner-overlay journal still names its original base and intermediate archive hashes. Prove old/new base helper-only equality, reconstruct and verify that exact old overlay chain from retained CAS/content, then replace only helper/installer metadata in its fully verified composed artifact. Persist a fixed current cohort reconstruction record binding the exact old/new base and composed artifacts plus unchanged journal digest; every consumer rechecks it instead of guessing a base alias or comparing old hashes to new composition. All overlay/member/provenance bytes and grants remain unchanged. Pi33 specs/plan have passed; runtime repair/this leaf qualification remain separate and OPEN.

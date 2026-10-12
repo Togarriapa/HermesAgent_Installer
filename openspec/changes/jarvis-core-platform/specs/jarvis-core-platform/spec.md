@@ -2377,6 +2377,13 @@ Source updates SHALL recover Source/Resources/discovery/primary/enrolled Obsidia
 ### Requirement: Exact retained owner-overlay reconstruction
 Helper-only transition SHALL preserve protected overlay-journal bytes and historical base/intermediate hashes. Root SHALL prove exact old/new base equality, reconstruct the original content chain and derive the new composed artifact by only helper/installer replacement. Current consumers SHALL verify the exact committed cohort reconstruction; guessed aliases or extra manifest changes SHALL deny.
 
+#### Scenario: Exact guarded old read and coherent new startup
+- **WHEN** a helper-only adapter update replaces O with N while actual Hermes Core generation remains H
+- **THEN** the sole home role is `jarvis-primary-home`; primary/reconstruction Core bindings remain H/H, with adapter generations separate. Root preserves original J0/U0/L0 and installs exact gated-old Ugo while the captured old process remains live.
+- **AND** prepared/resources-rebound boot/public/default reads deny; only CoreRuntime's UID0, private sealed active ContextVar custody for fixed Resources/primary readback admits unchanged J0 against exact Ugo/L0/cohort/process/currentness. No serialized seal, caller Boolean, synthetic journal or broad marker bypass is accepted.
+- **AND** Root finishes exact rebound Resources/primary/retained overlay/vault readback before stopping only the captured owned process. New source starts only after exact starting Js/Rs/U1/L1/current bindings match; fixed Root qualification custody remains separate from tool/account authorization.
+- **AND** actual native usability precedes final Jf/Rf and committed cohort. Starting and final raw-journal ownership hashes stay distinct; recovery restores compatible original records and original U0 last without reviving leases. Missing producers or conflicts remain pending.
+
 #### Scenario: Two owner overlays and a helper-only source change
 - **WHEN** the protected journal names old base B0 and intermediate hashes while reviewed current helper generates B1
 - **THEN** root validates retained B0/B1/A0 archives, exact journal/content custody, every stable-order intermediate hash and reconstructed final A0; it derives A1 by only fixed helper/installer replacement, proves A0/A1 equality and exact current installed/discovery bytes, with all other manifest/member/provenance and J bytes unchanged.
