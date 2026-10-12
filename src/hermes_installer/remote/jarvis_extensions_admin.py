@@ -11,6 +11,7 @@ import hmac
 import json
 import math
 import re
+import time
 from typing import Any
 
 FEATURE_ROUTES = (
@@ -73,15 +74,28 @@ def _source_label(source: str, name: str) -> tuple[str, str]:
         return "builtin", f"Hermes {name}"
     if source in {"resources", "bundledResources", "bundled-resource", "plugin"}:
         return "bundledResources", name
-    if source in {"user", "git", "config", "owner"}:
+    if source in {"user", "git", "catalog", "owner"}:
         return "useradded", name
     return "unknown", name
+
+
+def _mcp_config_revision(item: dict[str, Any]) -> str | None:
+    """Match the core client's redacted MCP identity fingerprint."""
+    name, transport, enabled, source = (item.get("name"), item.get("transport"),
+        item.get("enabled"), item.get("source"))
+    if (not isinstance(name, str) or transport not in {"http", "stdio", "unknown"}
+            or type(enabled) is not bool or source not in {"plugin", "config", "unknown"}):
+        return None
+    safe = {"name": name, "transport": transport, "enabled": enabled, "source": source}
+    return hashlib.sha256(json.dumps(safe, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=True, allow_nan=False).encode("ascii")).hexdigest()
 
 
 def build_extension_snapshot(*, skills: Any, plugins: Any, mcps: Any,
                              native_skill_files: Any = (),
                              archived_skill_files: Any = (),
-                             skill_catalog: set[str] | None = None) -> dict[str, Any]:
+                             skill_catalog: set[str] | None = None,
+                             owner_added_mcp_revisions: dict[str, str] | None = None) -> dict[str, Any]:
     """Build a closed, secret-free inventory. Missing source claims remain unknown."""
     rows: list[dict[str, Any]] = []
     if not isinstance(skills, list) or len(skills) > 256:
@@ -179,6 +193,7 @@ def build_extension_snapshot(*, skills: Any, plugins: Any, mcps: Any,
             "actionState": "archived · recovery available", "archivedVersions": safe_versions}
         rows.append(placeholder)
         rows_by_skill[skill_id] = placeholder
+    owner_mcp = owner_added_mcp_revisions or {}
     for kind, values in (("plugins", plugins), ("mcps", mcps)):
         if not isinstance(values, list) or len(values) > 512:
             raise ValueError("native extension inventory exceeded its bound")
@@ -194,10 +209,16 @@ def build_extension_snapshot(*, skills: Any, plugins: Any, mcps: Any,
                 raise ValueError("native plugin registry key was invalid")
             source = item.get("source") if isinstance(item.get("source"), str) else "unknown"
             provenance, label = _source_label(source, name)
+            if kind == "mcps":
+                revision = _mcp_config_revision(item)
+                provenance = ("useradded" if source == "config"
+                    and owner_mcp.get(name) == revision else
+                    "unknown")
+                label = name
             row = {"kind": kind, "name": name, "label": label,
                    "source": provenance, "editable": False,
                    "removable": (provenance == "useradded" if kind == "plugins"
-                                 else source == "config")}
+                                 else provenance == "useradded")}
             if kind == "plugins":
                 row.update({"key": key, "version": item.get("version", ""), "state": item.get("status", "unknown"),
                             "updateAvailable": item.get("update_available"),
@@ -207,7 +228,10 @@ def build_extension_snapshot(*, skills: Any, plugins: Any, mcps: Any,
             else:
                 row.update({"transport": item.get("transport", "unknown"),
                             "enabled": item.get("enabled") is True,
-                            "configRevision": item.get("config_revision")})
+                            "configRevision": item.get("config_revision"),
+                            "originLabel": ("Jarvis-added catalog server" if provenance == "useradded"
+                                            else "Plugin-provided; source not verified" if source == "plugin"
+                                            else "Native source unverified")})
             rows.append(row)
     rows.sort(key=lambda item: (item["kind"], item["label"].casefold(), item["name"]))
     canonical = json.dumps(rows, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
@@ -221,7 +245,8 @@ def build_extension_snapshot(*, skills: Any, plugins: Any, mcps: Any,
                                        "registration; the owner must explicitly confirm it.")},
                 "mcps": {"add": True, "edit": False, "remove": True,
                          "reason": ("Pinned Hermes MCP setup supports catalog add/remove; "
-                                    "connection edits have no atomic RPC.")},
+                                    "connection edits have no atomic RPC. Existing config servers "
+                                    "are removable only after this owner adds and verifies them here.")},
             }}
 
 
@@ -276,6 +301,7 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
             service.backend.list_mcp_servers())
         accepted = request.get("core_ingress")
         principal = current_owner(request)
+        owner_mcp_revisions = owned_mcp_revisions(principal.subject, principal.core_generation)
         provider = skill_provider(request)
         token = access_jwt(request)
         skill_files = provider.list_skills(core_generation=principal.core_generation,
@@ -288,7 +314,8 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
         return build_extension_snapshot(skills=skills, plugins=plugins, mcps=mcps,
                                         native_skill_files=skill_files,
                                         archived_skill_files=archived_skill_files,
-                                        skill_catalog=skill_catalog)
+                                        skill_catalog=skill_catalog,
+                                        owner_added_mcp_revisions=owner_mcp_revisions)
 
     async def get_extensions(request: Any) -> Any:
         try:
@@ -367,6 +394,33 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
         with service.store._connect() as db:
             db.execute("UPDATE jarvis_extension_actions SET state='complete' "
                        "WHERE owner_hash=? AND idem_hash=?", (owner_hash, idem_hash))
+
+    def owned_mcp_revisions(subject: str, generation: str) -> dict[str, str]:
+        owner_hash = hashlib.sha256(subject.encode()).hexdigest()
+        with service.store._connect() as db:
+            db.execute("CREATE TABLE IF NOT EXISTS jarvis_extension_owned_mcps ("
+                       "owner_hash TEXT NOT NULL, core_generation TEXT NOT NULL, "
+                       "server_name TEXT NOT NULL, config_revision TEXT NOT NULL, "
+                       "created REAL NOT NULL, PRIMARY KEY(owner_hash, server_name))")
+            rows = db.execute("SELECT server_name,config_revision FROM jarvis_extension_owned_mcps "
+                              "WHERE owner_hash=?", (owner_hash,)).fetchall()
+        return {row["server_name"]: row["config_revision"] for row in rows}
+
+    def record_owned_mcp(subject: str, generation: str, name: str, revision: str) -> None:
+        owner_hash = hashlib.sha256(subject.encode()).hexdigest()
+        with service.store._connect() as db:
+            db.execute("CREATE TABLE IF NOT EXISTS jarvis_extension_owned_mcps ("
+                       "owner_hash TEXT NOT NULL, core_generation TEXT NOT NULL, "
+                       "server_name TEXT NOT NULL, config_revision TEXT NOT NULL, "
+                       "created REAL NOT NULL, PRIMARY KEY(owner_hash, server_name))")
+            db.execute("INSERT OR REPLACE INTO jarvis_extension_owned_mcps "
+                       "VALUES(?,?,?,?,?)", (owner_hash, generation, name, revision, time.time()))
+
+    def forget_owned_mcp(subject: str, generation: str, name: str) -> None:
+        owner_hash = hashlib.sha256(subject.encode()).hexdigest()
+        with service.store._connect() as db:
+            db.execute("DELETE FROM jarvis_extension_owned_mcps "
+                       "WHERE owner_hash=? AND server_name=?", (owner_hash, name))
 
     async def mutate(request: Any, *, operation: str) -> Any:
         try:
@@ -584,10 +638,23 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                 status = 200
             elif operation == "mcps:add":
                 result = await service.backend.add_catalog_mcp(body["catalog_name"])
+                observed_mcps = await service.backend.list_mcp_servers()
+                observed = next((row for row in observed_mcps
+                                 if row.get("name") == result.get("name")), None)
+                revision = _mcp_config_revision(observed) if isinstance(observed, dict) else None
+                if (observed is None or observed.get("source") != "config"
+                        or revision is None
+                        or observed.get("config_revision") != revision):
+                    return web.json_response({"status": "pending",
+                        "reason": "MCP add was accepted but exact native configuration readback is pending"},
+                        status=202, headers=_secure_headers())
+                result["nativeInventoryConfirmed"] = True
+                mcp_owner_revision = revision
                 status = 201
             elif operation == "mcps:remove":
                 row = target
                 result = await service.backend.remove_mcp(row["name"])
+                forget_mcp_name = row["name"]
                 status = 200
             else:
                 raise web.HTTPNotFound(text="not found", headers=_secure_headers())
@@ -595,6 +662,11 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
             if after.subject != before.subject or after.core_generation != before.core_generation:
                 return web.json_response({"status": "pending", "reason": "owner or core generation changed"},
                                          status=202, headers=_secure_headers())
+            if operation == "mcps:add" and isinstance(mcp_owner_revision, str):
+                record_owned_mcp(before.subject, before.core_generation,
+                                  result["name"], mcp_owner_revision)
+            elif operation == "mcps:remove" and isinstance(forget_mcp_name, str):
+                forget_owned_mcp(before.subject, before.core_generation, forget_mcp_name)
             complete_action(body, before.subject)
             return web.json_response({"status": "applied", "result": result}, status=status,
                                      headers=_secure_headers())

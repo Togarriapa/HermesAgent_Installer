@@ -91,7 +91,8 @@ def test_extension_snapshot_keeps_provenance_and_prefixes_builtins():
              "status": "disabled", "settings_schema": [{"key": "mode", "type": "string"}]},
         ],
         mcps=[
-            {"name": "github", "transport": "http", "enabled": True, "source": "config"},
+            {"name": "github", "transport": "http", "enabled": True, "source": "config",
+             "config_revision": "not-a-jarvis-owner-proof"},
             {"name": "plugin-server", "transport": "stdio", "enabled": True, "source": "plugin"},
         ],
         skill_catalog={"web-facts"},
@@ -106,7 +107,8 @@ def test_extension_snapshot_keeps_provenance_and_prefixes_builtins():
     assert by_identity[("plugins", "owner-tool-package")]["key"] == "owner-tool"
     assert by_identity[("skills", "web-facts")]["source"] == "bundledResources"
     assert by_identity[("skills", "local-procedure")]["source"] == "unknown"
-    assert by_identity[("mcps", "github")]["source"] == "useradded"
+    assert by_identity[("mcps", "github")]["source"] == "unknown"
+    assert by_identity[("mcps", "github")]["removable"] is False
     assert by_identity[("mcps", "plugin-server")]["source"] == "bundledResources"
     # Resource overlays and owner-added Hermes-home entrypoints use the
     # source-bound root adapter. Unrecognized native rows remain read-only.
@@ -115,6 +117,27 @@ def test_extension_snapshot_keeps_provenance_and_prefixes_builtins():
     assert "Hermes stock skills remain read-only" in result["availableActions"]["skills"]["reason"]
     assert result["availableActions"]["plugins"]["remove"] is True
     assert result["availableActions"]["mcps"]["edit"] is False
+
+
+def test_mcp_removal_ownership_requires_exact_jarvis_add_readback_fingerprint():
+    from hermes_installer.remote.jarvis_extensions_admin import _mcp_config_revision
+
+    row = {"name": "github", "transport": "http", "enabled": True,
+           "source": "config"}
+    revision = _mcp_config_revision(row)
+    assert revision is not None
+    unknown = build_extension_snapshot(skills=[], plugins=[], mcps=[row])
+    owned = build_extension_snapshot(skills=[], plugins=[], mcps=[row],
+        owner_added_mcp_revisions={"github": revision})
+    changed = build_extension_snapshot(skills=[], plugins=[], mcps=[
+        {**row, "enabled": False}], owner_added_mcp_revisions={"github": revision})
+
+    assert unknown["items"][0]["source"] == "unknown"
+    assert unknown["items"][0]["removable"] is False
+    assert owned["items"][0]["source"] == "useradded"
+    assert owned["items"][0]["removable"] is True
+    assert changed["items"][0]["source"] == "unknown"
+    assert changed["items"][0]["removable"] is False
 
 
 def test_skill_snapshot_joins_root_manifest_to_native_skills_and_preserves_source():
@@ -158,7 +181,8 @@ def test_extension_snapshot_rejects_unbounded_native_inventory():
 @pytest.mark.parametrize(("source", "provenance", "label"), [
     ("bundled", "builtin", "Hermes files"),
     ("user", "useradded", "files"),
-    ("config", "useradded", "files"),
+    ("catalog", "useradded", "files"),
+    ("config", "unknown", "files"),
     ("plugin", "bundledResources", "files"),
     ("entrypoint", "unknown", "files"),
     ("unrecognized", "unknown", "files"),

@@ -61,7 +61,7 @@ _MOUNT = r'''function mount(container, api) {
     const box = document.createElement('article'); box.className='extension-card';
     text(box,'h3',item.label); text(box,'p',`${item.kind} · ${item.kind==='skills'?(item.originLabel||item.source):item.source}`);
     const detail = item.kind === 'plugins' ? `${item.state || 'status unknown'} · ${item.version || 'version unknown'}`
-      : item.kind === 'mcps' ? `${item.transport} · ${item.enabled ? 'enabled' : 'disabled'}` : `${item.category} · ${item.actionState || (item.loaded ? 'loaded' : 'source present, not loaded')}`;
+      : item.kind === 'mcps' ? `${item.transport} · ${item.enabled ? 'enabled' : 'disabled'} · ${item.originLabel || 'source unverified'}` : `${item.category} · ${item.actionState || (item.loaded ? 'loaded' : 'source present, not loaded')}`;
     text(box,'p',detail);
     if (item.updateAvailable === true) text(box,'p','A catalog update is available; review remains required.');
     const actions = document.createElement('div'); actions.className='extension-actions';
