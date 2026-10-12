@@ -271,7 +271,7 @@ def overlay_runtime(tmp_path, monkeypatch, request):
         skill_id=member["skill_id"], base_content=content, installed=installed,
         current=current, generation="a" * 64,
         own_generation=lambda uid=account.pw_uid, gid=account.pw_gid: set_generation_owner(uid, gid),
-        set_home_owner=set_home_owner)
+        set_home_owner=set_home_owner, own_generation_as_admin=own_generation_as_admin)
 
 
 def test_resources_write_cas_idempotency_archive_restore_and_native_readback(overlay_runtime):
@@ -372,7 +372,7 @@ def test_interrupted_overlay_journal_recovers_only_exact_old_or_new_generation(
         native.install_manual_jarvis_skills(new_archive, hermes_home=fixture.home,
             expected_sha256=archive_member_sha, replace_owned_from_archive=fixture.base,
             replace_owned_from_sha256=fixture.base_sha)
-        fixture.own_generation()
+        fixture.own_generation_as_admin()
     assert core.recover_resources_skill_overlay() is True
     target = fixture.home / "skills" / native._GENERATION / "skills" / fixture.skill_id / "SKILL.md"
     expected_bytes = edited if expected_sha == "new" else fixture.base_content
