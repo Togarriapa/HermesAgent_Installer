@@ -155,6 +155,7 @@ _HTML = '''<!doctype html>
             <p>Foreground only. Wake listening uses this browser’s speech service, may send audio outside Jarvis, and stops when this page is hidden or leaves Chat.</p>
           </div>
           <p class="voice-status" id="voice-status" role="status" aria-live="polite" hidden></p>
+          <p class="voice-status" id="chat-voice-unavailable" role="status" aria-live="polite" hidden></p>
         </div>
       </main>
       <!-- JARVIS_OVERVIEW_PANEL -->
@@ -498,6 +499,13 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   };
   let conversations = [];
   let conversationId = null;
+  function updateOverviewCommandTarget() {
+    const target = byId("overview-command-target");
+    if (!target) return;
+    const title = conversationId && (conversations.find((item) => item.id === conversationId)?.title
+      || ui.title.textContent.trim());
+    target.textContent = title ? "Sending to " + title : "A new conversation will start when you send.";
+  }
   let turnSelection = null;
   let turnSelectionConversationId = "";
   let turnSelectionLoading = false;
@@ -1006,10 +1014,17 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     ui.speechStop.disabled = true;
     const consentRow = byId("speech-consent-row");
     const unavailable = byId("speech-unavailable");
+    const chatUnavailable = byId("chat-voice-unavailable");
     consentRow.hidden = !voiceSupported;
     byId("chat-speech-consent-row").hidden = !voiceSupported;
     byId("voice-wake-controls").hidden = !voiceSupported || !pushToTalkEnabled();
     ui.voiceWake.hidden = !voiceSupported || !pushToTalkEnabled();
+    chatUnavailable.textContent = !Recognition
+      ? "Push-to-talk and wake listening are not available in this browser. You can still type."
+      : !window.isSecureContext
+        ? "Push-to-talk and wake listening require a secure browser connection. You can still type."
+        : "";
+    chatUnavailable.hidden = voiceSupported;
     if (!Recognition) {
       unavailable.textContent = "Push-to-talk is not supported by this browser. You can still type your message.";
       unavailable.hidden = false;
@@ -1310,6 +1325,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
         stopRecognition("Voice listening stopped because this chat moved to Recently removed.");
         closeStream();
         conversationId = null;
+        updateOverviewCommandTarget();
         await showView("overview");
       }
       await refreshConversations();
@@ -1357,6 +1373,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       if (!data || !Array.isArray(data.conversations)) throw new Error("Conversation history is unavailable.");
       conversations = data.conversations.filter((item) => item && typeof item.id === "string" && typeof item.title === "string");
       renderHistory();
+      updateOverviewCommandTarget();
       refreshTrash();
     } catch (error) {
       ui.sessionCount.textContent = "Your chat list is unavailable.";
@@ -1390,6 +1407,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       }
       ui.welcome.hidden = data.messages.length !== 0;
       ui.title.textContent = conversations.find((item) => item.id === id)?.title || "Your conversation";
+      updateOverviewCommandTarget();
       renderHistory();
       await loadTurnSelection(id);
       setPanel(false);
@@ -1407,6 +1425,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       ui.messages.replaceChildren();
       ui.welcome.hidden = false;
       ui.title.textContent = "A clear mind, at your service.";
+      updateOverviewCommandTarget();
       await loadTurnSelection(conversationId);
       await refreshConversations();
       renderHistory();
@@ -1577,6 +1596,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       if (!data.conversation || typeof data.conversation.id !== "string" || !data.conversation.id) throw new Error("Jarvis could not start a conversation.");
       conversationId = data.conversation.id;
       ui.title.textContent = data.conversation.title || "Your conversation";
+      updateOverviewCommandTarget();
       await refreshConversations();
       await loadTurnSelection(conversationId);
     }
@@ -1609,6 +1629,8 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       } else {
         showTurnConfiguration(assistantBody, "Queued · awaiting Core model confirmation.", "queued");
       }
+      ui.turnModel.value = "";
+      ui.turnEffort.value = "";
       watchTurn(data.turnId, data.heartbeatNonce, assistantBody, waiting, conversationId, text);
       refreshConversationsInBackground();
       return true;

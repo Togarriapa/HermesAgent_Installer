@@ -255,6 +255,9 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('if (!accepted) throw new Error("Jarvis could not safely queue this response.");', overview_command)
         self.assertIn("return true;", overview_command)
         overview = next(feature for feature in FEATURE_ASSETS if feature.feature_id == "overview")
+        self.assertIn('id="overview-command-target"', overview.view_html)
+        self.assertIn("A new conversation will start when you send.", overview.view_html)
+        self.assertIn("updateOverviewCommandTarget();", client)
         overview_submit = overview.mount_js.split(
             "async function submitCommand(event) {", 1
         )[1].split("\n  commandForm.addEventListener", 1)[0]
@@ -268,7 +271,7 @@ class JarvisChatAssetTests(unittest.TestCase):
         )
         models = next(feature for feature in FEATURE_ASSETS if feature.feature_id == "models-settings")
         model_mount = models.mount_js
-        self.assertIn("do not change the profile default", models.view_html)
+        self.assertIn("This setting does not change the profile default.", models.view_html)
         self.assertIn('button.classList.contains("chat-model-link") && conversationId', client)
         self.assertIn("mountFeature(feature, featureContext);", client)
         self.assertIn("Object.freeze({initialConversationId: context.initialConversationId})", client)
@@ -564,6 +567,8 @@ HELPER
     def test_overview_command_retains_draft_on_queue_failure_and_clears_only_after_queue(self):
         _content_type, script = reviewed_client_bundle()
         client = script.decode("utf-8")
+        target_helper = "function updateOverviewCommandTarget() {" + client.split(
+            "function updateOverviewCommandTarget() {", 1)[1].split("\n  }", 1)[0] + "\n  }"
         feature_api = "function featureApi(feature, root) {" + client.split(
             "function featureApi(feature, root) {", 1)[1].split(
                 "\n  function unmountFeature()", 1)[0]
@@ -585,23 +590,30 @@ const requests = [], views = [], errors = [];
 const selectedChoice = {modelId: "reviewed-model", reasoningEffort: "high"};
 const chatDraft = "A separate Chat draft";
 const assistantBody = {textContent: "", parentElement: {dataset: {}}, append(node) { this.waiting = node; }};
+const overviewTarget = {textContent: ""};
 const ui = {
   connection: {dataset: {state: "ready"}},
+  title: {textContent: "Current project chat"},
   input: {disabled: false, value: chatDraft, style: {}},
-  send: {disabled: false}
+  send: {disabled: false},
+  turnModel: {value: "reviewed-model"},
+  turnEffort: {value: "high"}
 };
 let observation = {textContent: ""};
 const commandInput = {value: "  retain this Overview draft  ", disabled: false};
 const submitButton = {disabled: false};
 const commandForm = {querySelector() { return submitButton; }};
 let stopped = false, activeTurnId = null, conversationId = "existing-conversation";
+const conversations = [{id: "existing-conversation", title: "Current project chat"}];
 function request(path, options) {
   requests.push({path, options});
   if (failQueue) return Promise.reject(new Error("simulated queue failure"));
   return Promise.resolve({status: "queued", turnId: "queued-turn", heartbeatNonce: "nonce",
     turnConfiguration: {state: "queued", modelId: selectedChoice.modelId}});
 }
-function currentTurnChoice() { return selectedChoice; }
+function currentTurnChoice() {
+  return {modelId: ui.turnModel.value || null, reasoningEffort: ui.turnEffort.value || null};
+}
 function clearError() {}
 function stopRecognition() {}
 function stopSpeech() {}
@@ -614,6 +626,11 @@ function refreshConversationsInBackground() {}
 function showError(message) { errors.push(message); }
 function showView(view) { views.push(view); return Promise.resolve(); }
 function createIdempotencyKey() { return "fixed-contract-key"; }
+function byId(id) {
+  assert.equal(id, "overview-command-target");
+  return overviewTarget;
+}
+TARGET_HELPER
 function $(selector) {
   assert.equal(selector, "[data-observation]");
   return observation;
@@ -626,6 +643,12 @@ SENDER
 SUBMIT
 (async () => {
   api = featureApi({id: "overview", routes}, {});
+  updateOverviewCommandTarget();
+  assert.equal(overviewTarget.textContent, "Sending to Current project chat");
+  conversationId = null;
+  updateOverviewCommandTarget();
+  assert.equal(overviewTarget.textContent, "A new conversation will start when you send.");
+  conversationId = "existing-conversation";
   const originalDraft = commandInput.value;
   await submitCommand({preventDefault() {}});
   assert.equal(commandInput.value, originalDraft);
@@ -638,6 +661,8 @@ SUBMIT
   assert.deepEqual(JSON.parse(requests[0].options.body), {
     text: originalDraft.trim(), modelId: "reviewed-model", reasoningEffort: "high"
   });
+  assert.equal(ui.turnModel.value, "reviewed-model");
+  assert.equal(ui.turnEffort.value, "high");
   assert.equal(ui.input.value, chatDraft);
   assert.equal(ui.input.disabled, false);
   assert.equal(submitButton.disabled, false);
@@ -650,9 +675,20 @@ SUBMIT
   assert.equal(requests.length, 2);
   assert.equal(JSON.parse(requests[1].options.body).modelId, "reviewed-model");
   assert.equal(JSON.parse(requests[1].options.body).reasoningEffort, "high");
+  assert.equal(ui.turnModel.value, "");
+  assert.equal(ui.turnEffort.value, "");
   assert.equal(submitButton.disabled, false);
+
+  ui.input.disabled = false;
+  ui.send.disabled = false;
+  commandInput.value = "next message uses defaults";
+  await submitCommand({preventDefault() {}});
+  assert.equal(requests.length, 3);
+  assert.deepEqual(JSON.parse(requests[2].options.body), {
+    text: "next message uses defaults", modelId: null, reasoningEffort: null
+  });
 })().catch((error) => { console.error(error); process.exitCode = 1; });
-'''.replace("FEATURE_ROUTES", routes).replace("FEATURE_API", feature_api).replace("SENDER", sender).replace("SUBMIT", submit)
+'''.replace("FEATURE_ROUTES", routes).replace("FEATURE_API", feature_api).replace("SENDER", sender).replace("SUBMIT", submit).replace("TARGET_HELPER", target_helper)
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "overview-command-harness.js"
             path.write_text(harness, encoding="utf-8")
@@ -738,6 +774,7 @@ FEATURE_API
         markup = page.decode("utf-8")
         self.assertIn('id="voice-input" type="button"', markup)
         self.assertIn('id="voice-wake-toggle" type="button" aria-pressed="false"', markup)
+        self.assertIn('id="chat-voice-unavailable" role="status" aria-live="polite" hidden', markup)
         self.assertIn('id="voice-handsfree-send" type="checkbox"', markup)
         self.assertIn('id="speech-consent" type="checkbox"', markup)
         self.assertIn("outside Jarvis", markup)
@@ -761,6 +798,44 @@ FEATURE_API
         self.assertIn('byId("voice-handsfree-send").checked && !existingDraft', source)
         self.assertIn("ui.form.requestSubmit()", source)
         self.assertIn("Foreground wake listening ended", source)
+
+    def test_chat_explains_voice_unavailability_in_the_composer(self):
+        _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
+        client = script.decode("utf-8")
+        configure = "function configureVoice() {" + client.split(
+            "function configureVoice() {", 1)[1].split(
+                "\n  function startRecognition(", 1)[0]
+        harness = r'''const assert = require("node:assert/strict");
+const elements = new Map();
+function byId(id) {
+  if (!elements.has(id)) elements.set(id, {hidden: false, disabled: false, textContent: ""});
+  return elements.get(id);
+}
+const ui = {speechStop: byId("speech-stop"), voiceWake: byId("voice-wake-toggle")};
+let voiceSupported = false, synthesisSupported = false;
+let window = {isSecureContext: true};
+function pushToTalkEnabled() { return false; }
+CONFIGURE
+configureVoice();
+assert.equal(byId("chat-voice-unavailable").hidden, false);
+assert.match(byId("chat-voice-unavailable").textContent, /not available in this browser/);
+window = {SpeechRecognition: function SpeechRecognition() {}, isSecureContext: false};
+configureVoice();
+assert.equal(byId("chat-voice-unavailable").hidden, false);
+assert.match(byId("chat-voice-unavailable").textContent, /secure browser connection/);
+window.isSecureContext = true;
+configureVoice();
+assert.equal(byId("chat-voice-unavailable").hidden, true);
+assert.equal(byId("chat-speech-consent-row").hidden, false);
+'''.replace("CONFIGURE", configure)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "chat-voice-unavailable-harness.js"
+            path.write_text(harness, encoding="utf-8")
+            result = subprocess.run(
+                ["node", str(path)], capture_output=True, text=True, check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_browser_voice_states_follow_fake_permission_start_and_cancel_events(self):
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
         client = script.decode("utf-8")

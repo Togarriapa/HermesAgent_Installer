@@ -41,7 +41,7 @@ _VIEW = """<section class="overview-page" aria-labelledby="overview-title">
     </aside>
   </section>
   <section class="command-panel" aria-labelledby="command-title">
-    <div class="command-intro"><span class="command-kicker">MESSAGE JARVIS</span><span>Private workspace</span></div>
+    <div class="command-intro"><span class="command-kicker">MESSAGE JARVIS</span><span id="overview-command-target" class="command-target" role="status" aria-live="polite">A new conversation will start when you send.</span></div>
     <form data-command-form class="command-form">
       <label class="visually-hidden" for="command-input">Ask Jarvis</label>
       <textarea id="command-input" name="command" rows="1" maxlength="8000" placeholder="Ask Jarvis anything…" autocomplete="off" autocapitalize="sentences" inputmode="text" enterkeyhint="send" aria-describedby="command-hint"></textarea>
@@ -202,6 +202,7 @@ _CSS += """
 [data-feature-root="overview"] .overview-window{margin:.65rem 0 1rem;color:#9fb8bc;font-size:.68rem;line-height:1.5}
 [data-feature-root="overview"] .command-panel{max-width:1000px;margin:1rem auto 1.75rem;padding:1rem clamp(1rem,2.5vw,1.6rem);border:1px solid rgba(88,228,235,.28);border-radius:16px;background:linear-gradient(115deg,rgba(8,27,34,.98),rgba(7,22,29,.97));box-shadow:0 16px 42px rgba(0,0,0,.24),inset 0 1px rgba(222,255,255,.04)}
 [data-feature-root="overview"] .command-intro{display:flex;justify-content:space-between;gap:1rem;color:#a9c2c5;font-size:.68rem}
+[data-feature-root="overview"] .command-target{max-width:min(52ch,58vw);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
 [data-feature-root="overview"] .command-kicker{color:#9be7ea;font-size:.65rem;font-weight:650;letter-spacing:.13em}
 [data-feature-root="overview"] .command-form{display:flex;align-items:stretch;gap:.6rem;margin-top:.65rem;padding:.5rem;border:1px solid rgba(88,228,235,.29);border-radius:12px;background:rgba(3,17,23,.78)}
 [data-feature-root="overview"] .command-form textarea{width:100%;min-width:0;min-height:54px;max-height:144px;resize:vertical;padding:.75rem .65rem;border:0;outline:0;background:transparent;color:var(--text,#edf5f6);font:inherit;font-size:1rem;line-height:1.5;caret-color:var(--cyan,#58e4eb)}
