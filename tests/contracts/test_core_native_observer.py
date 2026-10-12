@@ -716,6 +716,8 @@ def test_root_observed_expert_draft_origin_resolves_only_for_current_master_prom
     changed_args = {**read_args, "expected_draft_sha256": "9" * 64}
     changed_call = {**read_call, "handle": "Z" * 43,
                     "arguments": observer._canonical(changed_args)}
+    changed_call["arguments_sha256"] = hashlib.sha256(changed_call["arguments"]).hexdigest()
+    registry._obsidian_scoped_calls.add(changed_call["handle"])
     active["classification"] = (changed_call, owner, current_master_source, "master_read")
     with pytest.raises(ValueError, match="retained pending private origin"):
         registry._handle(peer, {
