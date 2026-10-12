@@ -921,7 +921,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     ui.voiceWake.textContent = "Enable foreground wake phrase";
     ui.voiceWake.hidden = !voiceSupported || !pushToTalkEnabled();
     if (current) {
-      current.onresult = current.onerror = current.onend = null;
+      current.onresult = current.onerror = current.onend = current.onstart = null;
       try { current.abort(); } catch (_) {}
     }
     if (message && current) showVoiceStatus(message);
@@ -1131,6 +1131,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       if (recognition !== current) return;
       if (!captureEligible()) { stopRecognition(); return; }
       recognitionStarted = true;
+      ui.voiceInput.dataset.listening = "true";
       if (mode === "wake") {
         setAssistantState("listening", "Foreground wake phrase active");
         showVoiceStatus("Listening for “Jarvis” in this visible Chat tab. Browser speech recognition may process audio outside Jarvis.");
@@ -1161,7 +1162,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     recognition = current;
     recognitionMode = mode;
     ui.voiceInput.hidden = true;
-    ui.voiceInput.dataset.listening = "true";
+    ui.voiceInput.dataset.listening = "false";
     ui.voiceStop.hidden = false;
     ui.voiceWake.setAttribute("aria-pressed", String(mode === "wake"));
     ui.voiceWake.textContent = mode === "wake" ? "Stop foreground wake phrase" : "Enable foreground wake phrase";

@@ -753,6 +753,9 @@ FEATURE_API
     def test_browser_voice_states_follow_fake_permission_start_and_cancel_events(self):
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
         client = script.decode("utf-8")
+        stop_start = client.index("  function stopRecognition(message = \"\") {")
+        stop_end = client.index("\n  function stopSpeech(", stop_start)
+        stop_source = client[stop_start:stop_end]
         start = client.index("  function startRecognition(mode = \"ptt\") {")
         end = client.index("\n  function clearError()", start)
         function_source = client[start:end]
@@ -774,6 +777,7 @@ let visibleStatus = "";
 let voiceSupported = true, activeTurnId = null, recognition = null, recognitionMode = "", wakePhraseHeard = false;
 const document = {visibilityState:"visible"};
 const instances = [];
+// This fake emits lifecycle events only; it captures and supplies no audio.
 class FakeRecognition {
   constructor(){ instances.push(this); }
   start() {}
@@ -785,29 +789,28 @@ const pushToTalkEnabled = () => element("speech-consent").checked;
 const stopSpeech = () => {};
 const showVoiceStatus = (message) => { visibleStatus = message; };
 const setAssistantState = (state, label) => { states.push({state,label}); };
-function stopRecognition(message = "") {
-  const current = recognition; recognition = null; recognitionMode = ""; wakePhraseHeard = false;
-  ui.voiceStop.hidden = true; ui.voiceInput.dataset.listening = "false";
-  if (current) { current.onresult = current.onerror = current.onend = current.onstart = null; current.abort(); }
-  if (message && current) showVoiceStatus(message);
-  if (current && !activeTurnId) setAssistantState("ready", "Ready for your message");
-}
+STOP_SOURCE
 FUNCTION_SOURCE
 startRecognition("ptt");
 assert.equal(states[states.length - 1].state, "checking", "permission/startup must not claim listening");
 assert.match(visibleStatus, /Starting browser speech recognition/);
+assert.equal(ui.voiceInput.dataset.listening, "false", "the control must not claim listening before onstart");
+assert.equal(ui.voiceStop.hidden, false, "the pending microphone request can still be stopped");
 const denied = instances[instances.length - 1];
 denied.onerror({error:"not-allowed"});
 assert.equal(states[states.length - 1].state, "error", "permission denial must surface as an error");
 assert.match(visibleStatus, /permission was denied/);
+assert.equal(ui.voiceStop.hidden, true);
 assert.equal(ui.input.disabled, false, "typed chat remains available after denial");
 
 states.length = 0; visibleStatus = "";
 startRecognition("ptt");
 const started = instances[instances.length - 1];
 assert.equal(states[states.length - 1].state, "checking");
+assert.equal(ui.voiceInput.dataset.listening, "false");
 started.onstart();
 assert.equal(states[states.length - 1].state, "listening", "listening begins only on the browser start event");
+assert.equal(ui.voiceInput.dataset.listening, "true");
 assert.match(visibleStatus, /Listening once/);
 started.onend();
 assert.equal(states[states.length - 1].state, "ready", "browser end returns the assistant to idle");
@@ -818,11 +821,18 @@ startRecognition("wake");
 const wake = instances[instances.length - 1];
 assert.equal(wake.continuous, true, "wake mode requests foreground continuous recognition");
 assert.equal(states[states.length - 1].state, "checking");
+assert.equal(ui.voiceInput.dataset.listening, "false");
+const lateStart = wake.onstart;
 stopRecognition("Foreground wake listening stopped.");
 assert.equal(wake.aborted, true, "explicit stop aborts the active recognizer");
+assert.equal(wake.onstart, null, "stop clears the production start callback");
+const stateCountAfterStop = states.length;
+lateStart();
+assert.equal(states.length, stateCountAfterStop, "a late browser start event after stop cannot claim listening");
+assert.equal(ui.voiceInput.dataset.listening, "false");
 assert.match(visibleStatus, /stopped/);
 assert.equal(element("speech-consent").checked, true, "stop does not silently revoke explicit page consent");
-'''.replace("FUNCTION_SOURCE", function_source)
+'''.replace("STOP_SOURCE", stop_source).replace("FUNCTION_SOURCE", function_source)
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "jarvis-voice-lifecycle-harness.js"
             path.write_text(harness, encoding="utf-8")
