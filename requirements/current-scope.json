@@ -445,7 +445,7 @@
     },
     {
       "id": "R0045",
-      "text": "Source: Togarriapa/HermesAgent_Resources (https://github.com/Togarriapa/HermesAgent_Resources).",
+      "text": "Source: Togarriapa/HermesAgent_Resources (https://github.com/Togarriapa/HermesAgent_Resources). Vendor the complete pinned source/helper/assets/provenance closure and offline importer so installed operation survives external checkout/repository unavailability; this does not authorize deleting that repository.",
       "phase": 4,
       "task_id": "RB-T266.4",
       "implementation_module": "src/hermes_installer/registry/adapter.py",
@@ -555,7 +555,7 @@
     },
     {
       "id": "R0056",
-      "text": "Preserve the repository's intended topology: user \u2192 Hermes \u2192 Orchestrator \u2192 internal specialists/teams \u2192 Orchestrator \u2192 Hermes. Specialists must not become independent user-facing channels. Preserve the declared response contract, scoped recruitment, contributor reporting, and material dissent where applicable.",
+      "text": "Jarvis is sole public MASTER and selects individual internal Experts or Teams; Orchestrator is an optional internal coordinator, not a mandatory hop. Preserve all208 source identities, scoped recruitment, response contract, contributor reporting and material dissent. Experts prepare internal work; Jarvis reviews and alone finalizes under exact task-start owner autonomy or separate owner approval.",
       "phase": 4,
       "task_id": "RB-T266.4",
       "implementation_module": "src/hermes_installer/registry/adapter.py",
@@ -3324,9 +3324,9 @@
         "https://github.com/taylorwilsdon/google_workspace_mcp"
       ],
       "requirement_ids": [
-        "R0101",
         "R0102",
-        "R0103"
+        "R0103",
+        "R0157"
       ],
       "task_ids": [
         "HI-T266.2"
@@ -3347,7 +3347,8 @@
         "https://developers.google.com/workspace/guides/configure-mcp-servers"
       ],
       "requirement_ids": [
-        "R0097"
+        "R0100",
+        "R0157"
       ],
       "task_ids": [
         "HI-T266.2"
@@ -3368,7 +3369,8 @@
         "https://developers.google.com/workspace/guides/configure-mcp-servers"
       ],
       "requirement_ids": [
-        "R0097"
+        "R0100",
+        "R0157"
       ],
       "task_ids": [
         "HI-T266.2"
@@ -3389,7 +3391,8 @@
         "https://developers.google.com/workspace/guides/configure-mcp-servers"
       ],
       "requirement_ids": [
-        "R0097"
+        "R0100",
+        "R0157"
       ],
       "task_ids": [
         "HI-T266.2"
@@ -3410,7 +3413,8 @@
         "https://developers.google.com/workspace/guides/configure-mcp-servers"
       ],
       "requirement_ids": [
-        "R0097"
+        "R0100",
+        "R0157"
       ],
       "task_ids": [
         "HI-T266.2"
@@ -3431,7 +3435,8 @@
         "https://developers.google.com/workspace/guides/configure-mcp-servers"
       ],
       "requirement_ids": [
-        "R0097"
+        "R0100",
+        "R0157"
       ],
       "task_ids": [
         "HI-T266.2"
@@ -3452,7 +3457,8 @@
         "https://developers.google.com/workspace/guides/configure-mcp-servers"
       ],
       "requirement_ids": [
-        "R0097"
+        "R0100",
+        "R0157"
       ],
       "task_ids": [
         "HI-T266.2"
@@ -3483,8 +3489,8 @@
       "task_ids": [
         "RT-T266.3"
       ],
-      "verification_method": "AC13 automatic exact owned setup/recovery; AC14 unauthorized HTTP/assets/WS denied then real official-app-only pixels/control; AC15 active-socket expiry/revocation/principal isolation",
-      "required_handling": "Implement automatic owned Cloudflare setup and protected app-only native Desktop per linked concrete operational scenarios; no public raw backend/full desktop/shell",
+      "verification_method": "AC13 exact owned setup/recovery; AC14 unauthorized assets/streams denied then actual finite Jarvis chat/tool/stop/history; AC15 original expiry/revocation/principal isolation; legacy owned Desktop retirement requires CORE-CLEANUP proof",
+      "required_handling": "Deliver automatic owned Cloudflare/Access protected finite Jarvis; retain legacy Desktop/Xpra identities and aliases as capability benchmarks and owned-cleanup mappings, not active GUI installation. No public raw backend/host desktop/shell.",
       "license_status": "See official source license/protocol terms; runtime account/certificate eligibility separately verified",
       "component_type": "Cloudflare Tunnel/cloudflared",
       "acceptance": "OPEN"
@@ -3511,8 +3517,8 @@
       "task_ids": [
         "RT-T266.3"
       ],
-      "verification_method": "AC13 automatic exact owned setup/recovery; AC14 unauthorized HTTP/assets/WS denied then real official-app-only pixels/control; AC15 active-socket expiry/revocation/principal isolation",
-      "required_handling": "Implement automatic owned Cloudflare setup and protected app-only native Desktop per linked concrete operational scenarios; no public raw backend/full desktop/shell",
+      "verification_method": "AC13 exact owned setup/recovery; AC14 unauthorized assets/streams denied then actual finite Jarvis chat/tool/stop/history; AC15 original expiry/revocation/principal isolation; legacy owned Desktop retirement requires CORE-CLEANUP proof",
+      "required_handling": "Deliver automatic owned Cloudflare/Access protected finite Jarvis; retain legacy Desktop/Xpra identities and aliases as capability benchmarks and owned-cleanup mappings, not active GUI installation. No public raw backend/host desktop/shell.",
       "license_status": "See official source license/protocol terms; runtime account/certificate eligibility separately verified",
       "component_type": "Cloudflare Access email login codes",
       "acceptance": "OPEN"
@@ -3538,8 +3544,8 @@
       "task_ids": [
         "RT-T266.3"
       ],
-      "verification_method": "AC13 automatic exact owned setup/recovery; AC14 unauthorized HTTP/assets/WS denied then real official-app-only pixels/control; AC15 active-socket expiry/revocation/principal isolation",
-      "required_handling": "Implement automatic owned Cloudflare setup and protected app-only native Desktop per linked concrete operational scenarios; no public raw backend/full desktop/shell",
+      "verification_method": "AC13 exact owned setup/recovery; AC14 unauthorized assets/streams denied then actual finite Jarvis chat/tool/stop/history; AC15 original expiry/revocation/principal isolation; legacy owned Desktop retirement requires CORE-CLEANUP proof",
+      "required_handling": "Deliver automatic owned Cloudflare/Access protected finite Jarvis; retain legacy Desktop/Xpra identities and aliases as capability benchmarks and owned-cleanup mappings, not active GUI installation. No public raw backend/host desktop/shell.",
       "license_status": "See official source license/protocol terms; runtime account/certificate eligibility separately verified",
       "component_type": "Native application-only Desktop bridge",
       "acceptance": "OPEN"
@@ -3565,8 +3571,8 @@
       "task_ids": [
         "RT-T266.3"
       ],
-      "verification_method": "AC13 automatic exact owned setup/recovery; AC14 unauthorized HTTP/assets/WS denied then real official-app-only pixels/control; AC15 active-socket expiry/revocation/principal isolation",
-      "required_handling": "Implement automatic owned Cloudflare setup and protected app-only native Desktop per linked concrete operational scenarios; no public raw backend/full desktop/shell",
+      "verification_method": "AC13 exact owned setup/recovery; AC14 unauthorized assets/streams denied then actual finite Jarvis chat/tool/stop/history; AC15 original expiry/revocation/principal isolation; legacy owned Desktop retirement requires CORE-CLEANUP proof",
+      "required_handling": "Deliver automatic owned Cloudflare/Access protected finite Jarvis; retain legacy Desktop/Xpra identities and aliases as capability benchmarks and owned-cleanup mappings, not active GUI installation. No public raw backend/host desktop/shell.",
       "license_status": "See official source license/protocol terms; runtime account/certificate eligibility separately verified",
       "component_type": "Protected Desktop HTML5 client",
       "acceptance": "OPEN"
@@ -3864,6 +3870,25 @@
   ],
   "runtime_acceptance": "OPEN; source/planning is not live qualification",
   "source_review": {
+    "unified_roadmap": {
+      "path": "docs/ROADMAP.md",
+      "date": "2026-10-12",
+      "requirements": 219,
+      "original_component_records": 62,
+      "acceptance_criteria_open": 18,
+      "task_groups_open": 8,
+      "direct_request_coverage": "docs/ROADMAP.md Coverage annex: complete user steering, rows1..15",
+      "priority": "Genuine chat/portable Resources repair, usable household UI, real Jarvis work/knowledge, complete capability qualification; gated device/HA/channel research does not stall MVP",
+      "research_only": "Household identity, Android companion/assistant/OS feasibility, HA Assist and messaging/calling reports; no device/account/HA/spend/capture/ROM authority",
+      "additional_requested_tools": [
+        {"name": "remotion-dev skills", "requirement_ids": ["R0088", "R0132", "R0134"], "status": "exact source/license/host/dependency review pending; unreviewed source, no installation claim"},
+        {"name": "Anthropic frontend-design, webapp-testing, mcp-builder", "requirement_ids": ["R0132", "R0134", "R0203"], "status": "exact requested source/host review pending; unreviewed source, no native behavior claim"},
+        {"name": "awesome-codex-plugins", "requirement_ids": ["R0103", "R0134"], "status": "exact requested source selection and license/host review pending; do not guess URL"},
+        {"name": "PrebuiltUI/components, awesome-web-components", "requirement_ids": ["R0203"], "status": "unreviewed inspiration unless actual prior source record exists; no automatic dependency"},
+        {"name": "Lordicon, LottieFiles, UseAnimations, AnimateCSS, Animista, HoverCSS", "requirement_ids": ["R0203"], "status": "unreviewed source/asset/license inspiration; original bounded accessible reduced-motion implementation required"}
+      ],
+      "source_accuracy": "Retain actual URL/frame/caption/metadata/full-reading coverage; inaccessible Meta Calling/Murphmaxxing/TikTok playback and unspecified tool URLs remain unreviewed, not qualified"
+    },
     "prompt_file": "Hermes_Pi_Installer_Agent_Prompt.md",
     "prompt_sha256": "d7608378a9207686fd1f9ba395e36d8f472111b317bd7877cd2c3732dd548ad5",
     "upstream_commit": "7085fbf7753266fc4943c55ac04926186bc90005",

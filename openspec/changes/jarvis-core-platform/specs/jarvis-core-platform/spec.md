@@ -353,7 +353,7 @@ The installer SHALL satisfy: Check available memory, CPU architecture/features, 
 - **AND** missing dependency/account/hardware or failed evidence leaves acceptance OPEN with exact next action, preserving data and prior working state.
 
 ### Requirement: R0045 current functional obligation
-The installer SHALL satisfy: Source: Togarriapa/HermesAgent_Resources (https://github.com/Togarriapa/HermesAgent_Resources).
+The installer SHALL satisfy: Source: Togarriapa/HermesAgent_Resources (https://github.com/Togarriapa/HermesAgent_Resources). Vendor the complete pinned source/helper/assets/provenance closure and offline importer so installed operation survives external checkout/repository unavailability; this does not authorize deleting that repository.
 
 #### Scenario: Verified capability or exact pending state
 - **WHEN** this obligation is implemented for a selected authorized target/account
@@ -441,7 +441,7 @@ The installer SHALL satisfy: Activate validated generations atomically and retai
 - **AND** missing dependency/account/hardware or failed evidence leaves acceptance OPEN with exact next action, preserving data and prior working state.
 
 ### Requirement: R0056 current functional obligation
-The installer SHALL satisfy: Preserve the repository's intended topology: user → Hermes → Orchestrator → internal specialists/teams → Orchestrator → Hermes. Specialists must not become independent user-facing channels. Preserve the declared response contract, scoped recruitment, contributor reporting, and material dissent where applicable.
+The installer SHALL satisfy: Jarvis is sole public MASTER and selects individual internal Experts or Teams; Orchestrator is an optional internal coordinator, not a mandatory hop. Preserve all208 source identities, scoped recruitment, response contract, contributor reporting and material dissent. Experts prepare internal work; Jarvis reviews and alone finalizes under exact task-start owner autonomy or separate owner approval.
 
 #### Scenario: Verified capability or exact pending state
 - **WHEN** this obligation is implemented for a selected authorized target/account
@@ -2274,11 +2274,12 @@ Root SHALL reclaim active origin capacity only after actual successful promotion
 - **THEN** pending/history data and learned notes are preserved, completion is not inferred and no provenance/grant is fabricated from private mirrors or silently evicted.
 
 ### Requirement: Actual exact-result Mission review bridge
-Within R0201/R0203 and RT-T266.3/VD-T266.5, root SHALL derive the exact owned current Mission/revision/run and complete persisted successful native result from independently verified execution records. A purpose-bound actual current no-tools Jarvis MASTER review request/completion SHALL join that context, owner/source generations and exact prompt/response digests. A planning receipt or caller-supplied result/JSON SHALL NOT constitute review. The closed observed response SHALL explicitly provide approved/rejected disposition, exact result digest and bounded nonempty rationale; the sealed decision and gateway Mission ledger SHALL retain all three plus their verified lineage through an implemented finite producer/delivery bridge.
+Within R0201/R0203 and RT-T266.3/VD-T266.5, root SHALL join an independently verified complete persisted successful Mission result to actual current no-tools Jarvis review. A finite bridge SHALL seal and persist the observed approved/rejected disposition, exact result digest, bounded nonempty rationale and verified lineage. Planning receipts, caller JSON and content delivery SHALL NOT substitute for review or owner permission.
 
 #### Scenario: Genuine completed run reviewed by current Jarvis
 - **WHEN** a current authenticated admitted owner turn requests review of its genuinely completed Expert/Team run and complete exact result bytes are verified and delivered to actual Jarvis
 - **THEN** the actual no-tools review completion yields a current purpose-bound sealed disposition/rationale, and the gateway atomically records it only for that exact pending owner/Mission/revision/run/result; owner approval and final-effect permission remain separate.
+- **AND** root independently verifies successful native execution, exact complete bytes/digest, owner, current Mission/revision/run and source/core generation, then joins actual review-purpose request/completion and prompt/response digests through the implemented producer/delivery/CAS path; bounded nonempty rationale and exact disposition/response lineage persist separately from owner approval.
 
 #### Scenario: Planning receipt, forged context or incomplete result
 - **WHEN** a caller supplies result text/authority, a planner completion is substituted, or execution success/full-content/source/owner/current revision cannot be independently verified
@@ -2293,11 +2294,12 @@ Within R0201/R0203 and RT-T266.3/VD-T266.5, root SHALL derive the exact owned cu
 - **THEN** the result remains internally reviewed and the final effect waits; Experts/Teams cannot obtain final-effect authority from any review or autonomy record.
 
 ### Requirement: Genuine retained Team-instance Ecosystem joins
-Within R0203 and HI-T266.2/RT-T266.3/RB-T266.4/VD-T266.5, root SHALL persist bounded genuine Team child-admission membership and independently observed sender-completion→exact recipient-request→response/completion relations in existing protected activity custody, joining exact distinct execution keys, owner/Mission/revision/binding and source/core generations. Finite current owner reads SHALL export only closed sanitized Team-instance/relation metadata with truthful coverage/currentness, never content, callable authority or invented catalog-to-instance communication.
+Within R0203 and HI-T266.2/RT-T266.3/RB-T266.4/VD-T266.5, root SHALL retain genuine Team instance membership and completed sender→recipient execution lineage in bounded protected activity custody. Current owner reads SHALL export only sanitized verified execution-key joins with truthful coverage/currentness, excluding content and authority. Catalog membership SHALL NOT imply actual communication or active workers.
 
 #### Scenario: Real Team membership and completed discussion
 - **WHEN** exact current selected Team binding admits actual Expert instances and native sender output is genuinely delivered to another admitted instance with verified responsive completion
 - **THEN** root retains deduplicated exact membership/communication lineage and Ecosystem displays only the included owned execution-key joins with authentic event time and coverage; repeated profile instances stay distinct.
+- **AND** native child admission and independently observed sender completion→exact recipient request→actual response/completion join owner/Mission/revision/current binding/source/core generations and distinct execution keys; closed bounded DTO/journal schemas preserve those verified joins while excluding content, callable handles and native session identifiers.
 
 #### Scenario: Declaration, independent drafts or unavailable producer
 - **WHEN** only catalog members, independent drafts, matching aliases/profiles, caller/model messages or incomplete native delivery evidence exist
@@ -2306,3 +2308,46 @@ Within R0203 and HI-T266.2/RT-T266.3/RB-T266.4/VD-T266.5, root SHALL persist bou
 #### Scenario: Expiry, restart, source change or bounded projection
 - **WHEN** original admission expires, records reload after restart, owner/source/Mission revision differs or record/read caps omit endpoints
 - **THEN** no execution/binding/lease revives or relation reassigns; independently verified retained history is inspectable only through current authenticated owner reads with historical/stale/partial labels, and foreign/corrupt/conflicting records deny or remain pending without fabricating completeness.
+
+### Requirement: Household identity compatibility and private-data continuity
+Within R0200..R0205, server identity SHALL derive from verified Access issuer/configured audience/subject. Optional household-directory adoption SHALL preserve valid existing access and owned data through versioned migration/rollback. Shared devices SHALL disclose current account and separate explicitly shared data; persona/email/speaker/device/caller claims SHALL NOT grant private access or final authority.
+
+#### Scenario: Existing user, namespace migration or account switch
+- **WHEN** an existing valid user has no directory entry, old subject-owned history is namespaced, or a shared tablet switches accounts
+- **THEN** valid access persists, old records remain owned/readable or explicitly preserved pending ambiguous recovery, stale private view state clears and another principal cannot obtain history/private knowledge; no silent empty replacement or email-based reassignment occurs.
+
+### Requirement: Device-qualified Android companion and assistant roadmap
+R0140/R0203 SHALL qualify protected text/foreground voice on identified stock devices with consent, transcript/text fallback, stop and privacy. Native assistant/hotword SHALL qualify separately per build. Research SHALL NOT authorize OS flashing, launcher/kiosk enrollment, background/biometric capture or broader phone control.
+
+#### Scenario: Unsupported hotword, uncertain speaker or offline device
+- **WHEN** native role/recognition/background support is unqualified, speaker identity is uncertain or current network/authentication is absent
+- **THEN** the feature remains unavailable with practical text/foreground fallback and exact next gate; no private persona selection, silent consequential queue or final authority derives from voice/device familiarity.
+
+### Requirement: Deferred finite HA voice interoperability
+R0101/R0158/R0140 SHALL defer live HA configuration until new named target/account authorization. Finite private authenticated text mapping SHALL qualify before audio/control, preserving distinct HA user/context/device/conversation and Jarvis owner/session/turn provenance/currentness. Audio/wake/control grants SHALL remain separate.
+
+#### Scenario: Research only, shared satellite or absent private auth
+- **WHEN** only source research exists, a room device cannot identify an authorized person, or the HA route lacks concrete owner-bound authentication
+- **THEN** live configuration/control stays deferred, private data/effects deny and no shared device, setup token or public RPC substitutes for required provenance; Core/chat/Resources work continues.
+
+### Requirement: Scoped household channels and gated calling
+Existing messaging/voice scope SHALL qualify enrolled private messaging/voice notes before calls. Authentic provider/person/chat lineage SHALL join existing one-use exact owner approvals. Calling, paid routes and recording SHALL remain unavailable until authorized/qualified; only Jarvis finalizes under matching explicit task-start autonomy or separate scoped approval.
+
+#### Scenario: Group reply, voice match, stale callback or unbudgeted call
+- **WHEN** a group/forwarded/ambiguous reply, caller ID/voice, notification delivery, replayed callback or unsupported/unbudgeted provider is offered as authorization
+- **THEN** final effects deny or wait, no Expert receives permission and no outbound call/test/spend/capture occurs; unavailable capabilities report exact manual/account/device/budget next steps with all acceptance OPEN.
+
+### Requirement: One complete dependency-ordered active roadmap
+The current change SHALL retain one complete dependency-ordered roadmap and preserve all existing obligations, code/history/data and later requests. Genuine chat/Resources and usable household interaction SHALL precede ambitious OS/calling optimization. GPT-6 Luna SHALL resume bounded implementation after actual Pi validation under GPT-6.1 Sol refinement, with candidate-bound evidence separate from acceptance.
+
+#### Scenario: New research, failed validation or optional unavailable target
+- **WHEN** source research adds ideas, current Pi validation fails or an account/device/budget is absent
+- **THEN** coverage and exact gates remain explicit, failed validation is repaired before dependent rollout and independent authorized MVP/adapter work continues; no research becomes enrollment/effect authority, no existing implementation/data is discarded and no unsupported capability or full task is marked accepted.
+- **AND** all219 requirements/62 original component records and aliases/18AC/eight task groups plus every later UI/Resources/voice/Android/HA/household/channel/tool/reference request remain covered, with source/fixture/rendered UX/live target/full acceptance evidence distinguished.
+
+### Requirement: Usable source-update receipt continuity
+Within BD-T266.1/R0055/R0153/R0172, source update/rollback SHALL refresh genuine current Resources/primary/enrolled Obsidian bindings under exact owned custody while preserving SOUL owner prefix, immutable prior backup and data. Healthy units/configuration SHALL NOT substitute for usable chat/Resources/vault proof or revive grants.
+
+#### Scenario: Changed source or failed rebase
+- **WHEN** source/artifact generation changes or currentness refresh/health/effective behavior fails
+- **THEN** exact reviewed rebase and native post-update/restart/rollback readback are required; unsafe compatibility fails with preserved recovery/data and no stale authority or uncertain-effect repetition, while routine preserving updates need no generic repeat-approval gate.
