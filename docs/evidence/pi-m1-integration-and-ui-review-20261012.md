@@ -31,6 +31,8 @@ units active. Process health does not prove usable chat.
 | `1cb2bbb09ec0070e933a7664449f65801454ad3f`, v52 | Compilation, strict specs/plan and all 56 focused Root checks passed in 410.05s. Corrections retain actual importer effects and protected custody checks. Archive SHA-256 `3a6b6d319f3eabf7ebc93f2b59bce0b704f32966295a9975c98395219ce7dcc8`. |
 | `6b4dd2b87412ae5efbce691fb18cf75a0836de37`, v53 | Compilation and strict specs/plan passed; gateway/JWT suite 3 failed, 36 passed. One new fixture used its accepted proof before assignment; two app-composition tests exposed an exact-versus-normalized shared-route comparison bug. |
 | `6d4bd9be7d63bc73ce6ac6d7953279b4aa696f9e`, v55 | Compilation, strict specs/plan and all 43 gateway/JWT/Mission-route checks passed in 1.40s. Includes bounded household admission and the exact shared-route repair. Archive SHA-256 `ebf183238ab9e488acc03de7ee1abcc26621b1ee62d31e995ff4eed855b0dad0`. |
+| `bf5bbf83c7969096b8167e5cf6fdcb2d2abf8030`, v56 | Compilation and strict specs/plan passed; adoption/gateway suite 6 failed, 86 passed. Existing effect fixtures needed the new source-switch keyword; static review separately found a missing final original-file CAS and pre-effect rollback classification. Staging only. |
+| `9429c2b2ec152dc6edae1be35c30ab703feb3b18`, v59 | Compilation, strict specs/plan and all 99 adoption/gateway/JWT/Mission-route checks passed in 1.77s. Source review concurs on exact pre-backup/pre-stop CAS and no service effects for pre-stop byte, ownership or protected-read conflicts; post-effect rollback remains unchanged. Archive SHA-256 `683eb63424338d62f198a1dc3780ed07454769bda8780f19647e06bc160b501c`. Staging only. |
 
 Logs and status JSON are under
 `/var/tmp/hermes-jarvis-core-checks-20261011/` on the identified Pi. OpenSpec
@@ -61,6 +63,18 @@ separate offline rollback contracts. The startup observer is Root-CLI-owned on
 a fixed separate lifecycle-only socket rather than an inaccessible global in
 another process. These source corrections still require actual Pi update,
 provider completion, protected public chat and recovery evidence.
+
+The actual v56 read-only live preflight returned a verified active adapter at
+`/opt/hermes-installer-core-0cbf9b819/src`, an unmanaged primary prompt and zero
+owner skill overlays. The separate legacy reader refused the same installation
+with `legacy service unit differs from the fixed owned unit`; its normal native
+observer socket already exists. Thus the legacy-only ingress adopter is not the
+deployment path for this Pi. A bounded already-adapter cohort refresh must join
+the real fixed Core update, exact owned old socket/process cleanup and protected
+Inspector/Gateway/config switch. No Core update or ingress mutation was
+attempted under the incompatible legacy recipe. The source review/fixtures above
+do not close this live deployment gap. Logs: `read-only-core-preflight56.log`
+and the browser's read-only migration-lane result. Four live units remained active.
 
 ## Full-shell visual review and disposition
 
