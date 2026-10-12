@@ -53,18 +53,22 @@ def test_installed_adapter_rollback_uses_exact_compatibility_recovery(monkeypatc
     source = tmp_path / "src"
     source.mkdir()
     events = []
+    legacy = {"running": False}
     core = SimpleNamespace(
         ADAPTER_SOURCE=source,
         _recover_interrupted_adapter_migration=lambda: events.append("recover-if-needed"),
         _owned_listener=lambda **kwargs: (events.append(
             "legacy-listener" if kwargs.get("legacy_launcher") else "adapter-listener")
-            or kwargs.get("legacy_launcher", False)),
+            or (legacy["running"] if kwargs.get("legacy_launcher") else not legacy["running"])),
         _journal=lambda: {"state": "installed", "adapter_migration_state": "active"},
         recover_owned_core_from_adapter_migration=lambda: pytest.fail(
             "normal recovery rejects the installed lifecycle state"),
     )
-    monkeypatch.setattr(adopt, "_recover_installed_adapter_to_legacy",
-                        lambda _core, expected: events.append(("compat-recovery", expected)))
+    def recover(_core, expected):
+        events.append(("compat-recovery", expected))
+        legacy["running"] = True
+
+    monkeypatch.setattr(adopt, "_recover_installed_adapter_to_legacy", recover)
 
     assert adopt._restore_legacy_core(core, source)
     assert events == ["recover-if-needed", "legacy-listener", "adapter-listener",
@@ -77,7 +81,7 @@ def test_installed_adapter_rollback_refuses_different_candidate_before_recovery(
     other = tmp_path / "other"
     other.mkdir()
     core = SimpleNamespace(ADAPTER_SOURCE=source)
-    with pytest.raises(RuntimeError, match="different"):
+    with pytest.raises(RuntimeError, match="differ"):
         adopt._recover_installed_adapter_to_legacy(core, other)
 
 
@@ -130,7 +134,7 @@ def _installed_recovery_fixture(monkeypatch, tmp_path, *, foreign_backup=False):
 
     def projection(path, **kwargs):
         assert kwargs["owner"] == 0
-        assert kwargs["group"] == (adopt.GATEWAY_GID if path == tmp_path / "token" else 0)
+        assert kwargs["group"] == (981 if path == tmp_path / "token" else 0)
         assert kwargs["mode"] == (0o640 if path == tmp_path / "token" else 0o600)
         return protected[path]
 
@@ -742,7 +746,8 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
 
     monkeypatch.setattr(adopt, "_run", run)
     monkeypatch.setattr(adopt, "_replace_ingress_units", replace_units)
-    monkeypatch.setattr(adopt, "_restore_legacy_core", lambda _core: events.append("recover-core") or True)
+    monkeypatch.setattr(adopt, "_restore_legacy_core",
+                        lambda _core, _source: events.append("recover-core") or True)
     monkeypatch.setattr(adopt, "_restore_old_ingress",
                         lambda *_args: events.append("restore-old-ingress") or True)
     monkeypatch.setattr(adopt, "_backup_value", lambda _sha: ({}, old_gateway,
