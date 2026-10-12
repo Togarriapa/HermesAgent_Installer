@@ -793,8 +793,31 @@ def test_owned_adapter_update_recovery_derives_exact_committed_join(
     assert core.JOURNAL.read_bytes() == core._canonical_json(fixture.prior)
 
 
+@pytest.mark.parametrize("phase", ["source-starting", "rolling-back"])
+def test_owned_adapter_update_recovery_restores_exact_interrupted_cohort(
+        committed_adapter_update_recovery, monkeypatch, phase):
+    fixture = committed_adapter_update_recovery
+    fixture.cohort["phase"] = phase
+    cohort_raw = core._canonical_json(fixture.cohort)
+    fixture.refresh["core_update_cohort_sha256"] = hashlib.sha256(cohort_raw).hexdigest()
+    monkeypatch.setattr(core, "_read_adapter_update_cohort",
+        lambda: (fixture.cohort, cohort_raw))
+
+    def recover():
+        assert core._ADAPTER_UPDATE_LOCK_HELD.get()
+        fixture.effects.append("recover-interrupted")
+        core.JOURNAL.write_bytes(core._canonical_json(fixture.prior))
+
+    monkeypatch.setattr(core, "_recover_interrupted_adapter_update", recover)
+    result = core.restore_owned_core_adapter_update()
+    assert "interrupted Core cohort restored" in result
+    assert fixture.effects == ["recover-interrupted"]
+    assert core.JOURNAL.read_bytes() == core._canonical_json(fixture.prior)
+
+
 @pytest.mark.parametrize("change", ["partial-join", "old-generation", "old-core-source",
-                                    "wrong-candidate", "bad-cohort-digest", "public-ingress"])
+                                    "wrong-candidate", "bad-cohort-digest", "wrong-cohort",
+                                    "public-ingress"])
 def test_owned_adapter_update_recovery_denies_unjoined_state_before_restore(
         committed_adapter_update_recovery, monkeypatch, change):
     fixture = committed_adapter_update_recovery
@@ -808,6 +831,12 @@ def test_owned_adapter_update_recovery_denies_unjoined_state_before_restore(
         fixture.ingress["candidate_sha"] = "f" * 40
     elif change == "bad-cohort-digest":
         fixture.refresh["core_update_cohort_sha256"] = "not-a-digest"
+    elif change == "wrong-cohort":
+        fixture.cohort["cohort_transaction_id"] = "e" * 32
+        cohort_raw = core._canonical_json(fixture.cohort)
+        monkeypatch.setattr(core, "_read_adapter_update_cohort",
+            lambda: (fixture.cohort, cohort_raw))
+        fixture.refresh["core_update_cohort_sha256"] = hashlib.sha256(cohort_raw).hexdigest()
     else:
         monkeypatch.setattr(core, "_run", lambda argv, check=True:
             SimpleNamespace(stdout="active" if "tunnel" in argv[-1] else "inactive"))

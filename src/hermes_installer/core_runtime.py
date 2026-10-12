@@ -5154,11 +5154,12 @@ def restore_owned_core_adapter_update():
 
   cohort,cohort_raw=_read_adapter_update_cohort()
   candidate=ingress.get("candidate_sha")
-  if (cohort.get("phase")!="committed"
+  phase=cohort.get("phase")
+  if (phase not in _ADAPTER_COHORT_PHASES
       or not isinstance(candidate,str) or re.fullmatch(r"[0-9a-f]{40}",candidate) is None
       or cohort.get("new_source")!=str(ADAPTER_SOURCE)
       or Path(cohort["new_source"]).parent.name!="hermes-installer-core-"+candidate[:9]):
-   raise CoreRuntimeError("current Core update is not a committed recovery candidate")
+   raise CoreRuntimeError("current Core cohort is not the retained native recovery candidate")
   provenance_raw=_projection_file(ADAPTER_SOURCE.parent/".source-provenance.json",
    owner=ROOT_UID,group=ROOT_UID,mode=0o444,maximum=4096)
   try: provenance=json.loads(provenance_raw,object_pairs_hook=unique)
@@ -5189,9 +5190,9 @@ def restore_owned_core_adapter_update():
   retained_reference=refresh.get("core_update_backup_reference")
   joins=(retained_reference,transaction,cohort_sha)
   if all(value is None for value in joins):
-   # Core may commit immediately before the adopter can persist its three
-   # joins. In that one crash window the actual current Core journal and
-   # committed cohort still must independently name this exact backup.
+   # Core may advance immediately before the adopter persists its three
+   # joins. The current protected cohort and its exact retained old backup
+   # must still independently join the ingress snapshot.
    pass
   elif (any(value is None for value in joins)
         or retained_reference!=reference
@@ -5200,6 +5201,26 @@ def restore_owned_core_adapter_update():
         or re.fullmatch(r"[0-9a-f]{64}",cohort_sha) is None
         or cohort_sha!=hashlib.sha256(cohort_raw).hexdigest()):
    raise CoreRuntimeError("retained adapter refresh does not join the current protected Core update")
+
+  for unit in ("hermes-jarvis-core-gateway.service","hermes-jarvis-mvp-tunnel.service"):
+   if _run(["systemctl","is-active",unit],False).stdout.strip()!="inactive":
+    raise CoreRuntimeError("public ingress must remain stopped during Core update recovery")
+  if phase!="committed":
+   # The normal qualification runner rejects these in-flight phases before
+   # it can reach recovery. Reuse its exact journaled rollback under the same
+   # lock, after independently joining the retained ingress row to the
+   # protected candidate and old backup above.
+   _recover_interrupted_adapter_update()
+   restored=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+   if restored!=old_journal:
+    raise CoreRuntimeError("interrupted Core cohort did not restore the exact prior journal")
+   prior_live,prior_live_raw,_prior_files=_read_active_adapter_runtime()
+   if (prior_live_raw!=old_journal
+       or prior_live.get("adapter_source")!=refresh["old_core_adapter_source"]
+       or prior_live.get("adapter_generation")!=refresh["old_core_adapter_generation"]
+       or prior_live.get("core_source_generation")!=refresh["old_core_source_generation"]):
+    raise CoreRuntimeError("interrupted Core cohort did not restore the prior live source tuple")
+   return "exact interrupted Core cohort restored to its prior adapter; ingress remains stopped"
 
   current, _current_raw, _files=_read_active_adapter_runtime()
   if (current.get("adapter_source")!=cohort.get("new_source")
@@ -5212,9 +5233,6 @@ def restore_owned_core_adapter_update():
       or current.get("adapter_update_target_generation")!=cohort.get("new_adapter_generation")
       or current.get("adapter_update_cohort_transaction_id")!=cohort.get("cohort_transaction_id")):
    raise CoreRuntimeError("current Core journal does not bind the exact committed update cohort")
-  for unit in ("hermes-jarvis-core-gateway.service","hermes-jarvis-mvp-tunnel.service"):
-   if _run(["systemctl","is-active",unit],False).stdout.strip()!="inactive":
-    raise CoreRuntimeError("public ingress must remain stopped during Core update recovery")
   _restore_adapter_update_backup(reference,allowed_sources=(
    Path(cohort["old_source"]),Path(cohort["new_source"])))
   restored=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
