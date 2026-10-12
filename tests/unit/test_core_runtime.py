@@ -8,6 +8,8 @@ import json
 import os
 import pwd
 import shlex
+import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -19,16 +21,24 @@ import pytest
 from hermes_installer import core_runtime as core
 
 
-def _exec_start_pre(unit_bytes, *, credential_mutations=None):
-    """Run the generated ExecStartPre with systemd-like credential files."""
+def _exec_start_pre(unit_bytes, *, credential_mutations=None, expect_success=None):
+    """Run the untouched generated guard as admin in a private mount view."""
     if os.geteuid() != 0:
         raise AssertionError("the Pi startup-guard fixture requires root to model admin")
     line = next((row for row in unit_bytes.decode().splitlines()
                  if row.startswith("ExecStartPre=")), None)
     if line is None:
+        if expect_success is True:
+            raise AssertionError("generated unit has no ExecStartPre guard")
         return None
+    unshare = shutil.which("unshare")
+    runuser = shutil.which("runuser")
+    if not unshare or not runuser:
+        raise AssertionError("Pi guard fixture requires unshare and runuser")
+    before_fixed_paths = _fixed_service_path_identity()
     cred_dir = Path(tempfile.mkdtemp(prefix="core-start-guard-", dir="/tmp"))
     cred_dir.chmod(0o700)
+    cred_view = Path(tempfile.mkdtemp(prefix="core-start-guard-view-", dir="/tmp"))
     admin = pwd.getpwnam("admin")
     try:
         loads = [row.partition("=")[2] for row in unit_bytes.decode().splitlines()
@@ -44,7 +54,9 @@ def _exec_start_pre(unit_bytes, *, credential_mutations=None):
             try:
                 content = source.read_bytes()
             except OSError:
-                return 125
+                raise AssertionError(
+                    f"generated LoadCredential source is unreadable: {name}"
+                ) from None
             target.write_bytes(content)
             target.chmod(0o400)
             os.chown(target, admin.pw_uid, admin.pw_gid)
@@ -58,23 +70,64 @@ def _exec_start_pre(unit_bytes, *, credential_mutations=None):
                 os.chown(target, admin.pw_uid, admin.pw_gid)
             elif mutation[0] == "mode":
                 target.chmod(mutation[1])
+            elif mutation[0] == "owner":
+                os.chown(target, mutation[1], mutation[2])
         os.chown(cred_dir, admin.pw_uid, admin.pw_gid)
         os.chmod(cred_dir, 0o500)
-        argv = shlex.split(line.partition("=")[2])
-        env = {"CREDENTIALS_DIRECTORY": str(cred_dir), "PATH": "/usr/bin:/bin"}
-        def become_admin():
-            os.setgroups([])
-            os.setgid(admin.pw_gid)
-            os.setuid(admin.pw_uid)
+        command = shlex.split(line.partition("=")[2])
+        namespace_script = """\
+set -eu
+unit_source=$1; shift
+launcher_source=$1; shift
+credential_source=$1; shift
+credential_target=$1; shift
+runuser_bin=$1; shift
+mount --make-rprivate /
+mount --bind -- "$unit_source" /etc/systemd/system/hermes-jarvis-core.service
+mount -o remount,bind,ro /etc/systemd/system/hermes-jarvis-core.service
+mount --bind -- "$launcher_source" /usr/local/libexec/hermes-jarvis-core-launcher
+mount -o remount,bind,ro /usr/local/libexec/hermes-jarvis-core-launcher
+mount --bind -- "$credential_source" "$credential_target"
+mount -o remount,bind,ro "$credential_target"
+export CREDENTIALS_DIRECTORY="$credential_target" PATH=/usr/bin:/bin
+actual_uid=$("$runuser_bin" -u admin -- /usr/bin/id -u)
+test "$actual_uid" = 1000
+printf 'FIXTURE_NAMESPACE_READY\\n'
+exec "$runuser_bin" -u admin -- "$@"
+"""
         result = subprocess.run(
-            argv, cwd="/", env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            check=False, preexec_fn=become_admin,
+            [unshare, "--mount", "--propagation", "private", "--", "sh", "-eu", "-c",
+             namespace_script, "core-start-guard", str(core.UNIT), str(core.LAUNCHER),
+             str(cred_dir), str(cred_view), runuser, *command],
+            cwd="/", env={"PATH": "/usr/bin:/bin"}, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, check=False,
         )
+        after_fixed_paths = _fixed_service_path_identity()
+        if after_fixed_paths != before_fixed_paths:
+            raise AssertionError("private guard fixture changed a live Pi Core service file")
+        stdout = result.stdout.decode("utf-8", errors="replace")
+        if not stdout.startswith("FIXTURE_NAMESPACE_READY\n"):
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()
+            raise AssertionError(
+                "private mount namespace or admin actor setup failed; "
+                f"exit={result.returncode}; stderr={stderr or '<empty>'}; "
+                f"stdout={stdout.strip() or '<empty>'}"
+            )
+        if (expect_success is not None
+                and (result.returncode == 0) is not expect_success):
+            outcome = "succeed" if expect_success else "fail closed"
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()
+            raise AssertionError(
+                f"generated ExecStartPre should {outcome}; exit={result.returncode}; "
+                f"stderr={stderr or '<empty>'}; "
+                f"stdout={result.stdout.decode('utf-8', errors='replace').strip() or '<empty>'}"
+            )
         return result.returncode
     finally:
         for child in cred_dir.iterdir():
             child.unlink()
         cred_dir.rmdir()
+        cred_view.rmdir()
 
 
 def _resource_receipt(*, prompt_matches=False):
@@ -145,7 +198,8 @@ def _fake_runtime(tmp_path, monkeypatch, *, fail_enable_once=False):
                 "python_uid": 1000, "python_gid": 1000, "python_mode": 0o755}
     monkeypatch.setattr(core, "_identity", lambda: identity)
     monkeypatch.setattr(core, "_owned_listener", lambda **_kwargs: True)
-    monkeypatch.setattr(core, "_launcher", lambda: b"test fixed core launcher")
+    monkeypatch.setattr(core, "_launcher",
+                        lambda adapter_source=None: b"test fixed core launcher")
     monkeypatch.setattr(core, "_install_bundled_resources", lambda _account: _resource_receipt())
     monkeypatch.setattr(core, "_write_resources_discovery", lambda: {
         "resource_counts": {"native_skills": 396, "source_profiles_preserved": 208},
@@ -233,7 +287,9 @@ def test_native_plugin_bootstrap_embedded_scripts_parse_on_target_runtime():
         compile(source, f"native-plugin-bootstrap-script-{index}", "exec")
 
 
-def _install_legacy_service_fixture(tmp_path, monkeypatch):
+def _install_legacy_service_fixture(tmp_path, monkeypatch, *, journal_state="active"):
+    if journal_state not in {"installed", "active"}:
+        raise ValueError("legacy fixture journal state must be installed or active")
     calls, enabled = _fake_runtime(tmp_path, monkeypatch)
     # Establish a complete temporary owned install using the same fixture actor
     # and fixed temp paths; do not manufacture a journal fragment by hand.
@@ -242,7 +298,7 @@ def _install_legacy_service_fixture(tmp_path, monkeypatch):
     core.LAUNCHER.write_bytes(launcher_bytes)
     core.LAUNCHER.chmod(0o755)
     record = json.loads(core.JOURNAL.read_text())
-    record.update({"state": "active",
+    record.update({"state": journal_state,
                    "launcher_sha256": hashlib.sha256(launcher_bytes).hexdigest(),
                    "unit_sha256": hashlib.sha256(core._unit()).hexdigest()})
     core.JOURNAL.write_text(json.dumps(record, sort_keys=True) + "\n")
@@ -286,6 +342,24 @@ def _install_legacy_service_fixture(tmp_path, monkeypatch):
 
 
 _REAL_CORE_LAUNCHER = core._launcher
+
+
+def _fixed_service_path_identity():
+    """Read the Pi-owned targets that the generated guard treats as fixed."""
+    paths = ((Path("/etc/systemd/system/hermes-jarvis-core.service"), 0o644),
+             (Path("/usr/local/libexec/hermes-jarvis-core-launcher"), 0o755))
+    identity = []
+    for path, expected_mode in paths:
+        info = path.lstat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                or (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode))
+                != (0, 0, expected_mode)):
+            raise AssertionError(f"fixed Core service path custody differs: {path}")
+        identity.append((str(path), info.st_dev, info.st_ino, info.st_uid, info.st_gid,
+                         stat.S_IMODE(info.st_mode), info.st_nlink, info.st_size,
+                         info.st_mtime_ns, info.st_ctime_ns,
+                         hashlib.sha256(path.read_bytes()).hexdigest()))
+    return tuple(identity)
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="legacy core migration requires the real root actor")
@@ -400,7 +474,7 @@ def test_native_adapter_update_stops_before_restart_on_failure_can_launch_new_la
             if (enabled["value"] and "Restart=on-failure" in core.UNIT.read_text()
                     and core.LAUNCHER.read_bytes() == core._launcher()):
                 enabled["value"] = False
-                status = _exec_start_pre(core.UNIT.read_bytes())
+                status = _exec_start_pre(core.UNIT.read_bytes(), expect_success=True)
                 if status:
                     guard_denials.append(status)
                 else:
@@ -520,7 +594,7 @@ def test_interrupted_adapter_update_recovers_from_journaled_generation_backup(tm
     assert interrupted_record["adapter_source"] == str(old_source)
     assert core.LAUNCHER.read_bytes() != launcher
     assert core.UNIT.read_bytes() != unit
-    assert _exec_start_pre(core.UNIT.read_bytes()) != 0
+    assert _exec_start_pre(core.UNIT.read_bytes(), expect_success=False) != 0
 
     monkeypatch.setattr(core, "_replace_journal", replace_journal)
     core._recover_interrupted_adapter_update()
@@ -557,7 +631,7 @@ def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pr
     real_run = core._run
     def interrupt_after_starting_recipe(argv, check=True):
         if argv == ["systemctl", "start", core.SERVICE]:
-            assert _exec_start_pre(core.UNIT.read_bytes()) == 0
+            assert _exec_start_pre(core.UNIT.read_bytes(), expect_success=True) == 0
             raise KeyboardInterrupt()
         return real_run(argv, check)
     monkeypatch.setattr(core, "_run", interrupt_after_starting_recipe)
@@ -576,7 +650,7 @@ def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pr
     with pytest.raises(KeyboardInterrupt):
         core._recover_interrupted_adapter_update()
     assert core.LAUNCHER.read_bytes() == prior_launcher
-    assert _exec_start_pre(core.UNIT.read_bytes()) != 0
+    assert _exec_start_pre(core.UNIT.read_bytes(), expect_success=False) != 0
 
     monkeypatch.setattr(core, "_atomic_replace", atomic_replace)
     monkeypatch.setattr(core, "_run", real_run)
@@ -737,7 +811,7 @@ def _adapter_cohort_starting_fixture(tmp_path, monkeypatch):
 @pytest.mark.skipif(os.geteuid() != 0, reason="ExecStartPre cohort gate requires the enrolled Pi root actor")
 def test_m1_boot_gate_admits_only_the_exact_source_starting_journal_and_resources(tmp_path, monkeypatch):
     unit, cohort, journal_raw, resources_raw = _adapter_cohort_starting_fixture(tmp_path, monkeypatch)
-    assert _exec_start_pre(unit) == 0
+    assert _exec_start_pre(unit, expect_success=True) == 0
     # A reboot during any incomplete phase must fail closed even when the
     # systemd unit and launcher already contain the new source recipe.
     for phase in ("prepared", "resources-rebound", "rolling-back"):
@@ -750,17 +824,17 @@ def test_m1_boot_gate_admits_only_the_exact_source_starting_journal_and_resource
             core._canonical_json(changed_reconstruction)).hexdigest()
         core._atomic_replace(core.ADAPTER_UPDATE_COHORT,
             core._canonical_json(changed), 0o400, core.ROOT_UID, core.ROOT_UID)
-        assert _exec_start_pre(unit) != 0
+        assert _exec_start_pre(unit, expect_success=False) != 0
     core._atomic_replace(core.ADAPTER_UPDATE_COHORT,
         core._canonical_json(cohort), 0o400, core.ROOT_UID, core.ROOT_UID)
 
     core.JOURNAL.write_bytes(b'{"partial":"journal"}\n')
-    assert _exec_start_pre(unit) != 0
+    assert _exec_start_pre(unit, expect_success=False) != 0
     core.JOURNAL.write_bytes(journal_raw)
     core.RESOURCES_RECORD.write_bytes(b'{"partial":"resources"}\n')
-    assert _exec_start_pre(unit) != 0
+    assert _exec_start_pre(unit, expect_success=False) != 0
     core.RESOURCES_RECORD.write_bytes(resources_raw)
-    assert _exec_start_pre(unit) == 0
+    assert _exec_start_pre(unit, expect_success=True) == 0
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="ExecStartPre cohort gate requires the enrolled Pi root actor")
@@ -769,17 +843,20 @@ def test_m1_boot_gate_checks_actual_backup_manifest_members_and_admin_execution(
     lines = unit.decode().splitlines()
     assert "User=admin" in lines
     assert not any(line.startswith("ExecStartPre=+") for line in lines)
-    assert _exec_start_pre(unit) == 0
+    assert _exec_start_pre(unit, expect_success=True) == 0
     manifest_credential = "adapter-backup-manifest"
     member_credential = "adapter-backup-journal"
     for mutations in (
         {manifest_credential: ("remove",)},
         {manifest_credential: ("bytes", b"{}\n")},
+        {manifest_credential: ("owner", 0, 0)},
         {member_credential: ("remove",)},
         {member_credential: ("bytes", b"corrupt retained journal\n")},
         {member_credential: ("mode", 0o600)},
+        {member_credential: ("owner", 0, 0)},
     ):
-        assert _exec_start_pre(unit, credential_mutations=mutations) != 0
+        assert _exec_start_pre(unit, credential_mutations=mutations,
+                               expect_success=False) != 0
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="cohort rollback custody requires the enrolled Pi root actor")
