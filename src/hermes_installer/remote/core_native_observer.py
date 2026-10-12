@@ -4444,7 +4444,7 @@ class RootCoreNativeObservationRegistry:
                         != _obsidian_startup_facts_sha256(startup)
                     or hashlib.sha256(_canonical({key: value for key, value in candidate.items()
                         if key not in {"receipt_sha256", "tool_result_sha256",
-                                       "native_returned_sha256"})).hexdigest()
+                                       "native_returned_sha256"}})).hexdigest()
                         != candidate["receipt_sha256"]
                     or not isinstance(candidate.get("tool_result_sha256"), str)
                     or candidate.get("native_returned_sha256")
