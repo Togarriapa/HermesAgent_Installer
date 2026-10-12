@@ -13,6 +13,7 @@ from typing import Any
 
 from .registry.primary_prompt import (
     MAX_SOUL_BYTES,
+    PrimaryPromptBlockError,
     append_managed_block,
     render_managed_block,
     split_managed_block,
@@ -403,6 +404,291 @@ def _new_record(source_generation, discovery, artifact_sha, resources_tree,
         "observed_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "error_code": None,
     }
+
+
+def _require_initial_custody(core, custody) -> None:
+    custody_type = getattr(core, "InitialPrimaryAdoptionCustody", None)
+    validator = getattr(core, "verify_initial_primary_adoption_custody", None)
+    if (custody_type is None or type(custody) is not custody_type
+            or not callable(validator)):
+        raise PrimaryPromptAdoptionError("sealed starting-cohort primary custody is unavailable")
+    try:
+        validator(custody)
+    except Exception as exc:
+        raise PrimaryPromptAdoptionError("sealed starting-cohort primary custody is stale") from exc
+
+
+def _initial_scope(core, custody):
+    scope = getattr(core, "initial_primary_adoption_scope", None)
+    if not callable(scope):
+        raise PrimaryPromptAdoptionError("fixed starting-cohort primary read scope is unavailable")
+    return scope(custody)
+
+
+def _record_initial_stage(core, custody) -> None:
+    _require_initial_custody(core, custody)
+    record_stage = getattr(core, "record_initial_primary_manager_stage", None)
+    if not callable(record_stage):
+        raise PrimaryPromptAdoptionError("starting-cohort manager stage recorder is unavailable")
+    try:
+        record_stage(custody)
+    except Exception as exc:
+        raise PrimaryPromptAdoptionError("starting-cohort manager stage did not bind") from exc
+
+
+def _bind_initial_custody_fields(custody, *, prior_sha, prior_signature,
+                                 source_prompt, block, desired, separator) -> None:
+    if (custody.prior_soul_sha256 != prior_sha
+            or tuple(custody.prior_soul_signature) != tuple(prior_signature)
+            or custody.source_prompt_sha256 != _sha(source_prompt)
+            or custody.managed_block_sha256 != _sha(block)
+            or custody.desired_soul_sha256 != _sha(desired)
+            or custody.owner_separator_hex != separator.hex()):
+        raise PrimaryPromptAdoptionError("starting-cohort SOUL or prompt snapshot differs")
+
+
+def adopt_primary_prompt_for_starting_cohort(custody) -> dict[str, Any]:
+    """Adopt the fixed bundled prompt under CoreRuntime's sealed starting cohort."""
+    from . import core_runtime as core
+    _require_initial_custody(core, custody)
+    if os.geteuid() != core.ROOT_UID:
+        raise PrimaryPromptAdoptionError("requires the fixed Linux root actor")
+    _check_root_context(core, require_listener=False)
+    _require_initial_custody(core, custody)
+    _ensure_dirs(core)
+
+    # Serialize with owner-prefix edits. CoreRuntime already holds its updater lock;
+    # this is the same narrow lock used by owner SOUL edits and ordinary adoption.
+    lock_path = core.PRIMARY_PROMPT_BACKUPS / "owner-prefix.lock"
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        info = os.fstat(lock_fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != core.ROOT_UID
+                or info.st_gid != core.ROOT_UID or stat.S_IMODE(info.st_mode) != 0o600):
+            raise PrimaryPromptAdoptionError("owner SOUL edit lock custody differs")
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        return _adopt_primary_prompt_for_starting_cohort_locked(core, custody)
+    finally:
+        os.close(lock_fd)
+
+
+def _adopt_primary_prompt_for_starting_cohort_locked(core, custody) -> dict[str, Any]:
+    from .registry.primary_prompt import append_managed_block, render_managed_block
+
+    _require_initial_custody(core, custody)
+    with _initial_scope(core, custody):
+        _require_initial_custody(core, custody)
+        record = _read_record(core)
+        current, signature = _read_soul(core)
+    current_sha = _sha(current)
+    with _initial_scope(core, custody):
+        _require_initial_custody(core, custody)
+        source_generation, discovery, artifact_sha, manifest, files, source_prompt = _fixed_bundle(
+            core, recovery_record=record, current_prompt_sha256=current_sha
+        )
+
+    block = render_managed_block(source_prompt)
+    block_sha = _sha(block)
+    if record is None:
+        if current_sha != custody.prior_soul_sha256 or tuple(signature) != tuple(custody.prior_soul_signature):
+            raise PrimaryPromptAdoptionError("starting-cohort owner SOUL snapshot differs")
+        desired, separator = append_managed_block(current, block)
+        _bind_initial_custody_fields(
+            custody, prior_sha=current_sha, prior_signature=signature,
+            source_prompt=source_prompt, block=block, desired=desired, separator=separator,
+        )
+    if record is not None:
+        # Only the CoreRuntime sealed transition may authorize a manager record
+        # after the initial absence snapshot. Its validator binds the exact stage.
+        if record.get("state") == "adopted":
+            with _initial_scope(core, custody):
+                _require_initial_custody(core, custody)
+                receipt = _record_matches_current(core, record, current, manifest, files)
+            return _status_record(record, receipt)
+        if record.get("state") not in {"preparing", "writing"}:
+            raise PrimaryPromptAdoptionError("starting-cohort primary journal state cannot resume")
+        if (record.get("core_source_generation") != source_generation
+                or record.get("artifact_sha256") != artifact_sha
+                or record.get("source_prompt_sha256") != _sha(source_prompt)
+                or record.get("managed_block_sha256") != block_sha):
+            raise PrimaryPromptAdoptionError("starting-cohort prompt stage has stale source custody")
+        with _initial_scope(core, custody):
+            _require_initial_custody(core, custody)
+            backup = _backup_read(core, record)
+        desired = backup + bytes.fromhex(record["owner_separator_hex"]) + block
+        _bind_initial_custody_fields(
+            custody, prior_sha=record["prior_soul_sha256"],
+            prior_signature=record["prior_soul_signature"], source_prompt=source_prompt,
+            block=block, desired=desired,
+            separator=bytes.fromhex(record["owner_separator_hex"]),
+        )
+        if current not in {backup, desired}:
+            raise PrimaryPromptAdoptionError("starting-cohort prompt stage found changed owner bytes")
+        if current == desired:
+            with _initial_scope(core, custody):
+                _require_initial_custody(core, custody)
+                _record_matches_current(core, record, desired, manifest, files)
+                receipt = _verify_native(core, manifest, files, desired, block_sha)
+            refresh = getattr(core, "refresh_initial_primary_starting_tuple", None)
+            if not callable(refresh):
+                raise PrimaryPromptAdoptionError("fixed starting-cohort Resources refresh is unavailable")
+            _require_initial_custody(core, custody)
+            refresh(custody)
+            record["state"] = "adopted"
+            record["native_effective_prompt_sha256"] = receipt["native_effective_prompt_sha256"]
+            record["native_effective_prompt_chars"] = receipt["native_effective_prompt_chars"]
+            record["result_soul_signature"] = signature
+            record["observed_at_utc"] = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+            _require_initial_custody(core, custody)
+            _write_record(core, record)
+            _record_initial_stage(core, custody)
+            return _status_record(record, receipt)
+        prior = backup
+        prior_signature = record["prior_soul_signature"]
+    else:
+        if (b"<!-- HERMES-INSTALLER-MANAGED-JARVIS-PRIMARY v1 BEGIN -->" in current
+                or b"<!-- HERMES-INSTALLER-MANAGED-JARVIS-PRIMARY v1 END -->" in current):
+            raise PrimaryPromptAdoptionError("unowned primary prompt marker is ambiguous")
+        prior = current
+        prior_signature = signature
+        record = _new_record(source_generation, discovery, artifact_sha,
+                             manifest["source"]["git_tree"], source_prompt, block,
+                             prior, signature, prior, separator)
+        _require_initial_custody(core, custody)
+        _write_record(core, record)
+        _require_initial_custody(core, custody)
+        _backup_bytes(core, record, prior)
+        _record_initial_stage(core, custody)
+    if record.get("state") == "preparing":
+        _require_initial_custody(core, custody)
+        record["state"] = "writing"
+        _write_record(core, record)
+        _record_initial_stage(core, custody)
+
+    _require_initial_custody(core, custody)
+    with _initial_scope(core, custody):
+        _require_initial_custody(core, custody)
+        active, active_signature = _read_soul(core)
+        if active != prior or active_signature != prior_signature:
+            raise PrimaryPromptAdoptionError("owner SOUL changed before initial prompt append")
+        _backup_bytes(core, record, prior)
+        _atomic_admin_replace(
+            core, desired, expected_signature=prior_signature,
+            uid=prior_signature[3], gid=prior_signature[4],
+            mode=stat.S_IMODE(prior_signature[2]), stage_name=record["stage_name"],
+        )
+        installed, installed_signature = _read_soul(core)
+        if installed != desired:
+            raise PrimaryPromptAdoptionError("initial primary append readback differs")
+        receipt = _verify_native(core, manifest, files, installed, block_sha)
+
+    # CoreRuntime independently reads the installed SOUL and A1 payload and CAS
+    # refreshes only this cohort's starting Resources tuple.
+    _require_initial_custody(core, custody)
+    refresh = getattr(core, "refresh_initial_primary_starting_tuple", None)
+    if not callable(refresh):
+        raise PrimaryPromptAdoptionError("fixed starting-cohort Resources refresh is unavailable")
+    try:
+        refresh(custody)
+    except Exception as exc:
+        raise PrimaryPromptAdoptionError("starting-cohort Resources refresh failed") from exc
+
+    record["state"] = "adopted"
+    record["native_effective_prompt_sha256"] = receipt["native_effective_prompt_sha256"]
+    record["native_effective_prompt_chars"] = receipt["native_effective_prompt_chars"]
+    record["result_soul_signature"] = installed_signature
+    record["observed_at_utc"] = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    _require_initial_custody(core, custody)
+    _write_record(core, record)
+    _record_initial_stage(core, custody)
+    return _status_record(record, receipt)
+
+
+def rollback_primary_prompt_for_starting_cohort(custody) -> None:
+    """Restore the exact initial append under stopped-service rollback custody."""
+    from . import core_runtime as core
+
+    custody_type = getattr(core, "InitialPrimaryRollbackCustody", None)
+    validator = getattr(core, "verify_initial_primary_rollback_custody", None)
+    if (custody_type is None or type(custody) is not custody_type
+            or not callable(validator)):
+        raise PrimaryPromptAdoptionError("sealed starting-cohort rollback custody is unavailable")
+    try:
+        validator(custody)
+    except Exception as exc:
+        raise PrimaryPromptAdoptionError("sealed starting-cohort rollback custody is stale") from exc
+    if os.geteuid() != core.ROOT_UID:
+        raise PrimaryPromptAdoptionError("requires the fixed Linux root actor")
+    lock_path = core.PRIMARY_PROMPT_BACKUPS / "owner-prefix.lock"
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        info = os.fstat(lock_fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != core.ROOT_UID
+                or info.st_gid != core.ROOT_UID or stat.S_IMODE(info.st_mode) != 0o600):
+            raise PrimaryPromptAdoptionError("owner SOUL edit lock custody differs")
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            validator(custody)
+        except Exception as exc:
+            raise PrimaryPromptAdoptionError("sealed starting-cohort rollback custody is stale") from exc
+        raw = core._projection_file(core.PRIMARY_PROMPT_JOURNAL, owner=core.ROOT_UID,
+                                    group=core.ROOT_UID, mode=0o600, maximum=64 * 1024)
+        if _sha(raw) != custody.primary_stage_sha256:
+            raise PrimaryPromptAdoptionError("retained primary manager stage differs")
+        record = _read_record(core)
+        if record is None or record.get("state") not in {"preparing", "writing", "rolling_back"}:
+            raise PrimaryPromptAdoptionError("owned initial primary rollback stage is unavailable")
+        if (record["prior_soul_sha256"] != custody.prior_soul_sha256
+                or tuple(record["prior_soul_signature"]) != tuple(custody.prior_soul_signature)
+                or record["core_source_generation"] != custody.core_source_generation
+                or record["artifact_sha256"] != custody.artifact_a1_sha256
+                or record["source_prompt_sha256"] != custody.source_prompt_sha256
+                or record["managed_block_sha256"] != custody.managed_block_sha256
+                or record["result_soul_sha256"] != custody.desired_soul_sha256
+                or record["owner_backup_name"] != custody.owner_backup_name
+                or record["owner_backup_name"] != custody.owner_backup_sha256):
+            raise PrimaryPromptAdoptionError("retained primary manager stage fields differ")
+        backup = _backup_read(core, record)
+        if _sha(backup) != custody.owner_backup_sha256:
+            raise PrimaryPromptAdoptionError("immutable primary owner backup differs")
+        current, signature = _read_soul(core)
+        if current == backup:
+            return
+        try:
+            prefix, separator, block = split_managed_block(
+                current, owner_prefix_length=record["owner_prefix_length"],
+                separator=bytes.fromhex(record["owner_separator_hex"]),
+            )
+        except PrimaryPromptBlockError as exc:
+            raise PrimaryPromptAdoptionError("owned initial primary block cannot be verified") from exc
+        desired = backup + bytes.fromhex(record["owner_separator_hex"]) + block
+        if (prefix != backup or _sha(prefix) != record["owner_prefix_sha256"]
+                or separator.hex() not in {"", "0a", "0a0a"}
+                or separator.hex() != record["owner_separator_hex"]
+                or _sha(block) != custody.managed_block_sha256
+                or current != desired or _sha(current) != custody.desired_soul_sha256):
+            raise PrimaryPromptAdoptionError("owner SOUL changed; initial rollback is refused")
+        try:
+            validator(custody)
+        except Exception as exc:
+            raise PrimaryPromptAdoptionError("sealed starting-cohort rollback custody is stale") from exc
+        current, signature = _read_soul(core)
+        if current != desired or _sha(current) != custody.desired_soul_sha256:
+            raise PrimaryPromptAdoptionError("owner SOUL changed before initial rollback")
+        _atomic_admin_replace(
+            core, backup, expected_signature=signature,
+            uid=signature[3], gid=signature[4], mode=stat.S_IMODE(signature[2]),
+            stage_name=record["stage_name"],
+        )
+        restored, restored_signature = _read_soul(core)
+        if (restored != backup or _sha(restored) != custody.prior_soul_sha256
+                or restored_signature[3] != custody.prior_soul_signature[3]
+                or restored_signature[4] != custody.prior_soul_signature[4]
+                or stat.S_IMODE(restored_signature[2]) != stat.S_IMODE(custody.prior_soul_signature[2])
+                or restored_signature[6] != custody.prior_soul_signature[6]):
+            raise PrimaryPromptAdoptionError("initial rollback did not restore exact owner SOUL bytes")
+    finally:
+        os.close(lock_fd)
 
 
 def adopt_primary_prompt() -> dict[str, Any]:
