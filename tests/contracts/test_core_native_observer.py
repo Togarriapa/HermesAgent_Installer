@@ -91,6 +91,7 @@ def test_non_codex_fallback_is_not_called_for_root_planned_turn(tmp_path: Path, 
     context = PlanningContext(1, "m" * 24, 1, "a" * 64, "b" * 64,
         hashlib.sha256(prompt.encode()).hexdigest(), "c" * 64, "d" * 64, "e" * 64, "hermes")
     monkeypatch.setattr(client, "planning_context_for_attempt", lambda **_kwargs: context)
+    monkeypatch.setattr(client, "master_review_context_for_attempt", lambda **_kwargs: None)
     install_native_codex_process_observer(ctx, client=client)
     request = {"model": "gpt-test", "tools": [{"name": "resources_delegate"}],
         "input": [{"type": "message", "role": "user",
@@ -159,6 +160,7 @@ def test_root_enrolled_planning_turn_reaches_provider_with_zero_tools(tmp_path: 
     context = PlanningContext(1, "m" * 24, 1, "a" * 64, "b" * 64,
         prompt_digest, "c" * 64, "d" * 64, "e" * 64, "hermes")
     monkeypatch.setattr(client, "planning_context_for_attempt", lambda **_kwargs: context)
+    monkeypatch.setattr(client, "master_review_context_for_attempt", lambda **_kwargs: None)
     attempt = ObservedProviderAttempt("x" * 32, "o" * 32, __import__("time").monotonic() + 20)
     monkeypatch.setattr(client, "register_attempt", lambda **_kwargs: attempt)
     receipts = []
@@ -203,6 +205,7 @@ def test_observer_forwards_exact_child_output_only_for_root_admitted_capture(
                                      capture_child_output=capture)
     receipts = []
     monkeypatch.setattr(client, "planning_context_for_attempt", lambda **_kwargs: None)
+    monkeypatch.setattr(client, "master_review_context_for_attempt", lambda **_kwargs: None)
     monkeypatch.setattr(client, "register_attempt", lambda **_kwargs: attempt)
     monkeypatch.setattr(client, "register_response", lambda **kwargs: receipts.append(kwargs))
     monkeypatch.setattr(observer, "_codex_account_fingerprint", lambda _resolver: "f" * 64)
@@ -422,6 +425,7 @@ def test_native_client_rechecks_review_receipt_through_closed_root_rpc(tmp_path,
     import stat
     import struct
     import time
+    from dataclasses import replace
     from types import SimpleNamespace
 
     import hermes_installer.remote.core_native_observer as observer
@@ -487,8 +491,11 @@ def test_native_client_rechecks_review_receipt_through_closed_root_rpc(tmp_path,
     assert request["op"] == "verify-master-review-completion"
     assert request["completion_handle"] == receipt.completion_handle
     assert request["result_sha256"] == receipt.result_sha256
+    client_receipt = replace(receipt, _client=client)
+    assert client_receipt.is_current_sealed(config=object(), custody=object()) is True
     exchange["response_ok"] = False
     assert client.verify_master_review_completion(receipt) is False
+    assert client_receipt.is_current_sealed(config=object(), custody=object()) is False
 
 
 def test_master_plan_readback_uses_canonical_root_durable_completion_record(monkeypatch):

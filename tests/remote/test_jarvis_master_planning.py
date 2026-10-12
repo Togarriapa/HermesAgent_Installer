@@ -189,6 +189,7 @@ def test_decision_mint_fails_closed_without_bridge_completion_type():
 
 @pytest.mark.parametrize("selected", [[], ["researcher"]])
 def test_typed_plan_decision_seals_zero_or_catalog_selected_sources(monkeypatch, selected):
+    from dataclasses import replace
     raw = json.dumps({"execution_mode": "oneshot", "selected_source_ids": selected,
                       "plan": {"steps": []}})
     _prompt, prompt_digest = build_master_plan_prompt(
@@ -221,6 +222,8 @@ def test_typed_plan_decision_seals_zero_or_catalog_selected_sources(monkeypatch,
         goal="Compare options", allowed_source_ids=SOURCE_IDS)
     assert decision.selected_source_ids == tuple(selected)
     assert decision.is_current_sealed(object(), custody=fixture_custody)
+    assert not replace(decision, plan={"steps": ["changed"]}).is_current_sealed(
+        object(), custody=fixture_custody)
     fixture_state["current"] = False
     assert not decision.is_current_sealed(object(), custody=fixture_custody)
     with pytest.raises(JarvisMasterPlanningDenied, match="current root planning completion"):
