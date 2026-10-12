@@ -286,6 +286,7 @@ def install_jarvis_settings_admin_routes(app: Any, service: JarvisChatService) -
                 headers=_secure_headers()) from None
 
     app.router.add_get(FEATURE_ROUTES[0][1], get_reasoning, allow_head=False)
-    app.router.add_post(FEATURE_ROUTES[1][1], set_reasoning, allow_head=False)
+    # aiohttp's add_post has no allow_head parameter and registers POST only.
+    app.router.add_post(FEATURE_ROUTES[1][1], set_reasoning)
     app.router.add_get(FEATURE_ROUTES[2][1], get_busy_input, allow_head=False)
-    app.router.add_post(FEATURE_ROUTES[3][1], set_busy_input, allow_head=False)
+    app.router.add_post(FEATURE_ROUTES[3][1], set_busy_input)
