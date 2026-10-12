@@ -158,16 +158,41 @@ def test_conversation_trash_is_recoverable_and_preserves_chat_and_project_links(
 def test_projects_assets_describe_the_verified_turn_context_boundary():
     validate_feature_assets((FEATURE_ASSETS,))
     assert FEATURE_ASSETS.feature_id == "projects"
+    html, js = FEATURE_ASSETS.view_html, FEATURE_ASSETS.mount_js
     assert "sharedMemory" in FEATURE_ASSETS.mount_js
     assert "scope.signal || lifecycle.signal" in FEATURE_ASSETS.mount_js
     assert "scope.isCurrent()" in FEATURE_ASSETS.mount_js
     assert "if (!isCurrent()) return;" in FEATURE_ASSETS.mount_js
     assert "innerHTML" not in FEATURE_ASSETS.mount_js
-    assert "data-notes" in FEATURE_ASSETS.view_html
-    assert "/chat/api/second-brain/notes?limit=50" in FEATURE_ASSETS.mount_js
-    assert "verified Codex Responses turn" in FEATURE_ASSETS.mount_js
-    assert "current root-observed context" in FEATURE_ASSETS.view_html
-    assert "stale or unavailable context receive no project block" in FEATURE_ASSETS.view_html
+    assert "data-notes" in html and "data-project-loading" in html and "data-project-error" in html
+    assert "data-project-empty" in html and 'aria-busy="true"' in html
+    assert "data-project-retry" in html and "data-notes-retry" in html
+    assert "/chat/api/second-brain/notes?limit=50" in js
+    assert "verified Codex Responses turns" in html
+    assert "another transport handles the message, Jarvis leaves it out" in html
+    assert "Project notes guide replies; they do not grant access." in html
+    assert "Linked notes stay in your Obsidian vault. Removing a link here does not delete a note." in html
+    assert "Obsidian notes remain in your vault. Project context is paused while a project is in Trash." in html
+    assert "Move this project to Trash? Its chats and note links stay saved" in js
+    assert "Open Chats" in html and "Open project ${project.title}" in js
+    assert "Moving a chat here changes its project link; it does not combine chat histories." in html
+    assert "Move chat to project" in html and "Remove from project" in js
+    assert "data-project-loading" in js and "aria-busy" in js and "Projects refreshed." in js
+    assert "retry before changing them" in js and "loadVaultNotes" in js
+    assert "control.disabled = vaultNotesState !== 'ready'" in js
+    assert "projectsLoaded ? 'Refreshing projects…' : 'Loading your projects…'" in js
+    assert "const submittedRevision = selectionRevision" in js
+    assert "if (selectionRevision === submittedRevision) selectProject(result.project)" in js
+    assert "function render()" in js and "else selectProject(null)" in js
+    assert "render(); conversationSelect.replaceChildren" in js
+    assert "if (chats.some(chat => chat.id === priorConversation)) conversationSelect.value = priorConversation" in js
+    assert "selectProject(selected);" not in js
+    assert "const targetProjectId = selected.id, submittedRevision = selectionRevision" in js
+    assert "if (selectionRevision === submittedRevision) conversationSelect.value = ''" in js
+    assert "Chat removed from this project. It remains available in Chats." in js
+    assert "projectData.projects" in js and "conversationData.conversations" in js
+    assert "call('/chat/api/conversations/' + encodeURIComponent(conversationId) + '/project'" in js
+    assert "body:JSON.stringify({projectId:null})" in js
 
 
 def test_trashing_chat_conflicts_with_active_turn_and_versions_survive_restore(tmp_path):
