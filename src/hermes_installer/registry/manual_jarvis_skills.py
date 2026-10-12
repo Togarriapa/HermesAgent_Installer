@@ -53,6 +53,7 @@ _GENERATION = f"installer-resources-{PINNED_REVISION[:12]}"
 _OWNER_FILE = ".hermes-installer-resource-ownership.json"
 PINNED_HERMES_REVISION = "7085fbf7753266fc4943c55ac04926186bc90005"
 LEGACY_MATERIALIZED_ARTIFACT_SHA256 = "f73463c641ac3744007ee8395b663802d5c916f59256fa8184ad2b4f5594b274"
+_HELPER_ARCHIVE_PATH = "manual_stage_jarvis_skills.py"
 
 
 class ManualJarvisSkillsError(RuntimeError):
@@ -468,6 +469,77 @@ def _read_artifact(archive_bytes: bytes, expected_sha256: str) -> tuple[dict[str
         raise ManualJarvisSkillsError("manual stage artifact contents are malformed or do not match its pin") from None
 
 
+def verify_same_materialization_transition(
+    previous_manifest: Mapping[str, Any], previous_files: Mapping[str, bytes],
+    next_manifest: Mapping[str, Any], next_files: Mapping[str, bytes],
+) -> bool:
+    """Classify only an exact helper metadata/byte change.
+
+    Both complete archives must first pass `_read_artifact`; the transition
+    boundary separately verifies each embedded helper's bytes against its
+    installer row. The helper is not materialized into the Resources tree.
+    """
+    def installer_row(manifest):
+        if type(manifest) is not dict:
+            return None
+        value = manifest.get("installer")
+        if (type(value) is not dict
+                or set(value) != {"archive_path", "size_bytes", "sha256"}
+                or value.get("archive_path") != _HELPER_ARCHIVE_PATH
+                or type(value.get("size_bytes")) is not int
+                or not 0 < value["size_bytes"] <= 1024 * 1024
+                or not isinstance(value.get("sha256"), str)
+                or _HEX64.fullmatch(value["sha256"]) is None):
+            return None
+        return value
+
+    if installer_row(previous_manifest) is None or installer_row(next_manifest) is None:
+        return False
+    if (type(previous_files) is not dict or type(next_files) is not dict
+            or _HELPER_ARCHIVE_PATH in previous_files or _HELPER_ARCHIVE_PATH in next_files
+            or any(not isinstance(path, str) or not isinstance(data, bytes)
+                   for mapping in (previous_files, next_files) for path, data in mapping.items())):
+        return False
+    old_non_installer = dict(previous_manifest)
+    new_non_installer = dict(next_manifest)
+    old_non_installer.pop("installer")
+    new_non_installer.pop("installer")
+    # Dict equality covers each path and complete byte string; `_read_artifact`
+    # has already enforced the declared member sizes and hashes.
+    return old_non_installer == new_non_installer and previous_files == next_files
+
+
+def _same_materialization_digests(manifest: Mapping[str, Any], files: Mapping[str, bytes]):
+    shared_manifest = dict(manifest)
+    shared_manifest.pop("installer", None)
+    rows = [{"path": path, "size_bytes": len(content), "sha256": _sha256(content)}
+            for path, content in sorted(files.items()) if path != _HELPER_ARCHIVE_PATH]
+    return (_sha256(_canonical_json(shared_manifest)),
+            _sha256(_canonical_json(rows)), len(rows))
+
+
+def _read_transition_archive(archive_bytes: bytes, expected_sha256: str):
+    manifest, files = _read_artifact(archive_bytes, expected_sha256)
+    installer = manifest.get("installer")
+    if (type(installer) is not dict
+            or set(installer) != {"archive_path", "size_bytes", "sha256"}
+            or installer.get("archive_path") != _HELPER_ARCHIVE_PATH
+            or type(installer.get("size_bytes")) is not int
+            or not 0 < installer["size_bytes"] <= 1024 * 1024
+            or not isinstance(installer.get("sha256"), str)
+            or _HEX64.fullmatch(installer["sha256"]) is None):
+        raise ManualJarvisSkillsError("helper-only transition installer metadata differs")
+    try:
+        with zipfile.ZipFile(io.BytesIO(archive_bytes), "r") as archive:
+            helper = archive.read(_HELPER_ARCHIVE_PATH)
+    except (OSError, KeyError, zipfile.BadZipFile):
+        raise ManualJarvisSkillsError("helper-only transition member is unavailable") from None
+    if (len(helper) != installer["size_bytes"]
+            or _sha256(helper) != installer["sha256"]):
+        raise ManualJarvisSkillsError("helper-only transition member digest differs")
+    return manifest, files, helper
+
+
 def _verify_owner_skill_overlay_transition(previous_manifest, previous_files, previous_sha256,
                                            manifest, files):
     """Permit replacing an owned generation only for one pinned skill document."""
@@ -710,10 +782,14 @@ def _verify_owned_generation(target: Path, files: Mapping[str, bytes], artifact_
     return actual_dirs
 
 
-def install_manual_jarvis_skills(
+def _install_manual_jarvis_skills(
     archive_bytes: bytes, *, hermes_home: str | Path, expected_sha256: str,
     replace_owned_from_archive: bytes | None = None,
     replace_owned_from_sha256: str | None = None,
+    migration_kind: str = "overlay",
+    transition_shared_manifest_sha256: str | None = None,
+    transition_shared_materialization_sha256: str | None = None,
+    transition_shared_member_count: int | None = None,
 ) -> dict[str, Any]:
     """Atomically add one revision-namespaced skill generation to a user's Hermes home.
 
@@ -728,8 +804,27 @@ def install_manual_jarvis_skills(
             raise ManualJarvisSkillsError("owned-generation migration archive is missing")
         previous_manifest, previous_files = _read_artifact(
             replace_owned_from_archive, replace_owned_from_sha256)
-        _verify_owner_skill_overlay_transition(previous_manifest, previous_files,
-            replace_owned_from_sha256, manifest, files)
+        if migration_kind == "overlay":
+            _verify_owner_skill_overlay_transition(previous_manifest, previous_files,
+                replace_owned_from_sha256, manifest, files)
+        elif migration_kind == "helper-only":
+            old_manifest, old_files, old_helper = _read_transition_archive(
+                replace_owned_from_archive, replace_owned_from_sha256)
+            new_manifest, new_files, new_helper = _read_transition_archive(
+                archive_bytes, expected_sha256)
+            if (not verify_same_materialization_transition(
+                    old_manifest, old_files, new_manifest, new_files)
+                    or new_helper != Path(__file__).read_bytes()):
+                raise ManualJarvisSkillsError(
+                    "helper-only transition differs from the reviewed current helper")
+            expected_shared = _same_materialization_digests(new_manifest, new_files)
+            if (expected_shared != (transition_shared_manifest_sha256,
+                                    transition_shared_materialization_sha256,
+                                    transition_shared_member_count)):
+                raise ManualJarvisSkillsError("helper-only transition proof digest differs")
+            previous_manifest, previous_files = old_manifest, old_files
+        else:
+            raise ManualJarvisSkillsError("owned-generation transition kind is unsupported")
     home_input = Path(hermes_home)
     if not home_input.is_absolute():
         raise ManualJarvisSkillsError("Hermes home must be an explicit absolute path")
@@ -926,6 +1021,36 @@ def install_manual_jarvis_skills(
     return result
 
 
+def install_manual_jarvis_skills(
+    archive_bytes: bytes, *, hermes_home: str | Path, expected_sha256: str,
+    replace_owned_from_archive: bytes | None = None,
+    replace_owned_from_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Existing owner-overlay/legacy importer; helper-only rebind is separate."""
+    return _install_manual_jarvis_skills(
+        archive_bytes, hermes_home=hermes_home, expected_sha256=expected_sha256,
+        replace_owned_from_archive=replace_owned_from_archive,
+        replace_owned_from_sha256=replace_owned_from_sha256,
+        migration_kind="overlay")
+
+
+def install_same_materialization_transition(
+    next_archive: bytes, previous_archive: bytes, *, hermes_home: str | Path,
+    next_sha256: str, previous_sha256: str,
+    shared_manifest_sha256: str, shared_materialization_sha256: str,
+    shared_member_count: int,
+) -> dict[str, Any]:
+    """Install only a parsed helper-only update; preserve the old tree as backup."""
+    return _install_manual_jarvis_skills(
+        next_archive, hermes_home=hermes_home, expected_sha256=next_sha256,
+        replace_owned_from_archive=previous_archive,
+        replace_owned_from_sha256=previous_sha256,
+        migration_kind="helper-only",
+        transition_shared_manifest_sha256=shared_manifest_sha256,
+        transition_shared_materialization_sha256=shared_materialization_sha256,
+        transition_shared_member_count=shared_member_count)
+
+
 def install_and_verify_manual_jarvis_skills(
     archive_bytes: bytes, *, hermes_home: str | Path, expected_sha256: str,
     hermes_source: str | Path, python: str | Path,
@@ -1108,6 +1233,16 @@ def main(argv: list[str] | None = None) -> int:
     overlay.add_argument("--python", required=True)
     overlay.add_argument("--expected-sha256", required=True)
     overlay.add_argument("--previous-sha256", required=True)
+    transition = sub.add_parser(
+        "import-helper-transition",
+        help="replace only an exact same-materialization installer-helper generation",
+    )
+    transition.add_argument("--home", required=True)
+    transition.add_argument("--next-sha256", required=True)
+    transition.add_argument("--previous-sha256", required=True)
+    transition.add_argument("--shared-manifest-sha256", required=True)
+    transition.add_argument("--shared-materialization-sha256", required=True)
+    transition.add_argument("--shared-member-count", required=True, type=int)
     args = parser.parse_args(argv)
     try:
         if args.command == "build":
@@ -1138,6 +1273,32 @@ def main(argv: list[str] | None = None) -> int:
                 hermes_source=args.hermes_source, python=args.python,
                 replace_owned_from_archive=previous_archive,
                 replace_owned_from_sha256=args.previous_sha256)
+        elif args.command == "import-helper-transition":
+            incoming = sys.stdin.buffer.read(2 * _ARTIFACT_LIMIT + 16 + 1)
+            if len(incoming) < 16 or len(incoming) > 2 * _ARTIFACT_LIMIT + 16:
+                raise ManualJarvisSkillsError("helper-only transition input is outside its bound")
+            next_size, previous_size = struct.unpack(">QQ", incoming[:16])
+            if (not 0 < next_size <= _ARTIFACT_LIMIT
+                    or not 0 < previous_size <= _ARTIFACT_LIMIT
+                    or len(incoming) != 16 + next_size + previous_size):
+                raise ManualJarvisSkillsError("helper-only transition framing differs")
+            next_archive = incoming[16:16 + next_size]
+            previous_archive = incoming[16 + next_size:]
+            old_manifest, old_files, _old_helper = _read_transition_archive(
+                previous_archive, args.previous_sha256)
+            new_manifest, new_files, new_helper = _read_transition_archive(
+                next_archive, args.next_sha256)
+            if (not verify_same_materialization_transition(
+                    old_manifest, old_files, new_manifest, new_files)
+                    or new_helper != Path(__file__).read_bytes()):
+                raise ManualJarvisSkillsError(
+                    "archives are not the exact reviewed helper-only transition")
+            result = install_same_materialization_transition(
+                next_archive, previous_archive, hermes_home=args.home,
+                next_sha256=args.next_sha256, previous_sha256=args.previous_sha256,
+                shared_manifest_sha256=args.shared_manifest_sha256,
+                shared_materialization_sha256=args.shared_materialization_sha256,
+                shared_member_count=args.shared_member_count)
         else:
             previous_archive = None
             previous_sha256 = args.replace_owned_from_sha256

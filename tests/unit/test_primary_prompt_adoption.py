@@ -202,3 +202,103 @@ def test_fixed_bundle_joins_finite_discovery_to_protected_resources_record_and_c
     assert actual_block == block
     assert record["owner_prefix_sha256"] == hashlib.sha256(owner_prefix).hexdigest()
     assert record["resources_tree"] == resources_tree
+
+
+def test_same_materialization_primary_rebase_is_metadata_only_and_requires_existing_adoption(
+        monkeypatch, tmp_path):
+    from hermes_installer import core_runtime as core
+
+    prompt = b"# Jarvis\n\nReviewed primary prompt.\n"
+    files = {"registry/profiles/hermes/SOUL.md": prompt,
+             "skills/a/SKILL.md": b"same skill bytes"}
+    installer_old = {"archive_path": manual_jarvis_skills._HELPER_ARCHIVE_PATH,
+                     "size_bytes": 12, "sha256": hashlib.sha256(b"old helper!!").hexdigest()}
+    new_helper = manual_jarvis_skills.Path(manual_jarvis_skills.__file__).read_bytes()
+    installer_new = {"archive_path": manual_jarvis_skills._HELPER_ARCHIVE_PATH,
+                     "size_bytes": len(new_helper), "sha256": hashlib.sha256(new_helper).hexdigest()}
+    source = {"revision": "a" * 40, "git_tree": "b" * 40}
+    old_manifest = {"source": source, "installer": installer_old}
+    new_manifest = {"source": source, "installer": installer_new}
+    old_archive, new_archive = b"retained-old-archive", b"reviewed-new-archive"
+    old_sha = hashlib.sha256(old_archive).hexdigest()
+    new_sha = hashlib.sha256(new_archive).hexdigest()
+    old_generation, new_generation = "c" * 64, "d" * 64
+    prefix = b"Owner-authored context.\n"
+    block = render_managed_block(prompt)
+    separator = b"\n\n"
+    current = prefix + separator + block
+    signature = [1, 2, stat.S_IFREG | 0o600, 1000, 1000, 1,
+                 len(current), 3, 4]
+    record = {
+        "schema": 1, "state": "adopted", "core_source_generation": old_generation,
+        "resources_revision": source["revision"], "resources_tree": source["git_tree"],
+        "artifact_sha256": old_sha, "source_prompt_sha256": hashlib.sha256(prompt).hexdigest(),
+        "managed_block_sha256": hashlib.sha256(block).hexdigest(),
+        "owner_backup_name": hashlib.sha256(prefix).hexdigest(),
+        "owner_prefix_sha256": hashlib.sha256(prefix).hexdigest(),
+        "owner_prefix_length": len(prefix), "owner_separator_hex": separator.hex(),
+        "prior_soul_sha256": hashlib.sha256(prefix).hexdigest(),
+        "prior_soul_signature": [1, 3, stat.S_IFREG | 0o600, 1000, 1000, 1,
+                                 len(prefix), 2, 3],
+        "result_soul_sha256": hashlib.sha256(current).hexdigest(),
+        "result_soul_signature": signature, "stage_name": ".SOUL.md.jarvis-0123456789abcdef01234567.stage",
+        "native_effective_prompt_sha256": "e" * 64, "native_effective_prompt_chars": len(current),
+        "observed_at_utc": "2026-10-12T00:00:00Z", "error_code": None,
+    }
+    record_raw = b"exact prior root journal"
+    shared = manual_jarvis_skills._same_materialization_digests(new_manifest, files)
+    transition = SimpleNamespace(
+        old_source_generation=old_generation, new_source_generation=new_generation,
+        old_artifact_sha256=old_sha, new_artifact_sha256=new_sha,
+        primary_record_sha256=hashlib.sha256(record_raw).hexdigest(),
+        soul_sha256=hashlib.sha256(current).hexdigest(), soul_signature=tuple(signature),
+        owner_prefix_length=len(prefix), owner_prefix_sha256=hashlib.sha256(prefix).hexdigest(),
+        owner_separator_hex=separator.hex(), managed_block_sha256=hashlib.sha256(block).hexdigest(),
+        prior_backup_sha256=hashlib.sha256(prefix).hexdigest(),
+        new_manifest_sha256=hashlib.sha256(manual_jarvis_skills._canonical_json(new_manifest)).hexdigest(),
+        old_manifest_sha256=hashlib.sha256(manual_jarvis_skills._canonical_json(old_manifest)).hexdigest(),
+        shared_manifest_sha256=shared[0], shared_materialization_sha256=shared[1],
+        shared_member_count=shared[2])
+    cas = tmp_path / "cas"
+    cas.mkdir()
+    monkeypatch.setattr(core, "ROOT_UID", os.geteuid())
+    monkeypatch.setattr(core, "RESOURCES_CAS", cas)
+    monkeypatch.setattr(core, "PRIMARY_PROMPT_JOURNAL", tmp_path / "primary.json")
+    monkeypatch.setattr(core, "PRIMARY_PROMPT_BACKUPS", tmp_path / "backups")
+    monkeypatch.setattr(core, "_projection_file", lambda path, **_kwargs:
+        record_raw if path == core.PRIMARY_PROMPT_JOURNAL else
+        old_archive if str(path).endswith(old_sha + ".zip") else new_archive)
+    monkeypatch.setattr(core, "verify_prepared_same_materialization_transition",
+                        lambda *_args, **_kwargs: True)
+    claims = []
+    monkeypatch.setattr(core, "claim_prepared_same_materialization_step",
+                        lambda _value, **kwargs: claims.append(kwargs["step"]) is None)
+    monkeypatch.setattr(core, "_core_source_generation", lambda: new_generation)
+    monkeypatch.setattr(manager, "_read_record", lambda _core: record)
+    monkeypatch.setattr(manager, "_read_soul", lambda _core: (current, signature))
+    monkeypatch.setattr(manager, "_backup_read", lambda *_args: prefix)
+    monkeypatch.setattr(manager, "_fixed_bundle", lambda *_args, **_kwargs:
+        (new_generation, {"resources_state": "discovered"}, new_sha,
+         new_manifest, files, prompt))
+    monkeypatch.setattr(manual_jarvis_skills, "_read_transition_archive",
+        lambda archive, _digest: (old_manifest, files, b"old helper!!")
+        if archive == old_archive else (new_manifest, files, new_helper))
+    monkeypatch.setattr(manager, "_verify_native", lambda *_args, **_kwargs: {
+        "active_primary_prompt_sha256": hashlib.sha256(current).hexdigest(),
+        "effective_prompt_contains_managed_block": True, "effective_prompt_truncated": False,
+        "native_effective_prompt_sha256": "f" * 64,
+        "native_effective_prompt_chars": len(current),
+    })
+    written = []
+    monkeypatch.setattr(manager, "_write_record", lambda _core, value: written.append(dict(value)))
+    monkeypatch.setattr(manager, "_read_record", lambda _core: written[-1] if written else record)
+
+    result = manager._rebase_identical_primary_binding_locked(
+        core, transition, core.claim_prepared_same_materialization_step)
+    assert result["state"] == "adopted"
+    assert claims == ["primary-rebase"]
+    assert written[0]["core_source_generation"] == new_generation
+    assert written[0]["artifact_sha256"] == new_sha
+    assert written[0]["result_soul_sha256"] == record["result_soul_sha256"]
+    assert written[0]["owner_backup_name"] == record["owner_backup_name"]
+    assert current == prefix + separator + block
