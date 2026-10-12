@@ -316,6 +316,7 @@ def test_root_master_review_receipt_joins_exact_live_owner_result_response_and_p
         "base_url": observer._CODEX_ENDPOINT, "retry_count": 0,
         "parent_tool_names": (), "account": "3" * 64, "request_sha256": "4" * 64,
         "attempt_handle": "Q" * 43, "master_review_response_text": raw,
+        "expiry": now + 30,
         "master_review_response_sha256": response_sha, "master_review_context": context,
         "response": ("5" * 64, {}, response_sha),
     }
@@ -327,6 +328,31 @@ def test_root_master_review_receipt_joins_exact_live_owner_result_response_and_p
     registry._lock = threading.RLock()
     registry._owners = {owner.owner_turn_handle: owner}
     registry._attempts = {attempt["attempt_handle"]: attempt}
+    # _handle() performs the production expiry sweep before dispatch. Model the
+    # empty root registries that are present on a real instance so this test
+    # exercises that same closed-RPC path rather than failing on an incomplete
+    # object.__new__ fixture.
+    registry._obsidian_bindings = {}
+    registry._obsidian_scoped_calls = set()
+    registry._obsidian_draft_read_deliveries = {}
+    registry._obsidian_draft_review_proposals = {}
+    registry._policies = {}
+    registry._owner_policy_handles = {}
+    registry._calls = {}
+    registry._claims = {}
+    registry._mission_pending = {}
+    registry._consumed_dispatches = {}
+    registry._child_sessions = {}
+    registry._planning_completions = {}
+    registry._expert_completions = {}
+    registry._team_completion_evidence = {}
+    registry._team_messages = {}
+    registry._team_bindings = {}
+    registry._team_completion_counts = {}
+    registry._team_edge_issued = set()
+    registry._master_selections = {}
+    registry._selected_source_deliveries = {}
+    registry._master_source_deliveries = {}
     registry._master_review_completions = {}
     registry._lifecycle_startup_probes = {}
     registry._lifecycle_startup_attempts = {}
