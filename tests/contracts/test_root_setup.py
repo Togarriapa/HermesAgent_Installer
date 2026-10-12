@@ -913,8 +913,12 @@ class RootSetupBoundaryTests(unittest.TestCase):
         self.assertNotEqual(code, 0)
         denied.assert_not_called()
 
-        with self.assertRaises(SystemExit):
-            main(["core-service", "adapter-update", "--source", "/tmp/caller.zip"])
+        output = io.StringIO()
+        with contextlib.redirect_stderr(output):
+            code = main(["core-service", "adapter-update", "--source", "/tmp/caller.zip"])
+        self.assertEqual(code, 2)
+        self.assertIn("Use exactly: core-service", output.getvalue())
+        self.assertNotIn("/tmp/caller.zip", output.getvalue())
 
 
 if __name__ == "__main__":
