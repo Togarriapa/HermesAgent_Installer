@@ -388,12 +388,19 @@ def _initialize_execution_store(store: Any) -> None:
         )""")
         db.execute("""UPDATE jarvis_mission_runs SET status='outcome_unknown',updated=?
                       WHERE status IN ('provisioning','conversation_ready')""", (time.time(),))
-        db.execute("""UPDATE jarvis_mission_approvals SET status='invalidated'
-                      WHERE status='approved' AND EXISTS (
-                        SELECT 1 FROM jarvis_mission_runs r WHERE r.owner=jarvis_mission_approvals.owner
-                        AND r.mission_id=jarvis_mission_approvals.mission_id
-                        AND r.revision=jarvis_mission_approvals.revision
-                        AND r.status='outcome_unknown')""")
+        approval_table = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='jarvis_mission_approvals'"
+        ).fetchone()
+        if approval_table is not None:
+            # The mission route initializes the approval ledger before this
+            # adapter in production. Standalone run-ledger users have no
+            # approvals to invalidate and must not create approval authority.
+            db.execute("""UPDATE jarvis_mission_approvals SET status='invalidated'
+                          WHERE status='approved' AND EXISTS (
+                            SELECT 1 FROM jarvis_mission_runs r WHERE r.owner=jarvis_mission_approvals.owner
+                            AND r.mission_id=jarvis_mission_approvals.mission_id
+                            AND r.revision=jarvis_mission_approvals.revision
+                            AND r.status='outcome_unknown')""")
 
 
 def _run_by_key(store: Any, owner: str, idempotency_hash: str) -> sqlite3.Row | None:
