@@ -9,6 +9,7 @@ import re
 import secrets
 import stat
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from .registry.primary_prompt import (
