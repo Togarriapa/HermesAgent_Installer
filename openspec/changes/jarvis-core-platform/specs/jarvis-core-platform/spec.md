@@ -2327,6 +2327,12 @@ Within R0200..R0205, server identity SHALL derive from verified Access issuer/co
 - **THEN** finite bounded standard input supplies only a validated union containing every old address before effects. Existing protected adoption journal retains exact original/prospective config bytes bound to their digests; no address argv/log/browser storage or later adhoc config edit is accepted as this transaction.
 - **AND** resume uses the retained same union/new bytes and fresh native/config custody; rollback restores exact old source/units/original allowlist without editing immutable generations or reviving leases. Missing or changed CAS/journal/input denies/pends; actual added-user login and global owner grants remain separate.
 
+#### Scenario: Already-adapter Core and owned ingress refresh
+- **WHEN** actual protected preflight proves an active adapter Core and its old Inspector owns the existing normal observer socket
+- **THEN** Root's finite refresh lane retains exact old Core/ingress/config/data, closes public ingress and stops only captured owned Inspector custody, removing only its proven unchanged socket after process exit. Foreign or replaced sockets deny.
+- **AND** the real fixed candidate Core qualification and independent committed-source/binding proof precede new Inspector/observer/Gateway/config-union activation. Legacy migration and sole-owner vault preparation are not invoked; existing registration/vault remain exact or absent/pending.
+- **AND** recovery uses actual retained adapter-update/primary rollback custody before exact old ingress restoration, never legacy backups, guessed process authority, repeated uncertain effects or revived leases. Real target positive/recovery and added-user login remain required; eight groups OPEN.
+
 #### Scenario: Existing user, namespace migration or account switch
 - **WHEN** an existing valid user has no directory entry, old subject-owned history is namespaced, or a shared tablet switches accounts
 - **THEN** valid access persists, old records remain owned/readable or explicitly preserved pending ambiguous recovery, stale private view state clears and another principal cannot obtain history/private knowledge; no silent empty replacement or email-based reassignment occurs.
