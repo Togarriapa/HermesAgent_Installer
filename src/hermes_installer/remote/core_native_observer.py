@@ -49,6 +49,8 @@ _NATIVE_ACTIVITY_MAX_INSTANCES = 100
 _NATIVE_ACTIVITY_MAX_EVENTS_PER_INSTANCE = 8
 _NATIVE_ACTIVITY_MAX_DEDUP_IDS_PER_INSTANCE = 32
 _NATIVE_ACTIVITY_MAX_EVENTS_PER_READ = 200
+_NATIVE_ACTIVITY_MAX_RELATIONS_PER_READ = 200
+_NATIVE_ACTIVITY_WINDOW_SECONDS = 7 * 24 * 60 * 60
 _OBSIDIAN_ORIGIN_STORE_NAME = "obsidian-draft-origins.json"
 _OBSIDIAN_ORIGIN_MAX_RECORDS = 4096
 _OBSIDIAN_ORIGIN_MAX_BYTES = 512 * 1024
@@ -880,18 +882,35 @@ def _native_activity_snapshot_from_bytes(raw: bytes) -> list[dict[str, Any]] | N
     try:
         value = json.loads(raw.decode("utf-8", errors="strict"), object_pairs_hook=_unique_json_pairs)
         if (type(value) is not dict or set(value) != {"schema", "instances"}
-                or type(value["schema"]) is not int or value["schema"] != 1
+                or type(value["schema"]) is not int or value["schema"] not in {1, 2}
                 or type(value["instances"]) is not list
                 or len(value["instances"]) > _NATIVE_ACTIVITY_MAX_INSTANCES
                 or json.dumps(value, ensure_ascii=False, sort_keys=True,
                     separators=(",", ":"), allow_nan=False).encode("utf-8") != raw):
             return None
         seen: set[str] = set()
+        team_keys: dict[str, tuple[Any, ...]] = {}
+        binding_keys: dict[tuple[str, str], str] = {}
+        relation_dedupes: set[str] = set()
+        relation_bindings: set[str] = set()
         fields = {"execution_key", "display_alias", "owner_subject_sha256", "mission_id",
             "mission_revision", "gateway_turn_id", "profile_id", "source_revision",
             "source_generation_sha256", "source_manifest_sha256", "core_generation",
             "core_source_generation", "child_lineage_sha256", "parent_lineage_sha256",
             "created_at", "updated_at", "tool_count_total", "seen_event_ids", "status", "events"}
+        team_lineage_fields = {"team_execution_key", "binding_id_sha256", "team_id",
+            "team_source_revision", "catalog_sha256", "bundle_generation_sha256",
+            "bundle_member_sha256", "selected_expert_ids", "binding_deadline_at",
+            "admission_deadline_at"}
+        team_relation_fields = {"relation_key", "dedupe_sha256", "binding_id_sha256",
+            "team_execution_key", "sender_execution_key", "recipient_execution_key",
+            "sender_profile_id", "recipient_profile_id", "sender_completion_sha256",
+            "recipient_completion_sha256", "team_message_sha256", "excerpt_sha256",
+            "recipient_request_sha256", "sender_response_sha256", "recipient_response_sha256",
+            "sender_text_sha256", "recipient_text_sha256", "sender_source_generation_sha256",
+            "recipient_source_generation_sha256", "event_at"}
+        if value["schema"] == 2:
+            fields = fields | {"team_lineage", "team_relation", "history_partial"}
         event_fields = {"event_id", "kind", "status", "at", "duration_ms", "tool_count"}
         for row in value["instances"]:
             if (type(row) is not dict or set(row) != fields
@@ -941,6 +960,102 @@ def _native_activity_snapshot_from_bytes(raw: bytes) -> list[dict[str, Any]] | N
                     return None
                 event_ids.add(event["event_id"])
             if not event_ids.issubset(set(row["seen_event_ids"])):
+                return None
+            if value["schema"] == 2:
+                lineage = row["team_lineage"]
+                if lineage is not None and (
+                        type(lineage) is not dict or set(lineage) != team_lineage_fields
+                        or not _OPAQUE.fullmatch(lineage.get("team_execution_key", ""))
+                        or not _HASH.fullmatch(lineage.get("binding_id_sha256", ""))
+                        or not isinstance(lineage.get("team_id"), str)
+                        or not _ID.fullmatch(lineage["team_id"])
+                        or not isinstance(lineage.get("team_source_revision"), str)
+                        or not 1 <= len(lineage["team_source_revision"]) <= 128
+                        or not all(_HASH.fullmatch(lineage.get(name, "")) for name in (
+                            "catalog_sha256", "bundle_generation_sha256", "bundle_member_sha256"))
+                        or type(lineage.get("selected_expert_ids")) is not list
+                        or len(lineage["selected_expert_ids"]) != 2
+                        or len(set(lineage["selected_expert_ids"])) != 2
+                        or any(not isinstance(item, str) or not _ID.fullmatch(item)
+                               for item in lineage["selected_expert_ids"])
+                        or row["profile_id"] not in lineage["selected_expert_ids"]
+                        or row["mission_id"] is None or row["mission_revision"] is None
+                        or any(type(lineage.get(name)) not in (int, float)
+                               or not math.isfinite(lineage[name])
+                               or not row["created_at"] <= lineage[name] <= row["created_at"] + 600.0
+                               for name in ("binding_deadline_at", "admission_deadline_at"))):
+                    return None
+                relation = row["team_relation"]
+                if relation is not None and (
+                        type(relation) is not dict or set(relation) != team_relation_fields
+                        or not _OPAQUE.fullmatch(relation.get("relation_key", ""))
+                        or not all(_HASH.fullmatch(relation.get(name, "")) for name in (
+                            "dedupe_sha256", "binding_id_sha256", "sender_completion_sha256",
+                            "recipient_completion_sha256", "team_message_sha256", "excerpt_sha256",
+                            "recipient_request_sha256", "sender_response_sha256",
+                            "recipient_response_sha256", "sender_text_sha256", "recipient_text_sha256",
+                            "sender_source_generation_sha256", "recipient_source_generation_sha256"))
+                        or not _OPAQUE.fullmatch(relation.get("team_execution_key", ""))
+                        or not all(_OPAQUE.fullmatch(relation.get(name, "")) for name in (
+                            "sender_execution_key", "recipient_execution_key"))
+                        or relation["sender_execution_key"] == relation["recipient_execution_key"]
+                        or not all(isinstance(relation.get(name), str) and _ID.fullmatch(relation[name])
+                                   for name in ("sender_profile_id", "recipient_profile_id"))
+                        or relation["sender_profile_id"] == relation["recipient_profile_id"]
+                        or type(relation.get("event_at")) not in (int, float)
+                        or not math.isfinite(relation["event_at"])
+                        or lineage is None
+                        or relation["binding_id_sha256"] != lineage["binding_id_sha256"]
+                        or relation["team_execution_key"] != lineage["team_execution_key"]
+                        or not row["created_at"] <= relation["event_at"] <= row["updated_at"]):
+                    return None
+                if relation is not None and (row["execution_key"] != relation["recipient_execution_key"]
+                        or row["profile_id"] != relation["recipient_profile_id"]):
+                    return None
+                if type(row["history_partial"]) is not bool:
+                    return None
+                if lineage is not None:
+                    owner_binding = (row["owner_subject_sha256"], lineage["binding_id_sha256"])
+                    fingerprint = (row["owner_subject_sha256"], lineage["team_id"],
+                        lineage["team_source_revision"],
+                        lineage["catalog_sha256"], lineage["bundle_generation_sha256"],
+                        lineage["bundle_member_sha256"], tuple(lineage["selected_expert_ids"]),
+                        row["mission_id"], row["mission_revision"], row["gateway_turn_id"])
+                    old = team_keys.setdefault(lineage["team_execution_key"], fingerprint)
+                    if old != fingerprint or binding_keys.setdefault(
+                            owner_binding, lineage["team_execution_key"]) != lineage["team_execution_key"]:
+                        return None
+                if relation is not None:
+                    if (relation["dedupe_sha256"] in relation_dedupes
+                            or relation["binding_id_sha256"] in relation_bindings):
+                        return None
+                    relation_dedupes.add(relation["dedupe_sha256"])
+                    relation_bindings.add(relation["binding_id_sha256"])
+        rows_by_execution = {row["execution_key"]: row for row in value["instances"]}
+        for recipient in value["instances"]:
+            relation = recipient.get("team_relation")
+            if relation is None:
+                continue
+            sender = rows_by_execution.get(relation["sender_execution_key"])
+            if sender is None:
+                continue  # bounded eviction may omit an endpoint; read marks coverage partial.
+            sender_team = sender.get("team_lineage")
+            recipient_team = recipient.get("team_lineage")
+            if (sender.get("status") != "completed"
+                    or sender.get("owner_subject_sha256") != recipient.get("owner_subject_sha256")
+                    or sender.get("gateway_turn_id") != recipient.get("gateway_turn_id")
+                    or sender.get("mission_id") != recipient.get("mission_id")
+                    or sender.get("mission_revision") != recipient.get("mission_revision")
+                    or sender.get("profile_id") != relation["sender_profile_id"]
+                    or sender.get("source_generation_sha256")
+                        != relation["sender_source_generation_sha256"]
+                    or recipient.get("source_generation_sha256")
+                        != relation["recipient_source_generation_sha256"]
+                    or not isinstance(sender_team, dict) or not isinstance(recipient_team, dict)
+                    or sender_team.get("team_execution_key") != relation["team_execution_key"]
+                    or recipient_team.get("team_execution_key") != relation["team_execution_key"]
+                    or sender_team.get("binding_id_sha256") != relation["binding_id_sha256"]
+                    or recipient_team.get("binding_id_sha256") != relation["binding_id_sha256"]):
                 return None
         return value["instances"]
     except Exception:
@@ -3271,6 +3386,8 @@ class RootCoreNativeObservationRegistry:
                 self._activity_records = {row["execution_key"]: row for row in rows}
         except Exception:
             self._activity_store_ok = False
+        if self._activity_store_ok:
+            self._prune_activity_window()
 
     @staticmethod
     def _activity_role(profile_id: str) -> str:
@@ -3299,11 +3416,173 @@ class RootCoreNativeObservationRegistry:
             suffix += 1
         return f"{base} ·{suffix}"
 
+    def _prune_activity_window(self, observed_at: float | None = None) -> None:
+        """Keep durable activity and dedupe state inside the declared read window."""
+        cutoff = (time.time() if observed_at is None else observed_at) - _NATIVE_ACTIVITY_WINDOW_SECONDS
+        expired = [key for key, row in self._activity_records.items()
+                   if row.get("created_at", 0) < cutoff]
+        if not expired:
+            return
+        for key in expired:
+            self._activity_records.pop(key, None)
+        self._persist_activity()
+
+    def _bind_team_activity(self, child: dict[str, Any], row: dict[str, Any]) -> None:
+        """Join a persisted activity key only to its actual retained Team admission."""
+        owner = child.get("owner")
+        source = child.get("source")
+        binding_id = child.get("team_binding_id")
+        binding = self._team_bindings.get(binding_id) if isinstance(binding_id, str) else None
+        mission = getattr(owner, "mission_binding", None)
+        now_mono, now_wall = time.monotonic(), time.time()
+        if (type(binding) is not RootSelectedTeamBinding or binding._seal is not _TEAM_BINDING_SEAL
+                or type(source) is not RootNativeSelectedSourceDelivery
+                or source.team_binding is not binding
+                or type(mission) is not MissionBinding
+                or binding.owner_subject_sha256 != owner.owner_subject_sha256
+                or binding.mission_id != mission.mission_id or binding.revision != mission.revision
+                or binding.goal_sha256 != mission.task_sha256
+                or binding.expires_monotonic <= now_mono
+                or owner.core_generation != self._custody.core_generation
+                or owner.core_source_generation != self._custody.core_source_generation
+                or child.get("profile_id") not in binding.selected_expert_ids
+                or source.profile_id != child.get("profile_id")
+                or source.generation_sha256 != binding.bundle_generation_sha256
+                or row["owner_subject_sha256"] != binding.owner_subject_sha256
+                or row["mission_id"] != binding.mission_id
+                or row["mission_revision"] != binding.revision):
+            self._activity_store_ok = False
+            return
+        binding_digest = hashlib.sha256(
+            b"jarvis-team-binding-lineage-v1\0" + binding.binding_id.encode("ascii")).hexdigest()
+        if row.get("team_lineage") is not None:
+            return
+        prior = [item.get("team_lineage") for item in self._activity_records.values()
+                 if item.get("team_lineage") is not None
+                 and item["owner_subject_sha256"] == owner.owner_subject_sha256
+                 and item["team_lineage"]["binding_id_sha256"] == binding_digest]
+        lineage = prior[0] if prior else None
+        if lineage is not None and any(
+                value != lineage for value in prior[1:]):
+            self._activity_store_ok = False
+            return
+        team_execution_key = (lineage["team_execution_key"] if lineage is not None
+                              else secrets.token_urlsafe(24))
+        admission_deadline = now_wall + max(0.0, float(child["expiry"]) - now_mono)
+        binding_deadline = (lineage["binding_deadline_at"] if lineage is not None else
+            now_wall + max(0.0, float(binding.expires_monotonic) - now_mono))
+        team_lineage = {
+            "team_execution_key": team_execution_key,
+            "binding_id_sha256": binding_digest,
+            "team_id": binding.team_id,
+            "team_source_revision": binding.source_revision,
+            "catalog_sha256": binding.catalog_sha256,
+            "bundle_generation_sha256": binding.bundle_generation_sha256,
+            "bundle_member_sha256": binding.bundle_member_sha256,
+            "selected_expert_ids": list(binding.selected_expert_ids),
+            "binding_deadline_at": binding_deadline,
+            "admission_deadline_at": admission_deadline,
+        }
+        if lineage is not None:
+            for key in team_lineage:
+                if key not in {"admission_deadline_at"} and team_lineage[key] != lineage[key]:
+                    self._activity_store_ok = False
+                    return
+        row["team_lineage"] = team_lineage
+
+    def _record_team_discussion_relation(self, *, recipient: dict[str, Any],
+                                         sender: dict[str, Any], team_message: dict[str, Any],
+                                         sender_completion_handle: str,
+                                         recipient_completion_handle: str,
+                                         recipient_request_sha256: str,
+                                         sender_response_sha256: str,
+                                         recipient_response_sha256: str,
+                                         sender_text_sha256: str,
+                                         recipient_text_sha256: str) -> None:
+        """Persist a directed edge only after root-verified recipient completion."""
+        recipient_activity = recipient.get("activity")
+        sender_execution_key = sender.get("execution_key")
+        sender_activity = self._activity_records.get(sender_execution_key)
+        lineage = (recipient_activity.get("team_lineage")
+                   if isinstance(recipient_activity, dict) else None)
+        sender_lineage = (sender_activity.get("team_lineage")
+                          if isinstance(sender_activity, dict) else None)
+        binding = self._team_bindings.get(recipient.get("team_binding_id"))
+        if (not self._activity_store_ok or not isinstance(lineage, dict)
+                or not isinstance(sender_lineage, dict)
+                or type(binding) is not RootSelectedTeamBinding
+                or binding._seal is not _TEAM_BINDING_SEAL
+                or not isinstance(team_message, dict)
+                or team_message.get("recipient_completion_handle") != recipient_completion_handle
+                or team_message.get("recipient_profile_id") != recipient.get("profile_id")
+                or team_message.get("recipient_goal_sha256") != recipient.get("goal_sha256")
+                or sender.get("profile_id") != team_message.get("sender_profile_id")
+                or sender.get("completion_handle") != sender_completion_handle
+                or sender.get("team_binding_id") != recipient.get("team_binding_id")
+                or lineage["binding_id_sha256"] != sender_lineage["binding_id_sha256"]
+                or lineage["team_execution_key"] != sender_lineage["team_execution_key"]
+                or sender_activity["profile_id"] != sender.get("profile_id")
+                or recipient_activity["profile_id"] != recipient.get("profile_id")
+                or sender_activity["owner_subject_sha256"] != recipient_activity["owner_subject_sha256"]
+                or sender_activity["mission_id"] != recipient_activity["mission_id"]
+                or sender_activity["mission_revision"] != recipient_activity["mission_revision"]
+                or sender.get("owner") is not recipient.get("owner")
+                or team_message.get("owner") is not recipient.get("owner")
+                or sender.get("profile_id") == recipient.get("profile_id")):
+            # This path runs only after the real recipient completion callback. If
+            # its exact root joins cannot be retained, fail telemetry closed rather
+            # than returning a deceptively complete topology.
+            self._activity_store_ok = False
+            return
+        relation_dedupe = hashlib.sha256(b"jarvis-team-relation-v1\0" + b"\0".join(
+            value.encode("ascii") for value in (binding.binding_id, sender_completion_handle,
+                team_message["message_handle"], recipient_completion_handle,
+                recipient_request_sha256, sender_response_sha256, recipient_response_sha256))).hexdigest()
+        existing = [row.get("team_relation") for row in self._activity_records.values()
+                    if isinstance(row.get("team_relation"), dict)
+                    and row["team_relation"]["binding_id_sha256"] == lineage["binding_id_sha256"]]
+        if existing:
+            if len(existing) == 1 and existing[0]["dedupe_sha256"] == relation_dedupe:
+                return
+            self._activity_store_ok = False
+            return
+        event_at = time.time()
+        relation = {
+            "relation_key": secrets.token_urlsafe(24), "dedupe_sha256": relation_dedupe,
+            "binding_id_sha256": lineage["binding_id_sha256"],
+            "team_execution_key": lineage["team_execution_key"],
+            "sender_execution_key": sender_execution_key,
+            "recipient_execution_key": recipient_activity["execution_key"],
+            "sender_profile_id": sender["profile_id"],
+            "recipient_profile_id": recipient.get("profile_id"),
+            "sender_completion_sha256": hashlib.sha256(sender_completion_handle.encode("ascii")).hexdigest(),
+            "recipient_completion_sha256": hashlib.sha256(recipient_completion_handle.encode("ascii")).hexdigest(),
+            "team_message_sha256": hashlib.sha256(team_message["message_handle"].encode("ascii")).hexdigest(),
+            "excerpt_sha256": team_message["excerpt_sha256"],
+            "recipient_request_sha256": recipient_request_sha256,
+            "sender_response_sha256": sender_response_sha256,
+            "recipient_response_sha256": recipient_response_sha256,
+            "sender_text_sha256": sender_text_sha256,
+            "recipient_text_sha256": recipient_text_sha256,
+            "sender_source_generation_sha256": sender_activity["source_generation_sha256"],
+            "recipient_source_generation_sha256": recipient_activity["source_generation_sha256"],
+            "event_at": event_at,
+        }
+        recipient_activity["team_relation"] = relation
+        recipient_activity["updated_at"] = max(recipient_activity["updated_at"], event_at)
+        self._persist_activity()
+
     def _persist_activity(self) -> None:
         if not self._activity_store_ok:
             return
-        rows = sorted(self._activity_records.values(), key=lambda row: row["created_at"])
-        payload = {"schema": 1, "instances": rows}
+        rows = []
+        for row in sorted(self._activity_records.values(), key=lambda item: item["created_at"]):
+            serialized = dict(row)
+            serialized.setdefault("team_lineage", None)
+            serialized.setdefault("team_relation", None)
+            serialized.setdefault("history_partial", False)
+            rows.append(serialized)
+        payload = {"schema": 2, "instances": rows}
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True,
                           separators=(",", ":"), allow_nan=False).encode("utf-8")
         if len(raw) > _NATIVE_ACTIVITY_MAX_BYTES:
@@ -3321,6 +3600,7 @@ class RootCoreNativeObservationRegistry:
         owner = child.get("owner")
         if owner is None or not self._activity_store_ok:
             return
+        self._prune_activity_window()
         row = child.get("activity")
         if row is None:
             binding = owner.mission_binding
@@ -3355,6 +3635,7 @@ class RootCoreNativeObservationRegistry:
                 "created_at": time.time(), "updated_at": time.time(),
                 "tool_count_total": 0, "seen_event_ids": [],
                 "status": "admitted", "events": [],
+                "team_lineage": None, "team_relation": None, "history_partial": False,
             }
             child["activity"] = row
             self._activity_records[execution_key] = row
@@ -3362,9 +3643,13 @@ class RootCoreNativeObservationRegistry:
                 oldest = min(self._activity_records.values(), key=lambda item: item["created_at"])
                 if oldest is not row:
                     self._activity_records.pop(oldest["execution_key"], None)
+                    for retained in self._activity_records.values():
+                        retained["history_partial"] = True
             kind, status = "admitted", "accepted"
             event_id = hashlib.sha256(
                 b"jarvis-native-activity-admitted-v1\0" + execution_key.encode("ascii")).hexdigest()
+            if child.get("team_binding_id") is not None:
+                self._bind_team_activity(child, row)
         events = row["events"]
         if kind == "tool_call" and (type(tool_count) is not int or not 0 <= tool_count <= 128):
             return
@@ -3393,7 +3678,8 @@ class RootCoreNativeObservationRegistry:
         with self._lock:
             self._ensure_open()
             observed_at = time.time()
-            window_start = observed_at - 7 * 24 * 60 * 60
+            window_start = observed_at - _NATIVE_ACTIVITY_WINDOW_SECONDS
+            self._prune_activity_window(observed_at)
             source = self._current_master_source()
             if (not _HASH.fullmatch(owner_subject_sha256 or "")
                     or core_generation != self._custody.core_generation
@@ -3401,19 +3687,26 @@ class RootCoreNativeObservationRegistry:
                     or source is None or source.is_current_sealed(self._custody, now=current) is not True
                     or not self._activity_store_ok):
                 raise CoreNativeObservationUnavailable("current owner activity is unavailable")
-            rows = [row for row in sorted(self._activity_records.values(),
+            all_rows = [row for row in sorted(self._activity_records.values(),
                     key=lambda item: item["updated_at"], reverse=True)
                     if row["owner_subject_sha256"] == owner_subject_sha256
                     and row["core_generation"] == core_generation
-                    and row["core_source_generation"] == core_source_generation
-                    and row["source_generation_sha256"] == source.artifact_sha256
                     and window_start <= row["created_at"] <= observed_at
                     and window_start <= row["updated_at"] <= observed_at]
-            rows = rows[:_NATIVE_ACTIVITY_MAX_INSTANCES]
+            partial = len(all_rows) > _NATIVE_ACTIVITY_MAX_INSTANCES
+            partial = partial or any(
+                row.get("history_partial") is True
+                for row in self._activity_records.values()
+                if row.get("owner_subject_sha256") == owner_subject_sha256
+                and row.get("core_generation") == core_generation
+                and window_start <= row.get("created_at", 0) <= observed_at)
+            rows = all_rows[:_NATIVE_ACTIVITY_MAX_INSTANCES]
             event_rows = [[event for event in row["events"]
                            if window_start <= event["at"] <= observed_at] for row in rows]
             event_counts = [min(1, len(events)) for events in event_rows]
             event_total = sum(event_counts)
+            if any(count < len(available) for count, available in zip(event_counts, event_rows)):
+                partial = True
             while event_total < _NATIVE_ACTIVITY_MAX_EVENTS_PER_READ:
                 advanced = False
                 for index, events in enumerate(event_rows):
@@ -3427,11 +3720,14 @@ class RootCoreNativeObservationRegistry:
                     break
 
             instances = []
+            included_execution_keys: set[str] = set()
             for row, available_events, event_count in zip(rows, event_rows, event_counts):
                 recent = available_events[-event_count:] if event_count else []
-                stale_after_restart = (row["status"] != "completed"
-                                       and row["updated_at"] < self._activity_started_at)
+                stale_after_restart = (row["core_source_generation"] != core_source_generation
+                    or (row["status"] != "completed"
+                        and row["updated_at"] < self._activity_started_at))
                 visible_status = "unknown" if stale_after_restart else row["status"]
+                included_execution_keys.add(row["execution_key"])
                 instances.append({
                     "execution_key": row["execution_key"], "display_alias": row["display_alias"],
                     "gateway_turn_id": row["gateway_turn_id"], "mission_id": row["mission_id"],
@@ -3444,8 +3740,146 @@ class RootCoreNativeObservationRegistry:
                     "events": [{key: event[key] for key in
                         ("kind", "status", "at", "duration_ms", "tool_count")} for event in recent],
                 })
-            return {"schema": 1, "observed_at": observed_at, "window_seconds": 7 * 24 * 60 * 60,
-                    "coverage": "observed-callbacks", "instances": instances, "relations": []}
+            try:
+                from hermes_installer.remote.core_gateway_inspector import _read_root_planning_catalog
+                current_catalog, current_catalog_sha = _read_root_planning_catalog(
+                    self._custody.core_source_generation)
+            except Exception:
+                current_catalog, current_catalog_sha = None, None
+
+            grouped: dict[str, dict[str, Any]] = {}
+            all_team_rows: dict[str, list[dict[str, Any]]] = {}
+            for row in all_rows:
+                lineage = row.get("team_lineage")
+                if isinstance(lineage, dict):
+                    all_team_rows.setdefault(lineage["team_execution_key"], []).append(row)
+            partial_team_keys: set[str] = set()
+            for row in rows:
+                lineage = row.get("team_lineage")
+                if not isinstance(lineage, dict):
+                    continue
+                key = lineage["team_execution_key"]
+                group = grouped.setdefault(key, {"lineage": lineage, "members": [],
+                    "created_at": row["created_at"], "binding_deadline_at": lineage["binding_deadline_at"]})
+                if group["lineage"] != lineage and any(
+                        k != "admission_deadline_at" for k in lineage
+                        if group["lineage"].get(k) != lineage.get(k)):
+                    partial_team_keys.add(key)
+                    partial = True
+                group["members"].append(row["execution_key"])
+                group["created_at"] = min(group["created_at"], row["created_at"])
+
+            team_instances = []
+            team_state_by_key: dict[str, str] = {}
+            binding_by_digest = {
+                hashlib.sha256(b"jarvis-team-binding-lineage-v1\0"
+                    + binding.binding_id.encode("ascii")).hexdigest(): binding
+                for binding in self._team_bindings.values()
+                if type(binding) is RootSelectedTeamBinding
+            }
+            for key, group in sorted(grouped.items(),
+                    key=lambda item: item[1]["created_at"], reverse=True):
+                lineage = group["lineage"]
+                all_members = {row["execution_key"] for row in all_team_rows.get(key, [])}
+                members = sorted(set(group["members"]))
+                if (set(members) != all_members
+                        or any(row.get("history_partial") is True
+                               for row in all_team_rows.get(key, []))):
+                    partial_team_keys.add(key)
+                    partial = True
+                binding = binding_by_digest.get(lineage["binding_id_sha256"])
+                stale_member = any(row["core_source_generation"] != core_source_generation
+                    for row in all_team_rows.get(key, []))
+                active_team = None
+                if current_catalog is not None:
+                    active_team = current_catalog.get("teams", {}).get(lineage["team_id"])
+                catalog_current = bool(current_catalog_sha == lineage["catalog_sha256"]
+                    and isinstance(active_team, dict)
+                    and active_team.get("source_revision") == lineage["team_source_revision"]
+                    and active_team.get("bundle_generation_sha256") == lineage["bundle_generation_sha256"]
+                    and active_team.get("bundle_member_sha256") == lineage["bundle_member_sha256"])
+                binding_current = bool(binding is not None
+                    and binding.expires_monotonic > current
+                    and binding.owner_subject_sha256 == owner_subject_sha256
+                    and binding.mission_id == (all_team_rows[key][0].get("mission_id"))
+                    and binding.revision == all_team_rows[key][0].get("mission_revision")
+                    and binding.team_id == lineage["team_id"]
+                    and binding.catalog_sha256 == lineage["catalog_sha256"]
+                    and binding.source_revision == lineage["team_source_revision"]
+                    and binding.bundle_generation_sha256 == lineage["bundle_generation_sha256"]
+                    and binding.bundle_member_sha256 == lineage["bundle_member_sha256"]
+                    and list(binding.selected_expert_ids) == lineage["selected_expert_ids"])
+                live_admission = bool(binding_current and any(
+                    child.get("team_binding_id") == binding.binding_id
+                    and child.get("complete") is not True
+                    and getattr(child.get("owner"), "owner_subject_sha256", None)
+                        == owner_subject_sha256
+                    for child in self._child_sessions.values()))
+                if key in partial_team_keys:
+                    state = "partial"
+                elif stale_member or lineage["binding_deadline_at"] <= observed_at:
+                    state = "stale"
+                elif live_admission and catalog_current:
+                    state = "current"
+                elif catalog_current and lineage["binding_deadline_at"] > observed_at:
+                    state = "historical"
+                else:
+                    state = "stale"
+                team_state_by_key[key] = state
+                team_instances.append({
+                    "team_execution_key": key, "team_id": lineage["team_id"],
+                    "source_revision": lineage["team_source_revision"],
+                    "mission_id": all_team_rows[key][0]["mission_id"],
+                    "mission_revision": all_team_rows[key][0]["mission_revision"],
+                    "members": members, "state": state,
+                    "coverage": "partial" if state == "partial" else "observed-callbacks",
+                })
+
+            relation_rows = []
+            for row in all_rows:
+                relation = row.get("team_relation")
+                if (isinstance(relation, dict)
+                        and window_start <= relation["event_at"] <= observed_at):
+                    relation_rows.append((row, relation))
+            relation_rows.sort(key=lambda item: item[1]["event_at"], reverse=True)
+            if len(relation_rows) > _NATIVE_ACTIVITY_MAX_RELATIONS_PER_READ:
+                partial = True
+                partial_team_keys.update(
+                    relation["team_execution_key"]
+                    for _row, relation in relation_rows[_NATIVE_ACTIVITY_MAX_RELATIONS_PER_READ:])
+            relations = []
+            for _row, relation in relation_rows[:_NATIVE_ACTIVITY_MAX_RELATIONS_PER_READ]:
+                key = relation["team_execution_key"]
+                if (relation["sender_execution_key"] not in included_execution_keys
+                        or relation["recipient_execution_key"] not in included_execution_keys
+                        or key not in team_state_by_key):
+                    partial = True
+                    partial_team_keys.add(key)
+                    continue
+                state = team_state_by_key[key]
+                if key in partial_team_keys:
+                    state = "partial"
+                relations.append({
+                    "relation_key": relation["relation_key"],
+                    "team_execution_key": key,
+                    "mission_id": _row["mission_id"],
+                    "mission_revision": _row["mission_revision"],
+                    "sender_execution_key": relation["sender_execution_key"],
+                    "recipient_execution_key": relation["recipient_execution_key"],
+                    "kind": "completed_message", "event_at": relation["event_at"],
+                    "state": state,
+                    "coverage": "partial" if state == "partial" else "observed-callbacks",
+                })
+            if partial_team_keys:
+                for team in team_instances:
+                    if team["team_execution_key"] in partial_team_keys:
+                        team["state"] = "partial"
+                        team["coverage"] = "partial"
+            return {"schema": 2, "observed_at": observed_at,
+                    "window_seconds": _NATIVE_ACTIVITY_WINDOW_SECONDS,
+                    "coverage": "observed-callbacks", "partial": partial,
+                    "instances": instances, "team_instances": team_instances,
+                    "relations": relations}
 
     @classmethod
     def from_current_core_custody(cls, custody: Any, *, selected_profile_source: Any = None,
@@ -5813,6 +6247,7 @@ class RootCoreNativeObservationRegistry:
                     sender["data_expires_monotonic"], recipient["expiry"],
                     claim["expiry"], owner.expires_monotonic, now + 30.0)
                 self._team_messages[message_handle] = {
+                    "message_handle": message_handle,
                     "binding_id": binding.binding_id, "binding": binding, "owner": owner,
                     "claim": claim, "sender": sender,
                     "sender_completion_handle": request["sender_completion_handle"],
@@ -6321,7 +6756,10 @@ class RootCoreNativeObservationRegistry:
                         "owner": owner,
                         "team_binding_id": team_binding_id,
                         "profile_id": child["profile_id"],
+                        "execution_key": (child.get("activity", {}).get("execution_key")
+                                          if isinstance(child.get("activity"), dict) else None),
                         "response_text": raw_text,
+                        "response_sha256": response[0],
                         "response_text_sha256": response[2],
                         "peer": peer,
                         "team_message_handle": child.get("team_message_handle"),
@@ -6329,6 +6767,18 @@ class RootCoreNativeObservationRegistry:
                     }
                 if team_message is not None:
                     team_message["recipient_completion_handle"] = completion_handle
+                    sender_evidence = self._team_completion_evidence.get(
+                        team_message.get("sender_completion_handle"))
+                    if sender_evidence is not None:
+                        self._record_team_discussion_relation(
+                            recipient=child, sender=sender_evidence, team_message=team_message,
+                            sender_completion_handle=team_message["sender_completion_handle"],
+                            recipient_completion_handle=completion_handle,
+                            recipient_request_sha256=final["request_sha256"],
+                            sender_response_sha256=sender_evidence.get("response_sha256", ""),
+                            recipient_response_sha256=response[0],
+                            sender_text_sha256=sender_evidence.get("response_text_sha256", ""),
+                            recipient_text_sha256=response[2])
                 return {"schema": 1, "nonce": nonce, "ok": True,
                     "completion_handle": completion_handle,
                     "owner_turn_handle": owner.owner_turn_handle,
