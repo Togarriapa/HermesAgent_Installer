@@ -2373,3 +2373,21 @@ Source updates SHALL recover Source/Resources/discovery/primary/enrolled Obsidia
 #### Scenario: No original primary adoption or unverified registry
 - **WHEN** primary adoption/Obsidian registration was absent or exact old/current binding/backup cannot be independently proven
 - **THEN** absence/conflict stays explicit pending for the separate actual adoption/registration/recovery path; rebasing cannot fabricate adopted/enrolled status or automatically repeat an uncertain effect, and routine preserving updates require no generic new confirmation.
+
+### Requirement: Exact retained owner-overlay reconstruction
+Helper-only transition SHALL preserve protected overlay-journal bytes and historical base/intermediate hashes. Root SHALL prove exact old/new base equality, reconstruct the original content chain and derive the new composed artifact by only helper/installer replacement. Current consumers SHALL verify the exact committed cohort reconstruction; guessed aliases or extra manifest changes SHALL deny.
+
+#### Scenario: Two owner overlays and a helper-only source change
+- **WHEN** the protected journal names old base B0 and intermediate hashes while reviewed current helper generates B1
+- **THEN** root validates retained B0/B1/A0 archives, exact journal/content custody, every stable-order intermediate hash and reconstructed final A0; it derives A1 by only fixed helper/installer replacement, proves A0/A1 equality and exact current installed/discovery bytes, with all other manifest/member/provenance and J bytes unchanged.
+- **AND** a closed root cohort row binds B0/B1/A0/A1/J/content-set/source/installed/discovery digests; both discovery and overlay consumers independently verify that exact current committed reconstruction before use, not a public DTO, transitive base alias or replaced historical hash.
+
+#### Scenario: Missing original CAS, changed journal or partial cohort
+- **WHEN** base/content/intermediate/final proof is absent/changed, current source/cohort/owner differs or the transition is incomplete/replayed after restart
+- **THEN** consumer resolution denies/pends without guessing/rebuilding old authority, editing J or broadening manifest comparison; exact verified rollback restores compatible data and current binding without lease revival. Subsequent owner edits need their ordinary explicit review/CAS and cannot use reconstruction as write authority.
+### Requirement: Root-owned helper transition privilege
+Only the fixed current UID0 updater SHALL consume the sealed in-process helper transition before runuser dispatch. Child integrity checks SHALL verify actual root-private invocation/pipe and owner/target/archive custody before effects. No serialized seal, owner UID, CLI digest or stdout SHALL confer root binding authority; Root SHALL independently verify effects/currentness before commit.
+
+#### Scenario: Direct owner CLI or changed root invocation
+- **WHEN** helper-only import lacks actual root-created private pipe/fixed reviewed runuser lineage or live current Root preparation, or custody/source/replay checks fail
+- **THEN** effects deny/pends before writes; a child cannot validate a portable seal or mint discovery/adoption, and genuine Root dispatch still independently verifies byte effects and current cohort before protected commit.

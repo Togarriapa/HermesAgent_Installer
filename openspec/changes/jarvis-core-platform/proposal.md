@@ -1,5 +1,9 @@
 # Proposal
 
+## M1 exact owner-overlay reconstruction clarification
+
+Clarify the existing helper-only transition: an unchanged protected owner-overlay journal still names its original base and intermediate archive hashes. Prove old/new base helper-only equality, reconstruct and verify that exact old overlay chain from retained CAS/content, then replace only helper/installer metadata in its fully verified composed artifact. Persist a fixed current cohort reconstruction record binding the exact old/new base and composed artifacts plus unchanged journal digest; every consumer rechecks it instead of guessing a base alias or comparing old hashes to new composition. All overlay/member/provenance bytes and grants remain unchanged. Pi33 specs/plan have passed; runtime repair/this leaf qualification remain separate and OPEN.
+
 ## M1 helper-only generation transition
 
 R0045/R0055/R0153/R0172 and BD-T266.1/RB-T266.4/VD-T266.5 need a finite same-materialization transition for a reviewed installer-helper change. The helper's bytes/hash change archive identity even when every compiled/materialized file is identical; the current post-overlay owned generation is not the old f734 legacy generation. Root must prove exact current record→retained CAS→complete installed generation and exact new equality excluding only fixed helper metadata, then recover Source/Resources/discovery/primary/current Obsidian binding as one owned cohort. This is not arbitrary old-artifact migration, semantic-source acceptance or new permission. Preserve owner edits, immutable backups/CAS, auth and vault data; initial primary adoption and genuine effects remain separate. Unified roadmap validation has passed on Pi30; this narrow refinement still needs separate Pi qualification.
