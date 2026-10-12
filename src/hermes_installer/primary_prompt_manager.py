@@ -314,8 +314,13 @@ def _fixed_bundle(core, *, recovery_record=None, current_prompt_sha256=None):
     current_bytes = core._projection_file(core.RESOURCES_RECORD, owner=core.ROOT_UID,
                                           group=core.ROOT_UID, mode=0o600, maximum=16 * 1024)
     current_record = json.loads(current_bytes)
-    if (manifest.get("source", {}).get("revision") != discovery.get("resources_revision")
-            or manifest.get("source", {}).get("git_tree") != discovery.get("resources_tree")
+    source = manifest.get("source")
+    resources_tree = current_record.get("resources_tree")
+    if (not isinstance(source, dict)
+            or not isinstance(resources_tree, str)
+            or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", resources_tree) is None
+            or source.get("revision") != discovery.get("resources_revision")
+            or source.get("git_tree") != resources_tree
             or current_record.get("artifact_sha256") != artifact_sha
             or current_record.get("core_source_generation") != source_generation):
         raise PrimaryPromptAdoptionError("current Resources source receipt changed")
@@ -383,11 +388,11 @@ def _check_root_context(core, *, require_listener=True):
     return service_record
 
 
-def _new_record(source_generation, discovery, artifact_sha, prompt, block, prior,
-                signature, prefix, separator):
+def _new_record(source_generation, discovery, artifact_sha, resources_tree,
+                prompt, block, prior, signature, prefix, separator):
     return {
         "schema": SCHEMA, "state": "preparing", "core_source_generation": source_generation,
-        "resources_revision": discovery["resources_revision"], "resources_tree": discovery["resources_tree"],
+        "resources_revision": discovery["resources_revision"], "resources_tree": resources_tree,
         "artifact_sha256": artifact_sha, "source_prompt_sha256": _sha(prompt),
         "managed_block_sha256": _sha(block), "owner_backup_name": _sha(prior),
         "owner_prefix_sha256": _sha(prefix), "owner_prefix_length": len(prefix),
@@ -463,7 +468,8 @@ def adopt_primary_prompt() -> dict[str, Any]:
                 or b"<!-- HERMES-INSTALLER-MANAGED-JARVIS-PRIMARY v1 END -->" in current):
             raise PrimaryPromptAdoptionError("unowned primary prompt marker is ambiguous")
         desired, separator = append_managed_block(current, block)
-        record = _new_record(source_generation, discovery, artifact_sha, source_prompt,
+        record = _new_record(source_generation, discovery, artifact_sha,
+                             manifest["source"]["git_tree"], source_prompt,
                              block, current, signature, current, separator)
         _write_record(core, record)
     _backup_bytes(core, record, current)
