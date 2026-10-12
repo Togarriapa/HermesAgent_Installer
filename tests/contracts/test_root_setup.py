@@ -898,6 +898,24 @@ class RootSetupBoundaryTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             main(["install", "--suite", "resource-cron-task-v1"])
 
+    def test_core_adapter_update_dispatch_is_fixed_root_only_and_has_no_selectors(self) -> None:
+        with patch.object(root_setup, "_require_root_linux"), \
+             patch("hermes_installer.core_runtime.update_owned_core_adapter",
+                   return_value="native adapter generation updated") as update:
+            code = main(["core-service", "adapter-update"])
+        self.assertEqual(code, 0)
+        update.assert_called_once_with()
+
+        with patch.object(root_setup, "_require_root_linux",
+                          side_effect=PermissionError("root required")), \
+             patch("hermes_installer.core_runtime.update_owned_core_adapter") as denied:
+            code = main(["core-service", "adapter-update"])
+        self.assertNotEqual(code, 0)
+        denied.assert_not_called()
+
+        with self.assertRaises(SystemExit):
+            main(["core-service", "adapter-update", "--source", "/tmp/caller.zip"])
+
 
 if __name__ == "__main__":
     unittest.main()
