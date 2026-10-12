@@ -75,27 +75,29 @@ CORE_NATIVE_ADAPTER_SOURCE = Path(__file__).resolve(strict=True).parents[2]
 CORE_NATIVE_ADAPTER_SOURCE_FILES = {
     "hermes_installer/__init__.py": "61ac3dfa3bd8505d5296065d597b9b76c4a42c1f17c706c2d67f4fee2b193242",
     "hermes_installer/remote/__init__.py": "bf7dbd677d6dd4384a02211039002f760821748b33f3f66ee425d9633b5005a4",
-    "hermes_installer/remote/core_native_observer.py": "8df595116d4acd3ded529fb53f575efb91b1569119183290f47932fcf084a24d",
+    "hermes_installer/remote/core_native_observer.py": "c944a54ceb0db0e963d8b9399f4f915b96ff12c81e786a1051bfaf71988ccd30",
     "hermes_installer/remote/jarvis_project_context_engine.py": "a4e1729960d6445c55225859b802860c014671c275d395794f3755c51b7a675a",
     "hermes_installer/primary_prompt_manager.py": "9e5a456478fdae763494da7ae4a197ad4b4cbf60e0ade454793c38713e603289",
     "hermes_installer/core_runtime.py": "5570c89f925996659fb4754f03697fa283cfcebe9f3b9d8b9d5abda4e6b82be5",
     "hermes_installer/registry/manual_jarvis_skills.py": "a64da81db1d8fcb3e5611dc9d15ae4ce29ce6a9e877107a86969e65401c89dc2",
     "hermes_installer/registry/resources_skill_overlay.py": "f34035f595fd39935e0bef5d4d42241134f4d6f1251aff34319ce0b647abe67f",
     "hermes_installer/remote/jarvis_profile_source_adapter.py": "48cf1015d3c997a4b949b5bb8d2d2593d04bcec677f3a3b10fa43cff1cf130c6",
-    "hermes_installer/remote/native_child_adapter.py": "5bf912a83bb011a0af55f0157204dd8a7ea7f00834bf4635de0de530e84ea365",
-    "hermes_installer/remote/jarvis_master_planning.py": "88a1192fbf6a55b680a80192ed312428346484054df324270626bd8bb927b239",
+    "hermes_installer/remote/native_child_adapter.py": "40578754388a04114b6103056051bf7362ac5e9b34195626b16c882c76547de8",
+    "hermes_installer/remote/jarvis_master_planning.py": "5ee3760ac3a3c92d1ccb626e95d250a15f040b9c002953b9d6441f57f83a94ce",
     "hermes_installer/remote/native_plugin_bootstrap.py": "e39c230582bb1e99e67986001c5fe2d3c7baa581266786e264ee0da508d1fe66",
     "hermes_installer/remote/jarvis_mission_executor.py": "80c1b89e5dbd93fb54d7ec04cde5818a1ed89a187746d40621cfb040e55beee1",
     "hermes_installer/components/__init__.py": "eb02d685a1fb560210c2915296f7553e279e100b511d6b63892d3e877ccd7e7b",
-    "hermes_installer/components/resources_internal_dispatch.py": "2c6cbda366df596fc1160f7fd6607e48fdee8ad29840f3d6bb9cd6858c2a668b",
+    "hermes_installer/components/resources_internal_dispatch.py": "47c3eb1ec9e21d15d9f86f184dad3e2020878e6d8b3de2edf4a63568f141aecd",
     "hermes_installer/components/resources_active_profile_source.py": "408ac8e98609b5beab00b048ec28f5e3c6c7e01868295148e334c68542d077dc",
     "hermes_installer/components/resources_native_plugin_bundle/plugin.yaml": "a3310f4d5645680ef10b62a99894a251cecde21ba04bdab113335463a3fad852",
     "hermes_installer/components/resources_native_plugin_bundle/__init__.py": "5e53bed15035a6a5aebc801f80230718096c8b5d3cae3a76afc96d4870bfe051",
     "hermes_installer/native_invocations.py": "16878d0b5416a763743ca9fa8b1714db93e5c9b063d3f71880ca429ebf16dc63",
-    "hermes_installer/remote/jarvis_final_effects.py": "ca625acb83476605659954764bcbdec35632db1add32ff6712cc7263f3b10b2f",
-    "hermes_installer/remote/obsidian_native_tools.py": "6578f07111f2e81ff1ae64fd64de58b33c74d26417eca574236c6e49bfff70a3",
-    "hermes_installer/remote/obsidian_native_scope.py": "06409003f1aab5fd9402b35014ff2930d2e066fc4d7c98fbe89e793ed0300746",
+    "hermes_installer/remote/jarvis_final_effects.py": "ede3844378230aa098f7e91b0cc74c17aae084e993a45ae8e24e630c15340274",
+    "hermes_installer/remote/jarvis_chat.py": "f4f2023e5f8ec6dfa90e064c3357f7019d4ceabbe2930c7d635ff851ab1ca045",
+    "hermes_installer/remote/obsidian_native_tools.py": "e341098e0f6be8a26cf40aaac3171a21cc7287d85cee86731ef499c851f1d1e6",
+    "hermes_installer/remote/obsidian_native_scope.py": "938b282b18adc9ade2943c83300dd1b4672a1c43c433cc1e5ee7dfd18da175dc",
     "hermes_installer/remote/obsidian_owner_lifecycle.py": "a35bba1ec02051401904d78255510edef65442275e69a60ac51cfe5d470888c5",
+    "hermes_installer/remote/obsidian_second_brain.py": "eaf6dcf730c8543a68016332378ffc6fb8c9caf5276a1b2ec49a1463f5c0ef15",
 }
 CORE_NATIVE_PLUGIN_STAGED_FILES = {
     "plugin.yaml": "a3310f4d5645680ef10b62a99894a251cecde21ba04bdab113335463a3fad852",
@@ -138,7 +140,7 @@ _NATIVE_TOOL_CONFIGURATION_SEAL = object()
 _RESOURCES_DELEGATE_NAME = "resources_delegate"
 _RESOURCES_DELEGATE_TOOLSET = "resources_internal"
 _RESOURCES_DELEGATE_SCHEMA_SHA256 = "9325cea421e122395475b0ba0d0517cb4aa4c16c3d4a14c5145f9fcc3f957f33"
-_RESOURCES_DISPATCH_SOURCE_SHA256 = "050afe835279e022ba3e4ec479f597692f5bdc88f7488eb630863d08a6b8cf9c"
+_RESOURCES_DISPATCH_SOURCE_SHA256 = "47c3eb1ec9e21d15d9f86f184dad3e2020878e6d8b3de2edf4a63568f141aecd"
 _SERVER_SLOTS = threading.BoundedSemaphore(16)
 _MAX_RETAINED_INGRESS_ISSUES = 128
 _RETAINED_INGRESS_ISSUES: dict[tuple[int, str, str, str], "_RetainedIngressIssue"] = {}

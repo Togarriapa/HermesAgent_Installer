@@ -678,7 +678,7 @@ def _native_activity_snapshot_from_bytes(raw: bytes) -> list[dict[str, Any]] | N
     except Exception:
         return None
 _RESOURCES_DELEGATE_REGISTRATION_SEAL = object()
-_RESOURCES_DELEGATE_SOURCE_SHA256 = "6eee1b932dfda36efc93e3901ccedf86af06af684d1c5c77bf882c1ba18a5d64"
+_RESOURCES_DELEGATE_SOURCE_SHA256 = "47c3eb1ec9e21d15d9f86f184dad3e2020878e6d8b3de2edf4a63568f141aecd"
 _RESOURCES_DELEGATE_SCHEMA_SHA256 = "9325cea421e122395475b0ba0d0517cb4aa4c16c3d4a14c5145f9fcc3f957f33"
 _MISSION_AUTHORIZATION_SEAL = object()
 _NATIVE_CHILD_AUTHORIZATION_SEAL = object()
