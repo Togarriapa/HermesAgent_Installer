@@ -117,7 +117,7 @@ def _backup_fixture():
                          "soul": b"edited owner bytes\n<managed block>",
                          "separator": b"\n", "managed_block": b"<managed block>",
                          "signature": [1, 2, 3],
-                         "record": {"state": "adopted", "result_soul_sha256": "e" * 64}}
+                         "record": {"state": "adopted", "result_soul_sha256": "e" * 64}}}
     prior = {"adapter_generation": "a" * 64}
 
     class Runtime:
