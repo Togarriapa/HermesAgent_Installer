@@ -150,6 +150,7 @@ class JarvisFinalEffectMiddlewareTests(unittest.TestCase):
             events.append("classify")
             return _CallerReceipt(observed_call, "master_effect")
 
+        client.authorize_current_tool_call = classify
         callback_context = _Context()
         install_jarvis_final_effect_middleware(callback_context, client)
         with patch("hermes_installer.native_invocations.current_native_tool_dispatch",
