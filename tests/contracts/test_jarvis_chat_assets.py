@@ -292,7 +292,8 @@ class JarvisChatAssetTests(unittest.TestCase):
         )
         models = next(feature for feature in FEATURE_ASSETS if feature.feature_id == "models-settings")
         model_mount = models.mount_js
-        self.assertIn("This setting does not change the profile default.", models.view_html)
+        self.assertIn("session-scoped model method", models.view_html)
+        self.assertIn("do not change the profile default", models.view_html)
         self.assertIn('button.classList.contains("chat-model-link") && conversationId', client)
         self.assertIn("mountFeature(feature, featureContext);", client)
         self.assertIn("Object.freeze({initialConversationId: context.initialConversationId})", client)
