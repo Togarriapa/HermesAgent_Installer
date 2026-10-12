@@ -13,8 +13,7 @@ import json
 import re
 import zipfile
 from dataclasses import dataclass
-from typing import Mapping
-from typing import Any
+from typing import Any, Mapping
 
 from . import manual_jarvis_skills as native
 
@@ -122,12 +121,11 @@ def _derive_helper_replacement(old_composed: bytes, new_base: bytes,
     changed_manifest = dict(old_manifest)
     changed_manifest["installer"] = dict(new_manifest["installer"])
     with io.BytesIO() as stream:
-        with zipfile.ZipFile(io.BytesIO(old_composed), "r") as old_zip:
-            with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_STORED) as out:
-                native._zip_write(out, "manifest.json", native._canonical_json(changed_manifest))
-                for name in sorted(old_files):
-                    native._zip_write(out, name, old_files[name])
-                native._zip_write(out, _HELPER_PATH, new_helper)
+        with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_STORED) as out:
+            native._zip_write(out, "manifest.json", native._canonical_json(changed_manifest))
+            for name in sorted(old_files):
+                native._zip_write(out, name, old_files[name])
+            native._zip_write(out, _HELPER_PATH, new_helper)
         return stream.getvalue()
 
 
@@ -216,11 +214,13 @@ def reconstruct_helper_only_overlay_transition(
     composed_manifest_sha = _non_installer_manifest_sha256(a1_manifest)
     base_tree_sha, base_count = _materialization_digest(b1_manifest, b1_files)
     composed_tree_sha, composed_count = _materialization_digest(a1_manifest, a1_files)
+    old_base_tree_sha, old_base_count = _materialization_digest(b0_manifest, b0_files)
+    old_composed_tree_sha, old_composed_count = _materialization_digest(a0_manifest, a0_files)
     if (base_manifest_sha != _non_installer_manifest_sha256(b0_manifest)
             or composed_manifest_sha != _non_installer_manifest_sha256(a0_manifest)
-            or base_tree_sha != _materialization_digest(b0_manifest, b0_files)[0]
-            or composed_tree_sha != _materialization_digest(a0_manifest, a0_files)[0]
-            or base_tree_sha != composed_tree_sha or base_count != composed_count):
+            or base_tree_sha != old_base_tree_sha or base_count != old_base_count
+            or composed_tree_sha != old_composed_tree_sha
+            or composed_count != old_composed_count or base_count != composed_count):
         raise ResourcesSkillOverlayError("helper-only reconstruction changed non-installer materialization")
     return HelperOnlyOverlayReconstruction(
         new_composed_archive=a1_archive,

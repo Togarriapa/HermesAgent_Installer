@@ -5,6 +5,9 @@ paths. Native directory replacement and byte readback are real, while the typed
 Hermes receipt is generated from the exact installed files in this isolated tree.
 """
 import hashlib
+import io
+import json
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,6 +17,140 @@ from hermes_installer import core_runtime as core
 from hermes_installer.registry import manual_jarvis_skills as native
 from hermes_installer.registry import resources_skill_overlay as overlay
 from hermes_installer.registry.native_install import NativeInstallReceipt
+
+
+def _replace_helper(archive_bytes, helper_bytes):
+    manifest, files = native._read_artifact(archive_bytes, hashlib.sha256(archive_bytes).hexdigest())
+    manifest["installer"] = {"archive_path": "manual_stage_jarvis_skills.py",
+                             "size_bytes": len(helper_bytes),
+                             "sha256": hashlib.sha256(helper_bytes).hexdigest()}
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_STORED) as archive:
+        native._zip_write(archive, "manifest.json", native._canonical_json(manifest))
+        for name, content in sorted(files.items()):
+            native._zip_write(archive, name, content)
+        native._zip_write(archive, "manual_stage_jarvis_skills.py", helper_bytes)
+    return stream.getvalue()
+
+
+def _two_overlay_history(base_archive):
+    base_sha = hashlib.sha256(base_archive).hexdigest()
+    manifest, files = native._read_artifact(base_archive, base_sha)
+    selected = manifest["skill_members"][:2]
+    contents = {}
+    for row in selected:
+        original = files[row["archive_path"]]
+        contents[row["skill_id"]] = original + b"\nOwner retained overlay.\n"
+    current = base_archive
+    digests = {}
+    for skill_id, content in sorted(contents.items()):
+        current, digests[skill_id] = overlay.build_effective_artifact(current, skill_id, content)
+    journal = {"schema": 1, "base_artifact_sha256": base_sha, "skills": {
+        skill_id: {"content_sha256": hashlib.sha256(contents[skill_id]).hexdigest(),
+                   "archive_sha256": digests[skill_id]}
+        for skill_id in sorted(contents)}}
+    return current, (json.dumps(journal, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii"), contents
+
+
+def _committed_row(reconstruction):
+    row = {
+        "schema": 1, "purpose": "helper-only-overlay-reconstruction",
+        "cohort_transaction_id": "a" * 64, "owner_uid": 1000,
+        "home_role": "jarvis-primary-home",
+        "old_base_artifact_sha256": reconstruction.old_base_artifact_sha256,
+        "new_base_artifact_sha256": reconstruction.new_base_artifact_sha256,
+        "old_composed_artifact_sha256": reconstruction.old_composed_artifact_sha256,
+        "new_composed_artifact_sha256": reconstruction.new_composed_artifact_sha256,
+        "overlay_journal_sha256": reconstruction.overlay_journal_sha256,
+        "overlay_contents": [{"skill_id": name, "content_sha256": digest}
+                              for name, digest in reconstruction.overlay_contents],
+        "base_non_installer_manifest_sha256": reconstruction.base_non_installer_manifest_sha256,
+        "composed_non_installer_manifest_sha256": reconstruction.composed_non_installer_manifest_sha256,
+        "materialized_tree_sha256": reconstruction.materialized_tree_sha256,
+        "old_installed_journal_sha256": "b" * 64, "new_installed_journal_sha256": "c" * 64,
+        "old_discovery_sha256": "d" * 64, "new_discovery_sha256": "e" * 64,
+        "old_core_source_generation": "f" * 64, "new_core_source_generation": "1" * 64,
+        "old_source_recipe_sha256": "2" * 64, "new_source_recipe_sha256": "3" * 64,
+        "phase": "committed",
+    }
+    context = {key: row[key] for key in (
+        "cohort_transaction_id", "owner_uid", "home_role", "old_installed_journal_sha256",
+        "new_installed_journal_sha256", "old_discovery_sha256", "new_discovery_sha256",
+        "old_core_source_generation", "new_core_source_generation",
+        "old_source_recipe_sha256", "new_source_recipe_sha256", "phase")}
+    return row, context
+
+
+def test_helper_only_overlay_reconstruction_preserves_two_exact_overlay_steps():
+    old_base = _replace_helper(native.build_manual_jarvis_skills_artifact(), b"retained old helper")
+    new_base = native.build_manual_jarvis_skills_artifact()
+    old_composed, journal, contents = _two_overlay_history(old_base)
+
+    result = overlay.reconstruct_helper_only_overlay_transition(
+        old_base, new_base, old_composed, journal, contents)
+
+    new_manifest, new_files = native._read_artifact(
+        result.new_composed_archive, result.new_composed_artifact_sha256)
+    old_manifest, old_files = native._read_artifact(
+        old_composed, result.old_composed_artifact_sha256)
+    assert result.verified_intermediate_archive_sha256 == tuple(
+        (skill_id, journal_digest)
+        for skill_id, journal_digest in sorted(
+            (skill_id, row["archive_sha256"])
+            for skill_id, row in json.loads(journal)["skills"].items()))
+    new_base_manifest, _ = native._read_artifact(new_base, result.new_base_artifact_sha256)
+    assert new_manifest["installer"] == new_base_manifest["installer"]
+    assert old_files == new_files
+    member_by_skill = {row["skill_id"]: row["archive_path"] for row in new_manifest["skill_members"]}
+    assert {name: new_files[member_by_skill[name]] for name in contents} == contents
+    assert result.overlay_journal_sha256 == hashlib.sha256(journal).hexdigest()
+
+    row, context = _committed_row(result)
+    current = overlay.resolve_committed_helper_only_overlay_reconstruction(
+        old_base, new_base, old_composed, journal, contents, row, current_context=context)
+    assert current.new_composed_archive == result.new_composed_archive
+    changed = dict(context)
+    changed["new_core_source_generation"] = "4" * 64
+    with pytest.raises(overlay.ResourcesSkillOverlayError, match="cohort differs"):
+        overlay.resolve_committed_helper_only_overlay_reconstruction(
+            old_base, new_base, old_composed, journal, contents, row, current_context=changed)
+    foreign = dict(row)
+    foreign["cohort_transaction_id"] = "9" * 64
+    assert not overlay.verify_committed_helper_only_overlay_reconstruction(
+        result, foreign, current_context=context)
+
+
+@pytest.mark.parametrize("tamper", ["intermediate", "content", "journal", "manifest"])
+def test_helper_only_overlay_reconstruction_denies_changed_chain_or_manifest(tamper):
+    old_base = _replace_helper(native.build_manual_jarvis_skills_artifact(), b"retained old helper")
+    new_base = native.build_manual_jarvis_skills_artifact()
+    old_composed, journal, contents = _two_overlay_history(old_base)
+    if tamper == "intermediate":
+        value = json.loads(journal)
+        key = sorted(value["skills"])[0]
+        value["skills"][key]["archive_sha256"] = "0" * 64
+        journal = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
+    elif tamper == "content":
+        key = sorted(contents)[0]
+        contents[key] += b"forged\n"
+    elif tamper == "journal":
+        journal = journal.replace(b'"schema":1', b'"schema":1,"schema":1')
+    else:
+        manifest, files = native._read_artifact(new_base, hashlib.sha256(new_base).hexdigest())
+        manifest["readiness"]["enabled"] = not manifest["readiness"].get("enabled", False)
+        # A changed source manifest must fail the fixed artifact parser/helper pair.
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_STORED) as archive:
+            native._zip_write(archive, "manifest.json", native._canonical_json(manifest))
+            for name, content in sorted(files.items()):
+                native._zip_write(archive, name, content)
+            native._zip_write(archive, "manual_stage_jarvis_skills.py",
+                              Path(native.__file__).read_bytes())
+        new_base = stream.getvalue()
+
+    with pytest.raises(overlay.ResourcesSkillOverlayError):
+        overlay.reconstruct_helper_only_overlay_transition(
+            old_base, new_base, old_composed, journal, contents)
 
 
 @pytest.fixture
