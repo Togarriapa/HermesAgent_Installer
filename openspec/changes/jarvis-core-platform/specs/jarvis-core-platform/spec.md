@@ -2351,3 +2351,25 @@ Within BD-T266.1/R0055/R0153/R0172, source update/rollback SHALL refresh genuine
 #### Scenario: Changed source or failed rebase
 - **WHEN** source/artifact generation changes or currentness refresh/health/effective behavior fails
 - **THEN** exact reviewed rebase and native post-update/restart/rollback readback are required; unsafe compatibility fails with preserved recovery/data and no stale authority or uncertain-effect repetition, while routine preserving updates need no generic repeat-approval gate.
+
+### Requirement: Exact helper-only same-materialization transition
+Within R0045/R0055/R0153/R0172, root SHALL derive current owned Resources from protected records/CAS and full installed-byte custody. A finite helper-only transition SHALL require exact manifest/materialization equality excluding only literal installer-helper metadata. Changed semantics, files, source or owner scope SHALL require a separate reviewed migration; no arbitrary old artifact or new permission is admitted.
+
+#### Scenario: Post-overlay generation and changed helper only
+- **WHEN** a reviewed helper change alters artifact SHA while current post-overlay materialization is independently verified identical
+- **THEN** exact old/new archive parsing, every non-installer manifest field and materialized path/size/byte join the current protected root record/CAS/generation; the new fixed helper metadata/bytes are separately source-verified and old helper is not executed. The finite prepared/consumed root transition atomically backs up/rebinds owned generation and independently proves new discovery without assuming legacy f734.
+
+#### Scenario: Semantic change, caller archive or owner edit
+- **WHEN** any non-installer field/member differs, prior archive/journal custody is missing/stale/foreign, or owner edits conflict
+- **THEN** helper-only transition denies/pends without widened normalization, unreviewed migration, fake stdout/DTO authority, data overwrite or permission expansion; immutable CAS, original backups and owner overlays remain preserved.
+
+### Requirement: Coherent Source and binding transition recovery
+Source updates SHALL recover Source/Resources/discovery/primary/enrolled Obsidian bindings as one owned journaled cohort. Primary rebase SHALL require unchanged adopted prompt/block/SOUL prefix and immutable prior backup. New current native proof SHALL precede cohort commit; partial state SHALL NOT grant admission, revive leases or imply enrollment/functionality.
+
+#### Scenario: Update, interruption, restart or rollback
+- **WHEN** source/helper identity changes or the cohort is interrupted/reverted
+- **THEN** root rechecks exact staged snapshots/custody at every phase, restores compatible source and all linked receipts together on rollback and qualifies actual chat/Resources/effective primary/enrolled vault; SOUL/auth/registration/vault/history bytes survive, old leases invalidate and healthy/configured-only success cannot commit.
+
+#### Scenario: No original primary adoption or unverified registry
+- **WHEN** primary adoption/Obsidian registration was absent or exact old/current binding/backup cannot be independently proven
+- **THEN** absence/conflict stays explicit pending for the separate actual adoption/registration/recovery path; rebasing cannot fabricate adopted/enrolled status or automatically repeat an uncertain effect, and routine preserving updates require no generic new confirmation.
