@@ -21,6 +21,7 @@ from typing import Any
 UTC = timezone.utc
 _ROUTES = {
     "/chat/api/overview": "overview",
+    "/chat/api/calendar": "calendar",
     "/chat/api/capabilities": "capabilities",
     "/chat/api/settings": "settings",
     "/chat/api/resources/learning": "learning",
@@ -313,7 +314,7 @@ def build_settings(core_projection: dict[str, Any] | None = None) -> dict[str, A
 
 
 def install_jarvis_dashboard_routes(app: Any, service: Any) -> None:
-    """Add three bounded GET endpoints to the already protected core gateway app."""
+    """Add bounded read projections and owner-confirmed Calendar selection routes."""
     from aiohttp import web
     from .jarvis_chat import JarvisChatService
 
@@ -328,6 +329,44 @@ def install_jarvis_dashboard_routes(app: Any, service: Any) -> None:
         launch = request.app.get("core_gateway_launch")
         if accepted is None or launch is None:
             raise web.HTTPServiceUnavailable(text="current core projection unavailable")
+        if request.path == "/chat/api/calendar":
+            assertions = request.headers.getall("Cf-Access-Jwt-Assertion", [])
+            if len(assertions) != 1:
+                raise web.HTTPForbidden(text="current authenticated Calendar ingress is required")
+            from datetime import datetime, timedelta
+            from zoneinfo import ZoneInfo
+            zone_name = "Europe/Lisbon"
+            now = datetime.now(ZoneInfo(zone_name)).replace(second=0, microsecond=0)
+            start = now.isoformat()
+            end = (now + timedelta(days=7)).isoformat()
+            try:
+                inspector = getattr(service, "inspector", None)
+                if inspector is None:
+                    raise ValueError
+                payload = await asyncio.wait_for(asyncio.to_thread(
+                    inspector.read_owner_calendar, assertions[0], accepted,
+                    calendar_ref=None, start_time=start, end_time=end,
+                    timezone_name=zone_name, page_size=100), timeout=5.0)
+                current = service._current(request)
+                if (current.subject != principal.subject
+                        or current.core_generation != principal.core_generation
+                        or accepted.verify_current(launch.config) is not True):
+                    raise ValueError
+                return web.json_response(payload, dumps=lambda value: json.dumps(
+                    value, ensure_ascii=False, separators=(",", ":"), allow_nan=False))
+            except Exception:
+                # A root producer failure is an unavailable state, never a fixture or
+                # a readiness claim. Keep the precise enrollment step actionable.
+                from .jarvis_calendar import project_calendar_page
+                payload = project_calendar_page({"status": "unavailable", "events": [],
+                    "account_label": "Selected connection · identity unknown",
+                    "calendar_label": "", "next_step": (
+                    "Calendar is not enrolled. Resume the root-managed Google Calendar setup "
+                        "with a read-only mcp:google-calendar:read credential, select a calendar, then refresh.")},
+                    timezone_name=zone_name, window_start=start, window_end=end,
+                    observed_at=datetime.now(UTC).isoformat())
+                return web.json_response(payload, status=200, dumps=lambda value: json.dumps(
+                    value, ensure_ascii=False, separators=(",", ":"), allow_nan=False))
         if request.path == "/chat/api/resources/learning":
             try:
                 assertions = request.headers.getall("Cf-Access-Jwt-Assertion", [])
@@ -439,5 +478,66 @@ def install_jarvis_dashboard_routes(app: Any, service: Any) -> None:
             verify_before_response()
             return web.json_response(base)
 
+    async def calendar_selection(request: Any) -> Any:
+        if request.raw_path != request.path:
+            raise web.HTTPNotFound(text="not found")
+        principal = service._current(request)
+        accepted = request.get("core_ingress")
+        launch = request.app.get("core_gateway_launch")
+        if accepted is None or launch is None:
+            raise web.HTTPServiceUnavailable(text="current core ingress unavailable")
+        if request.content_type != "application/json" or (
+                request.content_length is not None and request.content_length > 4096):
+            raise web.HTTPUnsupportedMediaType(text="Calendar selection requires bounded JSON")
+        chunks = bytearray()
+        async for chunk in request.content.iter_chunked(1024):
+            chunks.extend(chunk)
+            if len(chunks) > 4096:
+                raise web.HTTPRequestEntityTooLarge(max_size=4096, actual_size=len(chunks))
+        raw = bytes(chunks)
+        def unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate selection field")
+                result[key] = value
+            return result
+        try:
+            body = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=unique_pairs,
+                              parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()))
+        except Exception:
+            raise web.HTTPBadRequest(text="Calendar selection request is malformed") from None
+        if (not isinstance(body, dict) or set(body) != {"schema", "action", "confirmation"}
+                or type(body["schema"]) is not int or body["schema"] != 1
+                or body["action"] not in {"enable", "disable"}
+                or body["confirmation"] != "read-only-calendar-events"):
+            raise web.HTTPBadRequest(text="Calendar owner confirmation is required")
+        assertions = request.headers.getall("Cf-Access-Jwt-Assertion", [])
+        if len(assertions) != 1:
+            raise web.HTTPForbidden(text="current authenticated Calendar ingress is required")
+        try:
+            inspector = getattr(service, "inspector", None)
+            if inspector is None:
+                raise ValueError
+            state = await asyncio.wait_for(asyncio.to_thread(
+                inspector.select_owner_calendar, assertions[0], accepted,
+                action=body["action"]), timeout=5.0)
+            current = service._current(request)
+            if (current.subject != principal.subject
+                    or current.core_generation != principal.core_generation
+                    or accepted.verify_current(launch.config) is not True):
+                raise ValueError
+            return web.json_response({"schema": 1, "state": state},
+                dumps=lambda value: json.dumps(value, separators=(",", ":"), allow_nan=False))
+        except web.HTTPException:
+            raise
+        except Exception:
+            if body["action"] == "disable":
+                raise web.HTTPServiceUnavailable(text="Calendar consent could not be removed") from None
+            raise web.HTTPServiceUnavailable(text=(
+                "No current root-published Google Calendar read connection and selected resource are available. "
+                "Complete the protected Google Calendar enrollment, then retry.")) from None
+
     for path in _ROUTES:
         app.router.add_get(path, route, allow_head=False)
+    app.router.add_post("/chat/api/calendar/selection", calendar_selection)

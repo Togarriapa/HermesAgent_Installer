@@ -52,10 +52,11 @@ _HTML = '''<!doctype html>
       <nav class="primary-nav" aria-label="Jarvis sections">
         <button type="button" class="nav-item" data-view="overview">Overview</button>
         <button type="button" class="nav-item" data-view="chat">Chats</button>
-        <button type="button" class="nav-item feature-nav-link" data-view="projects" data-requires-feature="projects" hidden>Projects</button>
-        <button type="button" class="nav-item feature-nav-link" data-view="second-brain" data-requires-feature="second-brain" hidden>Knowledge</button>
-        <details class="nav-group manage-group" data-nav-group="manage"><summary aria-expanded="false">Manage</summary><div class="nav-menu"><button type="button" class="nav-item" data-view="capabilities">Capabilities</button><button type="button" class="nav-item" data-view="settings">Settings</button><!-- JARVIS_GROUP_MANAGE --></div></details>
+        <details class="nav-group" data-nav-group="work"><summary aria-expanded="false">Work</summary><div class="nav-menu"><!-- JARVIS_GROUP_WORK --></div></details>
+        <details class="nav-group" data-nav-group="resources"><summary aria-expanded="false">Resources</summary><div class="nav-menu"><button type="button" class="nav-item" data-view="capabilities">Capabilities</button><!-- JARVIS_GROUP_RESOURCES --></div></details>
+        <details class="nav-group" data-nav-group="system"><summary aria-expanded="false">System</summary><div class="nav-menu"><button type="button" class="nav-item" data-view="settings">Settings</button><!-- JARVIS_GROUP_SYSTEM --></div></details>
       </nav>
+      <button class="voice-entry" id="voice-entry" type="button" aria-label="Open voice controls" aria-controls="chat-preferences-panel" aria-expanded="false">Voice controls</button>
       <div class="assistant-hud" id="assistant-hud" data-state="checking" aria-label="Jarvis status">
         <span class="assistant-orb" aria-hidden="true"><span class="orb-core"></span><span class="orb-ring"></span><span class="orb-halo"></span></span>
         <span class="assistant-state"><strong id="assistant-state-label">JARVIS · CHECKING</strong><span id="assistant-mode" role="status" aria-live="polite">Checking secure connection</span></span>
@@ -155,6 +156,7 @@ _HTML = '''<!doctype html>
             <p>Foreground only. Wake listening uses this browser’s speech service, may send audio outside Jarvis, and stops when this page is hidden or leaves Chat.</p>
           </div>
           <p class="voice-status" id="voice-status" role="status" aria-live="polite" hidden></p>
+          <p class="voice-status" id="chat-voice-unavailable" role="status" aria-live="polite" hidden></p>
         </div>
       </main>
       <!-- JARVIS_OVERVIEW_PANEL -->
@@ -464,15 +466,21 @@ _CSS += b'''
 .nav-group:not([open])>.nav-menu{display:none}
 html[data-jarvis-motion="reduce"] *,html[data-jarvis-motion="reduce"] *::before,html[data-jarvis-motion="reduce"] *::after{transition-duration:0s!important}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition-duration:0s!important;transition-delay:0s!important}}
+.voice-entry{flex:none;min-height:44px;padding:0 13px;border:1px solid rgba(88,228,235,.28);border-radius:10px;background:rgba(24,102,111,.16);color:#d7f8fa;font:inherit;font-size:11px;font-weight:600;cursor:pointer}
+.voice-entry:hover{border-color:rgba(88,228,235,.58);background:rgba(29,139,150,.22)}
+.voice-entry:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
 /* Keep every mobile section reachable without clipping its popup or shrinking its target. */
 @media(max-width:760px){
   /* A filtered header traps fixed descendants inside its short box. */
   .topbar{background:rgba(5,17,22,.96);backdrop-filter:none;-webkit-backdrop-filter:none}
   .primary-nav{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));grid-template-rows:1fr;align-items:stretch;justify-content:stretch;overflow:visible;overflow-x:visible;overflow-y:visible;overscroll-behavior-inline:auto;scroll-snap-type:none}
+  .primary-nav>.nav-item{font-size:10px}
   .nav-group{position:static;min-width:0;flex:none}
-  .nav-group>summary{width:100%;min-width:0;height:100%;min-height:46px;justify-content:center;gap:3px;padding-inline:3px;font-size:clamp(8px,2.1vw,8.5px);line-height:1.05;letter-spacing:-.025em;text-align:center;white-space:normal;overflow-wrap:anywhere}
+  .nav-group>summary{width:100%;min-width:0;height:100%;min-height:46px;justify-content:center;gap:3px;padding-inline:3px;font-size:clamp(8px,2.4vw,10px);line-height:1.05;letter-spacing:0;text-align:center;white-space:nowrap;overflow-wrap:normal}
   .nav-group>summary:after{flex:0 0 5px}
   .nav-menu,.nav-group:nth-last-child(-n+2) .nav-menu{position:absolute;inset:auto 0 calc(100% + 12px);width:auto;min-width:0;max-width:none;max-height:min(64dvh,520px)}
+  .voice-entry{order:3;margin-left:0;padding-inline:11px;font-size:10px}
+  .connection{order:4;margin-left:auto}
   .voice-choice{width:100%;min-height:44px}
 }
 '''
@@ -498,6 +506,13 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   };
   let conversations = [];
   let conversationId = null;
+  function updateOverviewCommandTarget() {
+    const target = byId("overview-command-target");
+    if (!target) return;
+    const title = conversationId && (conversations.find((item) => item.id === conversationId)?.title
+      || ui.title.textContent.trim());
+    target.textContent = title ? "Sending to " + title : "A new conversation will start when you send.";
+  }
   let turnSelection = null;
   let turnSelectionConversationId = "";
   let turnSelectionLoading = false;
@@ -1006,10 +1021,17 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     ui.speechStop.disabled = true;
     const consentRow = byId("speech-consent-row");
     const unavailable = byId("speech-unavailable");
+    const chatUnavailable = byId("chat-voice-unavailable");
     consentRow.hidden = !voiceSupported;
     byId("chat-speech-consent-row").hidden = !voiceSupported;
     byId("voice-wake-controls").hidden = !voiceSupported || !pushToTalkEnabled();
     ui.voiceWake.hidden = !voiceSupported || !pushToTalkEnabled();
+    chatUnavailable.textContent = !Recognition
+      ? "Push-to-talk and wake listening are not available in this browser. You can still type."
+      : !window.isSecureContext
+        ? "Push-to-talk and wake listening require a secure browser connection. You can still type."
+        : "";
+    chatUnavailable.hidden = voiceSupported;
     if (!Recognition) {
       unavailable.textContent = "Push-to-talk is not supported by this browser. You can still type your message.";
       unavailable.hidden = false;
@@ -1310,6 +1332,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
         stopRecognition("Voice listening stopped because this chat moved to Recently removed.");
         closeStream();
         conversationId = null;
+        updateOverviewCommandTarget();
         await showView("overview");
       }
       await refreshConversations();
@@ -1319,6 +1342,18 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       await Promise.allSettled([refreshConversations(), refreshTrash()]);
       setHistoryActionStatus(error.message || "The chat could not be changed. Refresh and try again.", "error");
     }
+  }
+  async function openVoiceControls() {
+    await showView("chat");
+    const preferences = byId("chat-preferences");
+    preferences.open = true;
+    const target = voiceSupported
+      ? (pushToTalkEnabled() ? ui.voiceInput : byId("chat-speech-consent"))
+      : byId("chat-voice-unavailable");
+    if (!target.hasAttribute("tabindex") && target.tagName !== "INPUT" && target.tagName !== "BUTTON") {
+      target.setAttribute("tabindex", "-1");
+    }
+    target.focus();
   }
   function setPanel(open) {
     const value = Boolean(open);
@@ -1357,6 +1392,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       if (!data || !Array.isArray(data.conversations)) throw new Error("Conversation history is unavailable.");
       conversations = data.conversations.filter((item) => item && typeof item.id === "string" && typeof item.title === "string");
       renderHistory();
+      updateOverviewCommandTarget();
       refreshTrash();
     } catch (error) {
       ui.sessionCount.textContent = "Your chat list is unavailable.";
@@ -1390,6 +1426,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       }
       ui.welcome.hidden = data.messages.length !== 0;
       ui.title.textContent = conversations.find((item) => item.id === id)?.title || "Your conversation";
+      updateOverviewCommandTarget();
       renderHistory();
       await loadTurnSelection(id);
       setPanel(false);
@@ -1407,6 +1444,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       ui.messages.replaceChildren();
       ui.welcome.hidden = false;
       ui.title.textContent = "A clear mind, at your service.";
+      updateOverviewCommandTarget();
       await loadTurnSelection(conversationId);
       await refreshConversations();
       renderHistory();
@@ -1577,6 +1615,7 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       if (!data.conversation || typeof data.conversation.id !== "string" || !data.conversation.id) throw new Error("Jarvis could not start a conversation.");
       conversationId = data.conversation.id;
       ui.title.textContent = data.conversation.title || "Your conversation";
+      updateOverviewCommandTarget();
       await refreshConversations();
       await loadTurnSelection(conversationId);
     }
@@ -1609,6 +1648,8 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       } else {
         showTurnConfiguration(assistantBody, "Queued · awaiting Core model confirmation.", "queued");
       }
+      ui.turnModel.value = "";
+      ui.turnEffort.value = "";
       watchTurn(data.turnId, data.heartbeatNonce, assistantBody, waiting, conversationId, text);
       refreshConversationsInBackground();
       return true;
@@ -1929,6 +1970,10 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
     });
   }
   ui.toggle.addEventListener("click", () => setPanel(ui.panel.dataset.open !== "true"));
+  byId("voice-entry").addEventListener("click", () => { void openVoiceControls(); });
+  byId("chat-preferences").addEventListener("toggle", (event) => {
+    byId("voice-entry").setAttribute("aria-expanded", String(event.currentTarget.open));
+  });
   ui.close.addEventListener("click", () => setPanel(false));
   ui.scrim.addEventListener("click", () => setPanel(false));
   for (const group of document.querySelectorAll(".nav-group")) {
@@ -1995,8 +2040,8 @@ FEATURE_CSS_CHUNK_PATHS = (
     "/chat/assets/features-knowledge.css",
 )
 _FEATURE_CHUNK_IDS = (
-    ("missions", "bots", "activity", "native-controls"),
-    ("resources-learning", "native-inventory", "files", "models-settings", "overview"),
+    ("missions", "bots", "activity", "native-controls", "settings-admin"),
+    ("resources-learning", "native-inventory", "files", "models-settings", "overview", "calendar"),
     ("integrations", "context", "second-brain", "extensions", "projects", "profiles-admin"),
 )
 _FEATURE_CHUNKS_JS: dict[str, bytes] = {}
@@ -2011,7 +2056,15 @@ def _compose_feature_assets() -> None:
     _HTML = _HTML.replace(b"<!-- JARVIS_MOBILE_SETTINGS -->", SETTINGS_FRAGMENT_HTML.encode("utf-8"))
     _CSS += ("\n" + SETTINGS_FRAGMENT_CSS).encode("utf-8")
     validate_feature_assets(FEATURE_ASSETS)
-    grouped_nav: dict[str, list[str]] = {"manage": []}
+    grouped_nav: dict[str, list[str]] = {"work": [], "resources": [], "system": []}
+    feature_nav_group = {
+        "activity": "work", "bots": "work", "missions": "work", "projects": "work",
+        "context": "resources", "extensions": "resources", "files": "resources",
+        "native-controls": "resources", "native-inventory": "resources",
+        "profiles-admin": "resources", "resources-learning": "resources",
+        "second-brain": "resources", "integrations": "system", "models-settings": "system",
+        "calendar": "system", "settings-admin": "system",
+    }
     panels: list[str] = []
     css_fragments: dict[str, list[str]] = {path: [] for path in FEATURE_CSS_CHUNK_PATHS}
     javascript: dict[str, list[str]] = {path: [] for path in FEATURE_CHUNK_PATHS}
@@ -2028,8 +2081,11 @@ def _compose_feature_assets() -> None:
             f'<button type="button" class="nav-item" data-view="{feature_id}">'
             f'{nav_label}</button>'
         )
-        if feature.feature_id not in {"overview", "projects", "second-brain"}:
-            grouped_nav["manage"].append(nav_markup)
+        if feature.feature_id != "overview":
+            group = feature_nav_group.get(feature.feature_id)
+            if group is None:
+                raise ValueError("Jarvis feature is missing an explicit navigation group")
+            grouped_nav[group].append(nav_markup)
         panel_markup = (
             f'<section class="data-main" id="{feature_id}-view" '
             f'aria-label="{title}" data-view-panel="{feature_id}" hidden>'
@@ -2053,7 +2109,8 @@ def _compose_feature_assets() -> None:
         )
 
     html = _HTML.decode("utf-8")
-    html = html.replace("<!-- JARVIS_GROUP_MANAGE -->", "".join(grouped_nav["manage"]))
+    for group, entries in grouped_nav.items():
+        html = html.replace(f"<!-- JARVIS_GROUP_{group.upper()} -->", "".join(entries))
     html = html.replace("<!-- JARVIS_OVERVIEW_PANEL -->", "")
     html = html.replace("<!-- JARVIS_FEATURE_PANELS -->", "".join(panels))
     html = html.replace("__JARVIS_CAPABILITY_DETAILS__", _CAPABILITY_DETAILS_HTML)

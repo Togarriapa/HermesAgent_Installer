@@ -8,6 +8,7 @@ from . import jarvis_missions as _missions
 from . import jarvis_native_inventory as _native_inventory
 from . import jarvis_files as _files
 from . import jarvis_models as _models
+from . import jarvis_settings_admin as _settings_admin
 from . import jarvis_context as _context
 from . import jarvis_obsidian_vault as _obsidian
 from . import jarvis_extensions_admin as _extensions
@@ -22,7 +23,9 @@ from .jarvis_learning_feature import FEATURE_ASSETS as _LEARNING_ASSETS
 from .jarvis_native_inventory_assets import FEATURE_ASSETS as _NATIVE_INVENTORY_ASSETS
 from .jarvis_files_assets import FEATURE_ASSETS as _FILES_ASSETS
 from .jarvis_models_assets import FEATURE_ASSETS as _MODELS_ASSETS
+from .jarvis_settings_admin_assets import FEATURE_ASSETS as _SETTINGS_ADMIN_ASSETS
 from .jarvis_overview_assets import FEATURE_ASSETS as _OVERVIEW_ASSETS
+from .jarvis_calendar_assets import FEATURE_ASSETS as _CALENDAR_ASSETS
 from .jarvis_integrations_assets import FEATURE_ASSETS as _INTEGRATIONS_ASSETS
 from .jarvis_context_assets import FEATURE_ASSETS as _CONTEXT_ASSETS
 from .jarvis_second_brain_assets import FEATURE_ASSETS as _OBSIDIAN_ASSETS
@@ -41,8 +44,10 @@ FEATURE_ASSETS: tuple[JarvisFeatureAssets, ...] = (
     _NATIVE_INVENTORY_ASSETS,
     _FILES_ASSETS,
     _MODELS_ASSETS,
+    _SETTINGS_ADMIN_ASSETS,
     _OVERVIEW_ASSETS,
     _INTEGRATIONS_ASSETS,
+    _CALENDAR_ASSETS,
     _CONTEXT_ASSETS,
     _OBSIDIAN_ASSETS,
     _EXTENSIONS_ASSETS,
@@ -59,6 +64,8 @@ FEATURE_ROUTE_INSTALLERS = (
      _NATIVE_INVENTORY_ASSETS.api_routes),
     ("files", _files.install_jarvis_files_routes, _files.FEATURE_ROUTES),
     ("models-settings", _models.install_jarvis_models_routes, _models.FEATURE_ROUTES),
+    ("settings-admin", _settings_admin.install_jarvis_settings_admin_routes,
+     _settings_admin.FEATURE_ROUTES),
     ("context", _context.install_jarvis_context_routes, _CONTEXT_ASSETS.api_routes),
     ("second-brain", _obsidian.install_jarvis_obsidian_vault_routes, _OBSIDIAN_ASSETS.api_routes),
     ("extensions", _extensions.install_jarvis_extensions_admin_routes, _EXTENSIONS_ASSETS.api_routes),
@@ -71,6 +78,7 @@ FEATURE_ROUTE_OWNERS = (
     ("native-controls", "dashboard", _NATIVE_CONTROLS_ASSETS.api_routes),
     ("resources-learning", "dashboard", _LEARNING_ASSETS.api_routes),
     ("overview", "dashboard", _OVERVIEW_ASSETS.api_routes),
+    ("calendar", "dashboard", _CALENDAR_ASSETS.api_routes),
     ("integrations", "dashboard-and-bots-read", _INTEGRATIONS_ASSETS.api_routes),
 )
 
@@ -93,6 +101,7 @@ _OWNER_BY_FEATURE = {
     "native-controls": "dashboard",
     "resources-learning": "dashboard",
     "overview": "dashboard",
+    "calendar": "dashboard",
     "integrations": "dashboard-and-bots-read",
 }
 

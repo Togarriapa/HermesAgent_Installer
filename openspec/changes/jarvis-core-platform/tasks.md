@@ -127,6 +127,10 @@ VD-T266.5/R0090 Pi wiring evidence: genuine current-Core binding and actual nati
 
 These are ordered substeps of existing eight OPEN groups, not new task IDs. All 219 requirements/62 aliases/AC01..18, native Resources/device/account acceptance and original capability reachability remain OPEN. Each phase needs actual Pi source/effect/failure/recovery and user-visible evidence before claiming completion.
 
+## Source-only implementation checkpoint — 2026-10-12
+
+The current source composition contains the phone navigation/voice refinements, Overview ecosystem DTO and handoff activity, Projects context/recovery UX, owner Calendar read UI and producer, native reasoning/busy-input settings, and persistent Inspector service-unit coverage. This records implementation in the source tree only. The exact-candidate Pi tests, native effects, rendered UI/UX review, runtime adoption and deployment/stability evidence remain pending; all eight checkbox task groups and full acceptance stay OPEN.
+
 HI-T266.2/R0203 Extensions owner: use the pinned 7085 grouped settings matrix to select exact native controls; implement finite owner-admin Skills/Plugins/MCP/other-supported-extension add/edit/enable/disable/update/remove with revision/CAS/journal/post-state and auth/data preservation. skills.manage existence and read-only Plugins/MCP observations do not prove missing mutation modes. Profiles edits retain new overlay generations and effective readback; no Expert admin authority or generic config/renderer proxy.
 
 RT-T266.3/R0203 UI/Projects owner: one Extensions workspace with exact action readiness; source-kind labels “Hermes ” only for verified native display names, bundled Resources/user-added distinct, stable IDs unchanged. Chats/Projects trash/restore only owned records/context links, no learned Obsidian note deletion; actual running-state and restart/replay/cross-owner restoration evidence required.

@@ -31,6 +31,7 @@ from hermes_installer.artifacts import ArtifactCatalog, ArtifactSpec
 from hermes_installer.mcp.broker import ProtectedMCPService, build_mcp_handlers
 from hermes_installer.mcp.native_execution import (
     NativeMCPDispatcher, NativeMCPExecutionDenied, build_native_mcp_schema_catalog,
+    validate_selected_calendar_read,
 )
 from hermes_installer.mcp.native_dispatch import (
     HANDLER_ARTIFACT_ID, NativeMCPRegistrationIndex, schema_sha256,
@@ -51,6 +52,29 @@ RESULT_SCHEMA = {
         "isError": {"type": "boolean"},
     }, "required": ["content", "isError"], "additionalProperties": False,
 }
+
+
+class CalendarReadWindowContract(unittest.TestCase):
+    def test_accepts_only_selected_single_page_calendar_window(self):
+        validate_selected_calendar_read({
+            "calendarId": "owner-selected-calendar", "startTime": "2026-10-12T00:00:00Z",
+            "endTime": "2026-11-12T00:00:00Z", "timeZone": "Europe/Lisbon", "pageSize": 100,
+        }, {"calendarId": "owner-selected-calendar"})
+
+    def test_rejects_wrong_calendar_unbounded_window_pagination_and_oversize_page(self):
+        base = {"calendarId": "owner-selected-calendar", "startTime": "2026-10-12T00:00:00Z",
+                "endTime": "2026-10-13T00:00:00Z", "timeZone": "UTC", "pageSize": 100}
+        cases = [
+            ({**base, "calendarId": "other-calendar"}, {"calendarId": "owner-selected-calendar"}),
+            ({**base, "endTime": "2026-11-13T00:00:00Z"}, {"calendarId": "owner-selected-calendar"}),
+            ({**base, "pageSize": 101}, {"calendarId": "owner-selected-calendar"}),
+            ({**base, "pageToken": "next-page"}, {"calendarId": "owner-selected-calendar"}),
+            ({**base, "timeZone": "Not/AZone"}, {"calendarId": "owner-selected-calendar"}),
+        ]
+        for arguments, selection in cases:
+            with self.subTest(arguments=arguments):
+                with self.assertRaises(NativeMCPExecutionDenied):
+                    validate_selected_calendar_read(arguments, selection)
 
 
 def _validate_result_schema(raw: bytes) -> bool:

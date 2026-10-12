@@ -17,8 +17,10 @@ import secrets
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..authority import (
     AuthorityDenied, BrokeredEffectResponse, EffectAuthorization, HostContext,
@@ -45,6 +47,41 @@ _MAX_SOURCE_HANDLES = 64
 _MAX_DISCOVERY_PAGES = 32
 _TIMEOUT = 9.0
 _ADAPTER_ID = "hermes-installer.native-mcp-dispatch.v1"
+
+
+def validate_selected_calendar_read(arguments: Mapping[str, Any],
+                                    selection: Mapping[str, Any]) -> None:
+    """Keep one native Calendar read inside its root-selected 31-day window."""
+    expected = {"calendarId", "startTime", "endTime", "timeZone", "pageSize"}
+    if (not isinstance(arguments, Mapping) or not isinstance(selection, Mapping)
+            or set(selection) != {"calendarId"} or set(arguments) != expected
+            or arguments.get("calendarId") != selection.get("calendarId")
+            or not isinstance(selection.get("calendarId"), str)
+            or not selection["calendarId"]):
+        raise NativeMCPExecutionDenied(
+            "native.mcp.calendar.selection", "calendar read differs from its selected bounded source",
+        )
+    start, end = arguments.get("startTime"), arguments.get("endTime")
+    timezone_name, page_size = arguments.get("timeZone"), arguments.get("pageSize")
+    if (not isinstance(start, str) or not isinstance(end, str)
+            or type(page_size) is not int or not 1 <= page_size <= 100
+            or not isinstance(timezone_name, str) or len(timezone_name) > 128):
+        raise NativeMCPExecutionDenied(
+            "native.mcp.calendar.bounds", "calendar read window or page bound is invalid",
+        )
+    try:
+        start_at = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        end_at = datetime.fromisoformat(end.replace("Z", "+00:00"))
+        ZoneInfo(timezone_name)
+    except (ValueError, ZoneInfoNotFoundError):
+        raise NativeMCPExecutionDenied(
+            "native.mcp.calendar.time", "calendar read requires an explicit valid timezone window",
+        ) from None
+    if (start_at.tzinfo is None or end_at.tzinfo is None or end_at <= start_at
+            or end_at - start_at > timedelta(days=31)):
+        raise NativeMCPExecutionDenied(
+            "native.mcp.calendar.bounds", "calendar read window exceeds its 31-day bound",
+        )
 
 
 def _thaw(value: Any, *, depth: int = 0) -> Any:
@@ -259,6 +296,8 @@ class NativeMCPDispatcher:
             _validate_value(arguments, request_schema)
             selection = self._validate_selection(binding, arguments)
             service, operation, target = self._service_for(binding)
+            if service.service_id == "google-calendar" and binding.mcp_tool_name == "list_events":
+                validate_selected_calendar_read(arguments, selection)
             self._require_result_observer(service, operation, target)
             self._require_current(invocation, peer_uid, peer_pid, peer_pidfd)
         except NativeMCPExecutionDenied:

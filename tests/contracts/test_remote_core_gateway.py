@@ -816,6 +816,19 @@ class CoreGatewayProofTests(unittest.TestCase):
                 with self.assertRaises(inspector.CoreInspectionDenied):
                     inspector._current_native_adapter_generation(deadline=deadline)
 
+    def test_calendar_and_native_settings_sources_are_pinned(self):
+        inspector = core_gateway_inspector
+        pins = inspector.CORE_NATIVE_ADAPTER_SOURCE_FILES
+        source = inspector.CORE_NATIVE_ADAPTER_SOURCE
+        for relative in (
+                "hermes_installer/remote/owner_calendar_native.py",
+                "hermes_installer/remote/jarvis_calendar.py",
+                "hermes_installer/remote/jarvis_settings_admin.py"):
+            with self.subTest(relative=relative):
+                self.assertIn(relative, pins)
+                self.assertEqual(hashlib.sha256((source / relative).read_bytes()).hexdigest(),
+                                 pins[relative])
+
     def test_proc_environment_reader_returns_hashable_bytes_and_rejects_bad_entries(self):
         environment = core_gateway_inspector._read_proc_environment(
             os.getpid(), deadline=time.monotonic() + 2)
