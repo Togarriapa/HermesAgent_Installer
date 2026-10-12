@@ -49,6 +49,38 @@ def test_recovery_resolves_preparing_journal_before_accepting_legacy_listener():
     assert events == ["recover-if-needed", "legacy-listener-check"]
 
 
+def test_installed_adapter_rollback_uses_exact_compatibility_recovery(monkeypatch, tmp_path):
+    source = tmp_path / "src"
+    source.mkdir()
+    events = []
+    core = SimpleNamespace(
+        ADAPTER_SOURCE=source,
+        _recover_interrupted_adapter_migration=lambda: events.append("recover-if-needed"),
+        _owned_listener=lambda **kwargs: (events.append(
+            "legacy-listener" if kwargs.get("legacy_launcher") else "adapter-listener")
+            or kwargs.get("legacy_launcher", False)),
+        _journal=lambda: {"state": "installed", "adapter_migration_state": "active"},
+        recover_owned_core_from_adapter_migration=lambda: pytest.fail(
+            "normal recovery rejects the installed lifecycle state"),
+    )
+    monkeypatch.setattr(adopt, "_recover_installed_adapter_to_legacy",
+                        lambda _core, expected: events.append(("compat-recovery", expected)))
+
+    assert adopt._restore_legacy_core(core, source)
+    assert events == ["recover-if-needed", "legacy-listener", "adapter-listener",
+                      ("compat-recovery", source), "legacy-listener"]
+
+
+def test_installed_adapter_rollback_refuses_different_candidate_before_recovery(monkeypatch, tmp_path):
+    source = tmp_path / "src"
+    source.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    core = SimpleNamespace(ADAPTER_SOURCE=source)
+    with pytest.raises(RuntimeError, match="different"):
+        adopt._recover_installed_adapter_to_legacy(core, other)
+
+
 def _switch_fixture(monkeypatch, *, gateway=None, inspector=None, config=None,
                     installed=True):
     gateway = gateway if gateway is not None else _unit("core_gateway")
