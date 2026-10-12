@@ -7,6 +7,8 @@ Hermes receipt is generated from the exact installed files in this isolated tree
 import hashlib
 import io
 import json
+import os
+import pwd
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -181,6 +183,22 @@ def overlay_runtime(tmp_path, monkeypatch):
     core._atomic_replace(cas / f"{base_sha}.zip", base, 0o600, 0, 0)
     native.install_manual_jarvis_skills(base, hermes_home=home, expected_sha256=base_sha)
 
+    account = pwd.getpwnam("admin")
+
+    def set_generation_owner(uid, gid):
+        skills = home / "skills"
+        for root, directories, filenames in os.walk(skills, topdown=False, followlinks=False):
+            for filename in filenames:
+                os.chown(Path(root) / filename, uid, gid, follow_symlinks=False)
+            for dirname in directories:
+                os.chown(Path(root) / dirname, uid, gid, follow_symlinks=False)
+        os.chown(skills, uid, gid)
+
+    def own_generation_as_admin():
+        set_generation_owner(account.pw_uid, account.pw_gid)
+
+    own_generation_as_admin()
+
     installed = {"archive": base, "sha256": base_sha}
 
     def discover_and_load_selected(*, hermes_root, skill_ids, **_kwargs):
@@ -200,9 +218,11 @@ def overlay_runtime(tmp_path, monkeypatch):
     def install_owner(next_archive, previous_archive, *, next_sha, previous_sha):
         installed["archive"] = next_archive
         installed["sha256"] = next_sha
+        set_generation_owner(0, 0)
         native.install_and_verify_manual_jarvis_skills(next_archive, hermes_home=home,
             expected_sha256=next_sha, hermes_source="/pinned/hermes", python="/pinned/python",
             replace_owned_from_archive=previous_archive, replace_owned_from_sha256=previous_sha)
+        own_generation_as_admin()
 
     monkeypatch.setattr(core, "_install_resources_skill_overlay_as_owner", install_owner)
     current = {"artifact_sha256": base_sha}
@@ -226,7 +246,8 @@ def overlay_runtime(tmp_path, monkeypatch):
     content = native._read_artifact(base, base_sha)[1][member["archive_path"]]
     return SimpleNamespace(home=home, base=base, base_sha=base_sha,
         skill_id=member["skill_id"], base_content=content, installed=installed,
-        current=current, generation="a" * 64)
+        current=current, generation="a" * 64,
+        own_generation=lambda uid=account.pw_uid, gid=account.pw_gid: set_generation_owner(uid, gid))
 
 
 def test_resources_write_cas_idempotency_archive_restore_and_native_readback(overlay_runtime):
@@ -322,9 +343,11 @@ def test_interrupted_overlay_journal_recovers_only_exact_old_or_new_generation(
         __import__("json").dumps(pending, sort_keys=True, separators=(",", ":")).encode(),
         0o600, 0, 0)
     if install_new:
+        fixture.own_generation(0, 0)
         native.install_manual_jarvis_skills(new_archive, hermes_home=fixture.home,
             expected_sha256=archive_member_sha, replace_owned_from_archive=fixture.base,
             replace_owned_from_sha256=fixture.base_sha)
+        fixture.own_generation()
     assert core.recover_resources_skill_overlay() is True
     target = fixture.home / "skills" / native._GENERATION / "skills" / fixture.skill_id / "SKILL.md"
     expected_bytes = edited if expected_sha == "new" else fixture.base_content
