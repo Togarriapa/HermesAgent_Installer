@@ -140,6 +140,9 @@ def test_overview_mission_count_requires_live_current_owner_approval(tmp_path):
 
 def test_overview_fragment_is_a_fixed_accessible_asset():
     validate_feature_assets((FEATURE_ASSETS,))
+    assert FEATURE_ASSETS.mount_js.startswith("function mount(")
+    assert "  function overviewScopeIsCurrent(" in FEATURE_ASSETS.mount_js
+    assert "  function projectNativeEcosystem(" in FEATURE_ASSETS.mount_js
     assert FEATURE_ASSETS.feature_id == "overview"
     assert FEATURE_ASSETS.api_routes == (("GET", "/chat/api/overview"), ("GET", "/chat/api/ecosystem"))
     assert "<table>" in FEATURE_ASSETS.view_html
