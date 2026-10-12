@@ -6,7 +6,9 @@ it proves source behavior only, never Pi deployment or official Hermes readiness
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import threading
 import time
 from types import SimpleNamespace
 
@@ -142,14 +144,74 @@ def test_jarvis_review_sink_requires_current_exact_result_then_records_idempoten
     assert executor.record_jarvis_master_review(decision, config=object(), custody=object()) is True
     conflicting = replace(decision, rationale="Conflicting review disposition rationale.")
     assert executor.record_jarvis_master_review(conflicting, config=object(), custody=object()) is False
+
+    # Force two owners' distinct final decisions to observe the same pending
+    # projection before either reaches the serialized decision transaction.
+    barrier = threading.Barrier(2)
+    thread_state = threading.local()
+    original_project = executor.project
+
+    def synchronized_project(subject, row):
+        if not getattr(thread_state, "preflight_seen", False):
+            thread_state.preflight_seen = True
+            barrier.wait(timeout=5)
+        return original_project(subject, row)
+
+    executor.project = synchronized_project
+
+    def submit_review(choice, key, request):
+        try:
+            return executor.review(
+                subject=owner_sha, owner=owner_sha, mission_id=decision.mission_id,
+                revision=decision.revision, decision=choice,
+                idempotency_hash=key, request_hash=request,
+            )
+        except ValueError as exc:
+            return exc
+
+    accept = ("8" * 64, "9" * 64)
+    reject = ("a" * 64, "b" * 64)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(submit_review, "accept", *accept),
+                   pool.submit(submit_review, "reject", *reject)]
+        outcomes = [future.result(timeout=10) for future in futures]
+    executor.project = original_project
+    winners = [item for item in outcomes if isinstance(item, dict)]
+    losers = [item for item in outcomes if isinstance(item, ValueError)]
+    assert len(winners) == 1
+    assert len(losers) == 1
+    winning_decision = winners[0]["owner_decision"]
+    winning_key, winning_request = accept if winning_decision == "approved" else reject
+    losing_key, _losing_request = reject if winning_decision == "approved" else accept
+    # Exact replay is idempotent. A new key cannot rewrite even the same result.
+    assert executor.review(
+        subject=owner_sha, owner=owner_sha, mission_id=decision.mission_id,
+        revision=decision.revision, decision="accept" if winning_decision == "approved" else "reject",
+        idempotency_hash=winning_key, request_hash=winning_request,
+    )["owner_decision"] == winning_decision
+    with pytest.raises(ValueError, match="conflicts with its saved decision|idempotency conflict"):
+        executor.review(
+            subject=owner_sha, owner=owner_sha, mission_id=decision.mission_id,
+            revision=decision.revision,
+            decision="accept" if winning_decision == "approved" else "reject",
+            idempotency_hash="c" * 64, request_hash="d" * 64,
+        )
     with store._connect() as db:
         row = db.execute("SELECT jarvis_review_state,jarvis_review_rationale,"
                          "jarvis_review_response_sha256,jarvis_review_core_generation,"
                          "jarvis_review_core_source_generation,jarvis_review_turn_id "
                          "FROM jarvis_mission_runs WHERE id=?", (decision.run_id,)).fetchone()
+        final = db.execute("SELECT status,result_decision FROM jarvis_mission_runs WHERE id=?",
+                           (decision.run_id,)).fetchone()
+        actions = db.execute("SELECT idempotency_hash FROM jarvis_mission_actions WHERE owner=? "
+                             "AND action='review'", (owner_sha,)).fetchall()
     assert tuple(row) == ("approved", decision.rationale, response_sha,
                           decision.core_generation, decision.core_source_generation,
                           review_turn_id)
+    assert tuple(final) == ("accepted" if winning_decision == "approved" else "rejected",
+                            "accept" if winning_decision == "approved" else "reject")
+    assert {item["idempotency_hash"] for item in actions} == {winning_key}
+    assert losing_key not in {item["idempotency_hash"] for item in actions}
 
 
 def test_spent_binding_root_preflight_denial_stops_before_owner_registration_or_model_submit(tmp_path):

@@ -638,6 +638,8 @@ class MissionExecutionAdapter:
 
     def review(self, *, subject: str, owner: str, mission_id: str, revision: int,
                decision: str, idempotency_hash: str, request_hash: str) -> dict[str, Any]:
+        if decision not in {"accept", "reject"}:
+            raise ValueError("unsupported mission review decision")
         run = self.latest_run(owner, mission_id, revision)
         if run is None:
             raise ValueError("mission has no observed result awaiting review")
@@ -645,26 +647,75 @@ class MissionExecutionAdapter:
             raise ValueError("Jarvis has not approved this exact draft for owner decision")
         projected = self.project(subject, run)
         current = projected["status"]
-        if current in {"accepted", "rejected"}:
-            if current != ("accepted" if decision == "accept" else "rejected"):
-                raise ValueError("mission result review conflicts with its saved decision")
-            prior = self._action(owner, idempotency_hash)
-            if prior is None or (prior["mission_id"] != mission_id
-                    or int(prior["revision"]) != revision or prior["action"] != "review"
-                    or prior["request_hash"] != request_hash):
-                raise ValueError("mission action was already reviewed")
-            return projected
-        elif current != "review_pending":
+        if current not in {"review_pending", "accepted", "rejected"}:
             raise ValueError("mission has no observed result awaiting review")
-        self.reserve_action(owner=owner, mission_id=mission_id, revision=revision,
-                            action="review", idempotency_hash=idempotency_hash,
-                            request_hash=request_hash)
+
         saved = "accepted" if decision == "accept" else "rejected"
+        now = time.time()
         with self.store._connect() as db:
-            db.execute("UPDATE jarvis_mission_runs SET status=?,result_decision=?,updated=? "
-                       "WHERE id=? AND owner=? AND status IN ('queued','accepted','rejected')",
-                       (saved, decision, time.time(), run["id"], owner))
-        return self.project(subject, self.latest_run(owner, mission_id, revision))
+            # Serialize the pending read, idempotency claim, and final transition.
+            # A prior preflight projection is useful for the error message, but it is
+            # never authority to overwrite a decision made by a competing request.
+            db.execute("BEGIN IMMEDIATE")
+            locked = db.execute(
+                "SELECT * FROM jarvis_mission_runs WHERE id=? AND owner=? "
+                "AND mission_id=? AND revision=?",
+                (run["id"], owner, mission_id, revision),
+            ).fetchone()
+            if locked is None or locked["jarvis_review_state"] != "approved":
+                db.rollback()
+                raise ValueError("mission has no observed result awaiting review")
+
+            prior = db.execute(
+                "SELECT * FROM jarvis_mission_actions WHERE owner=? AND idempotency_hash=?",
+                (owner, idempotency_hash),
+            ).fetchone()
+            if prior is not None:
+                same_request = (
+                    prior["mission_id"] == mission_id
+                    and int(prior["revision"]) == revision
+                    and prior["action"] == "review"
+                    and prior["request_hash"] == request_hash
+                )
+                same_decision = (locked["status"] == saved
+                                 and locked["result_decision"] == decision)
+                if not same_request or not same_decision:
+                    db.rollback()
+                    raise ValueError("mission action idempotency conflict")
+                db.commit()
+                return self.project(subject, locked)
+
+            if locked["status"] != "queued" or locked["result_decision"] is not None:
+                db.rollback()
+                raise ValueError("mission result review conflicts with its saved decision")
+            # Recheck the real owned turn and native child completion while holding
+            # the writer lock; inventory/status labels alone cannot make a result
+            # eligible for owner review.
+            if self.project(subject, locked)["status"] != "review_pending":
+                db.rollback()
+                raise ValueError("mission has no observed result awaiting review")
+
+            db.execute(
+                "INSERT INTO jarvis_mission_actions VALUES(?,?,?,?,?,?,?)",
+                (owner, mission_id, revision, "review", idempotency_hash,
+                 request_hash, now),
+            )
+            changed = db.execute(
+                "UPDATE jarvis_mission_runs SET status=?,result_decision=?,updated=? "
+                "WHERE id=? AND owner=? AND mission_id=? AND revision=? "
+                "AND status='queued' AND jarvis_review_state='approved' "
+                "AND result_decision IS NULL",
+                (saved, decision, now, run["id"], owner, mission_id, revision),
+            ).rowcount
+            if changed != 1:
+                db.rollback()
+                raise ValueError("mission result review conflicts with its saved decision")
+            db.commit()
+            final = db.execute(
+                "SELECT * FROM jarvis_mission_runs WHERE id=? AND owner=?",
+                (run["id"], owner),
+            ).fetchone()
+        return self.project(subject, final)
 
     def record_jarvis_master_review(self, decision: Any, *, config: Any,
                                     custody: Any) -> bool:
