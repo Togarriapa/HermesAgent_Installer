@@ -94,8 +94,12 @@ def _backup_fixture():
         "prior_cohort": b"prior-cohort",
         "plugin_selection_sha256": "c" * 64,
         "token_sha256": "d" * 64,
-        "primary": {"state": "adopted", "owner_prefix": b"owner bytes",
-                    "backup": b"owner bytes"},
+        "primary": {"state": "adopted", "owner_prefix": b"edited owner bytes",
+                    "backup": b"original immutable owner bytes",
+                    "soul": b"edited owner bytes\n<managed block>",
+                    "separator": b"\n", "managed_block": b"<managed block>",
+                    "signature": [1, 2, 3],
+                    "record": {"state": "adopted", "result_soul_sha256": "e" * 64}},
     }
     contents = {
         "journal.json": raw["journal"], "unit": raw["unit"],
@@ -108,8 +112,12 @@ def _backup_fixture():
     }
     after_journal = b'{"adapter_update_backup":{"path":"fixed","source_generation":"' + b"a" * 64 + b'"}}'
     after = {"journal": after_journal, "token_sha256": raw["token_sha256"],
-             "primary": {"state": "adopted", "owner_prefix": b"owner bytes",
-                         "backup": b"owner bytes"}}
+             "primary": {"state": "adopted", "owner_prefix": b"edited owner bytes",
+                         "backup": b"original immutable owner bytes",
+                         "soul": b"edited owner bytes\n<managed block>",
+                         "separator": b"\n", "managed_block": b"<managed block>",
+                         "signature": [1, 2, 3],
+                         "record": {"state": "adopted", "result_soul_sha256": "e" * 64}}
     prior = {"adapter_generation": "a" * 64}
 
     class Runtime:
@@ -127,13 +135,15 @@ def test_protected_backup_requires_exact_old_journal_unit_launcher_and_bindings(
 
 
 @pytest.mark.parametrize("field", [
-    "unit", "launcher", "resources_record", "overlay_record", "primary_record",
-    "obsidian_registration", "prior_cohort",
+    "journal", "unit", "launcher", "resources_record", "overlay_record",
+    "primary_record", "obsidian_registration", "prior_cohort", "plugin-selection.json",
 ])
 def test_protected_backup_byte_change_is_not_a_generation_name_match(field):
     runtime, before, after, contents = _backup_fixture()
     filename = {
-        "unit": "unit", "launcher": "launcher", "resources_record": "resources-record.json",
+        "journal": "journal.json", "unit": "unit", "launcher": "launcher",
+        "plugin-selection.json": "plugin-selection.json",
+        "resources_record": "resources-record.json",
         "overlay_record": "overlay-record.json", "primary_record": "primary-record.json",
         "obsidian_registration": "obsidian-registration.json", "prior_cohort": "cohort.json",
     }[field]
@@ -146,11 +156,21 @@ def test_update_proof_rejects_changed_token_and_primary_owner_prefix_or_backup()
     after["token_sha256"] = "e" * 64
     assert qualification._backup_matches_before(runtime, before, after) is False
     after["token_sha256"] = before["token_sha256"]
+    assert qualification._primary_prompt_matches_before(before, after) is True
     after["primary"]["owner_prefix"] = b"altered owner bytes"
-    assert qualification._backup_matches_before(runtime, before, after) is False
+    assert qualification._primary_prompt_matches_before(before, after) is False
     after["primary"]["owner_prefix"] = before["primary"]["owner_prefix"]
     after["primary"]["backup"] = b"altered immutable backup"
-    assert qualification._backup_matches_before(runtime, before, after) is False
+    assert qualification._primary_prompt_matches_before(before, after) is False
+    after["primary"]["backup"] = before["primary"]["backup"]
+    after["primary"]["soul"] += b" altered managed block"
+    assert qualification._primary_prompt_matches_before(before, after) is False
+
+
+def test_approved_owner_prefix_can_differ_from_immutable_original_backup():
+    runtime, before, after, _contents = _backup_fixture()
+    assert before["primary"]["owner_prefix"] != before["primary"]["backup"]
+    assert qualification._primary_prompt_matches_before(before, after) is True
 
 
 def test_update_proof_allows_only_exact_initial_primary_append():
@@ -163,11 +183,19 @@ def test_update_proof_allows_only_exact_initial_primary_append():
         "state": "adopted", "owner_prefix": initial, "backup": initial,
         "separator": separator, "managed_block": managed,
         "soul": initial + separator + managed,
+        "signature": [1, 2, 3],
         "record": {"state": "adopted", "owner_prefix_length": len(initial)},
     }
-    assert qualification._backup_matches_before(runtime, before, after) is True
+    assert qualification._primary_prompt_matches_before(before, after) is True
     after["primary"]["soul"] = initial + b"unexpected bytes"
-    assert qualification._backup_matches_before(runtime, before, after) is False
+    assert qualification._primary_prompt_matches_before(before, after) is False
+
+
+def test_update_proof_cannot_pass_without_adopted_post_state():
+    before, _after = _snapshots()
+    before_primary = {"primary": {"state": "unmanaged", "soul": b"owner prefix"}}
+    after_primary = {"primary": {"state": "unmanaged", "soul": b"owner prefix"}}
+    assert qualification._primary_prompt_matches_before(before_primary, after_primary) is False
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="staged helper custody fixture requires root")

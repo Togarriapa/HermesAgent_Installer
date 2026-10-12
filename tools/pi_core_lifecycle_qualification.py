@@ -265,7 +265,7 @@ def _snapshot(runtime: Any) -> tuple[dict[str, Any], dict[str, Any]]:
 def _primary_prompt_state(runtime: Any) -> dict[str, Any]:
     """Validate adopted SOUL and immutable owner backup; retain bytes privately."""
     from hermes_installer import primary_prompt_manager as manager
-    from hermes_installer.registry.primary_prompt import split_managed_block
+    from hermes_installer.registry.primary_prompt import render_managed_block, split_managed_block
 
     soul, signature = manager._read_soul(runtime)
     record = manager._read_record(runtime)
@@ -277,13 +277,29 @@ def _primary_prompt_state(runtime: Any) -> dict[str, Any]:
                 "separator": b"", "managed_block": b""}
     if record.get("state") != "adopted":
         raise RuntimeError("primary prompt is not in its stable adopted state")
+    source_generation, _discovery, artifact_sha, manifest, files, _prompt = manager._fixed_bundle(runtime)
+    source = manifest.get("source") if isinstance(manifest, dict) else None
+    if (source_generation != runtime._core_source_generation()
+            or record.get("core_source_generation") != source_generation
+            or record.get("artifact_sha256") != artifact_sha
+            or not isinstance(source, dict)
+            or record.get("resources_revision") != source.get("revision")
+            or record.get("resources_tree") != source.get("git_tree")):
+        raise RuntimeError("adopted primary prompt source/artifact binding is stale")
     prefix, separator, block = split_managed_block(
         soul, owner_prefix_length=record["owner_prefix_length"],
         separator=bytes.fromhex(record["owner_separator_hex"]))
     backup = manager._backup_read(runtime, record)
-    if (_digest(prefix) != record["owner_prefix_sha256"] or prefix != backup
+    source_prompt = files.get("registry/profiles/hermes/SOUL.md")
+    if (_digest(prefix) != record["owner_prefix_sha256"]
+            or _digest(backup) != record["owner_backup_name"]
+            or _digest(backup) != record["prior_soul_sha256"]
             or _digest(soul) != record["result_soul_sha256"]
-            or _digest(block) != record["managed_block_sha256"]):
+            or signature != record["result_soul_signature"]
+            or _digest(block) != record["managed_block_sha256"]
+            or not isinstance(source_prompt, bytes)
+            or _digest(source_prompt) != record.get("source_prompt_sha256")
+            or block != render_managed_block(source_prompt)):
         raise RuntimeError("adopted primary prompt or immutable owner backup differs")
     return {"soul_sha256": _digest(soul), "state": "adopted",
             "owner_prefix_sha256": _digest(prefix), "owner_prefix_length": len(prefix),
@@ -319,22 +335,27 @@ def _backup_matches_before(runtime: Any, before: dict[str, Any], after: dict[str
                              "selection_sha256": before["plugin_selection_sha256"]}
             or before["token_sha256"] != after["token_sha256"]):
         return False
-    old_primary = before["primary"]
-    new_primary = after["primary"]
-    if old_primary["state"] == "adopted":
-        return (new_primary["state"] == "adopted"
-                and new_primary["soul"] == old_primary["soul"]
-                and new_primary["owner_prefix"] == old_primary["owner_prefix"]
-                and new_primary["backup"] == old_primary["backup"])
-    if new_primary["state"] == "unmanaged":
-        return new_primary["soul"] == old_primary["soul"]
-    record = new_primary["record"]
+    return True
+
+
+def _primary_prompt_matches_before(before: dict[str, Any], after: dict[str, Any]) -> bool:
+    """Require a valid adopted result and preserve owner-authored bytes exactly."""
+    old = before["primary"]
+    new = after["primary"]
+    if new["state"] != "adopted":
+        return False
+    if old["state"] == "adopted":
+        return (new["soul"] == old["soul"]
+                and new["owner_prefix"] == old["owner_prefix"]
+                and new["backup"] == old["backup"]
+                and new["record"] == old["record"]
+                and new["signature"] == old["signature"])
+    record = new["record"]
     return bool(record and record.get("state") == "adopted"
-                and new_primary["owner_prefix"] == old_primary["soul"]
-                and new_primary["backup"] == old_primary["soul"]
-                and new_primary["soul"] == (old_primary["soul"]
-                     + new_primary["separator"] + new_primary["managed_block"])
-                and record.get("owner_prefix_length") == len(old_primary["soul"]))
+                and new["owner_prefix"] == old["soul"]
+                and new["backup"] == old["soul"]
+                and new["soul"] == (old["soul"] + new["separator"] + new["managed_block"])
+                and record.get("owner_prefix_length") == len(old["soul"]))
 
 
 def _success_checks(before: dict[str, Any], after: dict[str, Any], candidate_src: str,
@@ -450,11 +471,8 @@ def main(argv: list[str] | None = None) -> int:
                 runtime, before_private, after_private)
             checks["runtime_token_digest_preserved"] = (
                 before_public["token_sha256"] == after_public["token_sha256"])
-            checks["primary_prompt_owner_bytes_preserved"] = (
-                before_public["primary_owner_prefix_sha256"]
-                == after_public["primary_owner_prefix_sha256"]
-                and before_public["primary_owner_prefix_length"]
-                == after_public["primary_owner_prefix_length"])
+            checks["primary_prompt_owner_bytes_and_adopted_record_preserved"] = (
+                _primary_prompt_matches_before(before_private, after_private))
         success = cli_exit == 0 and bool(checks) and all(checks.values())
         report = {
             "schema": 1,
