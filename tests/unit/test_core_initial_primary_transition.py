@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import stat
+from pathlib import Path
 
 import pytest
 
@@ -18,11 +19,57 @@ from hermes_installer.registry.primary_prompt import append_managed_block, rende
 from test_core_runtime import _adapter_cohort_starting_fixture
 
 
+def _refresh_exact_starting_unit_recipe(cohort):
+    """Rebuild the fixture's current starting tuple from the generated guarded recipe."""
+    unit = core._unit(
+        adapter_source=Path(cohort["new_source"]),
+        cohort_gate=True,
+        backup_generation=cohort["old_adapter_generation"],
+    )
+    core._atomic_replace(core.UNIT, unit, 0o644, core.ROOT_UID, core.ROOT_UID)
+
+    journal_raw = core._projection_file(
+        core.JOURNAL, owner=core.ROOT_UID, group=core.ROOT_UID, mode=0o600,
+        maximum=64 * 1024)
+    journal = json.loads(journal_raw)
+    journal["unit_sha256"] = hashlib.sha256(unit).hexdigest()
+    core._replace_journal(journal, expected_raw=journal_raw)
+    journal_raw = core._projection_file(
+        core.JOURNAL, owner=core.ROOT_UID, group=core.ROOT_UID, mode=0o600,
+        maximum=64 * 1024)
+
+    resources_raw = core._projection_file(
+        core.RESOURCES_RECORD, owner=core.ROOT_UID, group=core.ROOT_UID, mode=0o600,
+        maximum=16 * 1024)
+    resources = json.loads(resources_raw)
+    resources["core_ownership_sha256"] = hashlib.sha256(journal_raw).hexdigest()
+    resources_raw = core._canonical_json(resources)
+    core._atomic_replace(core.RESOURCES_RECORD, resources_raw, 0o600,
+                         core.ROOT_UID, core.ROOT_UID)
+
+    current, cohort_raw = core._read_adapter_update_cohort()
+    current["new_unit_sha256"] = hashlib.sha256(unit).hexdigest()
+    current["new_source_recipe_sha256"] = core._adapter_recipe_sha256(
+        current["new_source"], current["new_adapter_generation"],
+        current["new_unit_sha256"], current["new_launcher_sha256"])
+    reconstruction = dict(current["reconstruction"])
+    reconstruction["new_source_recipe_sha256"] = current["new_source_recipe_sha256"]
+    reconstruction["new_discovery_sha256"] = hashlib.sha256(resources_raw).hexdigest()
+    current["reconstruction"] = reconstruction
+    current["reconstruction_sha256"] = hashlib.sha256(
+        core._canonical_json(reconstruction)).hexdigest()
+    current["starting_journal_sha256"] = hashlib.sha256(journal_raw).hexdigest()
+    current["starting_resources_record_sha256"] = hashlib.sha256(resources_raw).hexdigest()
+    core._write_adapter_update_cohort(current, expected_raw=cohort_raw)
+    return current
+
+
 @pytest.mark.skipif(os.geteuid() != 0, reason="Root initial-primary journal fixture requires Pi root")
 def test_interrupted_preparing_stage_is_retained_and_refuses_owner_soul_drift(
         tmp_path, monkeypatch, request):
     _unit, cohort, _journal_raw, _resources_raw = _adapter_cohort_starting_fixture(
         tmp_path, monkeypatch, request)
+    cohort = _refresh_exact_starting_unit_recipe(cohort)
 
     runtime = tmp_path / "primary-runtime"
     owner_home = tmp_path / "admin" / ".hermes"
