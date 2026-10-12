@@ -303,6 +303,64 @@ class ManualJarvisSkillsTests(unittest.TestCase):
                             argparse.Namespace(home="/home/admin/.hermes"))
                     parent_lookup.assert_not_called()
 
+    @unittest.skipUnless(sys.platform.startswith("linux") and os.geteuid() == 0,
+                         "requires the identified Linux Pi root test role")
+    def test_helper_transition_origin_requires_stable_runuser_parent_lineage(self):
+        account = pwd.getpwnam("admin")
+        with tempfile.TemporaryDirectory(prefix="hermes-origin-lineage-") as directory:
+            home = self.make_home(Path(directory))
+            target = home / "skills" / manual_skills._GENERATION
+            target.mkdir()
+            os.chown(home, account.pw_uid, account.pw_gid)
+            os.chown(home / "skills", account.pw_uid, account.pw_gid)
+            os.chown(target, account.pw_uid, account.pw_gid)
+            pipe = type("PipeStat", (), {
+                "st_mode": stat.S_IFIFO | 0o600, "st_uid": 0,
+                "st_ino": 987654, "st_dev": 1,
+            })()
+            child_pid = os.getpid()
+            parent_pid = child_pid + 1
+            parent_identity = (child_pid + 2, 12345, "runuser", (0, 0, 0, 0))
+            real_readlink = os.readlink
+
+            def readlink(path, *args, **kwargs):
+                if path == "/proc/self/fd/0":
+                    return f"pipe:[{pipe.st_ino}]"
+                return real_readlink(path, *args, **kwargs)
+
+            with patch.object(manual_skills.os, "getresuid",
+                              return_value=(account.pw_uid,) * 3), \
+                 patch.object(manual_skills.os, "geteuid", return_value=account.pw_uid), \
+                 patch.object(manual_skills.os, "getresgid",
+                              return_value=(account.pw_gid,) * 3), \
+                 patch.object(manual_skills.os, "getppid", return_value=parent_pid), \
+                 patch.object(manual_skills.os, "fstat", return_value=pipe), \
+                 patch("fcntl.fcntl", return_value=os.O_RDONLY), \
+                 patch.object(manual_skills.os, "readlink", side_effect=readlink), \
+                 patch.object(manual_skills, "_proc_identity",
+                              return_value=parent_identity) as identity:
+                self.assertEqual(manual_skills._verify_helper_transition_origin(
+                    argparse.Namespace(home=str(home))), target)
+            self.assertEqual(identity.call_count, 2)
+
+            changed = (parent_identity[0], parent_identity[1] + 1,
+                       parent_identity[2], parent_identity[3])
+            with patch.object(manual_skills.os, "getresuid",
+                              return_value=(account.pw_uid,) * 3), \
+                 patch.object(manual_skills.os, "geteuid", return_value=account.pw_uid), \
+                 patch.object(manual_skills.os, "getresgid",
+                              return_value=(account.pw_gid,) * 3), \
+                 patch.object(manual_skills.os, "getppid", return_value=parent_pid), \
+                 patch.object(manual_skills.os, "fstat", return_value=pipe), \
+                 patch("fcntl.fcntl", return_value=os.O_RDONLY), \
+                 patch.object(manual_skills.os, "readlink", side_effect=readlink), \
+                 patch.object(manual_skills, "_proc_identity",
+                              side_effect=(parent_identity, changed)):
+                with self.assertRaisesRegex(
+                        ManualJarvisSkillsError, "fixed root runuser and inherited root pipe"):
+                    manual_skills._verify_helper_transition_origin(
+                        argparse.Namespace(home=str(home)))
+
     @unittest.skipUnless(sys.platform.startswith("linux") and os.geteuid() == 0
                          and Path("/usr/sbin/runuser").is_file()
                          and core_runtime.PYTHON.is_file(),

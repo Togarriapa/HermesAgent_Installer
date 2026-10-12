@@ -1104,20 +1104,30 @@ def restore_same_materialization_generation(
         raise ManualJarvisSkillsError("restore backup identity is invalid")
     target = home_input / "skills" / _GENERATION
     backup = home_input / backup_name
+    _verify_helper_transition_origin(argparse.Namespace(home=str(hermes_home)))
     _verify_owned_generation(target, current_files, current_sha256)
+    _verify_helper_transition_origin(argparse.Namespace(home=str(hermes_home)))
     _verify_owned_generation(backup, restore_files, restore_sha256)
     _verify_helper_transition_origin(argparse.Namespace(home=str(hermes_home)))
     # Reprove both directories immediately before the single atomic exchange.
+    _verify_helper_transition_origin(argparse.Namespace(home=str(hermes_home)))
     _verify_owned_generation(target, current_files, current_sha256)
+    _verify_helper_transition_origin(argparse.Namespace(home=str(hermes_home)))
     _verify_owned_generation(backup, restore_files, restore_sha256)
+    _verify_helper_transition_origin(argparse.Namespace(home=str(hermes_home)))
     _exchange_directories(target, backup)
     try:
+        _verify_helper_transition_origin(argparse.Namespace(home=str(hermes_home)))
         _verify_owned_generation(target, restore_files, restore_sha256)
+        _verify_helper_transition_origin(argparse.Namespace(home=str(hermes_home)))
         _verify_owned_generation(backup, current_files, current_sha256)
     except BaseException:
         try:
+            _verify_helper_transition_origin(argparse.Namespace(home=str(hermes_home)))
             _exchange_directories(target, backup)
+            _verify_helper_transition_origin(argparse.Namespace(home=str(hermes_home)))
             _verify_owned_generation(target, current_files, current_sha256)
+            _verify_helper_transition_origin(argparse.Namespace(home=str(hermes_home)))
             _verify_owned_generation(backup, restore_files, restore_sha256)
         except BaseException:
             # Preserve both complete trees if an atomic reverse exchange fails.
@@ -1136,30 +1146,40 @@ def restore_same_materialization_generation(
     }
 
 
-def _proc_identity(pid: int) -> tuple[int, str, bytes, tuple[int, ...]]:
-    """Read one stable process identity from procfs without exposing its argv."""
+def _proc_identity(pid: int) -> tuple[int, int, str, tuple[int, ...]]:
+    """Read the fixed runuser parent's stable PID lineage without privileged proc access."""
     proc = Path("/proc") / str(pid)
     try:
-        before = (proc / "stat").read_bytes()
-        close = before.rfind(b")")
-        fields = before[close + 2:].split()
-        if close < 0 or len(fields) <= 19:
+        def stat_identity(raw: bytes) -> tuple[int, int]:
+            close = raw.rfind(b")")
+            fields = raw[close + 2:].split()
+            if close < 0 or len(fields) <= 19:
+                raise ValueError
+            return int(fields[1]), int(fields[19])
+
+        def status_identity(raw: str) -> tuple[int, tuple[int, ...]]:
+            fields = {}
+            for line in raw.splitlines():
+                key, separator, value = line.partition(":")
+                if separator and key in {"PPid", "Uid"}:
+                    if key in fields:
+                        raise ValueError
+                    fields[key] = value.split()
+            if set(fields) != {"PPid", "Uid"} or len(fields["Uid"]) != 4:
+                raise ValueError
+            return int(fields["PPid"][0]), tuple(int(value) for value in fields["Uid"])
+
+        stat_before = stat_identity((proc / "stat").read_bytes())
+        status_before = status_identity((proc / "status").read_text(encoding="ascii"))
+        comm_before = (proc / "comm").read_text(encoding="ascii").rstrip("\n")
+        stat_after = stat_identity((proc / "stat").read_bytes())
+        status_after = status_identity((proc / "status").read_text(encoding="ascii"))
+        comm_after = (proc / "comm").read_text(encoding="ascii").rstrip("\n")
+        if (stat_before != stat_after or status_before != status_after
+                or comm_before != comm_after or stat_before[0] != status_before[0]
+                or comm_before != "runuser"):
             raise ValueError
-        parent_pid = int(fields[1])
-        start_time = int(fields[19])
-        argv = tuple((proc / "cmdline").read_bytes().rstrip(b"\0").split(b"\0"))
-        status = (proc / "status").read_text(encoding="ascii")
-        uid_line = next(line for line in status.splitlines() if line.startswith("Uid:"))
-        uids = tuple(int(value) for value in uid_line.split()[1:])
-        executable = os.readlink(proc / "exe")
-        after = (proc / "stat").read_bytes()
-        close_after = after.rfind(b")")
-        after_fields = after[close_after + 2:].split()
-        if (close_after < 0 or len(after_fields) <= 19
-                or int(after_fields[1]) != parent_pid
-                or int(after_fields[19]) != start_time):
-            raise ValueError
-        return parent_pid, executable, b"\0".join(argv), uids
+        return stat_before[0], stat_before[1], comm_before, status_before[1]
     except (OSError, StopIteration, UnicodeError, ValueError, IndexError):
         raise ManualJarvisSkillsError("helper-only importer process identity is unavailable") from None
 
@@ -1168,8 +1188,10 @@ def _verify_helper_transition_origin(args: argparse.Namespace) -> Path:
     """Require the exact root->runuser->admin pipe invocation before any effect.
 
     The root caller separately owns and consumes its in-process prepared
-    transition. This child check proves only the real Linux invocation and
-    current installed generation; hashes and CLI values are never authority.
+    transition and verifies the captured runuser process before writing its
+    private frame. This unprivileged child check proves only a root-created
+    read-only pipe, a stable root-UID runuser parent lineage, and the current
+    installed generation; hashes and CLI values are never authority.
     """
     try:
         account = pwd.getpwnam("admin")
@@ -1188,29 +1210,12 @@ def _verify_helper_transition_origin(args: argparse.Namespace) -> Path:
             raise ValueError
 
         parent_pid = os.getppid()
-        observed_parent, executable, parent_argv_bytes, parent_uids = _proc_identity(parent_pid)
-        runuser_stat = _ROOT_RUNUSER.lstat()
-        observed_exe = os.stat(f"/proc/{parent_pid}/exe")
-        expected_parent_argv = [
-            str(_ROOT_RUNUSER), "-u", "admin", "--", sys.executable, "-P",
-            "-m", _IMPORTER_MODULE, *sys.argv[1:],
-        ]
-        expected_parent_argv_bytes = b"\0".join(
-            item.encode("utf-8") for item in expected_parent_argv)
-        trusted_directories = (Path("/"), Path("/usr"), Path("/usr/sbin"))
-        if (observed_parent != os.getpid() or executable != str(_ROOT_RUNUSER)
-                or parent_uids != (0, 0, 0, 0)
-                or not stat.S_ISREG(runuser_stat.st_mode)
-                or runuser_stat.st_uid != 0
-                or runuser_stat.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
-                or not runuser_stat.st_mode & 0o111
-                or any(not stat.S_ISDIR(directory.lstat().st_mode)
-                       or directory.lstat().st_uid != 0
-                       or directory.lstat().st_mode & (stat.S_IWGRP | stat.S_IWOTH)
-                       for directory in trusted_directories)
-                or (observed_exe.st_dev, observed_exe.st_ino, observed_exe.st_uid)
-                    != (runuser_stat.st_dev, runuser_stat.st_ino, 0)
-                or parent_argv_bytes != expected_parent_argv_bytes):
+        if parent_pid <= 1:
+            raise ValueError
+        parent_parent_pid, parent_start, parent_comm, parent_uids = _proc_identity(parent_pid)
+        if (parent_pid != os.getppid() or parent_parent_pid <= 1
+                or parent_parent_pid == os.getpid() or parent_start <= 0
+                or parent_comm != "runuser" or parent_uids != (0, 0, 0, 0)):
             raise ValueError
 
         home = Path(args.home)
@@ -1228,6 +1233,19 @@ def _verify_helper_transition_origin(args: argparse.Namespace) -> Path:
         target_stat = target.lstat()
         if (not stat.S_ISDIR(target_stat.st_mode) or stat.S_ISLNK(target_stat.st_mode)
                 or target_stat.st_uid != uid):
+            raise ValueError
+        # Recheck the inherited pipe and complete parent tuple after target
+        # custody checks; unreadable or changed lineage remains fail-closed.
+        pipe_after = os.fstat(0)
+        pipe_link_after = os.readlink("/proc/self/fd/0")
+        parent_identity_after = _proc_identity(parent_pid)
+        if (os.getppid() != parent_pid
+                or parent_identity_after != (parent_parent_pid, parent_start,
+                                             parent_comm, parent_uids)
+                or pipe_after.st_ino != pipe.st_ino or pipe_after.st_dev != pipe.st_dev
+                or pipe_after.st_uid != 0 or not stat.S_ISFIFO(pipe_after.st_mode)
+                or fcntl.fcntl(0, fcntl.F_GETFL) & os.O_ACCMODE != os.O_RDONLY
+                or pipe_link_after != f"pipe:[{pipe_after.st_ino}]" ):
             raise ValueError
         return target
     except (AttributeError, OSError, KeyError, TypeError, ValueError, ManualJarvisSkillsError):
@@ -1490,6 +1508,7 @@ def main(argv: list[str] | None = None) -> int:
                     or new_helper != Path(__file__).read_bytes()):
                 raise ManualJarvisSkillsError(
                     "archives are not the exact reviewed helper-only transition")
+            _verify_helper_transition_origin(args)
             _verify_owned_generation(target, old_files, args.previous_sha256)
             result = install_same_materialization_transition(
                 next_archive, previous_archive, hermes_home=args.home,
@@ -1512,6 +1531,7 @@ def main(argv: list[str] | None = None) -> int:
             restore_archive = incoming[16 + current_size:]
             current_manifest, current_files, _current_helper = _read_transition_archive(
                 current_archive, args.current_sha256)
+            _verify_helper_transition_origin(args)
             _verify_owned_generation(target, current_files, args.current_sha256)
             result = restore_same_materialization_generation(
                 current_archive, restore_archive, hermes_home=args.home,
