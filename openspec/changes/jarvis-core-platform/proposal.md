@@ -1,5 +1,9 @@
 # Proposal
 
+## M1 helper-only generation transition
+
+R0045/R0055/R0153/R0172 and BD-T266.1/RB-T266.4/VD-T266.5 need a finite same-materialization transition for a reviewed installer-helper change. The helper's bytes/hash change archive identity even when every compiled/materialized file is identical; the current post-overlay owned generation is not the old f734 legacy generation. Root must prove exact current record→retained CAS→complete installed generation and exact new equality excluding only fixed helper metadata, then recover Source/Resources/discovery/primary/current Obsidian binding as one owned cohort. This is not arbitrary old-artifact migration, semantic-source acceptance or new permission. Preserve owner edits, immutable backups/CAS, auth and vault data; initial primary adoption and genuine effects remain separate. Unified roadmap validation has passed on Pi30; this narrow refinement still needs separate Pi qualification.
+
 ## One full-backlog roadmap and active delivery
 
 The direct request consolidates every original/current obligation, all later household/UI/voice/Android/HA/calling/visual/tool requests and all research into [the one current roadmap](../../../docs/ROADMAP.md), linked by CURRENT-PLAN. Preserve219 requirements,62 original components/aliases,18 OPEN AC and eight OPEN groups; correct stale mapping/topology wording instead of deleting work. Prioritize genuine chat/Resources repair, usable household command centre, then actual Jarvis/Expert/Team/Obsidian work and complete finite capability ports. Named account/device/budget gates do not stall independent MVP engineering. GPT-6.1 Sol owns refinements, GPT-6 Luna implements bounded validated handoffs; Root validates/qualifies on Pi and resumes unblocked implementation, never stops at planning or claims stable completion from it. The roadmap supersedes historical handoff priority ordering while retaining all detailed current contracts and evidence.
