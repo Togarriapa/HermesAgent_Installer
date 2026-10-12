@@ -243,6 +243,7 @@ def test_team_completion_excerpt_survives_child_lease_expiry_only_until_owner_bo
         "_team_completion_evidence",
         "_team_messages", "_team_bindings", "_team_completion_counts",
         "_master_selections", "_selected_source_deliveries", "_master_source_deliveries",
+        "_obsidian_draft_read_deliveries", "_obsidian_draft_review_proposals",
     ):
         setattr(registry, name, {})
     registry._obsidian_scoped_calls = set()
