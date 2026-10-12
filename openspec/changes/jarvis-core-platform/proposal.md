@@ -1,5 +1,13 @@
 # Proposal
 
+## One full-backlog roadmap and active delivery
+
+The direct request consolidates every original/current obligation, all later household/UI/voice/Android/HA/calling/visual/tool requests and all research into [the one current roadmap](../../../docs/ROADMAP.md), linked by CURRENT-PLAN. Preserve219 requirements,62 original components/aliases,18 OPEN AC and eight OPEN groups; correct stale mapping/topology wording instead of deleting work. Prioritize genuine chat/Resources repair, usable household command centre, then actual Jarvis/Expert/Team/Obsidian work and complete finite capability ports. Named account/device/budget gates do not stall independent MVP engineering. GPT-6.1 Sol owns refinements, GPT-6 Luna implements bounded validated handoffs; Root validates/qualifies on Pi and resumes unblocked implementation, never stops at planning or claims stable completion from it. The roadmap supersedes historical handoff priority ordering while retaining all detailed current contracts and evidence.
+
+## Household, Android, HA voice and communications roadmap
+
+The four 2026-10-12 research reports refine existing R0140/R0200..R0205 and R0101/R0158 within HI-T266.2/RT-T266.3/VD-T266.5. Preserve live MVP chat and genuine Resources repair as first priority. Sequence server-derived household identity/shared-device presentation, foreground Android companion voice, separately qualified native assistant support, then optional HA Assist interoperability and enrolled private messaging/voice notes before any eligible live calling. Research is not account/device qualification, enrollment, OS flashing, spending or HA mutation authority. Already valid Access users keep access without forced directory enrollment, and namespace migration preserves their data. No obsolete amendment forest/new task IDs/canonical acceptance; all219/62/18/eight groups remain OPEN.
+
 ## Actual Team-instance Ecosystem lineage (R0203)
 
 Complete the existing HI-T266.2/RT-T266.3/RB-T266.4 ecosystem read projection by retaining authentic native admitted Team-instance membership and verified sender-completion→recipient-request/result relations joined to existing execution keys. Static Bundle membership remains a declaration, not evidence of working instances or communication. Reuse bounded root activity custody and owner read transport, exclude content and execution authority, and keep stale/unknown/partial states honest. VD-T266.5 Pi qualification and affected-flow UI/UX review remain required; all219 requirements/62 aliases/18 AC/eight groups stay OPEN.
