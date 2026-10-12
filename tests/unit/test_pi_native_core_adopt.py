@@ -97,6 +97,90 @@ def test_switch_changes_only_two_import_roots_and_gateway_digest(monkeypatch):
     assert after["selected_data_root"] == "/home/admin/.hermes"
 
 
+def test_core_config_resume_refresh_is_journal_bound_and_commit_before_write(monkeypatch):
+    candidate = "d" * 40
+    source = Path(f"/opt/hermes-installer-core-{candidate[:9]}/src")
+    switched = json.dumps({"gateway_unit_sha256": "1" * 64, "core_unit_sha256": "2" * 64,
+                           "core_launcher_sha256": "3" * 64,
+                           "credential_ref": "keyring:codex-primary",
+                           "selected_data_root": "/home/admin/.hermes"},
+                          sort_keys=True, separators=(",", ":")).encode() + b"\n"
+    core_unit, launcher = b"current owned unit", b"current owned launcher"
+    unit_sha, launcher_sha = hashlib.sha256(core_unit).hexdigest(), hashlib.sha256(launcher).hexdigest()
+    backup = {"state": "recovery-required", "candidate_sha": candidate,
+              "new_config_sha256": hashlib.sha256(switched).hexdigest(),
+              "post_core_config_sha256": None}
+    files = {adopt.GATEWAY_CONFIG: switched}
+    info = SimpleNamespace(st_mode=stat.S_IFREG | 0o440, st_gid=981)
+    root_info = SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_gid=0)
+    writes = []
+
+    class Core:
+        UNIT = Path("/fixture/core.service")
+        LAUNCHER = Path("/fixture/core-launcher")
+
+        @staticmethod
+        def _journal():
+            return {"state": "installed", "adapter_migration_state": "active",
+                    "adapter_source": str(source), "adapter_generation": "a" * 64,
+                    "unit_sha256": unit_sha, "launcher_sha256": launcher_sha}
+
+        @staticmethod
+        def _owned_listener():
+            return True
+
+    monkeypatch.setattr(adopt, "INGRESS_BACKUP", Path("/fixture/backup.json"))
+    monkeypatch.setattr(adopt, "_backup_value",
+                        lambda sha: (backup, b"gateway", b"inspector", switched)
+                        if sha == candidate else pytest.fail("candidate mismatch"))
+
+    def read_fixed(path, **_kwargs):
+        if path == adopt.GATEWAY_CONFIG:
+            return files[path], info
+        if path == Core.UNIT:
+            return core_unit, SimpleNamespace(st_mode=stat.S_IFREG | 0o644, st_gid=0)
+        if path == Core.LAUNCHER:
+            return launcher, SimpleNamespace(st_mode=stat.S_IFREG | 0o755, st_gid=0)
+        if path == adopt.INGRESS_BACKUP:
+            return b"protected backup", root_info
+        raise AssertionError("unexpected fixed file")
+
+    monkeypatch.setattr(adopt, "_read_fixed", read_fixed)
+
+    def atomic_fixed(path, raw, **_kwargs):
+        writes.append(path)
+        if path == adopt.GATEWAY_CONFIG:
+            files[path] = raw
+
+    monkeypatch.setattr(adopt, "_atomic_fixed", atomic_fixed)
+    first = adopt._refresh_migrated_core_config(candidate, source, Core)
+    assert json.loads(first) == {**json.loads(switched), "core_unit_sha256": unit_sha,
+                                 "core_launcher_sha256": launcher_sha}
+    assert writes == [adopt.INGRESS_BACKUP, adopt.GATEWAY_CONFIG]
+    assert backup["post_core_config_sha256"] == hashlib.sha256(first).hexdigest()
+    assert adopt._refresh_migrated_core_config(candidate, source, Core) == first
+    assert writes == [adopt.INGRESS_BACKUP, adopt.GATEWAY_CONFIG]
+
+
+def test_core_config_resume_cas_rejects_unrecorded_bytes_before_effects(monkeypatch):
+    candidate = "e" * 40
+    source = Path(f"/opt/hermes-installer-core-{candidate[:9]}/src")
+    switched = b'{"gateway_unit_sha256":"1"}\n'
+    backup = {"state": "recovery-required", "new_config_sha256": hashlib.sha256(switched).hexdigest(),
+              "post_core_config_sha256": None}
+    writes = []
+    monkeypatch.setattr(adopt, "_backup_value",
+                        lambda _sha: (backup, b"gateway", b"inspector", switched))
+    monkeypatch.setattr(adopt, "_read_fixed", lambda *_args, **_kwargs:
+                        (b"unrecorded config bytes", SimpleNamespace(st_mode=stat.S_IFREG | 0o440,
+                                                                       st_gid=981)))
+    monkeypatch.setattr(adopt, "_atomic_fixed", lambda *args, **kwargs: writes.append(args))
+
+    with pytest.raises(RuntimeError, match="outside the saved adoption transaction"):
+        adopt._refresh_migrated_core_config(candidate, source, SimpleNamespace())
+    assert writes == []
+
+
 @pytest.mark.parametrize("case", ["duplicate-root", "unowned-root", "unit-root-mismatch",
                                     "config-digest-mismatch"])
 def test_qualification_refusals_happen_before_systemd_effects(monkeypatch, case):
@@ -472,3 +556,71 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
         if failure in {"migration", "migration-unclassified"}:
             expected_reason = "native_bridge_unavailable" if failure == "migration" else "unclassified"
             assert "Core migration reason code: " + expected_reason in output
+
+
+@pytest.mark.parametrize("fail_observer", [False, True])
+def test_resume_requires_exact_saved_candidate_and_keeps_ingress_closed_until_observer(
+        monkeypatch, tmp_path, fail_observer):
+    candidate = "f" * 40
+    source = Path(f"/opt/hermes-installer-core-{candidate[:9]}/src")
+    old_gateway, old_inspector = _unit("core_gateway"), _unit("core_gateway_inspector")
+    new_gateway = old_gateway.replace(OLD_SOURCE, str(source).encode("ascii"), 1)
+    new_inspector = old_inspector.replace(OLD_SOURCE, str(source).encode("ascii"), 1)
+    old_config = b"old config bytes\n"
+    current_config = b"post-core config bytes\n"
+    value = {"state": "recovery-required", "candidate_sha": candidate,
+             "new_gateway_sha256": hashlib.sha256(new_gateway).hexdigest(),
+             "new_inspector_sha256": hashlib.sha256(new_inspector).hexdigest(),
+             "new_config_sha256": hashlib.sha256(b"pre-core config bytes\n").hexdigest(),
+             "post_core_config_sha256": hashlib.sha256(current_config).hexdigest()}
+    files = {adopt.FIXED_UNITS[adopt.GATEWAY]: new_gateway,
+             adopt.FIXED_UNITS[adopt.INSPECTOR]: new_inspector,
+             adopt.GATEWAY_CONFIG: current_config}
+    states = {adopt.INSPECTOR: "active", adopt.GATEWAY: "inactive", adopt.TUNNEL: "inactive"}
+    events = []
+    info = SimpleNamespace(st_mode=stat.S_IFREG | 0o440, st_gid=981)
+    monkeypatch.setattr(adopt, "_backup_value",
+                        lambda sha: (value, old_gateway, old_inspector, b"pre-core config bytes\n")
+                        if sha == candidate else pytest.fail("wrong candidate"))
+    monkeypatch.setattr(adopt, "_unit_is_fixed", lambda _name: True)
+    monkeypatch.setattr(adopt, "_unit_state", lambda name: states[name])
+    monkeypatch.setattr(adopt, "_unit_is_exact_and_active", lambda name: states[name] == "active")
+    monkeypatch.setattr(adopt, "_verify_inspector_process", lambda *_args: events.append("verify-inspector"))
+    monkeypatch.setattr(adopt, "_read_fixed", lambda path, **_kwargs: (files[path], info))
+    monkeypatch.setattr(adopt, "_refresh_migrated_core_config",
+                        lambda *_args: events.append("refresh-config") or current_config)
+    monkeypatch.setattr(adopt, "_verify_gateway_tunnel",
+                        lambda _config, *, require_active: (events.append(
+                            "verify-active" if require_active else "verify-stopped"), True)[1])
+    def wait_observer(**_kwargs):
+        events.append("wait-observer")
+        if fail_observer:
+            raise RuntimeError("socket unavailable")
+        return (1, 2)
+
+    monkeypatch.setattr(adopt, "_wait_observer_socket", wait_observer)
+    monkeypatch.setattr(adopt, "_set_backup_state", lambda state: events.append(("backup-state", state)))
+
+    def run(*args, **_kwargs):
+        if args[1] in {"start", "restart", "stop"}:
+            events.append((args[1], args[2]))
+            states[args[2]] = "inactive" if args[1] == "stop" else "active"
+        return ""
+
+    monkeypatch.setattr(adopt, "_run", run)
+    config_type = SimpleNamespace(load=lambda **_kwargs: object())
+    core = SimpleNamespace()
+    if fail_observer:
+        with pytest.raises(RuntimeError, match="socket unavailable"):
+            adopt._resume_adoption(candidate, source, core, config_type, tmp_path / "observer.sock")
+        assert states[adopt.GATEWAY] == states[adopt.TUNNEL] == "inactive"
+        assert ("backup-state", "recovery-required") in events
+        assert not any(event in {("start", adopt.GATEWAY), ("start", adopt.TUNNEL)}
+                       for event in events)
+    else:
+        adopt._resume_adoption(candidate, source, core, config_type, tmp_path / "observer.sock")
+        assert events.index("refresh-config") < events.index(("restart", adopt.INSPECTOR))
+        assert events.index(("restart", adopt.INSPECTOR)) < events.index("wait-observer")
+        assert events.index("wait-observer") < events.index(("start", adopt.GATEWAY))
+        assert events.index(("start", adopt.GATEWAY)) < events.index(("start", adopt.TUNNEL))
+        assert ("backup-state", "migrated") in events

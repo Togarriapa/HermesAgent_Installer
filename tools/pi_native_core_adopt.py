@@ -51,6 +51,24 @@ _CORE_MIGRATION_REASON_CODES = {
     "prior owned core did not recover after migration rollback": "prior_core_recovery_failed",
     "adapter migration failed; protected backup retained for fixed recovery": "migration_failed_backup_retained",
     "adapter migration failed; original core service files and journal were restored": "migration_failed_prior_files_restored",
+    "no exact active adapter migration is eligible for recovery": "recovery_state_not_eligible",
+    "current migrated core identity is not verified; ingress remains stopped": "recovery_core_identity_unverified",
+    "current adapter generation or selected plugin changed": "recovery_adapter_selection_changed",
+    "current migration custody could not be reverified": "recovery_custody_unverified",
+    "adapter migration backup custody differs": "recovery_backup_custody_invalid",
+    "adapter migration backup has unexpected entries": "recovery_backup_entries_invalid",
+    "adapter migration backup manifest invalid": "recovery_backup_manifest_invalid",
+    "active journal does not bind the exact migration backup": "recovery_backup_not_journal_bound",
+    "prior owned core backup is not the exact reviewed legacy cohort": "recovery_legacy_backup_unverified",
+    "prior core journal backup is invalid": "recovery_prior_journal_invalid",
+    "prior core journal does not bind the legacy cohort": "recovery_prior_journal_mismatch",
+    "prior plugin selection backup bytes changed": "recovery_plugin_backup_changed",
+    "migrated core changed during recovery preflight": "recovery_core_changed_during_preflight",
+    "owned adapter core did not stop cleanly; recovery halted": "recovery_core_stop_failed",
+    "restored prior service unit is not the exact owned unit": "recovery_prior_unit_unverified",
+    "restored legacy core cohort differs from its retained backup": "recovery_legacy_cohort_mismatch",
+    "prior Hermes plugin selection is not current after recovery": "recovery_prior_plugin_selection_unverified",
+    "bounded migration recovery failed; protected backup retained and ingress remains stopped": "recovery_failed_backup_retained",
 }
 
 
@@ -293,6 +311,7 @@ def _save_ingress_backup(candidate_sha: str, saved, config_raw: bytes,
         "new_gateway_sha256": hashlib.sha256(new_units[FIXED_UNITS[GATEWAY]]).hexdigest(),
         "new_inspector_sha256": hashlib.sha256(new_units[FIXED_UNITS[INSPECTOR]]).hexdigest(),
         "new_config_sha256": hashlib.sha256(new_config).hexdigest(),
+        "post_core_config_sha256": None,
         "old_gateway_sha256": hashlib.sha256(saved[FIXED_UNITS[GATEWAY]][0]).hexdigest(),
         "old_inspector_sha256": hashlib.sha256(saved[FIXED_UNITS[INSPECTOR]][0]).hexdigest(),
         "old_config_sha256": hashlib.sha256(config_raw).hexdigest(),
@@ -349,11 +368,17 @@ def _backup_value(candidate_sha: str) -> tuple[dict, bytes, bytes, bytes]:
         keys = {"schema", "state", "candidate_sha", "gateway_unit", "inspector_unit",
                 "gateway_config", "gateway_mode", "gateway_gid", "old_gateway_sha256",
                 "old_inspector_sha256", "old_config_sha256", "new_gateway_sha256",
-                "new_inspector_sha256", "new_config_sha256"}
+                "new_inspector_sha256", "new_config_sha256", "post_core_config_sha256"}
+        legacy_keys = keys - {"post_core_config_sha256"}
+        if type(value) is dict and set(value) == legacy_keys:
+            value["post_core_config_sha256"] = None
         if (type(value) is not dict or set(value) != keys or type(value["schema"]) is not int
                 or value["schema"] != 1 or value["candidate_sha"] != candidate_sha
                 or value["state"] not in {"prepared", "units-switched", "migrated", "recovery-required"}
-                or value["gateway_mode"] != 0o440 or value["gateway_gid"] != 981):
+                or value["gateway_mode"] != 0o440 or value["gateway_gid"] != 981
+                or (value["post_core_config_sha256"] is not None
+                    and (not isinstance(value["post_core_config_sha256"], str)
+                         or re.fullmatch(r"[0-9a-f]{64}", value["post_core_config_sha256"]) is None))):
             raise ValueError
         decoded = tuple(base64.b64decode(value[key], validate=True) for key in
                         ("gateway_unit", "inspector_unit", "gateway_config"))
@@ -367,6 +392,64 @@ def _backup_value(candidate_sha: str) -> tuple[dict, bytes, bytes, bytes]:
         return value, *decoded
     except Exception:
         raise RuntimeError("fixed ingress rollback record is malformed") from None
+
+
+def _refresh_migrated_core_config(candidate_sha: str, expected_source: Path,
+                                  core_runtime) -> bytes:
+    """CAS-update only Core digests from the exact active migration journal."""
+    value, _gateway, _inspector, switched_config = _backup_value(candidate_sha)
+    if value["state"] not in {"migrated", "recovery-required"}:
+        raise RuntimeError("adoption backup is not in a resumable Core-migrated state")
+    current_raw, config_info = _read_fixed(GATEWAY_CONFIG, uid=0, gid=981,
+                                            mode=0o440, maximum=16 * 1024)
+    current_sha = hashlib.sha256(current_raw).hexdigest()
+    if current_sha not in {value["new_config_sha256"], value["post_core_config_sha256"]}:
+        raise RuntimeError("Gateway config is outside the saved adoption transaction")
+
+    record = core_runtime._journal()
+    if (type(record) is not dict or record.get("state") not in {"installed", "active"}
+            or record.get("adapter_migration_state") != "active"
+            or record.get("adapter_source") != str(expected_source)
+            or not isinstance(record.get("adapter_generation"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", record["adapter_generation"]) is None
+            or not core_runtime._owned_listener()):
+        raise RuntimeError("current journal does not prove the active candidate Core")
+    unit_raw, _ = _read_fixed(core_runtime.UNIT, uid=0, gid=0, mode=0o644, maximum=64 * 1024)
+    launcher_raw, _ = _read_fixed(core_runtime.LAUNCHER, uid=0, gid=0, mode=0o755,
+                                    maximum=64 * 1024)
+    unit_sha, launcher_sha = hashlib.sha256(unit_raw).hexdigest(), hashlib.sha256(launcher_raw).hexdigest()
+    if record.get("unit_sha256") != unit_sha or record.get("launcher_sha256") != launcher_sha:
+        raise RuntimeError("fixed Core files differ from their current journal digests")
+
+    if current_sha == value["post_core_config_sha256"]:
+        existing = json.loads(current_raw, object_pairs_hook=_unique_pairs)
+        if (type(existing) is not dict or existing.get("core_unit_sha256") != unit_sha
+                or existing.get("core_launcher_sha256") != launcher_sha):
+            raise RuntimeError("recorded post-Core config does not bind current journal digests")
+        return current_raw
+    if current_raw != switched_config:
+        raise RuntimeError("pre-Core Gateway config bytes differ from the saved transaction")
+    updated = json.loads(current_raw, object_pairs_hook=_unique_pairs)
+    if type(updated) is not dict:
+        raise RuntimeError("fixed Gateway config is malformed")
+    updated["core_unit_sha256"] = unit_sha
+    updated["core_launcher_sha256"] = launcher_sha
+    replacement = (json.dumps(updated, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    if len(replacement) > 16 * 1024:
+        raise RuntimeError("fixed Gateway config exceeded its bound")
+    replacement_sha = hashlib.sha256(replacement).hexdigest()
+    if value["post_core_config_sha256"] is not None:
+        if replacement_sha != value["post_core_config_sha256"]:
+            raise RuntimeError("recorded post-Core config digest differs from current journal")
+    else:
+        value["post_core_config_sha256"] = replacement_sha
+        _raw, backup_info = _read_fixed(INGRESS_BACKUP, uid=0, gid=0, mode=0o600,
+                                         maximum=128 * 1024)
+        backup_bytes = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
+        _atomic_fixed(INGRESS_BACKUP, backup_bytes, uid=0, gid=0, mode=stat.S_IMODE(backup_info.st_mode))
+    _atomic_fixed(GATEWAY_CONFIG, replacement, uid=0, gid=config_info.st_gid,
+                  mode=stat.S_IMODE(config_info.st_mode))
+    return replacement
 
 
 def _replace_ingress_units(new_units, new_config: bytes, config_info: os.stat_result) -> None:
@@ -405,7 +488,8 @@ def _restore_old_ingress(value: dict, old_gateway: bytes, old_inspector: bytes,
                 or sha256(current_inspector).hexdigest() not in
                 {value["new_inspector_sha256"], sha256(old_inspector).hexdigest()}
                 or sha256(current_config).hexdigest() not in
-                {value["new_config_sha256"], sha256(old_config).hexdigest()}):
+                {value["new_config_sha256"], value.get("post_core_config_sha256"),
+                 sha256(old_config).hexdigest()}):
             raise RuntimeError("fixed ingress files changed outside this transaction")
         _atomic_fixed(FIXED_UNITS[INSPECTOR], old_inspector, uid=0, gid=0, mode=0o644)
         _atomic_fixed(FIXED_UNITS[GATEWAY], old_gateway, uid=0, gid=0, mode=0o644)
@@ -598,6 +682,90 @@ def _wait_observer_socket(*, previous_inode: tuple[int, int] | None = None) -> t
     raise RuntimeError("fixed native-observer socket custody did not become ready")
 
 
+def _resume_adoption(candidate_sha: str, expected_source: Path, core_runtime,
+                     CoreGatewayConfig, observer_socket: Path) -> None:
+    """Resume only the saved candidate transaction with its current active Core."""
+    value, _old_gateway, _old_inspector, _old_config = _backup_value(candidate_sha)
+    if value["state"] != "recovery-required":
+        raise RuntimeError("resume requires the matching recovery-required transaction")
+    if any(not _unit_is_fixed(name) for name in (INSPECTOR, GATEWAY, TUNNEL)):
+        raise RuntimeError("fixed ingress unit ownership changed before resume")
+    if _unit_state(GATEWAY) != "inactive" or _unit_state(TUNNEL) != "inactive":
+        raise RuntimeError("Gateway and tunnel must remain stopped before resume")
+
+    gateway, _ = _read_fixed(FIXED_UNITS[GATEWAY], uid=0, gid=0,
+                              mode=0o644, maximum=64 * 1024)
+    inspector, _ = _read_fixed(FIXED_UNITS[INSPECTOR], uid=0, gid=0,
+                                mode=0o644, maximum=64 * 1024)
+    if (hashlib.sha256(gateway).hexdigest() != value["new_gateway_sha256"]
+            or hashlib.sha256(inspector).hexdigest() != value["new_inspector_sha256"]
+            or _unit_source(gateway, "core_gateway") != str(expected_source).encode("ascii")
+            or _unit_source(inspector, "core_gateway_inspector") != str(expected_source).encode("ascii")
+            or not _unit_is_exact_and_active(INSPECTOR)):
+        raise RuntimeError("fixed Inspector and Gateway do not match the saved candidate")
+    _verify_inspector_process(inspector, str(expected_source).encode("ascii"))
+
+    config_raw, _ = _read_fixed(GATEWAY_CONFIG, uid=0, gid=981,
+                                 mode=0o440, maximum=16 * 1024)
+    config_digest = hashlib.sha256(config_raw).hexdigest()
+    if config_digest not in {value["new_config_sha256"], value["post_core_config_sha256"]}:
+        raise RuntimeError("Gateway config does not match a saved resume state")
+
+    phase = "refresh config from current journal-owned Core"
+    print("Resume phase: " + phase, flush=True)
+    refreshed = _refresh_migrated_core_config(candidate_sha, expected_source, core_runtime)
+    config = CoreGatewayConfig.load(expected_owner_uid=0)
+    _verify_gateway_tunnel(config, require_active=False)
+    if refreshed != _read_fixed(GATEWAY_CONFIG, uid=0, gid=981,
+                                 mode=0o440, maximum=16 * 1024)[0]:
+        raise RuntimeError("refreshed Core config changed before Inspector restart")
+
+    previous_inode = None
+    try:
+        socket_info = observer_socket.lstat()
+        if (not stat.S_ISSOCK(socket_info.st_mode) or socket_info.st_uid != 0
+                or socket_info.st_gid != 1000 or stat.S_IMODE(socket_info.st_mode) != 0o660):
+            raise RuntimeError("preexisting native observer socket custody differs")
+        previous_inode = (socket_info.st_dev, socket_info.st_ino)
+    except FileNotFoundError:
+        pass
+
+    try:
+        phase = "restart Inspector with journal-current Core digests"
+        print("Resume phase: " + phase, flush=True)
+        _run("systemctl", "restart", INSPECTOR)
+        if not _unit_is_exact_and_active(INSPECTOR):
+            raise RuntimeError("candidate Inspector did not recover during resume")
+        _verify_inspector_process(inspector, str(expected_source).encode("ascii"))
+        phase = "verify fresh native observer socket"
+        print("Resume phase: " + phase, flush=True)
+        _wait_observer_socket(previous_inode=previous_inode)
+        phase = "start Gateway and tunnel"
+        print("Resume phase: " + phase, flush=True)
+        _run("systemctl", "start", GATEWAY)
+        _run("systemctl", "start", TUNNEL)
+        phase = "verify resumed ingress cohort"
+        print("Resume phase: " + phase, flush=True)
+        config = CoreGatewayConfig.load(expected_owner_uid=0)
+        _verify_gateway_tunnel(config, require_active=True)
+        _set_backup_state("migrated")
+        print("Saved candidate Core and Jarvis ingress cohort resumed and verified.")
+        print("Protected transaction backup retained for explicit operator recovery.")
+    except Exception:
+        for name in (TUNNEL, GATEWAY):
+            try:
+                _run("systemctl", "stop", name, check=False)
+            except Exception:
+                pass
+        try:
+            _set_backup_state("recovery-required")
+        except Exception:
+            pass
+        print("Resume failed during phase: " + phase + "; Gateway and tunnel remain stopped.",
+              file=sys.stderr)
+        raise
+
+
 def _restore_legacy_core(core_runtime) -> bool:
     # This guarded API checks the protected migration state and is a no-op
     # when no interrupted migration exists. Do not query the native journal
@@ -630,6 +798,8 @@ def main() -> int:
                         help="switch fixed Inspector/Gateway generation and run the journaled Core migration")
     action.add_argument("--rollback", action="store_true",
                         help="restore the exact pre-adoption Core/plugin and Inspector/Gateway cohort")
+    action.add_argument("--resume", action="store_true",
+                        help="resume the exact recovery-required candidate with its current journal-owned Core")
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9a-f]{40}", args.candidate_sha):
         parser.error("--candidate-sha must be a full lowercase 40-character Git commit SHA")
@@ -650,6 +820,13 @@ def main() -> int:
         from hermes_installer.remote.core_gateway import CoreGatewayConfig
         from hermes_installer.remote.core_native_observer import CORE_NATIVE_OBSERVER_SOCKET
 
+        if args.resume:
+            phase = "resume saved candidate adoption transaction"
+            print("Adoption phase: " + phase, flush=True)
+            _resume_adoption(args.candidate_sha, expected_adapter_source, core_runtime,
+                             CoreGatewayConfig, CORE_NATIVE_OBSERVER_SOCKET)
+            return 0
+
         if args.rollback:
             phase = "rollback journal and fixed-file validation"
             print("Adoption phase: " + phase, flush=True)
@@ -666,7 +843,8 @@ def main() -> int:
                               hashlib.sha256(current_config).hexdigest())
             if (current_hashes[0] not in {value["new_gateway_sha256"], value["old_gateway_sha256"]}
                     or current_hashes[1] not in {value["new_inspector_sha256"], value["old_inspector_sha256"]}
-                    or current_hashes[2] not in {value["new_config_sha256"], value["old_config_sha256"]}
+                    or current_hashes[2] not in {value["new_config_sha256"], value["old_config_sha256"],
+                                                 value.get("post_core_config_sha256")}
                     or (current_hashes[0] == value["new_gateway_sha256"]
                         and _unit_source(current_gateway, "core_gateway") != source)
                     or (current_hashes[1] == value["new_inspector_sha256"]
@@ -737,6 +915,12 @@ def main() -> int:
             if not core_runtime._owned_listener():
                 raise RuntimeError("migrated core listener did not verify")
             _set_backup_state("migrated")
+            phase = "bind Gateway config to journal-verified migrated Core"
+            print("Adoption phase: " + phase, flush=True)
+            _refresh_migrated_core_config(args.candidate_sha, expected_adapter_source,
+                                          core_runtime)
+            config = CoreGatewayConfig.load(expected_owner_uid=0)
+            _verify_gateway_tunnel(config, require_active=False)
 
             # Refresh pidfd-bound Inspector custody after the Core PID changes.
             phase = "restart Inspector for migrated Core PID"
@@ -765,13 +949,15 @@ def main() -> int:
         except Exception as error:
             failed_phase = phase
             recovered = False
+            recovery_error = None
             try:
                 print("Recovery phase: stop public tunnel and gateway", flush=True)
                 _run("systemctl", "stop", TUNNEL, check=False)
                 _run("systemctl", "stop", GATEWAY, check=False)
                 print("Recovery phase: restore legacy Core through journal", flush=True)
                 recovered = _restore_legacy_core(core_runtime)
-            except Exception:
+            except Exception as failure:
+                recovery_error = failure
                 recovered = False
             restored = (_restore_old_ingress(_backup_value(args.candidate_sha)[0],
                                               old_gateway, old_inspector, old_config)
@@ -784,6 +970,9 @@ def main() -> int:
             print("Prior Core verified: " + ("yes" if recovered else "no"))
             print("Prior Inspector/Gateway/tunnel cohort restored: " + ("yes" if restored else "no; ingress remains stopped"))
             print("Failed phase: " + failed_phase)
+            if recovery_error is not None:
+                print("Core recovery reason code: "
+                      + (_core_migration_reason_code(core_runtime, recovery_error) or "unclassified"))
             if failed_phase == "migrate owned Core and verify listener":
                 reason_code = _core_migration_reason_code(core_runtime, error)
                 print("Core migration reason code: " + (reason_code or "unclassified"))
