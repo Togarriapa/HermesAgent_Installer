@@ -1376,6 +1376,32 @@ def test_completed_ingress_history_is_immutable_and_digest_addressed(tmp_path, m
     assert first_identity[1] == inode
 
 
+@pytest.mark.parametrize("replaced", ["parent", "history"])
+def test_completed_ingress_history_reader_rejects_replaced_directory_before_archive_read(
+        tmp_path, monkeypatch, replaced):
+    real_parent = tmp_path / "core-runtime"
+    real_parent.mkdir(mode=0o700)
+    real_parent.chmod(0o700)
+    adopt.os.chown(real_parent, 0, 0)
+    real_history = real_parent / "native-adoption-ingress-history"
+    real_history.mkdir(mode=0o700)
+    real_history.chmod(0o700)
+    adopt.os.chown(real_history, 0, 0)
+    if replaced == "parent":
+        alias_parent = tmp_path / "replaced-parent"
+        alias_parent.symlink_to(real_parent, target_is_directory=True)
+        history = alias_parent / real_history.name
+    else:
+        history = real_parent / "replaced-history"
+        history.symlink_to(real_history, target_is_directory=True)
+    monkeypatch.setattr(adopt, "INGRESS_HISTORY", history)
+    monkeypatch.setattr(adopt, "_read_fixed", lambda *_args, **_kwargs:
+                        pytest.fail("archive bytes must not be read from replaced history custody"))
+
+    with pytest.raises(RuntimeError, match="fixed ingress history"):
+        adopt._verify_archived_completed_ingress({"prior_completed_ingress_sha256": "a" * 64})
+
+
 def test_nonterminal_predecessor_is_refused_before_history_or_core_reads(tmp_path, monkeypatch):
     runtime = tmp_path / "core-runtime"
     runtime.mkdir(mode=0o700)

@@ -1618,6 +1618,16 @@ def _verify_archived_completed_ingress(value: dict) -> None:
         return
     if type(digest) is not str or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
         raise RuntimeError("successor ingress predecessor reference is malformed")
+    for path, label in ((INGRESS_HISTORY.parent, "parent"), (INGRESS_HISTORY, "directory")):
+        try:
+            directory_info = path.lstat()
+        except OSError:
+            raise RuntimeError(f"fixed ingress history {label} custody differs") from None
+        if (not stat.S_ISDIR(directory_info.st_mode) or directory_info.st_uid != 0
+                or directory_info.st_gid != 0
+                or stat.S_IMODE(directory_info.st_mode) != 0o700
+                or (path == INGRESS_HISTORY and directory_info.st_nlink < 2)):
+            raise RuntimeError(f"fixed ingress history {label} custody differs")
     archived, _info = _read_fixed(INGRESS_HISTORY / (digest + ".json"), uid=0,
                                   gid=0, mode=0o600, maximum=128 * 1024)
     if hashlib.sha256(archived).hexdigest() != digest:
