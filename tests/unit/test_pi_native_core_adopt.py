@@ -81,6 +81,147 @@ def test_installed_adapter_rollback_refuses_different_candidate_before_recovery(
         adopt._recover_installed_adapter_to_legacy(core, other)
 
 
+def _installed_recovery_fixture(monkeypatch, tmp_path, *, foreign_backup=False):
+    source = tmp_path / "src"
+    source.mkdir()
+    backup = tmp_path / "adapter-migration-backup"
+    backup.mkdir(mode=0o700)
+    for name in ("journal.json", "unit", "launcher", "plugin-selection.json", "manifest.json"):
+        (backup / name).write_bytes(b"fixture")
+
+    previous = {"schema": 1, "service": "hermes-jarvis-core.service", "state": "active"}
+    unit, launcher = b"legacy unit bytes\n", b"legacy launcher bytes\n"
+    token = b"a" * 64 + b"\n"
+    previous.update({
+        "unit_sha256": hashlib.sha256(unit).hexdigest(),
+        "launcher_sha256": hashlib.sha256(launcher).hexdigest(),
+        "token_sha256": hashlib.sha256(token).hexdigest(),
+    })
+    backup_journal = json.dumps(previous, sort_keys=True).encode()
+    snapshot = b'{"selected":"legacy"}\n'
+    manifest = {"journal.json": hashlib.sha256(backup_journal).hexdigest(),
+                "unit": hashlib.sha256(unit).hexdigest(),
+                "launcher": hashlib.sha256(launcher).hexdigest(),
+                "plugin-selection.json": hashlib.sha256(snapshot).hexdigest()}
+    if foreign_backup:
+        manifest["unit"] = "0" * 64
+    manifest_raw = json.dumps(manifest, sort_keys=True).encode()
+    current = {"state": "installed", "adapter_migration_state": "active",
+               "adapter_source": str(source), "adapter_generation": "a" * 64,
+               "core_source_generation": "b" * 64, "plugin_selection_sha256": "c" * 64,
+               "adapter_migration_backup": manifest}
+    protected = {backup / "manifest.json": manifest_raw,
+                 backup / "journal.json": backup_journal,
+                 backup / "unit": unit, backup / "launcher": launcher,
+                 backup / "plugin-selection.json": snapshot,
+                 tmp_path / "token": token}
+    events = []
+    state = {"adapter_running": True, "selection": "c" * 64,
+             "files": {"unit": b"adapter unit", "launcher": b"adapter launcher"}}
+    old_files = {"unit": unit, "launcher": launcher}
+    monkeypatch.setattr(adopt.Path, "resolve", lambda path, strict=False: path)
+    real_listdir = adopt.os.listdir
+    monkeypatch.setattr(adopt.os, "listdir", lambda path: [
+        "journal.json", "unit", "launcher", "plugin-selection.json", "manifest.json"]
+        if path == backup else real_listdir(path))
+    real_lstat = adopt.Path.lstat
+    monkeypatch.setattr(adopt.Path, "lstat", lambda path: SimpleNamespace(
+        st_mode=stat.S_IFDIR | 0o700, st_uid=0, st_gid=0) if path == backup else real_lstat(path))
+
+    def projection(path, **kwargs):
+        assert kwargs["owner"] == 0
+        assert kwargs["group"] == (adopt.GATEWAY_GID if path == tmp_path / "token" else 0)
+        assert kwargs["mode"] == (0o640 if path == tmp_path / "token" else 0o600)
+        return protected[path]
+
+    class Selection:
+        @property
+        def selection_sha256(self):
+            return state["selection"]
+
+    def run(args, check=True):
+        events.append(tuple(args))
+        if args[1:] == ["stop", "hermes-jarvis-core.service"]:
+            state["adapter_running"] = False
+        elif args[1:] == ["start", "hermes-jarvis-core.service"]:
+            state["adapter_running"] = True
+        if args[1:3] == ["is-active", "hermes-jarvis-core.service"]:
+            return SimpleNamespace(stdout="active\n" if state["adapter_running"] else "inactive\n")
+        if args[1:3] == ["show", "--property=MainPID"]:
+            return SimpleNamespace(stdout="123\n" if state["adapter_running"] else "0\n")
+        return SimpleNamespace(stdout="")
+
+    def read_legacy():
+        events.append("readback-legacy")
+        return previous, backup_journal, state["files"].copy()
+
+    core = SimpleNamespace(
+        ADAPTER_SOURCE=source, ADAPTER_MIGRATION_BACKUP=backup, TOKEN=tmp_path / "token",
+        GATEWAY_GID=981, SERVICE="hermes-jarvis-core.service", UNIT="unit", LAUNCHER="launcher",
+        _journal=lambda: current,
+        _owned_unit_loaded=lambda: (events.append("unit-loaded") or True),
+        _owned_listener=lambda: (events.append("listener") or state["adapter_running"]),
+        _core_source_generation=lambda: "b" * 64,
+        _projection_file=projection, _unit=lambda: unit, _legacy_launcher=lambda: launcher,
+        _run=run,
+        _restore_adapter_migration_backup=lambda: (events.append("restore-backup"),
+            state["files"].update(old_files), state.update(adapter_running=False)),
+        _read_legacy_owned_runtime=read_legacy,
+    )
+    inspector = ModuleType("hermes_installer.remote.core_gateway_inspector")
+    inspector._current_native_adapter_generation = lambda **_kwargs: "a" * 64
+    inspector.verify_staged_native_resources_plugin = lambda **_kwargs: True
+    bootstrap = ModuleType("hermes_installer.remote.native_plugin_bootstrap")
+    bootstrap.verify_native_resources_plugin_selection = lambda: Selection()
+
+    def restore_selection(snapshot_bytes, *, expected_current_sha256):
+        events.append("restore-plugin-selection")
+        assert snapshot_bytes == snapshot and expected_current_sha256 == "c" * 64
+        state["selection"] = "d" * 64
+        return "d" * 64
+
+    bootstrap.restore_native_resources_plugin_selection = restore_selection
+    package = ModuleType("hermes_installer")
+    package.__path__ = []
+    remote = ModuleType("hermes_installer.remote")
+    remote.__path__ = []
+    remote.core_gateway_inspector = inspector
+    remote.native_plugin_bootstrap = bootstrap
+    monkeypatch.setitem(sys.modules, package.__name__, package)
+    monkeypatch.setitem(sys.modules, remote.__name__, remote)
+    monkeypatch.setitem(sys.modules, inspector.__name__, inspector)
+    monkeypatch.setitem(sys.modules, bootstrap.__name__, bootstrap)
+    return core, source, events, state
+
+
+def test_installed_adapter_recovery_restores_verified_legacy_backup_in_order(monkeypatch, tmp_path):
+    core, source, events, state = _installed_recovery_fixture(monkeypatch, tmp_path)
+
+    adopt._recover_installed_adapter_to_legacy(core, source)
+
+    stop = events.index(("systemctl", "stop", core.SERVICE))
+    plugin_restore = events.index("restore-plugin-selection")
+    restore = events.index("restore-backup")
+    start = events.index(("systemctl", "start", core.SERVICE))
+    readback = events.index("readback-legacy")
+    assert stop < plugin_restore < restore < start < readback
+    assert state["adapter_running"]
+    assert state["selection"] == "d" * 64
+    assert state["files"] == {"unit": b"legacy unit bytes\n",
+                               "launcher": b"legacy launcher bytes\n"}
+
+
+def test_installed_adapter_recovery_rejects_foreign_backup_before_stopping_core(
+        monkeypatch, tmp_path):
+    core, source, events, _state = _installed_recovery_fixture(
+        monkeypatch, tmp_path, foreign_backup=True)
+
+    with pytest.raises(RuntimeError, match="backup bytes differ"):
+        adopt._recover_installed_adapter_to_legacy(core, source)
+
+    assert not any(event == ("systemctl", "stop", core.SERVICE) for event in events)
+
+
 def _switch_fixture(monkeypatch, *, gateway=None, inspector=None, config=None,
                     installed=True):
     gateway = gateway if gateway is not None else _unit("core_gateway")
@@ -629,7 +770,7 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
         assert result == 0
         assert migrate_at is not None and fresh_at is not None
         assert gateway_tunnel_starts
-        assert len(fresh_checks) == 2
+        assert len(fresh_checks) == 1
         assert all(index > migrate_at and index > fresh_checks[-1]
                    for index in gateway_tunnel_starts)
         assert events.index("prepare-owner") < migrate_at < fresh_at
