@@ -599,13 +599,13 @@ def _wait_observer_socket(*, previous_inode: tuple[int, int] | None = None) -> t
 
 
 def _restore_legacy_core(core_runtime) -> bool:
-    if core_runtime._owned_listener(legacy_launcher=True):
-        return True
     record = core_runtime._journal()
     if record.get("adapter_migration_state") == "preparing":
         core_runtime._recover_interrupted_adapter_migration()
         if core_runtime._owned_listener(legacy_launcher=True):
             return True
+    if core_runtime._owned_listener(legacy_launcher=True):
+        return True
     if core_runtime._owned_listener():
         core_runtime.recover_owned_core_from_adapter_migration()
         return core_runtime._owned_listener(legacy_launcher=True)

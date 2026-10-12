@@ -30,6 +30,21 @@ def _unit(module, source=OLD_SOURCE):
             + module.encode("ascii") + b"\n")
 
 
+def test_recovery_resolves_preparing_journal_before_accepting_legacy_listener():
+    events = []
+    core = SimpleNamespace(
+        _journal=lambda: (events.append("read-journal") or {
+            "adapter_migration_state": "preparing",
+        }),
+        _recover_interrupted_adapter_migration=lambda: events.append("recover-preparing"),
+        _owned_listener=lambda **kwargs: (events.append("legacy-listener-check")
+                                          or kwargs.get("legacy_launcher", False)),
+    )
+
+    assert adopt._restore_legacy_core(core)
+    assert events == ["read-journal", "recover-preparing", "legacy-listener-check"]
+
+
 def _switch_fixture(monkeypatch, *, gateway=None, inspector=None, config=None,
                     installed=True):
     gateway = gateway if gateway is not None else _unit("core_gateway")
