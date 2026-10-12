@@ -39,6 +39,16 @@ NATIVE_OBSERVER_READ_WRITE = "ReadWritePaths=/var/lib/hermes-installer/core-runt
 NATIVE_OBSERVER_SUPPLEMENTARY_GROUPS = "SupplementaryGroups=1000"
 _SOURCE_PATH = re.compile(rb"/opt/hermes-installer-core-[0-9a-f]{9,64}/src\Z")
 
+
+def _wait_legacy_listener(core_runtime, *, timeout: float = 30.0) -> None:
+    """Bounded readiness wait for the exact old launcher after recovery start."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if core_runtime._owned_listener(legacy_launcher=True):
+            return
+        time.sleep(1.0)
+    raise RuntimeError("restored legacy Core listener did not become current")
+
 _CORE_MIGRATION_REASON_CODES = {
     "requires installed Linux root actor": "root_actor_required",
     "prior plugin selection snapshot is not verified": "prior_selection_snapshot_unverified",
@@ -907,15 +917,13 @@ def _recover_installed_adapter_to_legacy(core_runtime, expected_source: Path) ->
         verify_staged_native_resources_plugin,
     )
     from hermes_installer.remote.native_plugin_bootstrap import (
-        verify_native_resources_plugin_selection,
+        capture_native_resources_plugin_selection,
         restore_native_resources_plugin_selection,
     )
 
     deadline = time.monotonic() + 35.0
-    selection = verify_native_resources_plugin_selection()
     if (_current_native_adapter_generation(deadline=deadline) != record["adapter_generation"]
-            or not verify_staged_native_resources_plugin(deadline=deadline)
-            or getattr(selection, "selection_sha256", None) != record["plugin_selection_sha256"]):
+            or not verify_staged_native_resources_plugin(deadline=deadline)):
         raise RuntimeError("installed adapter generation or selected plugin changed")
 
     backup = core_runtime.ADAPTER_MIGRATION_BACKUP
@@ -967,32 +975,69 @@ def _recover_installed_adapter_to_legacy(core_runtime, expected_source: Path) ->
                    for char in token[:-1])
             or previous.get("token_sha256") != hashlib.sha256(token).hexdigest()):
         raise RuntimeError("protected prior Core credential does not match its journal")
-    if (not core_runtime._owned_unit_loaded() or not core_runtime._owned_listener()
+    if (not core_runtime._owned_unit_loaded()
             or core_runtime._core_source_generation() != record["core_source_generation"]):
         raise RuntimeError("installed adapter Core changed during recovery preflight")
+    active = core_runtime._run(["systemctl", "is-active", core_runtime.SERVICE], False).stdout.strip()
+    main_pid = core_runtime._run(
+        ["systemctl", "show", "--property=MainPID", "--value", core_runtime.SERVICE],
+        False).stdout.strip()
+    if active == "active":
+        if not core_runtime._owned_listener():
+            raise RuntimeError("installed adapter Core listener is not owned")
+    elif active not in {"inactive", "failed"} or main_pid not in {"", "0"}:
+        raise RuntimeError("interrupted Core rollback is not stopped cleanly")
 
-    core_runtime._run(["systemctl", "stop", core_runtime.SERVICE])
-    if (core_runtime._run(["systemctl", "is-active", core_runtime.SERVICE], False).stdout.strip()
-            == "active"
-            or core_runtime._run(["systemctl", "show", "--property=MainPID", "--value",
-                                  core_runtime.SERVICE], False).stdout.strip() not in {"", "0"}
-            or core_runtime._owned_listener()):
-        raise RuntimeError("installed adapter Core did not stop cleanly")
+    # Selection can already have been restored before a prior helper exited.
+    # Capture is unbiased by plugin enablement: require the exact immutable
+    # prior bytes/digest, or the journal-bound migrated selection before the
+    # official restore call. A restore command may report a CLI message after
+    # applying its write, so read back exact bytes before classifying failure.
+    selection_state = capture_native_resources_plugin_selection()
+    if (getattr(selection_state, "migrated_selection_sha256", None)
+            != record["plugin_selection_sha256"]):
+        raise RuntimeError("captured prior selection does not bind the migration journal")
+    already_prior = (selection_state.snapshot_json == snapshot)
+    if not already_prior:
+        if selection_state.prior_selection_sha256 != record["plugin_selection_sha256"]:
+            raise RuntimeError("current plugin selection is neither saved migration nor prior bytes")
+    if active == "active":
+        core_runtime._run(["systemctl", "stop", core_runtime.SERVICE])
+        if (core_runtime._run(["systemctl", "is-active", core_runtime.SERVICE], False).stdout.strip()
+                == "active"
+                or core_runtime._run(["systemctl", "show", "--property=MainPID", "--value",
+                                      core_runtime.SERVICE], False).stdout.strip() not in {"", "0"}
+                or core_runtime._owned_listener()):
+            raise RuntimeError("installed adapter Core did not stop cleanly")
     try:
-        restored_selection = restore_native_resources_plugin_selection(
-            snapshot, expected_current_sha256=record["plugin_selection_sha256"])
+        if not already_prior:
+            try:
+                restore_native_resources_plugin_selection(
+                    snapshot, expected_current_sha256=record["plugin_selection_sha256"])
+            except Exception:
+                # The fixed Hermes CLI may emit its own status text to stdout;
+                # accept only an exact post-effect readback of the saved bytes.
+                pass
+        restored_selection = capture_native_resources_plugin_selection()
+        if (restored_selection.snapshot_json != snapshot
+                or restored_selection.migrated_selection_sha256
+                   != record["plugin_selection_sha256"]):
+            raise RuntimeError("prior plugin selection snapshot did not read back exactly")
         core_runtime._restore_adapter_migration_backup()
         core_runtime._run(["systemctl", "daemon-reload"])
         if not core_runtime._owned_unit_loaded():
             raise RuntimeError("restored Core service unit is not the exact owned unit")
         core_runtime._run(["systemctl", "start", core_runtime.SERVICE])
+        _wait_legacy_listener(core_runtime)
         restored, restored_raw, restored_files = core_runtime._read_legacy_owned_runtime()
         if (restored != previous or restored_raw != backup_journal
                 or restored_files[core_runtime.UNIT] != backup_unit
                 or restored_files[core_runtime.LAUNCHER] != backup_launcher):
             raise RuntimeError("restored Core differs from its protected prior bytes")
-        final_selection = verify_native_resources_plugin_selection()
-        if getattr(final_selection, "selection_sha256", None) != restored_selection:
+        final_selection = capture_native_resources_plugin_selection()
+        if (final_selection.snapshot_json != snapshot
+                or final_selection.prior_selection_sha256
+                   != restored_selection.prior_selection_sha256):
             raise RuntimeError("prior Hermes plugin selection did not verify")
     except Exception:
         try:
@@ -1026,7 +1071,14 @@ def _restore_legacy_core(core_runtime, expected_source: Path | None = None) -> b
     state = _unit_state(core_runtime.SERVICE)
     if state not in {"inactive", "failed"}:
         return False
+    record = core_runtime._journal()
+    if (record.get("state") == "installed"
+            and record.get("adapter_migration_state") == "active"):
+        _recover_installed_adapter_to_legacy(
+            core_runtime, expected_source or Path(core_runtime.ADAPTER_SOURCE))
+        return core_runtime._owned_listener(legacy_launcher=True)
     _run("systemctl", "start", core_runtime.SERVICE)
+    _wait_legacy_listener(core_runtime)
     return core_runtime._owned_listener(legacy_launcher=True)
 
 

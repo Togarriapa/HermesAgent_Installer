@@ -85,7 +85,9 @@ def test_installed_adapter_rollback_refuses_different_candidate_before_recovery(
         adopt._recover_installed_adapter_to_legacy(core, other)
 
 
-def _installed_recovery_fixture(monkeypatch, tmp_path, *, foreign_backup=False):
+def _installed_recovery_fixture(monkeypatch, tmp_path, *, foreign_backup=False,
+                                selection_already_prior=False, core_running=True,
+                                restore_reports_failure=False):
     source = tmp_path / "src"
     source.mkdir()
     backup = tmp_path / "adapter-migration-backup"
@@ -120,7 +122,8 @@ def _installed_recovery_fixture(monkeypatch, tmp_path, *, foreign_backup=False):
                  backup / "plugin-selection.json": snapshot,
                  tmp_path / "token": token}
     events = []
-    state = {"adapter_running": True, "selection": "c" * 64,
+    state = {"adapter_running": core_running, "selection": "c" * 64,
+             "selection_prior": selection_already_prior,
              "files": {"unit": b"adapter unit", "launcher": b"adapter launcher"}}
     old_files = {"unit": unit, "launcher": launcher}
     monkeypatch.setattr(adopt.Path, "resolve", lambda path, strict=False: path)
@@ -176,14 +179,24 @@ def _installed_recovery_fixture(monkeypatch, tmp_path, *, foreign_backup=False):
     inspector._current_native_adapter_generation = lambda **_kwargs: "a" * 64
     inspector.verify_staged_native_resources_plugin = lambda **_kwargs: True
     bootstrap = ModuleType("hermes_installer.remote.native_plugin_bootstrap")
-    bootstrap.verify_native_resources_plugin_selection = lambda: Selection()
-
     def restore_selection(snapshot_bytes, *, expected_current_sha256):
         events.append("restore-plugin-selection")
         assert snapshot_bytes == snapshot and expected_current_sha256 == "c" * 64
         state["selection"] = "d" * 64
+        state["selection_prior"] = True
+        if restore_reports_failure:
+            raise RuntimeError("fixed Hermes command printed status before success marker")
         return "d" * 64
 
+    def capture_selection():
+        events.append("capture-selection")
+        return SimpleNamespace(
+            snapshot_json=snapshot if state["selection_prior"] else b'{"selected":"migrated"}\n',
+            prior_selection_sha256="d" * 64 if state["selection_prior"] else "c" * 64,
+            migrated_selection_sha256="c" * 64,
+        )
+
+    bootstrap.capture_native_resources_plugin_selection = capture_selection
     bootstrap.restore_native_resources_plugin_selection = restore_selection
     package = ModuleType("hermes_installer")
     package.__path__ = []
@@ -213,6 +226,32 @@ def test_installed_adapter_recovery_restores_verified_legacy_backup_in_order(mon
     assert state["selection"] == "d" * 64
     assert state["files"] == {"unit": b"legacy unit bytes\n",
                                "launcher": b"legacy launcher bytes\n"}
+
+
+def test_interrupted_stopped_recovery_accepts_exact_prior_selection_without_reenabling(
+        monkeypatch, tmp_path):
+    core, source, events, state = _installed_recovery_fixture(
+        monkeypatch, tmp_path, selection_already_prior=True, core_running=False)
+
+    adopt._recover_installed_adapter_to_legacy(core, source)
+
+    assert "restore-plugin-selection" not in events
+    assert events.index("capture-selection") < events.index("restore-backup")
+    assert events.index("restore-backup") < events.index(("systemctl", "start", core.SERVICE))
+    assert state["adapter_running"]
+    assert state["selection"] == "c" * 64
+
+
+def test_recovery_accepts_restore_cli_noise_only_after_exact_snapshot_readback(
+        monkeypatch, tmp_path):
+    core, source, events, state = _installed_recovery_fixture(
+        monkeypatch, tmp_path, restore_reports_failure=True)
+
+    adopt._recover_installed_adapter_to_legacy(core, source)
+
+    assert "restore-plugin-selection" in events
+    assert events.count("capture-selection") == 3
+    assert state["adapter_running"]
 
 
 def test_installed_adapter_recovery_rejects_foreign_backup_before_stopping_core(
