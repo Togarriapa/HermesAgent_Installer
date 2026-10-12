@@ -173,7 +173,9 @@ def test_interrupted_preparing_stage_is_retained_and_refuses_owner_soul_drift(
     soul.write_bytes(b"# Owner edited during interrupted Core update\n")
     soul.chmod(0o600)
     os.chown(soul, 1000, 1000)
-    with pytest.raises(core.CoreRuntimeError, match="initial primary stage or owner SOUL changed"):
+    with pytest.raises(
+            core.CoreRuntimeError,
+            match="unrecorded initial primary stage does not match the armed exact transition"):
         core._check_adapter_cohort_rollback_currentness(current_cohort, prior, contents)
 
     assert primary_journal.read_bytes() == before_journal
