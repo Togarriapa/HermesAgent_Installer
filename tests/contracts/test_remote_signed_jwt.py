@@ -1,4 +1,6 @@
 import base64,importlib.util,math,unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from hermes_installer.remote.gateway import GatewayDenied,RemotePolicy,validate_access_jwt
 HAS_CRYPTO=importlib.util.find_spec("jwt") is not None and importlib.util.find_spec("cryptography") is not None
 @unittest.skipUnless(HAS_CRYPTO,"install remote CPython3.14 ARM64 pinned dependency lock")
@@ -25,3 +27,41 @@ class SignedAccessJwtTests(unittest.TestCase):
  def test_wrong_signing_algorithm_is_denied(self):
   token=self.jwt.encode({"iss":self.policy.issuer,"aud":self.policy.audience},"unused",algorithm="HS256",headers={"kid":"fixture-kid"})
   with self.assertRaises(GatewayDenied):validate_access_jwt(token,policy=self.policy)
+  unsigned=self.jwt.encode({"iss":self.policy.issuer,"aud":self.policy.audience,
+   "iat":1700000000,"nbf":1700000000,"exp":1700000060,"sub":"subject-1",
+   "email":"owner@example.net"},key="",algorithm="none")
+  with self.assertRaises(GatewayDenied):validate_access_jwt(unsigned,policy=self.policy)
+ def test_three_allowed_emails_keep_signed_subject_ownership_without_directory(self):
+  from hermes_installer.remote.jarvis_chat import JarvisChatDenied,JarvisChatStore
+  emails=("owner@example.net","member-one@example.net","member-two@example.net")
+  policy=RemotePolicy("desk.example.net",self.policy.issuer,self.policy.audience,
+   frozenset(emails),self.policy.jwks)
+  principals=[]
+  with TemporaryDirectory() as directory:
+   # Admission and subject-owned storage must work without optional directory enrollment.
+   store=JarvisChatStore(Path(directory)/"chat.sqlite3")
+   for index,email in enumerate(emails,1):
+    token=self.jwt.encode({"iss":policy.issuer,"aud":[policy.audience],"iat":1700000000,
+     "nbf":1700000000,"exp":1700000060,"sub":f"subject-{index}","email":email},
+     self.key,algorithm="RS256",headers={"kid":"fixture-kid"})
+    identity=validate_access_jwt(token,policy=policy,now=lambda:1700000010)
+    principals.append(identity)
+    created=store.create_conversation(identity.subject,f"runtime-{index}",f"stored-{index}","core-a")
+    self.assertEqual([row["id"] for row in store.list_conversations(identity.subject)],
+     [created["id"]])
+   first=store.list_conversations(principals[0].subject)[0]
+   for identity in principals[1:]:
+    with self.assertRaises(JarvisChatDenied):
+     store.get_conversation(identity.subject,first["id"])
+   same_email_other_subject=self.jwt.encode({"iss":policy.issuer,"aud":[policy.audience],
+    "iat":1700000000,"nbf":1700000000,"exp":1700000060,"sub":"new-subject",
+    "email":emails[0]},self.key,algorithm="RS256",headers={"kid":"fixture-kid"})
+   other=validate_access_jwt(same_email_other_subject,policy=policy,now=lambda:1700000010)
+   self.assertEqual(store.list_conversations(other.subject),[])
+   with self.assertRaises(JarvisChatDenied):
+    store.get_conversation(other.subject,first["id"])
+  outsider=self.jwt.encode({"iss":policy.issuer,"aud":[policy.audience],"iat":1700000000,
+   "nbf":1700000000,"exp":1700000060,"sub":"outsider-subject",
+   "email":"outsider@example.net"},self.key,algorithm="RS256",headers={"kid":"fixture-kid"})
+  with self.assertRaises(GatewayDenied):
+   validate_access_jwt(outsider,policy=policy,now=lambda:1700000010)

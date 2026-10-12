@@ -18,10 +18,12 @@ import stat
 import struct
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .config import _EMAIL
 from .gateway import GatewayDenied, Principal, RemotePolicy, validate_access_jwt
 
 CORE_CONFIG = Path("/etc/hermes-installer/jarvis-core-gateway.json")
@@ -184,11 +186,21 @@ class CoreGatewayConfig:
                     or type(value.get("schema")) is not int or value["schema"] != 1):
                 raise ValueError
             emails = value["allowed_emails"]
-            if (not isinstance(emails, list) or len(emails) != 1
-                    or any(not isinstance(email, str) or not email.strip() for email in emails)):
+            if (not isinstance(emails, list) or not 1 <= len(emails) <= 32
+                    or any(type(email) is not str or len(email) > 254 for email in emails)):
+                raise ValueError
+            normalized_emails = []
+            for email in emails:
+                normalized = email.strip().casefold()
+                if (not normalized or len(normalized) > 254
+                        or any(unicodedata.category(char) == "Cc" for char in email)
+                        or not _EMAIL.fullmatch(normalized)):
+                    raise ValueError
+                normalized_emails.append(normalized)
+            if len(set(normalized_emails)) != len(normalized_emails):
                 raise ValueError
             result = cls(value["hostname"], value["issuer"], value["audience"],
-                frozenset(email.casefold() for email in emails), value["gateway_uid"],
+                frozenset(normalized_emails), value["gateway_uid"],
                 value["gateway_gid"], value["core_uid"], value["core_gid"], value["boot_id"],
                 value["gateway_unit_sha256"], value["gateway_python_sha256"],
                 value["tunnel_unit_sha256"], value["cloudflared_binary_sha256"],

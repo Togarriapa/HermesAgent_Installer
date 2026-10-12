@@ -727,6 +727,43 @@ class CoreGatewayProofTests(unittest.TestCase):
                 loaded = core_gateway.CoreGatewayConfig.load(
                     path=config_path, expected_owner_uid=os.getuid())
                 self.assertEqual(loaded.core_python, core_gateway_inspector.CORE_PYTHON_LINK)
+                self.assertEqual(loaded.allowed_emails, frozenset({"owner@example.test"}))
+
+                document["allowed_emails"] = [
+                    " Owner@Example.Test ", "member-one@example.test", "member-two@example.test",
+                ]
+                config_path.write_text(json.dumps(document), encoding="utf-8")
+                household = core_gateway.CoreGatewayConfig.load(
+                    path=config_path, expected_owner_uid=os.getuid())
+                self.assertEqual(household.allowed_emails, frozenset({
+                    "owner@example.test", "member-one@example.test", "member-two@example.test",
+                }))
+                max_length_email = "x" * 249 + "@a.co"
+                document["allowed_emails"] = [max_length_email]
+                config_path.write_text(json.dumps(document), encoding="utf-8")
+                self.assertEqual(core_gateway.CoreGatewayConfig.load(
+                    path=config_path, expected_owner_uid=os.getuid()).allowed_emails,
+                    frozenset({max_length_email}))
+                document["allowed_emails"] = [f"member{index}@example.test" for index in range(32)]
+                config_path.write_text(json.dumps(document), encoding="utf-8")
+                self.assertEqual(len(core_gateway.CoreGatewayConfig.load(
+                    path=config_path, expected_owner_uid=os.getuid()).allowed_emails), 32)
+
+                invalid_allowlists = (
+                    [], ["owner@example.test", " OWNER@example.test "],
+                    ["owner@example.test", "bad address@example.test"],
+                    ["owner@example.test\nother@example.test"],
+                    ["x" * 255 + "@example.test"],
+                    [f"member{index}@example.test" for index in range(33)],
+                    ["owner@example.test", "", "member@example.test"],
+                )
+                for invalid in invalid_allowlists:
+                    with self.subTest(allowed_emails=invalid):
+                        document["allowed_emails"] = invalid
+                        config_path.write_text(json.dumps(document), encoding="utf-8")
+                        with self.assertRaises(core_gateway.CoreGatewayDenied):
+                            core_gateway.CoreGatewayConfig.load(
+                                path=config_path, expected_owner_uid=os.getuid())
 
                 document["core_python"] = (
                     "/home/admin/HermesInstaller/data/installs/" + "0" * 24 +
@@ -761,6 +798,10 @@ class CoreGatewayProofTests(unittest.TestCase):
             changed = dataclasses.replace(root, peer_uid=1000)
             self.assertIs(changed.verify_current(config, peer_pid=440, peer_uid=1000, peer_gid=981,
                 listener_identity=(1, 2), now=12.0), False)
+            expanded_config = dataclasses.replace(config, allowed_emails=frozenset({
+                "owner@example.test", "member-one@example.test", "member-two@example.test",
+            }), config_sha256="9" * 64)
+            self.assertIs(accepted.verify_current(expanded_config, now=13.0), False)
             accepted = _accepted_observation(config, now=12.0)
             self.assertIs(accepted.verify_current(config, now=13.0), True)
             extended = dataclasses.replace(accepted, expires_monotonic=accepted.issued_monotonic + 30)
@@ -999,6 +1040,30 @@ class CoreGatewayIngressTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(core_gateway, "_validate_jwt", unexpected_jwt):
             with self.assertRaises(core_gateway.CoreGatewayDenied):
                 await core_gateway.accept_core_ingress(request, config, policy)
+
+    async def test_household_mutation_still_requires_exact_same_origin_before_jwt(self):
+        config = _config()
+        policy = RemotePolicy(config.hostname, config.issuer, config.audience,
+                              frozenset({"owner@example.test", "member@example.test"}), {})
+        for origin in (None, "https://attacker.example.test"):
+            calls = []
+
+            async def unexpected_jwt(*_args, **_kwargs):
+                calls.append(True)
+                raise AssertionError("CSRF rejection must precede JWT/root work")
+
+            values = {"Host": [config.hostname],
+                      "Cf-Access-Jwt-Assertion": ["signed-token-fixture"],
+                      "Origin": [] if origin is None else [origin]}
+            headers = SimpleNamespace(
+                getall=lambda key, default=(): values.get(key, default),
+                get=lambda *_args, **_kwargs: "")
+            request = SimpleNamespace(headers=headers, method="POST", app={})
+            with self.subTest(origin=origin), \
+                 patch.object(core_gateway, "_validate_jwt", side_effect=unexpected_jwt):
+                with self.assertRaises(core_gateway.CoreGatewayDenied):
+                    await core_gateway.accept_core_ingress(request, config, policy)
+                self.assertEqual(calls, [])
 
     async def test_http_middleware_serves_finite_current_response(self):
         config = _config()
