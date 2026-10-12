@@ -10,6 +10,7 @@ import json
 import os
 import pwd
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -82,7 +83,7 @@ class ManualJarvisSkillsTests(unittest.TestCase):
         return home
 
     def helper_pipe(self):
-        target = Path("/home/admin/.hermes/skills") / manual_skills._GENERATION
+        target = manual_skills._JARVIS_HOME / "skills" / manual_skills._GENERATION
         return patch.object(manual_skills, "_verify_helper_transition_origin", return_value=target)
 
     def test_helper_only_transition_preserves_full_generation_and_retains_old_backup(self):
@@ -189,7 +190,7 @@ class ManualJarvisSkillsTests(unittest.TestCase):
                 old_archive, hermes_home=home, expected_sha256=old_sha)
             backup_name = ".jarvis-resources-skills-helper-transition-" + "c" * 32
             origin = self.helper_pipe()
-            with origin:
+            with patch.object(manual_skills, "_JARVIS_HOME", home), origin:
                 staged = manual_skills.install_same_materialization_transition(
                     self.bundle, old_archive, hermes_home=home,
                     next_sha256=self.digest, previous_sha256=old_sha,
@@ -199,7 +200,7 @@ class ManualJarvisSkillsTests(unittest.TestCase):
             current_path = home / "skills" / manual_skills._GENERATION
             retained_path = home / backup_name
             self.assertEqual(staged["previous_generation_backup"], str(retained_path))
-            with origin:
+            with patch.object(manual_skills, "_JARVIS_HOME", home), origin:
                 restored = manual_skills.restore_same_materialization_generation(
                     self.bundle, old_archive, hermes_home=home,
                     current_sha256=self.digest, restore_sha256=old_sha,
@@ -223,7 +224,7 @@ class ManualJarvisSkillsTests(unittest.TestCase):
                 old_archive, hermes_home=home, expected_sha256=old_sha)
             backup_name = ".jarvis-resources-skills-helper-transition-" + "d" * 32
             origin = self.helper_pipe()
-            with origin:
+            with patch.object(manual_skills, "_JARVIS_HOME", home), origin:
                 manual_skills.install_same_materialization_transition(
                     self.bundle, old_archive, hermes_home=home,
                     next_sha256=self.digest, previous_sha256=old_sha,
@@ -234,7 +235,8 @@ class ManualJarvisSkillsTests(unittest.TestCase):
             (backup / "foreign-edit").write_bytes(b"must be preserved")
             current = home / "skills" / manual_skills._GENERATION
             before = {name: (current / name).read_bytes() for name in new_files}
-            with patch.object(manual_skills, "_verify_helper_transition_origin", return_value=current), \
+            with patch.object(manual_skills, "_JARVIS_HOME", home), \
+                    patch.object(manual_skills, "_verify_helper_transition_origin", return_value=current), \
                     self.assertRaises(manual_skills.ManualJarvisSkillsError):
                 manual_skills.restore_same_materialization_generation(
                     self.bundle, old_archive, hermes_home=home,

@@ -172,7 +172,6 @@ def overlay_runtime(tmp_path, monkeypatch):
     store = tmp_path / "overlay-journal"
     cas = tmp_path / "cas"
     monkeypatch.setattr(core, "ROOT_UID", 0)
-    monkeypatch.setattr(core, "ROOT_GID", 0)
     monkeypatch.setattr(core, "HERMES_HOME", home)
     monkeypatch.setattr(core, "RESOURCES_SKILL_OVERLAYS", store)
     monkeypatch.setattr(core, "RESOURCES_CAS", cas)
