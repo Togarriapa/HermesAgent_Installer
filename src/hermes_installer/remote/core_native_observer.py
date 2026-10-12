@@ -2066,43 +2066,6 @@ class RootVerifiedNativeChildAuthorization:
                                 for key in ("provider", "api_mode", "base_url", "model"))
         except (TypeError, AttributeError):
             return False
-
-
-_CURRENT_LIFECYCLE_STARTUP_PROBE: contextvars.ContextVar[LifecycleStartupProbeContext | None] = \
-    contextvars.ContextVar("hermes_lifecycle_startup_probe", default=None)
-_CURRENT_LIFECYCLE_STARTUP_IDENTITY: contextvars.ContextVar[str | None] = \
-    contextvars.ContextVar("hermes_lifecycle_startup_identity", default=None)
-_CURRENT_LIFECYCLE_STARTUP_INSTRUCTIONS_SHA256: contextvars.ContextVar[str | None] = \
-    contextvars.ContextVar("hermes_lifecycle_startup_instructions_sha256", default=None)
-
-
-@contextmanager
-def lifecycle_startup_probe_scope(context: LifecycleStartupProbeContext, *, identity: str,
-                                  expected_instructions: str):
-    if type(context) is not LifecycleStartupProbeContext or not context.is_root_issued():
-        raise CoreNativeObservationUnavailable("Root lifecycle probe context is required")
-    if (not isinstance(identity, str) or not identity
-            or not isinstance(expected_instructions, str) or not expected_instructions
-            or identity not in expected_instructions):
-        raise CoreNativeObservationUnavailable("loaded Jarvis primary identity is required")
-    expected_sha256 = hashlib.sha256(expected_instructions.encode("utf-8", "strict")).hexdigest()
-    token = _CURRENT_LIFECYCLE_STARTUP_PROBE.set(context)
-    identity_token = _CURRENT_LIFECYCLE_STARTUP_IDENTITY.set(identity)
-    instructions_token = _CURRENT_LIFECYCLE_STARTUP_INSTRUCTIONS_SHA256.set(expected_sha256)
-    try:
-        yield context
-    finally:
-        _CURRENT_LIFECYCLE_STARTUP_INSTRUCTIONS_SHA256.reset(instructions_token)
-        _CURRENT_LIFECYCLE_STARTUP_IDENTITY.reset(identity_token)
-        _CURRENT_LIFECYCLE_STARTUP_PROBE.reset(token)
-
-
-def take_lifecycle_startup_terminal(context: LifecycleStartupProbeContext) -> dict[str, str]:
-    if type(context) is not LifecycleStartupProbeContext or not context.is_root_issued():
-        raise CoreNativeObservationUnavailable("Root lifecycle probe context is required")
-    if len(context._terminal) != 1:
-        raise CoreNativeObservationUnavailable("actual lifecycle provider terminal is missing or ambiguous")
-    return context._terminal.pop()
         fixed_names = frozenset(
             {"web_search", "web_extract", "skills_list", "skill_view"} | _OBSIDIAN_READ_TOOL_NAMES
             if getattr(mode, "value", None) == "expert-read-research" else set()
@@ -2142,6 +2105,43 @@ def take_lifecycle_startup_terminal(context: LifecycleStartupProbeContext) -> di
             and math.isfinite(float(self.expires_monotonic))
             and now < self.expires_monotonic <= now + 30.0
         )
+
+
+_CURRENT_LIFECYCLE_STARTUP_PROBE: contextvars.ContextVar[LifecycleStartupProbeContext | None] = \
+    contextvars.ContextVar("hermes_lifecycle_startup_probe", default=None)
+_CURRENT_LIFECYCLE_STARTUP_IDENTITY: contextvars.ContextVar[str | None] = \
+    contextvars.ContextVar("hermes_lifecycle_startup_identity", default=None)
+_CURRENT_LIFECYCLE_STARTUP_INSTRUCTIONS_SHA256: contextvars.ContextVar[str | None] = \
+    contextvars.ContextVar("hermes_lifecycle_startup_instructions_sha256", default=None)
+
+
+@contextmanager
+def lifecycle_startup_probe_scope(context: LifecycleStartupProbeContext, *, identity: str,
+                                  expected_instructions: str):
+    if type(context) is not LifecycleStartupProbeContext or not context.is_root_issued():
+        raise CoreNativeObservationUnavailable("Root lifecycle probe context is required")
+    if (not isinstance(identity, str) or not identity
+            or not isinstance(expected_instructions, str) or not expected_instructions
+            or identity not in expected_instructions):
+        raise CoreNativeObservationUnavailable("loaded Jarvis primary identity is required")
+    expected_sha256 = hashlib.sha256(expected_instructions.encode("utf-8", "strict")).hexdigest()
+    token = _CURRENT_LIFECYCLE_STARTUP_PROBE.set(context)
+    identity_token = _CURRENT_LIFECYCLE_STARTUP_IDENTITY.set(identity)
+    instructions_token = _CURRENT_LIFECYCLE_STARTUP_INSTRUCTIONS_SHA256.set(expected_sha256)
+    try:
+        yield context
+    finally:
+        _CURRENT_LIFECYCLE_STARTUP_INSTRUCTIONS_SHA256.reset(instructions_token)
+        _CURRENT_LIFECYCLE_STARTUP_IDENTITY.reset(identity_token)
+        _CURRENT_LIFECYCLE_STARTUP_PROBE.reset(token)
+
+
+def take_lifecycle_startup_terminal(context: LifecycleStartupProbeContext) -> dict[str, str]:
+    if type(context) is not LifecycleStartupProbeContext or not context.is_root_issued():
+        raise CoreNativeObservationUnavailable("Root lifecycle probe context is required")
+    if len(context._terminal) != 1:
+        raise CoreNativeObservationUnavailable("actual lifecycle provider terminal is missing or ambiguous")
+    return context._terminal.pop()
 
 
 @dataclass(frozen=True, slots=True)
