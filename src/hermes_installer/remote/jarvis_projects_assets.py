@@ -215,7 +215,6 @@ _MOUNT = r"""function mount(container, api, state, scope = {}) {
       for (const chat of chats) conversationSelect.add(new Option(chat.title || 'Untitled chat', chat.id));
       if (chats.some(chat => chat.id === priorConversation)) conversationSelect.value = priorConversation;
       conversationSelect.disabled = !selected; addChat.disabled = !selected;
-      if (current && current.chats) renderChats(current.chats);
       empty.hidden = projects.length > 0;
       return true;
     } catch (_error) {
