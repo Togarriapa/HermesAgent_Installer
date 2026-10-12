@@ -394,6 +394,7 @@ def test_obsidian_origin_sidecar_atomic_readback_and_restart_load(tmp_path, monk
 
 
 def test_obsidian_completion_history_and_tombstone_join_without_retaining_markdown():
+    import hashlib
     import hermes_installer.remote.core_native_observer as observer
 
     origin = {

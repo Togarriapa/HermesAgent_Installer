@@ -116,6 +116,7 @@ class JarvisFinalEffectMiddlewareTests(unittest.TestCase):
             "destination": "Research/approved.md",
             "expected_base_sha256": None,
             "review_disposition": "approve",
+            "review_rationale": "Reviewed the exact delivered draft.",
         }
         from hermes_installer.native_invocations import canonical_tool_arguments
         canonical = canonical_tool_arguments(args)
@@ -225,6 +226,7 @@ class JarvisFinalEffectMiddlewareTests(unittest.TestCase):
             "destination": "Research/approved.md",
             "expected_base_sha256": None,
             "review_disposition": "approve",
+            "review_rationale": "Reviewed the exact delivered draft.",
         }
         from hermes_installer.native_invocations import canonical_tool_arguments
         canonical = canonical_tool_arguments(args)

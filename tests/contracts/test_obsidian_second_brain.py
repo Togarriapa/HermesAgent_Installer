@@ -170,6 +170,7 @@ def test_stale_external_edit_keeps_owner_bytes_and_reviewed_draft(tmp_path):
                return_value=dispatch):
         with pytest.raises(ObsidianVaultConflict, match="changed after review"):
             store.promote_reviewed_draft(**args, origin=origin, proposal=proposal,
+                                         review_rationale=None,
                                          observed_call=observed, permit=permit)
 
     assert "Concurrent Obsidian edit" in target.read_text(encoding="utf-8")
@@ -214,6 +215,7 @@ def test_promotion_retry_recovers_exact_committed_note_without_repeating_cas(tmp
 
     with pytest.raises(ObsidianVaultError, match="exact current root owner permit"):
         store.promote_reviewed_draft(**args, origin=origin, proposal=proposal,
+                                     review_rationale=None,
                                      observed_call={}, permit={})
     with patch("hermes_installer.native_invocations.current_native_tool_dispatch",
                return_value=dispatch), patch.object(store, "_write_private",
@@ -221,6 +223,7 @@ def test_promotion_retry_recovers_exact_committed_note_without_repeating_cas(tmp
                     "_atomic_note_write", side_effect=count_atomic):
         with pytest.raises(OSError, match="private promoted-record failure"):
             store.promote_reviewed_draft(**args, origin=origin, proposal=proposal,
+                                         review_rationale=None,
                                          observed_call=observed, permit=permit)
 
     assert atomic_calls == 1
@@ -231,6 +234,7 @@ def test_promotion_retry_recovers_exact_committed_note_without_repeating_cas(tmp
     with patch("hermes_installer.native_invocations.current_native_tool_dispatch",
                return_value=dispatch):
         saved = store.promote_reviewed_draft(**args, origin=origin, proposal=proposal,
+                                             review_rationale=None,
                                              observed_call=observed, permit=permit)
 
     assert atomic_calls == 1
