@@ -680,8 +680,9 @@ def main() -> int:
         old_inspector = saved[FIXED_UNITS[INSPECTOR]][0]
         try:
             # Stop public ingress before switching the exact fixed import roots.
-            # Start the new Inspector on the still-legacy Core first; it must
-            # bind the current P-less process before the owner prestart step.
+            # Install and process-check the Inspector while ingress is stopped.
+            # Its native observer requires a -P Core, so do not wait for a
+            # socket until the owner preparation and Core migration complete.
             phase = "stop ingress and atomically switch fixed Inspector and Gateway"
             print("Adoption phase: " + phase, flush=True)
             _replace_ingress_units(new_units, new_config, config_info)
@@ -693,10 +694,6 @@ def main() -> int:
                 raise RuntimeError("new fixed Inspector did not become active")
             _verify_inspector_process(new_units[FIXED_UNITS[INSPECTOR]],
                                       str(expected_adapter_source).encode("ascii"))
-            phase = "bind Inspector observer to legacy Core"
-            print("Adoption phase: " + phase, flush=True)
-            observer_identity = _wait_observer_socket()
-
             phase = "prepare existing Chat owner and vault"
             print("Adoption phase: " + phase, flush=True)
             from hermes_installer.remote.obsidian_owner_lifecycle import (
@@ -721,7 +718,7 @@ def main() -> int:
                 raise RuntimeError("new fixed Inspector did not recover after Core migration")
             phase = "bind fresh Inspector observer to migrated Core"
             print("Adoption phase: " + phase, flush=True)
-            observer_identity = _wait_observer_socket(previous_inode=observer_identity)
+            observer_identity = _wait_observer_socket()
             phase = "start public Gateway and tunnel"
             print("Adoption phase: " + phase, flush=True)
             _run("systemctl", "start", GATEWAY)

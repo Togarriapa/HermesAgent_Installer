@@ -274,7 +274,7 @@ def test_cli_rollback_recovers_core_before_restoring_old_ingress(monkeypatch, tm
 
 @pytest.mark.parametrize("failure", [None, "owner", "migration", "inspector-restart", "fresh-observer"])
 def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fresh(
-        monkeypatch, tmp_path, failure):
+        monkeypatch, tmp_path, failure, capsys):
     candidate = "c" * 40
     source = Path(f"/opt/hermes-installer-core-{candidate[:9]}/src")
     old_gateway, old_inspector = _unit("core_gateway"), _unit("core_gateway_inspector")
@@ -365,14 +365,13 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
                         lambda *_args, **_kwargs: events.append("verify-ingress") or {
                             adopt.GATEWAY: True, adopt.TUNNEL: True})
 
-    def wait_socket(**kwargs):
-        fresh = bool(kwargs)
-        if not fresh:
-            assert states[adopt.GATEWAY] == states[adopt.TUNNEL] == "inactive"
-        events.append("fresh-observer" if fresh else "legacy-observer")
-        if fresh and failure == "fresh-observer":
+    def wait_socket(**_kwargs):
+        assert states[adopt.GATEWAY] == states[adopt.TUNNEL] == "inactive"
+        assert "prepare-owner" in events and "migrate-core" in events
+        events.append("fresh-observer")
+        if failure == "fresh-observer":
             raise RuntimeError("injected observer failure")
-        return (1, 3) if fresh else (1, 2)
+        return (1, 3)
 
     monkeypatch.setattr(adopt, "_wait_observer_socket", wait_socket)
     monkeypatch.setattr(adopt, "_source_switch", lambda _source: (
@@ -427,7 +426,7 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
         assert migrate_at is not None and fresh_at is not None
         assert gateway_tunnel_starts
         assert all(index > migrate_at and index > fresh_at for index in gateway_tunnel_starts)
-        assert events.index("legacy-observer") < events.index("prepare-owner") < migrate_at
+        assert events.index("prepare-owner") < migrate_at < fresh_at
         assert migrate_at < events.index("verify-migrated-core")
         assert events.index("verify-migrated-core") < events.index(("restart", adopt.INSPECTOR))
         assert events.index(("restart", adopt.INSPECTOR)) < fresh_at
@@ -437,3 +436,10 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
         assert result == 4
         assert not gateway_tunnel_starts
         assert "restore-old-ingress" in events
+        expected_phase = {
+            "owner": "prepare existing Chat owner and vault",
+            "migration": "migrate owned Core and verify listener",
+            "inspector-restart": "restart Inspector for migrated Core PID",
+            "fresh-observer": "bind fresh Inspector observer to migrated Core",
+        }[failure]
+        assert "Failed phase: " + expected_phase in capsys.readouterr().out
