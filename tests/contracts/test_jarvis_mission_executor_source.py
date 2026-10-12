@@ -73,7 +73,8 @@ def test_jarvis_review_sink_requires_current_exact_result_then_records_idempoten
         def verify_master_review_completion(self, _receipt, *, config=None, custody=None):
             return current["value"]
 
-    owner_sha = hashlib.sha256(b"owner-a").hexdigest()
+    owner_subject = "owner-a"
+    owner_sha = hashlib.sha256(owner_subject.encode()).hexdigest()
     store = JarvisChatStore(tmp_path / "mission-review.sqlite3")
     activity_store = JarvisActivityStore(store)
     conversation = store.create_conversation("owner-a", "runtime-session", "stored-session", CORE)
@@ -136,7 +137,7 @@ def test_jarvis_review_sink_requires_current_exact_result_then_records_idempoten
         ])
 
     with pytest.raises(ValueError, match="Jarvis has not approved"):
-        executor.review(subject=owner_sha, owner=owner_sha, mission_id=decision.mission_id,
+        executor.review(subject=owner_subject, owner=owner_sha, mission_id=decision.mission_id,
             revision=decision.revision, decision="accept", idempotency_hash="6" * 64,
             request_hash="7" * 64)
 
@@ -153,6 +154,13 @@ def test_jarvis_review_sink_requires_current_exact_result_then_records_idempoten
     assert executor.record_jarvis_master_review(decision, config=object(), custody=object()) is True
     conflicting = replace(decision, rationale="Conflicting review disposition rationale.")
     assert executor.record_jarvis_master_review(conflicting, config=object(), custody=object()) is False
+
+    # The external subject is hashed by JarvisChatStore; the mission ledger's owner
+    # column already contains that digest. Keep those distinct so the real owned-turn
+    # join succeeds before exercising the owner decision race.
+    review_run = executor.latest_run(owner_sha, decision.mission_id, decision.revision)
+    assert review_run is not None
+    assert executor.project(owner_subject, review_run)["status"] == "review_pending"
 
     # Force two owners' distinct final decisions to observe the same pending
     # projection before either reaches the serialized decision transaction.
@@ -171,7 +179,7 @@ def test_jarvis_review_sink_requires_current_exact_result_then_records_idempoten
     def submit_review(choice, key, request):
         try:
             return executor.review(
-                subject=owner_sha, owner=owner_sha, mission_id=decision.mission_id,
+                subject=owner_subject, owner=owner_sha, mission_id=decision.mission_id,
                 revision=decision.revision, decision=choice,
                 idempotency_hash=key, request_hash=request,
             )
@@ -194,13 +202,13 @@ def test_jarvis_review_sink_requires_current_exact_result_then_records_idempoten
     losing_key, _losing_request = reject if winning_decision == "approved" else accept
     # Exact replay is idempotent. A new key cannot rewrite even the same result.
     assert executor.review(
-        subject=owner_sha, owner=owner_sha, mission_id=decision.mission_id,
+        subject=owner_subject, owner=owner_sha, mission_id=decision.mission_id,
         revision=decision.revision, decision="accept" if winning_decision == "approved" else "reject",
         idempotency_hash=winning_key, request_hash=winning_request,
     )["owner_decision"] == winning_decision
     with pytest.raises(ValueError, match="conflicts with its saved decision|idempotency conflict"):
         executor.review(
-            subject=owner_sha, owner=owner_sha, mission_id=decision.mission_id,
+            subject=owner_subject, owner=owner_sha, mission_id=decision.mission_id,
             revision=decision.revision,
             decision="accept" if winning_decision == "approved" else "reject",
             idempotency_hash="c" * 64, request_hash="d" * 64,
