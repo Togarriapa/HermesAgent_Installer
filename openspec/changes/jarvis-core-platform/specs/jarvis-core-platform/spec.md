@@ -1891,3 +1891,25 @@ Predeployment UI/UX evidence SHALL identify exact candidate/source/runtime bytes
 #### Scenario: Delete or extension consequence
 - **WHEN** a change affects Chat/Project deletion/restoration or extension/profile/Skill administration
 - **THEN** review verifies record scope, retention/CAS/recovery and preserved Obsidian knowledge/auth/data consequences against exact candidate effects before deployment.
+
+### Requirement: Native supported per-device trust convenience
+After genuine Cloudflare Access authentication, the system SHALL support an explicit off-by-default personal-device “Trust this device” option only through a verified native per-browser/device mechanism, with bounded effective expiry/readiness and actual forget/logout/revocation scope. The desired up-to-30-day target SHALL remain pending until per-device feasibility is established. A broad duration setting or local preference SHALL NOT be presented as per-device trust authority.
+
+#### Scenario: Native per-device mechanism unavailable or opt-in declined
+- **WHEN** the device is shared/untrusted, the user declines, or no supported per-device mechanism exists
+- **THEN** ordinary Cloudflare login continues, trust remains unavailable/pending with exact limitation and no silent broad TTL change, WARP enrollment or fabricated trust-active status.
+
+#### Scenario: Trusted device expiry, revocation or forgotten cookies
+- **WHEN** the native session/trust expires, is revoked/forgotten, signs out or browser cookies are cleared
+- **THEN** actual native scope/readback governs access and new authentication is required where applicable; stored UI preference cannot bypass admission or silently recreate trust.
+
+### Requirement: Trust never replaces Access or existing run ceilings
+Device convenience SHALL preserve protected Cloudflare cookie custody and full JWT-before-bytes validation, original owner/run deadlines and fresh revocation leases. The application SHALL NOT store browser-readable Access/service credentials or issue a local signed bypass cookie. New login/token reuse SHALL NOT revive an expired/revoked run or repeat an uncertain effect.
+
+#### Scenario: Preference present with invalid credential or old run
+- **WHEN** a trusted preference exists but the JWT/principal/issuer/audience/time/revocation witness is invalid, or an old run expired
+- **THEN** bytes/effects deny and the old run remains stopped; only separately admitted new work may proceed after actual current authentication.
+
+#### Scenario: Candidate trust-control revision
+- **WHEN** session/device controls or their behavior changes
+- **THEN** the mandatory affected-flow UI/UX gate records exact-candidate rendered post-login/expiry/error/forget/logout consequences across phone/tablet/desktop, with live native evidence and unsupported limits distinguished.
