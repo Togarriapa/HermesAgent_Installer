@@ -2001,6 +2001,7 @@ class CoreNativeObservationClient:
             "authorize-mission-dispatch", "admit-native-child",
             "admit-master-planner-child",
             "read-current-master-source", "admit-initial-master-plan",
+            "verify-master-review-completion",
             "complete-native-child", "verify-planning-completion",
             "request-final-effect", "poll-final-effect", "authorize-master-read-call",
             "read-selected-expert-source", "admit-selected-expert-child",
@@ -2141,8 +2142,14 @@ class CoreNativeObservationClient:
             raise CoreNativeObservationUnavailable("master-review prompt changed before provider dispatch")
         return context
 
-    def verify_master_review_completion(self, receipt: Any) -> bool:
-        """Revalidate a short-lived review receipt against the issuing root registry."""
+    def verify_master_review_completion(self, receipt: Any, *, config: Any = None,
+                                        custody: Any = None) -> bool:
+        """Revalidate a short-lived review receipt against the issuing root registry.
+
+        ``config`` and ``custody`` satisfy the common sealed-receipt interface;
+        the client never serializes caller-provided objects as authority. The
+        issuing root registry resolves and checks its own current custody.
+        """
         if (type(receipt) is not CoreVerifiedJarvisMasterReviewCompletion
                 or receipt._seal is not _MASTER_REVIEW_COMPLETION_SEAL):
             return False
