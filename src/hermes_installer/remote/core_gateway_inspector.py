@@ -113,6 +113,7 @@ MAX_REQUEST = 1024
 MAX_RESPONSE = 4096
 MAX_FINAL_EFFECT_RESPONSE = 64 * 1024
 MAX_MASTER_PLAN_RESPONSE = 32 * 1024
+MAX_MISSION_CATALOG_RESPONSE = 256 * 1024
 MAX_NATIVE_ACTIVITY_RESPONSE = 128 * 1024
 MAX_OBSIDIAN_VAULT_RESPONSE = 2 * 1024 * 1024
 MAX_PROFILE_ADMIN_REQUEST_BYTES = 96 * 1024
@@ -227,6 +228,43 @@ class PlanningContext:
                 or result.source_profile_id != "hermes"):
             raise CoreInspectionDenied("planning context is malformed")
         return result
+
+
+@dataclass(frozen=True, slots=True)
+class RootVerifiedMissionPlanningCatalog:
+    """Finite Team projection read through owner-authenticated current Resources CAS."""
+
+    catalog_sha256: str
+    teams: dict[str, dict[str, Any]]
+
+    @classmethod
+    def from_wire(cls, value: Any) -> "RootVerifiedMissionPlanningCatalog":
+        if type(value) is not dict or set(value) != {"catalog_sha256", "teams"}:
+            raise CoreInspectionDenied("current Team catalog fields differ")
+        digest, teams = value["catalog_sha256"], value["teams"]
+        if (not _is_hash(digest) or type(teams) is not dict or len(teams) > 128):
+            raise CoreInspectionDenied("current Team catalog is malformed")
+        normalized: dict[str, dict[str, Any]] = {}
+        fields = {"version", "source_revision", "bundle_generation_sha256",
+                  "bundle_member_path", "bundle_member_sha256", "source_member_path",
+                  "source_member_sha256", "source_path", "ordered_member_ids"}
+        for team_id, row in teams.items():
+            if (not isinstance(team_id, str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,95}", team_id) is None
+                    or type(row) is not dict or set(row) != fields
+                    or not isinstance(row["version"], str) or not 1 <= len(row["version"]) <= 64
+                    or not isinstance(row["source_revision"], str) or not 1 <= len(row["source_revision"]) <= 128
+                    or any(not _is_hash(row[name]) for name in (
+                        "bundle_generation_sha256", "bundle_member_sha256", "source_member_sha256"))
+                    or any(not isinstance(row[name], str) or not 1 <= len(row[name]) <= 512 for name in (
+                        "bundle_member_path", "source_member_path", "source_path"))
+                    or type(row["ordered_member_ids"]) is not list
+                    or not 1 <= len(row["ordered_member_ids"]) <= 32
+                    or len(set(row["ordered_member_ids"])) != len(row["ordered_member_ids"])
+                    or any(not isinstance(item, str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,95}", item) is None
+                           for item in row["ordered_member_ids"])):
+                raise CoreInspectionDenied("current Team catalog row is malformed")
+            normalized[team_id] = dict(row)
+        return cls(digest, normalized)
 
 
 _MASTER_PLAN_DATA_SEAL = object()
@@ -521,9 +559,73 @@ def _read_root_planning_catalog(core_source_generation: str) -> tuple[dict[str, 
             profiles[item["id"]] = label
     if set(profiles) != profile_ids:
         raise CoreInspectionDenied("pinned profile catalog differs from the Resources CAS")
+    teams: dict[str, dict[str, Any]] = {}
+    # Bundle authority is projected only from the complete current root CAS.
+    # The pinned dashboard inventory supplies labels, never membership.
+    try:
+        import yaml
+        package_rows = {row["archive_path"]: row for row in snapshot["manifest"]["package_members"]}
+        crosswalk_path = "registry/package/installer-registry/crosswalk.json"
+        crosswalk_row = package_rows.get(crosswalk_path)
+        crosswalk_bytes = snapshot["files"].get(crosswalk_path)
+        if (crosswalk_row is None or not isinstance(crosswalk_bytes, bytes)
+                or hashlib.sha256(crosswalk_bytes).hexdigest() != crosswalk_row.get("sha256")):
+            raise ValueError("verified Bundle provenance crosswalk is unavailable")
+        crosswalk = json.loads(crosswalk_bytes.decode("utf-8", errors="strict"),
+                               object_pairs_hook=_unique_pairs)
+        provenance = {(row.get("kind"), row.get("id")): row.get("source", {})
+                      for row in crosswalk.get("items", []) if type(row) is dict}
+        source_revision = snapshot["resources_revision"]
+        artifact_sha = snapshot["artifact_sha256"]
+        for item in inventory["items"]:
+            if item["kind"] != "bundles":
+                continue
+            identity = item["id"]
+            effective_path = f"registry/package/bundles/{identity}.yaml"
+            raw_path = f"registry/package/installer-registry/declarations/bundles/{identity}.yaml"
+            effective_row, raw_row = package_rows.get(effective_path), package_rows.get(raw_path)
+            effective_bytes, raw_bytes = snapshot["files"].get(effective_path), snapshot["files"].get(raw_path)
+            if (effective_row is None or raw_row is None
+                    or not isinstance(effective_bytes, bytes) or not isinstance(raw_bytes, bytes)
+                    or hashlib.sha256(effective_bytes).hexdigest() != effective_row.get("sha256")
+                    or hashlib.sha256(raw_bytes).hexdigest() != raw_row.get("sha256")):
+                raise ValueError("Bundle source members are absent from the current CAS")
+            effective, raw_doc = yaml.safe_load(effective_bytes), yaml.safe_load(raw_bytes)
+            if (type(effective) is not dict or type(raw_doc) is not dict
+                    or effective.get("kind") != "Bundle" or raw_doc.get("kind") != "Bundle"
+                    or effective.get("metadata", {}).get("name") != identity
+                    or raw_doc.get("metadata", {}).get("name") != identity
+                    or effective.get("metadata", {}).get("version") != raw_doc.get("metadata", {}).get("version")):
+                raise ValueError("Bundle declaration identity differs")
+            imports = effective.get("spec", {}).get("imports", {})
+            roster = imports.get("profiles") if isinstance(imports, dict) else None
+            if (type(roster) is not list or not roster or len(roster) > 32
+                    or any(not isinstance(profile_id, str) or profile_id not in profiles for profile_id in roster)
+                    or len(set(roster)) != len(roster)):
+                # A Bundle with nested or unresolved membership is not a Team
+                # candidate in this deliberately finite first slice.
+                continue
+            source = provenance.get(("bundles", identity))
+            if (type(source) is not dict or not isinstance(source.get("path"), str)
+                    or source.get("revision") != source_revision):
+                raise ValueError("Bundle source provenance is unavailable")
+            teams[identity] = {
+                "version": effective["metadata"]["version"],
+                "source_revision": source_revision,
+                "bundle_generation_sha256": artifact_sha,
+                "bundle_member_path": effective_path,
+                "bundle_member_sha256": hashlib.sha256(effective_bytes).hexdigest(),
+                "source_member_path": raw_path,
+                "source_member_sha256": hashlib.sha256(raw_bytes).hexdigest(),
+                "source_path": source["path"],
+                "ordered_member_ids": list(roster),
+            }
+    except Exception as error:
+        raise CoreInspectionDenied("protected Team catalog projection is unavailable") from error
     catalog = {
         "profiles": dict(sorted(profiles.items())),
         "sources": dict(sorted(sources.items())),
+        "teams": dict(sorted(teams.items())),
         "source": {"revision": inventory["source"]["revision"],
                    "catalog_version": inventory["source"]["catalogVersion"],
                    "package_sha256": expected_digest},
@@ -1437,6 +1539,79 @@ def observe_owner_turn(config: CoreGatewayConfig, *, request: dict[str, Any],
     return {"schema": 1, "nonce": request["nonce"], "owner_turn_handle": handle}
 
 
+def observe_read_current_mission_teams(config: CoreGatewayConfig, *, request: dict[str, Any],
+                                     caller_pid: int, caller_uid: int, caller_gid: int,
+                                     peer_pid: int, peer_uid: int, peer_gid: int,
+                                     custody: Any) -> dict[str, Any]:
+    """Return a finite current Bundle projection only inside accepted owner ingress."""
+    fields = {"schema", "op", "nonce", "peer_pid", "peer_uid", "peer_gid", "access_jwt",
+              "core_generation", "ingress_nonce", "ingress_proof_sha256", "mission_id", "revision"}
+    if (type(request) is not dict or set(request) != fields or request.get("schema") != 1
+            or request.get("op") != "read-current-mission-teams"
+            or (request.get("peer_pid"), request.get("peer_uid"), request.get("peer_gid"))
+                != (peer_pid, peer_uid, peer_gid)
+            or re.fullmatch(r"[0-9a-f]{64}", request.get("nonce", "")) is None
+            or not isinstance(request.get("access_jwt"), str)
+            or not 1 <= len(request["access_jwt"]) <= 16_384 or not request["access_jwt"].isascii()
+            or not _is_hash(request.get("core_generation"))
+            or re.fullmatch(r"[0-9a-f]{64}", request.get("ingress_nonce", "")) is None
+            or not _is_hash(request.get("ingress_proof_sha256"))
+            or re.fullmatch(r"[A-Za-z0-9_-]{24,64}", request.get("mission_id", "")) is None
+            or type(request.get("revision")) is not int or request["revision"] < 1):
+        raise CoreInspectionDenied("current Team catalog request is invalid")
+    caller_start = _proc_start_ticks(caller_pid)
+    key = (caller_pid, caller_start, request["ingress_nonce"], request["ingress_proof_sha256"])
+    with _RETAINED_INGRESS_LOCK:
+        retained = _RETAINED_INGRESS_ISSUES.get(key)
+    if (retained is None or retained.peer != (peer_pid, peer_uid, peer_gid)
+            or retained.core_generation != request["core_generation"]
+            or retained.config_sha256 != config.config_sha256
+            or time.monotonic() >= retained.expires_monotonic):
+        raise CoreInspectionDenied("current Team catalog ingress is stale")
+    deadline = retained.expires_monotonic
+    current = observe_current_ingress(config, nonce=retained.nonce,
+        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+        peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+        _issued=retained.issued_monotonic, _deadline=deadline, _retain_issuance=False)
+    from .gateway import validate_access_jwt
+    principal = validate_access_jwt(request["access_jwt"],
+        policy=config.policy(_learning_jwks(config, deadline=deadline)), deadline_monotonic=deadline)
+    owner_hash = hashlib.sha256(principal.subject.encode("utf-8")).hexdigest()
+    if (principal.email.casefold() not in config.allowed_emails
+            or hashlib.sha256(request["access_jwt"].encode("ascii")).hexdigest() != principal.token_fingerprint
+            or current["proof_sha256"] != retained.proof_sha256
+            or current["core_generation"] != retained.core_generation
+            or current["core_source_generation"] != custody.core_source_generation
+            or time.monotonic() >= deadline):
+        raise CoreInspectionDenied("current Team catalog owner ingress changed")
+    from .jarvis_chat import CHAT_STORE_PATH
+    path = Path("/var/lib/hermes-jarvis-chat/chat.sqlite3")
+    identity = _mission_store_identity(config, path, include_sidecars=False)
+    if CHAT_STORE_PATH != path:
+        raise CoreInspectionDenied("mission ledger path differs")
+    catalog, digest = _read_root_planning_catalog(current["core_source_generation"])
+    with sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=1) as db:
+        db.row_factory = sqlite3.Row
+        db.execute("PRAGMA query_only=ON")
+        mission = db.execute(
+            "SELECT id,owner,revision,status,execution_mode,master_plan_sha256 FROM jarvis_missions "
+            "WHERE id=? AND owner=? AND revision=?",
+            (request["mission_id"], owner_hash, request["revision"])).fetchone()
+        if (mission is None or mission["status"] != "draft" or mission["execution_mode"] != "pending"
+                or mission["master_plan_sha256"] is not None):
+            raise CoreInspectionDenied("current Team catalog mission is not awaiting a plan")
+    final = observe_current_ingress(config, nonce=retained.nonce,
+        caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+        peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
+        _issued=retained.issued_monotonic, _deadline=deadline, _retain_issuance=False)
+    if (final["proof_sha256"] != retained.proof_sha256 or time.monotonic() >= deadline
+            or _mission_store_identity(config, path, include_sidecars=False) != identity
+            or _read_root_planning_catalog(current["core_source_generation"])[1] != digest):
+        raise CoreInspectionDenied("current Team catalog changed during projection")
+    return {"schema": 1, "nonce": request["nonce"], "ok": True,
+            "planning_catalog": {"catalog_sha256": digest, "teams": catalog["teams"]}}
+
+
 def prepare_master_planning_context(config: CoreGatewayConfig, *, request: dict[str, Any],
                                    caller_pid: int, caller_uid: int, caller_gid: int,
                                    peer_pid: int, peer_uid: int, peer_gid: int,
@@ -1565,6 +1740,10 @@ def observe_read_master_plan(config: CoreGatewayConfig, *, request: dict[str, An
                 or master.is_current_sealed(custody, now=time.monotonic()) is not True):
             raise ValueError
         catalog, catalog_sha = _read_root_planning_catalog(custody.core_source_generation)
+        from .jarvis_master_planning import mission_catalog_sha256
+        legacy_catalog = dict(catalog)
+        legacy_catalog.pop("teams", None)
+        legacy_catalog_sha = mission_catalog_sha256(legacy_catalog)
         observed = registry.read_master_plan_record(
             owner_subject_sha256=owner_hash, mission_id=request["mission_id"],
             revision=request["revision"])
@@ -1590,6 +1769,11 @@ def observe_read_master_plan(config: CoreGatewayConfig, *, request: dict[str, An
                 raise ValueError
             plan = json.loads(mission["master_plan_json"], object_pairs_hook=_unique_pairs)
             selected = json.loads(mission["selected_source_ids"], object_pairs_hook=_unique_pairs)
+            team_selection = plan.get("team_selection") if isinstance(plan, dict) else None
+            saved_catalog_sha = planning["catalog_sha256"]
+            accepted_catalog_sha = catalog_sha
+            if team_selection is None and saved_catalog_sha == legacy_catalog_sha:
+                accepted_catalog_sha = legacy_catalog_sha
             source_binding = json.loads(planning["source_binding"], object_pairs_hook=_unique_pairs)
             turn = db.execute("SELECT owner,conversation_id,status,runtime_session_id,core_generation "
                               "FROM turns WHERE id=?", (mission["master_plan_gateway_turn_id"],)).fetchone()
@@ -1604,7 +1788,7 @@ def observe_read_master_plan(config: CoreGatewayConfig, *, request: dict[str, An
                     or planning["gateway_turn_id"] != mission["master_plan_gateway_turn_id"]
                     or planning["conversation_id"] != turn["conversation_id"]
                     or planning["task_sha256"] != mission_goal_arguments_sha256(mission["brief"])
-                    or planning["catalog_sha256"] != catalog_sha
+                    or planning["catalog_sha256"] != accepted_catalog_sha
                     or planning["status"] != "completed"
                     or source_binding != {"core_generation": custody.core_generation,
                                           "core_source_generation": custody.core_source_generation}
@@ -4110,6 +4294,12 @@ def _serve_connection(conn: socket.socket, config: CoreGatewayConfig) -> None:
                 peer_pid=request.get("peer_pid"), peer_uid=request.get("peer_uid"),
                 peer_gid=request.get("peer_gid"), custody=_CORE_NATIVE_CUSTODY)
             maximum = MAX_RESPONSE
+        elif request.get("op") == "read-current-mission-teams":
+            result = observe_read_current_mission_teams(config, request=request,
+                caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
+                peer_pid=request.get("peer_pid"), peer_uid=request.get("peer_uid"),
+                peer_gid=request.get("peer_gid"), custody=_CORE_NATIVE_CUSTODY)
+            maximum = MAX_MISSION_CATALOG_RESPONSE
         elif request.get("op") == "read-master-plan":
             result = observe_read_master_plan(config, request=request,
                 caller_pid=caller_pid, caller_uid=caller_uid, caller_gid=caller_gid,
@@ -4534,6 +4724,71 @@ class CoreGatewayInspector:
         if type(config) is not CoreGatewayConfig:
             raise CoreGatewayDenied("fixed current core gateway configuration is required")
         self._config = config
+
+    def read_current_mission_teams(self, access_jwt: str, accepted_ingress: Any,
+                                   mission_id: str, revision: int) -> RootVerifiedMissionPlanningCatalog:
+        """Read only protected current Bundle membership for this owner mission."""
+        from .core_gateway import CoreAcceptedIngressObservation, _read_config_current
+        if (type(accepted_ingress) is not CoreAcceptedIngressObservation
+                or not isinstance(access_jwt, str) or not 1 <= len(access_jwt) <= 16_384
+                or not access_jwt.isascii()
+                or hashlib.sha256(access_jwt.encode("ascii")).hexdigest()
+                    != accepted_ingress.principal.token_fingerprint
+                or not isinstance(mission_id, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{24,64}", mission_id) is None
+                or type(revision) is not int or revision < 1):
+            raise CoreGatewayDenied("current accepted mission ingress is required")
+        _read_config_current(self._config)
+        if accepted_ingress.verify_current(self._config) is not True:
+            raise CoreGatewayDenied("current accepted mission ingress is required")
+        proof = accepted_ingress.root_observation
+        nonce = os.urandom(32).hex()
+        deadline = min(time.monotonic() + MAX_PROOF_SECONDS, accepted_ingress.expires_monotonic)
+        body = {"schema": 1, "op": "read-current-mission-teams", "nonce": nonce,
+            "peer_pid": accepted_ingress.peer_pid, "peer_uid": accepted_ingress.peer_uid,
+            "peer_gid": accepted_ingress.peer_gid, "access_jwt": access_jwt,
+            "core_generation": accepted_ingress.core_generation,
+            "ingress_nonce": proof.nonce, "ingress_proof_sha256": proof.proof_sha256,
+            "mission_id": mission_id, "revision": revision}
+        result = self._inspector_request(body, accepted_ingress, deadline)
+        try:
+            if (set(result) != {"schema", "nonce", "ok", "planning_catalog"}
+                    or result.get("schema") != 1 or result.get("nonce") != nonce
+                    or result.get("ok") is not True or time.monotonic() >= deadline):
+                raise ValueError
+            value = RootVerifiedMissionPlanningCatalog.from_wire(result["planning_catalog"])
+            _read_config_current(self._config)
+            if accepted_ingress.verify_current(self._config) is not True:
+                raise ValueError
+            return value
+        except Exception:
+            raise CoreGatewayDenied("current protected Team catalog is malformed or stale") from None
+
+    def _inspector_request(self, body: dict[str, Any], accepted_ingress: Any,
+                           deadline: float) -> dict[str, Any]:
+        info = os.lstat(CORE_INSPECTOR_SOCKET)
+        if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != 0
+                or info.st_gid != self._config.gateway_gid
+                or stat.S_IMODE(info.st_mode) != 0o660):
+            raise CoreGatewayDenied("root planning inspector is unavailable")
+        raw = json.dumps(body, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("ascii")
+        if len(raw) > MAX_OWNER_TURN_REQUEST_BYTES:
+            raise CoreGatewayDenied("root planning request exceeded its bound")
+        conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            conn.settimeout(max(0.05, deadline - time.monotonic()))
+            conn.connect(str(CORE_INSPECTOR_SOCKET))
+            if not hasattr(socket, "SO_PEERCRED"):
+                raise ValueError
+            pid, uid, _gid = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            if uid != 0 or pid <= 1:
+                raise ValueError
+            conn.sendall(struct.pack("!I", len(raw)) + raw)
+            return _read_frame(conn, deadline, MAX_MISSION_CATALOG_RESPONSE)
+        except Exception:
+            raise CoreGatewayDenied("root planning catalog is unavailable") from None
+        finally:
+            conn.close()
 
     def prepare_master_planning_context(self, access_jwt: str, accepted_ingress: Any,
                                        mission_id: str, revision: int,

@@ -225,6 +225,31 @@ def test_mission_stays_pending_until_root_seals_master_plan_decision(tmp_path, m
     asyncio.run(scenario())
 
 
+def test_root_verified_mission_team_catalog_rejects_unbound_membership():
+    from hermes_installer.remote.core_gateway_inspector import (
+        CoreInspectionDenied, RootVerifiedMissionPlanningCatalog,
+    )
+
+    team = {
+        "version": "1.2.0", "source_revision": "a" * 40,
+        "bundle_generation_sha256": "b" * 64,
+        "bundle_member_path": "registry/package/bundles/research.yaml",
+        "bundle_member_sha256": "c" * 64,
+        "source_member_path": "registry/package/installer-registry/declarations/bundles/research.yaml",
+        "source_member_sha256": "d" * 64, "source_path": "bundles/research.yaml",
+        "ordered_member_ids": ["researcher", "analyst"],
+    }
+    catalog = RootVerifiedMissionPlanningCatalog.from_wire({
+        "catalog_sha256": "e" * 64, "teams": {"research": team},
+    })
+    assert catalog.teams["research"]["ordered_member_ids"] == ["researcher", "analyst"]
+    with pytest.raises(CoreInspectionDenied):
+        RootVerifiedMissionPlanningCatalog.from_wire({
+            "catalog_sha256": "e" * 64,
+            "teams": {"research": dict(team, bundle_member_sha256="not-a-digest")},
+        })
+
+
 def test_master_planner_prompt_is_bounded_and_treats_owner_sources_as_hints():
     row = {
         "id": "m" * 24,
@@ -266,11 +291,13 @@ def test_master_plan_turn_reserves_exact_owned_turn_once_before_scheduling(tmp_p
             return ("backend-session-fixed", "stored-session-fixed")
 
     async def scenario():
-        monkeypatch.setattr(jarvis_missions, "_verified_team_catalog", lambda: {
+        base_catalog = {
             "profiles": {"reviewer": "Internal reviewer"},
             "sources": {"reviewer": {"label": "Internal reviewer", "kind": "profiles"}},
+            "teams": {},
             "source": {"revision": "rev-a", "package_sha256": "a" * 64},
-        })
+        }
+        monkeypatch.setattr(jarvis_missions, "_verified_team_catalog", lambda: dict(base_catalog))
         store = JarvisChatStore(tmp_path / "planning.sqlite3")
         jarvis_missions._initialize(store)
         owner = store._owner("owner-a")
@@ -289,7 +316,12 @@ def test_master_plan_turn_reserves_exact_owned_turn_once_before_scheduling(tmp_p
         request = Request(ingress)
         backend = Backend()
         service = JarvisChatService(store, backend, principal_from_request=_principal)
-        service.inspector = SimpleNamespace(prepare_master_planning_context=None)
+        from hermes_installer.remote.core_gateway_inspector import RootVerifiedMissionPlanningCatalog
+        service.inspector = SimpleNamespace(
+            prepare_master_planning_context=None,
+            read_current_mission_teams=lambda *_args: RootVerifiedMissionPlanningCatalog(
+                jarvis_missions.mission_catalog_sha256(base_catalog), {}),
+        )
 
         def prepare(_jwt, accepted, got_id, revision, prompt_sha256):
             assert accepted is ingress and got_id == mission_id and revision == 1
@@ -298,7 +330,7 @@ def test_master_plan_turn_reserves_exact_owned_turn_once_before_scheduling(tmp_p
                 schema=1, mission_id=mission_id, revision=1,
                 goal_sha256=jarvis_missions._hash({"goal": "Review the approved local source."}),
                 catalog_sha256=jarvis_missions.mission_catalog_sha256(
-                    jarvis_missions._verified_team_catalog()),
+                    base_catalog),
                 planner_prompt_sha256=prompt_sha256,
                 master_source_generation_sha256="b" * 64,
                 master_source_manifest_sha256="c" * 64,
@@ -327,7 +359,7 @@ def test_master_plan_turn_reserves_exact_owned_turn_once_before_scheduling(tmp_p
                 "SELECT * FROM jarvis_missions WHERE id=?", (mission_id,)
             ).fetchone()
         prompt = jarvis_missions.build_jarvis_mission_master_plan_prompt(
-            mission_for_prompt, jarvis_missions._verified_team_catalog())
+            mission_for_prompt, base_catalog)
         prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
         context = prepare("", ingress, mission_id, 1, prompt_sha256)
         service.start_server_turn = start_server_turn

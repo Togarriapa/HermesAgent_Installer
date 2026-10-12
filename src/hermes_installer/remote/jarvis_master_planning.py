@@ -51,6 +51,7 @@ def mission_catalog_sha256(catalog: Mapping[str, Any]) -> str:
     """Hash the exact verified Resources catalog projection used by mission planning."""
     if (not isinstance(catalog, Mapping) or not isinstance(catalog.get("profiles"), Mapping)
             or not isinstance(catalog.get("sources"), Mapping)
+            or (catalog.get("teams") is not None and not isinstance(catalog.get("teams"), Mapping))
             or not isinstance(catalog.get("source"), Mapping)):
         raise ValueError("verified mission catalog is malformed")
     value = {
@@ -59,6 +60,10 @@ def mission_catalog_sha256(catalog: Mapping[str, Any]) -> str:
         "sources": dict(sorted(catalog["sources"].items())),
         "source": dict(catalog["source"]),
     }
+    # A catalog without the Teams member is the historical profile-only plan
+    # format. Keep its digest stable so existing individual plans remain data.
+    if "teams" in catalog:
+        value["teams"] = dict(sorted((catalog.get("teams") or {}).items()))
     return _sha256(_canonical(value))
 
 
@@ -90,6 +95,7 @@ def build_jarvis_mission_master_plan_prompt(row: Any,
         "brief": brief,
         "owner_source_preferences": preferences,
         "available_profile_ids": sorted(profiles),
+        "available_teams": dict(sorted((catalog.get("teams") or {}).items())),
         "goal_sha256": goal_sha256(brief),
         "catalog_sha256": catalog_sha256,
     }
@@ -101,7 +107,11 @@ def build_jarvis_mission_master_plan_prompt(row: Any,
         "task. Select zero or more internal expert profile IDs only from available_profile_ids; "
         "owner_source_preferences are hints, not a required or authoritative selection. Choose "
         "zero experts only for a Jarvis-only oneshot plan. Do not invent identities or claim any "
-        "work is already complete. Return only one JSON object with exactly these keys: "
+        "work is already complete. For a genuine two-Expert discussion, set plan.team_selection "
+        "to schema 1 with an exact team_id, bundle_generation_sha256, bundle_member_sha256, "
+        "ordered_member_ids, and two selected_expert_ids copied from available_teams; both Experts "
+        "must also be in selected_source_ids. Otherwise set plan.team_selection to null. Return only "
+        "one JSON object with exactly these keys: "
         "execution_mode, selected_source_ids, plan. The plan must be a bounded JSON object "
         "describing proposed work and review checkpoints.\n\n"
         "Persisted mission and trusted catalog context:\n" + _canonical(context).decode("utf-8")
@@ -224,7 +234,8 @@ def _parse_json(raw: str) -> dict[str, Any]:
         raise JarvisMasterPlanningDenied("master output is invalid or exceeds its bound") from None
 
 
-def parse_master_plan_output(raw: str, *, allowed_source_ids: Iterable[str]) -> dict[str, Any]:
+def parse_master_plan_output(raw: str, *, allowed_source_ids: Iterable[str],
+                             verified_teams: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Parse a model proposal; source IDs must already come from a verified offline catalog."""
     value = _parse_json(raw)
     if set(value) != {"execution_mode", "selected_source_ids", "plan"}:
@@ -238,6 +249,29 @@ def parse_master_plan_output(raw: str, *, allowed_source_ids: Iterable[str]) -> 
             or len(set(selected)) != len(selected) or any(item not in allowed for item in selected)
             or type(plan) is not dict):
         raise JarvisMasterPlanningDenied("master plan selection is invalid")
+    selection = plan.get("team_selection")
+    if selection is not None:
+        if (not isinstance(verified_teams, Mapping) or type(selection) is not dict
+                or set(selection) != {"schema", "team_id", "bundle_generation_sha256",
+                    "bundle_member_sha256", "ordered_member_ids", "selected_expert_ids"}
+                or type(selection.get("schema")) is not int or selection["schema"] != 1
+                or not isinstance(selection.get("team_id"), str)
+                or not isinstance(selection.get("ordered_member_ids"), list)
+                or not isinstance(selection.get("selected_expert_ids"), list)):
+            raise JarvisMasterPlanningDenied("Team selection metadata is malformed")
+        team = verified_teams.get(selection["team_id"])
+        members = selection["ordered_member_ids"]
+        experts = selection["selected_expert_ids"]
+        if (not isinstance(team, Mapping)
+                or selection.get("bundle_generation_sha256") != team.get("bundle_generation_sha256")
+                or selection.get("bundle_member_sha256") != team.get("bundle_member_sha256")
+                or members != team.get("ordered_member_ids")
+                or len(selected) != 2 or selected != experts
+                or type(experts) is not list or len(experts) != 2
+                or len(set(experts)) != 2
+                or any(not isinstance(item, str) or item not in members for item in experts)
+                or any(item not in selected for item in experts)):
+            raise JarvisMasterPlanningDenied("Team selection differs from the current protected Bundle roster")
     try:
         encoded_plan = _canonical(plan)
         encoded_result = _canonical(value)

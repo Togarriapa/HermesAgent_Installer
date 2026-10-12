@@ -67,6 +67,43 @@ def test_master_plan_rejects_duplicate_or_extra_top_level_fields():
         parse_master_plan_output(extra, allowed_source_ids=SOURCE_IDS)
 
 
+def test_team_selection_is_bound_to_exact_catalog_bundle_and_two_selected_members():
+    team = {
+        "version": "1.2.0", "source_revision": "a" * 40,
+        "bundle_generation_sha256": "b" * 64,
+        "bundle_member_path": "registry/package/bundles/research.yaml",
+        "bundle_member_sha256": "c" * 64,
+        "source_member_path": "registry/package/installer-registry/declarations/bundles/research.yaml",
+        "source_member_sha256": "d" * 64, "source_path": "bundles/research.yaml",
+        "ordered_member_ids": ["researcher", "analyst", "writer"],
+    }
+    selection = {"schema": 1, "team_id": "research",
+        "bundle_generation_sha256": team["bundle_generation_sha256"],
+        "bundle_member_sha256": team["bundle_member_sha256"],
+        "ordered_member_ids": team["ordered_member_ids"],
+        "selected_expert_ids": ["researcher", "analyst"]}
+    raw = json.dumps({"execution_mode": "kanban",
+        "selected_source_ids": ["researcher", "analyst"],
+        "plan": {"team_selection": selection}})
+    assert parse_master_plan_output(raw, allowed_source_ids=SOURCE_IDS + ("analyst",),
+        verified_teams={"research": team})["plan"]["team_selection"] == selection
+
+    stale = dict(selection, bundle_member_sha256="e" * 64)
+    stale_raw = json.dumps({"execution_mode": "kanban",
+        "selected_source_ids": ["researcher", "analyst"],
+        "plan": {"team_selection": stale}})
+    with pytest.raises(JarvisMasterPlanningDenied):
+        parse_master_plan_output(stale_raw, allowed_source_ids=SOURCE_IDS + ("analyst",),
+            verified_teams={"research": team})
+
+    independent = json.dumps({"execution_mode": "kanban",
+        "selected_source_ids": ["researcher", "analyst"],
+        "plan": {"team_selection": selection}})
+    with pytest.raises(JarvisMasterPlanningDenied):
+        parse_master_plan_output(independent, allowed_source_ids=SOURCE_IDS + ("analyst",),
+            verified_teams={"research": dict(team, ordered_member_ids=["researcher", "analyst"])})
+
+
 def test_master_review_is_bound_to_exact_result_digest():
     result = "Private internal draft"
     result_sha = hashlib.sha256(result.encode()).hexdigest()

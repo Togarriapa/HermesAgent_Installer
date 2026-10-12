@@ -91,6 +91,9 @@ def _verified_team_catalog() -> dict[str, Any]:
     return {
         "profiles": profiles,
         "sources": sources,
+        # Membership is filled only by the owner-authenticated current CAS read
+        # below; the offline identity inventory never supplies Team authority.
+        "teams": {},
         "source": {
             "revision": inventory["source"]["revision"],
             "catalog_version": inventory["source"]["catalogVersion"],
@@ -258,7 +261,20 @@ async def start_master_plan_turn(service: JarvisChatService, request: Any, *,
         ).fetchone()
     if mission is None or mission["master_plan_sha256"] is not None:
         return {"status": "unavailable"}
-    catalog = _verified_team_catalog()
+    catalog = dict(_verified_team_catalog())
+    read_teams = getattr(inspector, "read_current_mission_teams", None)
+    if not callable(read_teams):
+        return {"status": "unavailable"}
+    try:
+        root_catalog = read_teams(access_jwt, accepted_ingress, mission_id, revision)
+        from .core_gateway_inspector import RootVerifiedMissionPlanningCatalog
+        if type(root_catalog) is not RootVerifiedMissionPlanningCatalog:
+            return {"status": "unavailable"}
+        catalog["teams"] = root_catalog.teams
+        if mission_catalog_sha256(catalog) != root_catalog.catalog_sha256:
+            return {"status": "unavailable"}
+    except Exception:
+        return {"status": "unavailable"}
     prompt = build_jarvis_mission_master_plan_prompt(mission, catalog)
     prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     task_sha256 = _hash({"goal": mission["brief"]})

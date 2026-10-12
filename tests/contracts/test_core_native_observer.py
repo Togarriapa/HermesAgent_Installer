@@ -190,6 +190,47 @@ def test_root_enrolled_planning_turn_reaches_provider_with_zero_tools(tmp_path: 
     assert receipts[0]["response_text"] == response.output_text
 
 
+@pytest.mark.parametrize("capture,expected_text", [(True, "exact provider answer"), (False, None)])
+def test_observer_forwards_exact_child_output_only_for_root_admitted_capture(
+        tmp_path: Path, monkeypatch, capture: bool, expected_text: str | None):
+    """Root can retain exact Expert output for a sealed child, never ordinary chat text."""
+    from types import SimpleNamespace
+    import time
+    import hermes_installer.remote.core_native_observer as observer
+
+    client = CoreNativeObservationClient(socket_path=tmp_path / "unused.sock")
+    attempt = ObservedProviderAttempt("x" * 32, "o" * 32, time.monotonic() + 20,
+                                     capture_child_output=capture)
+    receipts = []
+    monkeypatch.setattr(client, "planning_context_for_attempt", lambda **_kwargs: None)
+    monkeypatch.setattr(client, "register_attempt", lambda **_kwargs: attempt)
+    monkeypatch.setattr(client, "register_response", lambda **kwargs: receipts.append(kwargs))
+    monkeypatch.setattr(observer, "_codex_account_fingerprint", lambda _resolver: "f" * 64)
+    ctx = _PluginContext()
+    install_native_codex_process_observer(ctx, client=client)
+    prompt = "child task"
+    request = {"model": "gpt-6-luna", "tools": [],
+        "input": [{"type": "message", "role": "user",
+                   "content": [{"type": "input_text", "text": prompt}]}]}
+    output = "exact provider answer"
+    response = SimpleNamespace(output_text=output, model_dump=lambda **_kwargs: {
+        "output_text": output, "output": []})
+
+    result = ctx.middleware["llm_execution"][0](
+        provider="openai-codex", api_mode="codex_responses",
+        base_url="https://chatgpt.com/backend-api/codex", model="gpt-6-luna",
+        request=request, session_id="child-session", turn_id="child-turn",
+        api_request_id="child-request", next_call=lambda _value: response,
+    )
+
+    assert result is response
+    assert len(receipts) == 1
+    assert receipts[0]["response_text"] == expected_text
+    if expected_text is not None:
+        assert receipts[0]["response_text_sha256"] == __import__("hashlib").sha256(
+            output.encode()).hexdigest()
+
+
 def test_master_plan_readback_uses_canonical_root_durable_completion_record(monkeypatch):
     """Only canonical root-published zero-tool records survive a registry restart."""
     import threading

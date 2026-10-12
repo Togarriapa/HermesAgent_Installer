@@ -191,6 +191,9 @@ class InternalProfileClaimSource(Protocol):
     def admit_selected_expert_child(self, *, resources_claim: RootSelectedInternalProfileDispatchClaim,
                                     child: object, source: Any, goal: str) -> Any: ...
 
+    def complete_selected_expert_child(self, *, resources_claim: RootSelectedInternalProfileDispatchClaim,
+                                       authorization: Any) -> Any: ...
+
 
 class HermesPluginContext(Protocol):
     def register_tool(self, name: str, toolset: str, schema: dict[str, Any],
@@ -374,7 +377,20 @@ def make_resources_delegate_handler(ctx: HermesPluginContext,
                         or not isinstance(native_result.get("summary"), str)
                         or not native_result["summary"].strip()):
                     raise ResourcesDispatchDenied("native expert lifecycle did not report a successful completion")
-                encoded = json.dumps(native_result, ensure_ascii=False, sort_keys=True,
+                completion = claim_source.complete_selected_expert_child(
+                    resources_claim=claim, authorization=authorization,
+                )
+                from hermes_installer.remote.core_native_observer import RootObservedExpertCompletion
+                if (type(completion) is not RootObservedExpertCompletion
+                        or completion.profile_id != source.profile_id
+                        or completion.source_revision != source.source_revision
+                        or completion.source_generation_sha256 != source.generation_sha256
+                        or completion.source_manifest_sha256 != source.source_member_manifest_sha256
+                        or completion.goal_sha256 != authorization.goal_sha256
+                        or not completion.response_text.strip()):
+                    raise ResourcesDispatchDenied("root did not observe this exact Expert provider completion")
+                observed_result = {**native_result, "summary": completion.response_text}
+                encoded = json.dumps(observed_result, ensure_ascii=False, sort_keys=True,
                                      separators=(",", ":"), allow_nan=False).encode("utf-8", "strict")
                 total_bytes += len(encoded)
                 if len(encoded) > MAX_RESULT_BYTES or total_bytes > MAX_RESULT_BYTES:
@@ -383,7 +399,10 @@ def make_resources_delegate_handler(ctx: HermesPluginContext,
                     "source_id": source.profile_id,
                     "source_revision": source.source_revision,
                     "generation_sha256": source.generation_sha256,
-                    "draft": native_result,
+                    "completion_handle": completion.completion_handle,
+                    "completion_response_sha256": completion.response_sha256,
+                    "completion_text_sha256": completion.response_text_sha256,
+                    "draft": observed_result,
                 })
             except Exception:
                 # Earlier results are internal read/research drafts only. Keep

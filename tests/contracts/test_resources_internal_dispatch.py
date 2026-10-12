@@ -93,12 +93,27 @@ class FakeDelivery:
         self.profile_id = source_id
         self.source_revision = "catalog-rev-7"
         self.generation_sha256 = digest("generation-" + source_id)
+        self.source_member_manifest_sha256 = digest("source-manifest-" + source_id)
         self.effective_prompt = ("Verified prompt for " + source_id).encode()
         self.effective_prompt_sha256 = digest(self.effective_prompt)
 
 
 class FakeAuthorization:
-    pass
+    def __init__(self, goal):
+        self.goal_sha256 = digest(goal)
+
+
+class FakeObservedCompletion:
+    def __init__(self, source, goal):
+        self.profile_id = source.profile_id
+        self.source_revision = source.source_revision
+        self.source_generation_sha256 = source.generation_sha256
+        self.source_manifest_sha256 = source.source_member_manifest_sha256
+        self.goal_sha256 = digest(goal)
+        self.response_text = "root observed answer"
+        self.completion_handle = "completion_0123456789abcdef"
+        self.response_sha256 = digest("provider-response")
+        self.response_text_sha256 = digest(self.response_text)
 
 
 class FakeMissionAuthorization:
@@ -121,6 +136,8 @@ class FakeRootClaimSource(OneShotIssuer):
         self.source_reads = []
         self.admissions = []
         self.events = []
+        self.completions = []
+        self.fail_completion = False
 
     def authorize_mission_claim(self, claim, *, task_sha256):
         self.events.append("authorize")
@@ -140,7 +157,17 @@ class FakeRootClaimSource(OneShotIssuer):
         assert child.valid_tool_names == {"web_search", "web_extract", "skills_list", "skill_view"}
         assert "delegate_task" not in child.valid_tool_names
         self.admissions.append((source.profile_id, goal, child))
-        return FakeAuthorization()
+        return FakeAuthorization(goal)
+
+    def complete_selected_expert_child(self, *, resources_claim, authorization):
+        assert resources_claim is self.claim
+        if self.fail_completion:
+            raise PermissionError("root has no observed final provider response")
+        profile_id, goal, _child = self.admissions[-1]
+        source = FakeDelivery(profile_id)
+        self.events.append("complete:" + profile_id)
+        self.completions.append(profile_id)
+        return FakeObservedCompletion(source, goal)
 
 
 def install_native_child_fakes(monkeypatch):
@@ -149,6 +176,7 @@ def install_native_child_fakes(monkeypatch):
     observer.RootNativeSelectedSourceDelivery = FakeDelivery
     observer.RootVerifiedMissionDispatchAuthorization = FakeMissionAuthorization
     observer.RootVerifiedNativeChildAuthorization = FakeAuthorization
+    observer.RootObservedExpertCompletion = FakeObservedCompletion
     adapter = types.ModuleType("hermes_installer.remote.native_child_adapter")
 
     class Mode(Enum):
@@ -246,7 +274,7 @@ def test_registered_tool_runs_only_root_selected_expert_through_native_child_lif
     }
     assert issuer.source_reads == ["researcher"]
     assert [row[0] for row in issuer.admissions] == ["researcher"]
-    assert issuer.events == ["authorize", "read:researcher", "admit:researcher"]
+    assert issuer.events == ["authorize", "read:researcher", "admit:researcher", "complete:researcher"]
     assert len(children) == len(calls) == 1
     assert children[0][0]["mode"] is Mode.EXPERT_READ_RESEARCH
     assert children[0][0]["source"].effective_prompt == b"Verified prompt for researcher"
@@ -280,6 +308,29 @@ def test_exact_plan_selection_fans_out_in_order_with_separate_reviewable_drafts(
     assert issuer.source_reads == ["researcher", "writer"]
     assert [item[0] for item in issuer.admissions] == ["researcher", "writer"]
     assert len(children) == len(calls) == 2
+    assert [item["draft"]["summary"] for item in response["drafts"]] == [
+        "root observed answer", "root observed answer"]
+    assert all(item["completion_handle"] and item["completion_text_sha256"] ==
+               digest("root observed answer") for item in response["drafts"])
+    assert context.dispatches == []
+
+
+def test_unobserved_provider_completion_never_becomes_a_reviewable_draft(native_registry, monkeypatch):
+    parent = Parent()
+    claim = current_claim(parent)
+    issuer = FakeRootClaimSource(claim)
+    issuer.fail_completion = True
+    install_native_child_fakes(monkeypatch)
+    context = NativeContext(native_registry)
+    register_resources_delegate(context, issuer)
+
+    response = json.loads(context.registration[3]({"goal": "bounded task"}, parent_agent=parent,
+                                                  tool_call_id="call-unobserved", turn_id="turn-unobserved"))
+
+    assert response["success"] is False
+    assert response["state"] == "pending"
+    assert response["completed_drafts"] == []
+    assert response["final_effect_authority"] is False
     assert context.dispatches == []
 
 

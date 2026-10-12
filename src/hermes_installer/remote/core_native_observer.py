@@ -823,6 +823,7 @@ class ObservedProviderAttempt:
     handle: str
     owner_turn_handle: str
     expires_monotonic: float
+    capture_child_output: bool = False
 
     def __post_init__(self) -> None:
         if (not _OPAQUE.fullmatch(self.handle or "")
@@ -831,8 +832,53 @@ class ObservedProviderAttempt:
                 or not isinstance(self.expires_monotonic, (int, float))
                 or not math.isfinite(self.expires_monotonic)
                 or self.expires_monotonic <= time.monotonic()
-                or self.expires_monotonic > time.monotonic() + 600.0):
+                or self.expires_monotonic > time.monotonic() + 600.0
+                or type(self.capture_child_output) is not bool):
             raise CoreNativeObservationUnavailable("root provider-attempt handle is malformed")
+
+
+@dataclass(frozen=True, slots=True)
+class RootObservedExpertCompletion:
+    """Exact provider text and source identity retained after a real Expert completion."""
+
+    completion_handle: str
+    owner_turn_handle: str
+    child_session_id: str
+    profile_id: str
+    source_revision: str
+    source_generation_sha256: str
+    source_manifest_sha256: str
+    goal_sha256: str
+    provider_attempt_handle: str
+    request_sha256: str
+    response_sha256: str
+    response_text_sha256: str
+    response_text: str
+    expires_monotonic: float
+    _seal: object
+
+    def __post_init__(self) -> None:
+        if (self._seal is not _EXPERT_COMPLETION_SEAL
+                or not _OPAQUE.fullmatch(self.completion_handle or "")
+                or not _OPAQUE.fullmatch(self.owner_turn_handle or "")
+                or not _ID.fullmatch(self.child_session_id or "")
+                or not _ID.fullmatch(self.profile_id or "")
+                or not _OPAQUE.fullmatch(self.provider_attempt_handle or "")
+                or not all(_HASH.fullmatch(value or "") for value in (
+                    self.source_generation_sha256, self.source_manifest_sha256,
+                    self.goal_sha256, self.request_sha256, self.response_sha256,
+                    self.response_text_sha256))
+                or not isinstance(self.source_revision, str) or not 1 <= len(self.source_revision) <= 128
+                or not isinstance(self.response_text, str)
+                or not 1 <= len(self.response_text.encode("utf-8", errors="strict")) <= 32 * 1024
+                or hashlib.sha256(self.response_text.encode("utf-8", errors="strict")).hexdigest()
+                    != self.response_text_sha256
+                or type(self.expires_monotonic) not in (int, float)
+                or not time.monotonic() < self.expires_monotonic <= time.monotonic() + 30.0):
+            raise CoreNativeObservationUnavailable("root Expert completion is malformed")
+
+
+_EXPERT_COMPLETION_SEAL = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1366,6 +1412,7 @@ class CoreNativeObservationClient:
             "complete-native-child", "verify-planning-completion",
             "request-final-effect", "poll-final-effect", "authorize-master-read-call",
             "read-selected-expert-source", "admit-selected-expert-child",
+            "complete-selected-expert-child",
             "planning-turn-context", "bind-obsidian-native-vault",
             "authorize-obsidian-call-scope", "record-obsidian-draft-origin",
             "resolve-obsidian-draft-origin",
@@ -1441,8 +1488,10 @@ class CoreNativeObservationClient:
         }
         row = self._rpc("register-attempt", payload)
         try:
+            if type(row.get("capture_child_output", False)) is not bool:
+                raise ValueError
             return ObservedProviderAttempt(row["attempt_handle"], row["owner_turn_handle"],
-                                          row["expires_monotonic"])
+                                          row["expires_monotonic"], row.get("capture_child_output", False))
         except (KeyError, TypeError, ValueError):
             raise CoreNativeObservationUnavailable("root provider-attempt receipt is malformed") from None
 
@@ -1546,6 +1595,47 @@ class CoreNativeObservationClient:
                 raise CoreNativeObservationUnavailable("provider result text is not digest-bound")
             payload["response_text"] = response_text
         self._rpc("register-response", payload)
+
+    def complete_selected_expert_child(self, *, authorization: RootVerifiedNativeChildAuthorization
+                                       ) -> RootObservedExpertCompletion:
+        """Return only the exact final provider text captured for this admitted child."""
+        if (type(authorization) is not RootVerifiedNativeChildAuthorization
+                or authorization._seal is not _NATIVE_CHILD_AUTHORIZATION_SEAL
+                or authorization.mode != "expert-read-research"):
+            raise CoreNativeObservationUnavailable("root-admitted Expert child is required")
+        row = self._rpc("complete-selected-expert-child", {
+            "admission_handle": authorization.admission_handle,
+            "owner_turn_handle": authorization.owner_turn_handle,
+            "child_session_id": authorization.child_session_id,
+        })
+        required = {"schema", "nonce", "ok", "completion_handle", "owner_turn_handle",
+                    "child_session_id", "profile_id", "source_revision",
+                    "source_generation_sha256", "source_manifest_sha256", "goal_sha256",
+                    "provider_attempt_handle", "request_sha256", "response_sha256",
+                    "response_text_sha256", "response_text", "expires_monotonic"}
+        if (set(row) != required or row.get("schema") != 1 or row.get("ok") is not True
+                or row["owner_turn_handle"] != authorization.owner_turn_handle
+                or row["child_session_id"] != authorization.child_session_id
+                or row["profile_id"] != authorization.profile_id
+                or row["source_generation_sha256"] != authorization.source_generation_sha256
+                or row["source_manifest_sha256"] != authorization.source_manifest_sha256
+                or row["goal_sha256"] != authorization.goal_sha256):
+            raise CoreNativeObservationUnavailable("root Expert completion does not match its admission")
+        try:
+            return RootObservedExpertCompletion(
+                completion_handle=row["completion_handle"],
+                owner_turn_handle=row["owner_turn_handle"],
+                child_session_id=row["child_session_id"], profile_id=row["profile_id"],
+                source_revision=row["source_revision"],
+                source_generation_sha256=row["source_generation_sha256"],
+                source_manifest_sha256=row["source_manifest_sha256"], goal_sha256=row["goal_sha256"],
+                provider_attempt_handle=row["provider_attempt_handle"], request_sha256=row["request_sha256"],
+                response_sha256=row["response_sha256"],
+                response_text_sha256=row["response_text_sha256"], response_text=row["response_text"],
+                expires_monotonic=float(row["expires_monotonic"]), _seal=_EXPERT_COMPLETION_SEAL,
+            )
+        except (KeyError, TypeError, ValueError):
+            raise CoreNativeObservationUnavailable("root Expert completion is malformed") from None
 
     def register_tool_call(self, *, attempt: ObservedProviderAttempt,
                            tool_call_id: str, canonical_arguments: bytes) -> ObservedNativeToolCall:
@@ -2418,6 +2508,7 @@ class RootCoreNativeObservationRegistry:
         self._consumed_dispatches: dict[str, dict[str, Any]] = {}
         self._child_sessions: dict[str, dict[str, Any]] = {}
         self._planning_completions: dict[str, dict[str, Any]] = {}
+        self._expert_completions: dict[str, dict[str, Any]] = {}
         # Unlike the gateway-owned mission SQLite rows, these records are retained
         # only after this root process observed and validated the native completion.
         self._master_plan_records: dict[tuple[str, str, int], RootObservedMasterPlanRecord] = {}
@@ -3058,6 +3149,9 @@ class RootCoreNativeObservationRegistry:
         for handle, row in list(self._planning_completions.items()):
             if row["expiry"] <= now:
                 self._planning_completions.pop(handle, None)
+        for handle, row in list(self._expert_completions.items()):
+            if row["expiry"] <= now:
+                self._expert_completions.pop(handle, None)
         for handle, row in list(self._master_selections.items()):
             if row["expiry"] <= now:
                 self._master_selections.pop(handle, None)
@@ -3141,7 +3235,8 @@ class RootCoreNativeObservationRegistry:
         catalog, catalog_sha = _read_root_planning_catalog(owner.core_source_generation)
         if catalog_sha != context.catalog_sha256:
             raise ValueError("master planning catalog changed")
-        parsed = parse_master_plan_output(raw_output, allowed_source_ids=catalog["profiles"])
+        parsed = parse_master_plan_output(raw_output, allowed_source_ids=catalog["profiles"],
+                                         verified_teams=catalog["teams"])
         if (not parsed["selected_source_ids"] and parsed["execution_mode"] != "oneshot"):
             raise ValueError("empty source selection is only valid for OneShot")
         if hashlib.sha256(raw_output.encode("utf-8", errors="strict")).hexdigest() != response_text_sha256:
@@ -4251,6 +4346,67 @@ class RootCoreNativeObservationRegistry:
                     "response_sha256": request["response_sha256"],
                     "expires_monotonic": expiry,
                     "owner_turn_expires_monotonic": owner.expires_monotonic}
+            if op == "complete-selected-expert-child":
+                required = {"schema", "op", "nonce", "admission_handle",
+                            "owner_turn_handle", "child_session_id"}
+                if set(request) != required:
+                    raise ValueError("Expert completion schema mismatch")
+                child = self._child_sessions.get(request["child_session_id"])
+                now = time.monotonic()
+                if (child is None or child["admission_handle"] != request["admission_handle"]
+                        or child["owner_turn_handle"] != request["owner_turn_handle"]
+                        or child["peer"] != peer or child["expiry"] <= now or child["complete"]
+                        or child["mode"] != "expert-read-research" or child["turn_id"] is None
+                        or not child["attempts"]):
+                    raise ValueError("Expert completion is not a live admitted child")
+                owner, policy, source = child["owner"], child["policy"], child.get("source")
+                attempts = [self._attempts.get(handle) for handle in child["attempts"]]
+                final = attempts[-1] if attempts else None
+                raw_text = final.get("response_text") if final is not None else None
+                response = final.get("response") if final is not None else None
+                if (owner.is_current_sealed(self._config, custody=self._custody, now=now) is not True
+                        or self._policy_for_owner(owner, now) is not policy
+                        or not callable(getattr(source, "is_current_sealed", None))
+                        or source.is_current_sealed(self._custody, now=now) is not True
+                        or source.profile_id != child["profile_id"]
+                        or source.generation_sha256 != child["source_generation_sha256"]
+                        or source.source_member_manifest_sha256 != child["source_manifest_sha256"]
+                        or source.effective_prompt_sha256 != child["prompt_sha256"]
+                        or any(row is None or row["child_admission_handle"] != child["admission_handle"]
+                               or row["response"] is None or row["expiry"] <= now
+                               or row["account"] != child["account"] for row in attempts)
+                        or final is None or final["session_id"] != child["session_id"]
+                        or final["turn_id"] != child["turn_id"]
+                        or response is None or response[1]
+                        or not _HASH.fullmatch(response[2] or "")
+                        or not isinstance(raw_text, str)
+                        or hashlib.sha256(raw_text.encode("utf-8", errors="strict")).hexdigest()
+                            != response[2]
+                        or not 1 <= len(raw_text.encode("utf-8", errors="strict")) <= 32 * 1024):
+                    raise ValueError("Expert completion lacks current root-observed provider output")
+                child["complete"] = True
+                child["response_text_sha256"] = response[2]
+                self._record_child_activity(child, kind="completed", status="completed",
+                    event_id=hashlib.sha256(("completed\0" + child["admission_handle"]).encode()).hexdigest())
+                completion_handle = secrets.token_urlsafe(32)
+                completion_expiry = min(child["expiry"], owner.expires_monotonic, now + 30.0)
+                self._expert_completions[completion_handle] = {
+                    "child": child, "final_attempt": final, "response_sha256": response[0],
+                    "response_text_sha256": response[2], "response_text": raw_text,
+                    "expiry": completion_expiry, "peer": peer, "consumed": False,
+                }
+                return {"schema": 1, "nonce": nonce, "ok": True,
+                    "completion_handle": completion_handle,
+                    "owner_turn_handle": owner.owner_turn_handle,
+                    "child_session_id": child["session_id"], "profile_id": child["profile_id"],
+                    "source_revision": source.source_revision,
+                    "source_generation_sha256": child["source_generation_sha256"],
+                    "source_manifest_sha256": child["source_manifest_sha256"],
+                    "goal_sha256": child["goal_sha256"],
+                    "provider_attempt_handle": final["attempt_handle"],
+                    "request_sha256": final["request_sha256"],
+                    "response_sha256": response[0], "response_text_sha256": response[2],
+                    "response_text": raw_text, "expires_monotonic": completion_expiry}
             if op == "verify-planning-completion":
                 fields = {"schema", "op", "nonce", "completion_handle", "owner_turn_handle",
                           "gateway_turn_id", "owner_subject_sha256", "core_generation",
@@ -4381,7 +4537,8 @@ class RootCoreNativeObservationRegistry:
                     self._record_child_activity(child, kind="attempt", status="started",
                         event_id=hashlib.sha256(("attempt\0" + handle).encode()).hexdigest())
                 return {"schema": 1, "nonce": nonce, "ok": True, "attempt_handle": handle,
-                        "owner_turn_handle": owner.owner_turn_handle, "expires_monotonic": expiry}
+                        "owner_turn_handle": owner.owner_turn_handle, "expires_monotonic": expiry,
+                        "capture_child_output": bool(is_child_attempt and child["mode"] == "expert-read-research")}
             if op == "register-response":
                 required_response = {"schema", "op", "nonce", "attempt_handle", "response_sha256",
                                      "response_text_sha256", "tool_calls", "completed"}
@@ -4406,7 +4563,10 @@ class RootCoreNativeObservationRegistry:
                     if (any(item["name"] not in child["tool_names"] for item in calls.values())
                             or (child["mode"] == "planner" and calls)
                             or (child["mode"] == "planner" and request["completed"]
-                                and not _HASH.fullmatch(request["response_text_sha256"] or ""))):
+                                and not _HASH.fullmatch(request["response_text_sha256"] or ""))
+                            or (child["mode"] == "expert-read-research" and request["completed"]
+                                and not calls and (not isinstance(request.get("response_text"), str)
+                                    or not _HASH.fullmatch(request["response_text_sha256"] or "")))):
                         raise ValueError("child response exceeds its admitted tool or text closure")
                 elif row["owner"].planning_context is not None:
                     raw_plan = request.get("response_text")
@@ -4419,9 +4579,19 @@ class RootCoreNativeObservationRegistry:
                     self._persist_master_plan_result(row, raw_plan, request["response_text_sha256"])
                 elif "response_text" in request:
                     raise ValueError("ordinary response cannot carry private planning output")
+                if "response_text" in request:
+                    text = request["response_text"]
+                    if (not isinstance(text, str) or not 1 <= len(text.encode("utf-8", errors="strict"))
+                            <= 32 * 1024
+                            or hashlib.sha256(text.encode("utf-8", errors="strict")).hexdigest()
+                                != request["response_text_sha256"]
+                            or (child is None and row["owner"].planning_context is None)):
+                        raise ValueError("provider text is not permitted or digest-bound")
                 row["response"] = ((request["response_sha256"], calls,
                                     request["response_text_sha256"])
                                    if request["completed"] else (None, {}, None))
+                row["response_text"] = (request.get("response_text")
+                                        if request["completed"] else None)
                 child = self._child_sessions.get(row["session_id"])
                 if child is not None:
                     started = row.get("activity_started_monotonic")
@@ -4665,6 +4835,7 @@ class RootCoreNativeObservationRegistry:
             self._consumed_dispatches.clear()
             self._child_sessions.clear()
             self._planning_completions.clear()
+            self._expert_completions.clear()
             self._master_selections.clear()
             self._selected_source_deliveries.clear()
             self._obsidian_bindings.clear()
@@ -4990,7 +5161,7 @@ def install_native_codex_process_observer(ctx: Any, *, client: CoreNativeObserva
                 client.register_response(
                     attempt=attempt, response_sha256=hashlib.sha256(response_bytes).hexdigest(),
                     response_text_sha256=response_text_sha256,
-                    response_text=(output_text if planning_context is not None
+                    response_text=(output_text if (planning_context is not None or attempt.capture_child_output)
                                    and isinstance(output_text, str) else None),
                     tool_calls=[{"id": call_id, "name": name,
                                  "arguments_sha256": hashlib.sha256(arguments).hexdigest()}
@@ -5122,6 +5293,26 @@ class RootInternalProfileClaimSource:
             raise CoreNativeObservationUnavailable("typed consumed Resources claim is required")
         return self._client.admit_selected_expert_child(
             native_claim=retained[1], child=child, source=source, goal=goal)
+
+    def complete_selected_expert_child(self, *, resources_claim: object,
+                                       authorization: RootVerifiedNativeChildAuthorization
+                                       ) -> RootObservedExpertCompletion:
+        """Return root-captured provider output for this one admitted Expert child."""
+        from hermes_installer.components.resources_internal_dispatch import (
+            RootSelectedInternalProfileDispatchClaim as ResourcesDispatchClaim,
+        )
+        with self._lock:
+            retained = self._mission_claims.get(getattr(resources_claim, "claim_id", ""))
+        if (type(resources_claim) is not ResourcesDispatchClaim or retained is None
+                or retained[0] is not resources_claim
+                or resources_claim.claim_id not in self._authorized_mission_claims):
+            raise CoreNativeObservationUnavailable("typed consumed Resources claim is required")
+        if (type(authorization) is not RootVerifiedNativeChildAuthorization
+                or authorization.owner_turn_handle != retained[1].owner_turn_handle
+                or authorization.parent_session_id != retained[1].session_id
+                or authorization.mode != "expert-read-research"):
+            raise CoreNativeObservationUnavailable("Expert admission belongs to another owner claim")
+        return self._client.complete_selected_expert_child(authorization=authorization)
 
     def consume_current_claim(self, profile_id: str, parent_agent: object, *,
                               tool_call_id: str, tool_name: str,
