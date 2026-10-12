@@ -722,7 +722,10 @@ def committed_adapter_update_recovery(tmp_path, monkeypatch):
               "old_core_source_generation": core_generation,
               "old_journal_sha256": hashlib.sha256(prior_raw).hexdigest(),
               "new_source": new_source, "new_adapter_generation": new_generation,
-              "new_core_source_generation": core_generation}
+              "new_core_source_generation": core_generation,
+              "reconstruction": {"phase": "committed", "new_discovery_sha256": "e" * 64}}
+    cohort["reconstruction_sha256"] = hashlib.sha256(
+        core._canonical_json(cohort["reconstruction"])).hexdigest()
     cohort_raw = core._canonical_json(cohort)
     backup_path = tmp_path / "adapter-update-backups" / old_generation
     reference = {"path": str(backup_path), "source_generation": old_generation,
@@ -793,11 +796,16 @@ def test_owned_adapter_update_recovery_derives_exact_committed_join(
     assert core.JOURNAL.read_bytes() == core._canonical_json(fixture.prior)
 
 
-@pytest.mark.parametrize("phase", ["source-starting", "rolling-back"])
+@pytest.mark.parametrize("phase", ["source-starting"])
 def test_owned_adapter_update_recovery_restores_exact_interrupted_cohort(
         committed_adapter_update_recovery, monkeypatch, phase):
     fixture = committed_adapter_update_recovery
     fixture.cohort["phase"] = phase
+    reconstruction = dict(fixture.cohort["reconstruction"])
+    reconstruction["phase"] = phase
+    fixture.cohort["reconstruction"] = reconstruction
+    fixture.cohort["reconstruction_sha256"] = hashlib.sha256(
+        core._canonical_json(reconstruction)).hexdigest()
     cohort_raw = core._canonical_json(fixture.cohort)
     fixture.refresh["core_update_cohort_sha256"] = hashlib.sha256(cohort_raw).hexdigest()
     monkeypatch.setattr(core, "_read_adapter_update_cohort",
@@ -813,6 +821,54 @@ def test_owned_adapter_update_recovery_restores_exact_interrupted_cohort(
     assert "interrupted Core cohort restored" in result
     assert fixture.effects == ["recover-interrupted"]
     assert core.JOURNAL.read_bytes() == core._canonical_json(fixture.prior)
+
+
+def test_owned_adapter_update_restart_accepts_only_exact_committed_to_rollback_transform(
+        committed_adapter_update_recovery, monkeypatch):
+    fixture = committed_adapter_update_recovery
+    committed_row = core._canonical_json(fixture.cohort)
+    committed_sha = hashlib.sha256(committed_row).hexdigest()
+    assert fixture.refresh["core_update_cohort_sha256"] == committed_sha
+    fixture.cohort["phase"] = "rolling-back"
+    reconstruction = dict(fixture.cohort["reconstruction"])
+    reconstruction["phase"] = "rolling-back"
+    fixture.cohort["reconstruction"] = reconstruction
+    fixture.cohort["reconstruction_sha256"] = hashlib.sha256(
+        core._canonical_json(reconstruction)).hexdigest()
+    rolling_raw = core._canonical_json(fixture.cohort)
+    monkeypatch.setattr(core, "_read_adapter_update_cohort",
+        lambda: (fixture.cohort, rolling_raw))
+    ingress_before = fixture.ingress_path.read_bytes()
+
+    def recover():
+        assert core._ADAPTER_UPDATE_LOCK_HELD.get()
+        fixture.effects.append("recover-interrupted")
+        core.JOURNAL.write_bytes(core._canonical_json(fixture.prior))
+
+    monkeypatch.setattr(core, "_recover_interrupted_adapter_update", recover)
+    result = core.restore_owned_core_adapter_update()
+    assert "interrupted Core cohort restored" in result
+    assert fixture.effects == ["recover-interrupted"]
+    assert fixture.ingress_path.read_bytes() == ingress_before
+
+
+def test_owned_adapter_update_restart_denies_mutated_rollback_transform(
+        committed_adapter_update_recovery, monkeypatch):
+    fixture = committed_adapter_update_recovery
+    fixture.cohort["phase"] = "rolling-back"
+    reconstruction = dict(fixture.cohort["reconstruction"])
+    reconstruction["phase"] = "rolling-back"
+    reconstruction["new_discovery_sha256"] = "f" * 64
+    fixture.cohort["reconstruction"] = reconstruction
+    fixture.cohort["reconstruction_sha256"] = hashlib.sha256(
+        core._canonical_json(reconstruction)).hexdigest()
+    rolling_raw = core._canonical_json(fixture.cohort)
+    monkeypatch.setattr(core, "_read_adapter_update_cohort",
+        lambda: (fixture.cohort, rolling_raw))
+    fixture.ingress_path.write_bytes(core._canonical_json(fixture.ingress))
+    with pytest.raises(core.CoreRuntimeError):
+        core.restore_owned_core_adapter_update()
+    assert fixture.effects == []
 
 
 @pytest.mark.parametrize("change", ["partial-join", "old-generation", "old-core-source",

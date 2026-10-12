@@ -5109,6 +5109,40 @@ def _adapter_update_backup_reference(cohort):
   raise CoreRuntimeError("adapter update recovery backup differs from its cohort")
  return {"path":str(backup),"source_generation":generation,"files":manifest}
 
+def _retained_committed_adapter_cohort_sha256(cohort,raw):
+ """Resolve the sole writer-defined committed-to-rollback cohort transform."""
+ if type(cohort) is not dict or not isinstance(raw,bytes): return None
+ try:
+  if raw!=_canonical_json(cohort): return None
+ except (TypeError,ValueError):
+  return None
+ if cohort.get("phase")=="committed":
+  return hashlib.sha256(raw).hexdigest()
+ if cohort.get("phase")!="rolling-back":
+  return hashlib.sha256(raw).hexdigest()
+ rolling_reconstruction=cohort.get("reconstruction")
+ if (type(rolling_reconstruction) is not dict
+     or rolling_reconstruction.get("phase")!="rolling-back"
+     or cohort.get("reconstruction_sha256")
+        !=hashlib.sha256(_canonical_json(rolling_reconstruction)).hexdigest()):
+  return None
+ committed=dict(cohort)
+ committed["phase"]="committed"
+ reconstruction=dict(rolling_reconstruction)
+ reconstruction["phase"]="committed"
+ committed["reconstruction"]=reconstruction
+ committed["reconstruction_sha256"]=hashlib.sha256(_canonical_json(reconstruction)).hexdigest()
+ initial=committed.get("initial_primary_transition")
+ if initial is not None:
+  if type(initial) is not dict or initial.get("state")!="rolling-back": return None
+  initial=dict(initial); initial["state"]="adopted"
+  committed["initial_primary_transition"]=initial
+ try:
+  committed_raw=_canonical_json(committed)
+ except (TypeError,ValueError):
+  return None
+ return hashlib.sha256(committed_raw).hexdigest()
+
 def restore_owned_core_adapter_update():
  """Restore only the current committed update retained by the ingress cohort."""
  if os.geteuid()!=ROOT_UID or not Path("/proc").is_dir():
@@ -5189,6 +5223,7 @@ def restore_owned_core_adapter_update():
   cohort_sha=refresh.get("core_update_cohort_sha256")
   retained_reference=refresh.get("core_update_backup_reference")
   joins=(retained_reference,transaction,cohort_sha)
+  retained_cohort_sha=_retained_committed_adapter_cohort_sha256(cohort,cohort_raw)
   if all(value is None for value in joins):
    # Core may advance immediately before the adopter persists its three
    # joins. The current protected cohort and its exact retained old backup
@@ -5199,7 +5234,7 @@ def restore_owned_core_adapter_update():
         or transaction!=cohort["cohort_transaction_id"]
         or not isinstance(cohort_sha,str)
         or re.fullmatch(r"[0-9a-f]{64}",cohort_sha) is None
-        or cohort_sha!=hashlib.sha256(cohort_raw).hexdigest()):
+        or cohort_sha!=retained_cohort_sha):
    raise CoreRuntimeError("retained adapter refresh does not join the current protected Core update")
 
   for unit in ("hermes-jarvis-core-gateway.service","hermes-jarvis-mvp-tunnel.service"):
