@@ -180,7 +180,9 @@ def test_overview_presence_is_gated_by_fresh_core_witness():
     assert '[data-feature-root="overview"] .overview-stage:not([data-in-viewport="true"]) .reactor-orbit{animation:none!important;transform:none!important}' in css
     assert 'html:not([data-page-visible="true"]) [data-feature-root="overview"] .overview-stage .reactor-orbit' in css
     assert '@media(prefers-reduced-motion:reduce){[data-feature-root="overview"] .reactor-dial,[data-feature-root="overview"] .reactor-orbit-inner,[data-feature-root="overview"] .reactor-orbit-outer{animation:none!important;transform:none!important}' in css
-    assert 'html[data-jarvis-motion="reduce"] [data-feature-root="overview"] .reactor-orbit-inner{animation:none!important;transform:none!important}' in css
+    app_reduce_rule = next(rule for rule in css.split("}") if 'html[data-jarvis-motion="reduce"]' in rule)
+    assert all(selector in app_reduce_rule for selector in (".reactor-dial", ".reactor-orbit-inner", ".reactor-orbit-outer"))
+    assert "animation:none!important;transform:none!important" in app_reduce_rule
     assert '[data-feature-root="overview"][data-stale="true"] .overview-stage .reactor-dial' in css
     assert '[data-feature-root="overview"] .quick-actions{display:flex;flex-wrap:wrap;overflow:visible' in css
 
