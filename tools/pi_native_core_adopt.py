@@ -719,13 +719,22 @@ def _recheck_ingress_snapshot(saved, old_config: bytes,
 
 def _replace_ingress_units(new_units, new_config: bytes, config_info: os.stat_result,
                            saved, old_config: bytes) -> None:
-    if any(not _unit_is_fixed(name) for name in (INSPECTOR, GATEWAY, TUNNEL)):
-        raise RuntimeError("fixed systemd unit ownership changed before source switch")
-    # The approved union arrives on stdin and the protected backup is written
-    # before this point. Recheck the exact captured inode/metadata/bytes at the
-    # last boundary before the first service stop, so delayed intake or backup
-    # creation cannot apply a candidate to a drifted ingress tuple.
-    _recheck_ingress_snapshot(saved, old_config, config_info)
+    try:
+        if any(not _unit_is_fixed(name) for name in (INSPECTOR, GATEWAY, TUNNEL)):
+            raise _IngressSnapshotConflict(
+                "fixed systemd unit ownership changed before source switch")
+        # The approved union arrives on stdin and the protected backup is
+        # written before this point. Recheck the exact captured inode, metadata
+        # and bytes at the last boundary before the first service stop.
+        _recheck_ingress_snapshot(saved, old_config, config_info)
+    except _IngressSnapshotConflict:
+        raise
+    except Exception:
+        # Protected-file open/read/custody failures are still pre-effect
+        # conflicts. Sanitize the low-level error and never enter rollback,
+        # which would itself stop a live ingress service.
+        raise _IngressSnapshotConflict(
+            "fixed ingress custody could not be reverified before source switch") from None
     _run("systemctl", "stop", TUNNEL)
     _run("systemctl", "stop", GATEWAY)
     _run("systemctl", "stop", INSPECTOR)

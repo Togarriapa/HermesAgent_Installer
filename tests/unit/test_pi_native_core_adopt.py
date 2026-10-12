@@ -1009,9 +1009,10 @@ def test_cli_rollback_recovers_core_before_restoring_old_ingress(monkeypatch, tm
     assert events[0] == ("source", candidate, source)
 
 
-@pytest.mark.parametrize("failure", [None, "ingress-drift", "late-ingress-drift", "owner", "migration",
-                                     "migration-unclassified", "inspector-restart",
-                                     "fresh-observer"])
+@pytest.mark.parametrize("failure", [None, "ingress-drift", "late-ingress-drift",
+                                     "late-ingress-read-failure", "late-unit-ownership",
+                                     "owner", "migration", "migration-unclassified",
+                                     "inspector-restart", "fresh-observer"])
 def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fresh(
         monkeypatch, tmp_path, failure, capsys):
     candidate = "c" * 40
@@ -1119,10 +1120,20 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
     monkeypatch.setattr(sys, "argv", [str(HELPER_PATH), "--candidate-sha", candidate, "--apply"])
     monkeypatch.setattr(adopt, "_verify_source_provenance",
                         lambda sha, path: events.append(("source", sha, path)))
-    monkeypatch.setattr(adopt, "_unit_is_fixed", lambda _name: True)
+    def unit_is_fixed(name):
+        return not (failure == "late-unit-ownership" and "save-backup" in events
+                    and name == adopt.GATEWAY)
+
+    monkeypatch.setattr(adopt, "_unit_is_fixed", unit_is_fixed)
     monkeypatch.setattr(adopt, "_unit_is_exact_and_active", lambda _name: True)
     monkeypatch.setattr(adopt, "_verify_inspector_process", lambda *_args: None)
-    monkeypatch.setattr(adopt, "_read_fixed", lambda path, **_kwargs: ingress_files[path])
+    def read_fixed(path, **_kwargs):
+        if (failure == "late-ingress-read-failure" and "save-backup" in events
+                and path == adopt.GATEWAY_CONFIG):
+            raise RuntimeError("fixed input permissions changed")
+        return ingress_files[path]
+
+    monkeypatch.setattr(adopt, "_read_fixed", read_fixed)
     monkeypatch.setattr(adopt, "_verify_gateway_tunnel",
                         lambda *_args, **_kwargs: events.append("verify-ingress") or {
                             adopt.GATEWAY: True, adopt.TUNNEL: True})
@@ -1185,14 +1196,15 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
                 states[name] = "active"
         return ""
 
+    original_replace_units = adopt._replace_ingress_units
+
     def replace_units(*args):
         events.append("switch-fixed-units")
-        recheck_snapshot(args[3], args[4], args[2])
-        for name in (adopt.TUNNEL, adopt.GATEWAY, adopt.INSPECTOR):
-            run("systemctl", "stop", name)
-        return None
+        return original_replace_units(*args)
 
     monkeypatch.setattr(adopt, "_run", run)
+    monkeypatch.setattr(adopt, "_atomic_fixed",
+                        lambda path, *_args, **_kwargs: events.append(("write", path)))
     monkeypatch.setattr(adopt, "_replace_ingress_units", replace_units)
     monkeypatch.setattr(adopt, "_restore_legacy_core",
                         lambda _core, _source: events.append("recover-core") or True)
@@ -1242,9 +1254,10 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
         assert not any(isinstance(event, tuple) and event[0] in {"stop", "start", "restart"}
                        for event in events)
         assert not backup_state["present"]
-    elif failure == "late-ingress-drift":
+    elif failure in {"late-ingress-drift", "late-ingress-read-failure",
+                     "late-unit-ownership"}:
         assert result == 4
-        assert events.index("save-backup") < events.index("switch-fixed-units")
+        assert "save-backup" in events
         assert "restore-old-ingress" not in events
         assert not any(isinstance(event, tuple) and event[0] in {"stop", "start", "restart"}
                        for event in events)
