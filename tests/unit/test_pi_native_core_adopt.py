@@ -371,7 +371,7 @@ def test_ingress_drift_after_union_intake_refuses_before_backup_effect(monkeypat
 
     assert writes == []
     assert effects == []
-    assert fixed[adopt.FIXED_UNITS[INSPECTOR]][0] != inspector
+    assert fixed[adopt.FIXED_UNITS[adopt.INSPECTOR]][0] != inspector
 
 
 def test_switch_changes_only_two_import_roots_and_gateway_digest(monkeypatch):
@@ -1009,7 +1009,7 @@ def test_cli_rollback_recovers_core_before_restoring_old_ingress(monkeypatch, tm
     assert events[0] == ("source", candidate, source)
 
 
-@pytest.mark.parametrize("failure", [None, "ingress-drift", "owner", "migration",
+@pytest.mark.parametrize("failure", [None, "ingress-drift", "late-ingress-drift", "owner", "migration",
                                      "migration-unclassified", "inspector-restart",
                                      "fresh-observer"])
 def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fresh(
@@ -1023,7 +1023,23 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
                              "credential_ref": "keyring:codex-primary"}).encode() + b"\n"
     new_config = json.dumps({"gateway_unit_sha256": hashlib.sha256(new_gateway).hexdigest(),
                              "credential_ref": "keyring:codex-primary"}).encode() + b"\n"
-    config_info = SimpleNamespace(st_mode=stat.S_IFREG | 0o440, st_gid=981)
+
+    def fake_info(raw, *, gid, mode, inode):
+        return SimpleNamespace(st_mode=stat.S_IFREG | mode, st_uid=0, st_gid=gid,
+                               st_dev=1, st_ino=inode, st_size=len(raw), st_mtime_ns=1)
+
+    config_info = fake_info(old_config, gid=981, mode=0o440, inode=3)
+    saved = {
+        adopt.FIXED_UNITS[adopt.GATEWAY]:
+            (old_gateway, fake_info(old_gateway, gid=0, mode=0o644, inode=1)),
+        adopt.FIXED_UNITS[adopt.INSPECTOR]:
+            (old_inspector, fake_info(old_inspector, gid=0, mode=0o644, inode=2)),
+    }
+    ingress_files = {
+        adopt.FIXED_UNITS[adopt.GATEWAY]: saved[adopt.FIXED_UNITS[adopt.GATEWAY]],
+        adopt.FIXED_UNITS[adopt.INSPECTOR]: saved[adopt.FIXED_UNITS[adopt.INSPECTOR]],
+        adopt.GATEWAY_CONFIG: (old_config, config_info),
+    }
     events = []
     legacy = {"value": True}
     states = {adopt.GATEWAY: "active", adopt.TUNNEL: "active", adopt.INSPECTOR: "active"}
@@ -1106,6 +1122,7 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
     monkeypatch.setattr(adopt, "_unit_is_fixed", lambda _name: True)
     monkeypatch.setattr(adopt, "_unit_is_exact_and_active", lambda _name: True)
     monkeypatch.setattr(adopt, "_verify_inspector_process", lambda *_args: None)
+    monkeypatch.setattr(adopt, "_read_fixed", lambda path, **_kwargs: ingress_files[path])
     monkeypatch.setattr(adopt, "_verify_gateway_tunnel",
                         lambda *_args, **_kwargs: events.append("verify-ingress") or {
                             adopt.GATEWAY: True, adopt.TUNNEL: True})
@@ -1119,21 +1136,35 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
         return (1, 3)
 
     monkeypatch.setattr(adopt, "_wait_observer_socket", wait_socket)
-    monkeypatch.setattr(adopt, "_source_switch", lambda _source, **_kwargs: (
-        {adopt.FIXED_UNITS[adopt.GATEWAY]: (old_gateway, None),
-         adopt.FIXED_UNITS[adopt.INSPECTOR]: (old_inspector, None)},
-        old_config, config_info,
-        {adopt.FIXED_UNITS[adopt.GATEWAY]: new_gateway,
-         adopt.FIXED_UNITS[adopt.INSPECTOR]: new_inspector}, new_config))
-    def recheck_snapshot(*_args):
-        events.append("recheck-ingress-snapshot")
+    def source_switch(_source, **_kwargs):
         if failure == "ingress-drift":
-            raise RuntimeError("fixed ingress files changed after the adoption snapshot")
+            raw, info = ingress_files[adopt.FIXED_UNITS[adopt.INSPECTOR]]
+            changed = raw + b"# drift before backup\n"
+            ingress_files[adopt.FIXED_UNITS[adopt.INSPECTOR]] = (
+                changed, SimpleNamespace(**{**vars(info), "st_size": len(changed),
+                                             "st_ino": info.st_ino + 1}))
+        return (saved, old_config, config_info,
+                {adopt.FIXED_UNITS[adopt.GATEWAY]: new_gateway,
+                 adopt.FIXED_UNITS[adopt.INSPECTOR]: new_inspector}, new_config)
+
+    monkeypatch.setattr(adopt, "_source_switch", source_switch)
+
+    actual_recheck_snapshot = adopt._recheck_ingress_snapshot
+
+    def recheck_snapshot(*args):
+        events.append("recheck-ingress-snapshot")
+        actual_recheck_snapshot(*args)
 
     monkeypatch.setattr(adopt, "_recheck_ingress_snapshot", recheck_snapshot)
     def save_backup(*_args):
         events.append("save-backup")
         backup_state["present"] = True
+        if failure == "late-ingress-drift":
+            raw, info = ingress_files[adopt.GATEWAY_CONFIG]
+            changed = raw + b" "
+            ingress_files[adopt.GATEWAY_CONFIG] = (
+                changed, SimpleNamespace(**{**vars(info), "st_size": len(changed),
+                                             "st_ino": info.st_ino + 1}))
 
     monkeypatch.setattr(adopt, "_save_ingress_backup", save_backup)
     monkeypatch.setattr(adopt, "_set_runtime_inspector_digest",
@@ -1154,8 +1185,9 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
                 states[name] = "active"
         return ""
 
-    def replace_units(*_args):
+    def replace_units(*args):
         events.append("switch-fixed-units")
+        recheck_snapshot(args[3], args[4], args[2])
         for name in (adopt.TUNNEL, adopt.GATEWAY, adopt.INSPECTOR):
             run("systemctl", "stop", name)
         return None
@@ -1210,6 +1242,13 @@ def test_apply_keeps_gateway_and_tunnel_stopped_until_core_and_observer_are_fres
         assert not any(isinstance(event, tuple) and event[0] in {"stop", "start", "restart"}
                        for event in events)
         assert not backup_state["present"]
+    elif failure == "late-ingress-drift":
+        assert result == 4
+        assert events.index("save-backup") < events.index("switch-fixed-units")
+        assert "restore-old-ingress" not in events
+        assert not any(isinstance(event, tuple) and event[0] in {"stop", "start", "restart"}
+                       for event in events)
+        assert backup_state["present"]
     else:
         assert result == 4
         assert not gateway_tunnel_starts

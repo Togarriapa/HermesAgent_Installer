@@ -42,6 +42,10 @@ _SOURCE_PATH = re.compile(rb"/opt/hermes-installer-core-[0-9a-f]{9,64}/src\Z")
 _APPROVED_EMAIL_UNION_MAX_BYTES = 16 * 1024
 
 
+class _IngressSnapshotConflict(RuntimeError):
+    """The fixed ingress CAS failed before the first service effect."""
+
+
 def _wait_legacy_listener(core_runtime, *, timeout: float = 30.0) -> None:
     """Bounded readiness wait for the exact old launcher after recovery start."""
     deadline = time.monotonic() + timeout
@@ -709,7 +713,8 @@ def _recheck_ingress_snapshot(saved, old_config: bytes,
             path, uid=uid, gid=gid, mode=mode, maximum=maximum)
         if (current_raw != expected_raw
                 or _stat_cas_identity(current_info) != _stat_cas_identity(expected_info)):
-            raise RuntimeError("fixed ingress files changed after the adoption snapshot")
+            raise _IngressSnapshotConflict(
+                "fixed ingress files changed after the adoption snapshot")
 
 
 def _replace_ingress_units(new_units, new_config: bytes, config_info: os.stat_result,
@@ -1436,6 +1441,13 @@ def main() -> int:
                 print("Owner enrollment/vault preparation persist if Core/plugin rollback is needed.")
             print("Exact rollback command: rerun this helper with the same --candidate-sha and --rollback.")
             return 0
+        except _IngressSnapshotConflict as error:
+            # The only issuer is the fixed pre-stop snapshot guard. Preserve
+            # its protected journal for inspection and leave active services
+            # untouched; the ordinary failure branch performs real rollback.
+            print("Adoption stopped before service effects; protected transaction retained.")
+            print("Failure type: " + type(error).__name__)
+            return 4
         except Exception as error:
             failed_phase = phase
             recovered = False
