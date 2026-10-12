@@ -190,6 +190,8 @@ _INITIAL_PRIMARY_ADOPTION_SEAL=object()
 _INITIAL_PRIMARY_ADOPTION_ACTIVE={}
 _INITIAL_PRIMARY_ROLLBACK_SEAL=object()
 _INITIAL_PRIMARY_ROLLBACK_ACTIVE={}
+_STARTING_LIFECYCLE_OBSERVER_SEAL=object()
+_STARTING_LIFECYCLE_OBSERVER_ACTIVE={}
 
 @dataclass(frozen=True, slots=True)
 class InitialPrimaryAdoptionCustody:
@@ -256,6 +258,27 @@ class InitialPrimaryRollbackCustody:
  owner_backup_name:str
  expires_monotonic:float
  _seal:object=field(repr=False,compare=False)
+
+@dataclass(frozen=True, slots=True)
+class StartingLifecycleObserverCustody:
+ """Root-selected live new-peer tuple for the private startup observer only."""
+ cohort:object
+ peer_pid:int
+ peer_uid:int
+ peer_gid:int
+ peer_start_ticks:str
+ boot_id:str
+ invocation_id:str
+ pidfd:int=field(repr=False,compare=False)
+ expires_monotonic:float
+ new_read:GuardedNewReadCustody=field(repr=False,compare=False)
+ _seal:object=field(repr=False,compare=False)
+
+@dataclass(frozen=True, slots=True)
+class _StartingLifecycleObserverSession:
+ custody:StartingLifecycleObserverCustody
+ registry:object=field(repr=False,compare=False)
+ rpc:object=field(repr=False,compare=False)
 
 @dataclass(frozen=True, slots=True)
 class _BaseOnlyReconstruction:
@@ -4627,6 +4650,160 @@ def _run_root_coro(coroutine):
  if len(result)!=1: raise CoreRuntimeError("native startup chat proof returned no bounded result")
  return result[0]
 
+def verify_starting_lifecycle_observer_custody(custody):
+ """Revalidate the one active Root-CLI observer against its guarded new peer."""
+ try:
+  held=_STARTING_LIFECYCLE_OBSERVER_ACTIVE.get(id(custody))
+  if (type(custody) is not StartingLifecycleObserverCustody
+      or custody._seal is not _STARTING_LIFECYCLE_OBSERVER_SEAL
+      or held is None or held.get("object") is not custody
+      or os.geteuid()!=ROOT_UID or not _ADAPTER_UPDATE_LOCK_HELD.get()
+      or time.monotonic()>=custody.expires_monotonic
+      or _ADAPTER_STARTUP_COHORT_CONTEXT.get() is not held.get("startup_context")):
+   return False
+  context=held["startup_context"]; cohort=custody.cohort
+  from .remote.core_native_observer import RootLifecycleStartupCohort
+  if (type(cohort) is not RootLifecycleStartupCohort or not cohort.is_root_selected()
+      or custody.new_read is not context.get("new_read")
+      or custody.peer_pid!=context.get("pid")
+      or custody.peer_start_ticks!=context.get("evidence",{}).get("start_ticks")
+      or custody.boot_id!=context.get("evidence",{}).get("boot_id")
+      or custody.invocation_id!=context.get("evidence",{}).get("invocation_id")
+      or not _validate_guarded_new_read(custody.new_read)):
+   return False
+  poller=select.poll(); poller.register(custody.pidfd,select.POLLIN|select.POLLHUP|select.POLLERR|select.POLLNVAL)
+  evidence,identity=_adapter_process_identity(Path(context["cohort"]["new_source"]),
+   context["adapter"],context["core"],context["pid"])
+  if (poller.poll(0) or identity!=context["identity"]
+      or evidence["start_ticks"]!=custody.peer_start_ticks
+      or evidence["boot_id"]!=custody.boot_id
+      or evidence["invocation_id"]!=custody.invocation_id):
+   return False
+  from .remote import core_gateway_inspector as inspector
+  listener_inode=inspector._core_listener_inode(context["pid"])
+  generation_payload=(f"{custody.invocation_id}\0{custody.peer_pid}\0"
+   f"{custody.peer_start_ticks}\0{listener_inode}\0{context['core']}").encode("ascii")
+  current_core_generation=hashlib.sha256(
+   b"hermes-jarvis-core-generation-v1\0"+generation_payload).hexdigest()
+  status_fields={line.split(":",1)[0]:line.split(":",1)[1].split()
+   for line in (Path("/proc")/str(custody.peer_pid)/"status").read_text().splitlines()
+   if ":" in line}
+  uids=status_fields.get("Uid",()); gids=status_fields.get("Gid",())
+  if (len(uids)<2 or len(gids)<2 or int(uids[1])!=custody.peer_uid
+      or int(gids[1])!=custody.peer_gid or custody.peer_uid!=1000 or custody.peer_gid!=1000
+      or current_core_generation!=cohort.core_generation):
+   return False
+  primary_raw,primary_record,soul,signature=_initial_primary_record_and_soul()
+  if (primary_raw!=context.get("primary") or primary_record is None
+      or primary_record.get("state")!="adopted"
+      or hashlib.sha256(soul).hexdigest()!=context.get("primary_source")
+      or tuple(signature)!=tuple(primary_record.get("result_soul_signature",()))
+      or primary_record.get("native_effective_prompt_sha256")!=context.get("soul")):
+   return False
+  current_resources=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,
+   mode=0o600,maximum=16*1024)
+  if (current_resources!=context.get("resources_raw")
+      or hashlib.sha256(current_resources).hexdigest()!=cohort.rs_sha256):
+   return False
+  fields={
+   "transaction_id":context["cohort"]["cohort_transaction_id"],
+   "starting_journal_sha256":hashlib.sha256(context["journal_raw"]).hexdigest(),
+   "cohort_sha256":hashlib.sha256(context["cohort_raw"]).hexdigest(),
+   "old_adapter_generation":context["cohort"]["old_adapter_generation"],
+   "new_adapter_generation":context["adapter"],"core_source_generation":context["core"],
+   "generation_a1_sha256":context["artifact"],
+   "js_sha256":hashlib.sha256(context["journal_raw"]).hexdigest(),
+   "rs_sha256":hashlib.sha256(context["resources_raw"]).hexdigest(),
+   "u1_sha256":hashlib.sha256(context["unit"]).hexdigest(),
+   "l1_sha256":hashlib.sha256(context["launcher"]).hexdigest(),
+   "primary_source_sha256":context["primary_source"],"active_soul_sha256":context["soul"],
+   "native_inventory_sha256":context["resources"]["loaded_skill_inventory_sha256"],
+   "peer_pid":context["pid"],"peer_uid":custody.peer_uid,"peer_gid":custody.peer_gid,
+   "peer_start_ticks":custody.peer_start_ticks,"boot_id":custody.boot_id,
+   "invocation_id":custody.invocation_id,
+  }
+  return all(getattr(cohort,key,None)==value for key,value in fields.items())
+ except Exception:
+  return False
+
+@contextmanager
+def _starting_lifecycle_observer():
+ """Run the exact purpose-only Root observer for this guarded starting tuple."""
+ context=_ADAPTER_STARTUP_COHORT_CONTEXT.get()
+ if (os.geteuid()!=ROOT_UID or not _ADAPTER_UPDATE_LOCK_HELD.get()
+     or type(context) is not dict or context.get("cohort",{}).get("phase")!="source-starting"
+     or not _validate_guarded_new_read(context.get("new_read"))):
+  raise CoreRuntimeError("starting lifecycle observer requires the guarded new cohort")
+ pid=context["pid"]; pidfd=context["pidfd"]
+ poller=select.poll(); poller.register(pidfd,select.POLLIN|select.POLLHUP|select.POLLERR|select.POLLNVAL)
+ if poller.poll(0): raise CoreRuntimeError("starting lifecycle peer PIDFD has exited")
+ from .remote import core_gateway_inspector as inspector
+ from .remote.core_native_observer import make_root_lifecycle_startup_cohort
+ from .remote.core_client import CoreRpcClient
+ listener_inode=inspector._core_listener_inode(pid)
+ if type(listener_inode) is not int or listener_inode<1:
+  raise CoreRuntimeError("starting lifecycle peer listener inode is unavailable")
+ invocation=context["evidence"]["invocation_id"]
+ start_ticks=context["evidence"]["start_ticks"]
+ peer_status={line.split(":",1)[0]:line.split(":",1)[1].split()
+  for line in (Path("/proc")/str(pid)/"status").read_text().splitlines() if ":" in line}
+ uids=peer_status.get("Uid",()); gids=peer_status.get("Gid",())
+ if len(uids)<2 or len(gids)<2 or int(uids[1])!=1000 or int(gids[1])!=1000:
+  raise CoreRuntimeError("starting lifecycle peer credentials differ from the selected Core owner")
+ generation_payload=(f"{invocation}\0{pid}\0{start_ticks}\0{listener_inode}\0{context['core']}").encode("ascii")
+ core_generation=hashlib.sha256(b"hermes-jarvis-core-generation-v1\0"+generation_payload).hexdigest()
+ status=_run_root_coro(CoreRpcClient().get_model_provider_status())
+ if (type(status) is not dict or status.get("provider_hint")!="openai-codex"
+     or status.get("codex_credential_configured") is not True
+     or not isinstance(status.get("model"),str)):
+  raise CoreRuntimeError("new Core does not expose the selected Codex subscription route")
+ from hermes_cli.auth_codex import resolve_codex_runtime_credentials
+ from .remote.core_native_observer import _codex_account_fingerprint
+ account=_codex_account_fingerprint(lambda:resolve_codex_runtime_credentials(read_only=True))
+ if not re.fullmatch(r"[0-9a-f]{64}",account):
+  raise CoreRuntimeError("current Codex account fingerprint is unavailable")
+ now=time.monotonic(); deadline=min(now+110.0,float(context["cohort"].get("deadline_monotonic",now+110.0)))
+ cohort=make_root_lifecycle_startup_cohort(
+  transaction_id=context["cohort"]["cohort_transaction_id"],
+  starting_journal_sha256=hashlib.sha256(context["journal_raw"]).hexdigest(),
+  cohort_sha256=hashlib.sha256(context["cohort_raw"]).hexdigest(),core_generation=core_generation,
+  old_adapter_generation=context["cohort"]["old_adapter_generation"],
+  new_adapter_generation=context["adapter"],core_source_generation=context["core"],
+  generation_a1_sha256=context["artifact"],
+  js_sha256=hashlib.sha256(context["journal_raw"]).hexdigest(),
+  rs_sha256=hashlib.sha256(context["resources_raw"]).hexdigest(),
+  u1_sha256=hashlib.sha256(context["unit"]).hexdigest(),
+  l1_sha256=hashlib.sha256(context["launcher"]).hexdigest(),
+  primary_source_sha256=context["primary_source"],active_soul_sha256=context["soul"],
+  native_inventory_sha256=context["resources"]["loaded_skill_inventory_sha256"],
+  peer_pid=pid,peer_uid=int(uids[1]),peer_gid=int(gids[1]),peer_start_ticks=start_ticks,
+  boot_id=context["evidence"]["boot_id"],invocation_id=invocation,
+  provider="openai-codex",api_mode="codex_responses",
+  base_url="https://chatgpt.com/backend-api/codex",model=status["model"],
+  account_fingerprint=account,issued_monotonic=now,deadline_monotonic=deadline)
+ from .remote.core_native_observer import RootLifecycleNativeObservationRegistry, RootLifecycleNativeObservationServer
+ custody=StartingLifecycleObserverCustody(cohort=cohort,peer_pid=pid,peer_uid=int(uids[1]),peer_gid=int(gids[1]),
+  peer_start_ticks=start_ticks,boot_id=context["evidence"]["boot_id"],invocation_id=invocation,
+  pidfd=pidfd,expires_monotonic=deadline,new_read=context["new_read"],
+  _seal=_STARTING_LIFECYCLE_OBSERVER_SEAL)
+ _STARTING_LIFECYCLE_OBSERVER_ACTIVE[id(custody)]={"object":custody,"startup_context":context}
+ registry=None; server=None
+ try:
+  if not verify_starting_lifecycle_observer_custody(custody):
+   raise CoreRuntimeError("starting lifecycle observer custody is stale")
+  registry=RootLifecycleNativeObservationRegistry.from_starting_custody(custody)
+  server=RootLifecycleNativeObservationServer(registry)
+  server.start()
+  if server.wait_ready(timeout=3.0) is not True:
+   raise CoreRuntimeError("Root lifecycle observer socket did not become ready")
+  yield _StartingLifecycleObserverSession(custody=custody,registry=registry,rpc=CoreRpcClient())
+ finally:
+  try:
+   if server is not None: server.close()
+   elif registry is not None: registry.close()
+  finally:
+   _STARTING_LIFECYCLE_OBSERVER_ACTIVE.pop(id(custody),None)
+
 def _prove_new_cohort_startup_chat():
  """Require one real native, no-tools Codex completion for the guarded new peer."""
  context=_ADAPTER_STARTUP_COHORT_CONTEXT.get()
@@ -4639,95 +4816,46 @@ def _prove_new_cohort_startup_chat():
      or _adapter_process_identity(ADAPTER_SOURCE,context["adapter"],context["core"],context["pid"])[1]
         !=context["identity"]):
   raise CoreRuntimeError("guarded startup peer changed before lifecycle chat enrollment")
- from .remote import core_gateway_inspector as inspector
  from .remote.core_native_observer import (
   CoreVerifiedLifecycleStartupCompletion, make_root_lifecycle_startup_cohort,
  )
- registry=inspector._CORE_NATIVE_REGISTRY
- if (registry is None or inspector._CORE_NATIVE_REGISTRY_TYPE is None
-     or type(registry) is not inspector._CORE_NATIVE_REGISTRY_TYPE
-     or registry is not inspector._CORE_NATIVE_REGISTRY
-     or not hasattr(registry,"enroll_lifecycle_startup_probe")):
-  raise CoreRuntimeError("new Core native startup observer is not current")
- custody=getattr(registry,"_custody",None)
- if (custody is None or getattr(custody,"core_pid",None)!=context["pid"]
-     or getattr(custody,"core_start_ticks",None)!=context["evidence"]["start_ticks"]
-     or getattr(custody,"core_invocation_id",None)!=context["evidence"]["invocation_id"]
-     or getattr(custody,"core_source_generation",None)!=context["core"]):
-  raise CoreRuntimeError("native observer custody does not bind the held new Core process")
- client=__import__("hermes_installer.remote.core_client",fromlist=["CoreRpcClient"]).CoreRpcClient
- rpc=client()
- status=_run_root_coro(rpc.get_model_provider_status())
- if (type(status) is not dict or status.get("provider_hint")!="openai-codex"
-     or status.get("codex_credential_configured") is not True
-     or not isinstance(status.get("model"),str)):
-  raise CoreRuntimeError("new Core does not expose the selected Codex subscription route")
- from hermes_cli.auth_codex import resolve_codex_runtime_credentials
- from .remote.core_native_observer import _codex_account_fingerprint
- account=_codex_account_fingerprint(
-  lambda: resolve_codex_runtime_credentials(read_only=True))
- if not re.fullmatch(r"[0-9a-f]{64}",account):
-  raise CoreRuntimeError("current Codex account fingerprint is unavailable")
- manifest,files=__import__("hermes_installer.registry.manual_jarvis_skills",
-  fromlist=["_read_transition_archive"])._read_transition_archive(
-   _projection_file(RESOURCES_CAS/(context["artifact"]+".zip"),owner=ROOT_UID,
-    group=ROOT_UID,mode=0o600,maximum=16*1024*1024),context["artifact"])
- now=time.monotonic(); deadline=now+110.0
- cohort=make_root_lifecycle_startup_cohort(
-  transaction_id=context["cohort"]["cohort_transaction_id"],
-  starting_journal_sha256=hashlib.sha256(context["journal_raw"]).hexdigest(),
-  cohort_sha256=hashlib.sha256(context["cohort_raw"]).hexdigest(),
-  core_generation=custody.core_generation,
-  old_adapter_generation=context["cohort"]["old_adapter_generation"],
-  new_adapter_generation=context["adapter"],core_source_generation=context["core"],
-  generation_a1_sha256=context["artifact"],
-  js_sha256=hashlib.sha256(context["journal_raw"]).hexdigest(),
-  rs_sha256=hashlib.sha256(context["resources_raw"]).hexdigest(),
-  u1_sha256=hashlib.sha256(context["unit"]).hexdigest(),
-  l1_sha256=hashlib.sha256(context["launcher"]).hexdigest(),
-  primary_source_sha256=context.get("primary_source",context["soul"]),
-  active_soul_sha256=context["soul"],
-  native_inventory_sha256=context["resources"]["loaded_skill_inventory_sha256"],
-  peer_pid=context["pid"],peer_uid=1000,peer_gid=1000,
-  peer_start_ticks=context["evidence"]["start_ticks"],boot_id=context["evidence"]["boot_id"],
-  invocation_id=context["evidence"]["invocation_id"],provider="openai-codex",
-  api_mode="codex_responses",base_url="https://chatgpt.com/backend-api/codex",
-  model=status["model"],account_fingerprint=account,issued_monotonic=now,
-  deadline_monotonic=deadline)
- handle=registry.enroll_lifecycle_startup_probe(cohort=cohort)
- wire=_run_root_coro(rpc.lifecycle_startup_probe(handle))
- if (type(wire) is not dict or set(wire)!={"schema","probe_handle","completion_handle","status","response_sha256"}
-     or wire.get("schema")!=1 or wire.get("probe_handle")!=handle
-     or wire.get("status")!="completed"):
-  raise CoreRuntimeError("new Core lifecycle startup response is not the exact completed proof")
- proof=registry.consume_lifecycle_startup_completion(
-  probe_handle=wire["probe_handle"],completion_handle=wire["completion_handle"],
-  native_response_sha256=wire["response_sha256"])
- expected={"transaction_id":context["cohort"]["cohort_transaction_id"],
-  "starting_journal_sha256":hashlib.sha256(context["journal_raw"]).hexdigest(),
-  "cohort_sha256":hashlib.sha256(context["cohort_raw"]).hexdigest(),
-  "core_generation":custody.core_generation,"old_adapter_generation":context["cohort"]["old_adapter_generation"],
-  "new_adapter_generation":context["adapter"],"core_source_generation":context["core"],
-  "generation_a1_sha256":context["artifact"],"js_sha256":hashlib.sha256(context["journal_raw"]).hexdigest(),
-  "rs_sha256":hashlib.sha256(context["resources_raw"]).hexdigest(),
-  "u1_sha256":hashlib.sha256(context["unit"]).hexdigest(),"l1_sha256":hashlib.sha256(context["launcher"]).hexdigest(),
-  "primary_source_sha256":context.get("primary_source",context["soul"]),
-  "active_soul_sha256":context["soul"],
-  "native_inventory_sha256":context["resources"]["loaded_skill_inventory_sha256"],
-  "peer_pid":context["pid"],"peer_uid":1000,"peer_gid":1000,
-  "peer_start_ticks":context["evidence"]["start_ticks"],"boot_id":context["evidence"]["boot_id"],
-  "invocation_id":context["evidence"]["invocation_id"],"provider":"openai-codex",
-  "api_mode":"codex_responses","base_url":"https://chatgpt.com/backend-api/codex",
-  "model":status["model"],"account_fingerprint":account}
- if (type(proof) is not CoreVerifiedLifecycleStartupCompletion
-     or proof.is_root_verified() is not True
-     or any(getattr(proof,key,None)!=value for key,value in expected.items())):
-  raise CoreRuntimeError("new Core lifecycle completion does not join its selected source cohort")
- if (poller.poll(0) or not _validate_guarded_new_read(context.get("new_read"))
-     or _adapter_process_identity(ADAPTER_SOURCE,context["adapter"],context["core"],context["pid"])[1]
-       !=context["identity"]):
-  raise CoreRuntimeError("new Core lifecycle completion is stale against the held process")
- return proof
+ with _starting_lifecycle_observer() as observer:
+  custody=observer.custody; registry=observer.registry; rpc=observer.rpc
+  cohort=custody.cohort
+  handle=registry.enroll_lifecycle_startup_probe(cohort=cohort)
+  wire=_run_root_coro(rpc.lifecycle_startup_probe(handle))
+  if (type(wire) is not dict
+      or set(wire)!={"schema","probe_handle","completion_handle","status","response_sha256"}
+      or type(wire.get("schema")) is not int or wire.get("schema")!=1
+      or wire.get("probe_handle")!=handle or wire.get("status")!="completed"):
+   raise CoreRuntimeError("new Core lifecycle startup response is not the exact completed proof")
+  proof=registry.consume_lifecycle_startup_completion(
+   probe_handle=wire["probe_handle"],completion_handle=wire["completion_handle"],
+   native_response_sha256=wire["response_sha256"])
+  expected=("transaction_id","starting_journal_sha256","cohort_sha256","core_generation",
+   "old_adapter_generation","new_adapter_generation","core_source_generation",
+   "generation_a1_sha256","js_sha256","rs_sha256","u1_sha256","l1_sha256",
+   "primary_source_sha256","active_soul_sha256","native_inventory_sha256","peer_pid",
+   "peer_uid","peer_gid","peer_start_ticks","boot_id","invocation_id","provider",
+   "api_mode","base_url","model","account_fingerprint")
+  if (type(proof) is not CoreVerifiedLifecycleStartupCompletion
+      or proof.is_root_verified() is not True
+      or any(getattr(proof,key,None)!=getattr(cohort,key,None) for key in expected)
+      or not verify_starting_lifecycle_observer_custody(custody)):
+   raise CoreRuntimeError("new Core lifecycle completion does not join its selected source cohort")
+  from hermes_cli.auth_codex import resolve_codex_runtime_credentials
+  from .remote.core_native_observer import _codex_account_fingerprint
+  account=_codex_account_fingerprint(lambda:resolve_codex_runtime_credentials(read_only=True))
+  status=_run_root_coro(rpc.get_model_provider_status())
+  if (account!=cohort.account_fingerprint or type(status) is not dict
+      or status.get("provider_hint")!=cohort.provider
+      or status.get("codex_credential_configured") is not True
+      or status.get("model")!=cohort.model
+      or time.monotonic()>=cohort.deadline_monotonic
+      or poller.poll(0) or _adapter_process_identity(ADAPTER_SOURCE,context["adapter"],
+       context["core"],context["pid"])[1]!=context["identity"]):
+   raise CoreRuntimeError("new Core lifecycle completion is stale against route, account, or peer")
+  return proof
 
 def _recover_interrupted_adapter_update():
  # The cohesive M1 cohort keeps the original ownership journal byte-identical
