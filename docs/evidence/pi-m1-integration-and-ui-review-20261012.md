@@ -22,12 +22,29 @@ units active. Process health does not prove usable chat.
 | `2dbdacc05538f9a48fbb693982db498558e2973d`, v40 | Source/tools/tests compilation and strict specs/plan passed. Specification validation only; runtime tests were not repeated. |
 | `840343f7a4b762d61b5fad44af90fe1aa50babb3`, v41 | Compilation and strict specs/plan passed. Root effect subset 9 failed, 100 passed; generated guards actually ran as admin in isolated mount namespaces. |
 | `07c8539628a10c7855101e2977f937c03b47f9a3`, v42 | Source/tools/tests compilation and strict specs/plan passed. Specification validation only. |
-| `bf3fdfd98ae3ed3aebae2de9adaaff880b82dad7`, v44 | Combined code/effect qualification running; do not treat its result as passed. Archive SHA-256 `e4ce6b9f6c8ad0afc2e5f9c0c80ed69e896449e47f9376bca5f406eacdfc56d6`. |
+| `bf3fdfd98ae3ed3aebae2de9adaaff880b82dad7`, v44 | Compilation and strict specs/plan passed; Root suite 17 failed, 261 passed. Archive SHA-256 `e4ce6b9f6c8ad0afc2e5f9c0c80ed69e896449e47f9376bca5f406eacdfc56d6`. |
+| `abf0296fb928e679843816b8ad0c936da1c8e6e1`, v45 | Compilation and strict specs/plan passed; Root private-mount suite 17 failed, 261 passed. Archive SHA-256 `72853ba5b0d9f43aab29c46b37769f18563e9d3dab30649c8ea36fc9b26bebc5`. |
+| `12ab8ace214fe4b7eaca5e39d78b4e53122bd51c`, v46 | Strict specs/plan passed; focused retry 11 failed, 6 passed, 115 deselected. Archive SHA-256 `0f36184bcb73dab78e3822c0bfbde5bfe31a22c715f025297b105d9962ea55f2`. |
+| `9c0ddfd9a90c7d1277e7fce58899a15b55cef3da`, v48 | Compilation stopped at a missing fixture brace; tests did not run. |
+| `80171d46f1af9b8cd291742485eb9e367dc89fc6`, v49 | Compilation and strict specs/plan passed; Root suite 9 failed, 292 passed. Archive SHA-256 `cf1c64d052b529b499d89bb66ee17b1baba0e40bb5b2f02eedf2bd4e83de2413`. |
+| `9bf2e67e0ebee5a340b5705a1802c1faa5d261a6`, v50 | Compilation and strict specs/plan passed; focused Root suite 3 failed, 53 passed. Actual Root-to-runuser importer effects and the Mission ownership/concurrency case passed. Staging only; live services remained unchanged. Archive SHA-256 `f0385330da41dffb9274a72a04f51e6cc0e5e34f43dc8d4d69184ec2576b248c`. |
+| `1cb2bbb09ec0070e933a7664449f65801454ad3f`, v52 | Compilation, strict specs/plan and all 56 focused Root checks passed in 410.05s. Corrections retain actual importer effects and protected custody checks. Archive SHA-256 `3a6b6d319f3eabf7ebc93f2b59bce0b704f32966295a9975c98395219ce7dcc8`. |
+| `6b4dd2b87412ae5efbce691fb18cf75a0836de37`, v53 | Compilation and strict specs/plan passed; gateway/JWT suite 3 failed, 36 passed. One new fixture used its accepted proof before assignment; two app-composition tests exposed an exact-versus-normalized shared-route comparison bug. |
+| `6d4bd9be7d63bc73ce6ac6d7953279b4aa696f9e`, v55 | Compilation, strict specs/plan and all 43 gateway/JWT/Mission-route checks passed in 1.40s. Includes bounded household admission and the exact shared-route repair. Archive SHA-256 `ebf183238ab9e488acc03de7ee1abcc26621b1ee62d31e995ff4eed855b0dad0`. |
 
 Logs and status JSON are under
 `/var/tmp/hermes-jarvis-core-checks-20261011/` on the identified Pi. OpenSpec
 reported `spec-driven`, `ready`, eight total/zero complete/eight remaining;
 no archive or canonical runtime acceptance was performed.
+
+The v45 archive retained directory mode0775 and file mode0664. The genuine
+immutable-source custody checks correctly refused that group-writable fixture.
+v46 removes group/other write bits only from its extracted candidate source
+before the private read-only bind. It does not change production validators or
+the host's `/opt` view. It also retries corrected journal callback, closed-review
+registry and actual activity-store fixtures. Four old updater tests still need
+current real systemd/process/source-starting integration witnesses; no fake
+PIDFD producer or negative-only replacement qualifies those obligations.
 
 Remote inspection found only `main` and `codex/luna-installer-development`;
 parallel work uses private local clones rather than additional remote branches.
@@ -61,15 +78,60 @@ Both are in `affected-flows-parallelcohort35-v19/` on the Pi.
 | --- | --- |
 | Placement, purpose and hierarchy | Overview uses the dedicated Jarvis circular presence view; five primary destinations are visible. Secondary resource/control destinations still need the roadmap's usability consolidation. |
 | Desktop/tablet/phone reflow | All nine captured views were inspected. No general horizontal overflow was visible in the contact sheet. Small text and lower-fold content need focused full-resolution review. |
-| Phone Chat primary journey | Blocking issue: the history pane filled the first Chat viewport, hiding the conversation/composer. Source `78a3a98b18b2e5b093ea042909fb46e01db1f084` makes first entry thread-first and gives history a labeled toggle. Post-fix rendered interaction remains under qualification. |
-| Navigation interaction | v20 failed because its fixture expected the obsolete Manage menu. v21 reached the correct destinations but sampled ARIA before the native details MutationObserver update. v22 waits for both native open state and ARIA, retaining selection/close checks; its Pi run is pending. |
+| Phone Chat primary journey | Prior blocking issue: history filled the first viewport. Source `78a3a98b18b2e5b093ea042909fb46e01db1f084` makes entry thread-first with a labeled history toggle. Pi v24 passed the entry/drawer/selection/returned-composer interaction. Root inspected the full-resolution drawer and returned-composer JPEGs; the textarea and per-message controls are visible. Real phone keyboard/provider behavior is separate acceptance. |
+| Navigation interaction | Correct Work/Resources/System groups and bounded native details/ARIA timing pass in v24. Exact fake-chat messages/model-settings and ecosystem reads are finite fixture responses; unknown methods/routes remain denied. |
 | Keyboard/touch, reduced motion and changing service states | Prior controlled probes cover bounded cases; complete focused visual and physical device verification remains pending. Still captures alone do not prove animation or audio. |
 | Destructive actions and knowledge retention | Live save/delete/restore and Obsidian preservation were not exercised by this visual review. |
 | Capability and authority claims | Synthetic fixture status, graphs and counts prove rendering only. Real native provider/resource/Expert/Team/Obsidian/account effects remain separate acceptance. |
 
-Disposition: **partial; deployment gate remains pending**. The first phone
-Chat fix needs actual returned-composer/drawer captures and interaction results.
-New Mission review behavior also needs its focused rendered journey. No
+Post-fix v24 uses source `2dbdacc05538f9a48fbb693982db498558e2973d`;
+the reviewed static asset source is byte-identical through v55. Its actual
+Pi report passes all checks at390x844,768x1024 and1440x900. Report SHA-256
+`db3c03c887b904f518b69919bb39dde6fc8cdd56f9cd170634044a7fab6b5629`;
+captures/report are in `affected-flows-parallelcohort40-v24/` on the Pi.
+It covers synthetic rendering, keyboard/touch geometry, actual sampled motion
+and reduced-motion/visibility rules; it does not establish real model, audio,
+knowledge or task effects.
+
+Root also inspected the actual v25 Mission contact sheet: unavailable, no-run,
+Jarvis-approved, Jarvis-rejected and owner-approval-pending states at all three
+sizes. Contact SHA-256 `2a862bb0283682cc339a6571adf5adeb1ddacc540358b44eacb99cacffcad474`.
+Its synthetic fixture proves rendering only. The owner controls required a
+focused capture. v26 and v27 correctly failed that additional check: v26
+captured controls below the viewport; v27 brought both controls into view,
+but its bounding-box corner hit tests sampled outside the buttons' rounded
+hit areas. v28 preserves full viewport/occlusion checks while sampling each
+actual rounded shape; all checks passed at phone/tablet/wide sizes. Report
+SHA-256 `f18b666071a98eb6e7cc3aa7c359392ba197bfbaad327b47cafb16f0fc880be8`.
+Root inspected the actual focused owner-control JPEGs at each size: both
+separately named Approve/Reject controls are visible, the phone stacks them,
+and their 44px touch targets remain unobscured. Phone/tablet/wide capture
+digests respectively:
+`a81b915b3796959c76d4db30d63cd84811a58200cf6ae2f5e7e03f157d6c31f1`,
+`d1d5df522e1b56471860c12d2259c335fe8ea7a079e36d4d1caf1d35202e1154`,
+`71f543823b8ca2a53b1518908bff0b1a9153ef0fdc672ff5e38c2a13a59fc38a`.
+These captures are under `affected-flows-parallelcohort40-v28/`; their static
+product assets are unchanged through v55. This satisfies the focused MVP
+review for this journey, not actual review/approval effects or the roadmap's
+finished design. Verbose status copy and overall navigation consolidation
+remain M2 usability work. The v26 Second Brain failure
+had no selected note/metadata, so it did not prove a clipping defect. The
+same interaction passed in v27. Neither run changed product assets.
+
+Cloudflare's owned Jarvis application and email-code allow policy were read
+back with three approved emails and a 720-hour session duration. Cookie
+binding, HttpOnly protection, OTP method, hostname/audience and other resources
+were retained. Old tokens keep their original expiry. The Pi config still
+contains its original single address: the bounded loader now passes signed
+principal/ownership/CSRF/currentness tests, but its approved union must be
+applied within the retained adoption transaction. No additional-account login
+or chat acceptance is claimed. Global extension/vault owner gates remain
+separate; a longer token never extends an existing turn or ingress lease.
+
+Disposition: **scoped MVP visual gate satisfied; runtime acceptance pending**.
+The phone layout blocker and focused Mission review capture are resolved in
+the reviewed candidate. Full parity, real owner/family usage and final UI polish
+remain unverified. No
 provider, microphone, external messaging, account enrollment or production
 mutation occurs in the UI fixture runs. Android/voice/communications research,
 all14-image intake and every prior direct request remain in the one current
