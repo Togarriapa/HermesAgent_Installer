@@ -3,10 +3,15 @@
 These tests are prepared for an authorized isolated target only; do not run them
 on a developer workstation against a real Hermes home.
 """
+import argparse
 import hashlib
 import io
 import json
 import os
+import pwd
+import stat
+import subprocess
+import sys
 import tempfile
 import unittest
 import warnings
@@ -31,6 +36,7 @@ from hermes_installer.registry.resources_skill_overlay import (
     ResourcesSkillOverlayError, build_effective_artifact, pinned_skill_bytes,
 )
 from hermes_installer.registry.native_install import NativeInstallReceipt
+from hermes_installer import core_runtime
 from hermes_installer.registry.jarvis_master_semantics import (
     JarvisSemanticsError,
     effective_profile_spec,
@@ -180,6 +186,145 @@ class ManualJarvisSkillsTests(unittest.TestCase):
             python="/opt/python", replace_owned_from_archive=previous_archive,
             replace_owned_from_sha256=previous_sha,
         )
+
+    def test_helper_transition_cli_denies_direct_caller_before_any_generation_effect(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = self.make_home(Path(directory))
+            args = [
+                "import-helper-transition", "--home", str(home),
+                "--next-sha256", "a" * 64, "--previous-sha256", "b" * 64,
+                "--shared-manifest-sha256", "c" * 64,
+                "--shared-materialization-sha256", "d" * 64,
+                "--shared-member-count", "1",
+            ]
+            stdin = io.TextIOWrapper(io.BytesIO(b"not an inherited root pipe"))
+            with patch("sys.stdin", stdin), patch.object(
+                    manual_skills, "install_same_materialization_transition") as importer:
+                with self.assertRaises(SystemExit):
+                    manual_skills.main(args)
+            importer.assert_not_called()
+            self.assertFalse((home / "skills" / manual_skills._GENERATION).exists())
+
+    def test_helper_transition_origin_rejects_foreign_regular_file_before_parent_lookup(self):
+        account = manual_skills.pwd.getpwnam("admin")
+        with tempfile.TemporaryDirectory() as directory:
+            foreign = Path(directory) / "foreign-input"
+            foreign.write_bytes(b"archives cannot authorize this transition")
+            with foreign.open("rb") as source:
+                with patch.object(manual_skills.sys, "platform", "linux"), \
+                     patch.object(manual_skills.os, "getresuid",
+                                  return_value=(account.pw_uid,) * 3), \
+                     patch.object(manual_skills.os, "geteuid", return_value=account.pw_uid), \
+                     patch.object(manual_skills.os, "getresgid",
+                                  return_value=(account.pw_gid,) * 3), \
+                     patch.object(manual_skills.os, "fstat", return_value=os.fstat(source.fileno())), \
+                     patch.object(manual_skills, "_proc_identity") as parent_lookup:
+                    with self.assertRaises(ManualJarvisSkillsError):
+                        manual_skills._verify_helper_transition_origin(
+                            argparse.Namespace(home="/home/admin/.hermes"))
+                    parent_lookup.assert_not_called()
+
+    @unittest.skipUnless(sys.platform.startswith("linux") and os.geteuid() == 0
+                         and Path("/usr/sbin/runuser").is_file()
+                         and core_runtime.PYTHON.is_file(),
+                         "requires the identified Linux Pi root test environment")
+    def test_helper_transition_cli_root_runuser_pipe_preserves_full_generation(self):
+        account = pwd.getpwnam("admin")
+        old_archive = _archive_with_helper(self.bundle, b"retained old helper fixture")
+        old_sha = hashlib.sha256(old_archive).hexdigest()
+        old_manifest, old_files, _old_helper = manual_skills._read_transition_archive(
+            old_archive, old_sha)
+        new_manifest, new_files, _new_helper = manual_skills._read_transition_archive(
+            self.bundle, self.digest)
+        self.assertTrue(manual_skills.verify_same_materialization_transition(
+            old_manifest, old_files, new_manifest, new_files))
+        shared_manifest, shared_tree, shared_count = manual_skills._same_materialization_digests(
+            new_manifest, new_files)
+
+        with tempfile.TemporaryDirectory(prefix="hermes-helper-transition-") as directory:
+            base = Path(directory)
+            os.chown(base, account.pw_uid, account.pw_gid)
+            home = self.make_home(base)
+            manual_skills.install_manual_jarvis_skills(
+                old_archive, hermes_home=home, expected_sha256=old_sha)
+            for root, directories, filenames in os.walk(home, topdown=False, followlinks=False):
+                for filename in filenames:
+                    os.chown(Path(root) / filename, account.pw_uid, account.pw_gid,
+                             follow_symlinks=False)
+                for dirname in directories:
+                    os.chown(Path(root) / dirname, account.pw_uid, account.pw_gid,
+                             follow_symlinks=False)
+            os.chown(home, account.pw_uid, account.pw_gid)
+
+            cli_args = [
+                "hermes_installer.registry.manual_jarvis_skills", "import-helper-transition",
+                "--home", str(home), "--next-sha256", self.digest,
+                "--previous-sha256", old_sha,
+                "--shared-manifest-sha256", shared_manifest,
+                "--shared-materialization-sha256", shared_tree,
+                "--shared-member-count", str(shared_count),
+            ]
+            env = {
+                "HOME": str(home.parent), "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
+                "LANG": "C.UTF-8", "PYTHONPATH": str(Path(manual_skills.__file__).parents[2]),
+                "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
+            }
+            framed = struct.pack(">QQ", len(self.bundle), len(old_archive)) + self.bundle + old_archive
+            direct_owner_script = (
+                "import subprocess,sys; "
+                "p=subprocess.run([sys.executable,'-P','-m',"
+                "'hermes_installer.registry.manual_jarvis_skills',*sys.argv[1:]], "
+                "input=sys.stdin.buffer.read(33554449),stdout=subprocess.PIPE,"
+                "stderr=subprocess.PIPE,check=False); "
+                "raise SystemExit(0 if p.returncode==2 and "
+                "b'fixed root runuser and inherited root pipe' in p.stderr else 91)"
+            )
+            direct_owner = subprocess.run(
+                ["/usr/sbin/runuser", "-u", "admin", "--", str(core_runtime.PYTHON),
+                 "-P", "-c", direct_owner_script, *cli_args[1:]],
+                input=framed, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                timeout=600, env=env, check=False)
+            self.assertEqual(direct_owner.returncode, 0,
+                             direct_owner.stderr.decode("utf-8", "replace"))
+
+            command = [
+                "/usr/sbin/runuser", "-u", "admin", "--", str(core_runtime.PYTHON), "-P", "-m",
+                *cli_args,
+            ]
+            result = subprocess.run(command, input=framed, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, timeout=600, env=env, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
+            receipt = json.loads(result.stdout)
+            target = home / "skills" / manual_skills._GENERATION
+            backup = Path(receipt["previous_generation_backup"])
+            self.assertEqual(receipt["state"], "staged")
+            self.assertEqual(receipt["previous_artifact_sha256"], old_sha)
+
+            def assert_generation(path, files, digest):
+                expected_files = set(files) | {manual_skills._OWNER_FILE}
+                expected_dirs = {
+                    "/".join(Path(name).parts[:depth])
+                    for name in files for depth in range(1, len(Path(name).parts))
+                }
+                actual_files = {item.relative_to(path).as_posix() for item in path.rglob("*")
+                                if item.is_file() and not item.is_symlink()}
+                actual_dirs = {item.relative_to(path).as_posix() for item in path.rglob("*")
+                               if item.is_dir() and not item.is_symlink()}
+                self.assertEqual(actual_files, expected_files)
+                self.assertEqual(actual_dirs, expected_dirs)
+                self.assertEqual((path / manual_skills._OWNER_FILE).read_bytes(),
+                                 manual_skills._owned_generation_journal(files, digest))
+                for name, content in files.items():
+                    member = path / name
+                    metadata = member.lstat()
+                    self.assertTrue(stat.S_ISREG(metadata.st_mode))
+                    self.assertEqual(metadata.st_uid, account.pw_uid)
+                    self.assertEqual(metadata.st_size, len(content))
+                    self.assertEqual(hashlib.sha256(member.read_bytes()).digest(),
+                                     hashlib.sha256(content).digest())
+
+            assert_generation(target, new_files, self.digest)
+            assert_generation(backup, old_files, old_sha)
 
     def test_compiled_master_semantics_are_distinct_from_verbatim_upstream(self):
         manifest, files = _read_artifact(self.bundle, self.digest)

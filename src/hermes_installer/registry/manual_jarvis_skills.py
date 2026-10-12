@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import hashlib
 import argparse
+import fcntl
 import io
 import json
 import os
+import pwd
 import re
 import shutil
 import stat
@@ -54,6 +56,8 @@ _OWNER_FILE = ".hermes-installer-resource-ownership.json"
 PINNED_HERMES_REVISION = "7085fbf7753266fc4943c55ac04926186bc90005"
 LEGACY_MATERIALIZED_ARTIFACT_SHA256 = "f73463c641ac3744007ee8395b663802d5c916f59256fa8184ad2b4f5594b274"
 _HELPER_ARCHIVE_PATH = "manual_stage_jarvis_skills.py"
+_ROOT_RUNUSER = Path("/usr/sbin/runuser")
+_IMPORTER_MODULE = "hermes_installer.registry.manual_jarvis_skills"
 
 
 class ManualJarvisSkillsError(RuntimeError):
@@ -1051,6 +1055,105 @@ def install_same_materialization_transition(
         transition_shared_member_count=shared_member_count)
 
 
+def _proc_identity(pid: int) -> tuple[int, str, bytes, tuple[int, ...]]:
+    """Read one stable process identity from procfs without exposing its argv."""
+    proc = Path("/proc") / str(pid)
+    try:
+        before = (proc / "stat").read_bytes()
+        close = before.rfind(b")")
+        fields = before[close + 2:].split()
+        if close < 0 or len(fields) <= 19:
+            raise ValueError
+        parent_pid = int(fields[1])
+        start_time = int(fields[19])
+        argv = tuple((proc / "cmdline").read_bytes().rstrip(b"\0").split(b"\0"))
+        status = (proc / "status").read_text(encoding="ascii")
+        uid_line = next(line for line in status.splitlines() if line.startswith("Uid:"))
+        uids = tuple(int(value) for value in uid_line.split()[1:])
+        executable = os.readlink(proc / "exe")
+        after = (proc / "stat").read_bytes()
+        close_after = after.rfind(b")")
+        after_fields = after[close_after + 2:].split()
+        if (close_after < 0 or len(after_fields) <= 19
+                or int(after_fields[1]) != parent_pid
+                or int(after_fields[19]) != start_time):
+            raise ValueError
+        return parent_pid, executable, b"\0".join(argv), uids
+    except (OSError, StopIteration, UnicodeError, ValueError, IndexError):
+        raise ManualJarvisSkillsError("helper-only importer process identity is unavailable") from None
+
+
+def _verify_helper_transition_origin(args: argparse.Namespace) -> Path:
+    """Require the exact root->runuser->admin pipe invocation before any effect.
+
+    The root caller separately owns and consumes its in-process prepared
+    transition. This child check proves only the real Linux invocation and
+    current installed generation; hashes and CLI values are never authority.
+    """
+    try:
+        account = pwd.getpwnam("admin")
+        uid = account.pw_uid
+        if (not sys.platform.startswith("linux") or os.getresuid() != (uid, uid, uid)
+                or os.geteuid() != uid or os.getresgid() !=
+                (account.pw_gid, account.pw_gid, account.pw_gid)):
+            raise ValueError
+
+        pipe = os.fstat(0)
+        flags = fcntl.fcntl(0, fcntl.F_GETFL)
+        pipe_link = os.readlink("/proc/self/fd/0")
+        if (not stat.S_ISFIFO(pipe.st_mode) or pipe.st_uid != 0
+                or flags & os.O_ACCMODE != os.O_RDONLY
+                or pipe_link != f"pipe:[{pipe.st_ino}]"):
+            raise ValueError
+
+        parent_pid = os.getppid()
+        observed_parent, executable, parent_argv_bytes, parent_uids = _proc_identity(parent_pid)
+        runuser_stat = _ROOT_RUNUSER.lstat()
+        observed_exe = os.stat(f"/proc/{parent_pid}/exe")
+        expected_parent_argv = [
+            str(_ROOT_RUNUSER), "-u", "admin", "--", sys.executable, "-P",
+            "-m", _IMPORTER_MODULE, *sys.argv[1:],
+        ]
+        expected_parent_argv_bytes = b"\0".join(
+            item.encode("utf-8") for item in expected_parent_argv)
+        trusted_directories = (Path("/"), Path("/usr"), Path("/usr/sbin"))
+        if (observed_parent != os.getpid() or executable != str(_ROOT_RUNUSER)
+                or parent_uids != (0, 0, 0, 0)
+                or not stat.S_ISREG(runuser_stat.st_mode)
+                or runuser_stat.st_uid != 0
+                or runuser_stat.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+                or not runuser_stat.st_mode & 0o111
+                or any(not stat.S_ISDIR(directory.lstat().st_mode)
+                       or directory.lstat().st_uid != 0
+                       or directory.lstat().st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+                       for directory in trusted_directories)
+                or (observed_exe.st_dev, observed_exe.st_ino, observed_exe.st_uid)
+                    != (runuser_stat.st_dev, runuser_stat.st_ino, 0)
+                or parent_argv_bytes != expected_parent_argv_bytes):
+            raise ValueError
+
+        home = Path(args.home)
+        if not home.is_absolute() or home.resolve(strict=True) != home:
+            raise ValueError
+        home_stat = home.lstat()
+        if not stat.S_ISDIR(home_stat.st_mode) or stat.S_ISLNK(home_stat.st_mode) or home_stat.st_uid != uid:
+            raise ValueError
+        skills_root = home / "skills"
+        skills_stat = skills_root.lstat()
+        if (not stat.S_ISDIR(skills_stat.st_mode) or stat.S_ISLNK(skills_stat.st_mode)
+                or skills_stat.st_uid != uid):
+            raise ValueError
+        target = home / "skills" / _GENERATION
+        target_stat = target.lstat()
+        if (not stat.S_ISDIR(target_stat.st_mode) or stat.S_ISLNK(target_stat.st_mode)
+                or target_stat.st_uid != uid):
+            raise ValueError
+        return target
+    except (AttributeError, OSError, KeyError, TypeError, ValueError, ManualJarvisSkillsError):
+        raise ManualJarvisSkillsError(
+            "helper-only transition requires the fixed root runuser and inherited root pipe") from None
+
+
 def install_and_verify_manual_jarvis_skills(
     archive_bytes: bytes, *, hermes_home: str | Path, expected_sha256: str,
     hermes_source: str | Path, python: str | Path,
@@ -1274,6 +1377,7 @@ def main(argv: list[str] | None = None) -> int:
                 replace_owned_from_archive=previous_archive,
                 replace_owned_from_sha256=args.previous_sha256)
         elif args.command == "import-helper-transition":
+            target = _verify_helper_transition_origin(args)
             incoming = sys.stdin.buffer.read(2 * _ARTIFACT_LIMIT + 16 + 1)
             if len(incoming) < 16 or len(incoming) > 2 * _ARTIFACT_LIMIT + 16:
                 raise ManualJarvisSkillsError("helper-only transition input is outside its bound")
@@ -1293,6 +1397,7 @@ def main(argv: list[str] | None = None) -> int:
                     or new_helper != Path(__file__).read_bytes()):
                 raise ManualJarvisSkillsError(
                     "archives are not the exact reviewed helper-only transition")
+            _verify_owned_generation(target, old_files, args.previous_sha256)
             result = install_same_materialization_transition(
                 next_archive, previous_archive, hermes_home=args.home,
                 next_sha256=args.next_sha256, previous_sha256=args.previous_sha256,
