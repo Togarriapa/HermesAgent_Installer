@@ -320,6 +320,13 @@ def _verify_completion(completion: Any, *, config: Any, custody: Any, now: float
     expected_type = _completion_type()
     if type(completion) is not expected_type:
         return False
+    verifier = getattr(completion, "is_current_sealed", None)
+    if not callable(verifier):
+        return False
+    try:
+        return verifier(config, custody=custody, now=now) is True
+    except Exception:
+        return False
 
 
 def _verify_review_completion(completion: Any, *, config: Any, custody: Any,

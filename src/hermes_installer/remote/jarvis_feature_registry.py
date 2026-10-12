@@ -58,7 +58,11 @@ FEATURE_ASSETS: tuple[JarvisFeatureAssets, ...] = (
 # New endpoint installers are explicit. Activity is installed exactly once by
 # JarvisChatService.install; native settings is installed by the dashboard API.
 FEATURE_ROUTE_INSTALLERS = (
-    ("missions", _missions.install_jarvis_missions_routes, _missions.FEATURE_ROUTES),
+    ("missions", _missions.install_jarvis_missions_routes, (
+        *_missions.FEATURE_ROUTES,
+        ("POST", "/chat/api/heartbeat"),
+        ("GET", "/chat/api/turns/{turn_id}/events"),
+    )),
     ("bots", _bots.install_jarvis_bots_routes, _bots.FEATURE_ROUTES),
     ("native-inventory", _native_inventory.install_jarvis_native_inventory_routes,
      _NATIVE_INVENTORY_ASSETS.api_routes),
@@ -84,6 +88,10 @@ FEATURE_ROUTE_OWNERS = (
 
 # Files may reuse only this fixed authenticated conversation selector.
 _SHARED_INSTALLER_READS = {
+    "missions": {
+        ("POST", "/chat/api/heartbeat"),
+        ("GET", "/chat/api/turns/{turn_id}/events"),
+    },
     "files": {("GET", "/chat/api/conversations")},
     "context": {("GET", "/chat/api/conversations")},
     "projects": {

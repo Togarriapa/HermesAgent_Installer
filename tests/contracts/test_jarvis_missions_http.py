@@ -196,7 +196,9 @@ def test_mission_routes_and_feature_assets_are_literal_and_finite():
     }
     assert jarvis_feature_registry.FEATURE_ROUTE_INSTALLERS == (
         ("missions", jarvis_missions.install_jarvis_missions_routes,
-         jarvis_missions.FEATURE_ROUTES),
+         (*jarvis_missions.FEATURE_ROUTES,
+          ("POST", "/chat/api/heartbeat"),
+          ("GET", "/chat/api/turns/{turn_id}/events"))),
         ("bots", jarvis_feature_registry._bots.install_jarvis_bots_routes,
          jarvis_feature_registry._bots.FEATURE_ROUTES),
         ("native-inventory", jarvis_feature_registry._native_inventory.install_jarvis_native_inventory_routes,
