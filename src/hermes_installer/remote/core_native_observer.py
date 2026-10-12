@@ -777,7 +777,11 @@ def _obsidian_history_from_bytes(raw: bytes) -> list[dict[str, Any]] | None:
 
 def _reserved_origin_tombstone(row: Mapping[str, Any]) -> dict[str, Any] | None:
     """Project the exact future tombstone reserved by an Obsidian history row."""
-    if (not isinstance(row, Mapping) or row.get("phase") not in {"reserved", "completed"}
+    # Before phase-tagged reservations existed, every root-history row was
+    # written only after a completed promotion. Preserve that exact legacy
+    # record hash while treating it as completed retained data.
+    phase = row.get("phase") if isinstance(row, Mapping) else None
+    if (not isinstance(row, Mapping) or phase not in {None, "reserved", "completed"}
             or type(row.get("origin")) is not dict or type(row.get("result")) is not dict
             or not _OPAQUE.fullmatch(row.get("record_id", ""))):
         return None
@@ -790,7 +794,8 @@ def _reserved_origin_tombstone(row: Mapping[str, Any]) -> dict[str, Any] | None:
         return None
     completed_body = {key: value for key, value in row.items()
                       if key != "record_sha256"}
-    completed_body["phase"] = "completed"
+    if phase is not None:
+        completed_body["phase"] = "completed"
     completed_sha = hashlib.sha256(_canonical(completed_body)).hexdigest()
     tombstone_body = {
         "owner_subject_sha256": origin["owner_subject_sha256"],
@@ -4450,7 +4455,7 @@ class RootCoreNativeObservationRegistry:
             reviewed = self._read_obsidian_owner_draft(data_root, registered_owner, draft_id)
         except Exception:
             reservation = next((row for row in self._obsidian_origin_history
-                if row.get("phase") in {"reserved", "completed"}
+                if row.get("phase") in {None, "reserved", "completed"}
                 and row["origin"].get("origin_record_sha256") == origin["origin_record_sha256"]
                 and row["result"].get("content_sha256") == content_sha
                 and row["result"].get("destination") == destination), None)
@@ -4801,7 +4806,7 @@ class RootCoreNativeObservationRegistry:
                     reviewed = self._read_obsidian_owner_draft(data_root, registered_owner, draft_id)
                 except Exception:
                     reservation = next((row for row in self._obsidian_origin_history
-                        if row.get("phase") in {"reserved", "completed"}
+                        if row.get("phase") in {None, "reserved", "completed"}
                         and row["origin"].get("origin_record_sha256") == record["origin_record_sha256"]
                         and row["result"].get("content_sha256") == content_sha
                         and row["result"].get("destination") == arguments["destination"]), None)
@@ -4960,8 +4965,8 @@ class RootCoreNativeObservationRegistry:
                     phase = "reserved"
                 else:
                     prior = history[existing_index]
-                    if prior.get("phase") not in {"reserved", "completed"}:
-                        raise ValueError("legacy completed archive cannot reserve a new write attempt")
+                    if prior.get("phase") not in {None, "reserved", "completed"}:
+                        raise ValueError("Obsidian archive cannot reserve a new write attempt")
                     attempts = list(prior.get("attempts", ({
                         "proposal": prior["proposal"], "approval": prior["approval"]},)))
                     current_attempt = {"proposal": archived_proposal, "approval": archived_approval}
@@ -5237,7 +5242,7 @@ class RootCoreNativeObservationRegistry:
                     reviewed = self._read_obsidian_owner_draft(data_root, registered_owner, draft_id)
                 except Exception:
                     reservation = next((row for row in self._obsidian_origin_history
-                        if row.get("phase") in {"reserved", "completed"}
+                        if row.get("phase") in {None, "reserved", "completed"}
                         and row["origin"].get("origin_record_sha256") == record["origin_record_sha256"]
                         and row["result"].get("content_sha256") == content_sha
                         and row["result"].get("destination") == proposal["destination"]), None)
@@ -5323,7 +5328,7 @@ class RootCoreNativeObservationRegistry:
                     # write. Permit a fresh Jarvis review only when the durable
                     # reservation and exact revision journal join all bytes.
                     reservation = next((row for row in self._obsidian_origin_history
-                        if row.get("phase") in {"reserved", "completed"}
+                        if row.get("phase") in {None, "reserved", "completed"}
                         and row["origin"].get("origin_record_sha256")
                             == record["origin_record_sha256"]
                         and row["result"].get("content_sha256") == content_sha), None)

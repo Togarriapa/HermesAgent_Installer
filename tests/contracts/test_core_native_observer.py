@@ -432,6 +432,7 @@ def test_obsidian_completion_history_and_tombstone_join_without_retaining_markdo
     }
     tombstone["completed_record_sha256"] = hashlib.sha256(
         observer._canonical(tombstone)).hexdigest()
+    assert observer._reserved_origin_tombstone(history_record) == tombstone
     state = observer._canonical({"schema": 2, "records": [], "completed": [tombstone]})
     assert observer._obsidian_origin_state_from_bytes(state) == (
         {}, {("a" * 64, "D" * 43): tombstone})
