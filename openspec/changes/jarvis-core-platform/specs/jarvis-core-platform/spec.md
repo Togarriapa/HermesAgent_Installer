@@ -2211,3 +2211,17 @@ Calendar SHALL bind actual enrolled owner account/calendar and source-verified r
 #### Scenario: No native account adapter or requested mutation
 - **WHEN** current OAuth/selected-resource read producer is unavailable or an event invitation/create/delete is requested
 - **THEN** read capability stays pending or mutation requires a separate reviewed owner effect; no fake events, account scope expansion or outbound test occurs.
+
+### Requirement: Protected Bundle selection distinct from profile preferences
+Team execution SHALL derive exact ordered membership from hash-verified protected Resources Bundle declarations and actual master plan selection covered by current plan/catalog digests. A separate root Team binding SHALL join existing schema2 mission/owner/source custody; old team_ids/profile preference data SHALL NOT constitute Team authority.
+
+#### Scenario: Missing Bundle selection or three-completion discussion
+- **WHEN** only profile preferences exist, or two initial drafts and one genuine recipient response are available
+- **THEN** preferences alone leave Team execution unavailable, while the three completions qualify discussion only if actual sender output→recipient input→responsive result lineage is proven within all existing limits.
+
+### Requirement: Durable origin records never revive child authority
+Verified private-draft origins SHALL persist in bounded protected root journal data with independent bytes/caller/input-output verification and fresh current-master resolution after restart. Stored origin references SHALL preserve provenance without granting or restoring execution leases.
+
+#### Scenario: Restart, missing lineage or origin-cap limit
+- **WHEN** runtime restarts, native origin input/output cannot be verified or the bounded journal is full
+- **THEN** current lookup/registration/bytes are revalidated or provenance remains pending; no retrospective file-only authority, silent history eviction or expired call/child revival occurs.
