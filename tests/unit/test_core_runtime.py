@@ -807,7 +807,12 @@ def test_owned_adapter_update_recovery_restores_exact_interrupted_cohort(
     fixture.cohort["reconstruction_sha256"] = hashlib.sha256(
         core._canonical_json(reconstruction)).hexdigest()
     cohort_raw = core._canonical_json(fixture.cohort)
-    fixture.refresh["core_update_cohort_sha256"] = hashlib.sha256(cohort_raw).hexdigest()
+    # The adopter cannot persist Core joins before the update runner returns;
+    # an interrupted source-starting phase therefore retains all three null.
+    fixture.refresh["core_update_backup_reference"] = None
+    fixture.refresh["core_update_cohort_transaction_id"] = None
+    fixture.refresh["core_update_cohort_sha256"] = None
+    fixture.ingress_path.write_bytes(core._canonical_json(fixture.ingress))
     monkeypatch.setattr(core, "_read_adapter_update_cohort",
         lambda: (fixture.cohort, cohort_raw))
 
