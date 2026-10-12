@@ -96,6 +96,7 @@ _GUARDED_OLD_READ_CONTEXT=contextvars.ContextVar("core_guarded_old_read",default
 _GUARDED_NEW_READ_CONTEXT=contextvars.ContextVar("core_guarded_new_read",default=None)
 _ADAPTER_UPDATE_LOCK_HELD=contextvars.ContextVar("adapter_update_lock_held",default=False)
 _ADAPTER_STARTUP_COHORT_CONTEXT=contextvars.ContextVar("adapter_startup_cohort_context",default=None)
+_INITIAL_PRIMARY_ADOPTION_CONTEXT=contextvars.ContextVar("initial_primary_adoption_context",default=None)
 _ABSENT_DIGEST = "absent"
 _ADAPTER_COHORT_PURPOSE="adapter-source-binding-cohort"
 _ADAPTER_COHORT_PHASES={"prepared","resources-rebound","source-starting",
@@ -113,6 +114,14 @@ _ADAPTER_COHORT_FIELDS={
  "old_artifact_sha256","new_artifact_sha256","owner_generation_backup_name",
  "primary_record_sha256","obsidian_registration_state","obsidian_registration_sha256",
  "obsidian_vault_tree_sha256","reconstruction","reconstruction_sha256",
+ "initial_primary_transition",
+}
+_INITIAL_PRIMARY_TRANSITION_FIELDS={
+ "schema","purpose","state","prior_record_state","prior_soul_sha256",
+ "prior_soul_signature","source_prompt_sha256","managed_block_sha256",
+ "desired_soul_sha256","owner_separator_hex","owner_backup_sha256",
+ "preparing_record_sha256","writing_record_sha256","adopted_record_sha256",
+ "before_resources_record_sha256","after_resources_record_sha256",
 }
 _OVERLAY_RECONSTRUCTION_FIELDS={
  "schema","purpose","cohort_transaction_id","owner_uid","home_role","phase",
@@ -177,6 +186,76 @@ class GuardedNewReadCustody:
 
 _GUARDED_NEW_READ_SEAL=object()
 _GUARDED_NEW_READ_ACTIVE={}
+_INITIAL_PRIMARY_ADOPTION_SEAL=object()
+_INITIAL_PRIMARY_ADOPTION_ACTIVE={}
+_INITIAL_PRIMARY_ROLLBACK_SEAL=object()
+_INITIAL_PRIMARY_ROLLBACK_ACTIVE={}
+
+@dataclass(frozen=True, slots=True)
+class InitialPrimaryAdoptionCustody:
+ """Root-only, in-process authority for one initial adoption in a source cohort."""
+ transaction_id:str
+ cohort_sha256:str
+ source:str
+ old_adapter_generation:str
+ new_adapter_generation:str
+ core_source_generation:str
+ artifact_a1_sha256:str
+ starting_journal_sha256:str
+ starting_resources_record_sha256:str
+ unit_sha256:str
+ launcher_sha256:str
+ source_recipe_sha256:str
+ process_identity_sha256:str
+ prior_soul_sha256:str
+ prior_soul_signature:tuple[int,...]
+ source_prompt_sha256:str
+ managed_block_sha256:str
+ desired_soul_sha256:str
+ owner_separator_hex:str
+ peer_pid:int
+ peer_start_ticks:str
+ boot_id:str
+ invocation_id:str
+ prior_record_sha256:str
+ issued_monotonic:float
+ deadline_monotonic:float
+ expires_monotonic:float
+ pidfd:int=field(repr=False,compare=False)
+ _seal:object=field(repr=False,compare=False)
+
+@dataclass(frozen=True)
+class InitialPrimaryRollbackCustody:
+ """One offline rollback of the exact initial-primary cohort stage."""
+ schema:int
+ purpose:str
+ transaction_id:str
+ cohort_sha256:str
+ initial_transition_sha256:str
+ recovery_snapshot_sha256:str
+ owner_uid:int
+ home_role:str
+ source:str
+ adapter_generation:str
+ core_source_generation:str
+ source_recipe_sha256:str
+ unit_sha256:str
+ launcher_sha256:str
+ journal_sha256:str
+ resources_record_sha256:str
+ artifact_a1_sha256:str
+ installed_journal_sha256:str
+ installed_tree_sha256:str
+ primary_stage_sha256:str
+ prior_soul_sha256:str
+ prior_soul_signature:tuple[int,...]
+ desired_soul_sha256:str
+ source_prompt_sha256:str
+ managed_block_sha256:str
+ owner_backup_sha256:str
+ owner_backup_name:str
+ expires_monotonic:float
+ _seal:object=field(repr=False,compare=False)
 
 @dataclass(frozen=True, slots=True)
 class _BaseOnlyReconstruction:
@@ -491,6 +570,61 @@ def _read_adapter_update_cohort(*,allow_absent=False):
       or reconstruction["base_non_installer_manifest_sha256"]
           !=reconstruction["composed_non_installer_manifest_sha256"]):
    raise ValueError
+  initial=row["initial_primary_transition"]
+  if initial is not None:
+   if (type(initial) is not dict or set(initial)!=_INITIAL_PRIMARY_TRANSITION_FIELDS
+       or type(initial.get("schema")) is not int or initial.get("schema")!=1
+       or initial.get("purpose")!="initial-primary-adoption"
+       or initial.get("prior_record_state")!="absent"
+       or initial.get("state") not in {"pending","preparing","writing","adopted","rolling-back"}
+       or type(initial.get("prior_soul_signature")) is not list
+       or len(initial["prior_soul_signature"])!=9
+       or any(type(part) is not int or part<0 for part in initial["prior_soul_signature"])
+       or not isinstance(initial.get("owner_separator_hex"),str)
+       or len(initial["owner_separator_hex"])%2
+       or len(initial["owner_separator_hex"])>4
+       or any(c not in "0123456789abcdef" for c in initial["owner_separator_hex"])):
+    raise ValueError
+   for key in ("prior_soul_sha256","source_prompt_sha256","managed_block_sha256",
+       "desired_soul_sha256","before_resources_record_sha256"):
+    if not isinstance(initial.get(key),str) or re.fullmatch(r"[0-9a-f]{64}",initial[key]) is None:
+     raise ValueError
+   for key in ("owner_backup_sha256","preparing_record_sha256","writing_record_sha256",
+       "adopted_record_sha256","after_resources_record_sha256"):
+    item=initial.get(key)
+    if item is not None and (not isinstance(item,str) or re.fullmatch(r"[0-9a-f]{64}",item) is None):
+     raise ValueError
+   progress={
+    "pending":(False,False,False,False),
+    "preparing":(None,False,False,False),
+    "writing":(True,True,False,None),
+    "adopted":(True,True,True,True),
+    "rolling-back":(True,initial.get("writing_record_sha256") is not None,
+      initial.get("adopted_record_sha256") is not None,
+      initial.get("after_resources_record_sha256") is not None),
+   }[initial["state"]]
+   for key,present in zip(("preparing_record_sha256","writing_record_sha256",
+                           "adopted_record_sha256","after_resources_record_sha256"),progress):
+    if present is not None and (initial.get(key) is not None)!=present:
+     raise ValueError
+   if (initial["state"] not in {"pending","preparing"}
+       and initial.get("owner_backup_sha256") is None):
+    raise ValueError
+   if (initial["state"]=="preparing" and initial.get("preparing_record_sha256") is not None
+       and initial.get("owner_backup_sha256") is None): raise ValueError
+   if (phase in {"prepared","resources-rebound"} and initial["state"]!="pending"):
+    raise ValueError
+   if (phase in {"bindings-verified","committed"} and initial["state"]!="adopted"):
+    raise ValueError
+   if (initial["state"]=="adopted"
+       and initial.get("after_resources_record_sha256")!=row.get("starting_resources_record_sha256")):
+    raise ValueError
+   if (initial["state"] in {"pending","preparing"}
+       and row["primary_record_sha256"]!=_ABSENT_DIGEST):
+    raise ValueError
+   if (initial["state"]=="adopted"
+       and row["primary_record_sha256"]!=initial["adopted_record_sha256"]):
+    raise ValueError
   if hashlib.sha256((json.dumps(reconstruction,sort_keys=True,separators=(",",":"),ensure_ascii=True)+"\n").encode("ascii")).hexdigest()!=row["reconstruction_sha256"]:
    raise ValueError
   canonical=(json.dumps(row,sort_keys=True,separators=(",",":"),ensure_ascii=True)+"\n").encode("ascii")
@@ -2224,7 +2358,7 @@ def _core_start_guard_code(adapter_source=None,cohort_gate=False,backup_generati
     "cs=os.stat(cp,follow_symlinks=False); rs=os.stat(rp,follow_symlinks=False); "
     "cr=open(cp,'rb').read(131073); rr=open(rp,'rb').read(16385); "
     "c=json.loads(cr); r=json.loads(rr); "
-    "keys={'schema','purpose','cohort_transaction_id','owner_uid','home_role','phase','old_source','new_source','old_adapter_generation','new_adapter_generation','old_core_source_generation','new_core_source_generation','old_source_recipe_sha256','new_source_recipe_sha256','old_unit_sha256','old_launcher_sha256','new_unit_sha256','new_launcher_sha256','guarded_old_unit_sha256','guarded_old_recipe_sha256','old_process_identity_sha256','old_journal_sha256','new_journal_sha256','old_resources_record_sha256','pre_switch_resources_record_sha256','starting_journal_sha256','starting_resources_record_sha256','new_resources_record_sha256','old_artifact_sha256','new_artifact_sha256','owner_generation_backup_name','primary_record_sha256','obsidian_registration_state','obsidian_registration_sha256','obsidian_vault_tree_sha256','reconstruction','reconstruction_sha256'}; "
+    "keys={'schema','purpose','cohort_transaction_id','owner_uid','home_role','phase','old_source','new_source','old_adapter_generation','new_adapter_generation','old_core_source_generation','new_core_source_generation','old_source_recipe_sha256','new_source_recipe_sha256','old_unit_sha256','old_launcher_sha256','new_unit_sha256','new_launcher_sha256','guarded_old_unit_sha256','guarded_old_recipe_sha256','old_process_identity_sha256','old_journal_sha256','new_journal_sha256','old_resources_record_sha256','pre_switch_resources_record_sha256','starting_journal_sha256','starting_resources_record_sha256','new_resources_record_sha256','old_artifact_sha256','new_artifact_sha256','owner_generation_backup_name','primary_record_sha256','obsidian_registration_state','obsidian_registration_sha256','obsidian_vault_tree_sha256','reconstruction','reconstruction_sha256','initial_primary_transition'}; "
     "canonical=lambda v:(json.dumps(v,sort_keys=True,separators=(',',':'),ensure_ascii=True,allow_nan=False)+'\\n').encode('ascii'); "
     "recipe=lambda s,g,u,l:hashlib.sha256(canonical({'schema':1,'source':s,'generation':g,'unit_sha256':u,'launcher_sha256':l})).hexdigest(); "
     "cp_ok=(stat.S_ISREG(cs.st_mode) and stat.S_IMODE(cs.st_mode)==0o400 and cs.st_nlink==1 and 0<len(cr)==cs.st_size<=131072); "
@@ -2239,7 +2373,8 @@ def _core_start_guard_code(adapter_source=None,cohort_gate=False,backup_generati
     "backup_ok=(isinstance(backup,dict) and backup.get('source_generation')==backup_generation and backup.get('path')=="+repr(str(ADAPTER_UPDATE_BACKUPS))+"+'/'+backup_generation and set(backup_files or {})==set(backup_members) and backup_raw==canonical(backup_files) and stat.S_ISREG(backup_manifest_stat.st_mode) and (backup_manifest_stat.st_uid,backup_manifest_stat.st_gid)==(1000,1000) and stat.S_IMODE(backup_manifest_stat.st_mode)==0o400 and backup_manifest_stat.st_nlink==1 and len(backup_raw)==backup_manifest_stat.st_size); "
     "backup_valid=lambda n,h:(lambda p,s,b:stat.S_ISREG(s.st_mode) and (s.st_uid,s.st_gid)==(1000,1000) and stat.S_IMODE(s.st_mode)==0o400 and s.st_nlink==1 and 0<s.st_size<=262144 and len(b)==s.st_size and hashlib.sha256(b).hexdigest()==h)(os.path.join(base,"+repr("adapter-backup-")+"+n.replace('.json','').replace('.','-')),os.stat(os.path.join(base,"+repr("adapter-backup-")+"+n.replace('.json','').replace('.','-')),follow_symlinks=False),open(os.path.join(base,"+repr("adapter-backup-")+"+n.replace('.json','').replace('.','-')),'rb').read(262145)); "
     "backup_ok=backup_ok and all(backup_valid(name,backup_files.get(name)) for name in backup_members) and hashlib.sha256(backup_raw).hexdigest()==hashlib.sha256(canonical(backup_files)).hexdigest(); "
-    "cohort_ok=(backup_ok and cp_ok and rp_ok and canonical(c)==cr and set(c)==keys and c.get('schema')==1 and c.get('purpose')=='adapter-source-binding-cohort' and c.get('owner_uid')==1000 and c.get('home_role')=='jarvis-primary-home' and c.get('owner_generation_backup_name')=='.jarvis-resources-skills-helper-transition-'+c.get('cohort_transaction_id') and phase in ('source-starting','bindings-verified','committed') and reconstruction_ok and c.get('new_source')==source and c.get('new_adapter_generation')==d.get('adapter_generation') and c.get('new_core_source_generation')==d.get('core_source_generation') and c.get('new_source_recipe_sha256')==recipe(source,d.get('adapter_generation'),d.get('unit_sha256'),d.get('launcher_sha256')) and expected_j==hashlib.sha256(raw).hexdigest() and expected_r==hashlib.sha256(rr).hexdigest() and r.get('core_ownership_sha256')==hashlib.sha256(raw).hexdigest() and r.get('core_source_generation')==c.get('new_core_source_generation') and r.get('artifact_sha256')==c.get('new_artifact_sha256') and d.get('adapter_update_cohort_transaction_id')==c.get('cohort_transaction_id') and d.get('adapter_update_target_source')==source and d.get('adapter_update_target_generation')==d.get('adapter_generation') and ((starting and d.get('adapter_update_state')=='starting') or (phase=='committed' and d.get('adapter_update_state')=='active')) and hashlib.sha256(open('/etc/systemd/system/hermes-jarvis-core.service','rb').read()).hexdigest()==c.get('new_unit_sha256') and hashlib.sha256(open('/usr/local/libexec/hermes-jarvis-core-launcher','rb').read()).hexdigest()==c.get('new_launcher_sha256')); "
+    "initial=c.get('initial_primary_transition'); initial_ok=(initial is None or (isinstance(initial,dict) and initial.get('purpose')=='initial-primary-adoption' and initial.get('prior_record_state')=='absent' and initial.get('state') in ('pending','adopted') and ((initial.get('state')=='pending' and c.get('primary_record_sha256')=='absent' and initial.get('owner_backup_sha256') is None) or (initial.get('state')=='adopted' and initial.get('adopted_record_sha256')==c.get('primary_record_sha256') and initial.get('after_resources_record_sha256')==hashlib.sha256(rr).hexdigest())))); "
+    "cohort_ok=(backup_ok and cp_ok and rp_ok and initial_ok and canonical(c)==cr and set(c)==keys and c.get('schema')==1 and c.get('purpose')=='adapter-source-binding-cohort' and c.get('owner_uid')==1000 and c.get('home_role')=='jarvis-primary-home' and c.get('owner_generation_backup_name')=='.jarvis-resources-skills-helper-transition-'+c.get('cohort_transaction_id') and phase in ('source-starting','bindings-verified','committed') and reconstruction_ok and c.get('new_source')==source and c.get('new_adapter_generation')==d.get('adapter_generation') and c.get('new_core_source_generation')==d.get('core_source_generation') and c.get('new_source_recipe_sha256')==recipe(source,d.get('adapter_generation'),d.get('unit_sha256'),d.get('launcher_sha256')) and expected_j==hashlib.sha256(raw).hexdigest() and expected_r==hashlib.sha256(rr).hexdigest() and r.get('core_ownership_sha256')==hashlib.sha256(raw).hexdigest() and r.get('core_source_generation')==c.get('new_core_source_generation') and r.get('artifact_sha256')==c.get('new_artifact_sha256') and d.get('adapter_update_cohort_transaction_id')==c.get('cohort_transaction_id') and d.get('adapter_update_target_source')==source and d.get('adapter_update_target_generation')==d.get('adapter_generation') and ((starting and d.get('adapter_update_state')=='starting') or (phase=='committed' and d.get('adapter_update_state')=='active')) and hashlib.sha256(open('/etc/systemd/system/hermes-jarvis-core.service','rb').read()).hexdigest()==c.get('new_unit_sha256') and hashlib.sha256(open('/usr/local/libexec/hermes-jarvis-core-launcher','rb').read()).hexdigest()==c.get('new_launcher_sha256')); "
     "ok=ok and cohort_ok; ")
  else:
   gate_code=""
@@ -2525,7 +2660,7 @@ def _guarded_old_read_scope(value,*,purpose):
 def _issue_guarded_new_read(*,cohort,cohort_raw,record,journal_raw,resources_raw,unit,
                             launcher,pidfd,pid,process_identity_sha256,purpose):
  if (os.geteuid()!=ROOT_UID or not _ADAPTER_UPDATE_LOCK_HELD.get()
-     or purpose not in {"resources-readback","primary-rebase-readback"}
+     or purpose not in {"resources-readback","primary-rebase-readback","primary-initial-adoption"}
      or cohort.get("phase") not in {"source-starting","bindings-verified"}
      or hashlib.sha256(journal_raw).hexdigest()!=cohort.get("starting_journal_sha256")
      or hashlib.sha256(resources_raw).hexdigest()!=cohort.get("starting_resources_record_sha256")
@@ -2559,7 +2694,7 @@ def _validate_guarded_new_read(value):
       or _GUARDED_NEW_READ_ACTIVE.get(id(value)) is not value
       or os.geteuid()!=ROOT_UID or not _ADAPTER_UPDATE_LOCK_HELD.get()
       or value.owner_uid!=ROOT_UID or value.home_role!="jarvis-primary-home"
-      or value.purpose not in {"resources-readback","primary-rebase-readback"}
+      or value.purpose not in {"resources-readback","primary-rebase-readback","primary-initial-adoption"}
       or time.monotonic()>=value.expires_monotonic):
    return False
   cohort,raw=_read_adapter_update_cohort()
@@ -2571,7 +2706,34 @@ def _validate_guarded_new_read(value):
   evidence,identity=_adapter_process_identity(Path(value.new_source),
    value.new_adapter_generation,value.new_core_source_generation,value.pid)
   poller=select.poll(); poller.register(value.pidfd,select.POLLIN|select.POLLHUP|select.POLLERR|select.POLLNVAL)
-  return bool(cohort["phase"] in {"source-starting","bindings-verified"}
+  initial=cohort.get("initial_primary_transition")
+  initial_state=initial.get("state") if type(initial) is dict else None
+  purpose_allowed=(
+   (value.purpose=="primary-initial-adoption" and cohort["phase"]=="source-starting"
+    and initial_state in {"preparing","writing","adopted","rolling-back"})
+   or (value.purpose in {"resources-readback","primary-rebase-readback"}
+    and initial_state not in {"preparing","writing","rolling-back"}))
+  primary_stage_allowed=True
+  if value.purpose=="primary-initial-adoption":
+   if initial_state in {"pending","preparing"} and initial.get("preparing_record_sha256") is None:
+    try:
+     os.stat(PRIMARY_PROMPT_JOURNAL,follow_symlinks=False)
+     primary_stage_allowed=False
+    except FileNotFoundError:
+     primary_stage_allowed=True
+   else:
+    try:
+     primary_raw=_projection_file(PRIMARY_PROMPT_JOURNAL,owner=ROOT_UID,group=ROOT_UID,
+      mode=0o600,maximum=64*1024)
+     primary_row=json.loads(primary_raw)
+     expected_stage={"preparing":"preparing","writing":"writing","adopted":"adopted",
+                     "rolling-back":{"rolling_back","rolled_back"}}[initial_state]
+     primary_stage_allowed=(primary_row.get("state") in expected_stage
+        if type(expected_stage) is set else primary_row.get("state")==expected_stage)
+    except Exception:
+     primary_stage_allowed=False
+  return bool(purpose_allowed and primary_stage_allowed
+   and cohort["phase"] in {"source-starting","bindings-verified"}
    and cohort["phase"]==value.phase and cohort["cohort_transaction_id"]==value.cohort_transaction_id
    and hashlib.sha256(raw).hexdigest()==value.cohort_sha256
    and hashlib.sha256(journal_raw).hexdigest()==value.starting_journal_sha256
@@ -2599,6 +2761,568 @@ def _guarded_new_read_scope(value,*,purpose):
   yield
  finally:
   _GUARDED_NEW_READ_CONTEXT.reset(token)
+
+def _initial_primary_transition_row(cohort):
+ row=cohort.get("initial_primary_transition") if type(cohort) is dict else None
+ if type(row) is not dict or set(row)!=_INITIAL_PRIMARY_TRANSITION_FIELDS:
+  raise CoreRuntimeError("initial primary cohort row is unavailable")
+ return row
+
+def _initial_primary_current(custody,*,allow_unrecorded_stage=False):
+ """Recheck exact current cohort/process/owner bytes for the fixed manager seam."""
+ try:
+  if (type(custody) is not InitialPrimaryAdoptionCustody
+      or custody._seal is not _INITIAL_PRIMARY_ADOPTION_SEAL
+      or os.geteuid()!=ROOT_UID or not _ADAPTER_UPDATE_LOCK_HELD.get()
+      or time.monotonic()>=custody.expires_monotonic
+      or time.monotonic()>=custody.deadline_monotonic):
+   return False
+  held=_INITIAL_PRIMARY_ADOPTION_ACTIVE.get(id(custody))
+  if type(held) is not dict or held.get("object") is not custody:
+   return False
+  cohort,cohort_raw=_read_adapter_update_cohort()
+  transition=_initial_primary_transition_row(cohort)
+  if (cohort.get("cohort_transaction_id")!=custody.transaction_id
+      or cohort.get("phase")!="source-starting"
+      or hashlib.sha256(cohort_raw).hexdigest()!=held.get("current_cohort_sha256")
+      or cohort.get("new_source")!=custody.source
+      or cohort.get("old_adapter_generation")!=custody.old_adapter_generation
+      or cohort.get("new_adapter_generation")!=custody.new_adapter_generation
+      or cohort.get("new_core_source_generation")!=custody.core_source_generation
+      or cohort.get("new_artifact_sha256")!=custody.artifact_a1_sha256
+      or cohort.get("starting_journal_sha256")!=custody.starting_journal_sha256
+      or cohort.get("starting_resources_record_sha256")!=held.get("current_resources_sha256")
+      or cohort.get("initial_primary_transition")!=held.get("transition_row")
+      or transition.get("prior_record_state")!="absent"
+      or cohort.get("primary_record_sha256") not in {_ABSENT_DIGEST,
+          transition.get("preparing_record_sha256"),transition.get("writing_record_sha256"),
+          transition.get("adopted_record_sha256")}):
+   return False
+  journal_raw=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+  resources_raw=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024)
+  unit=_projection_file(UNIT,owner=ROOT_UID,group=ROOT_UID,mode=0o644,maximum=256*1024)
+  launcher=_projection_file(LAUNCHER,owner=ROOT_UID,group=ROOT_UID,mode=0o755,maximum=256*1024)
+  record=json.loads(journal_raw)
+  if (hashlib.sha256(journal_raw).hexdigest()!=custody.starting_journal_sha256
+      or hashlib.sha256(resources_raw).hexdigest()!=held.get("current_resources_sha256")
+      or hashlib.sha256(unit).hexdigest()!=custody.unit_sha256
+      or hashlib.sha256(launcher).hexdigest()!=custody.launcher_sha256
+      or record.get("adapter_update_state")!="starting"
+      or record.get("adapter_update_cohort_transaction_id")!=custody.transaction_id
+      or record.get("adapter_source")!=custody.source
+      or record.get("adapter_generation")!=custody.new_adapter_generation
+      or record.get("core_source_generation")!=custody.core_source_generation
+      or _core_source_generation()!=custody.core_source_generation):
+   return False
+  from .remote.core_gateway_inspector import _current_native_adapter_generation
+  if _current_native_adapter_generation(deadline=time.monotonic()+35.0)!=custody.new_adapter_generation:
+   return False
+  evidence,identity=_adapter_process_identity(Path(custody.source),
+   custody.new_adapter_generation,custody.core_source_generation,custody.peer_pid)
+  poller=select.poll(); poller.register(custody.pidfd,select.POLLIN|select.POLLHUP|select.POLLERR|select.POLLNVAL)
+  if (identity!=custody.process_identity_sha256 or evidence.get("start_ticks")!=custody.peer_start_ticks
+      or evidence.get("boot_id")!=custody.boot_id
+      or evidence.get("invocation_id")!=custody.invocation_id or poller.poll(0)
+      or not _owned_listener_pidfd(adapter_source=Path(custody.source))):
+   return False
+  from . import primary_prompt_manager as primary
+  try:
+   primary_raw=_projection_file(PRIMARY_PROMPT_JOURNAL,owner=ROOT_UID,group=ROOT_UID,
+    mode=0o600,maximum=64*1024)
+   primary_row=json.loads(primary_raw)
+  except FileNotFoundError:
+   primary_raw=None; primary_row=None
+  state=transition["state"]
+  if state in {"pending","preparing"} and primary_raw is None:
+   soul,signature=primary._read_soul(sys.modules[__name__])
+   if (hashlib.sha256(soul).hexdigest()!=transition["prior_soul_sha256"]
+       or tuple(signature)!=tuple(transition["prior_soul_signature"])): return False
+  elif state=="pending":
+   if primary_raw is not None:
+    if not (allow_unrecorded_stage and type(primary_row) is dict
+        and primary_row.get("state")=="preparing"):
+     return False
+   soul,signature=primary._read_soul(sys.modules[__name__])
+   if (hashlib.sha256(soul).hexdigest()!=transition["prior_soul_sha256"]
+       or tuple(signature)!=tuple(transition["prior_soul_signature"])
+       or primary_row.get("prior_soul_sha256")!=transition["prior_soul_sha256"]
+       or primary_row.get("artifact_sha256")!=custody.artifact_a1_sha256
+       or primary_row.get("core_source_generation")!=custody.core_source_generation):
+     if not allow_unrecorded_stage: return False
+  else:
+   if type(primary_row) is not dict: return False
+   expected_digest=transition.get({"preparing":"preparing_record_sha256",
+    "writing":"writing_record_sha256","adopted":"adopted_record_sha256",
+    "rolling-back":"preparing_record_sha256"}.get(state,""))
+   current_stage=primary_row.get("state")
+   next_stage={"preparing":"writing","writing":"adopted"}.get(state)
+   digest_matches=expected_digest is not None and hashlib.sha256(primary_raw).hexdigest()==expected_digest
+   armed_prepare=(allow_unrecorded_stage and state=="preparing"
+      and transition.get("preparing_record_sha256") is None and current_stage=="preparing")
+   if not digest_matches and not armed_prepare and not (allow_unrecorded_stage and current_stage==next_stage): return False
+   soul,signature=primary._read_soul(sys.modules[__name__])
+   if primary_row.get("prior_soul_sha256")!=transition["prior_soul_sha256"]:
+    return False
+   if state in {"preparing","writing"} and hashlib.sha256(soul).hexdigest() not in {
+       transition["prior_soul_sha256"],transition["desired_soul_sha256"]}: return False
+   effective_state=current_stage if allow_unrecorded_stage and current_stage==next_stage else state
+   if effective_state=="adopted" and hashlib.sha256(soul).hexdigest()!=transition["desired_soul_sha256"]: return False
+   if effective_state=="adopted" and (primary_row.get("result_soul_sha256")!=transition["desired_soul_sha256"]
+       or transition.get("after_resources_record_sha256") is None): return False
+   backup=primary._backup_read(sys.modules[__name__],primary_row)
+   backup_sha=hashlib.sha256(backup).hexdigest()
+   if (backup_sha!=transition.get("owner_backup_sha256")
+       and not (allow_unrecorded_stage and state=="preparing"
+          and transition.get("owner_backup_sha256") is None
+          and backup_sha==transition.get("prior_soul_sha256"))): return False
+  return True
+ except Exception:
+  return False
+
+def verify_initial_primary_adoption_custody(custody):
+ if not _initial_primary_current(custody,allow_unrecorded_stage=True):
+  raise CoreRuntimeError("initial primary adoption custody is stale or foreign")
+ return True
+
+def _initial_primary_recovery_snapshot_sha256(prior,contents):
+ """Hash the exact protected rollback snapshot without copying its contents."""
+ names=("journal.json","resources-record.json","overlay-record.json",
+  "primary-record.json","obsidian-registration.json","unit","launcher","cohort.json")
+ rows={"prior":hashlib.sha256(_canonical_json(prior)).hexdigest()}
+ for name in names:
+  value=contents.get(name)
+  if value is not None and type(value) is not bytes: return None
+  rows[name]=hashlib.sha256(value or b"").hexdigest()
+ return hashlib.sha256(_canonical_json(rows)).hexdigest()
+
+def _initial_primary_rollback_current(custody):
+ """Verify offline recovery authority while the owned service remains stopped."""
+ try:
+  held=_INITIAL_PRIMARY_ROLLBACK_ACTIVE.get(id(custody))
+  if (type(custody) is not InitialPrimaryRollbackCustody
+      or custody._seal is not _INITIAL_PRIMARY_ROLLBACK_SEAL
+      or held is None or held.get("object") is not custody
+      or os.geteuid()!=ROOT_UID or not _ADAPTER_UPDATE_LOCK_HELD.get()
+      or custody.schema!=1 or custody.purpose!="initial-primary-offline-rollback"
+      or custody.owner_uid!=1000 or custody.home_role!="jarvis-primary-home"
+      or time.monotonic()>=custody.expires_monotonic):
+   return False
+  reference=held.get("reference")
+  prior,contents=_read_adapter_update_backup(reference)
+  if _initial_primary_recovery_snapshot_sha256(prior,contents)!=custody.recovery_snapshot_sha256:
+   return False
+  cohort,cohort_raw=_read_adapter_update_cohort()
+  transition=_initial_primary_transition_row(cohort)
+  journal=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+  resources=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024)
+  unit=_projection_file(UNIT,owner=ROOT_UID,group=ROOT_UID,mode=0o644,maximum=256*1024)
+  launcher=_projection_file(LAUNCHER,owner=ROOT_UID,group=ROOT_UID,mode=0o755,maximum=256*1024)
+  if (hashlib.sha256(cohort_raw).hexdigest()!=custody.cohort_sha256
+      or cohort.get("phase")!="rolling-back"
+      or hashlib.sha256(_canonical_json(transition)).hexdigest()!=custody.initial_transition_sha256
+      or transition.get("state")!="rolling-back"
+      or hashlib.sha256(journal).hexdigest()!=custody.journal_sha256
+      or hashlib.sha256(resources).hexdigest()!=custody.resources_record_sha256
+      or hashlib.sha256(unit).hexdigest()!=custody.unit_sha256
+      or hashlib.sha256(launcher).hexdigest()!=custody.launcher_sha256
+      or cohort.get("cohort_transaction_id")!=custody.transaction_id
+      or cohort.get("new_source")!=custody.source
+      or cohort.get("new_adapter_generation")!=custody.adapter_generation
+      or cohort.get("new_core_source_generation")!=custody.core_source_generation
+      or cohort.get("new_source_recipe_sha256")!=custody.source_recipe_sha256
+      or cohort.get("new_artifact_sha256")!=custody.artifact_a1_sha256
+      or transition.get("owner_backup_sha256")!=custody.owner_backup_sha256):
+   return False
+  old_source=Path(prior["adapter_source"])
+  expected_guarded=_unit(adapter_source=old_source,cohort_gate=True,
+   backup_generation=cohort["old_adapter_generation"])
+  if (unit!=expected_guarded or launcher not in {
+      contents["launcher"],_launcher(adapter_source=Path(cohort["new_source"]))}):
+   return False
+  active=_run(["systemctl","is-active",SERVICE],False).stdout.strip()
+  main_pid=_run(["systemctl","show","--property=MainPID","--value",SERVICE],False).stdout.strip()
+  if active=="active" or main_pid not in {"","0"}:
+   return False
+  if any(_owned_listener(adapter_source=Path(source)) for source in
+      {cohort["old_source"],cohort["new_source"]}): return False
+  if _core_source_generation()!=custody.core_source_generation:
+   return False
+  from .remote.core_gateway_inspector import _current_native_adapter_generation
+  if _current_native_adapter_generation(deadline=time.monotonic()+35.0)!=custody.adapter_generation:
+   return False
+  from .registry import manual_jarvis_skills as native
+  generation=HERMES_HOME/"skills"/native._GENERATION
+  archive=_projection_file(RESOURCES_CAS/(custody.artifact_a1_sha256+".zip"),
+   owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
+  manifest,files=native._read_transition_archive(archive,custody.artifact_a1_sha256)
+  native._verify_owned_generation(generation,files,custody.artifact_a1_sha256)
+  installed_raw=_projection_file(generation/native._OWNER_FILE,owner=1000,group=1000,
+   mode=0o600,maximum=2*1024*1024)
+  tree_sha=_hash_generation_tree(HERMES_HOME,manifest,files,custody.artifact_a1_sha256)
+  if (hashlib.sha256(installed_raw).hexdigest()!=custody.installed_journal_sha256
+      or tree_sha!=custody.installed_tree_sha256): return False
+  primary_raw=_projection_file(PRIMARY_PROMPT_JOURNAL,owner=ROOT_UID,group=ROOT_UID,
+   mode=0o600,maximum=64*1024)
+  if hashlib.sha256(primary_raw).hexdigest()!=custody.primary_stage_sha256:
+   return False
+  from . import primary_prompt_manager as primary
+  row=json.loads(primary_raw); soul,signature=primary._read_soul(sys.modules[__name__])
+  if (row.get("state") not in {"preparing","writing","adopted"}
+      or row.get("prior_soul_sha256")!=custody.prior_soul_sha256
+      or row.get("source_prompt_sha256")!=custody.source_prompt_sha256
+      or row.get("managed_block_sha256")!=custody.managed_block_sha256
+      or row.get("owner_backup_name")!=custody.owner_backup_sha256
+      or hashlib.sha256(soul).hexdigest() not in {
+       custody.prior_soul_sha256,custody.desired_soul_sha256}
+      or (hashlib.sha256(soul).hexdigest()==custody.prior_soul_sha256
+          and tuple(signature)!=custody.prior_soul_signature)):
+   return False
+  backup=primary._backup_read(sys.modules[__name__],row)
+  return hashlib.sha256(backup).hexdigest()==custody.owner_backup_sha256
+ except Exception:
+  return False
+
+def verify_initial_primary_rollback_custody(custody):
+ if not _initial_primary_rollback_current(custody):
+  raise CoreRuntimeError("initial primary offline rollback custody is stale or foreign")
+ return True
+
+def _issue_initial_primary_rollback_custody(*,reference,prior,contents,cohort,cohort_raw):
+ """Issue a fresh offline recovery capability only after the fixed service is stopped."""
+ if os.geteuid()!=ROOT_UID or not _ADAPTER_UPDATE_LOCK_HELD.get():
+  raise CoreRuntimeError("initial primary offline rollback requires the Root updater lock")
+ transition=_initial_primary_transition_row(cohort)
+ if cohort.get("phase")!="rolling-back" or transition.get("state")!="rolling-back":
+  raise CoreRuntimeError("initial primary rollback is not the exact rolling-back cohort")
+ # A crash can occur after the manager's atomic stage write and before its
+ # Root stage recorder updates C. Reconcile only the single exact next stage;
+ # never turn an arbitrary manager row into rollback evidence.
+ primary_raw=_projection_file(PRIMARY_PROMPT_JOURNAL,owner=ROOT_UID,group=ROOT_UID,
+  mode=0o600,maximum=64*1024)
+ from . import primary_prompt_manager as primary
+ stage_row=json.loads(primary_raw); stage=stage_row.get("state")
+ backup=primary._backup_read(sys.modules[__name__],stage_row)
+ backup_sha=hashlib.sha256(backup).hexdigest()
+ if (backup_sha!=transition.get("prior_soul_sha256")
+     or stage_row.get("owner_backup_name")!=backup_sha):
+  raise CoreRuntimeError("initial primary rollback stage lost its exact immutable prior backup")
+ stage_digest=hashlib.sha256(primary_raw).hexdigest()
+ staged=dict(transition)
+ if staged.get("owner_backup_sha256") is None: staged["owner_backup_sha256"]=backup_sha
+ if stage=="preparing" and staged.get("preparing_record_sha256") is None:
+  staged["preparing_record_sha256"]=stage_digest
+ elif stage=="writing" and staged.get("writing_record_sha256") is None:
+  if staged.get("preparing_record_sha256") is None:
+   raise CoreRuntimeError("unrecorded initial writing stage has no retained preparing predecessor")
+  staged["writing_record_sha256"]=stage_digest
+ elif stage=="adopted" and staged.get("adopted_record_sha256") is None:
+  if (staged.get("writing_record_sha256") is None
+      or staged.get("after_resources_record_sha256")!=hashlib.sha256(
+       _projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,
+        mode=0o600,maximum=16*1024)).hexdigest()):
+   raise CoreRuntimeError("unrecorded initial adopted stage lacks its exact Resources predecessor")
+  staged["adopted_record_sha256"]=stage_digest
+ if staged!=transition:
+  updated=dict(cohort); updated["initial_primary_transition"]=staged
+  updated["primary_record_sha256"]=stage_digest
+  cohort_raw=_write_adapter_update_cohort(updated,expected_raw=cohort_raw)
+  cohort=updated; transition=staged
+ active=_run(["systemctl","is-active",SERVICE],False).stdout.strip()
+ main_pid=_run(["systemctl","show","--property=MainPID","--value",SERVICE],False).stdout.strip()
+ if active=="active" or main_pid not in {"","0"} or any(
+     _owned_listener(adapter_source=Path(source)) for source in {cohort["old_source"],cohort["new_source"]}):
+  raise CoreRuntimeError("initial primary rollback requires the owned service and listener stopped")
+ row=json.loads(primary_raw); soul,signature=primary._read_soul(sys.modules[__name__])
+ if (row.get("state") not in {"preparing","writing","adopted"}
+     or row.get("prior_soul_sha256")!=transition.get("prior_soul_sha256")
+     or row.get("source_prompt_sha256")!=transition.get("source_prompt_sha256")
+     or row.get("managed_block_sha256")!=transition.get("managed_block_sha256")
+     or hashlib.sha256(soul).hexdigest() not in {transition.get("prior_soul_sha256"),
+      transition.get("desired_soul_sha256")}
+     or (hashlib.sha256(soul).hexdigest()==transition.get("prior_soul_sha256")
+      and tuple(signature)!=tuple(transition.get("prior_soul_signature",())))
+     or backup_sha!=transition.get("owner_backup_sha256")
+     or row.get("owner_backup_name")!=backup_sha):
+  raise CoreRuntimeError("initial primary rollback evidence is not the exact owned stage")
+ _retain_initial_primary_stage(cohort["cohort_transaction_id"],primary_raw)
+ journal=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+ resources=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024)
+ unit=_projection_file(UNIT,owner=ROOT_UID,group=ROOT_UID,mode=0o644,maximum=256*1024)
+ launcher=_projection_file(LAUNCHER,owner=ROOT_UID,group=ROOT_UID,mode=0o755,maximum=256*1024)
+ expected_guarded=_unit(adapter_source=Path(prior["adapter_source"]),cohort_gate=True,
+  backup_generation=cohort["old_adapter_generation"])
+ if (unit!=expected_guarded or launcher not in {
+     contents["launcher"],_launcher(adapter_source=Path(cohort["new_source"]))}):
+  raise CoreRuntimeError("initial primary offline rollback recipes are not the exact guarded cohort files")
+ from .registry import manual_jarvis_skills as native
+ generation=HERMES_HOME/"skills"/native._GENERATION
+ archive=_projection_file(RESOURCES_CAS/(cohort["new_artifact_sha256"]+".zip"),
+  owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
+ manifest,files=native._read_transition_archive(archive,cohort["new_artifact_sha256"])
+ native._verify_owned_generation(generation,files,cohort["new_artifact_sha256"])
+ installed_raw=_projection_file(generation/native._OWNER_FILE,owner=1000,group=1000,
+  mode=0o600,maximum=2*1024*1024)
+ values=dict(schema=1,purpose="initial-primary-offline-rollback",
+  transaction_id=cohort["cohort_transaction_id"],cohort_sha256=hashlib.sha256(cohort_raw).hexdigest(),
+  initial_transition_sha256=hashlib.sha256(_canonical_json(transition)).hexdigest(),
+  recovery_snapshot_sha256=_initial_primary_recovery_snapshot_sha256(prior,contents),
+  owner_uid=1000,home_role="jarvis-primary-home",source=cohort["new_source"],
+  adapter_generation=cohort["new_adapter_generation"],
+  core_source_generation=cohort["new_core_source_generation"],
+  source_recipe_sha256=cohort["new_source_recipe_sha256"],
+  unit_sha256=hashlib.sha256(unit).hexdigest(),launcher_sha256=hashlib.sha256(launcher).hexdigest(),
+  journal_sha256=hashlib.sha256(journal).hexdigest(),
+  resources_record_sha256=hashlib.sha256(resources).hexdigest(),
+  artifact_a1_sha256=cohort["new_artifact_sha256"],
+  installed_journal_sha256=hashlib.sha256(installed_raw).hexdigest(),
+  installed_tree_sha256=_hash_generation_tree(HERMES_HOME,manifest,files,cohort["new_artifact_sha256"]),
+  primary_stage_sha256=hashlib.sha256(primary_raw).hexdigest(),
+  prior_soul_sha256=transition["prior_soul_sha256"],
+  prior_soul_signature=tuple(transition["prior_soul_signature"]),
+  desired_soul_sha256=transition["desired_soul_sha256"],
+  source_prompt_sha256=transition["source_prompt_sha256"],
+  managed_block_sha256=transition["managed_block_sha256"],
+  owner_backup_sha256=backup_sha,owner_backup_name=row["owner_backup_name"],
+  expires_monotonic=time.monotonic()+180.0,_seal=_INITIAL_PRIMARY_ROLLBACK_SEAL)
+ custody=InitialPrimaryRollbackCustody(**values)
+ _INITIAL_PRIMARY_ROLLBACK_ACTIVE[id(custody)]={"object":custody,"reference":reference}
+ verify_initial_primary_rollback_custody(custody)
+ return custody
+
+def _issue_initial_primary_adoption_custody(*,cohort,cohort_raw,journal_raw,resources_raw,
+    unit,launcher,pidfd,pid,process_identity_sha256,prior_soul,prior_signature,
+    source_prompt,managed_block,desired_soul,owner_separator):
+ """Seal the single initial append to the exact running source-starting tuple."""
+ if (os.geteuid()!=ROOT_UID or not _ADAPTER_UPDATE_LOCK_HELD.get()
+     or type(cohort) is not dict or cohort.get("phase")!="source-starting"
+     or type(prior_soul) is not bytes or type(source_prompt) is not bytes
+     or type(managed_block) is not bytes or type(desired_soul) is not bytes
+     or not isinstance(owner_separator,bytes)):
+  raise CoreRuntimeError("initial primary adoption inputs are outside the fixed source cohort")
+ transition=_initial_primary_transition_row(cohort)
+ if (transition.get("state")!="preparing" or transition.get("prior_record_state")!="absent"
+     or hashlib.sha256(cohort_raw).hexdigest()!=hashlib.sha256(
+      _projection_file(ADAPTER_UPDATE_COHORT,owner=ROOT_UID,group=ROOT_UID,
+       mode=0o400,maximum=128*1024)).hexdigest()
+     or hashlib.sha256(journal_raw).hexdigest()!=cohort.get("starting_journal_sha256")
+     or hashlib.sha256(resources_raw).hexdigest()!=cohort.get("starting_resources_record_sha256")
+     or hashlib.sha256(unit).hexdigest()!=cohort.get("new_unit_sha256")
+     or hashlib.sha256(launcher).hexdigest()!=cohort.get("new_launcher_sha256")
+     or hashlib.sha256(prior_soul).hexdigest()!=transition.get("prior_soul_sha256")
+     or tuple(prior_signature)!=tuple(transition.get("prior_soul_signature",()))
+     or hashlib.sha256(source_prompt).hexdigest()!=transition.get("source_prompt_sha256")
+     or hashlib.sha256(managed_block).hexdigest()!=transition.get("managed_block_sha256")
+     or hashlib.sha256(desired_soul).hexdigest()!=transition.get("desired_soul_sha256")
+     or owner_separator.hex()!=transition.get("owner_separator_hex")):
+  raise CoreRuntimeError("initial primary adoption source or owner snapshot changed")
+ record=json.loads(journal_raw)
+ if (record.get("adapter_update_state")!="starting"
+     or record.get("adapter_update_cohort_transaction_id")!=cohort.get("cohort_transaction_id")):
+  raise CoreRuntimeError("initial primary adoption source journal is not current")
+ evidence,identity=_adapter_process_identity(Path(cohort["new_source"]),
+  cohort["new_adapter_generation"],cohort["new_core_source_generation"],pid)
+ poller=select.poll(); poller.register(pidfd,select.POLLIN|select.POLLHUP|select.POLLERR|select.POLLNVAL)
+ if (identity!=process_identity_sha256 or poller.poll(0)
+     or not _owned_listener_pidfd(adapter_source=Path(cohort["new_source"]))):
+  raise CoreRuntimeError("initial primary adoption peer is not the held current listener")
+ deadline=min(time.monotonic()+110.0,float(cohort.get("deadline_monotonic",time.monotonic()+110.0)))
+ issued=time.monotonic()
+ custody=InitialPrimaryAdoptionCustody(
+  transaction_id=cohort["cohort_transaction_id"],cohort_sha256=hashlib.sha256(cohort_raw).hexdigest(),
+  source=cohort["new_source"],old_adapter_generation=cohort["old_adapter_generation"],
+  new_adapter_generation=cohort["new_adapter_generation"],
+  core_source_generation=cohort["new_core_source_generation"],
+  artifact_a1_sha256=cohort["new_artifact_sha256"],
+  starting_journal_sha256=hashlib.sha256(journal_raw).hexdigest(),
+  starting_resources_record_sha256=hashlib.sha256(resources_raw).hexdigest(),
+  unit_sha256=hashlib.sha256(unit).hexdigest(),launcher_sha256=hashlib.sha256(launcher).hexdigest(),
+  source_recipe_sha256=cohort["new_source_recipe_sha256"],
+  process_identity_sha256=process_identity_sha256,
+  prior_soul_sha256=hashlib.sha256(prior_soul).hexdigest(),
+  prior_soul_signature=tuple(prior_signature),
+  source_prompt_sha256=hashlib.sha256(source_prompt).hexdigest(),
+  managed_block_sha256=hashlib.sha256(managed_block).hexdigest(),
+  desired_soul_sha256=hashlib.sha256(desired_soul).hexdigest(),
+  owner_separator_hex=owner_separator.hex(),peer_pid=pid,
+  peer_start_ticks=evidence["start_ticks"],boot_id=evidence["boot_id"],
+  invocation_id=evidence["invocation_id"],prior_record_sha256=_ABSENT_DIGEST,
+  issued_monotonic=issued,deadline_monotonic=deadline,expires_monotonic=deadline,
+  pidfd=pidfd,_seal=_INITIAL_PRIMARY_ADOPTION_SEAL)
+ _INITIAL_PRIMARY_ADOPTION_ACTIVE[id(custody)]={
+  "object":custody,"current_cohort_sha256":custody.cohort_sha256,
+  "current_resources_sha256":custody.starting_resources_record_sha256,
+  "transition_row":transition,"manager_record_raw":None,"manager_record_sha256":None,
+ }
+ return custody
+
+def _arm_initial_primary_adoption(*,new_read,cohort,cohort_raw):
+ """Close reboot admission before the primary manager's first durable write."""
+ if (os.geteuid()!=ROOT_UID or not _ADAPTER_UPDATE_LOCK_HELD.get()
+     or not _validate_guarded_new_read(new_read)):
+  raise CoreRuntimeError("initial primary preparation lost its current new-peer readback")
+ transition=_initial_primary_transition_row(cohort)
+ if transition.get("state")!="pending" or transition.get("prior_record_state")!="absent":
+  raise CoreRuntimeError("initial primary lane is not genuinely pending")
+ try:
+  _projection_file(PRIMARY_PROMPT_JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+  raise CoreRuntimeError("primary ownership journal appeared before the authorized initial stage")
+ except FileNotFoundError:
+  pass
+ from . import primary_prompt_manager as primary
+ soul,signature=primary._read_soul(sys.modules[__name__])
+ if (hashlib.sha256(soul).hexdigest()!=transition.get("prior_soul_sha256")
+     or tuple(signature)!=tuple(transition.get("prior_soul_signature",()))):
+  raise CoreRuntimeError("actual HOME SOUL changed before initial-primary preparation")
+ updated=dict(cohort); next_transition=dict(transition); next_transition["state"]="preparing"
+ updated["initial_primary_transition"]=next_transition
+ recon=dict(updated["reconstruction"])
+ recon["phase"]=updated["phase"]
+ updated["reconstruction"]=recon
+ updated["reconstruction_sha256"]=hashlib.sha256(_canonical_json(recon)).hexdigest()
+ raw=_write_adapter_update_cohort(updated,expected_raw=cohort_raw)
+ return updated,raw
+
+def _initial_primary_record_and_soul():
+ from . import primary_prompt_manager as primary
+ try:
+  raw=_projection_file(PRIMARY_PROMPT_JOURNAL,owner=ROOT_UID,group=ROOT_UID,
+   mode=0o600,maximum=64*1024)
+ except FileNotFoundError:
+  return None,None,None,None
+ record=primary._read_record(sys.modules[__name__])
+ soul,signature=primary._read_soul(sys.modules[__name__])
+ return raw,record,soul,tuple(signature)
+
+def _retain_initial_primary_stage(transaction_id,raw):
+ if (os.geteuid()!=ROOT_UID or re.fullmatch(r"[0-9a-f]{32}",str(transaction_id)) is None
+     or type(raw) is not bytes or len(raw)>64*1024):
+  raise CoreRuntimeError("initial primary stage cannot be retained")
+ directory=ADAPTER_UPDATE_BACKUPS/("initial-primary-"+transaction_id)
+ _ensure_dir(directory,ROOT_UID,ROOT_UID,0o700)
+ digest=hashlib.sha256(raw).hexdigest(); path=directory/(digest+".json")
+ if path.exists() or path.is_symlink():
+  if _projection_file(path,owner=ROOT_UID,group=ROOT_UID,mode=0o400,maximum=64*1024)!=raw:
+   raise CoreRuntimeError("retained initial primary stage digest collides with different bytes")
+ else:
+  _atomic(path,raw,0o400,ROOT_UID,ROOT_UID)
+ return digest
+
+def record_initial_primary_manager_stage(custody):
+ """Record only the real fixed-manager journal state currently on disk."""
+ if not _initial_primary_current(custody,allow_unrecorded_stage=True):
+  raise CoreRuntimeError("initial primary manager stage is outside current Root custody")
+ cohort,cohort_raw=_read_adapter_update_cohort()
+ initial=_initial_primary_transition_row(cohort)
+ raw,record,soul,signature=_initial_primary_record_and_soul()
+ if type(record) is not dict or raw is None:
+  raise CoreRuntimeError("fixed primary manager stage journal is missing")
+ state=record.get("state"); previous=initial.get("state")
+ transitions={"pending":{"preparing"},"preparing":{"preparing","writing","rolling_back"},
+              "writing":{"adopted","rolling_back"},"adopted":{"rolling_back"},
+              "rolling-back":{"rolling_back"}}
+ mapped="rolling-back" if state in {"rolling_back","rolled_back"} else state
+ if mapped not in transitions.get(previous,set()):
+  raise CoreRuntimeError("primary manager journal stage transition is not the next exact state")
+ if (record.get("core_source_generation")!=custody.core_source_generation
+     or record.get("artifact_sha256")!=custody.artifact_a1_sha256
+     or record.get("prior_soul_sha256")!=custody.prior_soul_sha256
+     or record.get("source_prompt_sha256")!=custody.source_prompt_sha256
+     or record.get("managed_block_sha256")!=custody.managed_block_sha256
+     or record.get("owner_separator_hex")!=custody.owner_separator_hex):
+  raise CoreRuntimeError("primary manager stage differs from the sealed initial-adoption inputs")
+ backup=__import__("hermes_installer.primary_prompt_manager",fromlist=["_backup_read"])._backup_read(
+  sys.modules[__name__],record)
+ backup_sha=hashlib.sha256(backup).hexdigest()
+ if backup_sha!=custody.prior_soul_sha256:
+  raise CoreRuntimeError("initial primary immutable backup differs from the exact prior owner SOUL")
+ if mapped in {"preparing","writing"} and hashlib.sha256(soul).hexdigest() not in {
+     custody.prior_soul_sha256,custody.desired_soul_sha256}:
+  raise CoreRuntimeError("initial primary manager stage found unrelated owner SOUL bytes")
+ if mapped=="adopted" and (hashlib.sha256(soul).hexdigest()!=custody.desired_soul_sha256
+     or record.get("result_soul_sha256")!=custody.desired_soul_sha256
+     or initial.get("after_resources_record_sha256") is None):
+  raise CoreRuntimeError("initial primary adopted journal lacks exact SOUL and Resources readback")
+ updated=dict(cohort); transition=dict(initial); digest=hashlib.sha256(raw).hexdigest()
+ transition["state"]=mapped; transition["owner_backup_sha256"]=backup_sha
+ if mapped=="preparing": transition["preparing_record_sha256"]=digest
+ elif mapped=="writing": transition["writing_record_sha256"]=digest
+ elif mapped=="adopted": transition["adopted_record_sha256"]=digest
+ updated["initial_primary_transition"]=transition
+ updated["primary_record_sha256"]=digest
+ new_raw=_write_adapter_update_cohort(updated,expected_raw=cohort_raw)
+ held=_INITIAL_PRIMARY_ADOPTION_ACTIVE[id(custody)]
+ held.update({"current_cohort_sha256":hashlib.sha256(new_raw).hexdigest(),
+              "transition_row":transition,"manager_record_raw":raw,
+              "manager_record_sha256":digest})
+ _retain_initial_primary_stage(custody.transaction_id,raw)
+ return True
+
+@contextmanager
+def initial_primary_adoption_scope(custody):
+ verify_initial_primary_adoption_custody(custody)
+ cohort,cohort_raw=_read_adapter_update_cohort()
+ journal_raw=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+ resources_raw=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024)
+ unit=_projection_file(UNIT,owner=ROOT_UID,group=ROOT_UID,mode=0o644,maximum=256*1024)
+ launcher=_projection_file(LAUNCHER,owner=ROOT_UID,group=ROOT_UID,mode=0o755,maximum=256*1024)
+ read=_issue_guarded_new_read(cohort=cohort,cohort_raw=cohort_raw,record=json.loads(journal_raw),
+  journal_raw=journal_raw,resources_raw=resources_raw,unit=unit,launcher=launcher,
+  pidfd=custody.pidfd,pid=custody.peer_pid,process_identity_sha256=custody.process_identity_sha256,
+  purpose="primary-initial-adoption")
+ new_token=_GUARDED_NEW_READ_CONTEXT.set(read)
+ adoption_token=_INITIAL_PRIMARY_ADOPTION_CONTEXT.set(custody)
+ try:
+  verify_initial_primary_adoption_custody(custody)
+  yield
+ finally:
+  _INITIAL_PRIMARY_ADOPTION_CONTEXT.reset(adoption_token)
+  _GUARDED_NEW_READ_CONTEXT.reset(new_token)
+
+def refresh_initial_primary_starting_tuple(custody):
+ """Refresh only the current starting Resources receipt after native adoption."""
+ if not _initial_primary_current(custody):
+  raise CoreRuntimeError("initial primary Resources refresh custody is stale")
+ cohort,cohort_raw=_read_adapter_update_cohort()
+ transition=_initial_primary_transition_row(cohort)
+ if transition.get("state")!="writing" or transition.get("after_resources_record_sha256") is not None:
+  raise CoreRuntimeError("initial primary Resources refresh is not the exact writing stage")
+ from . import primary_prompt_manager as primary
+ primary_raw,primary_record,soul,signature=_initial_primary_record_and_soul()
+ if (primary_record is None or primary_record.get("state")!="writing"
+     or hashlib.sha256(soul).hexdigest()!=custody.desired_soul_sha256
+     or tuple(signature)!=tuple(primary_record.get("result_soul_signature",()))):
+  raise CoreRuntimeError("initial primary write has not completed with exact owner bytes")
+ with initial_primary_adoption_scope(custody):
+  verify_initial_primary_adoption_custody(custody)
+  archive,resources=_verified_resources_payload()
+ if (hashlib.sha256(archive).hexdigest()!=custody.artifact_a1_sha256
+     or resources.get("artifact_sha256")!=custody.artifact_a1_sha256
+     or resources.get("core_source_generation")!=custody.core_source_generation
+     or resources.get("active_primary_prompt_sha256")!=custody.desired_soul_sha256
+     or resources.get("loaded_skill_inventory_sha256") is None):
+  raise CoreRuntimeError("native A1 Resources readback does not bind the adopted primary")
+ journal_raw=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+ if hashlib.sha256(journal_raw).hexdigest()!=custody.starting_journal_sha256:
+  raise CoreRuntimeError("Core journal changed before the initial-primary Resources refresh")
+ record=_bind_resources_record_to_starting_journal(resources,journal_raw)
+ resources_raw=(json.dumps(record,sort_keys=True,separators=(",",":"),ensure_ascii=True)+"\n").encode("ascii")
+ updated=dict(cohort); next_transition=dict(transition)
+ next_transition["after_resources_record_sha256"]=hashlib.sha256(resources_raw).hexdigest()
+ updated["initial_primary_transition"]=next_transition
+ updated["starting_resources_record_sha256"]=hashlib.sha256(resources_raw).hexdigest()
+ recon=dict(updated["reconstruction"]); recon["new_discovery_sha256"]=hashlib.sha256(resources_raw).hexdigest()
+ updated["reconstruction"]=recon
+ updated["reconstruction_sha256"]=hashlib.sha256(_canonical_json(recon)).hexdigest()
+ next_cohort_raw=_write_adapter_update_cohort(updated,expected_raw=cohort_raw)
+ _write_resources_record_bytes(archive,record)
+ if _projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,
+     mode=0o600,maximum=16*1024)!=resources_raw:
+  raise CoreRuntimeError("initial-primary Resources receipt did not persist exactly")
+ held=_INITIAL_PRIMARY_ADOPTION_ACTIVE[id(custody)]
+ held.update({"current_cohort_sha256":hashlib.sha256(next_cohort_raw).hexdigest(),
+  "current_resources_sha256":hashlib.sha256(resources_raw).hexdigest(),
+  "transition_row":next_transition})
+ return record
 
 def _legacy_launcher():
  """Exact pre-adapter launcher eligible for the one-time journaled migration."""
@@ -3636,8 +4360,65 @@ def _check_adapter_cohort_rollback_currentness(cohort,prior,contents):
   group=ROOT_UID,mode=0o600,maximum=64*1024)
  except FileNotFoundError: current_primary=None
  if not old_primary:
-  if current_primary is not None:
-   raise CoreRuntimeError("primary adoption appeared during an unadopted source cohort")
+  initial=cohort.get("initial_primary_transition")
+  if initial is None:
+   if current_primary is not None:
+    raise CoreRuntimeError("primary adoption appeared during an unadopted source cohort")
+  elif type(initial) is dict:
+   if initial.get("state") in {"pending","preparing"} and initial.get("preparing_record_sha256") is None:
+    if initial.get("state")=="pending" and current_primary is not None:
+     raise CoreRuntimeError("initial primary journal appeared outside its exact staged transition")
+    if initial.get("state")=="preparing" and current_primary is not None:
+     try: current_row=json.loads(current_primary)
+     except (ValueError,TypeError): raise CoreRuntimeError("initial primary journal is malformed") from None
+     from . import primary_prompt_manager as primary
+     soul,signature=primary._read_soul(sys.modules[__name__])
+     if (current_row.get("state")!="preparing"
+         or current_row.get("prior_soul_sha256")!=initial.get("prior_soul_sha256")
+         or current_row.get("source_prompt_sha256")!=initial.get("source_prompt_sha256")
+         or current_row.get("managed_block_sha256")!=initial.get("managed_block_sha256")
+         or hashlib.sha256(soul).hexdigest() not in {initial.get("prior_soul_sha256"),
+              initial.get("desired_soul_sha256")}
+         or (hashlib.sha256(soul).hexdigest()==initial.get("prior_soul_sha256")
+             and tuple(signature)!=tuple(initial.get("prior_soul_signature",())))):
+      raise CoreRuntimeError("unrecorded initial primary stage does not match the armed exact transition")
+     backup=primary._backup_read(sys.modules[__name__],current_row)
+     if hashlib.sha256(backup).hexdigest()!=initial.get("prior_soul_sha256"):
+      raise CoreRuntimeError("unrecorded initial primary backup differs from original owner SOUL")
+   else:
+    allowed_primary={initial.get("preparing_record_sha256"),initial.get("writing_record_sha256"),
+     initial.get("adopted_record_sha256")}
+    if current_primary is None:
+     raise CoreRuntimeError("initial primary journal is outside its exact retained stage")
+    try: current_row=json.loads(current_primary)
+    except (ValueError,TypeError): raise CoreRuntimeError("initial primary journal is malformed") from None
+    current_digest=hashlib.sha256(current_primary).hexdigest()
+    one_ahead={"preparing":"writing","writing":"adopted"}.get(initial.get("state"))
+    unrecorded_next=(current_digest not in allowed_primary and one_ahead is not None
+      and current_row.get("state")==one_ahead
+      and ((one_ahead=="writing" and initial.get("writing_record_sha256") is None)
+       or (one_ahead=="adopted" and initial.get("adopted_record_sha256") is None)))
+    if current_digest not in allowed_primary and not unrecorded_next:
+     raise CoreRuntimeError("initial primary journal is outside its exact retained stage")
+    from . import primary_prompt_manager as primary
+    soul,signature=primary._read_soul(sys.modules[__name__])
+    if (current_row.get("state") not in {"preparing","writing","adopted"}
+        or current_row.get("prior_soul_sha256")!=initial.get("prior_soul_sha256")
+        or current_row.get("artifact_sha256")!=cohort.get("new_artifact_sha256")
+        or current_row.get("core_source_generation")!=cohort.get("new_core_source_generation")
+        or current_row.get("source_prompt_sha256")!=initial.get("source_prompt_sha256")
+        or current_row.get("managed_block_sha256")!=initial.get("managed_block_sha256")
+        or hashlib.sha256(soul).hexdigest() not in {initial.get("prior_soul_sha256"),
+             initial.get("desired_soul_sha256")}
+        or (hashlib.sha256(soul).hexdigest()==initial.get("prior_soul_sha256")
+             and tuple(signature)!=tuple(initial.get("prior_soul_signature",())))):
+     raise CoreRuntimeError("initial primary stage or owner SOUL changed outside the retained cohort")
+    backup=primary._backup_read(sys.modules[__name__],current_row)
+    backup_sha=hashlib.sha256(backup).hexdigest()
+    if backup_sha not in {initial.get("owner_backup_sha256"),initial.get("prior_soul_sha256")}:
+     raise CoreRuntimeError("initial primary immutable backup changed outside the retained cohort")
+  else:
+   raise CoreRuntimeError("initial primary recovery row is malformed")
  elif current_primary!=old_primary:
   try:
    old_record=json.loads(old_primary); current_record=json.loads(current_primary)
@@ -3665,6 +4446,10 @@ def _restore_adapter_update_backup(reference,*,allowed_sources):
   _check_adapter_cohort_rollback_currentness(cohort,prior,contents)
  if cohort is not None and cohort["phase"]!="rolling-back":
   rolling=dict(cohort); rolling["phase"]="rolling-back"
+  initial=rolling.get("initial_primary_transition")
+  if type(initial) is dict and initial.get("state")!="pending":
+   initial=dict(initial); initial["state"]="rolling-back"
+   rolling["initial_primary_transition"]=initial
   reconstruction=dict(rolling["reconstruction"]); reconstruction["phase"]="rolling-back"
   rolling["reconstruction"]=reconstruction
   rolling["reconstruction_sha256"]=hashlib.sha256(_canonical_json(reconstruction)).hexdigest()
@@ -3682,7 +4467,6 @@ def _restore_adapter_update_backup(reference,*,allowed_sources):
      or _owned_unit_loaded() is not True):
   raise CoreRuntimeError("rollback deny-by-default unit did not load")
  if cohort is not None:
-  _restore_adapter_update_owner_generation(cohort)
   # Restore only the exact saved binding bytes. The current primary must still
   # carry the adopted SOUL bytes; a later owner edit is a conflict, never a
   # reason to overwrite their prompt.
@@ -3706,8 +4490,53 @@ def _restore_adapter_update_backup(reference,*,allowed_sources):
     raise CoreRuntimeError("immutable prior SOUL backup changed during rollback")
    if current_primary!=old_primary:
     _atomic_replace(PRIMARY_PROMPT_JOURNAL,old_primary,0o600,ROOT_UID,ROOT_UID)
+  elif cohort.get("initial_primary_transition") is not None:
+   transition=_initial_primary_transition_row(cohort)
+   if transition.get("state")!="rolling-back":
+    raise CoreRuntimeError("initial primary recovery is not in its closed rollback phase")
+   if current_primary is None:
+    from . import primary_prompt_manager as primary
+    soul,signature=primary._read_soul(sys.modules[__name__])
+    if (hashlib.sha256(soul).hexdigest()!=transition.get("prior_soul_sha256")
+        or tuple(signature)!=tuple(transition.get("prior_soul_signature",()))):
+     raise CoreRuntimeError("initial primary record is absent but original owner SOUL is not restored")
+   else:
+    custody=_issue_initial_primary_rollback_custody(reference=reference,prior=prior,
+     contents=contents,cohort=cohort,cohort_raw=_projection_file(ADAPTER_UPDATE_COHORT,
+      owner=ROOT_UID,group=ROOT_UID,mode=0o400,maximum=128*1024))
+    from . import primary_prompt_manager as primary
+    primary.rollback_primary_prompt_for_starting_cohort(custody)
+    verify_initial_primary_rollback_custody(custody)
+    stage=_projection_file(PRIMARY_PROMPT_JOURNAL,owner=ROOT_UID,group=ROOT_UID,
+     mode=0o600,maximum=64*1024)
+    if hashlib.sha256(stage).hexdigest()!=custody.primary_stage_sha256:
+     raise CoreRuntimeError("offline primary rollback changed its owned stage journal")
+    _retain_initial_primary_stage(cohort["cohort_transaction_id"],stage)
+    soul,signature=primary._read_soul(sys.modules[__name__])
+    if (hashlib.sha256(soul).hexdigest()!=transition["prior_soul_sha256"]
+        or tuple(signature)!=tuple(transition["prior_soul_signature"])):
+     raise CoreRuntimeError("offline primary rollback did not restore exact original SOUL")
+    PRIMARY_PROMPT_JOURNAL.unlink()
+    _sync_directory(PRIMARY_PROMPT_JOURNAL.parent)
+    try:
+     _projection_file(PRIMARY_PROMPT_JOURNAL,owner=ROOT_UID,group=ROOT_UID,
+      mode=0o600,maximum=64*1024)
+     raise CoreRuntimeError("initial primary journal remained after exact rollback unlink")
+    except FileNotFoundError: pass
   elif current_primary is not None:
    raise CoreRuntimeError("primary adoption appeared during an originally unadopted source cohort")
+  # If recovery resumed after an earlier successful atomic exchange, accept
+  # only the complete old generation. Otherwise the fixed restore helper must
+  # prove A1 is still current before exchanging it for A0.
+  from .registry import manual_jarvis_skills as native
+  target=HERMES_HOME/"skills"/native._GENERATION
+  old_archive=_projection_file(RESOURCES_CAS/(cohort["old_artifact_sha256"]+".zip"),
+   owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024*1024)
+  old_manifest,old_files=native._read_transition_archive(old_archive,cohort["old_artifact_sha256"])
+  try:
+   native._verify_owned_generation(target,old_files,cohort["old_artifact_sha256"])
+  except CoreRuntimeError:
+   _restore_adapter_update_owner_generation(cohort)
   _atomic_replace(RESOURCES_RECORD,contents["resources-record.json"],0o600,ROOT_UID,ROOT_UID)
   old_resource=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,
    mode=0o600,maximum=16*1024)
@@ -3856,7 +4685,7 @@ def _prove_new_cohort_startup_chat():
   rs_sha256=hashlib.sha256(context["resources_raw"]).hexdigest(),
   u1_sha256=hashlib.sha256(context["unit"]).hexdigest(),
   l1_sha256=hashlib.sha256(context["launcher"]).hexdigest(),
-  primary_source_sha256=hashlib.sha256(files["registry/profiles/hermes/SOUL.md"]).hexdigest(),
+  primary_source_sha256=context.get("primary_source",context["soul"]),
   active_soul_sha256=context["soul"],
   native_inventory_sha256=context["resources"]["loaded_skill_inventory_sha256"],
   peer_pid=context["pid"],peer_uid=1000,peer_gid=1000,
@@ -3882,7 +4711,7 @@ def _prove_new_cohort_startup_chat():
   "generation_a1_sha256":context["artifact"],"js_sha256":hashlib.sha256(context["journal_raw"]).hexdigest(),
   "rs_sha256":hashlib.sha256(context["resources_raw"]).hexdigest(),
   "u1_sha256":hashlib.sha256(context["unit"]).hexdigest(),"l1_sha256":hashlib.sha256(context["launcher"]).hexdigest(),
-  "primary_source_sha256":hashlib.sha256(files["registry/profiles/hermes/SOUL.md"]).hexdigest(),
+  "primary_source_sha256":context.get("primary_source",context["soul"]),
   "active_soul_sha256":context["soul"],
   "native_inventory_sha256":context["resources"]["loaded_skill_inventory_sha256"],
   "peer_pid":context["pid"],"peer_uid":1000,"peer_gid":1000,
@@ -4035,6 +4864,8 @@ def _update_owned_core_adapter_locked():
   owner=1000,group=1000,mode=0o600,maximum=2*1024*1024)
  old_custody=_hash_generation_tree(HERMES_HOME,old_manifest,old_generation_files,old_artifact)
  primary_raw=snapshots["primary_record"]
+ initial_primary_transition=None
+ initial_primary_prior_soul=None
  if primary_raw:
   from . import primary_prompt_manager as primary
   try:
@@ -4053,10 +4884,36 @@ def _update_owned_core_adapter_locked():
     "soul_sha256":hashlib.sha256(soul).hexdigest(),"soul_signature":tuple(soul_signature),
     "owner_prefix_sha256":hashlib.sha256(prefix).hexdigest(),"owner_prefix_length":len(prefix),
     "owner_separator_hex":separator.hex(),"managed_block_sha256":hashlib.sha256(block).hexdigest(),
-    "prior_backup_sha256":hashlib.sha256(prior_backup).hexdigest()}
+    "prior_backup_sha256":hashlib.sha256(prior_backup).hexdigest(),
+    "native_effective_prompt_sha256":parsed.get("native_effective_prompt_sha256")}
   except Exception:
    raise CoreRuntimeError("existing primary adoption or its exact owner bytes are not eligible") from None
  else:
+  from . import primary_prompt_manager as primary
+  from .registry.primary_prompt import append_managed_block,render_managed_block
+  try:
+   if PRIMARY_PROMPT_JOURNAL.exists() or PRIMARY_PROMPT_JOURNAL.is_symlink(): raise ValueError
+   initial_primary_prior_soul,initial_primary_signature=primary._read_soul(sys.modules[__name__])
+   source_prompt=new_generation_files.get("registry/profiles/hermes/SOUL.md")
+   if not isinstance(source_prompt,bytes): raise ValueError
+   managed_block=render_managed_block(source_prompt)
+   desired_soul,owner_separator=append_managed_block(initial_primary_prior_soul,managed_block)
+   initial_primary_transition={
+    "schema":1,"purpose":"initial-primary-adoption","state":"pending",
+    "prior_record_state":"absent",
+    "prior_soul_sha256":hashlib.sha256(initial_primary_prior_soul).hexdigest(),
+    "prior_soul_signature":list(initial_primary_signature),
+    "source_prompt_sha256":hashlib.sha256(source_prompt).hexdigest(),
+    "managed_block_sha256":hashlib.sha256(managed_block).hexdigest(),
+    "desired_soul_sha256":hashlib.sha256(desired_soul).hexdigest(),
+    "owner_separator_hex":owner_separator.hex(),"owner_backup_sha256":None,
+    "preparing_record_sha256":None,"writing_record_sha256":None,
+    "adopted_record_sha256":None,
+    "before_resources_record_sha256":hashlib.sha256(resources_raw).hexdigest(),
+    "after_resources_record_sha256":None,
+   }
+  except Exception:
+   raise CoreRuntimeError("initial primary adoption inputs are not exact or unambiguous") from None
   primary_values={"primary_record_sha256":_ABSENT_DIGEST,"soul_sha256":_ABSENT_DIGEST,
    "soul_signature":(),"owner_prefix_sha256":_ABSENT_DIGEST,"owner_prefix_length":0,
    "owner_separator_hex":"","managed_block_sha256":_ABSENT_DIGEST,"prior_backup_sha256":_ABSENT_DIGEST}
@@ -4071,8 +4928,11 @@ def _update_owned_core_adapter_locked():
   "primary_raw":primary_raw or None,"process_identity":old_process_sha,"pid":old_pid,
   "old_pidfd":old_pidfd,"source":str(old_source),"adapter":old_adapter,"core":old_core,
   "soul_sha256":primary_values["soul_sha256"] if primary_values["soul_sha256"]!=_ABSENT_DIGEST
-    else old_discovery.get("active_primary_prompt_sha256"),
-  "soul_signature":primary_values["soul_signature"],
+    else hashlib.sha256(initial_primary_prior_soul).hexdigest() if initial_primary_prior_soul is not None
+    else _ABSENT_DIGEST,
+  "soul_signature":primary_values["soul_signature"] if primary_values["primary_record_sha256"]!=_ABSENT_DIGEST
+    else tuple(initial_primary_transition["prior_soul_signature"]) if initial_primary_transition is not None
+    else (),
   "overlay_raw":overlay_raw,"registration_raw":snapshots["obsidian_registration"] or None}
  try:
   backup_reference=_save_adapter_update_backup(record,raw_journal,old_files,selection_digest,
@@ -4097,6 +4957,7 @@ def _update_owned_core_adapter_locked():
    **primary_values,"obsidian_registration_state":obsidian_state,
    "obsidian_registration_sha256":obsidian_sha,
    "obsidian_vault_tree_sha256":snapshots["obsidian_vault_tree_sha256"],
+   "initial_primary_transition":initial_primary_transition,
    "reconstruction":None,"reconstruction_sha256":None}
   reconstruction_row=_adapter_update_reconstruction_row(reconstruction,
    cohort_id=cohort_id,phase="prepared",old_core=old_core,new_core=old_core,
@@ -4296,11 +5157,83 @@ def _update_owned_core_adapter_locked():
       or actual_resources.get("loaded_skill_inventory_sha256")!=starting_record.get("loaded_skill_inventory_sha256")
       or actual_resources.get("active_primary_prompt_sha256")!=starting_record.get("active_primary_prompt_sha256")):
    raise CoreRuntimeError("new Core startup Resources readback differs from its starting receipt")
+  if initial_primary_transition is not None:
+   from . import primary_prompt_manager as primary
+   from .registry.primary_prompt import append_managed_block,render_managed_block
+   prior_soul,prior_signature=primary._read_soul(sys.modules[__name__])
+   source_prompt=new_generation_files.get("registry/profiles/hermes/SOUL.md")
+   if not isinstance(source_prompt,bytes):
+    raise CoreRuntimeError("initial-primary source prompt is unavailable")
+   managed_block=render_managed_block(source_prompt)
+   desired_soul,separator=append_managed_block(prior_soul,managed_block)
+   if (hashlib.sha256(prior_soul).hexdigest()!=initial_primary_transition["prior_soul_sha256"]
+       or tuple(prior_signature)!=tuple(initial_primary_transition["prior_soul_signature"])
+       or hashlib.sha256(source_prompt).hexdigest()!=initial_primary_transition["source_prompt_sha256"]
+       or hashlib.sha256(managed_block).hexdigest()!=initial_primary_transition["managed_block_sha256"]
+       or hashlib.sha256(desired_soul).hexdigest()!=initial_primary_transition["desired_soul_sha256"]
+       or separator.hex()!=initial_primary_transition["owner_separator_hex"]):
+    raise CoreRuntimeError("initial-primary inputs differ from the exact prepared owner snapshot")
+   current_cohort,current_cohort_raw=_read_adapter_update_cohort()
+   current_journal=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+   current_resources=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=16*1024)
+   current_cohort,current_cohort_raw=_arm_initial_primary_adoption(
+    new_read=new_read,cohort=current_cohort,cohort_raw=current_cohort_raw)
+   initial_custody=_issue_initial_primary_adoption_custody(
+    cohort=current_cohort,cohort_raw=current_cohort_raw,journal_raw=current_journal,
+    resources_raw=current_resources,unit=new_unit,launcher=new_launcher,pidfd=new_pidfd,
+    pid=new_pid,process_identity_sha256=new_process_sha,prior_soul=prior_soul,
+    prior_signature=prior_signature,source_prompt=source_prompt,managed_block=managed_block,
+    desired_soul=desired_soul,owner_separator=separator)
+   state["initial_primary_custody"]=initial_custody
+   primary.adopt_primary_prompt_for_starting_cohort(initial_custody)
+   current_cohort,current_cohort_raw=_read_adapter_update_cohort()
+   initial_row=_initial_primary_transition_row(current_cohort)
+   if initial_row.get("state")!="adopted":
+    raise CoreRuntimeError("initial primary manager did not complete the sealed adoption")
+   cohort,cohort_raw=current_cohort,current_cohort_raw
+   primary_raw,primary_record,active_soul,active_signature=_initial_primary_record_and_soul()
+   if (primary_record is None or primary_record.get("state")!="adopted"
+       or hashlib.sha256(active_soul).hexdigest()!=initial_row["desired_soul_sha256"]
+       or hashlib.sha256(primary_raw).hexdigest()!=initial_row["adopted_record_sha256"]
+       or hashlib.sha256(active_soul).hexdigest()!=primary_record.get("result_soul_sha256")):
+    raise CoreRuntimeError("initial primary adoption readback differs from its cohort row")
+   primary_values={"primary_record_sha256":hashlib.sha256(primary_raw).hexdigest(),
+    "soul_sha256":hashlib.sha256(active_soul).hexdigest(),
+    "soul_signature":tuple(active_signature),
+    "owner_prefix_sha256":primary_record.get("owner_prefix_sha256"),
+    "owner_prefix_length":primary_record.get("owner_prefix_length"),
+    "owner_separator_hex":primary_record.get("owner_separator_hex"),
+    "managed_block_sha256":primary_record.get("managed_block_sha256"),
+    "prior_backup_sha256":primary_record.get("owner_backup_name"),
+    "native_effective_prompt_sha256":primary_record.get("native_effective_prompt_sha256")}
+   if not re.fullmatch(r"[0-9a-f]{64}",str(primary_values["native_effective_prompt_sha256"] or "")):
+    raise CoreRuntimeError("adopted primary manager did not bind the native loaded identity")
+   state["primary_raw"]=primary_raw
+   state["soul_sha256"]=primary_values["soul_sha256"]
+   state["soul_signature"]=primary_values["soul_signature"]
+   starting=_journal()
+   starting_raw=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+   starting_resources_raw=_projection_file(RESOURCES_RECORD,owner=ROOT_UID,group=ROOT_UID,
+    mode=0o600,maximum=16*1024)
+   state["resources_raw"]=starting_resources_raw
+   new_read=_issue_guarded_new_read(cohort=current_cohort,cohort_raw=current_cohort_raw,
+    record=starting,journal_raw=starting_raw,resources_raw=starting_resources_raw,
+    unit=new_unit,launcher=new_launcher,pidfd=new_pidfd,pid=new_pid,
+    process_identity_sha256=new_process_sha,purpose="resources-readback")
+   state["new_read"]=new_read
+   with _guarded_new_read_scope(new_read,purpose="resources-readback"):
+    if read_current_resources_discovery(core_source_generation=old_core).get("resources_state")!="discovered":
+     raise CoreRuntimeError("initial adopted A1 Resources discovery did not verify")
+    actual_archive,actual_resources=_verified_resources_payload()
+   if (actual_archive!=new_archive
+       or actual_resources.get("active_primary_prompt_sha256")!=primary_values["soul_sha256"]):
+    raise CoreRuntimeError("initial adopted primary differs from current native Resources readback")
   startup_context={"cohort":cohort,"cohort_raw":cohort_raw,"record":starting,
    "journal_raw":starting_raw,"resources_raw":starting_resources_raw,"unit":new_unit,
    "launcher":new_launcher,"pidfd":new_pidfd,"pid":new_pid,"identity":new_process_sha,
    "evidence":new_evidence,"adapter":new_adapter,"core":old_core,"artifact":new_artifact,
-   "primary":state["primary_raw"],"soul":primary_values["soul_sha256"],
+   "primary":state["primary_raw"],"primary_source":primary_values["soul_sha256"],
+   "soul":primary_values.get("native_effective_prompt_sha256",primary_values["soul_sha256"]),
    "resources":actual_resources,"obsidian_state":obsidian_state,"obsidian_sha":obsidian_sha,
    "obsidian_vault":snapshots["obsidian_vault_tree_sha256"]}
   startup_token=_ADAPTER_STARTUP_COHORT_CONTEXT.set(startup_context)
@@ -4325,6 +5258,17 @@ def _update_owned_core_adapter_locked():
        or tuple(current_signature)!=primary_values["soul_signature"]
        or hashlib.sha256(current_primary).hexdigest()!=hashlib.sha256(state["primary_raw"]).hexdigest()):
     raise CoreRuntimeError("adopted primary binding changed during new-source lifecycle proof")
+  elif initial_primary_transition is not None:
+   current_soul,current_signature=primary._read_soul(sys.modules[__name__])
+   current_primary=_projection_file(PRIMARY_PROMPT_JOURNAL,owner=ROOT_UID,
+    group=ROOT_UID,mode=0o600,maximum=64*1024)
+   current_cohort,_current_cohort_raw=_read_adapter_update_cohort()
+   initial_row=_initial_primary_transition_row(current_cohort)
+   if (initial_row.get("state")!="adopted"
+       or hashlib.sha256(current_soul).hexdigest()!=initial_row.get("desired_soul_sha256")
+       or tuple(current_signature)!=primary_values["soul_signature"]
+       or hashlib.sha256(current_primary).hexdigest()!=initial_row.get("adopted_record_sha256")):
+    raise CoreRuntimeError("initial primary adoption changed during new-source lifecycle proof")
   else:
    try: primary_now=_projection_file(PRIMARY_PROMPT_JOURNAL,owner=ROOT_UID,
     group=ROOT_UID,mode=0o600,maximum=64*1024)
