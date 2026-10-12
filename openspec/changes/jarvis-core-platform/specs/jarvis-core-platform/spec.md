@@ -2291,3 +2291,18 @@ Within R0201/R0203 and RT-T266.3/VD-T266.5, root SHALL derive the exact owned cu
 #### Scenario: Approved review without owner effect authority
 - **WHEN** Jarvis approves an internal result but no exact task-start owner autonomy or separate current owner final-effect approval covers a proposed Write/Publish/Post/Merge
 - **THEN** the result remains internally reviewed and the final effect waits; Experts/Teams cannot obtain final-effect authority from any review or autonomy record.
+
+### Requirement: Genuine retained Team-instance Ecosystem joins
+Within R0203 and HI-T266.2/RT-T266.3/RB-T266.4/VD-T266.5, root SHALL persist bounded genuine Team child-admission membership and independently observed sender-completion→exact recipient-request→response/completion relations in existing protected activity custody, joining exact distinct execution keys, owner/Mission/revision/binding and source/core generations. Finite current owner reads SHALL export only closed sanitized Team-instance/relation metadata with truthful coverage/currentness, never content, callable authority or invented catalog-to-instance communication.
+
+#### Scenario: Real Team membership and completed discussion
+- **WHEN** exact current selected Team binding admits actual Expert instances and native sender output is genuinely delivered to another admitted instance with verified responsive completion
+- **THEN** root retains deduplicated exact membership/communication lineage and Ecosystem displays only the included owned execution-key joins with authentic event time and coverage; repeated profile instances stay distinct.
+
+#### Scenario: Declaration, independent drafts or unavailable producer
+- **WHEN** only catalog members, independent drafts, matching aliases/profiles, caller/model messages or incomplete native delivery evidence exist
+- **THEN** declared membership remains distinct, completed communication stays pending/unknown and no fake Team activity/animation or authority is inferred.
+
+#### Scenario: Expiry, restart, source change or bounded projection
+- **WHEN** original admission expires, records reload after restart, owner/source/Mission revision differs or record/read caps omit endpoints
+- **THEN** no execution/binding/lease revives or relation reassigns; independently verified retained history is inspectable only through current authenticated owner reads with historical/stale/partial labels, and foreign/corrupt/conflicting records deny or remain pending without fabricating completeness.
