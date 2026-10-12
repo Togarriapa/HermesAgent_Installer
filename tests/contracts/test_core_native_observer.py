@@ -247,6 +247,7 @@ def test_team_completion_excerpt_survives_child_lease_expiry_only_until_owner_bo
         "_team_messages", "_team_bindings", "_team_completion_counts",
         "_master_selections", "_selected_source_deliveries", "_master_source_deliveries",
         "_obsidian_draft_read_deliveries", "_obsidian_draft_review_proposals",
+        "_lifecycle_startup_probes",
     ):
         setattr(registry, name, {})
     registry._obsidian_scoped_calls = set()
@@ -327,6 +328,7 @@ def test_root_master_review_receipt_joins_exact_live_owner_result_response_and_p
     registry._owners = {owner.owner_turn_handle: owner}
     registry._attempts = {attempt["attempt_handle"]: attempt}
     registry._master_review_completions = {}
+    registry._lifecycle_startup_probes = {}
     registry._current_master_source = lambda: SimpleNamespace(generation_sha256="6" * 64)
     monkeypatch.setattr(
         "hermes_installer.remote.core_gateway_inspector._verify_master_review_context",
@@ -408,6 +410,7 @@ def test_root_master_review_completion_denies_provider_result_not_yet_completed(
     registry._attempts = {"Q" * 43: {"owner": owner, "turn_id": owner.gateway_turn_id,
                                      "response": None}}
     registry._master_review_completions = {}
+    registry._lifecycle_startup_probes = {}
     monkeypatch.setattr(
         "hermes_installer.remote.core_gateway_inspector._verify_master_review_context",
         lambda value, **_kwargs: value)
@@ -694,7 +697,7 @@ def test_typed_obsidian_origin_is_short_lived_and_exact_owner_registration_diges
         _decode_draft_origin({**row, "expires_monotonic": issued})
 
 
-def test_root_observed_expert_draft_origin_resolves_only_for_current_master_promotion():
+def test_root_observed_expert_draft_origin_resolves_only_for_current_master_promotion(monkeypatch):
     import hashlib
     import os
     import threading
@@ -702,6 +705,11 @@ def test_root_observed_expert_draft_origin_resolves_only_for_current_master_prom
     from types import SimpleNamespace
 
     import hermes_installer.remote.core_native_observer as observer
+
+    # This fixture exercises the fixed UID-1000 native client while the suite
+    # may itself be launched by root on the Pi.
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(os, "getegid", lambda: 1000)
 
     owner_sha, registration_sha = "a" * 64, "b" * 64
     draft_id = "D" * 43
@@ -1010,6 +1018,10 @@ def test_obsidian_read_delivery_client_uses_allowlisted_protocol_transport(monke
     from types import SimpleNamespace
 
     import hermes_installer.remote.core_native_observer as observer
+    # Model the enrolled UID-1000 native client independently of the UID that
+    # owns the Pi test runner; the fake SO_PEERCRED still models root as server.
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(os, "getegid", lambda: 1000)
     from hermes_installer.remote.obsidian_native_scope import (
         RootSelectedObsidianVaultBinding, _BINDING_SEAL,
     )
