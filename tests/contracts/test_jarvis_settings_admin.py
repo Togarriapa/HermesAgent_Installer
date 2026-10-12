@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import unittest
 
-from hermes_installer.remote.jarvis_chat import JarvisChatDenied
+from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
+
+from hermes_installer.remote.jarvis_chat import JarvisChatDenied, JarvisChatService
 from hermes_installer.remote.jarvis_feature_contract import validate_feature_assets
 from hermes_installer.remote.jarvis_feature_registry import FEATURE_ASSETS as REGISTERED_ASSETS
 from hermes_installer.remote.jarvis_settings_admin import (
@@ -13,6 +16,7 @@ from hermes_installer.remote.jarvis_settings_admin import (
     apply_global_reasoning,
     decode_native_busy,
     decode_native_reasoning,
+    install_jarvis_settings_admin_routes,
 )
 from hermes_installer.remote.jarvis_settings_admin_assets import FEATURE_ASSETS
 
@@ -39,6 +43,27 @@ class _Backend:
 
 
 class JarvisSettingsAdminTests(unittest.IsolatedAsyncioTestCase):
+    async def test_route_installation_preserves_finite_methods_and_denies_head(self):
+        app = web.Application()
+        # Route installation is independent of service execution. Exercise the
+        # actual aiohttp router so unsupported add_post keyword arguments fail
+        # here instead of during application startup on the Pi.
+        service = object.__new__(JarvisChatService)
+        install_jarvis_settings_admin_routes(app, service)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            for _method, path in FEATURE_ROUTES:
+                head = await client.head(path)
+                self.assertEqual(head.status, 405, path)
+                put = await client.put(path)
+                self.assertEqual(put.status, 405, path)
+            for _method, path in (route for route in FEATURE_ROUTES if route[0] == "POST"):
+                post = await client.post(path, data="{}", headers={"Content-Type": "application/json"})
+                self.assertEqual(post.status, 400, path)
+        finally:
+            await client.close()
+
     def test_leaf_is_registered_with_only_its_fixed_setting_routes(self):
         validate_feature_assets((FEATURE_ASSETS,))
         self.assertIn(FEATURE_ASSETS, REGISTERED_ASSETS)
