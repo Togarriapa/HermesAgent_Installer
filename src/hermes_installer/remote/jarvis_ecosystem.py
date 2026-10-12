@@ -14,12 +14,16 @@ FEATURE_ROUTES = (("GET", "/chat/api/ecosystem"),)
 _ID = re.compile(r"[A-Za-z0-9_-]{24,64}\Z", re.ASCII)
 _HASH = re.compile(r"[a-f0-9]{64}\Z", re.ASCII)
 _ALIAS = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._·-]{0,47}\Z", re.ASCII)
+_TEAM_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}\Z", re.ASCII)
 _STATUSES = frozenset({"admitted", "running", "responded", "completed", "unknown"})
 _EVENT_KINDS = frozenset({"admitted", "attempt", "response", "tool_call", "completed"})
 _EVENT_STATUSES = frozenset({"accepted", "started", "completed", "incomplete", "observed"})
 _MAX_INSTANCES = 100
 _MAX_EVENTS = 200
+_MAX_TEAMS = 100
+_MAX_RELATIONS = 200
 _WINDOW_SECONDS = 7 * 24 * 60 * 60
+_TEAM_STATES = frozenset({"current", "historical", "stale", "partial"})
 
 
 def _timestamp_seconds(value: Any) -> float:
@@ -36,15 +40,32 @@ def _timestamp(value: Any) -> str:
         raise ValueError("native activity timestamp is invalid") from None
 
 
+def _source_revision(value: Any) -> bool:
+    return (isinstance(value, str) and 1 <= len(value) <= 128
+            and all(0x21 <= ord(char) <= 0x7e for char in value))
+
+
 def project_native_activity_snapshot(value: Any) -> dict[str, Any]:
     """Validate and sanitize the sealed-root activity DTO for the browser."""
-    if (type(value) is not dict or set(value) != {
-            "schema", "observed_at", "window_seconds", "coverage", "instances", "relations"}
-            or type(value["schema"]) is not int or value["schema"] != 1
+    if type(value) is not dict or type(value.get("schema")) is not int:
+        raise ValueError("root activity snapshot schema is invalid")
+    schema = value["schema"]
+    base_fields = {"schema", "observed_at", "window_seconds", "coverage", "instances", "relations"}
+    if schema == 1:
+        expected_fields = base_fields
+    elif schema == 2:
+        expected_fields = base_fields | {"partial", "team_instances"}
+    else:
+        raise ValueError("root activity snapshot schema is invalid")
+    if (set(value) != expected_fields
             or type(value["window_seconds"]) is not int or value["window_seconds"] != _WINDOW_SECONDS
             or value["coverage"] != "observed-callbacks"
             or type(value["instances"]) is not list or len(value["instances"]) > _MAX_INSTANCES
-            or value["relations"] != []):
+            or type(value["relations"]) is not list or len(value["relations"]) > _MAX_RELATIONS
+            or schema == 1 and value["relations"] != []
+            or schema == 2 and (type(value["partial"]) is not bool
+                                or type(value["team_instances"]) is not list
+                                or len(value["team_instances"]) > _MAX_TEAMS)):
         raise ValueError("root activity snapshot schema is invalid")
     observed_seconds = _timestamp_seconds(value["observed_at"])
     window_start = observed_seconds - value["window_seconds"]
@@ -57,6 +78,7 @@ def project_native_activity_snapshot(value: Any) -> dict[str, Any]:
     response_duration_ms = 0
     response_duration_count = 0
     any_stale = False
+    instance_by_key: dict[str, dict[str, Any]] = {}
 
     for item in value["instances"]:
         fields = {
@@ -89,6 +111,7 @@ def project_native_activity_snapshot(value: Any) -> dict[str, Any]:
                 or type(item["events"]) is not list or len(item["events"]) > _MAX_EVENTS):
             raise ValueError("root activity instance is malformed")
         seen.add(key)
+        instance_by_key[key] = item
         event_total += len(item["events"])
         if event_total > _MAX_EVENTS:
             raise ValueError("root activity event cap exceeded")
@@ -164,11 +187,125 @@ def project_native_activity_snapshot(value: Any) -> dict[str, Any]:
         })
 
     partial = (value["coverage"] != "complete" or len(rows) == _MAX_INSTANCES
-               or event_total == _MAX_EVENTS or any_stale)
+               or event_total == _MAX_EVENTS or any_stale
+               or value.get("partial") is True)
+    teams: list[dict[str, Any]] = []
+    projected_relations: list[dict[str, Any]] = []
+    team_by_key: dict[str, dict[str, Any]] = {}
+    team_member_keys: set[str] = set()
+    relation_keys: set[str] = set()
+    relation_team_keys: set[str] = set()
+    if schema == 2:
+        for team in value["team_instances"]:
+            fields = {"team_execution_key", "team_id", "source_revision", "mission_id",
+                      "mission_revision", "members", "state", "coverage"}
+            team_key = team.get("team_execution_key") if type(team) is dict else None
+            mission_id = team.get("mission_id") if type(team) is dict else None
+            revision = team.get("mission_revision") if type(team) is dict else None
+            members = team.get("members") if type(team) is dict else None
+            if (type(team) is not dict or set(team) != fields
+                    or not isinstance(team_key, str) or _ID.fullmatch(team_key) is None
+                    or team_key in team_by_key
+                    or not isinstance(team["team_id"], str) or _TEAM_ID.fullmatch(team["team_id"]) is None
+                    or not _source_revision(team["source_revision"])
+                    or not isinstance(mission_id, str) or _ID.fullmatch(mission_id) is None
+                    or type(revision) is not int or revision < 1
+                    or type(members) is not list or not 1 <= len(members) <= 32
+                    or any(not isinstance(member, str) or _ID.fullmatch(member) is None for member in members)
+                    or len(set(members)) != len(members)
+                    or not isinstance(team["state"], str) or team["state"] not in _TEAM_STATES
+                    or not isinstance(team["coverage"], str)
+                    or team["coverage"] not in {"observed-callbacks", "partial"}):
+                raise ValueError("root activity Team instance is malformed")
+            member_rows = [instance_by_key.get(member) for member in members]
+            if (any(row is None for row in member_rows)
+                    or any(row["mission_id"] != mission_id or row["mission_revision"] != revision
+                           for row in member_rows)
+                    or team_member_keys.intersection(members)):
+                raise ValueError("root activity Team membership does not join included instances")
+            team_member_keys.update(members)
+            team_by_key[team_key] = team
+            team_partial = team["state"] == "partial" or team["coverage"] == "partial"
+            team_stale = team["state"] == "stale"
+            partial = partial or team_partial or team_stale
+            any_stale = any_stale or team_stale
+            teams.append({
+                "id": team_key, "team_execution_key": team_key,
+                "team_id": team["team_id"], "name": team["team_id"],
+                "source_revision": team["source_revision"], "mission_id": mission_id,
+                "mission_revision": revision, "members": list(members),
+                "state": team["state"], "coverage": team["coverage"],
+                "partial": team_partial,
+            })
+
+        for relation in value["relations"]:
+            fields = {"relation_key", "team_execution_key", "mission_id", "mission_revision",
+                      "sender_execution_key", "recipient_execution_key", "kind", "event_at",
+                      "state", "coverage"}
+            if (type(relation) is not dict or set(relation) != fields
+                    or not isinstance(relation["relation_key"], str)
+                    or _ID.fullmatch(relation["relation_key"]) is None
+                    or relation["relation_key"] in relation_keys
+                    or not isinstance(relation["team_execution_key"], str)
+                    or relation["team_execution_key"] not in team_by_key
+                    or relation["team_execution_key"] in relation_team_keys
+                    or not isinstance(relation["mission_id"], str)
+                    or _ID.fullmatch(relation["mission_id"]) is None
+                    or type(relation["mission_revision"]) is not int
+                    or relation["mission_revision"] < 1
+                    or not isinstance(relation["sender_execution_key"], str)
+                    or not isinstance(relation["recipient_execution_key"], str)
+                    or relation["sender_execution_key"] == relation["recipient_execution_key"]
+                    or relation["kind"] != "completed_message"
+                    or not isinstance(relation["state"], str) or relation["state"] not in _TEAM_STATES
+                    or not isinstance(relation["coverage"], str)
+                    or relation["coverage"] not in {"observed-callbacks", "partial"}):
+                raise ValueError("root activity Team relation is malformed")
+            event_seconds = _timestamp_seconds(relation["event_at"])
+            team = team_by_key[relation["team_execution_key"]]
+            sender = instance_by_key.get(relation["sender_execution_key"])
+            recipient = instance_by_key.get(relation["recipient_execution_key"])
+            if (not window_start <= event_seconds <= observed_seconds
+                    or relation["mission_id"] != team["mission_id"]
+                    or relation["mission_revision"] != team["mission_revision"]
+                    or relation["sender_execution_key"] not in team["members"]
+                    or relation["recipient_execution_key"] not in team["members"]
+                    or sender is None or recipient is None
+                    or sender["mission_id"] != relation["mission_id"]
+                    or recipient["mission_id"] != relation["mission_id"]
+                    or sender["mission_revision"] != relation["mission_revision"]
+                    or recipient["mission_revision"] != relation["mission_revision"]
+                    or sender["profile_id"] == recipient["profile_id"]
+                    or event_seconds < max(sender["created_at"], recipient["created_at"])
+                    or event_seconds > recipient["updated_at"]
+                    or relation["state"] in {"current", "historical"}
+                       and (sender["state"] != "completed" or recipient["state"] != "completed")):
+                raise ValueError("root activity Team relation does not join its instances")
+            relation_keys.add(relation["relation_key"])
+            relation_team_keys.add(relation["team_execution_key"])
+            relation_partial = (relation["state"] == "partial" or relation["coverage"] == "partial")
+            relation_stale = relation["state"] == "stale"
+            partial = partial or relation_partial or relation_stale
+            any_stale = any_stale or relation_stale
+            projected_relations.append({
+                "id": relation["relation_key"], "team_id": relation["team_execution_key"],
+                "team_execution_key": relation["team_execution_key"],
+                "mission_id": relation["mission_id"],
+                "mission_revision": relation["mission_revision"],
+                "from": relation["sender_execution_key"],
+                "to": relation["recipient_execution_key"],
+                "sender_execution_key": relation["sender_execution_key"],
+                "recipient_execution_key": relation["recipient_execution_key"],
+                "kind": relation["kind"], "at": _timestamp(event_seconds),
+                "state": relation["state"], "coverage": relation["coverage"],
+                "partial": relation_partial,
+            })
+
+    partial = partial or any_stale
     top_experts = sorted(expert_stats.values(), key=lambda row: (
         -row["completed_executions"], -row["observed_tool_calls"], row["profile_id"], row["source_revision"]))[:10]
     return {
-        "schema": 1,
+        "schema": 2,
         "observation": {
             "state": "quiet" if not rows else "partial" if partial else "observed",
             "observed_at": observed_at,
@@ -189,15 +326,16 @@ def project_native_activity_snapshot(value: Any) -> dict[str, Any]:
             "unknown_fields": (["active_instances", "completed_executions"] if partial else []),
         },
         "instances": rows,
-        "teams": [],
-        "relations": [],
+        "teams": teams,
+        "relations": projected_relations,
         "top_experts": [{
             **row, "basis": "completed root-observed executions and their observed native tool calls",
             "coverage": value["coverage"], "partial": partial,
         } for row in top_experts],
         "pending": {
-            "team_membership": "no_verified_instance_join",
-            "communication_edges": "no_verified_sender_recipient_records",
+            "team_membership": "verified" if teams else "no_verified_instance_join",
+            "communication_edges": ("verified" if projected_relations
+                                     else "no_verified_sender_recipient_records"),
         },
     }
 

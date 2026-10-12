@@ -1868,6 +1868,44 @@ def observe_read_master_plan(config: CoreGatewayConfig, *, request: dict[str, An
     return {"schema": 1, "nonce": request["nonce"], "ok": True, "plan_data": row}
 
 
+def _native_activity_read_envelope_is_valid(activity: Any) -> bool:
+    """Enforce only the closed, bounded root activity envelope; leaf code validates rows."""
+    common = {"schema", "observed_at", "window_seconds", "coverage", "instances", "relations"}
+    if type(activity) is not dict or type(activity.get("schema")) is not int:
+        return False
+    if activity["schema"] == 1:
+        expected = common
+    elif activity["schema"] == 2:
+        expected = common | {"partial", "team_instances"}
+    else:
+        return False
+    if (set(activity) != expected
+            or type(activity.get("observed_at")) not in (int, float)
+            or not math.isfinite(activity["observed_at"]) or activity["observed_at"] < 0
+            or type(activity.get("window_seconds")) is not int
+            or activity["window_seconds"] != 7 * 24 * 60 * 60
+            or activity.get("coverage") != "observed-callbacks"
+            or type(activity.get("instances")) is not list or len(activity["instances"]) > 100
+            or type(activity.get("relations")) is not list):
+        return False
+    if activity["schema"] == 1:
+        if activity["relations"] != []:
+            return False
+    elif (type(activity.get("partial")) is not bool
+          or type(activity.get("team_instances")) is not list
+          or len(activity["team_instances"]) > 100
+          or len(activity["relations"]) > 200):
+        return False
+    event_count = 0
+    for item in activity["instances"]:
+        if type(item) is not dict or type(item.get("events")) is not list:
+            return False
+        event_count += len(item["events"])
+        if event_count > 200:
+            return False
+    return True
+
+
 def observe_read_native_activity(config: CoreGatewayConfig, *, request: dict[str, Any],
                                  caller_pid: int, caller_uid: int, caller_gid: int,
                                  peer_pid: int, peer_uid: int, peer_gid: int,
@@ -1926,14 +1964,7 @@ def observe_read_native_activity(config: CoreGatewayConfig, *, request: dict[str
             peer_pid=peer_pid, peer_uid=peer_uid, peer_gid=peer_gid,
             _issued=retained.issued_monotonic, _deadline=deadline, _retain_issuance=False)
         if (final["proof_sha256"] != retained.proof_sha256 or time.monotonic() >= deadline
-                or type(activity) is not dict or set(activity) != {
-                    "schema", "observed_at", "window_seconds", "coverage", "instances", "relations"}
-                or activity.get("schema") != 1
-                or not isinstance(activity.get("instances"), list)
-                or len(activity["instances"]) > 100
-                or sum(len(item.get("events", [])) for item in activity["instances"]
-                       if isinstance(item, dict)) > 200
-                or activity.get("relations") != []):
+                or not _native_activity_read_envelope_is_valid(activity)):
             raise ValueError
     except Exception:
         raise CoreInspectionDenied("current native activity is unavailable") from None
@@ -5015,15 +5046,7 @@ class CoreGatewayInspector:
                     or result.get("ok") is not True or time.monotonic() >= deadline):
                 raise ValueError
             activity = result["activity"]
-            if (type(activity) is not dict or set(activity) != {
-                    "schema", "observed_at", "window_seconds", "coverage", "instances", "relations"}
-                    or activity["schema"] != 1
-                    or activity["window_seconds"] != 7 * 24 * 60 * 60
-                    or activity["coverage"] != "observed-callbacks"
-                    or type(activity["instances"]) is not list or len(activity["instances"]) > 100
-                    or activity["relations"] != []
-                    or sum(len(item.get("events", [])) for item in activity["instances"]
-                           if isinstance(item, dict)) > 200):
+            if not _native_activity_read_envelope_is_valid(activity):
                 raise ValueError
             return activity
         except Exception:
