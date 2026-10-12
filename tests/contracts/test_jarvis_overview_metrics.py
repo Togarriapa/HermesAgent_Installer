@@ -185,7 +185,10 @@ def test_overview_presence_is_gated_by_fresh_core_witness():
     assert '.overview-stage[data-in-viewport="true"][data-core-state="verified"]:is([data-activity="quiet"],[data-activity="active"])' in css
     assert '[data-feature-root="overview"] .overview-stage:not([data-in-viewport="true"]) .reactor-orbit{animation:none!important;transform:none!important}' in css
     assert 'html:not([data-page-visible="true"]) [data-feature-root="overview"] .overview-stage .reactor-orbit' in css
-    assert '@media(prefers-reduced-motion:reduce){[data-feature-root="overview"] .reactor-dial,[data-feature-root="overview"] .reactor-orbit-inner,[data-feature-root="overview"] .reactor-orbit-outer{animation:none!important;transform:none!important}' in css
+    os_reduce_rule = next(rule for rule in css.split("}")
+                         if '@media(prefers-reduced-motion:reduce)' in rule and ".reactor-orbit-inner" in rule)
+    assert all(selector in os_reduce_rule for selector in (".reactor-dial", ".reactor-orbit-inner", ".reactor-orbit-outer"))
+    assert "animation:none!important;transform:none!important" in os_reduce_rule
     app_reduce_rule = next(rule for rule in css.split("}") if 'html[data-jarvis-motion="reduce"]' in rule)
     assert all(selector in app_reduce_rule for selector in (".reactor-dial", ".reactor-orbit-inner", ".reactor-orbit-outer"))
     assert "animation:none!important;transform:none!important" in app_reduce_rule
@@ -226,7 +229,16 @@ def test_overview_ecosystem_uses_named_root_observations_and_cancels_stale_views
     assert "html:not([data-page-visible=\"true\"]) [data-feature-root=\"overview\"] .ecosystem-card" in css
     assert "prefers-reduced-motion:reduce" in css and 'data-jarvis-motion="reduce"' in css
 
-    helpers = js[:js.index('function mount(container, api, state, mountScope)')]
+    helper_start = js.index('  function overviewScopeIsCurrent(')
+    helper_end = js.index('\n  const root =', helper_start)
+    helpers = js[helper_start:helper_end]
+    assert "function projectNativeEcosystem(" in helpers
+    helper_harness = (
+        "function productionOverviewHelpers() {\n"
+        + helpers
+        + "\nreturn {overviewScopeIsCurrent, projectNativeEcosystem};\n}\n"
+        + "const {overviewScopeIsCurrent, projectNativeEcosystem} = productionOverviewHelpers();\n"
+    )
     harness = r'''const assert = require('node:assert/strict');
 const now = 1_800_000_000_000;
 const activeScope = {signal:{aborted:false},isCurrent:()=>true};
@@ -261,6 +273,6 @@ assert.equal(JSON.stringify(current).includes('private-instance'), false, 'priva
 '''
     with tempfile.TemporaryDirectory() as temporary:
         path = Path(temporary) / "overview-ecosystem-harness.js"
-        path.write_text("const assert = require('node:assert/strict');\n" + helpers + harness, encoding="utf-8")
+        path.write_text("const assert = require('node:assert/strict');\n" + helper_harness + harness, encoding="utf-8")
         result = subprocess.run(["node", str(path)], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
