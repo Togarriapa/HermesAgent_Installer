@@ -430,7 +430,7 @@ class CoreRpcClient:
                                             reasoning_effort: str | None,
                                             early_session_info: list[dict[str, Any]],
                                             deadline: float) -> tuple[str, str, dict[str, Any]]:
-        """Branch the complete native transcript, then set only this child session's route."""
+        """Branch full native history and apply a finite one-turn model/effort switch."""
         from .jarvis_model_catalog import (
             CODEX_MODEL_EFFORTS, CODEX_MODEL_ID_SET, CODEX_PROVIDER_ID,
         )
@@ -448,23 +448,24 @@ class CoreRpcClient:
         if (not _valid_session_id(child_runtime) or not _valid_session_id(child_stored)
                 or type(count) is not int or count < 1 or branch.get("messages_omitted") is not True):
             raise JarvisChatDenied("official core full-history turn branch was not confirmed")
+        # Native `--once` snapshots and restores both model and reasoning after the
+        # turn. Do not split reasoning into a second config.set: that mutation persists
+        # on the branched session even when the model itself is one-shot.
+        once_value = f"{model_id} --provider {CODEX_PROVIDER_ID}"
+        if reasoning_effort is not None:
+            once_value += f" --reasoning {reasoning_effort}"
+        once_value += " --once"
         model_set = await self._rpc_on_socket(ws, ws_types, "config.set", {
-            "key": "model", "value": f"{model_id} --provider {CODEX_PROVIDER_ID} --session",
+            "key": "model", "value": once_value,
             "session_id": child_runtime,
         }, deadline=deadline, early_session_info=early_session_info)
         if (model_set.get("key") != "model" or model_set.get("value") != model_id
-                or model_set.get("scope") != "session"
+                or model_set.get("scope") != "once"
                 or type(model_set.get("confirm_required")) is not bool
                 or model_set.get("confirm_required")
                 or model_set.get("warning", "") or model_set.get("confirm_message", "")
                 or model_set.get("deferred") is True):
-            raise JarvisChatDenied("official core isolated model selection was not confirmed")
-        if reasoning_effort is not None:
-            effort_set = await self._rpc_on_socket(ws, ws_types, "config.set", {
-                "key": "reasoning", "value": reasoning_effort, "session_id": child_runtime,
-            }, deadline=deadline, early_session_info=early_session_info)
-            if (effort_set.get("key") != "reasoning" or effort_set.get("value") != reasoning_effort):
-                raise JarvisChatDenied("official core isolated reasoning selection was not confirmed")
+            raise JarvisChatDenied("official core one-turn model and effort switch was not confirmed")
         return child_runtime, child_stored, {"branch": branch, "model": model_set}
 
     async def set_session_model(self, stored_session_id: str, model_id: str, *,

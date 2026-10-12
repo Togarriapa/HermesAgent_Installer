@@ -152,7 +152,7 @@ def test_owned_turn_resumes_and_submits_on_the_same_websocket_before_callback():
     assert order[-2:] == ["socket_closed", "client_closed"]
 
 
-def test_isolated_turn_branches_full_native_history_and_sets_only_session_route():
+def test_isolated_turn_branches_full_native_history_and_sets_one_turn_route():
     class Client(CoreRpcClient):
         def __init__(self, replies):
             self.replies = iter(replies)
@@ -165,9 +165,8 @@ def test_isolated_turn_branches_full_native_history_and_sets_only_session_route(
     client = Client([
         {"session_id": "runtime-new", "stored_session_id": "stored-new",
          "message_count": 4, "messages_omitted": True},
-        {"key": "model", "value": "gpt-6-sol", "scope": "session",
+        {"key": "model", "value": "gpt-6-sol", "scope": "once",
          "confirm_required": False, "deferred": False},
-        {"key": "reasoning", "value": "high"},
     ])
     result = asyncio.run(client._branch_isolated_turn_session(
         object(), object(), runtime_session_id="runtime-old", model_id="gpt-6-sol",
@@ -177,11 +176,8 @@ def test_isolated_turn_branches_full_native_history_and_sets_only_session_route(
     assert client.calls[0][1]["session_id"] == "runtime-old"
     assert client.calls[0][1]["idempotency_key"].startswith("jarvis_turn_")
     assert client.calls[1] == ("config.set", {
-        "key": "model", "value": "gpt-6-sol --provider openai-codex --session",
+        "key": "model", "value": "gpt-6-sol --provider openai-codex --reasoning high --once",
         "session_id": "runtime-new",
-    })
-    assert client.calls[2] == ("config.set", {
-        "key": "reasoning", "value": "high", "session_id": "runtime-new",
     })
 
     invalid = Client([])
@@ -251,10 +247,11 @@ def test_isolated_turn_readback_precedes_prompt_submit_and_mapping_rotation():
                 return {"session_id": "runtime-child", "stored_session_id": "stored-child",
                         "message_count": 3, "messages_omitted": True}
             if method == "config.set" and params["key"] == "model":
-                return {"key": "model", "value": "gpt-6-sol", "scope": "session",
+                assert params == {"key": "model",
+                                  "value": "gpt-6-sol --provider openai-codex --reasoning high --once",
+                                  "session_id": "runtime-child"}
+                return {"key": "model", "value": "gpt-6-sol", "scope": "once",
                         "confirm_required": False, "deferred": False}
-            if method == "config.set":
-                return {"key": "reasoning", "value": "high"}
             raise AssertionError(method)
 
         async def _wait_for_model_session_ready(self, ws, ws_types, **kwargs):
@@ -282,15 +279,121 @@ def test_isolated_turn_readback_precedes_prompt_submit_and_mapping_rotation():
     assert order[0][1] == "session.resume"
     assert order[1][1] == "session.branch_whole"
     assert order[2][1] == "config.set"
-    assert order[3][1] == "config.set"
-    assert order[4] == ("bind", "runtime-child", "stored-child")
-    assert order[5][1] == "prompt.submit"
+    assert order[3] == ("bind", "runtime-child", "stored-child")
+    assert order[4][1] == "prompt.submit"
     assert events[0].kind == "configuration"
     assert events[0].configuration == {
         "provider": "openai-codex", "modelId": "gpt-6-sol",
         "reasoningEffort": "high", "reasoningEffortWire": "high",
     }
     assert events[-1].kind == "complete"
+
+
+@pytest.mark.parametrize("isolated_terminal", ["complete", "interrupted", "failed"])
+def test_one_turn_model_and_effort_do_not_leak_into_next_ordinary_turn(isolated_terminal):
+    class FakeTypes:
+        TEXT, CLOSED, CLOSE, ERROR = 1, 2, 3, 4
+
+    class FakeClient:
+        async def close(self):
+            pass
+
+    class FakeSocket:
+        def __init__(self, stored_id):
+            self.stored_id = stored_id
+            self.frames = []
+            self.resume_info = None
+
+        async def send_json(self, request):
+            if request["method"] == "session.resume":
+                runtime_id = "runtime-parent" if self.stored_id == "stored-parent" else "runtime-child"
+                self.resume_info = {
+                    "model": "gpt-6-luna", "provider": "openai-codex",
+                    "reasoning_effort": "low", "reasoning_effort_wire": "low",
+                }
+                result = {"session_id": runtime_id, "resumed": self.stored_id,
+                          "info": self.resume_info}
+                self.frames.append(SimpleNamespace(type=1, data=json.dumps({
+                    "jsonrpc": "2.0", "id": request["id"], "result": result,
+                })))
+            elif request["method"] == "prompt.submit":
+                runtime_id = request["params"]["session_id"]
+                self.frames.extend((
+                    SimpleNamespace(type=1, data=json.dumps({
+                        "jsonrpc": "2.0", "id": request["id"], "result": {"status": "streaming"},
+                    })),
+                    SimpleNamespace(type=1, data=json.dumps({
+                        "method": "event", "params": {
+                            "type": "message.complete", "session_id": runtime_id,
+                            "payload": {"status": isolated_terminal if self.stored_id == "stored-parent"
+                                        else "complete", "text": "answer"},
+                        },
+                    })),
+                ))
+
+        async def receive(self):
+            return self.frames.pop(0)
+
+        async def close(self):
+            pass
+
+    class Client(CoreRpcClient):
+        def __init__(self):
+            self._timeout_seconds = 1
+            self.sockets = []
+            self.native_calls = []
+
+        async def _connect(self):
+            socket = FakeSocket("stored-parent" if not self.sockets else "stored-child")
+            self.sockets.append(socket)
+            return FakeClient(), socket, FakeTypes
+
+        async def _rpc_on_socket(self, ws, ws_types, method, params, **kwargs):
+            self.native_calls.append((method, params.copy()))
+            if method == "session.branch_whole":
+                return {"session_id": "runtime-child", "stored_session_id": "stored-child",
+                        "message_count": 2, "messages_omitted": True}
+            if method == "config.set" and params.get("key") == "model":
+                return {"key": "model", "value": "gpt-6-sol", "scope": "once",
+                        "confirm_required": False, "deferred": False}
+            raise AssertionError(method)
+
+        async def _wait_for_model_session_ready(self, ws, ws_types, **kwargs):
+            if kwargs["stored_session_id"] == "stored-parent":
+                return {"lazy": False, "stored_session_id": "stored-parent",
+                        "model": "gpt-6-luna", "provider": "openai-codex",
+                        "reasoning_effort": "low", "reasoning_effort_wire": "low"}
+            return {"lazy": False, "stored_session_id": "stored-child",
+                    "model": "gpt-6-sol", "provider": "openai-codex",
+                    "reasoning_effort": "high", "reasoning_effort_wire": "high"}
+
+    client = Client()
+    submissions = []
+
+    async def consume():
+        isolated = [event async for event in client.stream_owned_turn(
+            "stored-parent", "temporary route", isolated_model_id="gpt-6-sol",
+            isolated_reasoning_effort="high", on_isolated_session=lambda *_: True)]
+        ordinary = [event async for event in client.stream_owned_turn(
+            "stored-child", "use conversation default",
+            before_submit=lambda runtime_id: submissions.append(runtime_id))]
+        return isolated, ordinary
+
+    isolated, ordinary = asyncio.run(consume())
+    assert isolated[-1].kind == {"complete": "complete", "interrupted": "cancelled",
+                                 "failed": "failed"}[isolated_terminal]
+    assert ordinary[-1].kind == "complete"
+    assert submissions == ["runtime-child"]
+    assert client.sockets[1].resume_info == {
+        "model": "gpt-6-luna", "provider": "openai-codex",
+        "reasoning_effort": "low", "reasoning_effort_wire": "low",
+    }
+    config_calls = [params for method, params in client.native_calls if method == "config.set"]
+    assert config_calls == [{
+        "key": "model",
+        "value": "gpt-6-sol --provider openai-codex --reasoning high --once",
+        "session_id": "runtime-child",
+    }]
 
 
 def test_isolated_turn_rejects_mismatched_readback_before_prompt_submit():
@@ -328,10 +431,8 @@ def test_isolated_turn_rejects_mismatched_readback_before_prompt_submit():
                 return {"session_id": "runtime-child", "stored_session_id": "stored-child",
                         "message_count": 2, "messages_omitted": True}
             if params.get("key") == "model":
-                return {"key": "model", "value": "gpt-6-sol", "scope": "session",
+                return {"key": "model", "value": "gpt-6-sol", "scope": "once",
                         "confirm_required": False, "deferred": False}
-            if params.get("key") == "reasoning":
-                return {"key": "reasoning", "value": "high"}
             raise AssertionError(method)
 
         async def _wait_for_model_session_ready(self, ws, ws_types, **kwargs):
