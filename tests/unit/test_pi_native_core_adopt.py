@@ -589,6 +589,197 @@ def test_adapter_refresh_switch_stops_exact_old_peer_before_fixed_file_writes(
     assert not any(event[1] == "start" for event in events if isinstance(event, tuple))
 
 
+def test_adapter_refresh_accepts_old_observer_clean_unlink_after_held_process_exit(
+        monkeypatch, tmp_path):
+    pid = adopt.os.getpid()
+    invocation = "a" * 32
+    source = OLD_SOURCE
+    unit = _unit("core_gateway_inspector")
+    boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    cgroup = (Path("/proc") / str(pid) / "cgroup").read_text().splitlines()
+    identity = {
+        "pid": pid, "start_ticks": 123, "boot_id": boot_id,
+        "invocation_id": invocation, "source": source.decode(),
+        "unit_sha256": hashlib.sha256(unit).hexdigest(),
+        "executable": adopt.os.readlink(Path("/proc") / str(pid) / "exe"),
+        "cgroup": cgroup,
+    }
+    observer = tmp_path / "native-observer.sock"
+    parent_identity = (101, 202)
+    real_lstat = Path.lstat
+
+    def lstat(path):
+        if path == observer.parent:
+            return SimpleNamespace(st_mode=stat.S_IFDIR | 0o750, st_uid=0, st_gid=1000,
+                                   st_dev=parent_identity[0], st_ino=parent_identity[1])
+        return real_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+    monkeypatch.setattr(adopt, "_verify_inspector_process", lambda *_args: None)
+    monkeypatch.setattr(adopt, "_proc_start_ticks", lambda _pid: 123)
+    monkeypatch.setattr(adopt, "_unit_state", lambda _name: "inactive")
+    stopped = {"value": False}
+
+    def run(*args, **kwargs):
+        if args[1:3] == ("show", "--property=MainPID"):
+            return "0" if stopped["value"] else str(pid)
+        if args[1:3] == ("show", "--property=InvocationID"):
+            return invocation
+        if args[1:] == ("stop", adopt.INSPECTOR):
+            stopped["value"] = True
+        return ""
+
+    class Poller:
+        def __init__(self):
+            self.stopped = False
+
+        def register(self, *_args):
+            return None
+
+        def poll(self, timeout=0):
+            if timeout == 30_000:
+                self.stopped = True
+            return [(1, 1)] if self.stopped else []
+
+    monkeypatch.setattr(adopt, "_run", run)
+    monkeypatch.setattr(adopt.select, "poll", Poller)
+    custody = {
+        "pidfd": 7, "pid": pid, "start_ticks": 123, "boot_id": boot_id,
+        "invocation_id": invocation, "identity": identity,
+        "observer_socket": observer, "observer_state": "verified-owned",
+        "observer_device": 303, "observer_inode": 404,
+        "observer_parent_identity": parent_identity, "unit_raw": unit,
+        "source": source,
+    }
+
+    adopt._stop_captured_inspector(custody)
+
+    assert stopped["value"] is True
+    assert not observer.exists()
+    observer.write_bytes(b"replacement path")
+    stopped["value"] = False
+    with pytest.raises(RuntimeError, match="socket changed"):
+        adopt._stop_captured_inspector(custody)
+    assert observer.read_bytes() == b"replacement path"
+
+
+def test_adapter_refresh_pre_effect_failure_preserves_live_ingress(monkeypatch, tmp_path):
+    paths = {
+        adopt.GATEWAY: tmp_path / "gateway.service",
+        adopt.INSPECTOR: tmp_path / "inspector.service",
+        adopt.TUNNEL: tmp_path / "tunnel.service",
+    }
+    config_path = tmp_path / "gateway.json"
+    monkeypatch.setattr(adopt, "FIXED_UNITS", paths)
+    monkeypatch.setattr(adopt, "GATEWAY_CONFIG", config_path)
+    old_gateway = _unit("core_gateway")
+    old_inspector = _unit("core_gateway_inspector")
+    new_gateway = old_gateway.replace(OLD_SOURCE, NEW_SOURCE)
+    new_inspector = old_inspector.replace(OLD_SOURCE, NEW_SOURCE)
+    old_config = b'{"allowed_emails":["owner@example.test"]}\n'
+    new_config = b'{"allowed_emails":["owner@example.test","next@example.test"]}\n'
+    saved = {paths[adopt.GATEWAY]: (old_gateway, None),
+             paths[adopt.INSPECTOR]: (old_inspector, None)}
+    new_units = {paths[adopt.GATEWAY]: new_gateway,
+                 paths[adopt.INSPECTOR]: new_inspector}
+    config_info = SimpleNamespace(st_mode=stat.S_IFREG | 0o440, st_gid=981)
+    custody = {"pidfd": adopt.os.open("/dev/null", adopt.os.O_RDONLY),
+               "row": _adapter_refresh_row(),
+               "identity": {"unit_sha256": hashlib.sha256(old_inspector).hexdigest()}}
+    events = []
+
+    class GatewayConfig:
+        @staticmethod
+        def load(**_kwargs):
+            return object()
+
+    gateway_module = ModuleType("hermes_installer.remote.core_gateway")
+    gateway_module.CoreGatewayConfig = GatewayConfig
+    monkeypatch.setitem(sys.modules, "hermes_installer.remote.core_gateway", gateway_module)
+    monkeypatch.setattr(adopt, "_adapter_refresh_snapshot", lambda *_args: (
+        {"adapter_source": OLD_SOURCE.decode()}, b"old core journal", {}, {}, custody))
+    monkeypatch.setattr(adopt, "_verify_gateway_tunnel", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(adopt, "_source_switch", lambda *_args, **_kwargs:
+                        (saved, old_config, config_info, new_units, new_config))
+    monkeypatch.setattr(adopt, "_save_ingress_backup", lambda *_args, **_kwargs:
+                        events.append("backup"))
+    monkeypatch.setattr(adopt, "_set_backup_state", lambda *_args, **_kwargs:
+                        events.append("journal-state"))
+    monkeypatch.setattr(adopt, "_set_runtime_inspector_digest", lambda *_args, **_kwargs:
+                        events.append("runtime-journal"))
+    monkeypatch.setattr(adopt, "_runtime_repaired_inspector", lambda *_args:
+                        (_ for _ in ()).throw(RuntimeError("pre-effect fixture failure")))
+    monkeypatch.setattr(adopt, "_run", lambda *args, **_kwargs:
+                        events.append(("systemctl", *args)) or "")
+    monkeypatch.setattr(adopt, "_restore_adapter_refresh_core", lambda *_args:
+                        events.append("Core rollback"))
+    monkeypatch.setattr(adopt, "_restore_old_ingress", lambda *_args:
+                        events.append("ingress restore"))
+
+    result = adopt._apply_adapter_refresh(
+        "a" * 40, Path("/opt/hermes-installer-core-bbbbbbbbb/src"), "b" * 64,
+        Path("/candidate/tools/pi_core_lifecycle_qualification.py"), (),
+        object(), Path("/run/hermes-jarvis-native-observer/native-observer.sock"),
+        approved_union=False)
+
+    assert result == 4
+    assert events == ["backup", "journal-state", "runtime-journal"]
+
+
+def test_adapter_refresh_resume_recovers_partial_core_before_qualification(monkeypatch):
+    row = _adapter_refresh_row()
+    prior_raw = b"exact retained old Core journal\n"
+    row["old_core_journal_sha256"] = hashlib.sha256(prior_raw).hexdigest()
+    old_record = {
+        "adapter_source": row["old_core_adapter_source"],
+        "adapter_generation": row["old_core_adapter_generation"],
+        "core_source_generation": row["old_core_source_generation"],
+    }
+    state = {"phase": "partial"}
+    events = []
+
+    def current_is_old(_core, _row):
+        return state["phase"] == "old"
+
+    monkeypatch.setattr(adopt, "_backup_value", lambda _sha: (
+        {"adapter_refresh": row}, b"old gateway", b"old inspector", b"old config"))
+    monkeypatch.setattr(adopt, "_adapter_refresh_current_is_old", current_is_old)
+    monkeypatch.setattr(adopt, "_set_backup_state", lambda phase: events.append(("journal", phase)))
+
+    def restore_owned_core_adapter_update():
+        assert state["phase"] == "partial"
+        assert events[-1] == ("journal", "recovery-required")
+        events.append("fixed-root-locked-Core-recovery")
+        state["phase"] = "old"
+
+    def read_active():
+        events.append(("read-Core", state["phase"]))
+        if state["phase"] != "old":
+            raise RuntimeError("partial Core cannot satisfy ordinary active reader")
+        return old_record, prior_raw, {"unit": b"old unit", "launcher": b"old launcher"}
+
+    def snapshot(*, core_source_generation):
+        assert state["phase"] == "old"
+        assert core_source_generation == row["old_core_source_generation"]
+        events.append("snapshot-old-bindings")
+        return {"resources_record": b"old Resources"}
+
+    core = SimpleNamespace(restore_owned_core_adapter_update=restore_owned_core_adapter_update,
+                           _read_active_adapter_runtime=read_active,
+                           _snapshot_adapter_update_bindings=snapshot)
+
+    record, raw, files, snapshots = adopt._recover_adapter_refresh_core_for_resume(
+        core, "a" * 40, row)
+
+    assert record == old_record
+    assert raw == prior_raw
+    assert files["unit"] == b"old unit"
+    assert snapshots["resources_record"] == b"old Resources"
+    assert events == [("journal", "recovery-required"),
+                      "fixed-root-locked-Core-recovery", ("read-Core", "old"),
+                      ("read-Core", "old"), "snapshot-old-bindings"]
+
+
 def test_legacy_backup_resume_derives_only_the_original_email_recipe():
     candidate = "a" * 40
     source = Path(f"/opt/hermes-installer-core-{candidate[:9]}/src")

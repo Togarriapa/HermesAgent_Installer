@@ -361,6 +361,11 @@ def _stop_captured_inspector(custody: dict) -> None:
                not in {"", "0"}):
         raise RuntimeError("captured old Inspector did not stop cleanly")
     path = custody["observer_socket"]
+    parent = path.parent.lstat()
+    if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0 or parent.st_gid != 1000
+            or stat.S_IMODE(parent.st_mode) != 0o750
+            or (parent.st_dev, parent.st_ino) != custody["observer_parent_identity"]):
+        raise RuntimeError("captured normal observer parent changed during Inspector stop")
     try:
         current = path.lstat()
     except FileNotFoundError:
@@ -369,17 +374,17 @@ def _stop_captured_inspector(custody: dict) -> None:
         if current is not None:
             raise RuntimeError("an unowned normal observer socket appeared during stop")
         return
+    # The existing observer's clean shutdown normally unlinks its own socket.
+    # Once the held PIDFD and systemd state above prove the selected process is
+    # gone, that absence is equivalent to our unlinking the captured inode.
+    if current is None:
+        return
     if (current is None or not stat.S_ISSOCK(current.st_mode)
             or current.st_uid != 0 or current.st_gid != 1000
             or stat.S_IMODE(current.st_mode) != 0o660 or current.st_nlink != 1
             or (current.st_dev, current.st_ino) !=
                (custody["observer_device"], custody["observer_inode"])):
         raise RuntimeError("captured normal observer socket changed during Inspector stop")
-    parent = path.parent.lstat()
-    if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0 or parent.st_gid != 1000
-            or stat.S_IMODE(parent.st_mode) != 0o750
-            or (parent.st_dev, parent.st_ino) != custody["observer_parent_identity"]):
-        raise RuntimeError("captured normal observer parent changed during Inspector stop")
     path.unlink()
     directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
                            | getattr(os, "O_NOFOLLOW", 0))
@@ -557,6 +562,10 @@ def _replace_ingress_units_for_adapter_refresh(new_units, new_config: bytes,
     except Exception:
         raise _IngressSnapshotConflict(
             "fixed ingress custody could not be reverified before refresh") from None
+    # This is private state captured by the fixed producer, not a journal or
+    # caller assertion. Rollback effects are allowed only after a service
+    # effect has actually been entered.
+    inspector_custody["refresh_effect_started"] = True
     _run("systemctl", "stop", TUNNEL)
     _run("systemctl", "stop", GATEWAY)
     _stop_captured_inspector(inspector_custody)
@@ -664,6 +673,29 @@ def _restore_adapter_refresh_core(core_runtime, candidate_sha: str) -> bool:
                 and record.get("core_source_generation") == row["old_core_source_generation"])
     except Exception:
         return False
+
+
+def _recover_adapter_refresh_core_for_resume(core_runtime, candidate_sha: str,
+                                            row: dict) -> tuple[dict, bytes, dict, dict]:
+    """Return the exact retained old Core tuple before replaying qualification.
+
+    The fixed Core recovery API validates the protected candidate/old tuple and
+    resolves a partial cohort under its update lock. Qualification itself must
+    never be used as a recovery mechanism because its preflight requires a
+    complete old active snapshot.
+    """
+    if not _adapter_refresh_current_is_old(core_runtime, row):
+        if not _restore_adapter_refresh_core(core_runtime, candidate_sha):
+            raise RuntimeError("matching interrupted Core cohort could not recover its retained prior tuple")
+    record, raw, files = core_runtime._read_active_adapter_runtime()
+    if (hashlib.sha256(raw).hexdigest() != row["old_core_journal_sha256"]
+            or record.get("adapter_source") != row["old_core_adapter_source"]
+            or record.get("adapter_generation") != row["old_core_adapter_generation"]
+            or record.get("core_source_generation") != row["old_core_source_generation"]):
+        raise RuntimeError("resumed Core does not match the retained old adapter tuple")
+    snapshots = core_runtime._snapshot_adapter_update_bindings(
+        core_source_generation=row["old_core_source_generation"])
+    return record, raw, files, snapshots
 
 
 def _finish_adapter_refresh_ingress(candidate_sha: str, expected_source: Path,
@@ -780,22 +812,12 @@ def _resume_adapter_refresh(candidate_sha: str, expected_source: Path,
     except Exception:
         committed = None
     if committed is None:
-        old_record = old_raw = old_files = snapshots = None
-        if _adapter_refresh_current_is_old(core_runtime, row):
-            old_record, old_raw, old_files = core_runtime._read_active_adapter_runtime()
-            snapshots = core_runtime._snapshot_adapter_update_bindings(
-                core_source_generation=row["old_core_source_generation"])
+        old_record, old_raw, old_files, snapshots = _recover_adapter_refresh_core_for_resume(
+            core_runtime, candidate_sha, row)
         _run_core_refresh_qualification(candidate_sha, archive_sha, tool, tool_identity)
-        if old_record is not None:
-            cohort, reference, cohort_sha = _verify_adapter_refresh_commit(
-                core_runtime, expected_source, old_record, old_raw, old_files, snapshots)
-            _verify_adapter_refresh_bindings(core_runtime, snapshots, old_record)
-        else:
-            cohort, _raw, reference, contents, cohort_sha = _verify_current_adapter_refresh_join(
-                core_runtime, row)
-            snapshots = _snapshots_from_adapter_backup(contents, cohort)
-            old_record = json.loads(contents["journal.json"], object_pairs_hook=_unique_pairs)
-            _verify_adapter_refresh_bindings(core_runtime, snapshots, old_record)
+        cohort, reference, cohort_sha = _verify_adapter_refresh_commit(
+            core_runtime, expected_source, old_record, old_raw, old_files, snapshots)
+        _verify_adapter_refresh_bindings(core_runtime, snapshots, old_record)
         _set_adapter_refresh_core_join(candidate_sha, reference,
                                        cohort["cohort_transaction_id"], cohort_sha)
     else:
@@ -934,7 +956,9 @@ def _apply_adapter_refresh(candidate_sha: str, expected_source: Path,
     except Exception as error:
         failed_phase = phase
         restored = False
-        if saved is not None:
+        effects_started = (custody is not None
+                           and custody.get("refresh_effect_started") is True)
+        if saved is not None and effects_started:
             try:
                 _set_backup_state("recovery-required")
                 for name in (TUNNEL, GATEWAY):
@@ -942,8 +966,8 @@ def _apply_adapter_refresh(candidate_sha: str, expected_source: Path,
                 if _adapter_refresh_current_is_old(core_runtime, custody["row"]):
                     restored = True
                 else:
-                    # The committed-only Core API consumes the journaled row;
-                    # it never accepts caller paths or an arbitrary rollback target.
+                    # The fixed Core API consumes only the protected row and
+                    # derives either committed or interrupted recovery itself.
                     restored = _restore_adapter_refresh_core(core_runtime, candidate_sha)
                 if restored:
                     _retire_current_refresh_inspector(expected_source, observer_socket)
@@ -958,8 +982,12 @@ def _apply_adapter_refresh(candidate_sha: str, expected_source: Path,
                     _set_backup_state("recovery-required")
                 except Exception:
                     pass
-        print("Adapter refresh did not complete; automatic recovery was attempted from the retained journal.")
-        print("Prior Core and ingress verified: " + ("yes" if restored else "no; public ingress remains stopped"))
+        if saved is not None and not effects_started:
+            print("Adapter refresh stopped before service effects.")
+            print("No service effect began; prior public ingress remains untouched and the protected journal is retained.")
+        else:
+            print("Adapter refresh did not complete; automatic recovery was attempted from the retained journal.")
+            print("Prior Core and ingress verified: " + ("yes" if restored else "no; public ingress remains stopped"))
         print("Failed phase: " + failed_phase)
         print("Failure type: " + type(error).__name__)
         return 4
