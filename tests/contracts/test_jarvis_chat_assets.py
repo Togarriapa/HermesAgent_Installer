@@ -69,6 +69,9 @@ class JarvisChatAssetTests(unittest.TestCase):
 
         _content_type, script = reviewed_chat_asset("/chat/assets/app.js")
         client = script.decode("utf-8")
+        _content_type, stylesheet = reviewed_chat_asset("/chat/assets/app.css")
+        self.assertIn(".nav-group:not([open])>.nav-menu{display:none}", stylesheet.decode("utf-8"))
+        self.assertIn("#history-close{width:44px;height:44px;min-width:44px;min-height:44px}", stylesheet.decode("utf-8"))
         for endpoint in ("/capabilities", "/settings"):
             with self.subTest(endpoint=endpoint):
                 self.assertIn(f"${{API}}{endpoint}", client)
@@ -88,6 +91,7 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('button.setAttribute("aria-current", "page")', navigation)
         self.assertIn('group.dataset.current = String(active)', navigation)
         self.assertIn('summary.setAttribute("aria-current", "location")', navigation)
+        self.assertIn('some((item) => item.dataset.view === selected)', navigation)
         self.assertIn('group.open = false;', navigation)
         self.assertIn('setAttribute("aria-expanded", "false")', navigation)
         self.assertIn('window.matchMedia("(prefers-reduced-motion: reduce)")', client)
@@ -98,6 +102,7 @@ class JarvisChatAssetTests(unittest.TestCase):
         self.assertIn('showView(button.dataset.view, openChats ? "sessions" : button.dataset.view, featureContext);', client)
         self.assertIn('focusSelectedViewHeading(button.dataset.view);', client)
         self.assertIn('heading.focus({preventScroll: true});', client)
+        self.assertIn("new MutationObserver(() => summary.setAttribute(\"aria-expanded\", String(group.open)))", client)
         self.assertIn('button.classList.contains("chat-model-link") && conversationId', client)
         self.assertIn("Object.freeze({initialConversationId: context.initialConversationId})", client)
         self.assertIn('showView("overview");', client)

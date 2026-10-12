@@ -460,6 +460,8 @@ _CSS += b'''
 /* Target sizes verified by the Pi phone/tablet/desktop render probe. */
 #jarvis-home,#history-toggle,#message-input,.conversation-item{min-height:44px}
 #history-toggle{min-width:44px}
+#history-close{width:44px;height:44px;min-width:44px;min-height:44px}
+.nav-group:not([open])>.nav-menu{display:none}
 html[data-jarvis-motion="reduce"] *,html[data-jarvis-motion="reduce"] *::before,html[data-jarvis-motion="reduce"] *::after{transition-duration:0s!important}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition-duration:0s!important;transition-delay:0s!important}}
 /* Keep every mobile section reachable without clipping its popup or shrinking its target. */
@@ -1802,9 +1804,9 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
       if (selectedButton) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
     }
-    const manageViews = new Set(["capabilities", "settings", ...FEATURE_ASSETS.map((feature) => feature.id).filter((id) => !["overview", "projects", "second-brain"].includes(id))]);
     for (const group of document.querySelectorAll(".nav-group")) {
-      const active = group.dataset.navGroup === "manage" && manageViews.has(selected);
+      const active = [...group.querySelectorAll(".nav-item[data-view]")]
+        .some((item) => item.dataset.view === selected);
       group.dataset.current = String(active);
       const summary = group.querySelector("summary");
       if (active) summary.setAttribute("aria-current", "location");
@@ -1931,7 +1933,8 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   ui.scrim.addEventListener("click", () => setPanel(false));
   for (const group of document.querySelectorAll(".nav-group")) {
     const summary = group.querySelector("summary");
-    group.addEventListener("toggle", () => summary.setAttribute("aria-expanded", String(group.open)));
+    const observer = new MutationObserver(() => summary.setAttribute("aria-expanded", String(group.open)));
+    observer.observe(group, {attributes: true, attributeFilter: ["open"]});
   }
   function focusSelectedViewHeading(view) {
     const panel = [...document.querySelectorAll("[data-view-panel]")]
