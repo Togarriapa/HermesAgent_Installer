@@ -219,14 +219,14 @@ def test_overview_ecosystem_uses_named_root_observations_and_cancels_stale_views
     html, css, js = FEATURE_ASSETS.view_html, FEATURE_ASSETS.css, FEATURE_ASSETS.mount_js
     assert 'data-ecosystem-card' in html and 'data-handoff-graph' in html
     assert 'Expert instances' in html and 'data-selected-team' in html
-    assert 'Team membership is shown only when a verified instance-to-Team join is present.' in html
+    assert 'Team membership appears only when independently verified; animated handoffs require a separate recorded directed relation.' in html
     assert "await api.get('/chat/api/ecosystem')" in js
     assert 'display_name' in js and 'profile_id' in js and 'summary.observed_completed_executions' in js
-    assert 'No verified instance-to-Team join is available.' in js
+    assert 'No independently verified Team membership is available.' in js
     assert "overviewScopeIsCurrent(mountScope, generation, ecosystemGeneration, stopped)" in js
     assert "ecosystemObserver.observe(ecosystemCard)" in js
     assert "clearInterval(ecosystemPollTimer)" in js
-    assert '[data-activity-flow="active"]:is([data-ecosystem-state="current"],[data-ecosystem-state="partial"])[data-in-viewport="true"] .handoff-route[data-instance-state="running"] .handoff-edge:after' in css
+    assert '[data-activity-flow="active"]:is([data-ecosystem-state="current"],[data-ecosystem-state="partial"])[data-in-viewport="true"] .handoff-route[data-has-observed-relation="true"][data-instance-state="running"] .handoff-edge:after' in css
     edge_stop_rule = next(rule for rule in css.split("}")
                           if 'html:not([data-page-visible="true"]) [data-feature-root="overview"] .handoff-edge:after' in rule)
     assert '[data-feature-root="overview"]:not([data-network-online="true"]) .handoff-edge:after' in edge_stop_rule
@@ -253,7 +253,7 @@ assert.equal(overviewScopeIsCurrent({signal:{aborted:false},isCurrent:()=>false}
 assert.equal(overviewScopeIsCurrent({signal:{aborted:true},isCurrent:()=>true}, 2, 2, false), false);
 assert.equal(overviewScopeIsCurrent(activeScope, 2, 2, true), false);
 const iso = new Date(now - 5_000).toISOString();
-const page = {observation:{state:'observed',observed_at:iso,partial:false},teams:[{name:'Unjoined team'}],relations:[],pending:{team_membership:'no_verified_instance_join'},
+const page = {schema:2,observation:{state:'observed',observed_at:iso,partial:false},teams:[{name:'Unjoined team'}],relations:[],pending:{team_membership:'no_verified_instance_join'},
   instances:[{id:'private-instance',display_name:'Researcher',profile_id:'researcher',state:'running',stale:false,
     events:[{kind:'response',status:'observed',at:iso,duration_ms:1700,tool_count:0}]}],
   summary:{observed_instances:1,completed_executions:null,observed_completed_executions:2,
@@ -263,7 +263,26 @@ assert.equal(current.state, 'current');
 assert.equal(current.active, true);
 assert.equal(current.instances[0].display_name, 'Researcher');
 assert.equal(current.teams.length, 0);
-assert.equal(current.hasVerifiedTeamJoin, false, 'a Team name without an explicit membership relation is not selected');
+assert.equal(current.hasVerifiedTeamMembership, false, 'an unjoined Team name is not selected');
+assert.equal(current.teams.length, 0, 'an unjoined Team remains pending');
+assert.equal(current.instances[0].hasObservedRelation, false, 'an instance without a directed relation has no animated edge');
+const admitted = projectNativeEcosystem({...page,pending:{team_membership:'verified'},teams:[{name:'admitted-team'}]}, now, true);
+assert.equal(admitted.hasVerifiedTeamMembership, true);
+assert.deepEqual(admitted.teams.map(team => team.name), ['admitted-team'], 'verified membership appears before a discussion edge exists');
+assert.equal(admitted.instances[0].hasObservedRelation, false, 'membership alone does not create an animated handoff');
+const unverifiedWitness = projectNativeEcosystem({...page,pending:{team_membership:'verified'},teams:[{name:'admitted-team'}]}, now, false);
+assert.equal(unverifiedWitness.hasVerifiedTeamMembership, false, 'a stale Core witness cannot present membership as current');
+assert.equal(unverifiedWitness.teams.length, 0);
+const related = projectNativeEcosystem({...page,teams:[],instances:[...page.instances,
+  {id:'private-recipient',display_name:'Reviewer',profile_id:'reviewer',state:'completed',stale:false,events:[]}],
+  relations:[{from:'private-instance',to:'private-recipient',kind:'completed_message',state:'current'}]}, now, true);
+assert.equal(related.hasVerifiedTeamMembership, false, 'a relation does not imply verified Team membership');
+assert.equal(related.teams.length, 0);
+assert.equal(related.instances.every(instance => instance.hasObservedRelation), true, 'only actual relation endpoints can animate');
+const historical = projectNativeEcosystem({...page,instances:[...page.instances,
+  {id:'private-recipient',display_name:'Reviewer',profile_id:'reviewer',state:'completed',stale:false,events:[]}],
+  relations:[{from:'private-instance',to:'private-recipient',kind:'completed_message',state:'historical'}]}, now, true);
+assert.equal(historical.instances[0].hasObservedRelation, false, 'historical relations do not animate as current handoffs');
 assert.equal(projectNativeEcosystem({...page,observation:{state:'quiet',observed_at:iso}}, now, true).state, 'empty');
 const stale = projectNativeEcosystem({...page,observation:{state:'observed',observed_at:new Date(now-121_000).toISOString()}}, now, true);
 assert.equal(stale.state, 'stale');
@@ -273,7 +292,8 @@ const partial = projectNativeEcosystem({...page,observation:{state:'partial',obs
 assert.equal(partial.state, 'partial');
 assert.equal(partial.active, true, 'a fresh, explicitly non-stale running instance remains observable in a partial snapshot');
 assert.equal(projectNativeEcosystem({observation:{state:'broken'},instances:[]}, now, true).state, 'unavailable');
-assert.equal(JSON.stringify(current).includes('private-instance'), false, 'private execution ids stay out of the view model');
+assert.equal(JSON.stringify({...current, ...admitted, ...related}).includes('private-instance'), false, 'private execution ids stay out of the view model');
+assert.equal(JSON.stringify(related).includes('private-recipient'), false, 'private relation endpoint ids stay out of the view model');
 '''
     with tempfile.TemporaryDirectory() as temporary:
         path = Path(temporary) / "overview-ecosystem-harness.js"

@@ -66,7 +66,7 @@ _VIEW = """<section class="overview-page" aria-labelledby="overview-title">
     </div>
     <p class="ecosystem-summary" data-ecosystem-summary>Waiting for current native observations.</p>
     <ol class="handoff-graph" data-handoff-graph aria-label="Native Expert instances linked to their observed events" hidden></ol>
-    <p class="ecosystem-provenance">Names and states come from root-observed native instances. Team membership is shown only when a verified instance-to-Team join is present.</p>
+    <p class="ecosystem-provenance">Names and states come from root-observed native instances. Team membership appears only when independently verified; animated handoffs require a separate recorded directed relation.</p>
   </section>
   <div class="overview-toolbar"><p data-observation role="status" aria-live="polite">Loading measured data…</p><button type="button" data-refresh>Refresh</button></div>
   <p class="overview-window" data-window></p>
@@ -257,7 +257,7 @@ _CSS += """
 [data-feature-root="overview"] .handoff-node small{margin-top:.18rem;color:#97b1b5;font-size:.64rem;line-height:1.4}
 [data-feature-root="overview"] .handoff-edge{position:relative;height:2px;overflow:hidden;background:rgba(88,228,235,.24)}
 [data-feature-root="overview"] .handoff-edge:after{position:absolute;inset:0 auto 0 0;width:40%;content:"";background:#58e4eb;opacity:0;transform:translateX(-110%)}
-[data-feature-root="overview"] [data-activity-flow="active"]:is([data-ecosystem-state="current"],[data-ecosystem-state="partial"])[data-in-viewport="true"] .handoff-route[data-instance-state="running"] .handoff-edge:after{opacity:.9;animation:handoff-observation-flow 1.6s linear infinite}
+[data-feature-root="overview"] [data-activity-flow="active"]:is([data-ecosystem-state="current"],[data-ecosystem-state="partial"])[data-in-viewport="true"] .handoff-route[data-has-observed-relation="true"][data-instance-state="running"] .handoff-edge:after{opacity:.9;animation:handoff-observation-flow 1.6s linear infinite}
 [data-feature-root="overview"] .ecosystem-provenance{margin:.65rem 0 0;color:#829da2;font-size:.66rem;line-height:1.5}
 @keyframes handoff-observation-flow{to{transform:translateX(280%)}}
 @media(max-width:980px){
@@ -329,20 +329,33 @@ _MOUNT = r"""function mount(container, api, state, mountScope) {
       return {state:'unavailable', instances:[], teams:[], summary:null, active:false};
     }
     const fresh = Boolean(coreVerified && age >= -30000 && age <= 120000);
+    const instanceIds = new Set(snapshot.instances
+      .filter(instance => instance && typeof instance.id === 'string').map(instance => instance.id));
+    const relationEndpoints = new Set();
+    const relations = Array.isArray(snapshot.relations) ? snapshot.relations.slice(0,200) : [];
+    for (const relation of relations) {
+      if (!relation || relation.kind !== 'completed_message'
+          || !['current','partial'].includes(relation.state)
+          || typeof relation.from !== 'string' || typeof relation.to !== 'string'
+          || relation.from === relation.to || !instanceIds.has(relation.from) || !instanceIds.has(relation.to)) continue;
+      relationEndpoints.add(relation.from);
+      relationEndpoints.add(relation.to);
+    }
     const instances = snapshot.instances.filter(instance => instance
       && typeof instance.display_name === 'string' && typeof instance.profile_id === 'string'
       && typeof instance.state === 'string' && typeof instance.stale === 'boolean'
       && Array.isArray(instance.events)).slice(0,12).map(instance => ({
         display_name:instance.display_name, profile_id:instance.profile_id,
         state:instance.state, stale:instance.stale,
+        hasObservedRelation:typeof instance.id === 'string' && relationEndpoints.has(instance.id),
         events:instance.events.filter(event => event && typeof event.kind === 'string'
           && typeof event.status === 'string' && typeof event.at === 'string')
           .slice(-20).map(event => ({kind:event.kind, status:event.status, at:event.at,
             duration_ms:event.duration_ms, tool_count:event.tool_count})),
       }));
-    const hasVerifiedTeamJoin = snapshot.pending && snapshot.pending.team_membership !== 'no_verified_instance_join'
-      && snapshot.relations.length > 0;
-    const teams = (hasVerifiedTeamJoin ? snapshot.teams : []).filter(team => team && typeof team.name === 'string')
+    const hasVerifiedTeamMembership = fresh && snapshot.schema === 2 && snapshot.pending
+      && snapshot.pending.team_membership === 'verified';
+    const teams = (hasVerifiedTeamMembership ? snapshot.teams : []).filter(team => team && typeof team.name === 'string')
       .slice(0,8).map(team => ({name:team.name}));
     const active = fresh && instances.some(instance => !instance.stale && instance.state === 'running');
     return {state:!fresh ? 'stale' : observation.state === 'quiet' ? 'empty'
@@ -354,7 +367,7 @@ _MOUNT = r"""function mount(container, api, state, mountScope) {
         response_duration_coverage:snapshot.summary.response_duration_coverage,
       } : null, active, observedAt:observation.observed_at,
       pending:{team_membership:snapshot.pending && snapshot.pending.team_membership},
-      hasVerifiedTeamJoin};
+      hasVerifiedTeamMembership};
   }
 
   const root = container.querySelector('[data-feature-root="overview"]') || container;
@@ -405,7 +418,7 @@ _MOUNT = r"""function mount(container, api, state, mountScope) {
     if (projection.state === 'empty') {
       $('[data-ecosystem-status]').textContent = 'No native Expert instances were observed.';
       $('[data-expert-identity]').textContent = 'No instances in this snapshot.';
-      $('[data-selected-team]').textContent = 'No verified instance-to-Team join is available.';
+      $('[data-selected-team]').textContent = 'No independently verified Team membership is available.';
       $('[data-ecosystem-summary]').textContent = 'No instance counts or durations are available.';
       return;
     }
@@ -422,9 +435,9 @@ _MOUNT = r"""function mount(container, api, state, mountScope) {
       : `${format(observedInstances)} observed${observedInstances > projection.instances.length ? `; showing ${format(projection.instances.length)}` : ''}`;
     const instancePlural = observedInstances === 1 || observedInstances === null && projection.instances.length === 1 ? '' : 's';
     $('[data-expert-identity]').textContent = `${instanceLabel} native instance${instancePlural} in this snapshot.`;
-    $('[data-selected-team]').textContent = projection.teams.length && projection.hasVerifiedTeamJoin
+    $('[data-selected-team]').textContent = projection.teams.length && projection.hasVerifiedTeamMembership
       ? projection.teams.map(team => team.name).join(', ')
-      : 'No verified instance-to-Team join is available.';
+      : 'No independently verified Team membership is available.';
     const observedCompleted = number(summary.observed_completed_executions);
     const completed = number(summary.completed_executions);
     const observedDuration = number(summary.response_duration_ms);
@@ -443,6 +456,7 @@ _MOUNT = r"""function mount(container, api, state, mountScope) {
       const row = document.createElement('li');
       row.className = 'handoff-route';
       row.dataset.instanceState = instance.stale ? 'stale' : instance.state;
+      row.dataset.hasObservedRelation = String(instance.hasObservedRelation);
       const source = document.createElement('div');
       source.className = 'handoff-node';
       const sourceLabel = document.createElement('strong');
