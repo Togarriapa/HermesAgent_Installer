@@ -45,6 +45,7 @@ _MOUNT = r'''function mount(container, api) {
   const root = container.querySelector('[data-feature-root="extensions"]') || container;
   const list = root.querySelector('[data-extension-list]'), status = root.querySelector('[data-extension-status]');
   const refresh = root.querySelector('[data-extension-refresh]');
+  const lifecycle = new AbortController(), signal = lifecycle.signal, editors = new Set();
   let active = true, snapshot = null, busy = false;
   const text = (parent, tag, value) => { const node = document.createElement(tag); node.textContent = String(value ?? 'Unknown'); parent.append(node); return node; };
   const makeKey = () => { const bytes = new Uint8Array(24); crypto.getRandomValues(bytes); return btoa(String.fromCharCode(...bytes)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,''); };
@@ -53,9 +54,10 @@ _MOUNT = r'''function mount(container, api) {
     if (!exactConfirm(phrase)) return;
     busy = true; status.textContent = 'Applying the confirmed owner action…';
     try { const result = await api.post(path, {...body, confirmation:phrase, idempotency_key:makeKey(), revision:snapshot.revision});
+      if (!active) return;
       status.textContent = result && result.status === 'applied' ? (result.result && result.result.recoveryId ? `${result.result.action==='restore'?'Restored':'Archived'} skill version ${result.result.recoveryId}; refreshing native state.` : 'Owner action applied; refreshing observed state.') : 'The action may still be pending. Refresh to check current state.';
-    } catch (_) { status.textContent = 'The action was not confirmed. Refresh to see the current native state.'; }
-    finally { busy = false; await load(); }
+    } catch (_) { if (active) status.textContent = 'The action was not confirmed. Refresh to see the current native state.'; }
+    finally { if (active) { busy = false; await load(); } }
   }
   function card(item) {
     const box = document.createElement('article'); box.className='extension-card';
@@ -69,6 +71,7 @@ _MOUNT = r'''function mount(container, api) {
       const edit=text(actions,'button','Edit skill'); edit.type='button'; edit.addEventListener('click',async()=>{
         try {
           const file=await api.post('/chat/api/extensions/skills/read',{item_id:item.id,revision:snapshot.revision});
+          if (!active) return;
           const dialog=document.createElement('dialog'); dialog.setAttribute('aria-labelledby','extension-skill-edit-title');
           const form=document.createElement('form'); form.method='dialog';
           const heading=text(form,'h3',`Edit ${item.label}`); heading.id='extension-skill-edit-title';
@@ -76,13 +79,14 @@ _MOUNT = r'''function mount(container, api) {
           const save=document.createElement('button'); save.type='button'; save.textContent='Save skill';
           const cancel=document.createElement('button'); cancel.type='button'; cancel.textContent='Cancel';
           form.append(area,save,cancel); dialog.append(form); root.append(dialog);
-          cancel.addEventListener('click',()=>dialog.close());
-          save.addEventListener('click',async()=>{ const content=area.value; dialog.close(); dialog.remove();
+          cancel.addEventListener('click',()=>dialog.close(),{signal});
+          save.addEventListener('click',async()=>{ if (!active) return; const content=area.value; dialog.close(); dialog.remove(); editors.delete(dialog);
             await mutate('/chat/api/extensions/skills/edit',{item_id:item.id,content},`EDIT ${item.label}`);
-          });
-          dialog.addEventListener('close',()=>dialog.remove(),{once:true}); dialog.showModal(); area.focus();
-        } catch (_) { status.textContent='Current skill source is unavailable; refresh and retry.'; }
-      });
+          },{signal});
+          dialog.addEventListener('close',()=>{dialog.remove();editors.delete(dialog);},{once:true,signal});
+          editors.add(dialog); dialog.showModal(); area.focus();
+        } catch (_) { if (active) status.textContent='Current skill source is unavailable; refresh and retry.'; }
+      },{signal});
       if (item.removable) { const archive=text(actions,'button',item.source==='bundledResources'?'Archive overlay':'Archive skill'); archive.type='button'; archive.addEventListener('click',()=>{
         const resource = item.source==='bundledResources';
         const warning = resource
@@ -90,7 +94,7 @@ _MOUNT = r'''function mount(container, api) {
           : `Archive ${item.label}? Its owner-added SKILL.md entrypoint is moved out of discovery. A root-private recovery backup is retained.`;
         if (!window.confirm(warning)) return;
         void mutate('/chat/api/extensions/skills/remove',{item_id:item.id},`${resource?'ARCHIVE OVERLAY':'ARCHIVE (RECOVERABLE)'} ${item.label}`);
-      }); }
+      },{signal}); }
     }
     if (item.kind==='skills' && Array.isArray(item.archivedVersions) && item.archivedVersions.length
         && (item.source==='bundledResources' || (item.source==='useradded' && !item.editable))) {
@@ -101,7 +105,7 @@ _MOUNT = r'''function mount(container, api) {
         if (!Number.isInteger(selected)||selected<1||selected>versions.length) return;
         const version=versions[selected-1];
         await mutate('/chat/api/extensions/skills/restore',{item_id:item.id,restore_id:version.restoreId,restore_sha256:version.sha256},`RESTORE ${item.label} ${version.restoreId}`);
-      });
+      },{signal});
     }
     if (item.kind === 'plugins' && item.editable && Array.isArray(item.settings) && item.settings.some((field)=>['string','number','boolean','enum'].includes(field.type))) {
       const edit = text(actions,'button','Edit settings'); edit.type='button'; edit.addEventListener('click',async()=>{
@@ -114,42 +118,42 @@ _MOUNT = r'''function mount(container, api) {
           else values[field.key]=entered;
         }
         if (Object.keys(values).length) await mutate('/chat/api/extensions/plugins/edit',{item_id:item.id,values},`EDIT ${item.label}`);
-      });
+      },{signal});
       if (item.source==='useradded') { const toggle = text(actions,'button',item.state==='enabled'?'Disable':'Enable'); toggle.type='button'; toggle.addEventListener('click',()=>{
         const enabled = item.state!=='enabled'; const phrase=`${enabled?'ENABLE':'DISABLE'} ${item.label}`;
         void mutate('/chat/api/extensions/plugins/toggle',{item_id:item.id,enabled},phrase);
-      }); }
+      },{signal}); }
     }
     if (item.kind==='plugins' && item.removable && item.source==='useradded') {
       const remove=text(actions,'button','Remove permanently'); remove.type='button'; remove.addEventListener('click',()=>{
         const warning=`Permanently remove ${item.label} from this Hermes profile? This deletes its plugin package and registration and cannot be undone from this dashboard. It does not target your Obsidian vault.`;
         if (!window.confirm(warning)) return;
         void mutate('/chat/api/extensions/plugins/remove',{item_id:item.id},`DELETE PERMANENTLY ${item.label}`);
-      });
+      },{signal});
     }
     if (item.kind==='mcps' && item.removable) { const remove=text(actions,'button','Remove server'); remove.type='button'; remove.addEventListener('click',()=>{
       const kind=item.kind; void mutate(`/chat/api/extensions/${kind}/remove`,{item_id:item.id},`DELETE ${item.label}`);
-    }); }
+    },{signal}); }
     box.append(actions); return box;
   }
   function render() { list.replaceChildren(); if (!snapshot || !Array.isArray(snapshot.items)) return;
     for (const item of snapshot.items) list.append(card(item));
   }
   async function load() { if (!active || busy) return; refresh.disabled=true; status.textContent='Reading current Hermes inventory…';
-    try { const data=await api.get('/chat/api/extensions'); if (!data || data.schema!==1 || !Array.isArray(data.items) || typeof data.revision!=='string') throw Error();
+    try { const data=await api.get('/chat/api/extensions'); if (!active) return; if (!data || data.schema!==1 || !Array.isArray(data.items) || typeof data.revision!=='string') throw Error();
       snapshot=data; render(); status.textContent=`${data.items.length} current extension records · ${data.readiness}.`;
-    } catch (_) { snapshot=null; list.replaceChildren(); status.textContent='Current extension inventory is unavailable.'; }
+    } catch (_) { if (active) { snapshot=null; list.replaceChildren(); status.textContent='Current extension inventory is unavailable.'; } }
     finally { if(active) refresh.disabled=false; }
   }
   function bind(formSelector, path, key, endpoint, verb) { const form=root.querySelector(formSelector); form.addEventListener('submit',async(event)=>{
     event.preventDefault(); if(!snapshot||busy)return; const value=new FormData(form).get(key); if(typeof value!=='string'||!value.trim())return;
-    const phrase=`${verb} ${value.trim()}`; const body={[key]:value.trim()}; await mutate(path,body,phrase); form.reset();
-  }); }
+    const phrase=`${verb} ${value.trim()}`; const body={[key]:value.trim()}; await mutate(path,body,phrase); if (active) form.reset();
+  },{signal}); }
   bind('[data-add-skill]','/chat/api/extensions/skills/add','identifier','identifier','ADD');
   bind('[data-add-plugin]','/chat/api/extensions/plugins/add','catalog_name','catalog_name','ADD');
   bind('[data-add-mcp]','/chat/api/extensions/mcps/add','catalog_name','catalog_name','ADD');
-  refresh.addEventListener('click',load); void load();
-  return ()=>{active=false;refresh.removeEventListener('click',load);list.replaceChildren();};
+  refresh.addEventListener('click',load,{signal}); void load();
+  return ()=>{active=false;lifecycle.abort();for(const dialog of editors){if(dialog.open)dialog.close();dialog.remove();}editors.clear();list.replaceChildren();};
 }'''
 
 _UNMOUNT = "function unmount() {}"

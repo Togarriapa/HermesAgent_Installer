@@ -72,9 +72,9 @@ def _source_label(source: str, name: str) -> tuple[str, str]:
     """Render provenance from observed native source fields only."""
     if source in {"bundled", "builtin", "built-in"}:
         return "builtin", f"Hermes {name}"
-    if source in {"resources", "bundledResources", "bundled-resource", "plugin"}:
+    if source in {"resources", "bundledResources", "bundled-resource"}:
         return "bundledResources", name
-    if source in {"user", "git", "catalog", "owner"}:
+    if source in {"user", "git", "owner"}:
         return "useradded", name
     return "unknown", name
 
@@ -91,11 +91,38 @@ def _mcp_config_revision(item: dict[str, Any]) -> str | None:
         ensure_ascii=True, allow_nan=False).encode("ascii")).hexdigest()
 
 
+def _plugin_config_revision(item: dict[str, Any]) -> str | None:
+    """Fingerprint the secret-free native identity used to prove a Jarvis plugin install."""
+    name = _safe_label(item.get("name"), maximum=96)
+    key = _safe_label(item.get("key"), maximum=96)
+    version = item.get("version")
+    source = item.get("source")
+    catalog_name = item.get("catalog_name")
+    installed_sha = item.get("installed_sha")
+    catalog_sha = item.get("catalog_sha")
+    settings_revision = item.get("settings_revision")
+    if (name is None or key is None or not isinstance(version, str) or len(version) > 64
+            or source not in {"catalog", "user", "git"}
+            or (catalog_name is not None and _safe_label(catalog_name, maximum=160) is None)
+            or (installed_sha is not None and re.fullmatch(r"[0-9a-f]{40,64}", installed_sha) is None)
+            or (catalog_sha is not None and re.fullmatch(r"[0-9a-f]{40,64}", catalog_sha) is None)
+            or (source == "catalog" and (catalog_name is None or installed_sha is None))
+            or not isinstance(settings_revision, str)
+            or re.fullmatch(r"[0-9a-f]{64}", settings_revision) is None):
+        return None
+    safe = {"name": name, "key": key, "version": version, "source": source,
+            "catalog_name": catalog_name, "installed_sha": installed_sha,
+            "settings_revision": settings_revision}
+    return hashlib.sha256(json.dumps(safe, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=True, allow_nan=False).encode("ascii")).hexdigest()
+
+
 def build_extension_snapshot(*, skills: Any, plugins: Any, mcps: Any,
                              native_skill_files: Any = (),
                              archived_skill_files: Any = (),
                              skill_catalog: set[str] | None = None,
-                             owner_added_mcp_revisions: dict[str, str] | None = None) -> dict[str, Any]:
+                             owner_added_mcp_revisions: dict[str, str] | None = None,
+                             owner_added_plugin_revisions: dict[str, str] | None = None) -> dict[str, Any]:
     """Build a closed, secret-free inventory. Missing source claims remain unknown."""
     rows: list[dict[str, Any]] = []
     if not isinstance(skills, list) or len(skills) > 256:
@@ -194,6 +221,8 @@ def build_extension_snapshot(*, skills: Any, plugins: Any, mcps: Any,
         rows.append(placeholder)
         rows_by_skill[skill_id] = placeholder
     owner_mcp = owner_added_mcp_revisions or {}
+    owner_plugins = owner_added_plugin_revisions or {}
+    plugin_sources: dict[str, str] = {}
     for kind, values in (("plugins", plugins), ("mcps", mcps)):
         if not isinstance(values, list) or len(values) > 512:
             raise ValueError("native extension inventory exceeded its bound")
@@ -209,16 +238,29 @@ def build_extension_snapshot(*, skills: Any, plugins: Any, mcps: Any,
                 raise ValueError("native plugin registry key was invalid")
             source = item.get("source") if isinstance(item.get("source"), str) else "unknown"
             provenance, label = _source_label(source, name)
-            if kind == "mcps":
+            if kind == "plugins":
+                revision = _plugin_config_revision(item)
+                if source == "catalog":
+                    provenance = ("useradded" if owner_plugins.get(name) == revision else "unknown")
+                for provider_identity in {name, key}:
+                    prior = plugin_sources.get(provider_identity)
+                    plugin_sources[provider_identity] = provenance if prior in {None, provenance} else "unknown"
+            else:
                 revision = _mcp_config_revision(item)
-                provenance = ("useradded" if source == "config"
-                    and owner_mcp.get(name) == revision else
-                    "unknown")
+                if source == "config":
+                    provenance = "useradded" if owner_mcp.get(name) == revision else "unknown"
+                elif source == "plugin":
+                    plugin_name = _safe_label(item.get("plugin"), maximum=96)
+                    provider_source = plugin_sources.get(plugin_name or "", "unknown")
+                    provenance = ("bundledResources" if provider_source in {"builtin", "bundledResources"}
+                                  else "useradded" if provider_source == "useradded" else "unknown")
+                else:
+                    provenance = "unknown"
                 label = name
             row = {"kind": kind, "name": name, "label": label,
                    "source": provenance, "editable": False,
                    "removable": (provenance == "useradded" if kind == "plugins"
-                                 else provenance == "useradded")}
+                                 else source == "config" and provenance == "useradded")}
             if kind == "plugins":
                 row.update({"key": key, "version": item.get("version", ""), "state": item.get("status", "unknown"),
                             "updateAvailable": item.get("update_available"),
@@ -229,8 +271,13 @@ def build_extension_snapshot(*, skills: Any, plugins: Any, mcps: Any,
                 row.update({"transport": item.get("transport", "unknown"),
                             "enabled": item.get("enabled") is True,
                             "configRevision": item.get("config_revision"),
+                            "provider": item.get("plugin") if source == "plugin" else None,
                             "originLabel": ("Jarvis-added catalog server" if provenance == "useradded"
-                                            else "Plugin-provided; source not verified" if source == "plugin"
+                                            else (f"Hermes bundled plugin: {item.get('plugin')}"
+                                                  if source == "plugin" and provenance == "bundledResources"
+                                                  else f"User plugin: {item.get('plugin')}"
+                                                  if source == "plugin" and provenance == "useradded"
+                                                  else "Plugin-provided; source not verified" if source == "plugin"
                                             else "Native source unverified")})
             rows.append(row)
     rows.sort(key=lambda item: (item["kind"], item["label"].casefold(), item["name"]))
@@ -304,6 +351,7 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
         accepted = request.get("core_ingress")
         principal = current_owner(request)
         owner_mcp_revisions = owned_mcp_revisions(principal.subject, principal.core_generation)
+        owner_plugin_revisions = owned_plugin_revisions(principal.subject, principal.core_generation)
         provider = skill_provider(request)
         token = access_jwt(request)
         skill_files = provider.list_skills(core_generation=principal.core_generation,
@@ -317,7 +365,8 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                                         native_skill_files=skill_files,
                                         archived_skill_files=archived_skill_files,
                                         skill_catalog=skill_catalog,
-                                        owner_added_mcp_revisions=owner_mcp_revisions)
+                                        owner_added_mcp_revisions=owner_mcp_revisions,
+                                        owner_added_plugin_revisions=owner_plugin_revisions)
 
     async def get_extensions(request: Any) -> Any:
         try:
@@ -405,7 +454,8 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                        "server_name TEXT NOT NULL, config_revision TEXT NOT NULL, "
                        "created REAL NOT NULL, PRIMARY KEY(owner_hash, server_name))")
             rows = db.execute("SELECT server_name,config_revision FROM jarvis_extension_owned_mcps "
-                              "WHERE owner_hash=?", (owner_hash,)).fetchall()
+                              "WHERE owner_hash=? AND core_generation=?",
+                              (owner_hash, generation)).fetchall()
         return {row["server_name"]: row["config_revision"] for row in rows}
 
     def record_owned_mcp(subject: str, generation: str, name: str, revision: str) -> None:
@@ -422,7 +472,37 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
         owner_hash = hashlib.sha256(subject.encode()).hexdigest()
         with service.store._connect() as db:
             db.execute("DELETE FROM jarvis_extension_owned_mcps "
-                       "WHERE owner_hash=? AND server_name=?", (owner_hash, name))
+                       "WHERE owner_hash=? AND core_generation=? AND server_name=?",
+                       (owner_hash, generation, name))
+
+    def owned_plugin_revisions(subject: str, generation: str) -> dict[str, str]:
+        owner_hash = hashlib.sha256(subject.encode()).hexdigest()
+        with service.store._connect() as db:
+            db.execute("CREATE TABLE IF NOT EXISTS jarvis_extension_owned_plugins ("
+                       "owner_hash TEXT NOT NULL, core_generation TEXT NOT NULL, "
+                       "plugin_name TEXT NOT NULL, native_revision TEXT NOT NULL, "
+                       "created REAL NOT NULL, PRIMARY KEY(owner_hash, core_generation, plugin_name))")
+            rows = db.execute("SELECT plugin_name,native_revision FROM jarvis_extension_owned_plugins "
+                              "WHERE owner_hash=? AND core_generation=?",
+                              (owner_hash, generation)).fetchall()
+        return {row["plugin_name"]: row["native_revision"] for row in rows}
+
+    def record_owned_plugin(subject: str, generation: str, name: str, revision: str) -> None:
+        owner_hash = hashlib.sha256(subject.encode()).hexdigest()
+        with service.store._connect() as db:
+            db.execute("CREATE TABLE IF NOT EXISTS jarvis_extension_owned_plugins ("
+                       "owner_hash TEXT NOT NULL, core_generation TEXT NOT NULL, "
+                       "plugin_name TEXT NOT NULL, native_revision TEXT NOT NULL, "
+                       "created REAL NOT NULL, PRIMARY KEY(owner_hash, core_generation, plugin_name))")
+            db.execute("INSERT OR REPLACE INTO jarvis_extension_owned_plugins "
+                       "VALUES(?,?,?,?,?)", (owner_hash, generation, name, revision, time.time()))
+
+    def forget_owned_plugin(subject: str, generation: str, name: str) -> None:
+        owner_hash = hashlib.sha256(subject.encode()).hexdigest()
+        with service.store._connect() as db:
+            db.execute("DELETE FROM jarvis_extension_owned_plugins "
+                       "WHERE owner_hash=? AND core_generation=? AND plugin_name=?",
+                       (owner_hash, generation, name))
 
     async def mutate(request: Any, *, operation: str) -> Any:
         try:
@@ -517,6 +597,10 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
             if reserved != "new":
                 return web.json_response({"status": reserved}, status=202 if reserved == "pending" else 200,
                                          headers=_secure_headers())
+            mcp_owner_revision = None
+            forget_mcp_name = None
+            plugin_owner_revision = None
+            forget_plugin_name = None
             if operation == "skills:add":
                 result = await service.backend.install_skill(body["identifier"])
                 reload_result = await service.backend.reload_skills()
@@ -628,6 +712,17 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                 status = 200
             elif operation == "plugins:add":
                 result = await service.backend.install_plugin(body["catalog_name"])
+                observed_plugins = await service.backend.list_managed_plugins()
+                observed = next((row for row in observed_plugins
+                                 if row.get("name") == result.get("name")), None)
+                revision = _plugin_config_revision(observed) if isinstance(observed, dict) else None
+                if (observed is None or observed.get("source") not in {"catalog", "user", "git"}
+                        or revision is None):
+                    return web.json_response({"status": "pending",
+                        "reason": "plugin install was accepted but exact native configuration readback is pending"},
+                        status=202, headers=_secure_headers())
+                result["nativeInventoryConfirmed"] = True
+                plugin_owner_revision = revision
                 status = 201
             elif operation == "plugins:edit":
                 result = await service.backend.update_plugin_settings(target["key"], body["values"])
@@ -637,6 +732,12 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
                 status = 200
             elif operation == "plugins:remove":
                 result = await service.backend.remove_plugin(target["name"])
+                observed_plugins = await service.backend.list_managed_plugins()
+                if any(row.get("name") == target["name"] for row in observed_plugins):
+                    return web.json_response({"status": "pending",
+                        "reason": "plugin removal was accepted but native inventory still contains it"},
+                        status=202, headers=_secure_headers())
+                forget_plugin_name = target["name"]
                 status = 200
             elif operation == "mcps:add":
                 result = await service.backend.add_catalog_mcp(body["catalog_name"])
@@ -667,6 +768,11 @@ def install_jarvis_extensions_admin_routes(app: Any, service: Any) -> None:
             if operation == "mcps:add" and isinstance(mcp_owner_revision, str):
                 record_owned_mcp(before.subject, before.core_generation,
                                   result["name"], mcp_owner_revision)
+            elif operation == "plugins:add" and isinstance(plugin_owner_revision, str):
+                record_owned_plugin(before.subject, before.core_generation,
+                                    result["name"], plugin_owner_revision)
+            elif operation == "plugins:remove" and isinstance(forget_plugin_name, str):
+                forget_owned_plugin(before.subject, before.core_generation, forget_plugin_name)
             elif operation == "mcps:remove" and isinstance(forget_mcp_name, str):
                 forget_owned_mcp(before.subject, before.core_generation, forget_mcp_name)
             complete_action(body, before.subject)

@@ -741,13 +741,24 @@ class CoreRpcClient:
             if not isinstance(settings_rows, list) or len(settings_rows) > 64:
                 raise JarvisChatDenied("official plugin settings schema was invalid")
             safe_schema = _safe_plugin_settings_schema(settings_rows)
+            catalog_name = self._bounded_profile_text(row.get("catalog_name"), limit=160)
+            installed_sha = row.get("installed_sha")
+            if not isinstance(installed_sha, str) or re.fullmatch(r"[0-9a-fA-F]{40,64}", installed_sha) is None:
+                installed_sha = None
+            else:
+                installed_sha = installed_sha.lower()
+            catalog_sha = row.get("catalog_sha")
+            if not isinstance(catalog_sha, str) or re.fullmatch(r"[0-9a-fA-F]{40,64}", catalog_sha) is None:
+                catalog_sha = None
+            else:
+                catalog_sha = catalog_sha.lower()
             settings_revision = hashlib.sha256(json.dumps(
                 safe_schema, sort_keys=True, separators=(",", ":"),
                 ensure_ascii=True, allow_nan=False).encode("ascii")).hexdigest()
             projected.append({
                 "name": name, "key": key, "version": row["version"], "source": source,
-                "status": row["status"], "catalog_name": (
-                    row.get("catalog_name") if isinstance(row.get("catalog_name"), str) else None),
+                "status": row["status"], "catalog_name": catalog_name,
+                "installed_sha": installed_sha, "catalog_sha": catalog_sha,
                 "update_available": row.get("update_available") if type(row.get("update_available")) is bool else None,
                 "settings_schema": safe_schema,
                 "settings_revision": settings_revision,
@@ -813,8 +824,9 @@ class CoreRpcClient:
             config_revision = hashlib.sha256(json.dumps(
                 safe_revision_row, sort_keys=True, separators=(",", ":"),
                 ensure_ascii=True, allow_nan=False).encode("ascii")).hexdigest()
+            plugin = self._bounded_profile_text(row.get("plugin"), limit=96)
             projected.append({"name": name, "transport": transport, "enabled": row["enabled"],
-                              "source": source,
+                              "source": source, "plugin": plugin,
                               "config_revision": config_revision})
         return projected
 

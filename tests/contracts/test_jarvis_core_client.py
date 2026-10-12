@@ -719,3 +719,22 @@ def test_fixed_status_adapters_drop_metadata_and_use_server_default_profile():
         ("cron.manage", {"action": "list", "include_disabled": True}),
         ("plugins.list", {}), ("mcp.servers.status", {}),
     ]
+
+
+def test_mcp_extension_projection_keeps_provider_identity_without_connection_secrets():
+    client = CoreRpcClient(token_file=Path("/private/fake/token"))
+    calls = []
+
+    async def rpc(method, params):
+        calls.append((method, params))
+        return {"servers": [{"name": "plugin-server", "transport": "stdio", "enabled": True,
+                             "source": "plugin", "plugin": "bundled-provider",
+                             "command": "private-command", "env": {"TOKEN": "private-secret"}}]}
+
+    client._rpc = rpc
+    result = asyncio.run(client.list_mcp_servers())
+    assert result[0]["plugin"] == "bundled-provider"
+    assert result[0]["source"] == "plugin"
+    assert "private-command" not in repr(result)
+    assert "private-secret" not in repr(result)
+    assert calls == [("mcp.servers.list", {})]
