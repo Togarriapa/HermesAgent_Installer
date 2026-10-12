@@ -129,3 +129,7 @@ Calendar source clarification: an owner-selected protected connection/enrollment
 ## Reachable owner-UI Calendar producer
 
 Calendar's actual producer is a fixed owner-ingress read adapter composed in the existing root Inspector, not a fabricated native model call or an assumed AuthorityClient bridge. Implement protected connection registration/currentness, existing opaque credential-vault resolution and a narrowly authorized source-known HTTPS list_events exchange with a distinct owner-ui-calendar-read invocation class. Return real root-verified read results to the existing finite Calendar UI. Missing connection/account authorization stays pending; no third daemon, generic RPC, credential copy, spending or interruption of other native rollout is introduced.
+
+## Exact private draft read for Jarvis review
+
+R0090's review handoff needs actual stored Expert/prior-turn Markdown, not child summaries or promotion argument hashes. Add one fixed current-master-only obsidian_read_private_draft operation beside the existing seven native tools. It resolves owner+opaque draft ID+expected digest through retained root origin and independently read bytes, returns bounded actual content/provenance and carries no final-effect authority. Expert nonfinal closure remains exactly its existing six; no generic draft browser or public Expert identity. Existing jarvis-core-platform/eight tasks/all acceptance remain OPEN until real native read/review/promotion is qualified.

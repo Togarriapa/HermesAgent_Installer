@@ -2243,3 +2243,14 @@ Calendar reads SHALL use an implemented finite owner-ingress producer in the exi
 #### Scenario: Transport scope/currentness fails
 - **WHEN** owner/connection/calendar/source/credential scope, exact fixed request/result or original ingress/revocation lease cannot be verified before network/output
 - **THEN** read denies/pends with no copied secret, arbitrary RPC/URL, automatic repeated effect or lease restamping.
+
+### Requirement: Actual private draft content read by current Jarvis master
+The system SHALL provide one fixed obsidian_read_private_draft native read for current Jarvis master, resolving only registered owner+opaque draft ID+expected content digest through genuine retained root origin and independent pending bytes. It SHALL return bounded actual Markdown/provenance without granting promotion, and SHALL NOT enter the Expert's six-tool closure.
+
+#### Scenario: Expert/prior-turn draft review
+- **WHEN** Jarvis reviews an actual retained Expert or prior-turn draft
+- **THEN** current master admission reads the exact stored Markdown/digest before separate review/owner effect approval; summaries, argument hashes or root verification alone do not establish content review.
+
+#### Scenario: Expert request or incomplete content
+- **WHEN** an Expert/foreign caller requests private draft read or content exceeds complete-review bounds/changes digest
+- **THEN** access denies or review remains explicitly incomplete/pending, with no wildcard enumeration, false full review or automatic promotion.
