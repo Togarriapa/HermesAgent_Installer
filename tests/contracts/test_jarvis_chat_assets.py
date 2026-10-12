@@ -11,6 +11,7 @@ from hermes_installer.remote.jarvis_chat_assets import (
     FEATURE_CHUNK_PATHS, FEATURE_CSS_CHUNK_PATHS, reviewed_chat_asset,
 )
 from hermes_installer.remote.jarvis_feature_registry import FEATURE_ASSETS
+from hermes_installer.remote.jarvis_feature_contract import validate_feature_assets
 
 
 def reviewed_client_bundle():
@@ -19,6 +20,15 @@ def reviewed_client_bundle():
 
 
 class JarvisChatAssetTests(unittest.TestCase):
+    def test_registered_features_obey_the_fixed_asset_and_lifecycle_contract(self):
+        validate_feature_assets(FEATURE_ASSETS)
+        feature_ids = [feature.feature_id for feature in FEATURE_ASSETS]
+        self.assertEqual(len(feature_ids), len(set(feature_ids)))
+        for feature in FEATURE_ASSETS:
+            with self.subTest(feature=feature.feature_id):
+                self.assertTrue(feature.mount_js.startswith("function mount("))
+                self.assertTrue(feature.unmount_js.startswith("function unmount("))
+
     def test_chat_shell_uses_jarvis_branding_without_desktop_admin_links(self):
         _content_type, page = reviewed_chat_asset("/chat")
         source = page.decode("utf-8")
