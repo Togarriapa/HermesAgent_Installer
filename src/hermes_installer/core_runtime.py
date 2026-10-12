@@ -1,6 +1,6 @@
 """Fixed, journaled adoption of the pinned Hermes core service."""
 from __future__ import annotations
-import contextvars, fcntl, grp, hashlib, json, os, pwd, re, secrets, select, shlex, stat, struct, subprocess, sys, tempfile, threading, time
+import contextvars, fcntl, grp, hashlib, json, os, pwd, re, secrets, select, shlex, signal, stat, struct, subprocess, sys, tempfile, threading, time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -4001,6 +4001,128 @@ def _obsidian_vault_tree_sha256(root):
                 "size_bytes":len(data),"sha256":hashlib.sha256(data).hexdigest()})
  return hashlib.sha256(_canonical_json(rows)).hexdigest()
 
+def _verify_root_import_dispatch_source(adapter_generation,core_source_generation):
+ """Recheck the exact helper, Hermes source and PM interpreter before owner effects."""
+ _validate_adapter_source_path()
+ if _identity(verify_python_version=False).get("commit")!=COMMIT:
+  raise CoreRuntimeError("pinned Hermes identity changed before the owner importer")
+ if _core_source_generation()!=core_source_generation:
+  raise CoreRuntimeError("pinned Hermes Core source changed before the owner importer")
+ from .remote import core_gateway_inspector as inspector
+ if inspector._current_native_adapter_generation(deadline=time.monotonic()+20.0)!=adapter_generation:
+  raise CoreRuntimeError("fixed installer adapter generation changed before the owner importer")
+ if (_validated_executable(RUNUSER,{ROOT_UID})!=RUNUSER
+     or _validated_executable(PYTHON,{1000})!=PYTHON
+     or not PYTHON.is_symlink() or os.readlink(PYTHON)!=PYTHON_LINK_TARGET
+     or PYTHON.resolve(strict=True)!=PYTHON_REAL
+     or _digest(PYTHON_REAL)!=PYTHON_SHA256
+     or _digest(PYTHON.parent.parent/"pyvenv.cfg")!=PYVENV_CFG_SHA256):
+  raise CoreRuntimeError("fixed Root runuser or Hermes PM interpreter changed")
+
+def _root_runuser_executable_identity():
+ """Pin the fixed runuser executable before spawning its privileged child."""
+ if (_validated_executable(RUNUSER,{ROOT_UID})!=RUNUSER
+     or os.geteuid()!=ROOT_UID):
+  raise CoreRuntimeError("fixed Root runuser executable custody differs")
+ resolved=RUNUSER.resolve(strict=True); info=resolved.stat()
+ if (info.st_uid!=ROOT_UID or not stat.S_ISREG(info.st_mode)
+     or not info.st_mode&0o111):
+  raise CoreRuntimeError("fixed Root runuser executable custody differs")
+ return (info.st_dev,info.st_ino)
+
+def _root_runuser_pipe_identity(process,argv,pipe_fd,expected_executable):
+ """Capture one root-launched runuser parent and its inherited anonymous pipe."""
+ if (os.geteuid()!=ROOT_UID or not isinstance(process,subprocess.Popen)
+     or type(process.pid) is not int or process.pid<=1 or process.poll() is not None
+     or not hasattr(os,"pidfd_open")):
+  raise CoreRuntimeError("fixed Root runuser child is unavailable")
+ pipe=os.fstat(pipe_fd)
+ if not stat.S_ISFIFO(pipe.st_mode) or pipe.st_uid!=ROOT_UID:
+  raise CoreRuntimeError("Root importer stdin is not its anonymous root-owned pipe")
+ runuser=RUNUSER.resolve(strict=True); expected_exe=runuser.stat()
+ if ((expected_exe.st_dev,expected_exe.st_ino)!=expected_executable
+     or expected_exe.st_uid!=ROOT_UID or not stat.S_ISREG(expected_exe.st_mode)
+     or not expected_exe.st_mode&0o111):
+  raise CoreRuntimeError("fixed runuser executable custody differs")
+ pidfd=os.pidfd_open(process.pid,0)
+ identity={"pid":process.pid,"root_pid":os.getpid(),"pidfd":pidfd,
+  "argv":tuple(os.fsencode(item) for item in argv),"exe_dev":expected_exe.st_dev,
+  "exe_ino":expected_exe.st_ino,"pipe_dev":pipe.st_dev,"pipe_ino":pipe.st_ino}
+ try:
+  _assert_root_runuser_pipe_identity(process,identity,pipe_fd)
+  first=_root_runuser_proc_snapshot(process,identity,pipe_fd)
+  _assert_root_runuser_pipe_identity(process,identity,pipe_fd)
+  second=_root_runuser_proc_snapshot(process,identity,pipe_fd)
+  if first!=second:
+   raise CoreRuntimeError("fixed Root runuser parent changed during capture")
+  identity["snapshot"]=second
+  return identity
+ except BaseException:
+  os.close(pidfd)
+  raise
+
+def _root_runuser_proc_snapshot(process,identity,pipe_fd):
+ pid=identity["pid"]; proc=Path("/proc")/str(pid)
+ stat_text=(proc/"stat").read_text(); close=stat_text.rfind(")")
+ fields=stat_text[close+1:].split() if close>=0 else []
+ if len(fields)<20: raise CoreRuntimeError("Root runuser process identity is unavailable")
+ state=fields[0]; ppid=int(fields[1]); process_group=int(fields[2]); session=int(fields[3]); start_ticks=fields[19]
+ values={line.split(":",1)[0]:line.split(":",1)[1].split()
+  for line in (proc/"status").read_text().splitlines() if ":" in line}
+ actual_argv=(proc/"cmdline").read_bytes().split(b"\0")
+ if actual_argv and actual_argv[-1]==b"": actual_argv.pop()
+ comm=(proc/"comm").read_text().strip()
+ exe=(proc/"exe").stat()
+ pipe=os.fstat(pipe_fd)
+ proc_stdin=proc/"fd"/"0"
+ stdin_target=os.readlink(proc_stdin)
+ stdin_stat=proc_stdin.stat()
+ if (state in {"Z","X"} or ppid!=identity["root_pid"]
+     or process_group!=pid or session!=pid or not start_ticks.isdecimal()
+     or values.get("Uid")!=["0"]*4 or values.get("Gid")!=["0"]*4 or comm!="runuser"
+     or tuple(actual_argv)!=identity["argv"]
+     or (exe.st_dev,exe.st_ino,exe.st_uid)!=(identity["exe_dev"],identity["exe_ino"],ROOT_UID)
+     or not stat.S_ISFIFO(stdin_stat.st_mode) or stdin_stat.st_uid!=ROOT_UID
+     or (stdin_stat.st_dev,stdin_stat.st_ino)!=(pipe.st_dev,pipe.st_ino)
+     or stdin_target!=f"pipe:[{pipe.st_ino}]"
+     or (pipe.st_dev,pipe.st_ino,pipe.st_uid)!=(identity["pipe_dev"],identity["pipe_ino"],ROOT_UID)):
+  raise CoreRuntimeError("Root runuser parent, command, or inherited pipe changed")
+ return (start_ticks,ppid,process_group,session,comm,tuple(actual_argv),
+  exe.st_dev,exe.st_ino,stdin_target,stdin_stat.st_dev,stdin_stat.st_ino)
+
+def _assert_root_runuser_pipe_identity(process,identity,pipe_fd):
+ if (process.pid!=identity["pid"] or os.getpid()!=identity["root_pid"]
+     or process.poll() is not None):
+  raise CoreRuntimeError("fixed Root runuser process exited before its frame")
+ poller=select.poll(); poller.register(identity["pidfd"],select.POLLIN|select.POLLHUP|select.POLLERR|select.POLLNVAL)
+ current=_root_runuser_proc_snapshot(process,identity,pipe_fd)
+ expected=identity.get("snapshot",current)
+ if poller.poll(0) or current!=expected:
+  raise CoreRuntimeError("fixed Root runuser PIDFD or parent identity changed")
+
+def _assert_root_runuser_dispatch_complete(process,identity):
+ poller=select.poll(); poller.register(identity["pidfd"],select.POLLIN|select.POLLHUP|select.POLLERR|select.POLLNVAL)
+ if process.returncode is None or not poller.poll(0):
+  raise CoreRuntimeError("fixed Root runuser process did not exit under its retained PIDFD")
+
+def _terminate_root_runuser_group(process,identity):
+ """Reap only the isolated session created for a failed fixed runuser operation."""
+ if process is None: return
+ try:
+  if identity is not None:
+   # The isolated process group may outlive its runuser leader if the owner
+   # interpreter fails.  Its PID cannot be reused while members remain.
+   try: os.killpg(identity["pid"],signal.SIGKILL)
+   except ProcessLookupError: pass
+  elif process.poll() is None:
+   os.killpg(process.pid,signal.SIGKILL)
+  process.communicate(timeout=5)
+ except (OSError,subprocess.TimeoutExpired):
+  try: process.kill()
+  except OSError: pass
+  try: process.communicate(timeout=2)
+  except Exception: pass
+
 def _run_same_materialization_import(prepared,next_archive,old_archive,backup_name):
  """Consume the root seal at the fixed root→runuser importer boundary."""
  if (os.geteuid()!=ROOT_UID or not verify_prepared_same_materialization_transition(prepared)
@@ -4026,6 +4148,7 @@ def _run_same_materialization_import(prepared,next_archive,old_archive,backup_na
       prepared.shared_manifest_sha256,prepared.shared_materialization_sha256,
       prepared.shared_member_count)):
   raise CoreRuntimeError("fixed importer archives differ from the sealed classifier")
+ _verify_root_import_dispatch_source(prepared.new_adapter_generation,prepared.new_source_generation)
  argv=[str(RUNUSER),"-u","admin","--",str(PYTHON),"-P","-m",
   "hermes_installer.registry.manual_jarvis_skills","import-helper-transition",
   "--home",str(HERMES_HOME),"--next-sha256",prepared.new_artifact_sha256,
@@ -4040,15 +4163,18 @@ def _run_same_materialization_import(prepared,next_archive,old_archive,backup_na
   "PYTHONPATH":str(Path(__file__).resolve().parents[1]),
   "PYTHONNOUSERSITE":"1","PYTHONDONTWRITEBYTECODE":"1"}
  read_fd,write_fd=os.pipe()
+ process=None; dispatch=None; writer=None; write_error=[]
  try:
   if not claim_prepared_same_materialization_step(prepared,step="resources-import"):
    raise CoreRuntimeError("prepared helper-only import claim is stale or replayed")
+  runuser_executable=_root_runuser_executable_identity()
   process=subprocess.Popen(argv,stdin=read_fd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
-   cwd="/",env=env,close_fds=True,pass_fds=(read_fd,))
+   cwd="/",env=env,close_fds=True,pass_fds=(read_fd,),start_new_session=True)
   os.close(read_fd); read_fd=-1
-  write_error=[]
+  dispatch=_root_runuser_pipe_identity(process,argv,write_fd,runuser_executable)
   def send_frame():
    try:
+    _assert_root_runuser_pipe_identity(process,dispatch,write_fd)
     view=memoryview(frame)
     while view:
      written=os.write(write_fd,view)
@@ -4062,9 +4188,10 @@ def _run_same_materialization_import(prepared,next_archive,old_archive,backup_na
   writer.start()
   try: stdout,stderr=process.communicate(timeout=300)
   except subprocess.TimeoutExpired:
-   process.kill(); process.communicate(); writer.join(timeout=1)
+   _terminate_root_runuser_group(process,dispatch); writer.join(timeout=1)
    raise CoreRuntimeError("helper-only importer exceeded its fixed deadline") from None
   writer.join(timeout=1)
+  _assert_root_runuser_dispatch_complete(process,dispatch)
   if writer.is_alive() or write_error:
    raise CoreRuntimeError("helper-only importer input pipe did not complete exactly")
   if process.returncode!=0 or len(stdout)>16*1024 or len(stderr)>16*1024:
@@ -4101,6 +4228,10 @@ def _run_same_materialization_import(prepared,next_archive,old_archive,backup_na
    raise CoreRuntimeError("helper-only importer result is malformed") from None
   return result
  finally:
+  if process is not None and process.poll() is None:
+   _terminate_root_runuser_group(process,dispatch)
+  if writer is not None: writer.join(timeout=1)
+  if dispatch is not None: os.close(dispatch["pidfd"])
   if read_fd>=0: os.close(read_fd)
   try: os.close(write_fd)
   except OSError: pass
@@ -4262,6 +4393,8 @@ def _stop_owned_core_for_adapter_update(allowed_sources):
 
 def _restore_adapter_update_owner_generation(cohort):
  """Use the fixed root→runuser restore operation for an interrupted owner CAS."""
+ if os.geteuid()!=ROOT_UID or not _ADAPTER_UPDATE_LOCK_HELD.get():
+  raise CoreRuntimeError("owner-generation restore requires the held Root recovery lock")
  from .registry import manual_jarvis_skills as native
  target=HERMES_HOME/"skills"/native._GENERATION
  old_sha=cohort["old_artifact_sha256"]; new_sha=cohort["new_artifact_sha256"]
@@ -4278,15 +4411,17 @@ def _restore_adapter_update_owner_generation(cohort):
  if target_ok:
   return
  native._verify_owned_generation(target,new_files,new_sha)
+ _verify_root_import_dispatch_source(cohort["new_adapter_generation"],
+  cohort["new_core_source_generation"])
  name=cohort["owner_generation_backup_name"]
+ shared_manifest,shared_materialization,shared_count=_same_materialization_digests(
+  native,new_manifest,new_files)
  argv=[str(RUNUSER),"-u","admin","--",str(PYTHON),"-P","-m",
   "hermes_installer.registry.manual_jarvis_skills","restore-helper-transition",
   "--home",str(HERMES_HOME),"--current-sha256",new_sha,"--restore-sha256",old_sha,
-  "--backup-name",name,"--shared-manifest-sha256",
-  _same_materialization_digests(native,new_manifest,new_files)[0],
-  "--shared-materialization-sha256",
-  _same_materialization_digests(native,new_manifest,new_files)[1],
-  "--shared-member-count",str(_same_materialization_digests(native,new_manifest,new_files)[2])]
+  "--backup-name",name,"--shared-manifest-sha256",shared_manifest,
+  "--shared-materialization-sha256",shared_materialization,
+  "--shared-member-count",str(shared_count)]
  frame=struct.pack(">QQ",len(new_archive),len(old_archive))+new_archive+old_archive
  env={"PATH":"/usr/sbin:/usr/bin:/sbin:/bin","HOME":str(HOME),
   "HERMES_HOME":str(HERMES_HOME),"LANG":"C.UTF-8",
@@ -4296,25 +4431,34 @@ def _restore_adapter_update_owner_generation(cohort):
      or _validated_executable(PYTHON,{1000})!=PYTHON):
   raise CoreRuntimeError("fixed owner-generation rollback executables differ")
  rfd,wfd=os.pipe()
+ process=None; dispatch=None; writer=None; write_error=[]
  try:
+  runuser_executable=_root_runuser_executable_identity()
   process=subprocess.Popen(argv,stdin=rfd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
-   cwd="/",env=env,close_fds=True,pass_fds=(rfd,))
+   cwd="/",env=env,close_fds=True,pass_fds=(rfd,),start_new_session=True)
   os.close(rfd); rfd=-1
+  dispatch=_root_runuser_pipe_identity(process,argv,wfd,runuser_executable)
   def write_frame():
-   view=memoryview(frame)
-   while view:
-    sent=os.write(wfd,view)
-    if sent<=0: raise OSError("owner generation rollback pipe closed")
-    view=view[sent:]
-   os.close(wfd)
+   try:
+    _assert_root_runuser_pipe_identity(process,dispatch,wfd)
+    view=memoryview(frame)
+    while view:
+     sent=os.write(wfd,view)
+     if sent<=0: raise OSError("owner generation rollback pipe closed")
+     view=view[sent:]
+   except Exception as exc: write_error.append(exc)
+   finally:
+    try: os.close(wfd)
+    except OSError: pass
   writer=threading.Thread(target=write_frame,name="core-resources-rollback-pipe",daemon=True)
   writer.start()
   try: stdout,stderr=process.communicate(timeout=180)
   except subprocess.TimeoutExpired:
-   process.kill(); process.communicate(); writer.join(timeout=1)
+   _terminate_root_runuser_group(process,dispatch); writer.join(timeout=1)
    raise CoreRuntimeError("owner generation rollback exceeded its fixed deadline") from None
   writer.join(timeout=1)
-  if writer.is_alive() or process.returncode or len(stdout)>8192 or len(stderr)>8192:
+  _assert_root_runuser_dispatch_complete(process,dispatch)
+  if writer.is_alive() or write_error or process.returncode or len(stdout)>8192 or len(stderr)>8192:
    raise CoreRuntimeError("owner generation rollback operation failed")
   try: result=json.loads(stdout)
   except (ValueError,TypeError): raise CoreRuntimeError("owner generation rollback result is malformed") from None
@@ -4329,6 +4473,10 @@ def _restore_adapter_update_owner_generation(cohort):
   native._verify_owned_generation(target,old_files,old_sha)
   return result
  finally:
+  if process is not None and process.poll() is None:
+   _terminate_root_runuser_group(process,dispatch)
+  if writer is not None: writer.join(timeout=1)
+  if dispatch is not None: os.close(dispatch["pidfd"])
   if rfd>=0: os.close(rfd)
   try: os.close(wfd)
   except OSError: pass
