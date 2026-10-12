@@ -242,7 +242,7 @@ def test_per_message_isolated_session_registers_project_context_before_submit(tm
             Request(), conversation_id=conversation["id"], text="Use the project context.",
             idempotency_key="per-message-context-request-0001",
             turn_configuration={"model_id": "gpt-6-sol", "reasoning_effort": "high"})
-        for _ in range(100):
+        for _ in range(500):
             if store.owned_turn("subject-a", queued["turn_id"])["status"] == "completed":
                 break
             await asyncio.sleep(0.01)
@@ -257,6 +257,76 @@ def test_per_message_isolated_session_registers_project_context_before_submit(tm
     assert registered[0]["prompt_sha256"] == hashlib.sha256(
         b"Use the project context.").hexdigest()
     assert store.get_conversation("subject-a", conversation["id"])["session_key"] == "stored-isolated"
+
+
+@pytest.mark.parametrize("revocation", ["wrong-owner", "expired", "expired-during-registration"])
+def test_per_message_isolated_session_denies_stale_owner_before_rebind_or_submit(tmp_path, revocation):
+    store = JarvisChatStore(tmp_path / f"chat-{revocation}.sqlite3")
+    conversation = new_conversation(store, "subject-a")
+    access_jwt, ingress = "accepted-jwt-fixture", object()
+    current = [principal("subject-a")]
+    registered, submitted, failed_turn_ids = [], [], []
+
+    class Headers:
+        def getall(self, name, default=()):
+            return [access_jwt] if name == "Cf-Access-Jwt-Assertion" else list(default)
+
+    class Request:
+        headers = Headers()
+
+        def get(self, key):
+            return ingress if key == "core_ingress" else None
+
+    class Backend:
+        def stream_owned_turn(self, _stored_session_id, _text, *, isolated_model_id,
+                              isolated_reasoning_effort, on_isolated_session):
+            async def events():
+                if revocation == "wrong-owner":
+                    current[0] = principal("subject-b")
+                elif revocation == "expired":
+                    current[0] = ChatPrincipal(
+                        "subject-a", time.monotonic() - 1, time.monotonic() - 1,
+                        "core-generation-a")
+                await on_isolated_session("runtime-isolated", "stored-isolated")
+                submitted.append((isolated_model_id, isolated_reasoning_effort))
+                yield SimpleNamespace(kind="complete")
+            return events()
+
+        async def stop(self, _session_id):
+            pass
+
+    def register_owner_turn(**kwargs):
+        registered.append(kwargs)
+        if revocation == "expired-during-registration":
+            current[0] = ChatPrincipal(
+                "subject-a", time.monotonic() - 1, time.monotonic() - 1,
+                "core-generation-a")
+        return "a" * 32
+
+    service = JarvisChatService(
+        store, Backend(), principal_from_request=lambda _request: current[0],
+        owner_turn_register=register_owner_turn)
+
+    async def exercise():
+        queued = await service.start_server_turn(
+            Request(), conversation_id=conversation["id"], text="Do not submit after revocation.",
+            idempotency_key=f"per-message-revocation-{revocation}-0001",
+            turn_configuration={"model_id": "gpt-6-sol", "reasoning_effort": "high"})
+        failed_turn_ids.append(queued["turn_id"])
+        for _ in range(500):
+            if store.owned_turn("subject-a", queued["turn_id"])["status"] == "failed":
+                break
+            await asyncio.sleep(0.01)
+        assert store.owned_turn("subject-a", queued["turn_id"])["status"] == "failed"
+
+    asyncio.run(exercise())
+
+    assert len(registered) == (1 if revocation == "expired-during-registration" else 0)
+    assert submitted == []
+    unchanged = store.get_conversation("subject-a", conversation["id"])
+    assert unchanged["backend_id"] == conversation["backend_id"]
+    assert unchanged["session_key"] == conversation["session_key"]
+    assert service.owner_turn_handle_for(principal("subject-a"), failed_turn_ids[0]) is None
 
 
 def test_server_turn_mapping_runs_before_worker_and_failure_compensates_without_submit(tmp_path):

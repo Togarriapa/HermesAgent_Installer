@@ -342,6 +342,51 @@ class JarvisChatStore:
                 raise JarvisChatDenied("official core turn mapping changed before submit")
             db.execute("COMMIT")
 
+    def restore_unsubmitted_turn_session(self, principal: ChatPrincipal, conversation_id: str,
+                                         turn_id: str, current_runtime_id: str,
+                                         current_stored_session_id: str,
+                                         original_runtime_id: str,
+                                         original_stored_session_id: str) -> None:
+        """Undo an isolated-session map if currentness fails before prompt.submit."""
+        if (not isinstance(principal, ChatPrincipal) or not ID_RE.fullmatch(conversation_id or "")
+                or not ID_RE.fullmatch(turn_id or "")
+                or not all(_valid_core_session_id(value) for value in
+                           (current_runtime_id, current_stored_session_id,
+                            original_runtime_id, original_stored_session_id))):
+            raise JarvisChatDenied("isolated session rollback is invalid")
+        owner = self._owner(principal.subject)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            current = db.execute("""SELECT c.backend_id,c.session_key,c.owner,c.core_generation,
+                t.runtime_session_id,t.owner AS turn_owner,t.core_generation AS turn_generation,t.status
+                FROM conversations c JOIN turns t ON t.conversation_id=c.id
+                WHERE c.id=? AND t.id=?""", (conversation_id, turn_id)).fetchone()
+            events = db.execute("SELECT 1 FROM turn_events WHERE turn_id=? LIMIT 1",
+                                (turn_id,)).fetchone()
+            if (current is None or events is not None or current["owner"] != owner
+                    or current["turn_owner"] != owner
+                    or current["core_generation"] != principal.core_generation
+                    or current["turn_generation"] != principal.core_generation
+                    or current["status"] not in _ACTIVE
+                    or current["backend_id"] != current_runtime_id
+                    or current["runtime_session_id"] != current_runtime_id
+                    or current["session_key"] != current_stored_session_id):
+                db.execute("ROLLBACK")
+                raise JarvisChatDenied("isolated session rollback is no longer current")
+            changed_conversation = db.execute("""UPDATE conversations SET backend_id=?,session_key=?
+                WHERE id=? AND owner=? AND core_generation=? AND backend_id=? AND session_key=?""",
+                (original_runtime_id, original_stored_session_id, conversation_id, owner,
+                 principal.core_generation, current_runtime_id, current_stored_session_id)).rowcount
+            changed_turn = db.execute("""UPDATE turns SET runtime_session_id=?,updated=?
+                WHERE id=? AND owner=? AND conversation_id=? AND core_generation=?
+                  AND runtime_session_id=? AND status IN ('queued','running')""",
+                (original_runtime_id, _now(), turn_id, owner, conversation_id,
+                 principal.core_generation, current_runtime_id)).rowcount
+            if changed_conversation != 1 or changed_turn != 1:
+                db.execute("ROLLBACK")
+                raise JarvisChatDenied("isolated session rollback changed")
+            db.execute("COMMIT")
+
     def fail_active_conversation_turns(self, conversation_id: str) -> None:
         with self._connect() as db:
             ids = [row[0] for row in db.execute(
@@ -1193,10 +1238,17 @@ class JarvisChatService:
                 if (current.subject != principal.subject
                         or current.core_generation != principal.core_generation):
                     raise JarvisChatDenied("protected core turn changed before scheduling")
+                def current_principal_check() -> ChatPrincipal:
+                    # The stream worker outlives this handler. Keep only a narrow
+                    # currentness callback, rather than reaching for an implicit
+                    # request variable from inside the worker.
+                    return self._current(request)
+
                 async with self._worker_lock:
                     task = asyncio.create_task(self._run(
                         turn_id, conversation["backend_id"], text, principal, conversation_id,
                         stored_session_id=conversation["session_key"],
+                        current_principal_check=current_principal_check,
                         owner_turn_context=owner_turn_context,
                         require_mission_binding=require_mission_binding,
                         planning_context=planning_context,
@@ -1222,6 +1274,7 @@ class JarvisChatService:
     async def _run(self, turn_id: str, session_id: str, text: str,
                    activity_principal: ChatPrincipal | None = None,
                    conversation_id: str = "", *, stored_session_id: str = "",
+                   current_principal_check: Callable[[], ChatPrincipal] | None = None,
                    owner_turn_context: tuple[str, Any, Any | None] | None = None,
                    require_mission_binding: bool = False,
                    planning_context: Any | None = None,
@@ -1301,10 +1354,26 @@ class JarvisChatService:
                 async def bind_isolated_session(actual_session_id: str,
                                                 actual_stored_session_id: str) -> bool:
                     nonlocal session_id
-                    latest = self._current(request)
+                    if not callable(current_principal_check):
+                        raise JarvisChatDenied("per-message currentness check is unavailable")
+                    latest = current_principal_check()
                     if (latest.subject != activity_principal.subject
                             or latest.core_generation != activity_principal.core_generation):
                         raise JarvisChatDenied("per-message turn ownership changed")
+                    original_runtime_id = session_id
+
+                    def rollback_unsubmitted_mapping() -> None:
+                        self._owner_turn_handles.pop(turn_id, None)
+                        try:
+                            self.store.restore_unsubmitted_turn_session(
+                                activity_principal, conversation_id, turn_id,
+                                actual_session_id, actual_stored_session_id,
+                                original_runtime_id, stored_session_id)
+                        except Exception:
+                            # Keep the stale-turn denial primary. The store's exact CAS
+                            # prevents compensation from overwriting a newer mapping.
+                            pass
+
                     self.store.rebind_active_turn_session(
                         activity_principal, conversation_id, turn_id, session_id,
                         actual_session_id, stored_session_id=actual_stored_session_id)
@@ -1340,8 +1409,21 @@ class JarvisChatService:
                                 self._owner_turn_handles[turn_id] = owner_handle
                         except Exception:
                             if mission_binding is not None or planning_context is not None:
+                                rollback_unsubmitted_mapping()
                                 raise JarvisChatDenied(
                                     "mission owner-turn verification is unavailable") from None
+                    # Root registration is synchronous authority work from the stream's
+                    # point of view. Recheck after it too, immediately before Core resumes
+                    # the same socket and sends prompt.submit.
+                    try:
+                        latest = current_principal_check()
+                    except Exception:
+                        rollback_unsubmitted_mapping()
+                        raise
+                    if (latest.subject != activity_principal.subject
+                            or latest.core_generation != activity_principal.core_generation):
+                        rollback_unsubmitted_mapping()
+                        raise JarvisChatDenied("per-message turn ownership changed before submit")
                     return True
 
                 if turn_configuration is not None:
