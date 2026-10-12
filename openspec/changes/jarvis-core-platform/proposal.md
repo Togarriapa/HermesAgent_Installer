@@ -1,5 +1,7 @@
 # Proposal
 
+Close the existing M1 usable-chat producer gap with one Root-only fixed new-peer lifecycle probe: actual native Jarvis identity/Resources readback, ephemeral no-memory/no-tools official agent, existing authenticated Codex route and real terminal provider/native observations bound to exact starting custody. Reuse the pinned loopback client/native registration and observer mechanics without inventing an owner/planner receipt. Missing producers/login remain pending; all acceptance groups stay OPEN.
+
 M1 phase handoff clarification: preserve original J0 while Root performs exact private old-process Resources/primary readback under a sealed CoreRuntime scope after installing the gated-old unit. Boot/public admission deny partial cohorts. Separate adapter O/N from actual Core H/H, fix the sole home role to `jarvis-primary-home`, and bind starting versus final journal/Resources tuples explicitly. Start new source only with coherent bindings; retain original-unit recovery and require genuine native usability before final commit. This is the existing lifecycle scope, with all eight acceptance groups OPEN.
 
 ## M1 exact owner-overlay reconstruction clarification

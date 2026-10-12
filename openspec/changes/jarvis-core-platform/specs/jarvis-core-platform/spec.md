@@ -2377,6 +2377,12 @@ Source updates SHALL recover Source/Resources/discovery/primary/enrolled Obsidia
 ### Requirement: Exact retained owner-overlay reconstruction
 Helper-only transition SHALL preserve protected overlay-journal bytes and historical base/intermediate hashes. Root SHALL prove exact old/new base equality, reconstruct the original content chain and derive the new composed artifact by only helper/installer replacement. Current consumers SHALL verify the exact committed cohort reconstruction; guessed aliases or extra manifest changes SHALL deny.
 
+#### Scenario: Genuine fixed new-peer startup chat proof
+- **WHEN** Root qualifies the exact coherent starting cohort before final commit
+- **THEN** one fixed Root-enrolled lifecycle operation on the actual new native gateway peer uses its current Jarvis primary identity, independently verified H/A1 Resources inventory and existing authenticated Codex route with zero added metered spend.
+- **AND** an ephemeral official agent has empty tools/history, memory/context capture/persistence/background learning disabled, no provider fallback and a bounded fixed nonce prompt. The existing native provider observer joins actual request and successful provider/native terminal to exact source/process/account/identity/cohort custody; no fake owner turn, synthetic response, caller boolean or planning receipt qualifies.
+- **AND** only the private current single-use Root completion permits bindings-verified; changed peer/account/source, missing seam/login, extra context/tool call, timeout/replay or incomplete completion deny/pending. Recovery invalidates handles/proof and preserves the compatible old cohort without healthy-only commit or revived grants.
+
 #### Scenario: Exact guarded old read and coherent new startup
 - **WHEN** a helper-only adapter update replaces O with N while actual Hermes Core generation remains H
 - **THEN** the sole home role is `jarvis-primary-home`; primary/reconstruction Core bindings remain H/H, with adapter generations separate. Root preserves original J0/U0/L0 and installs exact gated-old Ugo while the captured old process remains live.
