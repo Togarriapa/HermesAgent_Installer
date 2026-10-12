@@ -2272,3 +2272,22 @@ Root SHALL reclaim active origin capacity only after actual successful promotion
 #### Scenario: Uncertain write, crash or missing archive
 - **WHEN** post-write completion is uncertain, compaction is interrupted or retained root history cannot be verified
 - **THEN** pending/history data and learned notes are preserved, completion is not inferred and no provenance/grant is fabricated from private mirrors or silently evicted.
+
+### Requirement: Actual exact-result Mission review bridge
+Within R0201/R0203 and RT-T266.3/VD-T266.5, root SHALL derive the exact owned current Mission/revision/run and complete persisted successful native result from independently verified execution records. A purpose-bound actual current no-tools Jarvis MASTER review request/completion SHALL join that context, owner/source generations and exact prompt/response digests. A planning receipt or caller-supplied result/JSON SHALL NOT constitute review. The closed observed response SHALL explicitly provide approved/rejected disposition, exact result digest and bounded nonempty rationale; the sealed decision and gateway Mission ledger SHALL retain all three plus their verified lineage through an implemented finite producer/delivery bridge.
+
+#### Scenario: Genuine completed run reviewed by current Jarvis
+- **WHEN** a current authenticated admitted owner turn requests review of its genuinely completed Expert/Team run and complete exact result bytes are verified and delivered to actual Jarvis
+- **THEN** the actual no-tools review completion yields a current purpose-bound sealed disposition/rationale, and the gateway atomically records it only for that exact pending owner/Mission/revision/run/result; owner approval and final-effect permission remain separate.
+
+#### Scenario: Planning receipt, forged context or incomplete result
+- **WHEN** a caller supplies result text/authority, a planner completion is substituted, or execution success/full-content/source/owner/current revision cannot be independently verified
+- **THEN** review denies or stays pending; delivery/readback/model JSON alone is neither completed review nor permission, and no execution/publication occurs.
+
+#### Scenario: Stale delivery, replay or restart
+- **WHEN** current reviewing admission expires/revokes, source/revision/run/result changes, delivery conflicts or the service restarts
+- **THEN** stale/unsealed/conflicting delivery denies, exact persisted identical replay is idempotent and history remains data; a retained successful result may receive a newly admitted review but no expired run/lease is revived or effect repeated.
+
+#### Scenario: Approved review without owner effect authority
+- **WHEN** Jarvis approves an internal result but no exact task-start owner autonomy or separate current owner final-effect approval covers a proposed Write/Publish/Post/Merge
+- **THEN** the result remains internally reviewed and the final effect waits; Experts/Teams cannot obtain final-effect authority from any review or autonomy record.

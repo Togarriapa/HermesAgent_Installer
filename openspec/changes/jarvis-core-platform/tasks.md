@@ -1,5 +1,7 @@
 # Tasks
 
+RT-T266.3/R0201/R0203 Mission/Resources owner: wire root-derived exact persisted successful run/result context to an actual current purpose-bound no-tools Jarvis MASTER review completion, closed approved/rejected+digest+bounded rationale, sealed decision and implemented gateway `record_jarvis_master_review` callsite/CAS. Preserve launch consent/owner acceptance/final-effect permission as distinct records; no planner-receipt relabeling, caller authority or new task IDs. VD-T266.5 Pi-only qualification: genuine Expert/Team result→Jarvis disposition/rationale→ledger readback, rejection preservation, default owner approval versus exact initial autonomy, missing producer/incomplete/failed/uncertain results, wrong owner/source/revision/run/digest, planner substitution, injected result/JSON, replay/conflicting decision, expiry/revocation and restart without lease revival or repeated effects. Mandatory candidate-bound affected-flow UI/UX review applies to changed review/result presentation. Implementation and live qualification remain OPEN within the existing eight groups.
+
 Implementation and live acceptance are distinct. Every task remains OPEN until its actual effects/failure/recovery evidence exists on the Pi.
 
 - [ ] BD-T266.1 Install/adopt/resume/recover independently owned official core; dependencies: none. Verify linked requirements, effects, denial and recovery; document exact limitations.
