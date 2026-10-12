@@ -99,20 +99,14 @@ def _plugin_config_revision(item: dict[str, Any]) -> str | None:
     source = item.get("source")
     catalog_name = item.get("catalog_name")
     installed_sha = item.get("installed_sha")
-    catalog_sha = item.get("catalog_sha")
-    settings_revision = item.get("settings_revision")
     if (name is None or key is None or not isinstance(version, str) or len(version) > 64
             or source not in {"catalog", "user", "git"}
             or (catalog_name is not None and _safe_label(catalog_name, maximum=160) is None)
             or (installed_sha is not None and re.fullmatch(r"[0-9a-f]{40,64}", installed_sha) is None)
-            or (catalog_sha is not None and re.fullmatch(r"[0-9a-f]{40,64}", catalog_sha) is None)
-            or (source == "catalog" and (catalog_name is None or installed_sha is None))
-            or not isinstance(settings_revision, str)
-            or re.fullmatch(r"[0-9a-f]{64}", settings_revision) is None):
+            or (source == "catalog" and (catalog_name is None or installed_sha is None))):
         return None
     safe = {"name": name, "key": key, "version": version, "source": source,
-            "catalog_name": catalog_name, "installed_sha": installed_sha,
-            "settings_revision": settings_revision}
+            "catalog_name": catalog_name, "installed_sha": installed_sha}
     return hashlib.sha256(json.dumps(safe, sort_keys=True, separators=(",", ":"),
         ensure_ascii=True, allow_nan=False).encode("ascii")).hexdigest()
 
@@ -252,11 +246,17 @@ def build_extension_snapshot(*, skills: Any, plugins: Any, mcps: Any,
                 elif source == "plugin":
                     plugin_name = _safe_label(item.get("plugin"), maximum=96)
                     provider_source = plugin_sources.get(plugin_name or "", "unknown")
-                    provenance = ("bundledResources" if provider_source in {"builtin", "bundledResources"}
+                    provenance = ("builtin" if provider_source == "builtin"
+                                  else "bundledResources" if provider_source == "bundledResources"
                                   else "useradded" if provider_source == "useradded" else "unknown")
+                    if provenance == "builtin":
+                        label = f"Hermes {name}"
+                    elif provenance == "bundledResources":
+                        label = name
                 else:
                     provenance = "unknown"
-                label = name
+                if source != "plugin":
+                    label = name
             row = {"kind": kind, "name": name, "label": label,
                    "source": provenance, "editable": False,
                    "removable": (provenance == "useradded" if kind == "plugins"
@@ -272,12 +272,14 @@ def build_extension_snapshot(*, skills: Any, plugins: Any, mcps: Any,
                             "enabled": item.get("enabled") is True,
                             "configRevision": item.get("config_revision"),
                             "provider": item.get("plugin") if source == "plugin" else None,
-                            "originLabel": ("Jarvis-added catalog server" if provenance == "useradded"
-                                            else (f"Hermes bundled plugin: {item.get('plugin')}"
-                                                  if source == "plugin" and provenance == "bundledResources"
-                                                  else f"User plugin: {item.get('plugin')}"
-                                                  if source == "plugin" and provenance == "useradded"
-                                                  else "Plugin-provided; source not verified" if source == "plugin"
+                            "originLabel": (f"Hermes plugin: {item.get('plugin')}"
+                                            if source == "plugin" and provenance == "builtin"
+                                            else f"Resources plugin: {item.get('plugin')}"
+                                            if source == "plugin" and provenance == "bundledResources"
+                                            else f"User plugin: {item.get('plugin')}"
+                                            if source == "plugin" and provenance == "useradded"
+                                            else "Jarvis-added catalog server" if provenance == "useradded"
+                                            else "Plugin-provided; source not verified" if source == "plugin"
                                             else "Native source unverified")})
             rows.append(row)
     rows.sort(key=lambda item: (item["kind"], item["label"].casefold(), item["name"]))

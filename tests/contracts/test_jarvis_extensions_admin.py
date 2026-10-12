@@ -116,7 +116,8 @@ def test_extension_snapshot_keeps_provenance_and_prefixes_builtins():
     assert by_identity[("skills", "local-procedure")]["source"] == "unknown"
     assert by_identity[("mcps", "github")]["source"] == "unknown"
     assert by_identity[("mcps", "github")]["removable"] is False
-    assert by_identity[("mcps", "plugin-server")]["source"] == "bundledResources"
+    assert by_identity[("mcps", "plugin-server")]["source"] == "builtin"
+    assert by_identity[("mcps", "plugin-server")]["label"] == "Hermes plugin-server"
     assert by_identity[("mcps", "plugin-server")]["removable"] is False
     assert by_identity[("mcps", "unverified-server")]["source"] == "unknown"
     assert by_identity[("mcps", "unverified-server")]["removable"] is False
@@ -161,7 +162,12 @@ def test_catalog_plugin_ownership_requires_exact_jarvis_install_readback_fingerp
     unknown = build_extension_snapshot(skills=[], plugins=[row], mcps=[])
     owned = build_extension_snapshot(skills=[], plugins=[row], mcps=[],
         owner_added_plugin_revisions={"catalog-helper": revision})
+    edited = build_extension_snapshot(skills=[], plugins=[{**row, "settings_revision": "d" * 64,
+        "status": "enabled"}], mcps=[],
+        owner_added_plugin_revisions={"catalog-helper": revision})
     changed = build_extension_snapshot(skills=[], plugins=[{**row, "installed_sha": "d" * 40}], mcps=[],
+        owner_added_plugin_revisions={"catalog-helper": revision})
+    foreign = build_extension_snapshot(skills=[], plugins=[{**row, "catalog_name": "foreign/plugin"}], mcps=[],
         owner_added_plugin_revisions={"catalog-helper": revision})
 
     assert unknown["items"][0]["source"] == "unknown"
@@ -169,7 +175,10 @@ def test_catalog_plugin_ownership_requires_exact_jarvis_install_readback_fingerp
     assert unknown["items"][0]["removable"] is False
     assert owned["items"][0]["source"] == "useradded"
     assert owned["items"][0]["removable"] is True
+    assert edited["items"][0]["source"] == "useradded"
+    assert edited["items"][0]["removable"] is True
     assert changed["items"][0]["source"] == "unknown"
+    assert foreign["items"][0]["source"] == "unknown"
 
 
 def test_skill_snapshot_joins_root_manifest_to_native_skills_and_preserves_source():
