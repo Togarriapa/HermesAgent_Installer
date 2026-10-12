@@ -378,9 +378,6 @@ class CoreVerifiedJarvisMasterPlanDecision:
     def is_current_sealed(self, config: Any, *, custody: Any, now: float | None = None) -> bool:
         current = time.monotonic() if now is None else now
         try:
-            parsed = parse_master_review_output(
-                self._completion.response_text,
-                expected_result_sha256=self.result_sha256)
             return bool(self._seal is _DECISION_SEAL and self.schema == 1
                         and type(self.revision) is int and self.revision >= 1
                         and _HASH.fullmatch(self.owner_subject_sha256 or "")
@@ -409,6 +406,10 @@ class CoreVerifiedJarvisMasterPlanDecision:
                         and self._completion.gateway_turn_id == self.gateway_turn_id
                         and self._completion.core_generation == self.core_generation
                         and self._completion.core_source_generation == self.core_source_generation
+                        # Planning receipts bind the exact zero-tool provider
+                        # response by digest; unlike review receipts they do not
+                        # carry response text or a reviewed Mission result.
+                        and _HASH.fullmatch(self._completion.response_sha256 or "")
                         and _verify_completion(self._completion, config=config, custody=custody, now=current))
         except Exception:
             return False
