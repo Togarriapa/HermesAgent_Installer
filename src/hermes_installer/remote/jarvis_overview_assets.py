@@ -322,53 +322,51 @@ html:not([data-page-visible="true"]) [data-feature-root="overview"] .overview-st
 [data-feature-root="overview"] .overview-stage:not([data-in-viewport="true"]) .reactor-orbit{animation:none!important;transform:none!important}
 """
 
-_MOUNT = r"""function overviewScopeIsCurrent(scope, generation, currentGeneration, stopped) {
-  return !stopped && generation === currentGeneration
-    && !(scope && scope.signal && scope.signal.aborted)
-    && (!scope || typeof scope.isCurrent !== 'function' || scope.isCurrent());
-}
-function projectNativeEcosystem(snapshot, now, coreVerified) {
-  const observation = snapshot && snapshot.observation;
-  const observedAt = observation && typeof observation.observed_at === 'string'
-    ? Date.parse(observation.observed_at) : NaN;
-  const age = now - observedAt;
-  if (!observation || !['quiet','observed','partial'].includes(observation.state)
-      || !Array.isArray(snapshot.instances) || !Array.isArray(snapshot.teams) || !Array.isArray(snapshot.relations)
-      || !Number.isFinite(observedAt)) {
-    return {state:'unavailable', instances:[], teams:[], summary:null, active:false};
+_MOUNT = r"""function mount(container, api, state, mountScope) {
+  function overviewScopeIsCurrent(scope, generation, currentGeneration, stopped) {
+    return !stopped && generation === currentGeneration
+      && !(scope && scope.signal && scope.signal.aborted)
+      && (!scope || typeof scope.isCurrent !== 'function' || scope.isCurrent());
   }
-  const fresh = Boolean(coreVerified && age >= -30000 && age <= 120000);
-  const instances = snapshot.instances.filter(instance => instance
-    && typeof instance.display_name === 'string' && typeof instance.profile_id === 'string'
-    && typeof instance.state === 'string' && typeof instance.stale === 'boolean'
-    && Array.isArray(instance.events)).slice(0,12).map(instance => ({
-      display_name:instance.display_name, profile_id:instance.profile_id,
-      state:instance.state, stale:instance.stale,
-      events:instance.events.filter(event => event && typeof event.kind === 'string'
-        && typeof event.status === 'string' && typeof event.at === 'string')
-        .slice(-20).map(event => ({kind:event.kind, status:event.status, at:event.at,
-          duration_ms:event.duration_ms, tool_count:event.tool_count})),
-    }));
-  const hasVerifiedTeamJoin = snapshot.pending && snapshot.pending.team_membership !== 'no_verified_instance_join'
-    && snapshot.relations.length > 0;
-  const teams = (hasVerifiedTeamJoin ? snapshot.teams : []).filter(team => team && typeof team.name === 'string')
-    .slice(0,8).map(team => ({name:team.name}));
-  const active = fresh && instances.some(instance => !instance.stale && instance.state === 'running');
-  return {state:!fresh ? 'stale' : observation.state === 'quiet' ? 'empty'
-      : observation.state === 'partial' ? 'partial' : 'current',
-    instances, teams, summary:snapshot.summary ? {
-      completed_executions:snapshot.summary.completed_executions,
-      observed_completed_executions:snapshot.summary.observed_completed_executions,
-      response_duration_ms:snapshot.summary.response_duration_ms,
-      response_duration_coverage:snapshot.summary.response_duration_coverage,
-    } : null, active, observedAt:observation.observed_at,
-    pending:{team_membership:snapshot.pending && snapshot.pending.team_membership},
-    hasVerifiedTeamJoin};
-}
+  function projectNativeEcosystem(snapshot, now, coreVerified) {
+    const observation = snapshot && snapshot.observation;
+    const observedAt = observation && typeof observation.observed_at === 'string'
+      ? Date.parse(observation.observed_at) : NaN;
+    const age = now - observedAt;
+    if (!observation || !['quiet','observed','partial'].includes(observation.state)
+        || !Array.isArray(snapshot.instances) || !Array.isArray(snapshot.teams) || !Array.isArray(snapshot.relations)
+        || !Number.isFinite(observedAt)) {
+      return {state:'unavailable', instances:[], teams:[], summary:null, active:false};
+    }
+    const fresh = Boolean(coreVerified && age >= -30000 && age <= 120000);
+    const instances = snapshot.instances.filter(instance => instance
+      && typeof instance.display_name === 'string' && typeof instance.profile_id === 'string'
+      && typeof instance.state === 'string' && typeof instance.stale === 'boolean'
+      && Array.isArray(instance.events)).slice(0,12).map(instance => ({
+        display_name:instance.display_name, profile_id:instance.profile_id,
+        state:instance.state, stale:instance.stale,
+        events:instance.events.filter(event => event && typeof event.kind === 'string'
+          && typeof event.status === 'string' && typeof event.at === 'string')
+          .slice(-20).map(event => ({kind:event.kind, status:event.status, at:event.at,
+            duration_ms:event.duration_ms, tool_count:event.tool_count})),
+      }));
+    const hasVerifiedTeamJoin = snapshot.pending && snapshot.pending.team_membership !== 'no_verified_instance_join'
+      && snapshot.relations.length > 0;
+    const teams = (hasVerifiedTeamJoin ? snapshot.teams : []).filter(team => team && typeof team.name === 'string')
+      .slice(0,8).map(team => ({name:team.name}));
+    const active = fresh && instances.some(instance => !instance.stale && instance.state === 'running');
+    return {state:!fresh ? 'stale' : observation.state === 'quiet' ? 'empty'
+        : observation.state === 'partial' ? 'partial' : 'current',
+      instances, teams, summary:snapshot.summary ? {
+        completed_executions:snapshot.summary.completed_executions,
+        observed_completed_executions:snapshot.summary.observed_completed_executions,
+        response_duration_ms:snapshot.summary.response_duration_ms,
+        response_duration_coverage:snapshot.summary.response_duration_coverage,
+      } : null, active, observedAt:observation.observed_at,
+      pending:{team_membership:snapshot.pending && snapshot.pending.team_membership},
+      hasVerifiedTeamJoin};
+  }
 
-"""
-
-_MOUNT += r"""function mount(container, api, state, mountScope) {
   const root = container.querySelector('[data-feature-root="overview"]') || container;
   const $ = (selector) => root.querySelector(selector);
   const refreshButton = $('[data-refresh]');
