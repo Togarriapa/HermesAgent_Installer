@@ -149,6 +149,7 @@ def test_mcp_removal_ownership_requires_exact_jarvis_add_readback_fingerprint():
     assert owned["items"][0]["source"] == "useradded"
     assert owned["items"][0]["removable"] is True
     assert changed["items"][0]["source"] == "unknown"
+    assert changed["items"][0]["removable"] is False
 
 
 def test_malformed_native_owner_fingerprints_never_match_an_empty_ledger():
@@ -164,7 +165,6 @@ def test_malformed_native_owner_fingerprints_never_match_an_empty_ledger():
     assert by_kind["plugins"]["removable"] is False
     assert by_kind["mcps"]["source"] == "unknown"
     assert by_kind["mcps"]["removable"] is False
-    assert changed["items"][0]["removable"] is False
 
 
 def test_catalog_plugin_ownership_requires_exact_jarvis_install_readback_fingerprint():
