@@ -690,6 +690,141 @@ def test_starting_and_partial_rollback_interruption_fail_closed_in_exec_start_pr
     assert enabled["value"]
 
 
+@pytest.fixture
+def committed_adapter_update_recovery(tmp_path, monkeypatch):
+    if os.geteuid() != 0:
+        pytest.skip("fixed Core update recovery requires the root actor")
+    old_source = "/opt/hermes-installer-core-aaaaaaaaa/src"
+    new_source_root = tmp_path / "hermes-installer-core-bbbbbbbbb"
+    new_source_root.mkdir()
+    (new_source_root / "src").mkdir()
+    new_source = str(new_source_root / "src")
+    provenance = {"schema": 1, "source_commit": "b" * 40,
+                  "archive_sha256": "f" * 64}
+    (new_source_root / ".source-provenance.json").write_bytes(core._canonical_json(provenance))
+    (new_source_root / ".source-provenance.json").chmod(0o444)
+    old_generation, new_generation = "a" * 64, "b" * 64
+    core_generation, cohort_id = "c" * 64, "d" * 32
+    prior = {"schema": 1, "service": core.SERVICE, "state": "active",
+             "adapter_migration_state": "active",
+             "adapter_source": old_source, "adapter_generation": old_generation,
+             "core_source_generation": core_generation}
+    prior_raw = core._canonical_json(prior)
+    current = {"schema": 1, "state": "active", "adapter_migration_state": "active",
+               "adapter_source": new_source, "adapter_generation": new_generation,
+               "core_source_generation": core_generation, "adapter_update_state": "active",
+               "adapter_update_previous_source": old_source,
+               "adapter_update_target_source": new_source,
+               "adapter_update_target_generation": new_generation,
+               "adapter_update_cohort_transaction_id": cohort_id}
+    cohort = {"phase": "committed", "cohort_transaction_id": cohort_id,
+              "old_source": old_source, "old_adapter_generation": old_generation,
+              "old_core_source_generation": core_generation,
+              "old_journal_sha256": hashlib.sha256(prior_raw).hexdigest(),
+              "new_source": new_source, "new_adapter_generation": new_generation,
+              "new_core_source_generation": core_generation}
+    cohort_raw = core._canonical_json(cohort)
+    backup_path = tmp_path / "adapter-update-backups" / old_generation
+    reference = {"path": str(backup_path), "source_generation": old_generation,
+                 "files": {"journal.json": hashlib.sha256(prior_raw).hexdigest()}}
+    current["adapter_update_backup"] = reference
+    current_raw = core._canonical_json(current)
+    contents = {"journal.json": prior_raw}
+    refresh = {"schema": 1, "purpose": "adapter-refresh",
+        "old_core_journal_sha256": hashlib.sha256(prior_raw).hexdigest(),
+        "old_core_adapter_source": old_source, "old_core_adapter_generation": old_generation,
+        "old_core_source_generation": core_generation,
+        "old_inspector_process_identity_sha256": "e" * 64,
+        "old_observer_state": "absent", "old_observer_device": None,
+        "old_observer_inode": None, "core_update_backup_reference": reference,
+        "core_update_cohort_transaction_id": cohort_id,
+        "core_update_cohort_sha256": hashlib.sha256(cohort_raw).hexdigest()}
+    ingress = {"schema": 1, "state": "recovery-required",
+               "candidate_sha": "b" * 40, "adapter_refresh": refresh}
+    ingress_path = tmp_path / "native-adoption-ingress-backup.json"
+    ingress_path.write_bytes(core._canonical_json(ingress)); ingress_path.chmod(0o600)
+    journal_path = tmp_path / "ownership.json"
+    journal_path.write_bytes(current_raw); journal_path.chmod(0o600)
+    monkeypatch.setattr(core, "ADAPTER_UPDATE_BACKUPS", tmp_path / "adapter-update-backups")
+    monkeypatch.setattr(core, "RESOURCES_SKILL_OVERLAYS", tmp_path / "overlays")
+    monkeypatch.setattr(core, "PRIMARY_PROMPT_BACKUPS", tmp_path / "primary-backups")
+    monkeypatch.setattr(core, "NATIVE_ADOPTION_INGRESS_BACKUP", ingress_path)
+    monkeypatch.setattr(core, "JOURNAL", journal_path)
+    monkeypatch.setattr(core, "ADAPTER_SOURCE", Path(new_source))
+    monkeypatch.setattr(core, "_read_adapter_update_cohort", lambda: (cohort, cohort_raw))
+    monkeypatch.setattr(core, "_adapter_update_backup_reference", lambda _cohort: reference)
+    monkeypatch.setattr(core, "_read_adapter_update_backup", lambda _reference: (prior, contents))
+
+    def read_active():
+        raw = journal_path.read_bytes()
+        return json.loads(raw), raw, {}
+
+    monkeypatch.setattr(core, "_read_active_adapter_runtime", read_active)
+    monkeypatch.setattr(core, "_run", lambda argv, check=True:
+        SimpleNamespace(stdout="inactive"))
+    effects = []
+
+    def restore(received, *, allowed_sources):
+        assert core._ADAPTER_UPDATE_LOCK_HELD.get()
+        assert received == reference
+        assert tuple(map(str, allowed_sources)) == (old_source, new_source)
+        effects.append("restore")
+        journal_path.write_bytes(prior_raw)
+        os.chmod(journal_path, 0o600)
+        return prior
+
+    monkeypatch.setattr(core, "_restore_adapter_update_backup", restore)
+    return SimpleNamespace(refresh=refresh, ingress=ingress, ingress_path=ingress_path,
+        cohort=cohort, reference=reference, prior=prior, effects=effects,
+        current_raw=current_raw, restore=restore)
+
+
+@pytest.mark.parametrize("joins", ["absent", "exact"])
+def test_owned_adapter_update_recovery_derives_exact_committed_join(
+        committed_adapter_update_recovery, joins):
+    fixture = committed_adapter_update_recovery
+    if joins == "absent":
+        fixture.refresh["core_update_backup_reference"] = None
+        fixture.refresh["core_update_cohort_transaction_id"] = None
+        fixture.refresh["core_update_cohort_sha256"] = None
+    fixture.ingress_path.write_bytes(core._canonical_json(fixture.ingress))
+    assert "exact prior journal-owned Core adapter" in core.restore_owned_core_adapter_update()
+    assert fixture.effects == ["restore"]
+    assert core.JOURNAL.read_bytes() == core._canonical_json(fixture.prior)
+
+
+@pytest.mark.parametrize("change", ["partial-join", "old-generation", "old-core-source",
+                                    "wrong-candidate", "public-ingress"])
+def test_owned_adapter_update_recovery_denies_unjoined_state_before_restore(
+        committed_adapter_update_recovery, monkeypatch, change):
+    fixture = committed_adapter_update_recovery
+    if change == "partial-join":
+        fixture.refresh["core_update_cohort_sha256"] = None
+    elif change == "old-generation":
+        fixture.refresh["old_core_adapter_generation"] = "f" * 64
+    elif change == "old-core-source":
+        fixture.refresh["old_core_source_generation"] = "f" * 64
+    elif change == "wrong-candidate":
+        fixture.ingress["candidate_sha"] = "f" * 40
+    else:
+        monkeypatch.setattr(core, "_run", lambda argv, check=True:
+            SimpleNamespace(stdout="active" if "tunnel" in argv[-1] else "inactive"))
+    fixture.ingress_path.write_bytes(core._canonical_json(fixture.ingress))
+    with pytest.raises(core.CoreRuntimeError):
+        core.restore_owned_core_adapter_update()
+    assert fixture.effects == []
+
+
+def test_atomic_primary_restore_accepts_new_inode_but_keeps_original_owner_metadata():
+    original = (1, 20, stat.S_IFREG | 0o600, 1000, 1000, 1, 64, 100, 101)
+    restored = (1, 93, stat.S_IFREG | 0o600, 1000, 1000, 1, 64, 200, 201)
+    assert core._restored_soul_signature_matches(restored, original)
+    for index, changed in ((2, stat.S_IFREG | 0o640), (3, 0), (4, 981), (6, 65), (5, 2)):
+        tampered = list(restored)
+        tampered[index] = changed
+        assert not core._restored_soul_signature_matches(tampered, original)
+
+
 def _adapter_cohort_starting_fixture(tmp_path, monkeypatch, request):
     """Build the exact on-disk systemd inputs used by the M1 source-start gate."""
     from hermes_installer.remote import obsidian_owner_lifecycle as obsidian

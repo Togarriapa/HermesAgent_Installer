@@ -26,6 +26,8 @@ RESOURCES_SKILL_OVERLAYS=Path("/var/lib/hermes-installer/core-runtime/resources-
 ADAPTER_MIGRATION_BACKUP=Path("/var/lib/hermes-installer/core-runtime/adapter-migration-backup")
 ADAPTER_UPDATE_BACKUPS=Path("/var/lib/hermes-installer/core-runtime/adapter-update-backups")
 ADAPTER_UPDATE_COHORT=Path("/var/lib/hermes-installer/core-runtime/adapter-update-cohort.json")
+NATIVE_ADOPTION_INGRESS_BACKUP=Path(
+ "/var/lib/hermes-installer/core-runtime/native-adoption-ingress-backup.json")
 # This exact older package was materialized before the importer helper was
 # hardened. Its only difference from the current package is that helper member;
 # the helper itself is not installed into the owner's Hermes tree.
@@ -2918,6 +2920,17 @@ def _initial_primary_recovery_snapshot_sha256(prior,contents):
   rows[name]=hashlib.sha256(value or b"").hexdigest()
  return hashlib.sha256(_canonical_json(rows)).hexdigest()
 
+def _restored_soul_signature_matches(signature,prior_signature):
+ """Match stable ownership metadata after atomic replacement, not old inode/time."""
+ return bool(type(signature) in {tuple,list} and type(prior_signature) in {tuple,list}
+  and len(signature)==len(prior_signature)==9
+  and all(type(part) is int and part>=0 for part in signature)
+  and all(type(part) is int and part>=0 for part in prior_signature)
+  and stat.S_ISREG(signature[2]) and signature[5]==1
+  and signature[3]==prior_signature[3] and signature[4]==prior_signature[4]
+  and stat.S_IMODE(signature[2])==stat.S_IMODE(prior_signature[2])
+  and signature[6]==prior_signature[6])
+
 def _initial_primary_rollback_current(custody):
  """Verify offline recovery authority while the owned service remains stopped."""
  try:
@@ -2998,7 +3011,7 @@ def _initial_primary_rollback_current(custody):
       or hashlib.sha256(soul).hexdigest() not in {
        custody.prior_soul_sha256,custody.desired_soul_sha256}
       or (hashlib.sha256(soul).hexdigest()==custody.prior_soul_sha256
-          and tuple(signature)!=custody.prior_soul_signature)):
+          and not _restored_soul_signature_matches(signature,custody.prior_soul_signature))):
    return False
   backup=primary._backup_read(sys.modules[__name__],row)
   return hashlib.sha256(backup).hexdigest()==custody.owner_backup_sha256
@@ -3063,7 +3076,8 @@ def _issue_initial_primary_rollback_custody(*,reference,prior,contents,cohort,co
      or hashlib.sha256(soul).hexdigest() not in {transition.get("prior_soul_sha256"),
       transition.get("desired_soul_sha256")}
      or (hashlib.sha256(soul).hexdigest()==transition.get("prior_soul_sha256")
-      and tuple(signature)!=tuple(transition.get("prior_soul_signature",())))
+      and not _restored_soul_signature_matches(
+       signature,transition.get("prior_soul_signature",())))
      or backup_sha!=transition.get("owner_backup_sha256")
      or row.get("owner_backup_name")!=backup_sha):
   raise CoreRuntimeError("initial primary rollback evidence is not the exact owned stage")
@@ -4551,7 +4565,8 @@ def _check_adapter_cohort_rollback_currentness(cohort,prior,contents):
          or hashlib.sha256(soul).hexdigest() not in {initial.get("prior_soul_sha256"),
               initial.get("desired_soul_sha256")}
          or (hashlib.sha256(soul).hexdigest()==initial.get("prior_soul_sha256")
-             and tuple(signature)!=tuple(initial.get("prior_soul_signature",())))):
+             and not _restored_soul_signature_matches(
+              signature,initial.get("prior_soul_signature",())))):
       raise CoreRuntimeError("unrecorded initial primary stage does not match the armed exact transition")
      backup=primary._backup_read(sys.modules[__name__],current_row)
      if hashlib.sha256(backup).hexdigest()!=initial.get("prior_soul_sha256"):
@@ -4582,7 +4597,8 @@ def _check_adapter_cohort_rollback_currentness(cohort,prior,contents):
         or hashlib.sha256(soul).hexdigest() not in {initial.get("prior_soul_sha256"),
              initial.get("desired_soul_sha256")}
         or (hashlib.sha256(soul).hexdigest()==initial.get("prior_soul_sha256")
-             and tuple(signature)!=tuple(initial.get("prior_soul_signature",())))):
+             and not _restored_soul_signature_matches(
+              signature,initial.get("prior_soul_signature",())))):
      raise CoreRuntimeError("initial primary stage or owner SOUL changed outside the retained cohort")
     backup=primary._backup_read(sys.modules[__name__],current_row)
     backup_sha=hashlib.sha256(backup).hexdigest()
@@ -4669,7 +4685,8 @@ def _restore_adapter_update_backup(reference,*,allowed_sources):
     from . import primary_prompt_manager as primary
     soul,signature=primary._read_soul(sys.modules[__name__])
     if (hashlib.sha256(soul).hexdigest()!=transition.get("prior_soul_sha256")
-        or tuple(signature)!=tuple(transition.get("prior_soul_signature",()))):
+        or not _restored_soul_signature_matches(
+         signature,transition.get("prior_soul_signature",()))):
      raise CoreRuntimeError("initial primary record is absent but original owner SOUL is not restored")
    else:
     custody=_issue_initial_primary_rollback_custody(reference=reference,prior=prior,
@@ -4685,7 +4702,8 @@ def _restore_adapter_update_backup(reference,*,allowed_sources):
     _retain_initial_primary_stage(cohort["cohort_transaction_id"],stage)
     soul,signature=primary._read_soul(sys.modules[__name__])
     if (hashlib.sha256(soul).hexdigest()!=transition["prior_soul_sha256"]
-        or tuple(signature)!=tuple(transition["prior_soul_signature"])):
+        or not _restored_soul_signature_matches(
+         signature,transition["prior_soul_signature"])):
      raise CoreRuntimeError("offline primary rollback did not restore exact original SOUL")
     PRIMARY_PROMPT_JOURNAL.unlink()
     _sync_directory(PRIMARY_PROMPT_JOURNAL.parent)
@@ -5090,6 +5108,124 @@ def _adapter_update_backup_reference(cohort):
  if type(manifest) is not dict or any(manifest.get(name)!=digest for name,digest in expected.items()):
   raise CoreRuntimeError("adapter update recovery backup differs from its cohort")
  return {"path":str(backup),"source_generation":generation,"files":manifest}
+
+def restore_owned_core_adapter_update():
+ """Restore only the current committed update retained by the ingress cohort."""
+ if os.geteuid()!=ROOT_UID or not Path("/proc").is_dir():
+  raise CoreRuntimeError("owned adapter update restore requires the Root Linux actor")
+ with _adapter_update_lock():
+  raw=_projection_file(NATIVE_ADOPTION_INGRESS_BACKUP,owner=ROOT_UID,
+   group=ROOT_UID,mode=0o600,maximum=128*1024)
+  def unique(pairs):
+   value={}
+   for key,item in pairs:
+    if key in value: raise ValueError
+    value[key]=item
+   return value
+  try: ingress=json.loads(raw,object_pairs_hook=unique)
+  except (ValueError,TypeError):
+   raise CoreRuntimeError("retained ingress recovery journal is malformed") from None
+  fields={"schema","purpose","old_core_journal_sha256","old_core_adapter_source",
+   "old_core_adapter_generation","old_core_source_generation",
+   "old_inspector_process_identity_sha256","old_observer_state","old_observer_device",
+   "old_observer_inode","core_update_backup_reference",
+   "core_update_cohort_transaction_id","core_update_cohort_sha256"}
+  refresh=ingress.get("adapter_refresh") if type(ingress) is dict else None
+  if (type(ingress) is not dict or ingress.get("schema")!=1
+      or ingress.get("state")!="recovery-required"
+      or type(refresh) is not dict or set(refresh)!=fields
+      or refresh.get("schema")!=1 or refresh.get("purpose")!="adapter-refresh"):
+   raise CoreRuntimeError("no exact recovery-required native adapter refresh is retained")
+  for key in ("old_core_journal_sha256","old_core_adapter_generation",
+              "old_core_source_generation","old_inspector_process_identity_sha256",
+              "core_update_cohort_sha256"):
+   if not isinstance(refresh.get(key),str) or re.fullmatch(r"[0-9a-f]{64}",refresh[key]) is None:
+    raise CoreRuntimeError("retained adapter refresh digest is malformed")
+  if (not isinstance(refresh.get("old_core_adapter_source"),str)
+      or not Path(refresh["old_core_adapter_source"]).is_absolute()
+      or refresh.get("old_observer_state") not in {"verified-owned","absent"}
+      or (refresh["old_observer_state"]=="verified-owned"
+       and (type(refresh.get("old_observer_device")) is not int
+        or type(refresh.get("old_observer_inode")) is not int
+        or refresh["old_observer_device"]<0 or refresh["old_observer_inode"]<1))
+      or (refresh["old_observer_state"]=="absent"
+       and (refresh.get("old_observer_device") is not None
+        or refresh.get("old_observer_inode") is not None))):
+   raise CoreRuntimeError("retained old Core or observer identity is malformed")
+
+  cohort,cohort_raw=_read_adapter_update_cohort()
+  candidate=ingress.get("candidate_sha")
+  if (cohort.get("phase")!="committed"
+      or not isinstance(candidate,str) or re.fullmatch(r"[0-9a-f]{40}",candidate) is None
+      or cohort.get("new_source")!=str(ADAPTER_SOURCE)
+      or Path(cohort["new_source"]).parent.name!="hermes-installer-core-"+candidate[:9]):
+   raise CoreRuntimeError("current Core update is not a committed recovery candidate")
+  provenance_raw=_projection_file(ADAPTER_SOURCE.parent/".source-provenance.json",
+   owner=ROOT_UID,group=ROOT_UID,mode=0o444,maximum=4096)
+  try: provenance=json.loads(provenance_raw,object_pairs_hook=unique)
+  except (ValueError,TypeError):
+   raise CoreRuntimeError("current candidate source provenance is malformed") from None
+  if (type(provenance) is not dict
+      or set(provenance)!={"schema","source_commit","archive_sha256"}
+      or provenance.get("schema")!=1 or provenance.get("source_commit")!=candidate
+      or not isinstance(provenance.get("archive_sha256"),str)
+      or re.fullmatch(r"[0-9a-f]{64}",provenance["archive_sha256"]) is None
+      or provenance_raw!=_canonical_json(provenance)):
+   raise CoreRuntimeError("current candidate source provenance differs from the retained ingress candidate")
+  reference=_adapter_update_backup_reference(cohort)
+  prior,contents=_read_adapter_update_backup(reference)
+  old_journal=contents["journal.json"]
+  if (hashlib.sha256(old_journal).hexdigest()!=refresh["old_core_journal_sha256"]
+      or prior.get("service")!=SERVICE or prior.get("adapter_migration_state")!="active"
+      or prior.get("adapter_source")!=refresh["old_core_adapter_source"]
+      or prior.get("adapter_generation")!=refresh["old_core_adapter_generation"]
+      or prior.get("core_source_generation")!=refresh["old_core_source_generation"]
+      or cohort.get("old_journal_sha256")!=refresh["old_core_journal_sha256"]
+      or cohort.get("old_source")!=refresh["old_core_adapter_source"]
+      or cohort.get("old_adapter_generation")!=refresh["old_core_adapter_generation"]
+      or cohort.get("old_core_source_generation")!=refresh["old_core_source_generation"]):
+   raise CoreRuntimeError("retained old Core tuple differs from the exact protected update backup")
+  transaction=refresh.get("core_update_cohort_transaction_id")
+  cohort_sha=refresh.get("core_update_cohort_sha256")
+  retained_reference=refresh.get("core_update_backup_reference")
+  joins=(retained_reference,transaction,cohort_sha)
+  if all(value is None for value in joins):
+   # Core may commit immediately before the adopter can persist its three
+   # joins. In that one crash window the actual current Core journal and
+   # committed cohort still must independently name this exact backup.
+   pass
+  elif (any(value is None for value in joins)
+        or retained_reference!=reference
+        or transaction!=cohort["cohort_transaction_id"]
+        or cohort_sha!=hashlib.sha256(cohort_raw).hexdigest()):
+   raise CoreRuntimeError("retained adapter refresh does not join the current protected Core update")
+
+  current, _current_raw, _files=_read_active_adapter_runtime()
+  if (current.get("adapter_source")!=cohort.get("new_source")
+      or current.get("adapter_generation")!=cohort.get("new_adapter_generation")
+      or current.get("core_source_generation")!=cohort.get("new_core_source_generation")
+      or current.get("adapter_update_state")!="active"
+      or current.get("adapter_update_backup")!=reference
+      or current.get("adapter_update_previous_source")!=cohort.get("old_source")
+      or current.get("adapter_update_target_source")!=cohort.get("new_source")
+      or current.get("adapter_update_target_generation")!=cohort.get("new_adapter_generation")
+      or current.get("adapter_update_cohort_transaction_id")!=cohort.get("cohort_transaction_id")):
+   raise CoreRuntimeError("current Core journal does not bind the exact committed update cohort")
+  for unit in ("hermes-jarvis-core-gateway.service","hermes-jarvis-mvp-tunnel.service"):
+   if _run(["systemctl","is-active",unit],False).stdout.strip()!="inactive":
+    raise CoreRuntimeError("public ingress must remain stopped during Core update recovery")
+  _restore_adapter_update_backup(reference,allowed_sources=(
+   Path(cohort["old_source"]),Path(cohort["new_source"])))
+  restored=_projection_file(JOURNAL,owner=ROOT_UID,group=ROOT_UID,mode=0o600,maximum=64*1024)
+  if restored!=old_journal:
+   raise CoreRuntimeError("prior adapter Core journal did not restore exactly")
+  prior_live,prior_live_raw,_prior_files=_read_active_adapter_runtime()
+  if (prior_live_raw!=old_journal
+      or prior_live.get("adapter_source")!=refresh["old_core_adapter_source"]
+      or prior_live.get("adapter_generation")!=refresh["old_core_adapter_generation"]
+      or prior_live.get("core_source_generation")!=refresh["old_core_source_generation"]):
+   raise CoreRuntimeError("restored prior Core process or source tuple is not current")
+  return "exact prior journal-owned Core adapter and bindings restored; ingress remains stopped"
 
 def update_owned_core_adapter():
  with _adapter_update_lock():
