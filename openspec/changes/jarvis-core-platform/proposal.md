@@ -1,5 +1,9 @@
 # Proposal
 
+## Actual Team-instance Ecosystem lineage (R0203)
+
+Complete the existing HI-T266.2/RT-T266.3/RB-T266.4 ecosystem read projection by retaining authentic native admitted Team-instance membership and verified sender-completion→recipient-request/result relations joined to existing execution keys. Static Bundle membership remains a declaration, not evidence of working instances or communication. Reuse bounded root activity custody and owner read transport, exclude content and execution authority, and keep stale/unknown/partial states honest. VD-T266.5 Pi qualification and affected-flow UI/UX review remain required; all219 requirements/62 aliases/18 AC/eight groups stay OPEN.
+
 ## Exact Mission result-review bridge (R0201/R0203)
 
 Complete the existing RT-T266.3/VD-T266.5 Mission review path with a real current Jarvis no-tools review of the exact persisted completed Expert/Team run result. Root derives the owned Mission/revision/run/result context from verified persisted execution records; neither caller-supplied text nor a planner-child completion may stand in for that join. Deliver the explicit approved/rejected disposition and bounded nonempty rationale as a sealed current decision to the existing gateway Mission ledger. Content delivery, Jarvis disposition and owner final-effect authorization remain separate. This refinement creates no new requirement/task IDs, final-effect grants or acceptance claims; all219 requirements/62 aliases/18 AC/eight task groups remain OPEN.
