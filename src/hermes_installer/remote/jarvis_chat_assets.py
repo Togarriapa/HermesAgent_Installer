@@ -54,7 +54,7 @@ _HTML = '''<!doctype html>
         <button type="button" class="nav-item" data-view="chat">Chats</button>
         <button type="button" class="nav-item feature-nav-link" data-view="projects" data-requires-feature="projects" hidden>Projects</button>
         <button type="button" class="nav-item feature-nav-link" data-view="second-brain" data-requires-feature="second-brain" hidden>Knowledge</button>
-        <details class="nav-group manage-group" data-nav-group="manage"><summary>Manage</summary><div class="nav-menu"><button type="button" class="nav-item" data-view="capabilities">Capabilities</button><button type="button" class="nav-item" data-view="settings">Settings</button><!-- JARVIS_GROUP_MANAGE --></div></details>
+        <details class="nav-group manage-group" data-nav-group="manage"><summary aria-expanded="false">Manage</summary><div class="nav-menu"><button type="button" class="nav-item" data-view="capabilities">Capabilities</button><button type="button" class="nav-item" data-view="settings">Settings</button><!-- JARVIS_GROUP_MANAGE --></div></details>
       </nav>
       <div class="assistant-hud" id="assistant-hud" data-state="checking" aria-label="Jarvis status">
         <span class="assistant-orb" aria-hidden="true"><span class="orb-core"></span><span class="orb-ring"></span><span class="orb-halo"></span></span>
@@ -1768,6 +1768,10 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   }
   async function showView(view, navSelection = view, featureContext = {}) {
     byId("chat-preferences").open = false;
+    for (const group of document.querySelectorAll(".nav-group")) {
+      group.open = false;
+      group.querySelector("summary")?.setAttribute("aria-expanded", "false");
+    }
     const selected = ["chat", "overview", "capabilities", "settings"].includes(view) || featuresById.has(view) ? view : "chat";
     const selectedNavigation = navSelection === "sessions" && selected === "chat" ? "sessions" : selected;
     if (selected !== currentView && mountedFeature) unmountFeature();
@@ -1911,18 +1915,30 @@ _JS = r'''/* Browser client is text-first with optional, explicitly enabled brow
   ui.toggle.addEventListener("click", () => setPanel(ui.panel.dataset.open !== "true"));
   ui.close.addEventListener("click", () => setPanel(false));
   ui.scrim.addEventListener("click", () => setPanel(false));
+  for (const group of document.querySelectorAll(".nav-group")) {
+    const summary = group.querySelector("summary");
+    group.addEventListener("toggle", () => summary.setAttribute("aria-expanded", String(group.open)));
+  }
+  function focusSelectedViewHeading(view) {
+    const panel = [...document.querySelectorAll("[data-view-panel]")]
+      .find((candidate) => candidate.dataset.viewPanel === view && !candidate.hidden);
+    const heading = panel?.querySelector("h1, h2");
+    if (!heading) return;
+    if (!heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
+    heading.focus({preventScroll: true});
+  }
   for (const button of document.querySelectorAll("[data-view]")) button.addEventListener("click", () => {
-    for (const group of document.querySelectorAll(".nav-group")) group.open = false;
     const featureContext = button.classList.contains("chat-model-link") && conversationId
       ? {initialConversationId: conversationId} : {};
     const openChats = button.dataset.view === "chat"
       && window.matchMedia("(max-width: 760px)").matches;
     showView(button.dataset.view, openChats ? "sessions" : button.dataset.view, featureContext);
+    focusSelectedViewHeading(button.dataset.view);
   });
   byId("jarvis-home").addEventListener("click", (event) => {
     event.preventDefault();
-    for (const group of document.querySelectorAll(".nav-group")) group.open = false;
     showView("overview");
+    focusSelectedViewHeading("overview");
   });
   window.addEventListener("pagehide", () => { closeStream(); stopRecognition(); stopSpeech(); unmountFeature(); });
   document.addEventListener("visibilitychange", () => {

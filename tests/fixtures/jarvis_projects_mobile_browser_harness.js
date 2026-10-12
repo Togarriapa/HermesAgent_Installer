@@ -49,6 +49,7 @@
     if (method === "GET" && path === "/chat/api/projects/trash") return json({projects: []});
     if (method === "GET" && path === "/chat/api/conversations/trash") return json([]);
     if (method === "GET" && path === "/chat/api/conversations") return json({conversations: [testChat]});
+    if (method === "GET" && path === "/chat/api/models/conversations") return json({conversations: [testChat]});
     if (method === "GET" && path === "/chat/api/second-brain/notes") return json({notes: []});
     if (method === "GET" && /^\/chat\/api\/conversations\/[^/]+\/messages$/.test(path)) {
       return json({messages: []});
@@ -83,6 +84,27 @@
       "Chats must open its conversation drawer on mobile.");
     assert(chatsButton.getAttribute("aria-current") === "page",
       "Chats must remain the selected primary destination while its drawer is open.");
+
+    const manage = document.querySelector(".manage-group");
+    const manageSummary = manage.querySelector("summary");
+    manageSummary.click();
+    await waitFor(() => manage.open && manageSummary.getAttribute("aria-expanded") === "true",
+      "Manage opening state");
+    const modelsButton = manage.querySelector('[data-view="models-settings"]');
+    assert(modelsButton, "The Models destination should be available inside Manage.");
+    modelsButton.click();
+    await waitFor(() => document.querySelector(".workspace")?.dataset.currentView === "models-settings",
+      "Models view");
+    await waitFor(() => !manage.open && manageSummary.getAttribute("aria-expanded") === "false",
+      "Manage closing after destination selection");
+    const modelsPanel = document.querySelector('[data-view-panel="models-settings"]');
+    const modelsHeading = modelsPanel.querySelector("h1, h2");
+    const headingBounds = modelsHeading.getBoundingClientRect();
+    assert(!modelsPanel.hidden && headingBounds.height > 0
+      && headingBounds.bottom > 0 && headingBounds.top < window.innerHeight,
+    "Choosing a feature from Manage must leave its content visible in the mobile viewport.");
+    assert(document.activeElement === modelsHeading,
+      "Choosing a feature must move focus to its heading after closing Manage.");
 
     await clickView("projects");
     await waitFor(() => typeof delayedProjectRead === "function", "the delayed project read");
@@ -121,7 +143,8 @@
     await waitFor(() => document.getElementById("conversation-panel").dataset.open !== "true",
       "the existing close-on-chat-selection behavior");
 
-    console.info("PASS: mobile Chats opens one conversation list; new chat and selecting a chat close it; "
+    console.info("PASS: mobile Chats opens one conversation list; Manage closes, updates aria-expanded, and "
+      + "focuses the visible Models heading; new chat and selecting a chat close it; "
       + "Projects remount submits one create; late project reads do not update an inactive view.");
   } finally {
     window.fetch = nativeFetch;
